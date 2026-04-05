@@ -1,0 +1,108 @@
+# OpsGrid End-to-End PoC Configuration
+# Example collector configurations for all supported data sources
+
+collectors:
+  # 1. Bambu Labs via MQTT
+  - asset_id: "bambu-printer-001"
+    collector_type: "bambu_mqtt"
+    enabled: true
+    config:
+      printer_ip: "192.168.1.101"
+      access_code: "12345678"
+      serial_number: "00M00A2B123456789"
+
+  # 2. QIDI via Screen Scraping (OCR)
+  - asset_id: "qidi-printer-001"
+    collector_type: "qidi_screen"
+    enabled: true
+    config:
+      printer_ip: "192.168.1.102"
+      serial_number: "QIDI001"
+
+  # 3. SOVOL via Screen Scraping (OCR)
+  - asset_id: "sovol-printer-001"
+    collector_type: "sovol_screen"
+    enabled: true
+    config:
+      printer_ip: "192.168.1.103"
+      serial_number: "SOVOL001"
+
+  # 4. ORCA Slicer File Watcher
+  - asset_id: "orca-workstation-001"
+    collector_type: "orca_file"
+    enabled: true
+    config:
+      watch_path: "/mnt/shared/3d-prints/output"
+
+  # 5. Industrial PLC via OPC-UA
+  - asset_id: "plc-line-001"
+    collector_type: "opcua"
+    enabled: true
+    config:
+      server_url: "opc.tcp://192.168.1.200:4840"
+      username: "operator"
+      password: "password123"
+      certificate_path: null
+      private_key_path: null
+      nodes_to_monitor:
+        - "ns=2;s=Temperature"
+        - "ns=2;s=Pressure"
+        - "ns=2;s=MachineState"
+
+  # 6. VFD via Modbus TCP
+  - asset_id: "vfd-motor-001"
+    collector_type: "modbus"
+    enabled: true
+    config:
+      connection_type: "tcp"
+      host: "192.168.1.201"
+      port: 502
+      slave_id: 1
+      poll_interval: 5.0
+      registers_to_poll:
+        - name: "motor_speed"
+          address: 0
+          type: "holding"
+          data_type: "uint16"
+          scale: 0.1
+        - name: "motor_current"
+          address: 1
+          type: "holding"
+          data_type: "uint16"
+          scale: 0.01
+        - name: "motor_temp"
+          address: 2
+          type: "holding"
+          data_type: "int16"
+          scale: 0.1
+        - name: "state"
+          address: 10
+          type: "holding"
+          data_type: "uint16"
+
+  # 7. Sensor Array via Modbus RTU
+  - asset_id: "sensor-array-001"
+    collector_type: "modbus"
+    enabled: true
+    config:
+      connection_type: "rtu"
+      serial_port: "/dev/ttyUSB0"
+      baudrate: 9600
+      slave_id: 2
+      poll_interval: 10.0
+      registers_to_poll:
+        - name: "vibration_x"
+          address: 0
+          type: "input"
+          data_type: "float32"
+          count: 2
+        - name: "vibration_y"
+          address: 2
+          type: "input"
+          data_type: "float32"
+          count: 2
+        - name: "vibration_z"
+          address: 4
+          type: "input"
+          data_type: "float32"
+          count: 2

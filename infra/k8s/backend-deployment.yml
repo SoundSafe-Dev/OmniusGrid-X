@@ -1,0 +1,73 @@
+# K3s Deployment Manifests for OmniusGrid
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: omniusgrid-backend
+  namespace: omniusgrid
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: omniusgrid-backend
+  template:
+    metadata:
+      labels:
+        app: omniusgrid-backend
+    spec:
+      containers:
+      - name: backend
+        image: omniusgrid/backend:latest
+        ports:
+        - containerPort: 8000
+        env:
+        - name: DATABASE_URL
+          value: "postgresql://omniusgrid:password@timescaledb:5432/omniusgrid"
+        - name: REDPANDA_URL
+          value: "redpanda:29092"
+        # Liveness probe - restart if process hangs
+        livenessProbe:
+          httpGet:
+            path: /health/live
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        # Readiness probe - remove from service if not ready
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        # Startup probe - give time for initial startup
+        startupProbe:
+          httpGet:
+            path: /health/startup
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          failureThreshold: 30
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: omniusgrid-backend
+  namespace: omniusgrid
+spec:
+  selector:
+    app: opsgrid-backend
+  ports:
+  - port: 8000
+    targetPort: 8000
+  type: ClusterIP

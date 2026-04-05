@@ -1,0 +1,47 @@
+# Grafana Provisioning - Data Sources
+
+apiVersion: 1
+
+datasources:
+  # Prometheus metrics
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: "5s"
+      httpMethod: POST
+      manageAlerts: true
+      prometheusType: Prometheus
+
+  # Loki logs
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    editable: false
+    jsonData:
+      maxLines: 1000
+      derivedFields:
+        - name: "trace_id"
+          matcherRegex: "trace_id=(\\w+)"
+          url: "$$${__value.raw}"
+        - name: "asset_id"
+          matcherRegex: "asset_id=(\\w+)"
+          url: "/dashboard/asset/$$${__value.raw}"
+
+  # TimescaleDB (PostgreSQL)
+  - name: TimescaleDB
+    type: postgres
+    access: proxy
+    url: timescaledb:5432
+    database: opsgrid
+    user: opsgrid_readonly
+    editable: false
+    jsonData:
+      sslmode: "disable"
+      timescaledb: true
+    secureJsonData:
+      password: "readonly_password"
