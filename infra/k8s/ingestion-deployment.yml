@@ -1,0 +1,84 @@
+# K3s Ingestion Worker Deployment with Horizontal Pod Autoscaler
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: omniusgrid-ingestion
+  namespace: omniusgrid
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: omniusgrid-ingestion
+  template:
+    metadata:
+      labels:
+        app: omniusgrid-ingestion
+    spec:
+      containers:
+      - name: ingestion
+        image: omniusgrid/backend:latest
+        command: ["python", "-m", "app.workers.ingestion"]
+        env:
+        - name: DATABASE_URL
+          value: "postgresql://omniusgrid:password@timescaledb:5432/omniusgrid"
+        - name: REDPANDA_URL
+          value: "redpanda:29092"
+        - name: WORKER_MODE
+          value: "ingestion"
+        # Liveness probe - restart if worker hangs
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - "ps aux | grep -q 'app.workers.ingestion' || exit 1"
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "250m"
+---
+# Horizontal Pod Autoscaler - scale ingestion workers based on queue depth
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: omniusgrid-ingestion-hpa
+  namespace: omniusgrid
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: omniusgrid-ingestion
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: External
+    external:
+      metric:
+        name: redpanda_consumer_lag
+        selector:
+          matchLabels:
+            topic: telemetry
+      target:
+        type: AverageValue
+        averageValue: "1000"
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 15
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 10
+        periodSeconds: 60

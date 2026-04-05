@@ -1,0 +1,93 @@
+# pgBackRest Backup Service for Kubernetes
+# Runs as a sidecar or cronjob for continuous backups
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pgbackrest-backup
+  namespace: omniusgrid
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pgbackrest-backup
+  template:
+    metadata:
+      labels:
+        app: pgbackrest-backup
+    spec:
+      containers:
+      - name: pgbackrest
+        image: pgbackrest/pgbackrest:latest
+        env:
+        - name: PGBACKREST_REPO1_S3_KEY
+          valueFrom:
+            secretKeyRef:
+              name: pgbackrest-credentials
+              key: s3-key
+        - name: PGBACKREST_REPO1_S3_KEY_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: pgbackrest-credentials
+              key: s3-secret
+        - name: PGBACKREST_REPO1_CIPHER_PASS
+          valueFrom:
+            secretKeyRef:
+              name: pgbackrest-credentials
+              key: cipher-pass
+        volumeMounts:
+        - name: pgbackrest-config
+          mountPath: /etc/pgbackrest
+        - name: postgres-data
+          mountPath: /var/lib/postgresql/data
+        command:
+        - /bin/sh
+        - -c
+        - |
+          # Continuous archiving daemon
+          while true; do
+            echo "Starting pgBackRest archive-get..."
+            pgbackrest --stanza=opsgrid-db archive-get
+            sleep 60
+          done
+      volumes:
+      - name: pgbackrest-config
+        configMap:
+          name: pgbackrest-config
+      - name: postgres-data
+        persistentVolumeClaim:
+          claimName: timescaledb-data
+---
+# CronJob for scheduled full backups
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: pgbackrest-full-backup
+  namespace: omniusgrid
+spec:
+  schedule: "0 2 * * *"  # Daily at 2 AM
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: backup
+            image: pgbackrest/pgbackrest:latest
+            env:
+            - name: PGBACKREST_REPO1_S3_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: pgbackrest-credentials
+                  key: s3-key
+            - name: PGBACKREST_REPO1_S3_KEY_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: pgbackrest-credentials
+                  key: s3-secret
+            command:
+            - pgbackrest
+            - --stanza=opsgrid-db
+            - backup
+            - --type=full
+          restartPolicy: OnFailure

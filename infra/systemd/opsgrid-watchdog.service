@@ -1,0 +1,33 @@
+# systemd Watchdog Configuration for OmniusGrid
+# Place in /etc/systemd/system/omniusgrid-watchdog.service
+
+[Unit]
+Description=OmniusGrid Hardware Watchdog
+Documentation=man:systemd.service(5)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/watchdog -v /dev/watchdog
+ExecStopPost=/bin/sh -c '[ "$SERVICE_RESULT" = "success" ] || /usr/bin/logger -t watchdog "OmniusGrid watchdog: system reset triggered"'
+
+# Hardware watchdog settings
+WatchdogDevice=/dev/watchdog
+WatchdogSec=60
+
+# Restart policy
+Restart=always
+RestartSec=5
+
+# Resource limits
+LimitNOFILE=65535
+LimitNPROC=4096
+
+# Sandboxing
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/log/omniusgrid
+
+[Install]
+WantedBy=multi-user.target

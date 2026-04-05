@@ -1,0 +1,123 @@
+groups:
+  - name: opsgrid_critical
+    rules:
+      # CRITICAL: Database down
+      - alert: TimescaleDBDown
+        expr: up{job="timescaledb"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: infrastructure
+        annotations:
+          summary: "TimescaleDB is down"
+          description: "TimescaleDB has been down for more than 1 minute. All data ingestion is halted."
+          runbook_url: "https://wiki/runbooks/timescaledb-down"
+
+      # CRITICAL: Message broker down
+      - alert: RedpandaDown
+        expr: up{job="redpanda"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: infrastructure
+        annotations:
+          summary: "Redpanda message broker is down"
+          description: "Redpanda has been down for more than 1 minute. Edge agents are buffering locally."
+
+      # CRITICAL: Disk space
+      - alert: DiskSpaceCritical
+        expr: (node_filesystem_avail_bytes / node_filesystem_size_bytes) < 0.05
+        for: 2m
+        labels:
+          severity: critical
+          team: infrastructure
+        annotations:
+          summary: "Disk space critically low"
+          description: "{{ $labels.instance }} has less than 5% disk space remaining."
+
+      # HIGH: Backend API down
+      - alert: BackendAPIDown
+        expr: up{job="opsgrid-backend"} == 0
+        for: 2m
+        labels:
+          severity: high
+          team: backend
+        annotations:
+          summary: "OpsGrid Backend API is down"
+          description: "Backend API has been down for more than 2 minutes. Dashboard inaccessible."
+
+      # HIGH: Memory pressure
+      - alert: HighMemoryUsage
+        expr: (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes > 0.85
+        for: 5m
+        labels:
+          severity: high
+          team: infrastructure
+        annotations:
+          summary: "High memory usage detected"
+          description: "{{ $labels.instance }} memory usage is above 85%"
+
+  - name: opsgrid_data_quality
+    rules:
+      # MEDIUM: Data ingestion lag
+      - alert: IngestionLagHigh
+        expr: redpanda_kafka_consumer_group_lag > 10000
+        for: 5m
+        labels:
+          severity: medium
+          team: data
+        annotations:
+          summary: "High message lag in Redpanda"
+          description: "Consumer group lag is over 10,000 messages. Data backfill may be needed."
+
+      # MEDIUM: Asset offline
+      - alert: AssetOffline
+        expr: |
+          (
+            time() - opsgrid_asset_last_seen_timestamp_seconds > 300
+          )
+        for: 5m
+        labels:
+          severity: medium
+          team: operations
+        annotations:
+          summary: "Asset offline"
+          description: "Asset {{ $labels.asset_name }} hasn't been seen for 5 minutes"
+
+      # LOW: Slow queries
+      - alert: SlowDatabaseQueries
+        expr: |
+          (
+            rate(postgresql_stat_activity_max_tx_duration[5m]) > 30
+          )
+        for: 10m
+        labels:
+          severity: low
+          team: data
+        annotations:
+          summary: "Slow database queries detected"
+          description: "Queries taking longer than 30 seconds"
+
+  - name: opsgrid_edge_agents
+    rules:
+      # MEDIUM: Edge agent buffering (network issue)
+      - alert: EdgeAgentBuffering
+        expr: opsgrid_edge_buffer_messages > 5000
+        for: 3m
+        labels:
+          severity: medium
+          team: edge
+        annotations:
+          summary: "Edge agent buffering high volume"
+          description: "Edge agent {{ $labels.agent_id }} has over 5000 buffered messages"
+
+      # LOW: OCR accuracy drop
+      - alert: OcrAccuracyLow
+        expr: opsgrid_ocr_accuracy < 0.80
+        for: 10m
+        labels:
+          severity: low
+          team: edge
+        annotations:
+          summary: "OCR accuracy below threshold"
+          description: "Screen scraper accuracy dropped below 80% on {{ $labels.asset_id }}"

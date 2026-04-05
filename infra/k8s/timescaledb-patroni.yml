@@ -1,0 +1,122 @@
+# Patroni HA PostgreSQL/TimescaleDB StatefulSet
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: timescaledb-patroni
+  namespace: omniusgrid
+spec:
+  serviceName: timescaledb-patroni
+  replicas: 3
+  selector:
+    matchLabels:
+      app: timescaledb-patroni
+  template:
+    metadata:
+      labels:
+        app: timescaledb-patroni
+    spec:
+      containers:
+      - name: timescaledb
+        image: timescale/timescaledb-ha:pg15-latest
+        ports:
+        - containerPort: 5432
+        - containerPort: 8008  # Patroni REST API
+        env:
+        - name: PATRONI_ETCD3_HOSTS
+          value: "etcd:2379"
+        - name: PATRONI_SCOPE
+          value: "omniusgrid-db"
+        - name: PATRONI_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: PATRONI_POSTGRESQL_DATA_DIR
+          value: "/var/lib/postgresql/data/pgdata"
+        - name: PATRONI_POSTGRESQL_PGPASS
+          value: "/tmp/pgpass"
+        - name: PATRONI_POSTGRESQL_LISTEN
+          value: "0.0.0.0:5432"
+        - name: PATRONI_RESTAPI_LISTEN
+          value: "0.0.0.0:8008"
+        - name: PATRONI_SUPERUSER_USERNAME
+          value: "postgres"
+        - name: PATRONI_SUPERUSER_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: timescaledb-credentials
+              key: superuser-password
+        - name: PATRONI_REPLICATION_USERNAME
+          value: "replicator"
+        - name: PATRONI_REPLICATION_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: timescaledb-credentials
+              key: replication-password
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/postgresql/data
+        # Patroni health check
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8008
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /readiness
+            port: 8008
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 100Gi
+      storageClassName: fast-ssd  # Use SSD storage class
+---
+# Headless service for StatefulSet
+apiVersion: v1
+kind: Service
+metadata:
+  name: timescaledb-patroni
+  namespace: omniusgrid
+spec:
+  selector:
+    app: timescaledb-patroni
+  ports:
+  - port: 5432
+    targetPort: 5432
+  clusterIP: None
+---
+# Client service pointing to master
+apiVersion: v1
+kind: Service
+metadata:
+  name: timescaledb-master
+  namespace: omniusgrid
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-internal: "true"
+spec:
+  selector:
+    app: timescaledb-patroni
+    role: master
+  ports:
+  - port: 5432
+    targetPort: 5432
+  type: ClusterIP

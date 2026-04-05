@@ -1,0 +1,52 @@
+# systemd Service for OmniusGrid Backend (when running on bare metal/VM, not K3s)
+# Place in /etc/systemd/system/omniusgrid-backend.service
+
+[Unit]
+Description=OmniusGrid Backend API
+Documentation=https://omniusgrid.local/docs
+Requires=network.target timescaledb.service redpanda.service
+After=network.target timescaledb.service redpanda.service
+
+[Service]
+Type=notify
+WorkingDirectory=/opt/omniusgrid/backend
+Environment="PATH=/opt/omniusgrid/venv/bin:/usr/local/bin:/usr/bin"
+Environment="PYTHONPATH=/opt/omniusgrid/backend"
+Environment="DATABASE_URL=postgresql://omniusgrid:password@localhost:5432/omniusgrid"
+Environment="REDPANDA_URL=localhost:9092"
+Environment="LOG_LEVEL=INFO"
+
+ExecStart=/opt/omniusgrid/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+ExecReload=/bin/kill -HUP $MAINPID
+
+# Notify systemd when ready
+NotifyAccess=main
+
+# Resource limits
+LimitAS=1G
+LimitNOFILE=65535
+
+# Restart policy (self-healing)
+Restart=on-failure
+RestartSec=5
+StartLimitInterval=60
+StartLimitBurst=3
+
+# Graceful shutdown
+TimeoutStopSec=30
+KillSignal=SIGTERM
+KillMode=mixed
+
+# Security hardening
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/log/opsgrid
+NoNewPrivileges=yes
+
+# Watchdog - systemd will expect periodic keepalives
+WatchdogSec=30
+NotifyAccess=all
+
+[Install]
+WantedBy=multi-user.target

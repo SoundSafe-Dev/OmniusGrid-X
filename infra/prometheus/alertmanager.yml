@@ -1,0 +1,88 @@
+global:
+  smtp_smarthost: 'localhost:587'
+  smtp_from: 'opsgrid@factory.local'
+  smtp_auth_username: ''
+  smtp_auth_password: ''
+
+# Route alerts based on severity
+templates:
+- '/etc/alertmanager/template/*.tmpl'
+
+route:
+  group_by: ['alertname', 'cluster', 'service']
+  group_wait: 10s
+  group_interval: 5m
+  repeat_interval: 12h
+  receiver: 'default'
+  routes:
+    # Critical alerts go to PagerDuty/SMS
+    - match:
+        severity: critical
+      receiver: 'pagerduty-critical'
+      continue: true
+
+    # High severity to Slack #opsgrid-alerts
+    - match:
+        severity: high
+      receiver: 'slack-high'
+
+    # Medium severity to Slack #opsgrid-info
+    - match:
+        severity: medium
+      receiver: 'slack-medium'
+
+    # Low severity - log only (no noise)
+    - match:
+        severity: low
+      receiver: 'null'
+
+receivers:
+  - name: 'default'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#opsgrid-general'
+        title: '{{ .GroupLabels.alertname }}'
+        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+
+  - name: 'null'
+
+  - name: 'pagerduty-critical'
+    pagerduty_configs:
+      - service_key: '${PAGERDUTY_SERVICE_KEY}'
+        description: '{{ .CommonAnnotations.summary }}'
+        severity: critical
+
+  - name: 'slack-high'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#opsgrid-alerts'
+        title: '⚠️ HIGH: {{ .GroupLabels.alertname }}'
+        text: |
+          {{ range .Alerts }}
+          *Summary:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Runbook:* {{ .Annotations.runbook_url }}
+          {{ end }}
+        send_resolved: true
+
+  - name: 'slack-medium'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#opsgrid-info'
+        title: '{{ .GroupLabels.alertname }}'
+        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+        send_resolved: false
+
+inhibit_rules:
+  # If critical alert fires, suppress lower severity for same issue
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'high'
+    equal: ['alertname', 'cluster', 'service']
+
+  - source_match:
+      severity: 'high'
+    target_match:
+      severity: 'medium'
+    equal: ['alertname', 'cluster', 'service']
