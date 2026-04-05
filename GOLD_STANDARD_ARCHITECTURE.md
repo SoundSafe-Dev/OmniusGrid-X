@@ -5,84 +5,91 @@
 
 OmniusGrid implements the industry gold standard for Industrial IoT AI: **Edge Inference for real-time control** combined with **Cloud Training/Simulation for strategic optimization**.
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              CLOUD ENVIRONMENT                               │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐             │
-│  │  Model Training │  │  Monte Carlo    │  │  Digital Twin   │             │
-│  │  (PyTorch/GPU)  │  │  Simulations    │  │  Simulations    │             │
-│  │                 │  │                 │  │                 │             │
-│  │  • New model    │  │  • What-if      │  │  • Fleet-wide   │             │
-│  │    weights      │  │    scenarios    │  │    optimization │             │
-│  │  • Batch jobs   │  │  • 30-day OEE   │  │  • Scheduling   │             │
-│  │  • Retraining   │  │    forecasts    │  │  • Capacity     │             │
-│  └────────┬────────┘  └────────┬────────┘  └────────┬────────┘             │
-│           │                    │                    │                       │
-│           └────────────────────┴────────────────────┘                       │
-│                              │                                              │
-│                         ┌────┴────┐                                         │
-│                         │ Model   │  ◄── Updated weights pushed to edge   │
-│                         │Registry │                                         │
-│                         └────┬────┘                                         │
-└──────────────────────────────┼────────────────────────────────────────────┘
-                               │
-                      ┌────────┴────────┐  Outbound-only mTLS
-                      │  Secure Cloud     │  Cloud never initiates
-                      │  Gateway          │  connections to factory
-                      └────────┬────────┘
-                               │ Feature Vectors
-                               │ Discrete Events
-                               │ Model Artifacts (download)
-┌──────────────────────────────┼────────────────────────────────────────────┐
-│                              │           FACTORY FLOOR (Edge Rack)          │
-│  ┌───────────────────────────┴───────────────────────────┐                 │
-│  │              TimescaleDB (Patroni HA)                  │                 │
-│  │  • Raw telemetry (compressed, 90% reduction)           │                 │
-│  │  • Continuous Aggregates (feature vectors)             │                 │
-│  │  • 3-node cluster with auto-failover                 │                 │
-│  └───────────────────────────┬───────────────────────────┘                 │
-│                              │                                              │
-│  ┌───────────────────────────┴───────────────────────────┐                 │
-│  │              Feature Extraction Service               │                 │
-│  │  • Rolling statistics (mean, std, velocity)          │                 │
-│  │  • State transition counts                           │                 │
-│  │  • Efficiency scores                                   │                 │
-│  │  • Sends only ML-relevant features to cloud          │                 │
-│  └───────────────────────────┬───────────────────────────┘                 │
-│                              │                                              │
-│  ┌───────────────────────────┴───────────────────────────┐                 │
-│  │              Local Tactical Engine (PyTorch)          │                 │
-│  │  • Latency: < 100ms for control loops                 │                 │
-│  │  • Safety rules (hard thresholds)                     │                 │
-│  │  • Emergency stops                                    │                 │
-│  │  • Immediate parameter adjustments                    │                 │
-│  │  • "Spindle vibration high → reduce feed 5%"        │                 │
-│  └───────────────────────────┬───────────────────────────┘                 │
-│                              │                                              │
-│  ┌───────────────────────────┴───────────────────────────┐                 │
-│  │              Cloud Strategic Engine Interface         │                 │
-│  │  • Receives recommendations (NOT commands)            │                 │
-│  │  • Requires operator approval                         │                 │
-│  │  • Macro-optimizations (scheduling, fleet)           │                 │
-│  │  • "Change infill pattern for +5% OEE"              │                 │
-│  └───────────────────────────────────────────────────────┘                 │
-│                                                                            │
-│  ┌───────────────────────────────────────────────────────┐                 │
-│  │              MLOps Pipeline                           │                 │
-│  │  • Polls model registry every 5 min                  │                 │
-│  │  • Downloads new TorchScript models                  │                 │
-│  │  • Validates before deployment                        │                 │
-│  │  • Hot-swap with zero downtime                        │                 │
-│  │  • Rollback capability                                │                 │
-│  └───────────────────────────────────────────────────────┘                 │
-│                                                                            │
-│  ┌───────────────────────────────────────────────────────┐                 │
-│  │              Edge Agents (Store-and-Forward)          │                 │
-│  │  • Bambu Labs MQTT collectors                        │                 │
-│  │  • Screen scrapers (OCR) for QIDI/SOVOL              │                 │
-│  │  • 24h SQLite buffer for resilience                  │                 │
-│  └───────────────────────────────────────────────────────┘                 │
-└────────────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph CLOUD["☁️ Cloud Environment"]
+        direction TB
+        subgraph TRAIN["Model Training"]
+            MT["PyTorch/GPU"]
+            MT1["• New model weights"]
+            MT2["• Batch jobs"]
+            MT3["• Retraining"]
+        end
+
+        subgraph MC["Monte Carlo Simulations"]
+            MCS["What-if scenarios"]
+            MCS1["• 30-day OEE forecasts"]
+        end
+
+        subgraph DT["Digital Twin Simulations"]
+            DTS["Fleet-wide optimization"]
+            DTS1["• Scheduling"]
+            DTS2["• Capacity planning"]
+        end
+
+        MR["Model Registry"]
+
+        MT --> MR
+        MCS --> MR
+        DTS --> MR
+    end
+
+    MR -. "Updated weights<br/>pushed to edge" .-> GATEWAY
+
+    subgraph EDGE["🏭 Factory Floor - Edge Rack (K3s/Patroni)"]
+        direction TB
+
+        GATEWAY["Secure Cloud Gateway"]
+
+        subgraph DB["TimescaleDB (Patroni HA)"]
+            TS["Raw telemetry"]
+            TS1["• 90% compression"]
+            CA["Continuous Aggregates"]
+            CA1["• Feature vectors"]
+        end
+
+        subgraph FEAT["Feature Extraction Service"]
+            F1["Rolling statistics"]
+            F2["State transitions"]
+            F3["Efficiency scores"]
+        end
+
+        subgraph TACT["Local Tactical Engine (PyTorch)"]
+            T1["Latency: <100ms"]
+            T2["Safety rules"]
+            T3["Emergency stops"]
+            T4["Parameter adjustments"]
+        end
+
+        subgraph STRAT["Cloud Strategic Engine Interface"]
+            S1["Receives recommendations"]
+            S2["Operator approval required"]
+            S3["Macro-optimizations"]
+        end
+
+        subgraph MLOPS["MLOps Pipeline"]
+            M1["Polls registry every 5min"]
+            M2["Downloads TorchScript models"]
+            M3["Hot-swap with zero downtime"]
+            M4["Rollback capability"]
+        end
+
+        subgraph AGENTS["Edge Agents (Store-and-Forward)"]
+            A1["Bambu Labs MQTT"]
+            A2["Screen scrapers (OCR)"]
+            A3["24h SQLite buffer"]
+        end
+    end
+
+    GATEWAY -. "Outbound-only mTLS<br/>Cloud never initiates" .-> CLOUD
+
+    AGENTS --> DB
+    TS --> CA
+    CA --> FEAT
+    FEAT --> TACT
+    FEAT -.-> GATEWAY
+    TACT --> STRAT
+    MLOPS -.-> TACT
 ```
 
 ## Key Architectural Decisions
