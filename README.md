@@ -142,10 +142,64 @@ OmniusGrid/
 │   └── opsgrid_agent/
 │       ├── collectors/     # Protocol implementations
 │       └── buffer/         # SQLite store-and-forward
-├── frontend/              # React dashboard
+├── frontend/              # React 18 + TypeScript dashboard
 │   └── src/
-│       ├── components/
-│       └── pages/
+│       ├── api/            # API clients (axios, WebSocket)
+│       │   ├── auth.ts
+│       │   ├── assets.ts
+│       │   ├── alarms.ts
+│       │   ├── telemetry.ts
+│       │   ├── engines.ts
+│       │   └── websocket.ts
+│       ├── components/     # React components
+│       │   ├── ui/         # Reusable UI primitives
+│       │   │   ├── Button.tsx
+│       │   │   ├── Card.tsx
+│       │   │   ├── Input.tsx
+│       │   │   ├── Select.tsx
+│       │   │   ├── Badge.tsx
+│       │   │   ├── Table.tsx
+│       │   │   ├── Skeleton.tsx
+│       │   │   └── ChartContainer.tsx
+│       │   ├── common/     # Domain-specific components
+│       │   │   ├── PackMLBadge.tsx
+│       │   │   ├── SeverityBadge.tsx
+│       │   │   ├── StatusIndicator.tsx
+│       │   │   └── TimeAgo.tsx
+│       │   └── layout/     # Layout components
+│       │       ├── Layout.tsx
+│       │       ├── Sidebar.tsx
+│       │       ├── Header.tsx
+│       │       └── ProtectedRoute.tsx
+│       ├── hooks/          # Custom React hooks
+│       │   ├── useAuth.ts
+│       │   ├── useWebSocket.ts
+│       │   ├── useTelemetry.ts
+│       │   ├── useAlarms.ts
+│       │   └── useAssets.ts
+│       ├── pages/          # Page components
+│       │   ├── auth/       # Login page
+│       │   ├── dashboard/  # Dashboard
+│       │   ├── assets/     # Asset management
+│       │   ├── alarms/     # Alarm management
+│       │   ├── oee/        # OEE analytics
+│       │   ├── engines/    # AI Engine dashboards
+│       │   │   ├── TacticalEngine.tsx
+│       │   │   ├── StrategicEngine.tsx
+│       │   │   ├── MLOpsPipeline.tsx
+│       │   │   └── CloudGateway.tsx
+│       │   ├── analytics/  # Operational analytics
+│       │   ├── fleet/      # Fleet management
+│       │   └── admin/      # Administration
+│       ├── stores/         # Zustand state management
+│       │   ├── authStore.ts
+│       │   ├── uiStore.ts
+│       │   └── realtimeStore.ts
+│       ├── types/          # TypeScript types
+│       └── utils/          # Utilities
+│           ├── formatters.ts
+│           ├── constants.ts
+│           └── helpers.ts
 ├── database/              # Schema migrations
 ├── infra/                 # Deployment configs
 │   ├── k8s/              # Kubernetes manifests
@@ -213,6 +267,29 @@ OmniusGrid/
 - **Human-in-the-Loop**: Grafana dashboards, manual overrides, maintenance scheduling
 - **Lights Out**: Automated health probes, HA failover, systemd watchdogs
 - **Observability**: Prometheus metrics, Loki centralized logging, Alertmanager routing
+
+### Frontend Dashboard
+
+- **Authentication**: JWT-based auth with role-based access control (RBAC)
+- **Real-time Updates**: WebSocket integration for live telemetry and alarms
+- **Responsive Design**: Mobile-first layout with collapsible sidebar
+- **AI Engine Dashboards**:
+  - Tactical Engine: Monitor <100ms edge inference with safety controls
+  - Strategic Engine: Approve/reject cloud optimization recommendations
+  - MLOps Pipeline: Model deployment, rollback, and version management
+  - Cloud Gateway: Monitor cloud sync status and data egress
+- **Operational Analytics**:
+  - Asset Health: Predictive maintenance and health scoring
+  - Telemetry Charts: Historical data visualization
+  - Predictive Maintenance: Scheduling and planning tools
+- **Fleet Management**:
+  - Multi-site overview with OEE metrics
+  - Organization hierarchy navigation
+- **Administration**:
+  - User management with role assignment
+  - Collector configuration and restart controls
+  - System health monitoring
+  - Application settings and preferences
 
 ### Enterprise Features
 
