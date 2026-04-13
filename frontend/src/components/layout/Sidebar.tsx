@@ -164,8 +164,8 @@ export const Sidebar: FC<SidebarProps> = ({ mobile = false, onClose }) => {
       <div className="p-4 border-b border-opsgrid-border flex items-center justify-between">
         {!sidebarCollapsed || mobile ? (
           <div>
-            <h1 className="text-xl font-bold text-opsgrid-primary">OpsGrid</h1>
-            <p className="text-xs text-opsgrid-text-secondary">Manufacturing Operations</p>
+            <h1 className="text-xl font-bold text-opsgrid-primary">OmniusGrid</h1>
+            <p className="text-xs text-opsgrid-text-secondary">Universal Data Feed</p>
           </div>
         ) : (
           <div className="w-8 h-8 bg-opsgrid-primary rounded-lg flex items-center justify-center mx-auto">

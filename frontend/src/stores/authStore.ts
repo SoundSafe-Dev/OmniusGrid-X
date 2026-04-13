@@ -16,6 +16,7 @@ interface AuthState {
   logout: () => Promise<void>;
   refreshAccessToken: () => Promise<boolean>;
   setUser: (user: User) => void;
+  devLogin: (user: User, token: string) => void;
   clearError: () => void;
   hasPermission: (resource: string, action: Permission['action']) => boolean;
 }
@@ -34,16 +35,14 @@ export const useAuthStore = create<AuthState>()(
         set({ isLoading: true, error: null });
         try {
           const response = await authApi.login(credentials);
-          const { accessToken, refreshToken, user } = response;
+          const { accessToken, user } = response;
 
           localStorage.setItem('accessToken', accessToken);
-          localStorage.setItem('refreshToken', refreshToken);
           localStorage.setItem('user', JSON.stringify(user));
 
           set({
             user,
             accessToken,
-            refreshToken,
             isAuthenticated: true,
             isLoading: false,
           });
@@ -99,6 +98,17 @@ export const useAuthStore = create<AuthState>()(
       setUser: (user) => {
         set({ user });
         localStorage.setItem('user', JSON.stringify(user));
+      },
+
+      devLogin: (user: User, token: string) => {
+        localStorage.setItem('accessToken', token);
+        localStorage.setItem('user', JSON.stringify(user));
+        set({
+          user,
+          accessToken: token,
+          isAuthenticated: true,
+          isLoading: false,
+        });
       },
 
       clearError: () => set({ error: null }),

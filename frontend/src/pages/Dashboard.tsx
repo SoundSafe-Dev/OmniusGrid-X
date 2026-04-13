@@ -2,15 +2,15 @@ import { FC } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery } from 'react-query'
 import { AlertTriangle, CheckCircle, Box, Activity } from 'lucide-react'
-import { api } from '../api/client'
+import { dashboardApi, alarmsApi } from '../api'
 
 const Dashboard: FC = () => {
   const { data: overview, isLoading } = useQuery('dashboard-overview', () =>
-    api.get('/api/v1/dashboard/overview').then((res) => res.data)
+    dashboardApi.getOverview()
   )
   
   const { data: activeAlarms } = useQuery('active-alarms', () =>
-    api.get('/api/v1/alarms/active').then((res) => res.data)
+    alarmsApi.getActive()
   )
 
   if (isLoading) {
@@ -24,25 +24,25 @@ const Dashboard: FC = () => {
   const stats = [
     {
       label: 'Total Assets',
-      value: overview?.total_assets || 0,
+      value: overview?.totalAssets || 0,
       icon: Box,
       color: 'text-opsgrid-primary',
     },
     {
       label: 'Active',
-      value: overview?.active_assets || 0,
+      value: overview?.activeAssets || 0,
       icon: CheckCircle,
       color: 'text-status-running',
     },
     {
       label: 'Active Alarms',
-      value: overview?.active_alarms || 0,
+      value: overview?.activeAlarms || 0,
       icon: AlertTriangle,
-      color: overview?.critical_alarms > 0 ? 'text-status-alarm' : 'text-status-warning',
+      color: overview?.criticalAlarms > 0 ? 'text-status-alarm' : 'text-status-warning',
     },
     {
       label: 'Critical',
-      value: overview?.critical_alarms || 0,
+      value: overview?.criticalAlarms || 0,
       icon: Activity,
       color: 'text-status-alarm',
     },
@@ -75,7 +75,7 @@ const Dashboard: FC = () => {
       <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-4">
         <h3 className="text-lg font-semibold mb-4">Assets by PackML State</h3>
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-          {Object.entries(overview?.assets_by_state || {}).map(([state, count]) => (
+          {Object.entries(overview?.assetsByState || {}).map(([state, count]) => (
             <div
               key={state}
               className="bg-opsgrid-bg rounded-lg p-3 text-center"

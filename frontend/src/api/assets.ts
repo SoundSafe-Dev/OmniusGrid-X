@@ -1,4 +1,5 @@
 import { api } from './client';
+import { mockApi } from './mockApi';
 import {
   Asset,
   AssetCreate,
@@ -13,6 +14,8 @@ import {
   Organization,
 } from '../types';
 
+const USE_MOCK = true; // Set to false to use real backend
+
 interface AssetListParams {
   organizationId?: string;
   workcellId?: string;
@@ -24,6 +27,7 @@ interface AssetListParams {
 
 export const assetsApi = {
   list: async (params?: AssetListParams): Promise<PaginatedResponse<Asset>> => {
+    if (USE_MOCK) return mockApi.getAssets();
     const response = await api.get<Asset[]>('/api/v1/assets/', { params });
     return {
       items: response.data,
@@ -35,6 +39,11 @@ export const assetsApi = {
   },
 
   get: async (assetId: string): Promise<Asset> => {
+    if (USE_MOCK) {
+      const asset = await mockApi.getAsset(assetId);
+      if (!asset) throw new Error('Asset not found');
+      return asset;
+    }
     const response = await api.get<Asset>(`/api/v1/assets/${assetId}`);
     return response.data;
   },
@@ -59,6 +68,7 @@ export const assetsApi = {
   },
 
   getTypes: async (category?: string): Promise<AssetType[]> => {
+    if (USE_MOCK) return mockApi.getAssetTypes();
     const response = await api.get<AssetType[]>('/api/v1/assets/types/', {
       params: category ? { category } : undefined,
     });
@@ -76,6 +86,7 @@ export const assetsApi = {
 
 export const dashboardApi = {
   getOverview: async (organizationId?: string): Promise<DashboardOverview> => {
+    if (USE_MOCK) return mockApi.getDashboardOverview();
     const response = await api.get<DashboardOverview>('/api/v1/dashboard/overview', {
       params: organizationId ? { organization_id: organizationId } : undefined,
     });
@@ -92,6 +103,7 @@ export const dashboardApi = {
   },
 
   getAssetOEE: async (assetId: string, hours: number = 24): Promise<OEEMetrics> => {
+    if (USE_MOCK) return mockApi.getAssetOEE(assetId);
     const response = await api.get<OEEMetrics>(`/api/v1/dashboard/assets/${assetId}/oee`, {
       params: { hours },
     });
@@ -99,6 +111,7 @@ export const dashboardApi = {
   },
 
   getFleetOEE: async (organizationId?: string, hours: number = 24): Promise<FleetOEE> => {
+    if (USE_MOCK) return mockApi.getFleetOEE();
     const response = await api.get<FleetOEE>('/api/v1/dashboard/fleet/oee', {
       params: { organization_id: organizationId, hours },
     });
@@ -108,6 +121,7 @@ export const dashboardApi = {
 
 export const workcellsApi = {
   list: async (organizationId?: string): Promise<Workcell[]> => {
+    if (USE_MOCK) return mockApi.getWorkcells();
     const response = await api.get<Workcell[]>('/api/v1/workcells/', {
       params: organizationId ? { organization_id: organizationId } : undefined,
     });
@@ -122,6 +136,7 @@ export const workcellsApi = {
 
 export const organizationsApi = {
   list: async (): Promise<Organization[]> => {
+    if (USE_MOCK) return mockApi.getOrganizations();
     const response = await api.get<Organization[]>('/api/v1/organizations/');
     return response.data;
   },

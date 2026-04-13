@@ -1,11 +1,11 @@
 import { FC } from 'react'
 import { useQuery } from 'react-query'
 import { BarChart3, TrendingUp, Clock } from 'lucide-react'
-import { api } from '../api/client'
+import { dashboardApi } from '../api'
 
 const OEE: FC = () => {
   const { data: fleetOEE, isLoading } = useQuery('fleet-oee', () =>
-    api.get('/api/v1/dashboard/fleet/oee?hours=24').then((res) => res.data)
+    dashboardApi.getFleetOEE()
   )
 
   if (isLoading) {
@@ -37,7 +37,7 @@ const OEE: FC = () => {
             <p className="text-opsgrid-text-secondary">Availability</p>
           </div>
           <p className="text-3xl font-bold">
-            {((fleetOEE?.fleet_average_availability || 0) * 100).toFixed(1)}%
+            {((fleetOEE?.fleetAverageAvailability || 0) * 100).toFixed(1)}%
           </p>
           <p className="text-sm text-opsgrid-text-secondary mt-1">
             Time equipment was available to run
@@ -50,7 +50,7 @@ const OEE: FC = () => {
             <p className="text-opsgrid-text-secondary">Performance</p>
           </div>
           <p className="text-3xl font-bold">
-            {(fleetOEE?.fleet_average_performance * 100 || 100).toFixed(1)}%
+            {(fleetOEE?.fleetAveragePerformance * 100 || 100).toFixed(1)}%
           </p>
           <p className="text-sm text-opsgrid-text-secondary mt-1">
             Speed vs ideal cycle time
@@ -63,7 +63,7 @@ const OEE: FC = () => {
             <p className="text-opsgrid-text-secondary">Overall OEE</p>
           </div>
           <p className="text-3xl font-bold">
-            {((fleetOEE?.fleet_average_oee || 0) * 100).toFixed(1)}%
+            {((fleetOEE?.fleetAverageOee || 0) * 100).toFixed(1)}%
           </p>
           <p className="text-sm text-opsgrid-text-secondary mt-1">
             Availability × Performance × Quality
@@ -75,7 +75,7 @@ const OEE: FC = () => {
       <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg">
         <div className="p-4 border-b border-opsgrid-border">
           <h3 className="text-lg font-semibold">
-            Asset OEE Breakdown ({fleetOEE?.asset_count || 0} assets)
+            Asset OEE Breakdown ({fleetOEE?.assetCount || 0} assets)
           </h3>
         </div>
         
@@ -91,10 +91,10 @@ const OEE: FC = () => {
             </thead>
             <tbody className="divide-y divide-opsgrid-border">
               {fleetOEE?.assets?.map((asset: any) => (
-                <tr key={asset.asset_id} className="hover:bg-opsgrid-bg/50">
+                <tr key={asset.assetId} className="hover:bg-opsgrid-bg/50">
                   <td className="p-4">
-                    <p className="font-medium">{asset.asset_name}</p>
-                    <p className="text-sm text-opsgrid-text-secondary">{asset.asset_id}</p>
+                    <p className="font-medium">{asset.assetName}</p>
+                    <p className="text-sm text-opsgrid-text-secondary">{asset.assetId}</p>
                   </td>
                   <td className="p-4 text-center">
                     <div className="flex items-center justify-center gap-2">

@@ -1,21 +1,22 @@
 import { FC } from 'react'
 import { useQuery, useMutation, useQueryClient } from 'react-query'
 import { AlertTriangle, CheckCircle, Bell } from 'lucide-react'
-import { api } from '../api/client'
+import { alarmsApi } from '../api'
 
 const Alarms: FC = () => {
   const queryClient = useQueryClient()
   
-  const { data: alarms, isLoading } = useQuery('alarms-list', () =>
-    api.get('/api/v1/alarms/').then((res) => res.data)
+  const { data: alarmsData, isLoading } = useQuery('alarms-list', () =>
+    alarmsApi.list()
   )
+  const alarms = alarmsData?.items || []
 
   const { data: activeAlarms } = useQuery('active-alarms', () =>
-    api.get('/api/v1/alarms/active').then((res) => res.data)
+    alarmsApi.getActive()
   )
 
   const acknowledgeMutation = useMutation(
-    (alarmId: string) => api.post(`/api/v1/alarms/${alarmId}/acknowledge`, {}),
+    (alarmId: string) => alarmsApi.acknowledge(alarmId),
     {
       onSuccess: () => {
         queryClient.invalidateQueries('alarms-list')

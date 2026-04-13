@@ -2,12 +2,13 @@ import { FC } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery } from 'react-query'
 import { Box, ChevronRight, Activity } from 'lucide-react'
-import { api } from '../api/client'
+import { assetsApi } from '../api'
 
 const Assets: FC = () => {
-  const { data: assets, isLoading } = useQuery('assets', () =>
-    api.get('/api/v1/assets/').then((res) => res.data)
+  const { data: assetsData, isLoading } = useQuery('assets', () =>
+    assetsApi.list()
   )
+  const assets = assetsData?.items || []
 
   const getStatusColor = (state: string) => {
     switch (state) {
