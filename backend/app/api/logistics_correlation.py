@@ -1,0 +1,419 @@
+"""
+Logistics Correlation API Endpoints
+Cross-domain data correlation between YMS/TMS and manufacturing
+"""
+
+from datetime import datetime, timedelta
+from typing import List, Optional
+from uuid import UUID
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db.database import get_db
+from app.models.schemas import (
+    LogisticsCorrelationResponse,
+    DockScheduleCorrelationResponse,
+    DetentionRiskPrediction,
+    LoadQualityLogCreate,
+    LoadQualityLogResponse,
+    TruckAssetCorrelationResponse
+)
+from app.services.logistics_correlation_engine import (
+    logistics_correlation_engine,
+    DockProductionSynchronizer,
+    DetentionRiskPredictor,
+    LoadQualityCorrelator
+)
+
+router = APIRouter(prefix="/logistics", tags=["logistics_correlation"])
+
+
+# ==================== Dashboard Endpoints ====================
+
+@router.get("/correlation-dashboard", response_model=LogisticsCorrelationResponse)
+async def get_correlation_dashboard(
+    organization_id: UUID,
+    date: Optional[datetime] = Query(None),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get comprehensive logistics correlation dashboard"""
+    dashboard = await logistics_correlation_engine.get_correlation_dashboard(
+        organization_id=organization_id,
+        date=date,
+        db=db
+    )
+    return dashboard
+
+
+# ==================== Dock-Production Sync Endpoints ====================
+
+@router.get("/dock-production-sync", response_model=dict)
+async def get_dock_production_sync(
+    organization_id: UUID,
+    date: Optional[datetime] = Query(None),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get dock schedule aligned with production forecasts"""
+    synchronizer = DockProductionSynchronizer()
+    sync_data = await synchronizer.get_sync_dashboard(
+        organization_id=organization_id,
+        date=date,
+        db=db
+    )
+    return sync_data
+
+
+@router.post("/dock-appointments/{appointment_id}/sync")
+async def sync_dock_appointment(
+    appointment_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """Run dock-production sync analysis for specific appointment"""
+    synchronizer = DockProductionSynchronizer()
+    try:
+        result = await synchronizer.sync_dock_with_production(
+            appointment_id=appointment_id,
+            db=db
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+# ==================== Truck-Asset Readiness Endpoints ====================
+
+@router.get("/truck-asset-readiness")
+async def get_truck_asset_readiness(
+    organization_id: UUID,
+    shipment_id: Optional[UUID] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """Get truck arrival vs asset readiness correlation"""
+    if shipment_id:
+        # Get specific shipment optimization
+        result = await logistics_correlation_engine.optimize_truck_asset_assignment(
+            organization_id=organization_id,
+            shipment_id=shipment_id,
+            db=db
+        )
+        return result
+    else:
+        # Get overall readiness metrics for the day
+        dashboard = await logistics_correlation_engine.get_correlation_dashboard(
+            organization_id=organization_id,
+            db=db
+        )
+        return {
+            "production_dock_sync_percent": dashboard['production_dock_sync_percent'],
+            "at_risk_appointments": dashboard['at_risk_appointments'],
+            "truck_arrivals_today": dashboard['truck_arrivals_today'],
+            "avg_dwell_time_hours": dashboard['avg_dwell_time_hours'],
+            "note": "Provide shipment_id for specific optimization recommendations"
+        }
+
+
+# ==================== Load Quality Correlation Endpoints ====================
+
+@router.post("/load-quality", response_model=LoadQualityLogResponse)
+async def log_load_quality_issue(
+    data: LoadQualityLogCreate,
+    db: AsyncSession = Depends(get_db)
+):
+    """Log shipping defect and correlate to manufacturing root cause"""
+    correlator = LoadQualityCorrelator()
+    log = await correlator.log_quality_issue(
+        organization_id=data.organization_id,
+        shipment_id=data.shipment_id,
+        defect_type=data.defect_type or 'damaged',
+        severity=data.severity or 'major',
+        quantity_affected=data.quantity_affected or 0,
+        asset_id=data.asset_id,
+        operation_id=data.operation_id,
+        carrier_liable=data.carrier_liable,
+        db=db
+    )
+    return log
+
+
+@router.get("/load-quality-correlation")
+async def get_load_quality_correlation(
+    organization_id: UUID,
+    start_date: datetime = Query(default_factory=lambda: datetime.utcnow() - timedelta(days=30)),
+    end_date: Optional[datetime] = Query(None),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get load quality correlation analytics"""
+    if not end_date:
+        end_date = datetime.utcnow()
+    
+    correlator = LoadQualityCorrelator()
+    analytics = await correlator.get_quality_analytics(
+        organization_id=organization_id,
+        start_date=start_date,
+        end_date=end_date,
+        db=db
+    )
+    return analytics
+
+
+# ==================== Delivery Efficiency Endpoints ====================
+
+@router.get("/delivery-efficiency")
+async def get_delivery_efficiency(
+    organization_id: UUID,
+    days: int = Query(30, ge=1, le=365),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get on-time delivery vs production efficiency metrics"""
+    from sqlalchemy import select, func
+    from app.db.models import Shipment
+    
+    start_date = datetime.utcnow() - timedelta(days=days)
+    
+    # Get shipment delivery stats
+    result = await db.execute(
+        select(
+            func.count(Shipment.id).label('total_shipments'),
+            func.sum(func.case([(Shipment.actual_delivery <= Shipment.scheduled_delivery, 1)], else_=0)).label('on_time'),
+            func.avg(
+                func.extract('epoch', Shipment.actual_delivery - Shipment.scheduled_delivery) / 60
+            ).label('avg_delay_minutes')
+        ).where(
+            Shipment.organization_id == organization_id,
+            Shipment.status == 'delivered',
+            Shipment.actual_delivery.isnot(None),
+            Shipment.scheduled_delivery.isnot(None),
+            Shipment.actual_delivery >= start_date
+        )
+    )
+    row = result.fetchone()
+    
+    total = row.total_shipments or 0
+    on_time = row.on_time or 0
+    on_time_percent = (on_time / total * 100) if total > 0 else 0
+    avg_delay = row.avg_delay_minutes or 0
+    
+    return {
+        "period_days": days,
+        "total_delivered_shipments": total,
+        "on_time_deliveries": on_time,
+        "on_time_percent": round(on_time_percent, 1),
+        "late_deliveries": total - on_time,
+        "avg_delay_minutes": round(float(avg_delay), 1) if avg_delay else 0,
+        "efficiency_grade": "A" if on_time_percent >= 95 else "B" if on_time_percent >= 85 else "C" if on_time_percent >= 75 else "D"
+    }
+
+
+# ==================== Detention Risk Prediction Endpoints ====================
+
+@router.post("/predict-detention", response_model=DetentionRiskPrediction)
+async def predict_detention(
+    appointment_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """Predict detention risk for a dock appointment"""
+    predictor = DetentionRiskPredictor()
+    try:
+        prediction = await predictor.predict_risk(
+            appointment_id=appointment_id,
+            db=db
+        )
+        return DetentionRiskPrediction(**prediction)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.get("/detention-risk/upcoming")
+async def get_upcoming_detention_risks(
+    organization_id: UUID,
+    hours_ahead: int = Query(24, ge=1, le=168),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get detention risk predictions for upcoming appointments"""
+    from sqlalchemy import select
+    from app.db.models import DockAppointment
+    
+    cutoff = datetime.utcnow() + timedelta(hours=hours_ahead)
+    
+    result = await db.execute(
+        select(DockAppointment).where(
+            DockAppointment.organization_id == organization_id,
+            DockAppointment.scheduled_start >= datetime.utcnow(),
+            DockAppointment.scheduled_start <= cutoff,
+            DockAppointment.status.in_(['scheduled', 'in_progress'])
+        )
+    )
+    appointments = result.scalars().all()
+    
+    predictor = DetentionRiskPredictor()
+    predictions = []
+    
+    for appt in appointments:
+        try:
+            pred = await predictor.predict_risk(appt.id, db)
+            predictions.append(pred)
+        except Exception:
+            continue
+    
+    # Sort by risk score (highest first)
+    predictions.sort(key=lambda x: x['risk_score'], reverse=True)
+    
+    high_risk_count = sum(1 for p in predictions if p['risk_score'] >= 50)
+    
+    return {
+        "appointments_analyzed": len(appointments),
+        "high_risk_count": high_risk_count,
+        "predictions": predictions[:10],  # Top 10 risks
+        "summary": {
+            "critical": sum(1 for p in predictions if p['risk_level'] == 'critical'),
+            "high": sum(1 for p in predictions if p['risk_level'] == 'high'),
+            "medium": sum(1 for p in predictions if p['risk_level'] == 'medium'),
+            "low": sum(1 for p in predictions if p['risk_level'] == 'low')
+        }
+    }
+
+
+# ==================== Compliance & Safety Endpoints ====================
+
+@router.get("/compliance/summary")
+async def get_compliance_summary(
+    organization_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """Get logistics compliance summary (DOT, CTPAT, HOS)"""
+    from sqlalchemy import select, func
+    from app.db.models import Carrier, Driver, DockAppointment
+    
+    # Carrier compliance
+    carrier_result = await db.execute(
+        select(
+            func.count(Carrier.id).label('total'),
+            func.sum(func.case([(Carrier.ctpat_certified == True, 1)], else_=0)).label('ctpat_count'),
+            func.sum(func.case([
+                (Carrier.insurance_on_file == True, 1),
+                (Carrier.insurance_expires_at > datetime.utcnow(), 1)
+            ], else_=0)).label('valid_insurance')
+        ).where(
+            Carrier.organization_id == organization_id,
+            Carrier.is_active == True
+        )
+    )
+    carrier_row = carrier_result.fetchone()
+    
+    # Driver HOS compliance
+    hos_violations = await db.execute(
+        select(func.count(Driver.id)).where(
+            Driver.organization_id == organization_id,
+            or_(
+                Driver.hos_drive_hours_today > 11,
+                Driver.hos_on_duty_hours_today > 14,
+                Driver.medical_cert_expires < datetime.utcnow()
+            )
+        )
+    )
+    hos_count = hos_violations.scalar() or 0
+    
+    # Driver medical cert expirations (next 30 days)
+    medical_expiring = await db.execute(
+        select(func.count(Driver.id)).where(
+            Driver.organization_id == organization_id,
+            Driver.medical_cert_expires.between(
+                datetime.utcnow(),
+                datetime.utcnow() + timedelta(days=30)
+            )
+        )
+    )
+    medical_expiring_count = medical_expiring.scalar() or 0
+    
+    return {
+        "carrier_compliance": {
+            "total_carriers": carrier_row.total or 0,
+            "ctpat_certified": carrier_row.ctpat_count or 0,
+            "valid_insurance": carrier_row.valid_insurance or 0,
+            "compliance_rate": round(
+                (carrier_row.ctpat_count or 0) / (carrier_row.total or 1) * 100, 1
+            ) if carrier_row.total else 0
+        },
+        "driver_compliance": {
+            "hos_violations_today": hos_count,
+            "medical_certs_expiring_30_days": medical_expiring_count
+        },
+        "overall_status": "COMPLIANT" if hos_count == 0 and (carrier_row.ctpat_count or 0) > 0 else "ATTENTION_REQUIRED"
+    }
+
+
+# ==================== Optimize Assignment Endpoints ====================
+
+@router.post("/optimize-assignment")
+async def optimize_assignment(
+    organization_id: UUID,
+    shipment_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """Get optimal truck-asset assignment recommendations"""
+    result = await logistics_correlation_engine.optimize_truck_asset_assignment(
+        organization_id=organization_id,
+        shipment_id=shipment_id,
+        db=db
+    )
+    return result
+
+
+# ==================== Liability & Cost Endpoints ====================
+
+@router.get("/liability/costs")
+async def get_liability_costs(
+    organization_id: UUID,
+    days: int = Query(30, ge=1, le=365),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get detention, demurrage, and quality liability costs"""
+    from sqlalchemy import select, func
+    from app.db.models import DriverWaitTime, LoadQualityLog
+    
+    start_date = datetime.utcnow() - timedelta(days=days)
+    
+    # Detention/Demurrage costs
+    detention_result = await db.execute(
+        select(
+            func.sum(DriverWaitTime.detention_charge).label('total_detention'),
+            func.sum(DriverWaitTime.demurrage_charge).label('total_demurrage'),
+            func.count(func.distinct(DriverWaitTime.id)).label('incident_count')
+        ).where(
+            DriverWaitTime.organization_id == organization_id,
+            DriverWaitTime.check_in_at >= start_date
+        )
+    )
+    detention_row = detention_result.fetchone()
+    
+    # Quality liability
+    quality_result = await db.execute(
+        select(
+            func.sum(LoadQualityLog.claim_amount).label('total_claims'),
+            func.sum(func.case([(LoadQualityLog.carrier_liable == False, LoadQualityLog.claim_amount)], else_=0)).label('manufacturing_liability'),
+            func.sum(func.case([(LoadQualityLog.carrier_liable == True, LoadQualityLog.claim_amount)], else_=0)).label('carrier_liability')
+        ).where(
+            LoadQualityLog.organization_id == organization_id,
+            LoadQualityLog.created_at >= start_date
+        )
+    )
+    quality_row = quality_result.fetchone()
+    
+    detention_total = float(detention_row.total_detention or 0) + float(detention_row.total_demurrage or 0)
+    quality_total = float(quality_row.total_claims or 0)
+    
+    return {
+        "period_days": days,
+        "detention_demurrage": {
+            "total_charges": round(detention_total, 2),
+            "detention": round(float(detention_row.total_detention or 0), 2),
+            "demurrage": round(float(detention_row.total_demurrage or 0), 2),
+            "incident_count": detention_row.incident_count or 0
+        },
+        "quality_claims": {
+            "total_claims": round(quality_total, 2),
+            "manufacturing_liability": round(float(quality_row.manufacturing_liability or 0), 2),
+            "carrier_liability": round(float(quality_row.carrier_liability or 0), 2)
+        },
+        "total_liability": round(detention_total + quality_total, 2)
+    }
