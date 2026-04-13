@@ -7,9 +7,28 @@ import {
 } from '../types';
 
 export const authApi = {
-  login: async (credentials: LoginCredentials): Promise<AuthResponse> => {
-    const response = await api.post<AuthResponse>('/api/v1/auth/login', credentials);
-    return response.data;
+  login: async (credentials: LoginCredentials): Promise<{ accessToken: string; user: User }> => {
+    const formData = new URLSearchParams();
+    formData.append('username', credentials.email);
+    formData.append('password', credentials.password);
+
+    const response = await api.post<AuthResponse>('/api/v1/auth/login', formData, {
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+    });
+    
+    // Fetch user info after login
+    const userResponse = await api.get<User>('/api/v1/auth/me', {
+      headers: {
+        'Authorization': `Bearer ${response.data.access_token}`,
+      },
+    });
+    
+    return {
+      accessToken: response.data.access_token,
+      user: userResponse.data,
+    };
   },
 
   logout: async (): Promise<void> => {

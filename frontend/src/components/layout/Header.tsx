@@ -1,9 +1,9 @@
 import { FC, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Menu, Bell, X } from 'lucide-react';
-import { useUIStore, useActiveAlarms } from '../../hooks';
+import { useUIStore } from '../../stores';
+import { useActiveAlarms, useWebSocket } from '../../hooks';
 import { ConnectionStatus } from '../common';
-import { useWebSocket } from '../../hooks';
 import { cn } from '../../utils';
 import { Sidebar } from './Sidebar';
 

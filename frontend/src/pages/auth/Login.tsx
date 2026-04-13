@@ -1,14 +1,15 @@
 import { FC, useState, FormEvent } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
-import { Factory, Eye, EyeOff, AlertCircle } from 'lucide-react';
-import { useAuth } from '../../hooks';
+import { Factory, Eye, EyeOff, AlertCircle, Zap } from 'lucide-react';
+import { useAuthStore } from '../../stores';
 import { Input, Button } from '../../components';
-import { cn } from '../../utils';
+
+const DEV_MODE = true; // Set to false for production
 
 export const Login: FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { login, isLoading, error, clearError } = useAuth();
+  const { login, isLoading, error, clearError, devLogin } = useAuthStore();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -20,6 +21,23 @@ export const Login: FC = () => {
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     clearError();
+
+    // DEV MODE: Bypass authentication
+    const trimmedEmail = email.trim().toLowerCase();
+    if (DEV_MODE && (trimmedEmail === 'dev' || trimmedEmail === 'admin@omniusgrid.com')) {
+      console.log('DEV MODE: Bypassing authentication');
+      devLogin({
+        id: 'dev-user',
+        email: 'admin@omniusgrid.com',
+        name: 'Dev Admin',
+        role: 'admin',
+        isActive: true,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }, 'dev-token');
+      navigate(from, { replace: true });
+      return;
+    }
 
     try {
       await login({ email, password, rememberMe });
@@ -37,8 +55,14 @@ export const Login: FC = () => {
           <div className="inline-flex items-center justify-center w-16 h-16 bg-opsgrid-primary/20 rounded-xl mb-4">
             <Factory className="w-8 h-8 text-opsgrid-primary" />
           </div>
-          <h1 className="text-2xl font-bold text-opsgrid-text">OpsGrid</h1>
-          <p className="text-opsgrid-text-secondary mt-1">Manufacturing Operations Dashboard</p>
+          <h1 className="text-2xl font-bold text-opsgrid-text">OmniusGrid</h1>
+          <p className="text-opsgrid-text-secondary mt-1">Universal Manufacturing Data Feed Dashboard</p>
+          {DEV_MODE && (
+            <div className="mt-2 inline-flex items-center gap-1 px-3 py-1 bg-status-warning/20 text-status-warning rounded-full text-xs">
+              <Zap size={12} />
+              DEV MODE - Login with "dev" / any password
+            </div>
+          )}
         </div>
 
         {/* Login Card */}
@@ -58,7 +82,7 @@ export const Login: FC = () => {
                 <Input
                   type="email"
                   label="Email"
-                  placeholder="Enter your email"
+                  placeholder={DEV_MODE ? 'Enter "dev" for dev mode' : 'Enter your email'}
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
@@ -122,7 +146,7 @@ export const Login: FC = () => {
 
         {/* Version */}
         <p className="text-center text-xs text-opsgrid-text-secondary mt-6">
-          OpsGrid v0.1.0 • Industrial IoT Platform
+          OmniusGrid v0.1.0 • Industrial IoT Platform
         </p>
       </div>
     </div>
