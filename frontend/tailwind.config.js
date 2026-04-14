@@ -1,5 +1,6 @@
 /** @type {import('tailwindcss').Config} */
 export default {
+  darkMode: 'class',
   content: [
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
@@ -7,18 +8,19 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Industrial color palette
+        // Industrial color palette using CSS variables
         'opsgrid': {
-          'bg': '#0f172a',
-          'panel': '#1e293b',
-          'border': '#334155',
-          'border-emphasis': '#475569',
-          'text': '#f8fafc',
-          'text-secondary': '#94a3b8',
-          'primary': '#0ea5e9',
-          'accent': '#6366f1',
+          'bg': 'var(--color-bg)',
+          'panel': 'var(--color-panel)',
+          'border': 'var(--color-border)',
+          'border-emphasis': 'var(--color-border-emphasis)',
+          'text': 'var(--color-text)',
+          'text-secondary': 'var(--color-text-secondary)',
+          'primary': 'var(--color-primary)',
+          'accent': 'var(--color-accent)',
+          'hover': 'var(--color-hover)',
         },
-        // Status colors
+        // Status colors (unchanged)
         'status': {
           'running': '#22c55e',
           'warning': '#eab308',
@@ -28,7 +30,7 @@ export default {
           'maintenance': '#3b82f6',
           'setup': '#f97316',
         },
-        // PackML state colors
+        // PackML state colors (unchanged)
         'packml': {
           'idle': '#6b7280',
           'starting': '#f59e0b',
