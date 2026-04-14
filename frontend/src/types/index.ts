@@ -4,3 +4,4 @@ export * from './alarm';
 export * from './telemetry';
 export * from './engine';
 export * from './common';
+export * from './logistics';

@@ -107,7 +107,7 @@ services:
       dockerfile: Dockerfile
     container_name: omniusgrid-frontend
     ports:
-      - "3000:3000"
+      - "9999:3000"
     volumes:
       - ./frontend:/app
       - /app/node_modules
@@ -119,17 +119,18 @@ services:
     networks:
       - omniusgrid-network
 
-  # Local NTP Server (Chrony) - for clock synchronization
+  # Local NTP Server - for clock synchronization
   ntp:
-    image: cturra/chrony
+    image: alpine:latest
     container_name: omniusgrid-ntp
     cap_add:
       - SYS_TIME
+    command: |
+      sh -c "apk add --no-cache chrony && chronyd -d -F 1"
     ports:
       - "123:123/udp"
     environment:
       - NTP_SERVERS=time.nist.gov,time.cloudflare.com
-      - LOG_LEVEL=0
     networks:
       - omniusgrid-network
 
@@ -247,5 +248,5 @@ volumes:
   loki-data:
 
 networks:
-  opsgrid-network:
+  omniusgrid-network:
     driver: bridge

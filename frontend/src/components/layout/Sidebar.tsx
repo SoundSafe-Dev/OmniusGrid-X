@@ -13,6 +13,8 @@ import {
   ChevronLeft,
   ChevronRight,
   LogOut,
+  Warehouse,
+  Truck,
 } from 'lucide-react';
 import { useUIStore, useAuthStore } from '../../stores';
 import { cn } from '../../utils';
@@ -59,6 +61,15 @@ const navItems: NavItem[] = [
     children: [
       { path: '/fleet', label: 'Overview', icon: Globe },
       { path: '/fleet/organization', label: 'Organization', icon: Globe },
+    ],
+  },
+  {
+    path: '/logistics',
+    label: 'Logistics',
+    icon: Truck,
+    children: [
+      { path: '/logistics/yard', label: 'Yard (YMS)', icon: Warehouse },
+      { path: '/logistics/transportation', label: 'Transportation (TMS)', icon: Truck },
     ],
   },
   {

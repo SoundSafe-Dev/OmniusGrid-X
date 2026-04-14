@@ -5,7 +5,7 @@ import { AlertTriangle, CheckCircle, Box, Activity } from 'lucide-react'
 import { dashboardApi, alarmsApi } from '../api'
 
 const Dashboard: FC = () => {
-  const { data: overview, isLoading } = useQuery('dashboard-overview', () =>
+  const { data: overview, isLoading, error } = useQuery('dashboard-overview', () =>
     dashboardApi.getOverview()
   )
   
@@ -13,10 +13,20 @@ const Dashboard: FC = () => {
     alarmsApi.getActive()
   )
 
+  console.log('Dashboard render:', { isLoading, overview, error, activeAlarms })
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="text-opsgrid-text-secondary">Loading...</div>
+        <div className="text-opsgrid-text-secondary">Loading dashboard data...</div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-status-alarm">Error loading dashboard: {(error as Error).message}</div>
       </div>
     )
   }
