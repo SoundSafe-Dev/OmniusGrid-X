@@ -28,6 +28,7 @@ OmniusGrid is a resilient manufacturing operations platform designed for Industr
 | **Observability** | Prometheus metrics, Loki logs, Grafana dashboards, TimescaleDB |
 | **Security** | mTLS device authentication, zero-trust networking, audit trails |
 | **Operations** | K3s-orchestrated, Patroni HA, automatic disaster recovery |
+| **Logistics** | YMS/TMS with detention billing, HOS compliance, dock-production sync |
 
 ---
 
@@ -241,6 +242,44 @@ OmniusGrid/
 | POST | `/admin/assets/{id}/maintenance` | Set maintenance mode |
 | GET | `/admin/system/status` | System health status |
 
+### Yard Management (YMS)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/v1/yard/trailers/checkin` | Trailer yard entry |
+| POST | `/api/v1/yard/trailers/{id}/checkout` | Trailer check-out with detention calc |
+| GET | `/api/v1/yard/trailers` | Current yard inventory |
+| POST | `/api/v1/yard/dock/doors/{id}/assign/{trailer_id}` | Assign trailer to dock |
+| POST | `/api/v1/yard/dock/appointments` | Schedule dock appointment |
+| GET | `/api/v1/yard/dwell-times` | Dwell time analytics |
+| POST | `/api/v1/yard/moves` | Record yard jockey move |
+
+### Transportation Management (TMS)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/v1/transportation/carriers` | Create carrier profile |
+| GET | `/api/v1/transportation/carriers/{id}/compliance` | DOT/CTPAT compliance summary |
+| POST | `/api/v1/transportation/drivers` | Create driver with HOS tracking |
+| GET | `/api/v1/transportation/drivers/{id}/hos` | Driver HOS compliance status |
+| POST | `/api/v1/transportation/shipments` | Create shipment |
+| POST | `/api/v1/transportation/shipments/{id}/dispatch` | Dispatch with compliance check |
+| GET | `/api/v1/transportation/shipments/{id}/costs` | Calculate freight costs |
+| POST | `/api/v1/transportation/routes` | Create optimized route |
+| POST | `/api/v1/transportation/load-plans` | Create load plan |
+
+### Logistics Correlation
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/v1/logistics/correlation-dashboard` | Cross-domain metrics |
+| POST | `/api/v1/logistics/predict-detention` | ML detention risk prediction |
+| GET | `/api/v1/logistics/dock-production-sync` | Production-dock alignment |
+| POST | `/api/v1/logistics/load-quality` | Log defect with root cause |
+| GET | `/api/v1/logistics/delivery-efficiency` | On-time delivery analytics |
+| GET | `/api/v1/logistics/compliance/summary` | Logistics compliance summary |
+| GET | `/api/v1/logistics/liability/costs` | Total liability tracking |
+
 ---
 
 ## Features
@@ -285,6 +324,12 @@ OmniusGrid/
 - **Fleet Management**:
   - Multi-site overview with OEE metrics
   - Organization hierarchy navigation
+- **Logistics Management**:
+  - YMS: Trailer tracking, dock scheduling, detention/demurrage billing
+  - TMS: Carrier management, shipment tracking, HOS compliance monitoring
+  - Dock-Production Sync: Align truck arrivals with production readiness
+  - Load Quality Correlation: Link shipping defects to manufacturing root causes
+  - Detention Risk Prediction: ML-based prediction of detention events
 - **Administration**:
   - User management with role assignment
   - Collector configuration and restart controls
