@@ -28,7 +28,7 @@ OmniusGrid is a resilient manufacturing operations platform designed for Industr
 | **Observability** | Prometheus metrics, Loki logs, Grafana dashboards, TimescaleDB |
 | **Security** | mTLS device authentication, zero-trust networking, audit trails |
 | **Operations** | K3s-orchestrated, Patroni HA, automatic disaster recovery |
-| **Logistics** | YMS/TMS with detention billing, HOS compliance, dock-production sync |
+| **Logistics** | YMS/TMS with GeoTab telematics, detention billing, HOS compliance, dock-production sync |
 
 ---
 
@@ -118,7 +118,7 @@ docker-compose exec timescaledb psql -U omniusgrid -d omniusgrid \
 
 | Service | URL | Credentials |
 |---------|-----|-------------|
-| Dashboard | http://localhost:3000 | - |
+| Dashboard | http://localhost:9999 | - |
 | API | http://localhost:8000 | Bearer token |
 | API Docs | http://localhost:8000/docs | - |
 | Grafana | http://localhost:3001 | `admin` / `omniusgrid_admin` |
@@ -280,6 +280,29 @@ OmniusGrid/
 | GET | `/api/v1/logistics/compliance/summary` | Logistics compliance summary |
 | GET | `/api/v1/logistics/liability/costs` | Total liability tracking |
 
+### GeoTab Integration
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/v1/geotab/devices` | List all GeoTab devices |
+| GET | `/api/v1/geotab/devices/{id}/location` | Real-time GPS location |
+| GET | `/api/v1/geotab/devices/{id}/trips` | Trip history |
+| GET | `/api/v1/geotab/devices/{id}/diagnostics` | Vehicle diagnostics (DTC codes) |
+| GET | `/api/v1/geotab/exceptions` | Rule violations (speeding, harsh braking) |
+| GET | `/api/v1/geotab/fleet/summary` | Fleet-wide status overview |
+| POST | `/api/v1/geotab/webhook` | Real-time GeoTab event webhook |
+
+### Frontend Dashboard Routes
+
+| Route | Description |
+|-------|-------------|
+| `/` | Main Dashboard |
+| `/assets` | Asset Management |
+| `/alarms` | Alarm Management |
+| `/oee` | OEE Analytics |
+| `/logistics/yard` | **Yard Management (YMS)** - Trailer tracking, dock doors, appointments |
+| `/logistics/transportation` | **Transportation Management (TMS)** - Fleet, drivers, shipments, GeoTab |
+
 ---
 
 ## Features
@@ -325,11 +348,13 @@ OmniusGrid/
   - Multi-site overview with OEE metrics
   - Organization hierarchy navigation
 - **Logistics Management**:
-  - YMS: Trailer tracking, dock scheduling, detention/demurrage billing
-  - TMS: Carrier management, shipment tracking, HOS compliance monitoring
-  - Dock-Production Sync: Align truck arrivals with production readiness
-  - Load Quality Correlation: Link shipping defects to manufacturing root causes
-  - Detention Risk Prediction: ML-based prediction of detention events
+  - **YMS (Yard Management)**: Trailer tracking, dock scheduling, detention/demurrage billing
+  - **TMS (Transportation Management)**: Carrier management, shipment tracking, HOS compliance monitoring
+  - **GeoTab Integration**: Real-time GPS tracking, vehicle diagnostics, driver behavior monitoring, trip history
+  - **Dock-Production Sync**: Align truck arrivals with production readiness
+  - **Load Quality Correlation**: Link shipping defects to manufacturing root causes
+  - **Detention Risk Prediction**: ML-based prediction of detention events
+  - **Fleet Telematics**: Live vehicle status, fuel monitoring, exception reporting (speeding, harsh braking)
 - **Administration**:
   - User management with role assignment
   - Collector configuration and restart controls

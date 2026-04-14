@@ -1,6 +1,5 @@
 import { FC } from 'react'
 import { Routes, Route } from 'react-router-dom'
-import { QueryClient, QueryClientProvider } from 'react-query'
 import { Layout, ProtectedRoute } from './components'
 import { Login } from './pages/auth'
 
@@ -23,21 +22,12 @@ import { FleetOverview, OrganizationTree } from './pages/fleet'
 // Admin pages
 import { Users, Collectors, SystemHealth, Settings } from './pages/admin'
 
-// Create Query Client
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      staleTime: 30000,
-      retry: 2,
-      refetchOnWindowFocus: false,
-    },
-  },
-})
+// Logistics pages
+import { YardManagement, TransportationManagement } from './pages/logistics'
 
 const App: FC = () => {
   return (
-    <QueryClientProvider client={queryClient}>
-      <Routes>
+    <Routes>
         {/* Public Routes */}
         <Route path="/login" element={<Login />} />
 
@@ -72,6 +62,10 @@ const App: FC = () => {
             <Route path="/fleet" element={<FleetOverview />} />
             <Route path="/fleet/organization" element={<OrganizationTree />} />
 
+            {/* Logistics - YMS & TMS */}
+            <Route path="/logistics/yard" element={<YardManagement />} />
+            <Route path="/logistics/transportation" element={<TransportationManagement />} />
+
             {/* Admin */}
             <Route path="/admin/users" element={<Users />} />
             <Route path="/admin/collectors" element={<Collectors />} />
@@ -91,7 +85,6 @@ const App: FC = () => {
           </div>
         } />
       </Routes>
-    </QueryClientProvider>
   )
 }
 

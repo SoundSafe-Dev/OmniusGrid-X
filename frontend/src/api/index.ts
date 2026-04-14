@@ -5,3 +5,5 @@ export { alarmsApi } from './alarms';
 export { telemetryApi } from './telemetry';
 export { enginesApi } from './engines';
 export { websocketManager } from './websocket';
+export { yardApi, geoTabYardApi } from './yard';
+export { transportationApi, geoTabApi } from './transportation';
