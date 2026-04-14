@@ -27,6 +27,9 @@ export const Header: FC = () => {
     if (path.startsWith('/engines')) return 'AI Engines';
     if (path.startsWith('/analytics')) return 'Analytics';
     if (path.startsWith('/fleet')) return 'Fleet Management';
+    if (path.startsWith('/logistics/yard')) return 'Yard Management';
+    if (path.startsWith('/logistics/transportation')) return 'Transportation Management';
+    if (path.startsWith('/logistics')) return 'Logistics';
     if (path.startsWith('/admin')) return 'Administration';
     return 'OpsGrid';
   };
