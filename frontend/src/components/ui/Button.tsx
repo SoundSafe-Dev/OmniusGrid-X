@@ -23,7 +23,7 @@ export const Button: FC<ButtonProps> = ({
 
   const variantClasses = {
     primary:
-      'bg-opsgrid-primary hover:bg-sky-600 text-white focus:ring-sky-500',
+      'bg-opsgrid-primary hover:bg-opsgrid-accent text-opsgrid-bg focus:ring-opsgrid-accent',
     secondary:
       'bg-opsgrid-panel hover:bg-opsgrid-border border border-opsgrid-border text-opsgrid-text focus:ring-opsgrid-border-emphasis',
     danger:
