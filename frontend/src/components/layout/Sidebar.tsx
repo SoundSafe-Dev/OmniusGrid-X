@@ -15,6 +15,8 @@ import {
   LogOut,
   Warehouse,
   Truck,
+  Sun,
+  Moon,
 } from 'lucide-react';
 import { useUIStore, useAuthStore } from '../../stores';
 import { cn } from '../../utils';
@@ -92,10 +94,14 @@ interface SidebarProps {
 }
 
 export const Sidebar: FC<SidebarProps> = ({ mobile = false, onClose }) => {
-  const { sidebarCollapsed, toggleSidebar } = useUIStore();
+  const { sidebarCollapsed, toggleSidebar, theme, setTheme } = useUIStore();
   const { user, logout } = useAuthStore();
   const { isAdmin } = useAuth();
   const navigate = useNavigate();
+
+  const toggleTheme = () => {
+    setTheme(theme === 'dark' ? 'light' : 'dark');
+  };
 
   const handleLogout = () => {
     logout();
@@ -215,22 +221,41 @@ export const Sidebar: FC<SidebarProps> = ({ mobile = false, onClose }) => {
                 <p className="text-xs text-opsgrid-text-secondary capitalize">{user?.role}</p>
               </div>
             </div>
-            <button
-              onClick={handleLogout}
-              className="flex items-center gap-2 w-full px-3 py-2 rounded-lg text-opsgrid-text-secondary hover:bg-opsgrid-border hover:text-opsgrid-text transition-colors"
-            >
-              <LogOut size={16} />
-              <span className="text-sm">Logout</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={toggleTheme}
+                className="flex items-center gap-2 flex-1 px-3 py-2 rounded-lg text-opsgrid-text-secondary hover:bg-opsgrid-hover hover:text-opsgrid-text transition-colors"
+                title={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+              >
+                {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+                <span className="text-sm">{theme === 'dark' ? 'Light' : 'Dark'}</span>
+              </button>
+              <button
+                onClick={handleLogout}
+                className="flex items-center justify-center p-2 rounded-lg text-opsgrid-text-secondary hover:bg-opsgrid-hover hover:text-opsgrid-text transition-colors"
+                title="Logout"
+              >
+                <LogOut size={16} />
+              </button>
+            </div>
           </div>
         ) : (
-          <button
-            onClick={handleLogout}
-            className="flex items-center justify-center w-full p-2 rounded-lg text-opsgrid-text-secondary hover:bg-opsgrid-border hover:text-opsgrid-text transition-colors"
-            title="Logout"
-          >
-            <LogOut size={20} />
-          </button>
+          <div className="flex flex-col gap-2">
+            <button
+              onClick={toggleTheme}
+              className="flex items-center justify-center w-full p-2 rounded-lg text-opsgrid-text-secondary hover:bg-opsgrid-hover hover:text-opsgrid-text transition-colors"
+              title={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+            >
+              {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
+            </button>
+            <button
+              onClick={handleLogout}
+              className="flex items-center justify-center w-full p-2 rounded-lg text-opsgrid-text-secondary hover:bg-opsgrid-hover hover:text-opsgrid-text transition-colors"
+              title="Logout"
+            >
+              <LogOut size={20} />
+            </button>
+          </div>
         )}
       </div>
     </aside>
