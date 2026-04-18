@@ -1,5 +1,5 @@
-# TimescaleDB Continuous Aggregates for Feature Vector Generation
-# Run these to create materialized views for ML feature extraction
+-- TimescaleDB Continuous Aggregates for Feature Vector Generation
+-- Run these to create materialized views for ML feature extraction
 
 -- Create continuous aggregate for temperature features
 CREATE MATERIALIZED VIEW temp_features_hourly

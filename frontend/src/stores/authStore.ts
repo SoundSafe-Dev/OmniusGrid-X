@@ -101,6 +101,7 @@ export const useAuthStore = create<AuthState>()(
       },
 
       devLogin: (user: User, token: string) => {
+        console.log('DEV LOGIN CALLED', user, token);
         localStorage.setItem('accessToken', token);
         localStorage.setItem('user', JSON.stringify(user));
         set({
@@ -109,6 +110,7 @@ export const useAuthStore = create<AuthState>()(
           isAuthenticated: true,
           isLoading: false,
         });
+        console.log('DEV LOGIN STATE SET');
       },
 
       clearError: () => set({ error: null }),

@@ -69,7 +69,7 @@ class PackMLState(Base):
     state_entered_at = Column(DateTime(timezone=True), nullable=False)
     state_exited_at = Column(DateTime(timezone=True))
     duration_seconds = Column(Numeric)
-    metadata = Column(JSON, default={})
+    meta_data = Column(JSON, default={})
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
 
@@ -82,7 +82,7 @@ class Telemetry(Base):
     value = Column(Numeric, nullable=False)
     unit = Column(String(50))
     packml_state = Column(String(50))
-    metadata = Column(JSON, default={})
+    meta_data = Column(JSON, default={})
     sequence_num = Column(BigInteger)
 
 
@@ -102,7 +102,7 @@ class Alarm(Base):
     acknowledged_comment = Column(Text)
     occurred_at = Column(DateTime(timezone=True), nullable=False)
     cleared_at = Column(DateTime(timezone=True))
-    metadata = Column(JSON, default={})
+    meta_data = Column(JSON, default={})
 
 
 class Operation(Base):
@@ -118,7 +118,7 @@ class Operation(Base):
     completed_at = Column(DateTime(timezone=True))
     planned_duration = Column(Numeric)
     actual_duration = Column(Numeric)
-    metadata = Column(JSON, default={})
+    meta_data = Column(JSON, default={})
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
 
@@ -157,7 +157,7 @@ class YardTrailer(Base):
     shipment_id = Column(UUID(as_uuid=True), ForeignKey("shipments.id"))
     temperature_setpoint = Column(Numeric)  # for reefers
     temperature_actual = Column(Numeric)
-    metadata = Column(JSON, default={})
+    meta_data = Column(JSON, default={})
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
@@ -193,7 +193,7 @@ class YardMove(Base):
     started_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     completed_at = Column(DateTime(timezone=True))
     duration_seconds = Column(Numeric)
-    metadata = Column(JSON, default={})
+    meta_data = Column(JSON, default={})
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
 
@@ -217,7 +217,7 @@ class DriverWaitTime(Base):
     detention_charge = Column(Numeric)  # calculated charge
     demurrage_charge = Column(Numeric)
     is_billed = Column(Boolean, default=False)
-    metadata = Column(JSON, default={})
+    meta_data = Column(JSON, default={})
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
@@ -235,7 +235,7 @@ class YardCheckPoint(Base):
     weight_lbs = Column(Numeric)
     inspection_status = Column(String(50))  # passed, failed, pending
     inspector_id = Column(UUID(as_uuid=True))
-    metadata = Column(JSON, default={})
+    meta_data = Column(JSON, default={})
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
 
@@ -318,7 +318,7 @@ class Shipment(Base):
     temperature_min = Column(Numeric)
     temperature_max = Column(Numeric)
     route_id = Column(UUID(as_uuid=True), ForeignKey("routes.id"))
-    metadata = Column(JSON, default={})
+    meta_data = Column(JSON, default={})
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
@@ -360,7 +360,7 @@ class LoadPlan(Base):
     special_instructions = Column(Text)
     is_executed = Column(Boolean, default=False)
     executed_at = Column(DateTime(timezone=True))
-    metadata = Column(JSON, default={})
+    meta_data = Column(JSON, default={})
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
@@ -385,7 +385,7 @@ class FreightCharge(Base):
     invoice_number = Column(String(100))
     approved_by = Column(UUID(as_uuid=True))
     approved_at = Column(DateTime(timezone=True))
-    metadata = Column(JSON, default={})
+    meta_data = Column(JSON, default={})
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
@@ -412,7 +412,7 @@ class DockAppointment(Base):
     driver_id = Column(UUID(as_uuid=True), ForeignKey("drivers.id"))
     priority = Column(String(20), default="normal")
     compliance_required = Column(Boolean, default=False)  # FDA, etc.
-    metadata = Column(JSON, default={})
+    meta_data = Column(JSON, default={})
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
@@ -436,7 +436,7 @@ class TruckAssetCorrelation(Base):
     detention_incurred = Column(Boolean, default=False)
     detention_charge = Column(Numeric)
     efficiency_score = Column(Numeric)  # 0-100 based on synchronization
-    metadata = Column(JSON, default={})
+    meta_data = Column(JSON, default={})
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
 
@@ -460,6 +460,22 @@ class LoadQualityLog(Base):
     claim_filed = Column(Boolean, default=False)
     claim_amount = Column(Numeric)
     resolved_at = Column(DateTime(timezone=True))
-    metadata = Column(JSON, default={})
+    meta_data = Column(JSON, default={})
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class User(Base):
+    """User authentication and authorization"""
+    __tablename__ = "users"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    email = Column(String(255), unique=True, nullable=False)
+    hashed_password = Column(String(255), nullable=False)
+    full_name = Column(String(255))
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"))
+    role = Column(String(50), default="operator")
+    is_active = Column(Boolean, default=True)
+    last_login = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)

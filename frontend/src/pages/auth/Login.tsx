@@ -11,7 +11,7 @@ export const Login: FC = () => {
   const location = useLocation();
   const { login, isLoading, error, clearError, devLogin } = useAuthStore();
 
-  const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -21,10 +21,12 @@ export const Login: FC = () => {
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     clearError();
+    console.log('Form submitted', { username, password, DEV_MODE });
 
     // DEV MODE: Bypass authentication
-    const trimmedEmail = email.trim().toLowerCase();
-    if (DEV_MODE && (trimmedEmail === 'dev' || trimmedEmail === 'admin@omniusgrid.com')) {
+    const trimmedUsername = username.trim().toLowerCase();
+    console.log('Trimmed username:', trimmedUsername, 'Matches dev?', trimmedUsername === 'dev');
+    if (DEV_MODE && trimmedUsername === 'dev') {
       console.log('DEV MODE: Bypassing authentication');
       devLogin({
         id: 'dev-user',
@@ -40,7 +42,7 @@ export const Login: FC = () => {
     }
 
     try {
-      await login({ email, password, rememberMe });
+      await login({ email: username, password, rememberMe });
       navigate(from, { replace: true });
     } catch {
       // Error is handled by the auth store
@@ -80,11 +82,11 @@ export const Login: FC = () => {
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
                 <Input
-                  type="email"
-                  label="Email"
-                  placeholder={DEV_MODE ? 'Enter "dev" for dev mode' : 'Enter your email'}
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  type="text"
+                  label="Username"
+                  placeholder={DEV_MODE ? 'Enter "dev" for dev mode' : 'Enter your username'}
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
                   required
                   disabled={isLoading}
                 />
