@@ -60,7 +60,7 @@ CREATE TABLE assets (
 
 -- PackML State History (for OEE calculations)
 CREATE TABLE packml_states (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID NOT NULL DEFAULT gen_random_uuid(),
     asset_id UUID NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
     state VARCHAR(50) NOT NULL, -- PackML state: Idle, Starting, Execute, Held, Suspended, etc.
     previous_state VARCHAR(50),
@@ -69,7 +69,8 @@ CREATE TABLE packml_states (
     duration_seconds NUMERIC,
     metadata JSONB DEFAULT '{}',
     -- Example: {"reason": "material_change", "operator_id": "uuid"}
-    created_at TIMESTAMPTZ DEFAULT NOW()
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (id, state_entered_at)
 );
 
 -- Convert to hypertable for time-series optimization
@@ -90,17 +91,17 @@ CREATE TABLE telemetry (
 -- Convert to hypertable
 SELECT create_hypertable('telemetry', 'time', if_not_exists => TRUE);
 
+-- Enable compression on telemetry first
+ALTER TABLE telemetry SET (
+    timescaledb.compress,
+    timescaledb.compress_segmentby = 'asset_id, metric_name'
+);
+
 -- Compression policy: compress after 7 days
 SELECT add_compression_policy('telemetry', INTERVAL '7 days', if_not_exists => TRUE);
 
 -- Retention policy: drop raw data after 30 days (aggregates kept longer)
 SELECT add_retention_policy('telemetry', INTERVAL '30 days', if_not_exists => TRUE);
-
--- Enable compression on telemetry
-ALTER TABLE telemetry SET (
-    timescaledb.compress,
-    timescaledb.compress_segmentby = 'asset_id, metric_name'
-);
 
 -- Telemetry 1-minute aggregates (cold tier / long-term retention)
 CREATE MATERIALIZED VIEW telemetry_1min (
@@ -140,7 +141,7 @@ CREATE TABLE operations (
 
 -- Alarms (ISA-18.2 compliant)
 CREATE TABLE alarms (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID NOT NULL DEFAULT gen_random_uuid(),
     asset_id UUID NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
     alarm_code VARCHAR(100) NOT NULL,
     severity VARCHAR(20) NOT NULL CHECK (severity IN ('critical', 'high', 'medium', 'low', 'info')),
@@ -153,7 +154,8 @@ CREATE TABLE alarms (
     acknowledged_comment TEXT,
     occurred_at TIMESTAMPTZ NOT NULL,
     cleared_at TIMESTAMPTZ,
-    metadata JSONB DEFAULT '{}'
+    metadata JSONB DEFAULT '{}',
+    PRIMARY KEY (id, occurred_at)
 );
 
 SELECT create_hypertable('alarms', 'occurred_at', if_not_exists => TRUE);
@@ -247,7 +249,7 @@ CREATE INDEX idx_device_identities_status ON device_identities(status);
 
 -- Immutable audit trail for compliance
 CREATE TABLE audit_trail (
-    entry_id VARCHAR(64) PRIMARY KEY,  -- SHA256 hash
+    entry_id VARCHAR(64) NOT NULL,  -- SHA256 hash
     timestamp TIMESTAMPTZ NOT NULL,
     actor_type VARCHAR(20) NOT NULL,  -- human, ai_tactical, ai_strategic, system, api
     actor_id VARCHAR(255) NOT NULL,
@@ -261,7 +263,8 @@ CREATE TABLE audit_trail (
     ip_address INET,
     session_id VARCHAR(255),
     hash_chain VARCHAR(64),  -- Link to previous entry
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (entry_id, timestamp)
 );
 
 -- Indexes for audit trail queries

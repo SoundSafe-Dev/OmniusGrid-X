@@ -15,10 +15,7 @@ httpx==0.25.2
 websockets==12.0
 aiosqlite==0.19.0
 paho-mqtt==1.6.1
-opcua-client==0.8.1
-pymodbus==3.6.0
-python-opencv==4.8.1.80
-pytesseract==0.3.10
+pymodbus==3.6.9
 watchdog==3.0.0
 structlog==23.2.0
 prometheus-client==0.19.0

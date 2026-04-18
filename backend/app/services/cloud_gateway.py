@@ -44,16 +44,16 @@ class CloudGateway:
             port=settings.CLOUD_MQTT_PORT or 8883,
             topic_prefix=settings.CLOUD_TOPIC_PREFIX or 'opsgrid/factories/dev',
             client_id=f"opsgrid-edge-{settings.ORGANIZATION_ID}",
-            use_mtls=True
+            use_mtls=settings.MTLS_ENABLED
         )
-        
+
         self._queue: List[Dict] = []
         self._client: Optional[aiomqtt.Client] = None
         self._connected = False
         self._max_queue_size = 10000
         self._batch_size = 100
         self._flush_interval = 30  # seconds
-        
+
         # mTLS configuration
         self._ssl_context: Optional[ssl.SSLContext] = None
         if self.endpoint.use_mtls:
