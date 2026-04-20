@@ -441,3 +441,290 @@ export interface AppointmentFilters {
   dateTo?: string;
   priority?: DockAppointment['priority'];
 }
+
+// Fleet Tracker Types
+
+export interface FleetVehiclePosition {
+  deviceId: string;
+  vehicleId: string;
+  driverId?: string;
+  driverName?: string;
+  position: GeoLocation;
+  status: 'moving' | 'idle' | 'stopped' | 'offline';
+  speed: number;
+  heading: number;
+  lastUpdate: string;
+}
+
+export interface ShipmentRoute {
+  shipmentId: string;
+  shipmentNumber: string;
+  origin: GeoLocation;
+  destination: GeoLocation;
+  waypoints: GeoLocation[];
+  status: Shipment['status'];
+  vehicleId?: string;
+  driverName?: string;
+  color: string;
+}
+
+export interface GeofenceZone {
+  id: string;
+  name: string;
+  type: 'circle' | 'polygon';
+  center?: GeoLocation;
+  radius?: number; // in meters
+  coordinates?: GeoLocation[]; // for polygon
+  color: 'green' | 'yellow' | 'red';
+  description?: string;
+}
+
+export interface FleetUpdate {
+  type: 'vehicle_position' | 'status_change' | 'geofence_alert' | 'shipment_update';
+  timestamp: string;
+  data: FleetVehiclePosition | GeofenceAlert | ShipmentRoute;
+}
+
+export interface GeofenceAlert {
+  id: string;
+  vehicleId: string;
+  geofenceId: string;
+  geofenceName: string;
+  alertType: 'entry' | 'exit' | 'violation';
+  location: GeoLocation;
+  timestamp: string;
+}
+
+export type MapFilterType = 'all' | 'shipments' | 'fleet' | 'carriers' | 'compliance';
+
+// ============================================
+// Fleet Tracker Enhancement Types
+// ============================================
+
+// Geofencing Types
+export interface GeofenceAlertExtended {
+  id: string;
+  vehicleId: string;
+  vehicleNumber: string;
+  driverName?: string;
+  geofenceId: string;
+  geofenceName: string;
+  alertType: 'entry' | 'exit' | 'violation';
+  location: GeoLocation;
+  timestamp: string;
+  acknowledged: boolean;
+  severity: 'info' | 'warning' | 'critical';
+}
+
+export interface GeofenceZoneExtended extends GeofenceZone {
+  vehiclesInside: string[];
+  alertRules: {
+    onEntry: boolean;
+    onExit: boolean;
+    notifyRoles: string[];
+  };
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// Fleet Health & Security Types
+export interface DiagnosticTroubleCode {
+  code: string;
+  description: string;
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  system: 'engine' | 'transmission' | 'emissions' | 'safety' | 'other';
+  timestamp: string;
+  cleared: boolean;
+  vehicleId: string;
+  vehicleNumber: string;
+}
+
+export interface VehicleHealthStatus {
+  vehicleId: string;
+  vehicleNumber: string;
+  driverId?: string;
+  driverName?: string;
+  status: 'online' | 'offline' | 'maintenance' | 'warning';
+  lastCommunication: string;
+  dtcs: DiagnosticTroubleCode[];
+  safetyScore: number;
+  securityStatus: 'secure' | 'warning' | 'alert';
+  engineHours: number;
+  odometer: number;
+  fuelLevel?: number;
+}
+
+export interface SecurityEvent {
+  id: string;
+  vehicleId: string;
+  vehicleNumber: string;
+  eventType: 'unauthorized_access' | 'unusual_route' | 'after_hours_use' | 'geofence_violation' | 'device_tampering';
+  timestamp: string;
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  location?: GeoLocation;
+  description: string;
+  acknowledged: boolean;
+  driverName?: string;
+}
+
+export interface DriverSafetyMetrics {
+  driverId: string;
+  driverName: string;
+  overallScore: number;
+  harshBrakingEvents: number;
+  harshAccelerationEvents: number;
+  speedingEvents: number;
+  idleTimeHours: number;
+  seatbeltViolations: number;
+  period: string;
+  trend: 'improving' | 'stable' | 'declining';
+}
+
+// Maintenance Types
+export interface MaintenanceSchedule {
+  id: string;
+  vehicleId: string;
+  vehicleNumber: string;
+  serviceType: 'oil_change' | 'tire_rotation' | 'brake_inspection' | 'engine_tuneup' | 'transmission_service' | 'annual_inspection' | 'other';
+  description: string;
+  scheduledDate: string;
+  dueMileage?: number;
+  currentMileage: number;
+  status: 'scheduled' | 'overdue' | 'completed' | 'cancelled';
+  priority: 'low' | 'normal' | 'high' | 'urgent';
+  estimatedCost?: number;
+  assignedTechnician?: string;
+  notes?: string;
+}
+
+export interface PartUsed {
+  partNumber: string;
+  description: string;
+  quantity: number;
+  unitCost: number;
+}
+
+export interface RepairOrder {
+  id: string;
+  vehicleId: string;
+  vehicleNumber: string;
+  workOrderNumber: string;
+  issueDescription: string;
+  reportedDate: string;
+  startedDate?: string;
+  completedDate?: string;
+  status: 'reported' | 'diagnosing' | 'in_progress' | 'waiting_parts' | 'completed' | 'cancelled';
+  priority: 'low' | 'normal' | 'high' | 'urgent';
+  assignedTechnician?: string;
+  estimatedCost: number;
+  actualCost?: number;
+  partsUsed: PartUsed[];
+  laborHours?: number;
+  relatedDTCs?: string[];
+}
+
+export interface ServiceHistoryEntry {
+  id: string;
+  vehicleId: string;
+  vehicleNumber: string;
+  serviceType: string;
+  description: string;
+  serviceDate: string;
+  mileageAtService: number;
+  cost: number;
+  technician?: string;
+  notes?: string;
+  partsReplaced?: string[];
+}
+
+export interface MaintenanceCosts {
+  totalYTD: number;
+  monthlyAverage: number;
+  costPerVehicle: number;
+  upcomingEstimated: number;
+  byCategory: Record<string, number>;
+  monthlyBreakdown: { month: string; cost: number }[];
+}
+
+// Performance & KPI Types
+export interface KPIWidgetConfig {
+  id: string;
+  type: 'fuel_efficiency' | 'idle_time' | 'on_time_performance' | 'vehicle_health' | 'cost_per_mile' | 'dtc_count';
+  title: string;
+  position: number;
+  size: 'small' | 'medium' | 'large';
+  timeRange: 'today' | 'week' | 'month' | 'quarter' | 'year';
+  filters?: {
+    vehicleIds?: string[];
+    carrierId?: string;
+    driverIds?: string[];
+  };
+}
+
+export interface FuelEfficiencyData {
+  fleetAverage: number;
+  unit: 'mpg' | 'l_per_100km';
+  bestPerformers: { vehicleId: string; vehicleNumber: string; efficiency: number }[];
+  worstPerformers: { vehicleId: string; vehicleNumber: string; efficiency: number }[];
+  trend: { date: string; value: number }[];
+  byVehicle: Record<string, number>;
+  totalFuelConsumed: number;
+  totalDistance: number;
+}
+
+export interface IdleTimeData {
+  totalHours: number;
+  percentageOfRuntime: number;
+  costImpact: number;
+  byVehicle: Record<string, { hours: number; percentage: number; cost: number }>;
+  trend: { date: string; hours: number; cost: number }[];
+}
+
+export interface OnTimePerformanceData {
+  overallPercentage: number;
+  onTimeCount: number;
+  lateCount: number;
+  byCarrier: Record<string, number>;
+  byRoute: Record<string, number>;
+  trend: { date: string; percentage: number; onTime: number; total: number }[];
+}
+
+export interface VehicleHealthScoreData {
+  fleetAverage: number;
+  byVehicle: Record<string, number>;
+  criticalCount: number;
+  warningCount: number;
+  healthyCount: number;
+  factors: {
+    dtcs: number;
+    maintenance: number;
+    safety: number;
+    connectivity: number;
+  };
+}
+
+export interface CostPerMileData {
+  totalCost: number;
+  totalMiles: number;
+  averageCostPerMile: number;
+  breakdown: {
+    fuel: number;
+    maintenance: number;
+    insurance: number;
+    other: number;
+  };
+  byVehicle: Record<string, number>;
+  trend: { date: string; cost: number; miles: number }[];
+}
+
+export interface DTCCountData {
+  totalActive: number;
+  criticalCount: number;
+  byVehicle: Record<string, number>;
+  bySystem: Record<string, number>;
+  recent: DiagnosticTroubleCode[];
+  trend: { date: string; count: number; cleared: number }[];
+}
+
+export type TimeRange = 'today' | 'week' | 'month' | 'quarter' | 'year' | 'custom';

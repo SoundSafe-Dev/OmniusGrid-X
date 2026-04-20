@@ -1,0 +1,147 @@
+"""WebSocket API endpoints for real-time updates"""
+
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, Query
+from typing import Optional, Set
+import json
+import structlog
+
+from app.services.websocket_manager import websocket_manager
+from app.core.security import get_current_user_ws
+
+logger = structlog.get_logger()
+router = APIRouter()
+
+
+@router.websocket("/ws")
+async def websocket_endpoint(
+    websocket: WebSocket,
+    token: Optional[str] = Query(None),
+    organization_id: Optional[str] = Query(None),
+    asset_ids: Optional[str] = Query(None)  # Comma-separated list
+):
+    """
+    WebSocket endpoint for real-time telemetry, state changes, and alarms.
+    
+    Query Parameters:
+    - token: JWT authentication token
+    - organization_id: Organization to subscribe to
+    - asset_ids: Optional comma-separated list of asset IDs to filter (empty = all)
+    
+    Message Types Received from Client:
+    - subscribe: Update subscription filters
+    - ping: Keep connection alive
+    
+    Message Types Sent to Client:
+    - telemetry: Real-time sensor data
+    - state: PackML state transitions
+    - alarm: New alarm events
+    - command_status: Command execution updates
+    - connection_established: Initial connection confirmation
+    """
+    # Validate authentication
+    user = None
+    if token:
+        try:
+            user = await get_current_user_ws(token)
+        except Exception as e:
+            await websocket.close(code=1008, reason="Authentication failed")
+            logger.warning("websocket_auth_failed", error=str(e))
+            return
+    
+    # Default to user's organization if not specified
+    if not organization_id and user:
+        organization_id = str(user.organization_id)
+    
+    if not organization_id:
+        await websocket.close(code=1008, reason="Organization ID required")
+        return
+    
+    # Connect client
+    await websocket_manager.connect_client(websocket, organization_id)
+    
+    # Parse asset filter
+    subscribed_assets: Set[str] = set()
+    if asset_ids:
+        subscribed_assets = set(a.strip() for a in asset_ids.split(',') if a.strip())
+    
+    # Update subscription
+    websocket_manager.update_subscription(
+        websocket,
+        asset_ids=subscribed_assets if subscribed_assets else None,
+        message_types={'telemetry', 'state', 'alarm', 'command_status'}
+    )
+    
+    logger.info(
+        "websocket_client_connected",
+        organization_id=organization_id,
+        asset_filter=list(subscribed_assets) if subscribed_assets else "all",
+        user_id=str(user.id) if user else "anonymous"
+    )
+    
+    try:
+        while True:
+            # Receive messages from client
+            data = await websocket.receive_text()
+            
+            try:
+                message = json.loads(data)
+                msg_type = message.get('type')
+                
+                if msg_type == 'ping':
+                    await websocket.send_json({'type': 'pong', 'timestamp': message.get('timestamp')})
+                
+                elif msg_type == 'subscribe':
+                    # Update subscription
+                    new_assets = message.get('asset_ids')
+                    new_types = message.get('message_types')
+                    
+                    if new_assets is not None:
+                        subscribed_assets = set(new_assets)
+                    
+                    websocket_manager.update_subscription(
+                        websocket,
+                        asset_ids=subscribed_assets if subscribed_assets else None,
+                        message_types=set(new_types) if new_types else None
+                    )
+                    
+                    await websocket.send_json({
+                        'type': 'subscription_updated',
+                        'payload': {
+                            'asset_ids': list(subscribed_assets) if subscribed_assets else [],
+                            'message_types': list(new_types) if new_types else ['telemetry', 'state', 'alarm']
+                        }
+                    })
+                
+                elif msg_type == 'unsubscribe':
+                    # Clear subscription filters (receive all)
+                    websocket_manager.update_subscription(
+                        websocket,
+                        asset_ids=None,
+                        message_types=None
+                    )
+                    await websocket.send_json({'type': 'unsubscribed'})
+                
+                else:
+                    await websocket.send_json({
+                        'type': 'error',
+                        'payload': {'message': f'Unknown message type: {msg_type}'}
+                    })
+            
+            except json.JSONDecodeError:
+                await websocket.send_json({
+                    'type': 'error',
+                    'payload': {'message': 'Invalid JSON'}
+                })
+            
+            except Exception as e:
+                logger.error("websocket_message_handler_error", error=str(e))
+                await websocket.send_json({
+                    'type': 'error',
+                    'payload': {'message': 'Internal error'}
+                })
+    
+    except WebSocketDisconnect:
+        logger.info("websocket_client_disconnected", organization_id=organization_id)
+    
+    finally:
+        websocket_manager.disconnect_client(websocket, organization_id)

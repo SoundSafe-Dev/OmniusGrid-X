@@ -1,0 +1,70 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: omniusgrid-staging
+
+resources:
+  - ../../base
+
+namePrefix: staging-
+
+commonLabels:
+  environment: staging
+  version: latest
+
+replicas:
+  - name: backend
+    count: 2
+  - name: frontend
+    count: 2
+
+patchesStrategicMerge:
+  - backend-resources.yaml
+
+images:
+  - name: omniusgrid/backend
+    newName: ghcr.io/omniusgrid/backend
+    newTag: develop
+  - name: omniusgrid/frontend
+    newName: ghcr.io/omniusgrid/frontend
+    newTag: develop
+
+configMapGenerator:
+  - name: backend-config
+    literals:
+      - LOG_LEVEL=debug
+      - MTLS_ENABLED=false
+      - DEBUG=true
+
+secretGenerator:
+  - name: database-credentials
+    type: Opaque
+    options:
+      disableNameSuffixHash: true
+    literals:
+      - username=omniusgrid_staging
+      - database=omniusgrid_staging
+  - name: jwt-secret
+    type: Opaque
+    options:
+      disableNameSuffixHash: true
+    behavior: create
+
+patches:
+  - target:
+      kind: Ingress
+      name: omniusgrid-ingress
+    patch: |-
+      - op: replace
+        path: /spec/rules/0/host
+        value: staging.omniusgrid.local
+      - op: replace
+        path: /spec/rules/1/host
+        value: api-staging.omniusgrid.local
+      - op: replace
+        path: /spec/tls/0/hosts
+        value:
+          - staging.omniusgrid.local
+          - api-staging.omniusgrid.local
+      - op: remove
+        path: /metadata/annotations/cert-manager.io~1cluster-issuer

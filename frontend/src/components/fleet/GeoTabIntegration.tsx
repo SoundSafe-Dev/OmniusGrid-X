@@ -1,0 +1,487 @@
+import { FC, useEffect, useState, useCallback } from 'react';
+import { MapContainer, TileLayer, Marker, Popup, Polyline, Circle } from 'react-leaflet';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
+import { 
+  Truck, 
+  Navigation, 
+  AlertTriangle, 
+  Clock, 
+  Fuel,
+  MapPin,
+  Activity,
+  Route,
+  Shield
+} from 'lucide-react';
+import { Card, Badge } from '../ui';
+import { websocketManager } from '../../api';
+
+// GeoTab Vehicle Data Interface
+interface GeoTabVehicle {
+  id: string;
+  name: string;
+  deviceId: string;
+  licensePlate: string;
+  vin: string;
+  currentPosition: {
+    latitude: number;
+    longitude: number;
+    heading: number;
+    speed: number;
+    timestamp: string;
+  };
+  status: 'moving' | 'stopped' | 'idle' | 'offline' | 'warning';
+  driver?: {
+    name: string;
+    id: string;
+    hosStatus: 'on_duty' | 'driving' | 'off_duty' | 'sleeper';
+    hoursRemaining: number;
+  };
+  tripInfo?: {
+    destination: string;
+    eta: string;
+    distanceRemaining: number;
+  };
+  alerts: string[];
+  fuelLevel?: number;
+  odometer: number;
+}
+
+// GeoTab Geofence Interface
+interface GeoTabGeofence {
+  id: string;
+  name: string;
+  type: 'yard' | 'customer' | 'restricted' | 'corridor';
+  coordinates: [number, number][];
+  center: [number, number];
+  radius?: number;
+}
+
+interface GeoTabIntegrationProps {
+  organizationId: string;
+  height?: number;
+  showGeofences?: boolean;
+  showTrail?: boolean;
+  selectedVehicleId?: string;
+}
+
+// Custom vehicle marker icon
+const createVehicleIcon = (status: string, heading: number) => {
+  const colorMap: Record<string, string> = {
+    moving: '#22c55e',
+    stopped: '#ef4444',
+    idle: '#eab308',
+    offline: '#6b7280',
+    warning: '#f97316',
+  };
+  
+  const color = colorMap[status] || '#6b7280';
+  
+  return L.divIcon({
+    className: 'vehicle-marker',
+    html: `
+      <div style="
+        width: 40px;
+        height: 40px;
+        background: ${color};
+        border: 3px solid white;
+        border-radius: 50%;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        transform: rotate(${heading}deg);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      ">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+          <path d="M12 2L12 12M12 2L8 6M12 2L16 6"/>
+        </svg>
+      </div>
+    `,
+    iconSize: [40, 40],
+    iconAnchor: [20, 20],
+  });
+};
+
+// Status badge component
+const VehicleStatusBadge: FC<{ status: string }> = ({ status }) => {
+  const variantMap: Record<string, any> = {
+    moving: 'success',
+    stopped: 'error',
+    idle: 'warning',
+    offline: 'neutral',
+    warning: 'warning',
+  };
+  
+  return (
+    <Badge variant={variantMap[status] || 'neutral'} dot>
+      {status.charAt(0).toUpperCase() + status.slice(1)}
+    </Badge>
+  );
+};
+
+export const GeoTabIntegration: FC<GeoTabIntegrationProps> = ({
+  organizationId,
+  height = 600,
+  showGeofences = true,
+  showTrail = true,
+  selectedVehicleId,
+}) => {
+  const [vehicles, setVehicles] = useState<GeoTabVehicle[]>([]);
+  const [geofences, setGeofences] = useState<GeoTabGeofence[]>([]);
+  const [selectedVehicle, setSelectedVehicle] = useState<GeoTabVehicle | null>(null);
+  const [vehicleTrails, setVehicleTrails] = useState<Record<string, Array<[number, number]>>>({});
+  const [mapCenter, setMapCenter] = useState<[number, number]>([39.8283, -98.5795]); // Center of US
+  const [connectionStatus, setConnectionStatus] = useState<'connected' | 'disconnected'>('disconnected');
+
+  // Subscribe to GeoTab WebSocket updates
+  useEffect(() => {
+    const unsubscribeStatus = websocketManager.subscribe<{ connected: boolean }>(
+      'connection_status',
+      ({ connected }) => {
+        setConnectionStatus(connected ? 'connected' : 'disconnected');
+      }
+    );
+
+    const unsubscribeGeoTab = websocketManager.subscribe<{
+      type: 'vehicle_position' | 'geofence_event' | 'hos_alert' | 'diagnostic';
+      vehicleId: string;
+      data: any;
+    }>('geotab', (message) => {
+      if (message.type === 'vehicle_position') {
+        setVehicles((prev) => {
+          const existing = prev.find((v) => v.id === message.vehicleId);
+          if (existing) {
+            // Update existing vehicle
+            return prev.map((v) =>
+              v.id === message.vehicleId
+                ? { ...v, currentPosition: message.data.position, status: message.data.status }
+                : v
+            );
+          }
+          // Add new vehicle
+          return [...prev, message.data.vehicle];
+        });
+
+        // Update trail
+        if (showTrail) {
+          const newPoint: [number, number] = [
+            message.data.position.latitude,
+            message.data.position.longitude,
+          ];
+          setVehicleTrails((prev) => ({
+            ...prev,
+            [message.vehicleId]: [
+              ...(prev[message.vehicleId] || []),
+              newPoint,
+            ].slice(-50) as [number, number][], // Keep last 50 points
+          }));
+        }
+      }
+    });
+
+    // Fetch initial data
+    fetchVehicles();
+    fetchGeofences();
+
+    return () => {
+      unsubscribeStatus();
+      unsubscribeGeoTab();
+    };
+  }, [organizationId, showTrail]);
+
+  const fetchVehicles = useCallback(async () => {
+    try {
+      const response = await fetch(`/api/v1/fleet/vehicles?organization_id=${organizationId}`);
+      if (response.ok) {
+        const data = await response.json();
+        setVehicles(data.vehicles || []);
+        
+        // Center map on first vehicle if exists
+        if (data.vehicles?.length > 0) {
+          const first = data.vehicles[0];
+          setMapCenter([first.currentPosition.latitude, first.currentPosition.longitude]);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to fetch vehicles:', error);
+    }
+  }, [organizationId]);
+
+  const fetchGeofences = useCallback(async () => {
+    try {
+      const response = await fetch(`/api/v1/fleet/geofences?organization_id=${organizationId}`);
+      if (response.ok) {
+        const data = await response.json();
+        setGeofences(data.geofences || []);
+      }
+    } catch (error) {
+      console.error('Failed to fetch geofences:', error);
+    }
+  }, [organizationId]);
+
+  // Filter visible vehicles
+  const visibleVehicles = selectedVehicleId
+    ? vehicles.filter((v) => v.id === selectedVehicleId)
+    : vehicles;
+
+  return (
+    <Card className="w-full">
+      {/* Header */}
+      <div className="p-4 border-b border-opsgrid-border">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <MapPin className="w-5 h-5 text-opsgrid-primary" />
+            <h3 className="text-lg font-semibold text-opsgrid-text">GeoTab Fleet Tracking</h3>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2 text-sm text-opsgrid-text-secondary">
+              <div className={`w-2 h-2 rounded-full ${connectionStatus === 'connected' ? 'bg-green-500' : 'bg-red-500'}`} />
+              {connectionStatus === 'connected' ? 'Live' : 'Disconnected'}
+            </div>
+            <Badge variant="info">{vehicles.length} Vehicles</Badge>
+          </div>
+        </div>
+      </div>
+
+      {/* Map */}
+      <div className="relative" style={{ height }}>
+        <MapContainer
+          center={mapCenter}
+          zoom={6}
+          style={{ height: '100%', width: '100%' }}
+          scrollWheelZoom={true}
+        >
+          <TileLayer
+            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          />
+
+          {/* Geofences */}
+          {showGeofences && geofences.map((geofence) => (
+            <div key={geofence.id}>
+              {geofence.radius ? (
+                <Circle
+                  center={geofence.center}
+                  radius={geofence.radius}
+                  pathOptions={{
+                    color: geofence.type === 'restricted' ? '#ef4444' : '#3b82f6',
+                    fillColor: geofence.type === 'restricted' ? '#ef4444' : '#3b82f6',
+                    fillOpacity: 0.1,
+                    weight: 2,
+                  }}
+                />
+              ) : (
+                <Polyline
+                  positions={geofence.coordinates}
+                  pathOptions={{
+                    color: '#3b82f6',
+                    weight: 2,
+                    fillOpacity: 0.1,
+                  }}
+                />
+              )}
+            </div>
+          ))}
+
+          {/* Vehicle Trails */}
+          {showTrail && Object.entries(vehicleTrails).map(([vehicleId, trail]) => (
+            <Polyline
+              key={`trail-${vehicleId}`}
+              positions={trail}
+              pathOptions={{
+                color: '#64748b',
+                weight: 2,
+                opacity: 0.5,
+                dashArray: '5, 10',
+              }}
+            />
+          ))}
+
+          {/* Vehicle Markers */}
+          {visibleVehicles.map((vehicle) => (
+            <Marker
+              key={vehicle.id}
+              position={[
+                vehicle.currentPosition.latitude,
+                vehicle.currentPosition.longitude,
+              ]}
+              icon={createVehicleIcon(vehicle.status, vehicle.currentPosition.heading)}
+              eventHandlers={{
+                click: () => setSelectedVehicle(vehicle),
+              }}
+            >
+              <Popup>
+                <div className="p-2 min-w-[250px]">
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="font-semibold text-opsgrid-text">{vehicle.name}</h4>
+                    <VehicleStatusBadge status={vehicle.status} />
+                  </div>
+                  
+                  <div className="space-y-2 text-sm">
+                    <div className="flex items-center gap-2 text-opsgrid-text-secondary">
+                      <Truck className="w-4 h-4" />
+                      <span>{vehicle.licensePlate}</span>
+                    </div>
+                    
+                    <div className="flex items-center gap-2 text-opsgrid-text-secondary">
+                      <Navigation className="w-4 h-4" />
+                      <span>{vehicle.currentPosition.speed.toFixed(1)} mph</span>
+                    </div>
+                    
+                    {vehicle.driver && (
+                      <div className="flex items-center gap-2 text-opsgrid-text-secondary">
+                        <Shield className="w-4 h-4" />
+                        <span>{vehicle.driver.name}</span>
+                        <Badge size="sm" variant={vehicle.driver.hoursRemaining < 2 ? 'warning' : 'success'}>
+                          {vehicle.driver.hoursRemaining.toFixed(1)}h left
+                        </Badge>
+                      </div>
+                    )}
+                    
+                    {vehicle.tripInfo && (
+                      <div className="flex items-center gap-2 text-opsgrid-text-secondary">
+                        <Route className="w-4 h-4" />
+                        <span>To: {vehicle.tripInfo.destination}</span>
+                      </div>
+                    )}
+                    
+                    {vehicle.fuelLevel !== undefined && (
+                      <div className="flex items-center gap-2 text-opsgrid-text-secondary">
+                        <Fuel className="w-4 h-4" />
+                        <span>Fuel: {vehicle.fuelLevel}%</span>
+                      </div>
+                    )}
+                    
+                    {vehicle.alerts.length > 0 && (
+                      <div className="mt-2 p-2 bg-red-500/10 rounded">
+                        <div className="flex items-center gap-1 text-red-500">
+                          <AlertTriangle className="w-4 h-4" />
+                          <span className="font-medium">Alerts</span>
+                        </div>
+                        {vehicle.alerts.map((alert, idx) => (
+                          <p key={idx} className="text-xs text-red-500 ml-5">{alert}</p>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </Popup>
+            </Marker>
+          ))}
+        </MapContainer>
+
+        {/* Vehicle List Overlay */}
+        <div className="absolute top-4 right-4 w-64 max-h-[calc(100%-32px)] overflow-y-auto">
+          <Card className="bg-opsgrid-panel/95 backdrop-blur">
+            <div className="p-3">
+              <h4 className="font-medium text-opsgrid-text mb-2 flex items-center gap-2">
+                <Activity className="w-4 h-4" />
+                Vehicles ({vehicles.length})
+              </h4>
+              <div className="space-y-1">
+                {vehicles.map((vehicle) => (
+                  <button
+                    key={vehicle.id}
+                    onClick={() => setSelectedVehicle(vehicle)}
+                    className={`w-full p-2 rounded text-left text-sm transition-colors ${
+                      selectedVehicle?.id === vehicle.id
+                        ? 'bg-opsgrid-primary/20 border border-opsgrid-primary'
+                        : 'hover:bg-opsgrid-bg'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium text-opsgrid-text">{vehicle.name}</span>
+                      <div
+                        className="w-2 h-2 rounded-full"
+                        style={{
+                          backgroundColor:
+                            vehicle.status === 'moving'
+                              ? '#22c55e'
+                              : vehicle.status === 'stopped'
+                              ? '#ef4444'
+                              : '#eab308',
+                        }}
+                      />
+                    </div>
+                    <div className="flex items-center gap-2 text-xs text-opsgrid-text-secondary mt-1">
+                      <span>{vehicle.currentPosition.speed.toFixed(0)} mph</span>
+                      {vehicle.driver && (
+                        <>
+                          <span>•</span>
+                          <span>{vehicle.driver.name}</span>
+                        </>
+                      )}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </Card>
+        </div>
+      </div>
+
+      {/* Selected Vehicle Details */}
+      {selectedVehicle && (
+        <div className="p-4 border-t border-opsgrid-border bg-opsgrid-bg">
+          <div className="flex items-start justify-between">
+            <div>
+              <h4 className="font-semibold text-opsgrid-text">{selectedVehicle.name}</h4>
+              <p className="text-sm text-opsgrid-text-secondary">
+                {selectedVehicle.vin} • {selectedVehicle.licensePlate}
+              </p>
+            </div>
+            <VehicleStatusBadge status={selectedVehicle.status} />
+          </div>
+          
+          <div className="grid grid-cols-4 gap-4 mt-4">
+            <div className="p-3 bg-opsgrid-panel rounded">
+              <div className="flex items-center gap-2 text-opsgrid-text-secondary mb-1">
+                <Navigation className="w-4 h-4" />
+                <span className="text-xs">Speed</span>
+              </div>
+              <p className="text-lg font-semibold text-opsgrid-text">
+                {selectedVehicle.currentPosition.speed.toFixed(1)} mph
+              </p>
+            </div>
+            
+            <div className="p-3 bg-opsgrid-panel rounded">
+              <div className="flex items-center gap-2 text-opsgrid-text-secondary mb-1">
+                <Clock className="w-4 h-4" />
+                <span className="text-xs">Last Update</span>
+              </div>
+              <p className="text-sm font-semibold text-opsgrid-text">
+                {new Date(selectedVehicle.currentPosition.timestamp).toLocaleTimeString()}
+              </p>
+            </div>
+            
+            {selectedVehicle.driver && (
+              <div className="p-3 bg-opsgrid-panel rounded">
+                <div className="flex items-center gap-2 text-opsgrid-text-secondary mb-1">
+                  <Shield className="w-4 h-4" />
+                  <span className="text-xs">HOS Remaining</span>
+                </div>
+                <p className={`text-lg font-semibold ${selectedVehicle.driver.hoursRemaining < 2 ? 'text-status-alarm' : 'text-opsgrid-text'}`}>
+                  {selectedVehicle.driver.hoursRemaining.toFixed(1)}h
+                </p>
+              </div>
+            )}
+            
+            {selectedVehicle.fuelLevel !== undefined && (
+              <div className="p-3 bg-opsgrid-panel rounded">
+                <div className="flex items-center gap-2 text-opsgrid-text-secondary mb-1">
+                  <Fuel className="w-4 h-4" />
+                  <span className="text-xs">Fuel Level</span>
+                </div>
+                <p className={`text-lg font-semibold ${selectedVehicle.fuelLevel < 20 ? 'text-status-alarm' : 'text-opsgrid-text'}`}>
+                  {selectedVehicle.fuelLevel}%
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+};
+
+export default GeoTabIntegration;

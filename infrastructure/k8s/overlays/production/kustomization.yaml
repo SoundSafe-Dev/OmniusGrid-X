@@ -1,0 +1,70 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: omniusgrid
+
+resources:
+  - ../../base
+
+namePrefix: prod-
+
+commonLabels:
+  environment: production
+  version: stable
+
+replicas:
+  - name: backend
+    count: 5
+  - name: frontend
+    count: 3
+
+patchesStrategicMerge:
+  - backend-resources.yaml
+  - frontend-resources.yaml
+  - hpa.yaml
+
+images:
+  - name: omniusgrid/backend
+    newName: ghcr.io/omniusgrid/backend
+    newTag: v1.0.0
+  - name: omniusgrid/frontend
+    newName: ghcr.io/omniusgrid/frontend
+    newTag: v1.0.0
+
+configMapGenerator:
+  - name: backend-config
+    literals:
+      - LOG_LEVEL=warn
+      - MTLS_ENABLED=true
+      - CACHE_ENABLED=true
+
+secretGenerator:
+  - name: database-credentials
+    type: Opaque
+    options:
+      disableNameSuffixHash: true
+    literals:
+      - username=omniusgrid_prod
+      - database=omniusgrid_prod
+  - name: jwt-secret
+    type: Opaque
+    options:
+      disableNameSuffixHash: true
+    behavior: create
+
+patches:
+  - target:
+      kind: Ingress
+      name: omniusgrid-ingress
+    patch: |-
+      - op: replace
+        path: /spec/rules/0/host
+        value: omniusgrid.local
+      - op: replace
+        path: /spec/rules/1/host
+        value: api.omniusgrid.local
+      - op: replace
+        path: /spec/tls/0/hosts
+        value:
+          - omniusgrid.local
+          - api.omniusgrid.local

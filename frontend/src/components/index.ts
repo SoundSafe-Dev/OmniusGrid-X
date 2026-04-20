@@ -1,3 +1,11 @@
 export { Button, Card, Input, Select, Badge, Table, Skeleton, SkeletonCard, SkeletonTable, ChartContainer } from './ui';
 export { PackMLBadge, PackMLIndicator, SeverityBadge, StatusIndicator, ConnectionStatus, TimeAgo } from './common';
 export { Layout, ProtectedRoute, Sidebar, Header } from './layout';
+export { FleetTrackerMap } from './fleet/FleetTrackerMap';
+export { GeoTabIntegration } from './fleet/GeoTabIntegration';
+export { GeofencingPanel } from './fleet/GeofencingPanel';
+export { HealthSecurityPanel } from './fleet/HealthSecurityPanel';
+export { MaintenancePanel } from './fleet/MaintenancePanel';
+export { PerformancePanel } from './fleet/PerformancePanel';
+export { RealtimeTelemetryChart } from './charts';
+export { CommandPanel } from './commands';

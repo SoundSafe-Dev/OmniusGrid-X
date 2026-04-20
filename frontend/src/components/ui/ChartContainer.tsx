@@ -4,7 +4,7 @@ import { cn } from '../../utils';
 interface ChartContainerProps {
   children: ReactNode;
   title?: string;
-  subtitle?: string;
+  subtitle?: string | ReactNode;
   className?: string;
   height?: number;
   loading?: boolean;
@@ -33,7 +33,7 @@ export const ChartContainer: FC<ChartContainerProps> = ({
             <h3 className="text-lg font-semibold text-opsgrid-text">{title}</h3>
           )}
           {subtitle && (
-            <p className="text-sm text-opsgrid-text-secondary">{subtitle}</p>
+            <div className="text-sm text-opsgrid-text-secondary">{subtitle}</div>
           )}
         </div>
       )}

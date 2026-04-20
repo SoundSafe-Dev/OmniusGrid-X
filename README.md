@@ -23,10 +23,14 @@ OmniusGrid is a resilient manufacturing operations platform designed for Industr
 
 | Domain | Features |
 |--------|----------|
-| **Data Collection** | 7 industrial protocols (MQTT, OPC-UA, Modbus, Screen Scraping, File Watching) |
+| **Data Collection** | 7 industrial protocols (MQTT, OPC-UA, Modbus, Screen Scraping/OCR, File Watching) |
+| **Real-time Pipeline** | WebSocket broadcasting, subscription management, live telemetry/state/alarms |
+| **Command Executor** | Queued commands with retries, timeouts, cancellation, emergency stop |
+| **OEE Automation** | Automated OEE calculation from PackML states and telemetry part counting |
 | **Edge AI** | <100ms inference loops, TorchScript models, automated model lifecycle |
 | **Observability** | Prometheus metrics, Loki logs, Grafana dashboards, TimescaleDB |
-| **Security** | mTLS device authentication, zero-trust networking, audit trails |
+| **Security** | mTLS device authentication, certificate generation, zero-trust networking, audit trails |
+| **DevOps** | GitHub Actions CI/CD, Kubernetes manifests (staging/production), auto-scaling |
 | **Operations** | K3s-orchestrated, Patroni HA, automatic disaster recovery |
 | **Logistics** | YMS/TMS with GeoTab telematics, detention billing, HOS compliance, dock-production sync |
 
@@ -167,6 +171,17 @@ OmniusGrid/
 │       │   │   ├── SeverityBadge.tsx
 │       │   │   ├── StatusIndicator.tsx
 │       │   │   └── TimeAgo.tsx
+│       │   ├── charts/     # Data visualization
+│       │   │   └── RealtimeTelemetryChart.tsx
+│       │   ├── commands/   # Command UI
+│       │   │   └── CommandPanel.tsx
+│       │   ├── fleet/      # Fleet tracking
+│       │   │   ├── FleetTrackerMap.tsx
+│       │   │   ├── GeoTabIntegration.tsx
+│       │   │   ├── GeofencingPanel.tsx
+│       │   │   ├── HealthSecurityPanel.tsx
+│       │   │   ├── MaintenancePanel.tsx
+│       │   │   └── PerformancePanel.tsx
 │       │   └── layout/     # Layout components
 │       │       ├── Layout.tsx
 │       │       ├── Sidebar.tsx
@@ -202,11 +217,35 @@ OmniusGrid/
 │           ├── constants.ts
 │           └── helpers.ts
 ├── database/              # Schema migrations
-├── infra/                 # Deployment configs
+├── infrastructure/        # Deployment configs
 │   ├── k8s/              # Kubernetes manifests
+│   │   ├── base/         # Base Kustomize layer
+│   │   │   ├── namespace.yaml
+│   │   │   ├── backend-deployment.yaml
+│   │   │   ├── backend-service.yaml
+│   │   │   ├── frontend-deployment.yaml
+│   │   │   ├── timescaledb-statefulset.yaml
+│   │   │   ├── redpanda-statefulset.yaml
+│   │   │   ├── ingress.yaml
+│   │   │   └── kustomization.yaml
+│   │   └── overlays/     # Environment overlays
+│   │       ├── production/
+│   │       │   ├── kustomization.yaml
+│   │       │   ├── backend-resources.yaml
+│   │       │   ├── frontend-resources.yaml
+│   │       │   └── hpa.yaml
+│   │       └── staging/
+│   │           ├── kustomization.yaml
+│   │           └── backend-resources.yaml
+│   ├── tls/              # Certificate configs
 │   ├── prometheus/       # Alerting rules
 │   ├── grafana/          # Dashboards
 │   └── systemd/          # Service definitions
+├── scripts/              # Utility scripts
+│   └── generate-certs.sh # mTLS certificate generation
+├── .github/              # GitHub Actions
+│   └── workflows/
+│       └── ci-cd.yml     # CI/CD pipeline
 └── docs/                  # Architecture documentation
 ```
 
@@ -291,6 +330,37 @@ OmniusGrid/
 | GET | `/api/v1/geotab/exceptions` | Rule violations (speeding, harsh braking) |
 | GET | `/api/v1/geotab/fleet/summary` | Fleet-wide status overview |
 | POST | `/api/v1/geotab/webhook` | Real-time GeoTab event webhook |
+
+### Command Executor
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/v1/commands/submit` | Submit command to asset |
+| GET | `/api/v1/commands/{command_id}/status` | Check command status |
+| POST | `/api/v1/commands/{command_id}/cancel` | Cancel pending command |
+| GET | `/api/v1/commands/asset/{asset_id}/history` | Asset command history |
+| POST | `/api/v1/commands/asset/{asset_id}/emergency-stop` | Emergency stop asset |
+
+### OEE (Overall Equipment Effectiveness)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/v1/oee/current/{asset_id}` | Current OEE metrics (availability, performance, quality) |
+| GET | `/api/v1/oee/historical/{asset_id}` | Historical OEE data with aggregation |
+| GET | `/api/v1/oee/dashboard/summary` | Organization-wide OEE summary |
+| GET | `/api/v1/oee/losses/{asset_id}` | OEE loss breakdown analysis |
+
+### WebSocket Real-time API
+
+| Event | Direction | Description |
+|-------|-----------|-------------|
+| `subscribe` | Client → Server | Subscribe to asset/org messages |
+| `unsubscribe` | Client → Server | Unsubscribe from messages |
+| `telemetry` | Server → Client | Real-time telemetry updates |
+| `state_change` | Server → Client | PackML state transitions |
+| `alarm` | Server → Client | Alarm notifications |
+| `command_status` | Server → Client | Command execution updates |
+| `ping/pong` | Bidirectional | Connection keepalive |
 
 ### Frontend Dashboard Routes
 
