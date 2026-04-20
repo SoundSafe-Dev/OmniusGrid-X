@@ -5,10 +5,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from app.api import assets, telemetry, alarms, operations, auth, dashboard, health, engines
-from app.api import yard, transportation, logistics_correlation
+from app.api import yard, transportation, logistics_correlation, websocket, commands, oee
 from app.core.config import settings
 from app.db.database import init_db
 from app.services.websocket_manager import websocket_manager
+from app.services.command_executor import command_executor
+from app.services.oee_calculator import oee_calculator
 
 
 @asynccontextmanager
@@ -17,8 +19,12 @@ async def lifespan(app: FastAPI):
     # Startup
     await init_db()
     await websocket_manager.connect()
+    await command_executor.start()
+    await oee_calculator.start()
     yield
     # Shutdown
+    await oee_calculator.stop()
+    await command_executor.stop()
     await websocket_manager.disconnect()
 
 
@@ -50,6 +56,9 @@ app.include_router(engines.router, prefix="/api/v1/engines", tags=["AI Engines"]
 app.include_router(yard.router, prefix="/api/v1/yard", tags=["Yard Management"])
 app.include_router(transportation.router, prefix="/api/v1/transportation", tags=["Transportation Management"])
 app.include_router(logistics_correlation.router, prefix="/api/v1/logistics", tags=["Logistics Correlation"])
+app.include_router(commands.router, prefix="/api/v1/commands", tags=["Commands"])
+app.include_router(oee.router, prefix="/api/v1/oee", tags=["OEE"])
+app.include_router(websocket.router, tags=["WebSocket"])
 
 
 @app.get("/")

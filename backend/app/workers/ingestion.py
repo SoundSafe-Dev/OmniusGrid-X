@@ -15,6 +15,8 @@ sys.path.insert(0, '/app')
 from app.db.database import AsyncSessionLocal
 from app.db.models import Telemetry, PackMLState, Asset, Alarm
 from app.services.data_shedding import data_shedder
+from app.services.websocket_manager import websocket_manager
+from app.services.oee_calculator import oee_calculator
 
 structlog.configure(
     processors=[
@@ -109,11 +111,11 @@ class IngestionWorker:
         async with AsyncSessionLocal() as session:
             try:
                 if msg_type == 'telemetry':
-                    await self._process_telemetry(session, asset_id, data)
+                    await self._process_telemetry(session, asset_id, data, organization_id)
                 elif msg_type == 'state':
-                    await self._process_state(session, asset_id, data)
+                    await self._process_state(session, asset_id, data, organization_id)
                 elif msg_type == 'alarms':
-                    await self._process_alarm(session, asset_id, data)
+                    await self._process_alarm(session, asset_id, data, organization_id)
                 
                 await session.commit()
             
@@ -121,7 +123,7 @@ class IngestionWorker:
                 await session.rollback()
                 raise
     
-    async def _process_telemetry(self, session: AsyncSession, asset_id: str, data: Dict):
+    async def _process_telemetry(self, session: AsyncSession, asset_id: str, data: Dict, organization_id: str):
         """Process telemetry data with intelligent shedding"""
         # Parse timestamp
         timestamp_str = data.get('timestamp_edge') or data.get('timestamp')
@@ -176,8 +178,37 @@ class IngestionWorker:
             asset_id=asset_id,
             timestamp=timestamp.isoformat()
         )
+        
+        # Publish to WebSocket for real-time updates
+        try:
+            # Extract just the telemetry values for broadcast
+            telemetry_summary = {
+                metric_name: float(value) if isinstance(value, (int, float)) else value
+                for metric_name, value in telemetry_data.items()
+                if value is not None and isinstance(value, (int, float, str, bool))
+            }
+            
+            await websocket_manager.publish_telemetry(
+                organization_id=organization_id,
+                asset_id=asset_id,
+                telemetry_data=telemetry_summary,
+                packml_state=packml_state
+            )
+        except Exception as e:
+            # Don't fail ingestion if WebSocket fails
+            logger.warning("websocket_publish_failed", error=str(e), asset_id=asset_id)
+        
+        # Update OEE part counters
+        try:
+            await oee_calculator.process_telemetry(
+                asset_id=asset_id,
+                organization_id=organization_id,
+                telemetry=telemetry_data
+            )
+        except Exception as e:
+            logger.warning("oee_telemetry_tracking_failed", error=str(e), asset_id=asset_id)
     
-    async def _process_state(self, session: AsyncSession, asset_id: str, data: Dict):
+    async def _process_state(self, session: AsyncSession, asset_id: str, data: Dict, organization_id: str):
         """Process PackML state transitions"""
         new_state = data.get('packml_state')
         previous_state = data.get('previous_state')
@@ -230,8 +261,32 @@ class IngestionWorker:
             to_state=new_state,
             timestamp=timestamp.isoformat()
         )
+        
+        # Publish state change to WebSocket
+        try:
+            await websocket_manager.publish_state_change(
+                organization_id=organization_id,
+                asset_id=asset_id,
+                previous_state=previous_state,
+                new_state=new_state,
+                metadata=data.get('metadata', {})
+            )
+        except Exception as e:
+            logger.warning("websocket_state_publish_failed", error=str(e), asset_id=asset_id)
+        
+        # Update OEE tracking
+        try:
+            await oee_calculator.process_state_change(
+                asset_id=asset_id,
+                organization_id=organization_id,
+                previous_state=previous_state,
+                new_state=new_state,
+                timestamp=timestamp
+            )
+        except Exception as e:
+            logger.warning("oee_state_tracking_failed", error=str(e), asset_id=asset_id)
     
-    async def _process_alarm(self, session: AsyncSession, asset_id: str, data: Dict):
+    async def _process_alarm(self, session: AsyncSession, asset_id: str, data: Dict, organization_id: str):
         """Process alarm events"""
         alarm = Alarm(
             asset_id=asset_id,
@@ -250,6 +305,22 @@ class IngestionWorker:
             alarm_code=alarm.alarm_code,
             severity=alarm.severity
         )
+        
+        # Publish alarm to WebSocket
+        try:
+            await websocket_manager.publish_alarm(
+                organization_id=organization_id,
+                asset_id=asset_id,
+                alarm_data={
+                    'alarm_code': alarm.alarm_code,
+                    'severity': alarm.severity,
+                    'message': alarm.message,
+                    'description': alarm.description,
+                    'occurred_at': alarm.occurred_at.isoformat()
+                }
+            )
+        except Exception as e:
+            logger.warning("websocket_alarm_publish_failed", error=str(e), asset_id=asset_id)
     
     def _infer_unit(self, metric_name: str) -> Optional[str]:
         """Infer unit from metric name"""

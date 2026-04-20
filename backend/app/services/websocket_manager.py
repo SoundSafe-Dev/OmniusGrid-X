@@ -1,14 +1,41 @@
 """WebSocket Manager for Real-Time Updates"""
 
 import json
-from typing import Dict, Set
+import asyncio
+from typing import Dict, Set, Optional, Any
 from fastapi import WebSocket, WebSocketDisconnect
 import structlog
 from aiokafka import AIOKafkaConsumer
+from datetime import datetime
 
 from app.core.config import settings
 
 logger = structlog.get_logger()
+
+
+class WebSocketMessage:
+    """Structured WebSocket message"""
+    def __init__(
+        self,
+        msg_type: str,
+        payload: Dict[str, Any],
+        organization_id: Optional[str] = None,
+        asset_id: Optional[str] = None
+    ):
+        self.type = msg_type
+        self.payload = payload
+        self.organization_id = organization_id
+        self.asset_id = asset_id
+        self.timestamp = datetime.utcnow().isoformat()
+    
+    def to_dict(self) -> dict:
+        return {
+            'type': self.type,
+            'payload': self.payload,
+            'organization_id': self.organization_id,
+            'asset_id': self.asset_id,
+            'timestamp': self.timestamp
+        }
 
 
 class WebSocketManager:
@@ -25,6 +52,13 @@ class WebSocketManager:
         self.active_connections: Dict[str, Set[WebSocket]] = {}
         self.consumer: AIOKafkaConsumer = None
         self._running = False
+        
+        # Track client subscriptions: websocket -> {asset_ids, message_types}
+        self.subscriptions: Dict[WebSocket, Dict[str, Any]] = {}
+        
+        # Message queue for ingestion worker
+        self._message_queue: asyncio.Queue = asyncio.Queue(maxsize=10000)
+        self._queue_task: Optional[asyncio.Task] = None
     
     async def connect(self):
         """Initialize WebSocket manager and Kafka consumer"""
@@ -43,8 +77,10 @@ class WebSocketManager:
             self._running = True
             
             # Start broadcast loop
-            import asyncio
             asyncio.create_task(self._broadcast_loop())
+            
+            # Start queue processor for ingestion worker messages
+            self._queue_task = asyncio.create_task(self._process_message_queue())
             
             logger.info("websocket_manager_connected")
         except Exception as e:
@@ -53,6 +89,15 @@ class WebSocketManager:
     async def disconnect(self):
         """Clean up connections"""
         self._running = False
+        
+        # Stop queue processor
+        if self._queue_task:
+            self._queue_task.cancel()
+            try:
+                await self._queue_task
+            except asyncio.CancelledError:
+                pass
+        
         if self.consumer:
             await self.consumer.stop()
         logger.info("websocket_manager_disconnected")
@@ -66,16 +111,35 @@ class WebSocketManager:
         
         self.active_connections[organization_id].add(websocket)
         
+        # Initialize empty subscription for this client
+        self.subscriptions[websocket] = {
+            'asset_ids': set(),  # Empty means all assets
+            'message_types': {'telemetry', 'alarm', 'state', 'command_status'}
+        }
+        
         logger.info(
             "client_connected",
             organization_id=organization_id,
             total_clients=sum(len(s) for s in self.active_connections.values())
         )
+        
+        # Send connection confirmation
+        try:
+            await websocket.send_json({
+                'type': 'connection_established',
+                'payload': {'organization_id': organization_id}
+            })
+        except Exception:
+            pass
     
     def disconnect_client(self, websocket: WebSocket, organization_id: str):
         """Remove client connection"""
         if organization_id in self.active_connections:
             self.active_connections[organization_id].discard(websocket)
+        
+        # Clean up subscriptions
+        if websocket in self.subscriptions:
+            del self.subscriptions[websocket]
         
         logger.info(
             "client_disconnected",
@@ -99,6 +163,164 @@ class WebSocketManager:
         for conn in disconnected:
             self.active_connections[organization_id].discard(conn)
     
+    def update_subscription(
+        self,
+        websocket: WebSocket,
+        asset_ids: Optional[Set[str]] = None,
+        message_types: Optional[Set[str]] = None
+    ):
+        """Update client subscription preferences"""
+        if websocket not in self.subscriptions:
+            self.subscriptions[websocket] = {'asset_ids': set(), 'message_types': set()}
+        
+        if asset_ids is not None:
+            self.subscriptions[websocket]['asset_ids'] = set(asset_ids)
+        
+        if message_types is not None:
+            self.subscriptions[websocket]['message_types'] = set(message_types)
+        
+        logger.debug(
+            "subscription_updated",
+            asset_ids=list(self.subscriptions[websocket]['asset_ids']),
+            message_types=list(self.subscriptions[websocket]['message_types'])
+        )
+    
+    def _should_send_to_client(self, websocket: WebSocket, message: WebSocketMessage) -> bool:
+        """Check if message should be sent to client based on subscriptions"""
+        if websocket not in self.subscriptions:
+            return True  # No subscription filtering = send all
+        
+        sub = self.subscriptions[websocket]
+        
+        # Check message type filter
+        if message.type not in sub['message_types']:
+            return False
+        
+        # Check asset filter (empty set means all assets)
+        if sub['asset_ids'] and message.asset_id and message.asset_id not in sub['asset_ids']:
+            return False
+        
+        return True
+    
+    async def publish_telemetry(
+        self,
+        organization_id: str,
+        asset_id: str,
+        telemetry_data: Dict[str, Any],
+        packml_state: Optional[str] = None
+    ):
+        """
+        Publish telemetry update from ingestion worker.
+        Called after successful database write.
+        """
+        message = WebSocketMessage(
+            msg_type='telemetry',
+            payload={
+                'asset_id': asset_id,
+                'telemetry': telemetry_data,
+                'packml_state': packml_state
+            },
+            organization_id=organization_id,
+            asset_id=asset_id
+        )
+        
+        try:
+            # Add to queue for async processing
+            await self._message_queue.put(('org', organization_id, message))
+        except asyncio.QueueFull:
+            logger.warning("websocket_message_queue_full", dropped_message=True)
+    
+    async def publish_state_change(
+        self,
+        organization_id: str,
+        asset_id: str,
+        previous_state: Optional[str],
+        new_state: str,
+        metadata: Optional[Dict] = None
+    ):
+        """Publish PackML state change"""
+        message = WebSocketMessage(
+            msg_type='state',
+            payload={
+                'asset_id': asset_id,
+                'previous_state': previous_state,
+                'new_state': new_state,
+                'metadata': metadata or {}
+            },
+            organization_id=organization_id,
+            asset_id=asset_id
+        )
+        
+        try:
+            await self._message_queue.put(('org', organization_id, message))
+        except asyncio.QueueFull:
+            logger.warning("websocket_message_queue_full", dropped_message=True)
+    
+    async def publish_alarm(
+        self,
+        organization_id: str,
+        asset_id: str,
+        alarm_data: Dict[str, Any]
+    ):
+        """Publish alarm event"""
+        message = WebSocketMessage(
+            msg_type='alarm',
+            payload={
+                'asset_id': asset_id,
+                **alarm_data
+            },
+            organization_id=organization_id,
+            asset_id=asset_id
+        )
+        
+        try:
+            await self._message_queue.put(('org', organization_id, message))
+        except asyncio.QueueFull:
+            logger.warning("websocket_message_queue_full", dropped_message=True)
+    
+    async def _process_message_queue(self):
+        """Process messages from ingestion worker and broadcast to clients"""
+        while self._running:
+            try:
+                # Get message from queue with timeout
+                try:
+                    scope_type, scope_id, message = await asyncio.wait_for(
+                        self._message_queue.get(),
+                        timeout=1.0
+                    )
+                except asyncio.TimeoutError:
+                    continue
+                
+                # Broadcast based on scope
+                if scope_type == 'org':
+                    await self._broadcast_filtered(scope_id, message)
+                
+                self._message_queue.task_done()
+                
+            except Exception as e:
+                logger.error("message_queue_processor_error", error=str(e))
+    
+    async def _broadcast_filtered(self, organization_id: str, message: WebSocketMessage):
+        """Broadcast message to subscribed clients only"""
+        if organization_id not in self.active_connections:
+            return
+        
+        disconnected = set()
+        
+        for websocket in self.active_connections[organization_id]:
+            try:
+                # Check if client wants this message
+                if self._should_send_to_client(websocket, message):
+                    await websocket.send_json(message.to_dict())
+            except Exception:
+                disconnected.add(websocket)
+        
+        # Clean up disconnected clients
+        for conn in disconnected:
+            self.active_connections[organization_id].discard(conn)
+            if conn in self.subscriptions:
+                del self.subscriptions[conn]
+
     async def _broadcast_loop(self):
         """Continuously consume from Kafka and broadcast to clients"""
         try:

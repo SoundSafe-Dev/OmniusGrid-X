@@ -9,6 +9,7 @@ import structlog
 
 from opsgrid_agent.buffer.store_forward import StoreForwardBuffer
 from opsgrid_agent.collectors.mqtt import BambuCollector, MQTTCollector
+from opsgrid_agent.collectors.coordinator import UnifiedCollectorCoordinator, CollectorConfig
 from opsgrid_agent.packml import PackMLStateMapper
 
 structlog.configure(
@@ -50,10 +51,15 @@ class EdgeAgent:
             buffer_path=self.config.get('buffer_path', '/var/lib/opsgrid-agent/buffer.db'),
             retention_hours=self.config.get('buffer_retention_hours', 24)
         )
-        self.collectors: List[Any] = []
         self.kafka_producer = None
         self._running = False
         self._tasks: List[asyncio.Task] = []
+        
+        # Initialize collector coordinator
+        self.coordinator = UnifiedCollectorCoordinator(
+            buffer=self.buffer,
+            kafka_producer=None  # Will be set after Kafka init
+        )
     
     def _load_config(self) -> Dict[str, Any]:
         """Load configuration from environment"""
@@ -77,6 +83,10 @@ class EdgeAgent:
                 key_serializer=lambda k: k.encode('utf-8') if k else None,
             )
             await self.kafka_producer.start()
+            
+            # Set coordinator's Kafka producer
+            self.coordinator.kafka_producer = self.kafka_producer
+            
             logger.info(
                 "kafka_producer_started",
                 brokers=self.config['redpanda_url']
@@ -246,6 +256,47 @@ class EdgeAgent:
                 logger.error("stats_reporter_error", error=str(e))
                 await asyncio.sleep(300)
     
+    async def _initialize_collectors(self):
+        """Initialize collectors from configuration"""
+        collectors_config = self.config.get('collectors', [])
+        
+        if not collectors_config:
+            logger.warning("no_collectors_configured")
+            return
+        
+        for collector_conf in collectors_config:
+            try:
+                asset_id = collector_conf.get('asset_id')
+                collector_type = collector_conf.get('type')
+                
+                if not asset_id or not collector_type:
+                    logger.error("invalid_collector_config", config=collector_conf)
+                    continue
+                
+                # Create collector config
+                config = CollectorConfig(
+                    collector_type=collector_type,
+                    asset_id=asset_id,
+                    config=collector_conf.get('config', {}),
+                    enabled=collector_conf.get('enabled', True)
+                )
+                
+                # Register with coordinator
+                self.coordinator.register_collector(config)
+                
+                logger.info(
+                    "collector_registered",
+                    asset_id=asset_id,
+                    type=collector_type
+                )
+            
+            except Exception as e:
+                logger.error(
+                    "collector_registration_failed",
+                    config=collector_conf,
+                    error=str(e)
+                )
+    
     async def start(self):
         """Start the edge agent"""
         logger.info(
@@ -264,8 +315,11 @@ class EdgeAgent:
         self._tasks.append(asyncio.create_task(self._cleanup_worker()))
         self._tasks.append(asyncio.create_task(self._stats_reporter()))
         
-        # TODO: Initialize collectors from configuration
-        # For now, we'll simulate with a test collector
+        # Initialize collectors from configuration
+        await self._initialize_collectors()
+        
+        # Start all collectors via coordinator
+        await self.coordinator.start_all()
         
         logger.info("edge_agent_started")
     
@@ -283,9 +337,8 @@ class EdgeAgent:
             except asyncio.CancelledError:
                 pass
         
-        # Stop collectors
-        for collector in self.collectors:
-            await collector.stop()
+        # Stop all collectors via coordinator
+        await self.coordinator.stop_all()
         
         # Stop Kafka producer
         await self._stop_kafka_producer()
