@@ -748,3 +748,307 @@ class DetentionRiskPrediction(BaseModel):
     factors: List[str]
     predicted_detention_minutes: Optional[float]
     recommended_actions: List[str]
+
+
+# ==================== Kanban Task Management Schemas ====================
+
+class TaskBoardBase(BaseModel):
+    name: str = "Main Operations Board"
+    board_type: str = "unified"  # unified, production, maintenance, quality, safety, logistics
+    default_view_config: Dict[str, Any] = {}
+
+
+class TaskBoardCreate(TaskBoardBase):
+    organization_id: UUID
+
+
+class TaskBoardResponse(TaskBoardBase):
+    id: UUID
+    organization_id: UUID
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class TaskColumnBase(BaseModel):
+    name: str
+    position: int
+    wip_limit: int = 5
+    column_type: str  # backlog, triage, in_progress, review, rejected, done
+    color: str = "#6366F1"
+    is_collapsed: bool = False
+    auto_archive_days: int = 7
+
+
+class TaskColumnCreate(TaskColumnBase):
+    board_id: UUID
+
+
+class TaskColumnResponse(TaskColumnBase):
+    id: UUID
+    board_id: UUID
+    created_at: datetime
+    updated_at: datetime
+    task_count: Optional[int] = 0  # Computed field
+
+    class Config:
+        from_attributes = True
+
+
+class TaskChecklistItem(BaseModel):
+    text: str
+    completed: bool = False
+
+
+class TaskBase(BaseModel):
+    title: str
+    description: Optional[str] = None
+    task_type: str  # production_job, maintenance_pm, maintenance_cm, quality_inspection, safety_check, alarm_response, command_execution, material_request, changeover, custom
+    priority: str = "medium"  # low, medium, high, critical, emergency
+    status: str = "draft"
+    planned_start: Optional[datetime] = None
+    planned_duration: Optional[int] = None  # minutes
+    due_date: Optional[datetime] = None
+    estimated_effort_minutes: Optional[int] = None
+    tags: List[str] = []
+    checklist_items: List[TaskChecklistItem] = []
+    color_code: Optional[str] = None
+
+
+class TaskCreate(TaskBase):
+    board_id: UUID
+    column_id: UUID
+    assigned_to: Optional[UUID] = None
+    asset_id: Optional[UUID] = None
+    operation_id: Optional[UUID] = None
+    alarm_id: Optional[UUID] = None
+    command_id: Optional[str] = None
+    parent_task_id: Optional[UUID] = None
+    custom_fields: Dict[str, Any] = {}
+    completion_actions: Dict[str, Any] = {}
+
+
+class TaskUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    priority: Optional[str] = None
+    status: Optional[str] = None
+    assigned_to: Optional[UUID] = None
+    column_id: Optional[UUID] = None
+    position: Optional[int] = None
+    progress_percent: Optional[int] = None
+    checklist_items: Optional[List[TaskChecklistItem]] = None
+    custom_fields: Optional[Dict[str, Any]] = None
+    due_date: Optional[datetime] = None
+    color_code: Optional[str] = None
+
+
+class TaskResponse(TaskBase):
+    id: UUID
+    board_id: UUID
+    column_id: UUID
+    position: int
+    assigned_to: Optional[UUID]
+    assigned_by: Optional[UUID]
+    assigned_at: Optional[datetime]
+    actual_start: Optional[datetime]
+    actual_end: Optional[datetime]
+    asset_id: Optional[UUID]
+    operation_id: Optional[UUID]
+    alarm_id: Optional[UUID]
+    command_id: Optional[str]
+    work_order_id: Optional[UUID]
+    parent_task_id: Optional[UUID]
+    related_shipment_id: Optional[UUID]
+    rule_id: Optional[UUID]
+    progress_percent: int
+    time_logged_minutes: int
+    custom_fields: Dict[str, Any]
+    approval_status: str
+    approved_by: Optional[UUID]
+    approved_at: Optional[datetime]
+    rejection_reason: Optional[str]
+    completion_actions: Dict[str, Any]
+    completion_result: Dict[str, Any]
+    created_by: Optional[UUID]
+    created_at: datetime
+    updated_at: datetime
+    completed_at: Optional[datetime]
+    completed_by: Optional[UUID]
+
+    class Config:
+        from_attributes = True
+
+
+class TaskMoveRequest(BaseModel):
+    target_column_id: UUID
+    position: Optional[int] = None
+
+
+class TaskApprovalRequest(BaseModel):
+    action: str  # approve, reject
+    reason: Optional[str] = None  # Required for reject
+
+
+class TaskCommentBase(BaseModel):
+    content: str
+    comment_type: str = "comment"  # comment, system, time_log, status_change, approval_action
+
+
+class TaskCommentCreate(TaskCommentBase):
+    task_id: UUID
+
+
+class TaskCommentResponse(TaskCommentBase):
+    id: UUID
+    task_id: UUID
+    user_id: Optional[UUID]
+    metadata: Dict[str, Any]
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class TaskTimerStart(BaseModel):
+    description: Optional[str] = None
+
+
+class TaskTimerStop(BaseModel):
+    description: Optional[str] = None
+
+
+class TaskTimerResponse(BaseModel):
+    id: UUID
+    task_id: UUID
+    user_id: UUID
+    started_at: datetime
+    ended_at: Optional[datetime]
+    duration_minutes: int
+    is_running: bool
+    description: Optional[str]
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class TaskRuleBase(BaseModel):
+    rule_name: str
+    description: Optional[str] = None
+    trigger_type: str
+    trigger_conditions: Dict[str, Any] = {}
+    task_template: Dict[str, Any] = {}
+    auto_approve_emergency: bool = False
+    auto_approve_timeout_minutes: int = 30
+    assignee_rule: str = "asset_owner"  # round_robin, asset_owner, supervisor, specific_user
+    escalation_config: Dict[str, Any] = {}
+    completion_actions: Dict[str, Any] = {}
+
+
+class TaskRuleCreate(TaskRuleBase):
+    organization_id: UUID
+    target_board_id: Optional[UUID] = None
+    target_column_id: Optional[UUID] = None
+    specific_assignee_id: Optional[UUID] = None
+    notify_users: List[UUID] = []
+
+
+class TaskRuleUpdate(BaseModel):
+    rule_name: Optional[str] = None
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
+    trigger_conditions: Optional[Dict[str, Any]] = None
+    task_template: Optional[Dict[str, Any]] = None
+    auto_approve_emergency: Optional[bool] = None
+    auto_approve_timeout_minutes: Optional[int] = None
+    assignee_rule: Optional[str] = None
+    escalation_config: Optional[Dict[str, Any]] = None
+
+
+class TaskRuleResponse(TaskRuleBase):
+    id: UUID
+    organization_id: UUID
+    is_active: bool
+    is_system_rule: bool
+    target_board_id: Optional[UUID]
+    target_column_id: Optional[UUID]
+    specific_assignee_id: Optional[UUID]
+    notify_users: List[UUID]
+    created_by: Optional[UUID]
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class TaskRuleTestRequest(BaseModel):
+    sample_data: Dict[str, Any]  # Simulated trigger data to test against
+
+
+class TaskRuleTestResponse(BaseModel):
+    would_trigger: bool
+    matched_conditions: List[str]
+    generated_task_preview: Optional[Dict[str, Any]]
+
+
+class KanbanViewFilter(BaseModel):
+    view_type: str = "all"  # all, by_asset, by_workcell, by_type, by_priority, by_assignee
+    asset_id: Optional[UUID] = None
+    workcell_id: Optional[UUID] = None
+    task_type: Optional[str] = None
+    priority: Optional[str] = None
+    assignee_id: Optional[UUID] = None
+    status: Optional[str] = None
+    date_from: Optional[datetime] = None
+    date_to: Optional[datetime] = None
+
+
+class KanbanBoardData(BaseModel):
+    board: TaskBoardResponse
+    columns: List[TaskColumnResponse]
+    tasks: List[TaskResponse]
+    view_config: Dict[str, Any]
+
+
+class KanbanMetrics(BaseModel):
+    total_tasks: int
+    tasks_by_column: Dict[str, int]
+    tasks_by_priority: Dict[str, int]
+    tasks_awaiting_approval: int
+    overdue_tasks: int
+    avg_cycle_time_minutes: Optional[float]
+    tasks_completed_today: int
+    active_escalations: int
+
+
+class KanbanWorkloadItem(BaseModel):
+    user_id: UUID
+    user_name: str
+    assigned_tasks: int
+    in_progress_tasks: int
+    overdue_tasks: int
+    avg_completion_time: Optional[float]
+
+
+class KanbanWorkloadResponse(BaseModel):
+    workloads: List[KanbanWorkloadItem]
+
+
+class TaskEscalationResponse(BaseModel):
+    id: UUID
+    task_id: UUID
+    rule_id: Optional[UUID]
+    escalation_level: int
+    triggered_at: datetime
+    resolved_at: Optional[datetime]
+    notified_users: List[UUID]
+    actions_taken: List[str]
+    notification_channels: List[str]
+
+    class Config:
+        from_attributes = True

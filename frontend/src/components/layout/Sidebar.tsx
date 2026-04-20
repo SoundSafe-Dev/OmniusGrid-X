@@ -17,6 +17,7 @@ import {
   Truck,
   Sun,
   Moon,
+  Kanban as KanbanIcon,
 } from 'lucide-react';
 import { useUIStore, useAuthStore } from '../../stores';
 import { cn } from '../../utils';
@@ -35,6 +36,7 @@ const navItems: NavItem[] = [
   { path: '/assets', label: 'Assets', icon: Box },
   { path: '/alarms', label: 'Alarms', icon: Bell },
   { path: '/oee', label: 'OEE', icon: BarChart3 },
+  { path: '/kanban', label: 'Kanban Board', icon: KanbanIcon },
   {
     path: '/engines',
     label: 'AI Engines',
