@@ -906,7 +906,7 @@ class TaskCommentResponse(TaskCommentBase):
     id: UUID
     task_id: UUID
     user_id: Optional[UUID]
-    metadata: Dict[str, Any]
+    extra_data: Dict[str, Any]
     created_at: datetime
 
     class Config:

@@ -1,6 +1,30 @@
 -- Migration: Create Kanban Task Management Tables
 -- Description: Adds tables for the actionable decision-making kanban system
 
+-- Commands table (for command executor)
+CREATE TABLE IF NOT EXISTS commands (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    asset_id UUID NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    command_type VARCHAR(50) NOT NULL,
+    action_id VARCHAR(255) NOT NULL,
+    parameters JSONB DEFAULT '{}'::jsonb,
+    status VARCHAR(50) DEFAULT 'pending',
+    priority VARCHAR(20) DEFAULT 'normal',
+    issued_at TIMESTAMPTZ DEFAULT NOW(),
+    issued_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    executed_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    result JSONB DEFAULT '{}'::jsonb,
+    error_message TEXT,
+    organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_commands_asset ON commands(asset_id);
+CREATE INDEX IF NOT EXISTS idx_commands_status ON commands(status);
+CREATE INDEX IF NOT EXISTS idx_commands_org ON commands(organization_id);
+
 -- Task Boards (unified board per organization)
 CREATE TABLE IF NOT EXISTS task_boards (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -100,7 +124,7 @@ CREATE TABLE IF NOT EXISTS task_comments (
     user_id UUID REFERENCES users(id) ON DELETE SET NULL,
     comment_type VARCHAR(50) DEFAULT 'comment', -- comment, system, time_log, status_change, approval_action
     content TEXT,
-    metadata JSONB DEFAULT '{}'::jsonb,
+    extra_data JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
