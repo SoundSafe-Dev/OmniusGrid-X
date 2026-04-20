@@ -1,0 +1,180 @@
+/**
+ * KanbanBoard - Main kanban board component with drag-and-drop
+ */
+
+import React, { useState, useCallback } from 'react';
+import { TaskColumn as TaskColumnType, Task, TaskChecklistItem } from '../../stores/kanbanStore';
+import { KanbanColumn } from './KanbanColumn';
+
+interface KanbanBoardProps {
+  board: { id: string } | null;
+  columns: TaskColumnType[];
+  tasks: Task[];
+  onTaskClick: (taskId: string) => void;
+  onDragEnd: (taskId: string, targetColumnId: string, position?: number) => Promise<void>;
+  viewMode: 'board' | 'list';
+}
+
+export const KanbanBoard: React.FC<KanbanBoardProps> = ({
+  board,
+  columns,
+  tasks,
+  onTaskClick,
+  onDragEnd,
+  viewMode,
+}) => {
+  const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
+  const [dragOverColumnId, setDragOverColumnId] = useState<string | null>(null);
+
+  const handleDragStart = useCallback((taskId: string) => {
+    setDraggedTaskId(taskId);
+  }, []);
+
+  const handleDragOver = useCallback((columnId: string) => {
+    setDragOverColumnId(columnId);
+  }, []);
+
+  const handleDragLeave = useCallback(() => {
+    setDragOverColumnId(null);
+  }, []);
+
+  const handleDrop = useCallback(async (columnId: string) => {
+    if (draggedTaskId) {
+      await onDragEnd(draggedTaskId, columnId);
+      setDraggedTaskId(null);
+      setDragOverColumnId(null);
+    }
+  }, [draggedTaskId, onDragEnd]);
+
+  if (!board) {
+    return (
+      <div className="h-full flex items-center justify-center">
+        <div className="text-gray-500">No board available</div>
+      </div>
+    );
+  }
+
+  if (viewMode === 'list') {
+    return (
+      <div className="h-full overflow-auto p-4">
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow">
+          {tasks.length === 0 ? (
+            <div className="p-8 text-center text-gray-500">
+              No tasks found
+            </div>
+          ) : (
+            <table className="w-full">
+              <thead className="bg-gray-50 dark:bg-gray-700">
+                <tr>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Task</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Priority</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Assignee</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Due Date</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+                {tasks.map((task) => (
+                  <tr
+                    key={task.id}
+                    onClick={() => onTaskClick(task.id)}
+                    className="hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer"
+                  >
+                    <td className="px-4 py-3">
+                      <div className="font-medium text-gray-900 dark:text-white">{task.title}</div>
+                      <div className="text-sm text-gray-500 truncate max-w-xs">
+                        {task.description || 'No description'}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+                        {task.task_type.replace('_', ' ')}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <PriorityBadge priority={task.priority} />
+                    </td>
+                    <td className="px-4 py-3">
+                      <StatusBadge status={task.status} />
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">
+                      {task.assigned_to ? 'Assigned' : 'Unassigned'}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">
+                      {task.due_date ? new Date(task.due_date).toLocaleDateString() : '-'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-full overflow-x-auto overflow-y-hidden">
+      <div className="flex h-full gap-4 p-4 min-w-max">
+        {columns
+          .sort((a: TaskColumnType, b: TaskColumnType) => a.position - b.position)
+          .map((column: TaskColumnType) => {
+            const columnTasks = tasks
+              .filter((t: Task) => t.column_id === column.id)
+              .sort((a: Task, b: Task) => a.position - b.position);
+
+            return (
+              <KanbanColumn
+                key={column.id}
+                column={column}
+                tasks={columnTasks}
+                onTaskClick={onTaskClick}
+                onDragStart={handleDragStart}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                isDragOver={dragOverColumnId === column.id}
+              />
+            );
+          })}
+      </div>
+    </div>
+  );
+};
+
+// Helper components
+const PriorityBadge: React.FC<{ priority: string }> = ({ priority }) => {
+  const colors: Record<string, string> = {
+    low: 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300',
+    medium: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
+    high: 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200',
+    critical: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200',
+    emergency: 'bg-red-200 text-red-900 dark:bg-red-800 dark:text-red-100 animate-pulse',
+  };
+
+  return (
+    <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${colors[priority] || colors.medium}`}>
+      {priority}
+    </span>
+  );
+};
+
+const StatusBadge: React.FC<{ status: string }> = ({ status }) => {
+  const colors: Record<string, string> = {
+    draft: 'bg-gray-100 text-gray-800',
+    ready: 'bg-blue-100 text-blue-800',
+    in_progress: 'bg-yellow-100 text-yellow-800',
+    blocked: 'bg-red-100 text-red-800',
+    completed: 'bg-green-100 text-green-800',
+    cancelled: 'bg-gray-100 text-gray-600',
+  };
+
+  return (
+    <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${colors[status] || colors.draft}`}>
+      {status.replace('_', ' ')}
+    </span>
+  );
+};
+
+export default KanbanBoard;

@@ -1,0 +1,197 @@
+/**
+ * Kanban Board Page - Actionable Decision-Making Interface
+ * Main entry point for the unified kanban system
+ */
+
+import React, { useState, useEffect, useCallback } from 'react';
+import { useAuth } from '../hooks/useAuth';
+import { KanbanBoard } from '../components/kanban/KanbanBoard';
+import { KanbanFilters } from '../components/kanban/KanbanFilters';
+import { KanbanMetricsBar } from '../components/kanban/KanbanMetricsBar';
+import { CreateTaskModal } from '../components/kanban/CreateTaskModal';
+import { TaskDetailModal } from '../components/kanban/TaskDetailModal';
+import { KanbanProvider, useKanban } from '../stores/kanbanStore';
+import { Button } from '../components/ui/Button';
+import { Plus, Filter, LayoutGrid, List } from 'lucide-react';
+
+// Inner component that uses kanban context
+const KanbanContent: React.FC = () => {
+  const { user } = useAuth();
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const _currentUser = user; // Available for future user-specific filtering
+  const { 
+    board, 
+    columns, 
+    tasks, 
+    metrics, 
+    filters, 
+    isLoading, 
+    setFilters, 
+    refreshBoard,
+    moveTask 
+  } = useKanban();
+  
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<'board' | 'list'>('board');
+  const [showFilters, setShowFilters] = useState(false);
+
+  // Initial load
+  useEffect(() => {
+    refreshBoard();
+  }, [refreshBoard]);
+
+  // Handle task click
+  const handleTaskClick = useCallback((taskId: string) => {
+    setSelectedTaskId(taskId);
+  }, []);
+
+  // Close task detail modal
+  const handleCloseTaskDetail = useCallback(() => {
+    setSelectedTaskId(null);
+  }, []);
+
+  // Handle drag and drop
+  const handleDragEnd = useCallback(async (taskId: string, targetColumnId: string, position?: number) => {
+    try {
+      await moveTask(taskId, targetColumnId, position);
+    } catch (error) {
+      console.error('Failed to move task:', error);
+    }
+  }, [moveTask]);
+
+  // Get selected task
+  const selectedTask = selectedTaskId ? tasks.find((t: Task) => t.id === selectedTaskId) : null;
+
+  return (
+    <div className="h-full flex flex-col bg-gray-50 dark:bg-gray-900">
+      {/* Header */}
+      <div className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-4 py-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-xl font-semibold text-gray-900 dark:text-white">
+              Operations Board
+            </h1>
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              Actionable decision-making kanban
+            </p>
+          </div>
+          
+          <div className="flex items-center gap-3">
+            {/* View Toggle */}
+            <div className="flex items-center bg-gray-100 dark:bg-gray-700 rounded-lg p-1">
+              <button
+                onClick={() => setViewMode('board')}
+                className={`p-2 rounded-md transition-colors ${
+                  viewMode === 'board' 
+                    ? 'bg-white dark:bg-gray-600 shadow-sm text-blue-600' 
+                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-900'
+                }`}
+                title="Board View"
+              >
+                <LayoutGrid className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => setViewMode('list')}
+                className={`p-2 rounded-md transition-colors ${
+                  viewMode === 'list' 
+                    ? 'bg-white dark:bg-gray-600 shadow-sm text-blue-600' 
+                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-900'
+                }`}
+                title="List View"
+              >
+                <List className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Filter Toggle */}
+            <Button
+              variant={showFilters ? 'primary' : 'outline'}
+              size="sm"
+              onClick={() => setShowFilters(!showFilters)}
+              className="flex items-center gap-2"
+            >
+              <Filter className="w-4 h-4" />
+              Filters
+            </Button>
+
+            {/* Create Task Button */}
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => setIsCreateModalOpen(true)}
+              className="flex items-center gap-2"
+            >
+              <Plus className="w-4 h-4" />
+              New Task
+            </Button>
+          </div>
+        </div>
+
+        {/* Metrics Bar */}
+        {metrics && (
+          <KanbanMetricsBar 
+            metrics={metrics}
+            className="mt-3"
+          />
+        )}
+      </div>
+
+      {/* Filters Panel */}
+      {showFilters && (
+        <KanbanFilters 
+          filters={filters}
+          onFiltersChange={setFilters}
+          className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700"
+        />
+      )}
+
+      {/* Main Board Area */}
+      <div className="flex-1 overflow-hidden">
+        {isLoading ? (
+          <div className="h-full flex items-center justify-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
+          </div>
+        ) : (
+          <KanbanBoard
+            board={board}
+            columns={columns}
+            tasks={tasks}
+            onTaskClick={handleTaskClick}
+            onDragEnd={handleDragEnd}
+            viewMode={viewMode}
+          />
+        )}
+      </div>
+
+      {/* Create Task Modal */}
+      <CreateTaskModal
+        isOpen={isCreateModalOpen}
+        onClose={() => setIsCreateModalOpen(false)}
+        boardId={board?.id}
+        defaultColumnId={columns.find(c => c.column_type === 'backlog')?.id}
+      />
+
+      {/* Task Detail Modal */}
+      {selectedTask && (
+        <TaskDetailModal
+          isOpen={!!selectedTaskId}
+          onClose={handleCloseTaskDetail}
+          task={selectedTask}
+          columns={columns}
+        />
+      )}
+    </div>
+  );
+};
+
+// Main page component with provider
+const KanbanPage: React.FC = () => {
+  return (
+    <KanbanProvider>
+      <KanbanContent />
+    </KanbanProvider>
+  );
+};
+
+export default KanbanPage;

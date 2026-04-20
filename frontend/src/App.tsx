@@ -9,6 +9,7 @@ import Assets from './pages/Assets'
 import AssetDetail from './pages/AssetDetail'
 import Alarms from './pages/Alarms'
 import OEE from './pages/OEE'
+import Kanban from './pages/Kanban'
 
 // AI Engine pages
 import { TacticalEngine, StrategicEngine, MLOpsPipeline, CloudGateway } from './pages/engines'
@@ -46,6 +47,9 @@ const App: FC = () => {
 
             {/* OEE */}
             <Route path="/oee" element={<OEE />} />
+
+            {/* Kanban Board */}
+            <Route path="/kanban" element={<Kanban />} />
 
             {/* AI Engines */}
             <Route path="/engines/tactical" element={<TacticalEngine />} />
