@@ -21,16 +21,27 @@ import {
   Activity,
   Thermometer,
   Phone,
-  Package
+  Package,
+  Wrench
 } from 'lucide-react';
-import { transportationApi, geoTabApi } from '../../api';
+import { transportationApi, geoTabApi, fleetTrackerApi } from '../../api';
 import { 
+  FleetTrackerMap, 
+  GeofencingPanel, 
+  HealthSecurityPanel, 
+  MaintenancePanel, 
+  PerformancePanel 
+} from '../../components';
+import type { 
   Carrier, 
   Driver, 
   Shipment, 
   Vehicle,
   ShipmentFilters,
-  GeoLocation
+  GeoLocation,
+  MapFilterType,
+  FleetVehiclePosition,
+  ShipmentRoute
 } from '../../types';
 
 const TRANSPORT_QUERY_KEY = 'transportation';
@@ -40,8 +51,10 @@ export const TransportationManagement: FC = () => {
   const [selectedDriver, setSelectedDriver] = useState<Driver | null>(null);
   const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
   const [filters, setFilters] = useState<ShipmentFilters>({});
-  const [activeTab, setActiveTab] = useState<'shipments' | 'fleet' | 'carriers' | 'compliance'>('shipments');
+  const [activeTab, setActiveTab] = useState<'shipments' | 'fleet' | 'carriers' | 'compliance' | 'geofencing' | 'health' | 'maintenance' | 'performance'>('shipments');
   const [fleetLocation, setFleetLocation] = useState<GeoLocation | null>(null);
+  const [selectedMapVehicle, setSelectedMapVehicle] = useState<string | null>(null);
+  const [selectedMapShipment, setSelectedMapShipment] = useState<string | null>(null);
 
   const { data: shipmentsData, isLoading: shipmentsLoading, refetch: refetchShipments } = useQuery(
     [TRANSPORT_QUERY_KEY, 'shipments', filters],
@@ -175,6 +188,26 @@ export const TransportationManagement: FC = () => {
         <StatCard label="CT-PAT Cert" value={stats.ctpatCertified} icon={Shield} color="text-green-500" />
       </div>
 
+      {/* Fleet Tracker Map - Persistent across all tabs */}
+      <FleetTrackerMap
+        filter={activeTab as MapFilterType}
+        selectedVehicleId={selectedMapVehicle}
+        selectedShipmentId={selectedMapShipment}
+        onVehicleClick={(vehicle) => {
+          setSelectedMapVehicle(vehicle.vehicleId);
+          // Find and select the driver if available
+          const driver = drivers.find(d => d.id === vehicle.driverId);
+          if (driver) setSelectedDriver(driver);
+        }}
+        onShipmentClick={(shipmentRoute) => {
+          setSelectedMapShipment(shipmentRoute.shipmentId);
+          // Find and select the shipment
+          const shipment = shipments.find(s => s.id === shipmentRoute.shipmentId);
+          if (shipment) setSelectedShipment(shipment);
+        }}
+        height="400px"
+      />
+
       {/* Fleet Summary from GeoTab */}
       {fleetSummary && (
         <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-4">
@@ -238,17 +271,21 @@ export const TransportationManagement: FC = () => {
 
       {/* Tabs */}
       <div className="border-b border-opsgrid-border">
-        <div className="flex gap-1">
+        <div className="flex gap-1 flex-wrap">
           {[
             { id: 'shipments', label: 'Shipments', icon: Package },
             { id: 'fleet', label: 'Fleet & Drivers', icon: Truck },
             { id: 'carriers', label: 'Carriers', icon: Building2 },
             { id: 'compliance', label: 'Compliance', icon: Shield },
+            { id: 'geofencing', label: 'Geofencing', icon: MapPin },
+            { id: 'health', label: 'Health & Security', icon: Activity },
+            { id: 'maintenance', label: 'Maintenance', icon: Wrench },
+            { id: 'performance', label: 'Performance', icon: Gauge },
           ].map(tab => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id as typeof activeTab)}
-              className={`flex items-center gap-2 px-4 py-2 border-b-2 transition-colors ${
+              className={`flex items-center gap-2 px-3 py-2 border-b-2 transition-colors text-sm ${
                 activeTab === tab.id
                   ? 'border-opsgrid-primary text-opsgrid-primary'
                   : 'border-transparent text-opsgrid-text-secondary hover:text-opsgrid-text'
@@ -672,6 +709,26 @@ export const TransportationManagement: FC = () => {
         </div>
       )}
 
+      {/* Geofencing Tab */}
+      {activeTab === 'geofencing' && (
+        <GeofencingPanel />
+      )}
+
+      {/* Health & Security Tab */}
+      {activeTab === 'health' && (
+        <HealthSecurityPanel />
+      )}
+
+      {/* Maintenance Tab */}
+      {activeTab === 'maintenance' && (
+        <MaintenancePanel />
+      )}
+
+      {/* Performance Tab */}
+      {activeTab === 'performance' && (
+        <PerformancePanel />
+      )}
+
       {/* Shipment Detail Modal */}
       {selectedShipment && (
         <ShipmentDetailModal 
@@ -717,8 +774,14 @@ const ShipmentDetailModal: FC<{ shipment: Shipment; onClose: () => void }> = ({ 
   }, [shipment.id]);
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg max-w-2xl w-full max-h-[90vh] overflow-auto">
+    <div 
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4"
+      onClick={onClose}
+    >
+      <div 
+        className="bg-opsgrid-panel border border-opsgrid-border rounded-lg max-w-2xl w-full max-h-[90vh] overflow-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="p-6 border-b border-opsgrid-border flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Package className="w-6 h-6 text-opsgrid-primary" />
@@ -850,8 +913,14 @@ const ShipmentDetailModal: FC<{ shipment: Shipment; onClose: () => void }> = ({ 
 
 const DriverDetailModal: FC<{ driver: Driver; onClose: () => void }> = ({ driver, onClose }) => {
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg max-w-lg w-full">
+    <div 
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4"
+      onClick={onClose}
+    >
+      <div 
+        className="bg-opsgrid-panel border border-opsgrid-border rounded-lg max-w-lg w-full"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="p-6 border-b border-opsgrid-border flex items-center justify-between">
           <div className="flex items-center gap-3">
             <User className="w-6 h-6 text-opsgrid-primary" />
