@@ -481,6 +481,28 @@ class User(Base):
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
 
+class Command(Base):
+    """Command execution log for actionable decisions"""
+    __tablename__ = "commands"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    asset_id = Column(UUID(as_uuid=True), ForeignKey("assets.id"), nullable=False)
+    command_type = Column(String(50), nullable=False)
+    action_id = Column(String(255), nullable=False)
+    parameters = Column(JSON, default=dict)
+    status = Column(String(50), default="pending")  # pending, executing, completed, failed, cancelled
+    priority = Column(String(20), default="normal")  # low, normal, high, critical
+    issued_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    issued_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
+    executed_at = Column(DateTime(timezone=True))
+    completed_at = Column(DateTime(timezone=True))
+    result = Column(JSON, default=dict)
+    error_message = Column(Text)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"))
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
 # ==================== Kanban Task Management Models ====================
 
 class TaskBoard(Base):
@@ -595,7 +617,7 @@ class TaskComment(Base):
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
     comment_type = Column(String(50), default="comment")  # comment, system, time_log, status_change, approval_action
     content = Column(Text)
-    metadata = Column(JSON, default=dict)  # { "before_state": "...", "after_state": "..." }
+    extra_data = Column(JSON, default=dict)  # { "before_state": "...", "after_state": "..." }
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
 

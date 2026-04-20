@@ -20,6 +20,7 @@ export const Header: FC = () => {
     if (path.startsWith('/assets')) return 'Assets';
     if (path.startsWith('/alarms')) return 'Alarms';
     if (path.startsWith('/oee')) return 'OEE';
+    if (path.startsWith('/kanban')) return 'Kanban Board';
     if (path.startsWith('/engines/tactical')) return 'Tactical Engine';
     if (path.startsWith('/engines/strategic')) return 'Strategic Engine';
     if (path.startsWith('/engines/mlops')) return 'MLOps Pipeline';
@@ -31,7 +32,7 @@ export const Header: FC = () => {
     if (path.startsWith('/logistics/transportation')) return 'Transportation Management';
     if (path.startsWith('/logistics')) return 'Logistics';
     if (path.startsWith('/admin')) return 'Administration';
-    return 'OpsGrid';
+    return 'OmniusGrid';
   };
 
   const activeAlarmsCount = activeAlarms?.count || 0;

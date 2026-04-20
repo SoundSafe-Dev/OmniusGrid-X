@@ -14,12 +14,12 @@ from sqlalchemy.orm import selectinload
 from app.db.database import get_db, AsyncSessionLocal
 from app.db.models import (
     TaskBoard, TaskColumn, Task, TaskComment, TaskTimer, 
-    TaskRule, TaskEscalation, Asset, Alarm, User, Organization
+    TaskRule, TaskEscalation, Asset, Alarm, User, Organization, Command
 )
 from app.models.schemas import (
     TaskBoardCreate, TaskBoardResponse, TaskColumnCreate, TaskColumnResponse,
     TaskCreate, TaskUpdate, TaskResponse, TaskMoveRequest, TaskApprovalRequest,
-    TaskCommentCreate, TaskCommentResponse, TaskTimerStart, TaskTimerStop, TaskTimerResponse,
+    TaskCommentBase, TaskCommentCreate, TaskCommentResponse, TaskTimerStart, TaskTimerStop, TaskTimerResponse,
     TaskRuleCreate, TaskRuleUpdate, TaskRuleResponse, TaskRuleTestRequest, TaskRuleTestResponse,
     KanbanViewFilter, KanbanBoardData, KanbanMetrics, KanbanWorkloadResponse,
     TaskEscalationResponse, TaskChecklistItem
@@ -96,7 +96,7 @@ async def log_task_comment(
     user_id: Optional[UUID],
     content: str,
     comment_type: str = "system",
-    metadata: Dict[str, Any] = None
+    extra_data: Dict[str, Any] = None
 ):
     """Log a system comment for task activity"""
     comment = TaskComment(
@@ -104,7 +104,7 @@ async def log_task_comment(
         user_id=user_id,
         content=content,
         comment_type=comment_type,
-        metadata=metadata or {}
+        extra_data=extra_data or {}
     )
     session.add(comment)
 
