@@ -7,3 +7,8 @@ export { enginesApi } from './engines';
 export { websocketManager } from './websocket';
 export { yardApi, geoTabYardApi } from './yard';
 export { transportationApi, geoTabApi } from './transportation';
+export { fleetTrackerApi } from './fleetTracker';
+export { geofencingApi } from './geofencing';
+export { fleetHealthApi } from './fleetHealth';
+export { maintenanceApi } from './maintenance';
+export { kpiApi } from './kpi';
