@@ -4,7 +4,22 @@
 
 import React from 'react';
 import { Task } from '../../stores/kanbanStore';
-import { AlertCircle, Clock, User, CheckSquare, Paperclip, MessageSquare } from 'lucide-react';
+import { 
+  AlertCircle, 
+  Clock, 
+  User, 
+  CheckSquare, 
+  MessageSquare,
+  Wrench,
+  Factory,
+  ShieldCheck,
+  AlertTriangle,
+  Play,
+  Package,
+  ArrowRightLeft,
+  Settings,
+  User as UserIcon
+} from 'lucide-react';
 
 interface KanbanCardProps {
   task: Task;
@@ -40,18 +55,18 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
     emergency: 'bg-red-200 text-red-700 border-red-400 animate-pulse',
   };
 
-  // Type labels
-  const typeLabels: Record<string, string> = {
-    production_job: 'Production',
-    maintenance_pm: 'Preventive Maintenance',
-    maintenance_cm: 'Corrective Maintenance',
-    quality_inspection: 'Quality Check',
-    safety_check: 'Safety Audit',
-    alarm_response: 'Alarm Response',
-    command_execution: 'Command',
-    material_request: 'Material Request',
-    changeover: 'Changeover',
-    custom: 'Custom',
+  // Type labels and icons
+  const typeConfig: Record<string, { label: string; icon: any; color: string }> = {
+    production_job: { label: 'Production', icon: Factory, color: 'bg-blue-100 text-blue-600' },
+    maintenance_pm: { label: 'Preventive', icon: Wrench, color: 'bg-green-100 text-green-600' },
+    maintenance_cm: { label: 'Corrective', icon: Wrench, color: 'bg-orange-100 text-orange-600' },
+    quality_inspection: { label: 'Quality', icon: ShieldCheck, color: 'bg-purple-100 text-purple-600' },
+    safety_check: { label: 'Safety', icon: ShieldCheck, color: 'bg-red-100 text-red-600' },
+    alarm_response: { label: 'Alarm', icon: AlertTriangle, color: 'bg-red-200 text-red-700' },
+    command_execution: { label: 'Command', icon: Play, color: 'bg-indigo-100 text-indigo-600' },
+    material_request: { label: 'Material', icon: Package, color: 'bg-yellow-100 text-yellow-600' },
+    changeover: { label: 'Changeover', icon: ArrowRightLeft, color: 'bg-teal-100 text-teal-600' },
+    custom: { label: 'Custom', icon: Settings, color: 'bg-gray-100 text-gray-600' },
   };
 
   return (
@@ -81,12 +96,19 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
 
         {/* Task Type Badge */}
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300">
-            {typeLabels[task.task_type] || task.task_type}
-          </span>
+          {(() => {
+            const config = typeConfig[task.task_type] || typeConfig.custom;
+            const Icon = config.icon;
+            return (
+              <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${config.color} dark:bg-opacity-20`}>
+                <Icon className="w-3 h-3 mr-1" />
+                {config.label}
+              </span>
+            );
+          })()}
           
           {isOverdue && (
-            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-600">
+            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400">
               <AlertCircle className="w-3 h-3 mr-1" />
               Overdue
             </span>
@@ -104,12 +126,18 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
         {task.progress_percent > 0 && (
           <div className="space-y-1">
             <div className="flex items-center justify-between text-xs">
-              <span className="text-gray-500">Progress</span>
-              <span className="text-gray-700 dark:text-gray-300">{task.progress_percent}%</span>
+              <span className="text-gray-500 dark:text-gray-400">Progress</span>
+              <span className={`font-medium ${
+                task.progress_percent === 100 ? 'text-green-600' : 'text-gray-700 dark:text-gray-300'
+              }`}>{task.progress_percent}%</span>
             </div>
-            <div className="h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+            <div className="h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
               <div
-                className="h-full bg-blue-500 rounded-full transition-all"
+                className={`h-full rounded-full transition-all ${
+                  task.progress_percent === 100 
+                    ? 'bg-gradient-to-r from-green-400 to-green-600' 
+                    : 'bg-gradient-to-r from-blue-400 to-blue-600'
+                }`}
                 style={{ width: `${task.progress_percent}%` }}
               />
             </div>
@@ -129,12 +157,19 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
           <div className="flex items-center gap-2">
             {/* Assignee */}
             {task.assigned_to ? (
-              <div className="flex items-center gap-1 text-xs text-gray-500">
-                <User className="w-3 h-3" />
-                <span>Assigned</span>
+              <div className="flex items-center gap-1.5">
+                <div className="w-5 h-5 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white text-[10px] font-medium">
+                  DA
+                </div>
+                <span className="text-xs text-gray-600 dark:text-gray-400">Dev Admin</span>
               </div>
             ) : (
-              <span className="text-xs text-gray-400 italic">Unassigned</span>
+              <div className="flex items-center gap-1.5">
+                <div className="w-5 h-5 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center">
+                  <UserIcon className="w-3 h-3 text-gray-400" />
+                </div>
+                <span className="text-xs text-gray-400 italic">Unassigned</span>
+              </div>
             )}
           </div>
 

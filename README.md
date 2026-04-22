@@ -33,6 +33,8 @@ OmniusGrid is a resilient manufacturing operations platform designed for Industr
 | **DevOps** | GitHub Actions CI/CD, Kubernetes manifests (staging/production), auto-scaling |
 | **Operations** | K3s-orchestrated, Patroni HA, automatic disaster recovery |
 | **Logistics** | YMS/TMS with GeoTab telematics, detention billing, HOS compliance, dock-production sync |
+| **Task Management** | Kanban board with task grouping, assignment, approval workflows |
+| **Compliance** | Actionable registries (OSHA, ISO, internal), data correlation mapping, scoring |
 
 ---
 
@@ -78,14 +80,24 @@ flowchart TB
             OPC["OPC-UA (PLCs)"]
             MODBUS["Modbus TCP/RTU"]
         end
+
+        subgraph OPS["Operations Management"]
+            KANBAN["Kanban Board<br/>Task Management"]
+            REG["Actionable Registries<br/>Compliance & Operations"]
+            CORR["Data Correlation<br/>Mapping & Scoring"]
+        end
     end
 
     CG -. "Outbound-only mTLS<br/>Cloud never initiates" .-> EDGE
     AGENTS --> TACT
     AGENTS --> TSDB
+    AGENTS --> KANBAN
     TACT --> STRAT
     TACT --> FEAT
     FEAT -.-> CG
+    KANBAN --> REG
+    REG --> CORR
+    TSDB --> REG
 ```
 
 ---
@@ -175,6 +187,12 @@ OmniusGrid/
 │       │   │   └── RealtimeTelemetryChart.tsx
 │       │   ├── commands/   # Command UI
 │       │   │   └── CommandPanel.tsx
+│       │   ├── kanban/     # Task management
+│       │   │   ├── KanbanBoard.tsx
+│       │   │   ├── KanbanColumn.tsx
+│       │   │   ├── KanbanCard.tsx
+│       │   │   ├── TaskDetailModal.tsx
+│       │   │   └── CreateTaskModal.tsx
 │       │   ├── fleet/      # Fleet tracking
 │       │   │   ├── FleetTrackerMap.tsx
 │       │   │   ├── GeoTabIntegration.tsx
@@ -199,6 +217,10 @@ OmniusGrid/
 │       │   ├── assets/     # Asset management
 │       │   ├── alarms/     # Alarm management
 │       │   ├── oee/        # OEE analytics
+│       │   ├── kanban/     # Kanban task management
+│       │   │   └── Kanban.tsx
+│       │   ├── registries/ # Actionable registries
+│       │   │   └── Registries.tsx
 │       │   ├── engines/    # AI Engine dashboards
 │       │   │   ├── TacticalEngine.tsx
 │       │   │   ├── StrategicEngine.tsx
@@ -209,6 +231,7 @@ OmniusGrid/
 │       │   └── admin/      # Administration
 │       ├── stores/         # Zustand state management
 │       │   ├── authStore.ts
+│       │   ├── kanbanStore.ts
 │       │   ├── uiStore.ts
 │       │   └── realtimeStore.ts
 │       ├── types/          # TypeScript types
@@ -331,6 +354,43 @@ OmniusGrid/
 | GET | `/api/v1/geotab/fleet/summary` | Fleet-wide status overview |
 | POST | `/api/v1/geotab/webhook` | Real-time GeoTab event webhook |
 
+### Kanban Task Management
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/v1/kanban/boards` | List all Kanban boards |
+| POST | `/api/v1/kanban/boards` | Create new board |
+| GET | `/api/v1/kanban/boards/{id}` | Get board details with columns and tasks |
+| POST | `/api/v1/kanban/boards/{id}/tasks` | Create task on board |
+| PUT | `/api/v1/kanban/tasks/{id}` | Update task details |
+| PUT | `/api/v1/kanban/tasks/{id}/move` | Move task to different column |
+| POST | `/api/v1/kanban/tasks/{id}/approve` | Approve task for execution |
+| POST | `/api/v1/kanban/tasks/{id}/start` | Start task execution |
+| POST | `/api/v1/kanban/tasks/{id}/complete` | Mark task as completed |
+| DELETE | `/api/v1/kanban/tasks/{id}` | Delete task |
+| GET | `/api/v1/auth/users` | Get organization users for assignment |
+
+### Actionable Registries & Compliance
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/v1/registries` | List all actionable registries |
+| POST | `/api/v1/registries` | Create new registry |
+| GET | `/api/v1/registries/{id}` | Get registry details |
+| PUT | `/api/v1/registries/{id}` | Update registry |
+| DELETE | `/api/v1/registries/{id}` | Delete registry |
+| GET | `/api/v1/registries/{id}/items` | List registry items |
+| POST | `/api/v1/registries/{id}/items` | Create registry item |
+| PUT | `/api/v1/registries/items/{id}` | Update registry item |
+| DELETE | `/api/v1/registries/items/{id}` | Delete registry item |
+| GET | `/api/v1/registries/{id}/compliance-score` | Calculate compliance score |
+| GET | `/api/v1/registries/{id}/risk-score` | Calculate risk score |
+| GET | `/api/v1/correlations` | List data correlations |
+| POST | `/api/v1/correlations` | Create data correlation |
+| GET | `/api/v1/correlations/{id}` | Get correlation details |
+| PUT | `/api/v1/correlations/{id}` | Update correlation |
+| DELETE | `/api/v1/correlations/{id}` | Delete correlation |
+
 ### Command Executor
 
 | Method | Endpoint | Description |
@@ -370,8 +430,10 @@ OmniusGrid/
 | `/assets` | Asset Management |
 | `/alarms` | Alarm Management |
 | `/oee` | OEE Analytics |
+| `/kanban` | **Kanban Board** - Task management with grouping, assignment, approval workflows |
 | `/logistics/yard` | **Yard Management (YMS)** - Trailer tracking, dock doors, appointments |
 | `/logistics/transportation` | **Transportation Management (TMS)** - Fleet, drivers, shipments, GeoTab |
+| `/registries` | **Actionable Registries** - Compliance (OSHA, ISO), operational registries, data correlation |
 
 ---
 
@@ -430,6 +492,20 @@ OmniusGrid/
   - Collector configuration and restart controls
   - System health monitoring
   - Application settings and preferences
+- **Task Management**:
+  - **Kanban Board**: Drag-and-drop task management with multiple columns (Backlog, Triage, In Progress, Review, Done, Rejected)
+  - **Task Grouping**: Tasks grouped by type (Production, Maintenance, Quality, Safety, Alarm, Command, Material, Changeover) with collapsible headers
+  - **Task Assignment**: Dropdown to assign tasks to organization workers/teams with user avatars
+  - **Approval Workflows**: Task approval/rejection with reason tracking
+  - **Task Types**: Support for YMS, TMS, logistics, production, maintenance, safety, alarms, commands, materials, and changeovers
+  - **Progress Tracking**: Progress bars, checklists, time logging, and due date management
+- **Compliance & Registries**:
+  - **Actionable Registries**: Compliance registries (OSHA, ISO) and internal operational registries
+  - **Registry Items**: Individual compliance items with severity levels, completion criteria, and verification methods
+  - **Data Correlation**: Mapping and scoring relationships between tasks, assets, and registry items
+  - **Compliance Scoring**: Automated compliance score calculation based on item completion
+  - **Risk Scoring**: Risk assessment for registry items and correlations
+  - **Frequency Tracking**: Periodic compliance requirements with due date management
 
 ### Enterprise Features
 

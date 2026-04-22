@@ -572,11 +572,10 @@ class Task(Base):
     # Relationships to OmniusGrid entities
     asset_id = Column(UUID(as_uuid=True), ForeignKey("assets.id"))
     operation_id = Column(UUID(as_uuid=True), ForeignKey("operations.id"))
-    alarm_id = Column(UUID(as_uuid=True), ForeignKey("alarms.id"))
+    alarm_id = Column(UUID(as_uuid=True))
     command_id = Column(String(255))  # Command ID (string format)
     work_order_id = Column(UUID(as_uuid=True))
     parent_task_id = Column(UUID(as_uuid=True), ForeignKey("tasks.id"))
-    related_shipment_id = Column(UUID(as_uuid=True), ForeignKey("shipments.id"))
     rule_id = Column(UUID(as_uuid=True), ForeignKey("task_rules.id"))  # Rule that created this task
 
     # Progress tracking
@@ -689,3 +688,78 @@ class TaskEscalation(Base):
     actions_taken = Column(JSON, default=list)  # ["email_sent", "sms_sent", "reassigned"]
     notification_channels = Column(JSON, default=list)  # ["push", "email", "sms"]
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class ActionableRegistry(Base):
+    """Actionable registries for compliance and operational requirements"""
+    __tablename__ = "actionable_registries"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
+    registry_name = Column(String(255), nullable=False)  # e.g., "OSHA 1910.147", "ISO 9001:2015"
+    registry_type = Column(String(50), nullable=False)  # safety, quality, environmental, operational, regulatory
+    registry_category = Column(String(100))  # sub-category within type
+    description = Column(Text)
+    is_active = Column(Boolean, default=True)
+    is_compliance = Column(Boolean, default=False)  # true for compliance registries (OSHA, ISO), false for operational
+    frequency = Column(String(50))  # daily, weekly, monthly, quarterly, annually, as_needed
+    next_due_date = Column(DateTime(timezone=True))
+    last_completed_date = Column(DateTime(timezone=True))
+    compliance_score = Column(Integer, default=0)  # 0-100
+    priority_level = Column(String(20), default="medium")  # low, medium, high, critical
+    assigned_owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
+    assigned_team_id = Column(UUID)  # team reference if applicable
+    reference_url = Column(String(500))  # link to official documentation
+    checklist_requirements = Column(JSON, default=list)  # [{id, requirement, completed, notes}]
+    meta_data = Column(JSON, default=dict)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class ActionableRegistryItem(Base):
+    """Individual actionable items within a registry"""
+    __tablename__ = "actionable_registry_items"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    registry_id = Column(UUID(as_uuid=True), ForeignKey("actionable_registries.id"), nullable=False)
+    item_code = Column(String(100), nullable=False)  # e.g., "1910.147(a)(1)"
+    item_name = Column(String(255), nullable=False)
+    item_description = Column(Text)
+    severity_level = Column(String(20), default="medium")  # low, medium, high, critical
+    is_active = Column(Boolean, default=True)
+    is_required = Column(Boolean, default=True)
+    completion_criteria = Column(Text)
+    verification_method = Column(String(255))  # inspection, test, documentation, audit
+    estimated_effort_minutes = Column(Integer)
+    related_task_id = Column(UUID(as_uuid=True), ForeignKey("tasks.id"))
+    last_completed_at = Column(DateTime(timezone=True))
+    next_due_at = Column(DateTime(timezone=True))
+    completion_frequency = Column(String(50))  # daily, weekly, monthly, quarterly, annually
+    compliance_score = Column(Integer, default=0)  # 0-100
+    risk_score = Column(Integer, default=0)  # 0-100, calculated based on severity and overdue status
+    meta_data = Column(JSON, default=dict)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class DataCorrelation(Base):
+    """Data correlation mapping for tasks and actionable items"""
+    __tablename__ = "data_correlations"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
+    correlation_type = Column(String(50), nullable=False)  # task_to_registry, task_to_asset, task_to_alarm, registry_to_asset
+    source_type = Column(String(50), nullable=False)  # task, registry_item, asset, alarm, operation
+    source_id = Column(UUID(as_uuid=True))
+    target_type = Column(String(50), nullable=False)  # task, registry_item, asset, alarm, operation
+    target_id = Column(UUID(as_uuid=True))
+    correlation_strength = Column(Integer, default=50)  # 0-100, strength of correlation
+    correlation_method = Column(String(50), default="manual")  # manual, automated, ai_suggested
+    confidence_score = Column(Integer, default=0)  # 0-100, confidence in correlation
+    is_active = Column(Boolean, default=True)
+    is_bidirectional = Column(Boolean, default=False)
+    correlation_meta_data = Column(JSON, default=dict)  # additional context
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
