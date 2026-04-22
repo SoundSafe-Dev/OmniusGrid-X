@@ -89,10 +89,12 @@ async def get_current_active_user(
         )
         org = org_result.scalar_one_or_none()
         if not org:
+            # Use random slug to avoid conflicts
+            import uuid as uuid_lib
             org = Organization(
                 id=dev_org_id,
                 name="Dev Organization",
-                is_active=True
+                slug=f"dev-{uuid_lib.uuid4().hex[:8]}"
             )
             db.add(org)
             await db.commit()
@@ -103,14 +105,16 @@ async def get_current_active_user(
         )
         user = user_result.scalar_one_or_none()
         if not user:
+            # Use a pre-h bcrypt password for "dev" to avoid runtime issues
+            # bcrypt hash of "dev" is: $2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYHqF5pXa9W
             user = User(
                 id=dev_user_id,
                 email="admin@omniusgrid.com",
-                name="Dev Admin",
+                full_name="Dev Admin",
                 role="admin",
                 is_active=True,
                 organization_id=dev_org_id,
-                hashed_password=pwd_context.hash("dev")
+                hashed_password="$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYHqF5pXa9W"
             )
             db.add(user)
             await db.commit()
@@ -199,3 +203,28 @@ async def get_current_user_info(
         "organization_id": str(current_user.organization_id) if current_user.organization_id else None,
         "last_login": current_user.last_login.isoformat() if current_user.last_login else None
     }
+
+
+@router.get("/users")
+async def get_organization_users(
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get all users in the organization for assignment"""
+    if not current_user.organization_id:
+        return []
+    
+    result = await db.execute(
+        select(User).where(User.organization_id == current_user.organization_id)
+    )
+    users = result.scalars().all()
+    
+    return [
+        {
+            "id": str(user.id),
+            "full_name": user.full_name,
+            "email": user.email,
+            "role": user.role
+        }
+        for user in users
+    ]

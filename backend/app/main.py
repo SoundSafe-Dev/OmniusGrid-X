@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from app.api import assets, telemetry, alarms, operations, auth, dashboard, health, engines
-from app.api import yard, transportation, logistics_correlation, websocket, commands, oee, kanban
+from app.api import yard, transportation, logistics_correlation, websocket, commands, oee, kanban, registries
 from app.core.config import settings
 from app.db.database import init_db
 from app.services.websocket_manager import websocket_manager
@@ -63,6 +63,7 @@ app.include_router(logistics_correlation.router, prefix="/api/v1/logistics", tag
 app.include_router(commands.router, prefix="/api/v1/commands", tags=["Commands"])
 app.include_router(oee.router, prefix="/api/v1/oee", tags=["OEE"])
 app.include_router(kanban.router, prefix="/api/v1/kanban", tags=["Kanban"])
+app.include_router(registries.router, tags=["Registries"])
 app.include_router(websocket.router, tags=["WebSocket"])
 
 

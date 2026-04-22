@@ -2,7 +2,7 @@
  * KanbanColumn - Individual column component for kanban board
  */
 
-import React from 'react';
+import React, { useState } from 'react';
 import { TaskColumn as TaskColumnType, Task } from '../../stores/kanbanStore';
 import { KanbanCard } from './KanbanCard';
 import { AlertCircle, ChevronDown, ChevronRight } from 'lucide-react';
@@ -18,6 +18,20 @@ interface KanbanColumnProps {
   isDragOver: boolean;
 }
 
+// Task type labels for display
+const typeLabels: Record<string, string> = {
+  production_job: 'Production',
+  maintenance_pm: 'Preventive Maint.',
+  maintenance_cm: 'Corrective Maint.',
+  quality_inspection: 'Quality',
+  safety_check: 'Safety',
+  alarm_response: 'Alarm',
+  command_execution: 'Command',
+  material_request: 'Material',
+  changeover: 'Changeover',
+  custom: 'Custom',
+};
+
 export const KanbanColumn: React.FC<KanbanColumnProps> = ({
   column,
   tasks,
@@ -28,6 +42,8 @@ export const KanbanColumn: React.FC<KanbanColumnProps> = ({
   onDrop,
   isDragOver,
 }) => {
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     onDragOver(column.id);
@@ -38,7 +54,29 @@ export const KanbanColumn: React.FC<KanbanColumnProps> = ({
     onDrop(column.id);
   };
 
+  const toggleGroup = (taskType: string) => {
+    setCollapsedGroups((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(taskType)) {
+        newSet.delete(taskType);
+      } else {
+        newSet.add(taskType);
+      }
+      return newSet;
+    });
+  };
+
   const wipWarning = column.wip_limit > 0 && tasks.length > column.wip_limit;
+
+  // Group tasks by type
+  const groupedTasks = tasks.reduce((acc: Record<string, Task[]>, task) => {
+    const type = task.task_type;
+    if (!acc[type]) {
+      acc[type] = [];
+    }
+    acc[type].push(task);
+    return acc;
+  }, {});
 
   return (
     <div
@@ -101,7 +139,7 @@ export const KanbanColumn: React.FC<KanbanColumnProps> = ({
 
       {/* Tasks Container */}
       <div
-        className={`flex-1 p-2 space-y-2 overflow-y-auto min-h-[200px] max-h-[calc(100vh-300px)] rounded-b-lg ${
+        className={`flex-1 p-2 overflow-y-auto min-h-[200px] max-h-[calc(100vh-300px)] rounded-b-lg ${
           column.column_type === 'backlog'
             ? 'bg-gray-100 dark:bg-gray-800/50'
             : column.column_type === 'triage'
@@ -120,14 +158,39 @@ export const KanbanColumn: React.FC<KanbanColumnProps> = ({
             No tasks
           </div>
         ) : (
-          tasks.map((task: Task, index: number) => (
-            <KanbanCard
-              key={task.id}
-              task={task}
-              index={index}
-              onClick={() => onTaskClick(task.id)}
-              onDragStart={() => onDragStart(task.id)}
-            />
+          Object.entries(groupedTasks).map(([taskType, tasksInGroup]) => (
+            <div key={taskType} className="mb-3">
+              {/* Group Header */}
+              <button
+                onClick={() => toggleGroup(taskType)}
+                className="w-full flex items-center justify-between px-2 py-1 text-xs font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 rounded mb-1 transition-colors"
+              >
+                <div className="flex items-center gap-1">
+                  {collapsedGroups.has(taskType) ? (
+                    <ChevronRight className="w-3 h-3" />
+                  ) : (
+                    <ChevronDown className="w-3 h-3" />
+                  )}
+                  <span>{typeLabels[taskType] || taskType}</span>
+                  <span className="text-gray-400">({tasksInGroup.length})</span>
+                </div>
+              </button>
+
+              {/* Group Tasks */}
+              {!collapsedGroups.has(taskType) && (
+                <div className="space-y-2">
+                  {tasksInGroup.map((task: Task, index: number) => (
+                    <KanbanCard
+                      key={task.id}
+                      task={task}
+                      index={index}
+                      onClick={() => onTaskClick(task.id)}
+                      onDragStart={() => onDragStart(task.id)}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
           ))
         )}
       </div>

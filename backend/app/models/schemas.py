@@ -862,7 +862,6 @@ class TaskResponse(TaskBase):
     command_id: Optional[str]
     work_order_id: Optional[UUID]
     parent_task_id: Optional[UUID]
-    related_shipment_id: Optional[UUID]
     rule_id: Optional[UUID]
     progress_percent: int
     time_logged_minutes: int
@@ -1049,6 +1048,148 @@ class TaskEscalationResponse(BaseModel):
     notified_users: List[UUID]
     actions_taken: List[str]
     notification_channels: List[str]
+
+    class Config:
+        from_attributes = True
+
+
+# ============ Actionable Registries Schemas ============
+
+class ActionableRegistryBase(BaseModel):
+    registry_name: str
+    registry_type: str  # safety, quality, environmental, operational, regulatory
+    registry_category: Optional[str] = None
+    description: Optional[str] = None
+    is_active: bool = True
+    is_compliance: bool = False
+    frequency: Optional[str] = None  # daily, weekly, monthly, quarterly, annually, as_needed
+    next_due_date: Optional[datetime] = None
+    last_completed_date: Optional[datetime] = None
+    compliance_score: int = 0
+    priority_level: str = "medium"  # low, medium, high, critical
+    assigned_owner_id: Optional[UUID] = None
+    assigned_team_id: Optional[UUID] = None
+    reference_url: Optional[str] = None
+    checklist_requirements: List[Dict[str, Any]] = []
+    meta_data: Dict[str, Any] = {}
+
+
+class ActionableRegistryCreate(ActionableRegistryBase):
+    pass
+
+
+class ActionableRegistryUpdate(BaseModel):
+    registry_name: Optional[str] = None
+    registry_type: Optional[str] = None
+    registry_category: Optional[str] = None
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
+    is_compliance: Optional[bool] = None
+    frequency: Optional[str] = None
+    next_due_date: Optional[datetime] = None
+    last_completed_date: Optional[datetime] = None
+    compliance_score: Optional[int] = None
+    priority_level: Optional[str] = None
+    assigned_owner_id: Optional[UUID] = None
+    assigned_team_id: Optional[UUID] = None
+    reference_url: Optional[str] = None
+    checklist_requirements: Optional[List[Dict[str, Any]]] = None
+    meta_data: Optional[Dict[str, Any]] = None
+
+
+class ActionableRegistryResponse(ActionableRegistryBase):
+    id: UUID
+    organization_id: UUID
+    created_by: Optional[UUID]
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ActionableRegistryItemBase(BaseModel):
+    item_code: str
+    item_name: str
+    item_description: Optional[str] = None
+    severity_level: str = "medium"  # low, medium, high, critical
+    is_active: bool = True
+    is_required: bool = True
+    completion_criteria: Optional[str] = None
+    verification_method: Optional[str] = None  # inspection, test, documentation, audit
+    estimated_effort_minutes: Optional[int] = None
+    related_task_id: Optional[UUID] = None
+    last_completed_at: Optional[datetime] = None
+    next_due_at: Optional[datetime] = None
+    completion_frequency: Optional[str] = None  # daily, weekly, monthly, quarterly, annually
+    compliance_score: int = 0
+    risk_score: int = 0
+    meta_data: Dict[str, Any] = {}
+
+
+class ActionableRegistryItemCreate(ActionableRegistryItemBase):
+    registry_id: UUID
+
+
+class ActionableRegistryItemUpdate(BaseModel):
+    item_code: Optional[str] = None
+    item_name: Optional[str] = None
+    item_description: Optional[str] = None
+    severity_level: Optional[str] = None
+    is_active: Optional[bool] = None
+    is_required: Optional[bool] = None
+    completion_criteria: Optional[str] = None
+    verification_method: Optional[str] = None
+    estimated_effort_minutes: Optional[int] = None
+    related_task_id: Optional[UUID] = None
+    last_completed_at: Optional[datetime] = None
+    next_due_at: Optional[datetime] = None
+    completion_frequency: Optional[str] = None
+    compliance_score: Optional[int] = None
+    risk_score: Optional[int] = None
+    meta_data: Optional[Dict[str, Any]] = None
+
+
+class ActionableRegistryItemResponse(ActionableRegistryItemBase):
+    id: UUID
+    registry_id: UUID
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class DataCorrelationBase(BaseModel):
+    correlation_type: str  # task_to_registry, task_to_asset, task_to_alarm, registry_to_asset
+    source_type: str  # task, registry_item, asset, alarm, operation
+    source_id: Optional[UUID] = None
+    target_type: str  # task, registry_item, asset, alarm, operation
+    target_id: Optional[UUID] = None
+    correlation_strength: int = 50  # 0-100
+    correlation_method: str = "manual"  # manual, automated, ai_suggested
+    confidence_score: int = 0  # 0-100
+    is_active: bool = True
+    is_bidirectional: bool = False
+    correlation_meta_data: Dict[str, Any] = {}
+
+
+class DataCorrelationCreate(DataCorrelationBase):
+    pass
+
+
+class DataCorrelationUpdate(BaseModel):
+    correlation_strength: Optional[int] = None
+    confidence_score: Optional[int] = None
+    is_active: Optional[bool] = None
+
+
+class DataCorrelationResponse(DataCorrelationBase):
+    id: UUID
+    organization_id: UUID
+    created_by: Optional[UUID]
+    created_at: datetime
+    updated_at: datetime
 
     class Config:
         from_attributes = True

@@ -2,16 +2,23 @@
  * TaskDetailModal - Modal for viewing and editing task details
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useKanban, Task, TaskColumn } from '../../stores/kanbanStore';
 import { Button } from '../ui/Button';
-import { X, Play, CheckCircle, AlertCircle, User, Clock, Calendar, ArrowRightLeft } from 'lucide-react';
+import { X, Play, CheckCircle, AlertCircle, User, Clock, Calendar, ArrowRightLeft, ChevronDown } from 'lucide-react';
 
 interface TaskDetailModalProps {
   isOpen: boolean;
   onClose: () => void;
   task: Task | null;
   columns: TaskColumn[];
+}
+
+interface User {
+  id: string;
+  full_name: string;
+  email: string;
+  role: string;
 }
 
 export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
@@ -24,6 +31,67 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
   const [isEditing, setIsEditing] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formData, setFormData] = useState<Partial<Task>>({});
+  const [users, setUsers] = useState<User[]>([]);
+  const [showAssignDropdown, setShowAssignDropdown] = useState(false);
+  const [isLoadingUsers, setIsLoadingUsers] = useState(false);
+
+  // Fetch users when modal opens
+  useEffect(() => {
+    const fetchUsers = async () => {
+      if (!isOpen) return;
+      setIsLoadingUsers(true);
+      try {
+        const token = localStorage.getItem('token') || 'dev-token';
+        const response = await fetch('http://localhost:8000/api/v1/auth/users', {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+          },
+        });
+        if (response.ok) {
+          const data = await response.json();
+          setUsers(data);
+        }
+      } catch (error) {
+        console.error('Failed to fetch users:', error);
+      } finally {
+        setIsLoadingUsers(false);
+      }
+    };
+    fetchUsers();
+  }, [isOpen]);
+
+  const handleAssign = async (userId: string) => {
+    setIsSubmitting(true);
+    try {
+      await updateTask(task.id, { assigned_to: userId });
+      setShowAssignDropdown(false);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleUnassign = async () => {
+    setIsSubmitting(true);
+    try {
+      await updateTask(task.id, { assigned_to: null });
+      setShowAssignDropdown(false);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Get user initials for avatar
+  const getUserInitials = (fullName: string) => {
+    return fullName
+      .split(' ')
+      .map((name) => name[0])
+      .join('')
+      .toUpperCase()
+      .slice(0, 2);
+  };
+
+  // Get assigned user
+  const assignedUser = task.assigned_to ? users.find((u) => u.id === task.assigned_to) : null;
 
   if (!isOpen || !task) return null;
 
@@ -259,14 +327,76 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                   : 'No due date'}
               </p>
             </div>
-            <div>
+            <div className="relative">
               <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                 <User className="inline w-4 h-4 mr-1" />
                 Assigned To
               </h3>
-              <p className="text-gray-900 dark:text-white">
-                {task.assigned_to ? 'Assigned' : 'Unassigned'}
-              </p>
+              <button
+                onClick={() => setShowAssignDropdown(!showAssignDropdown)}
+                disabled={isLoadingUsers || isSubmitting}
+                className="w-full flex items-center justify-between px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <div className="flex items-center gap-2">
+                  {assignedUser ? (
+                    <>
+                      <div className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white text-xs font-medium">
+                        {getUserInitials(assignedUser.full_name)}
+                      </div>
+                      <span>{assignedUser.full_name}</span>
+                    </>
+                  ) : (
+                    <>
+                      <div className="w-6 h-6 rounded-full bg-gray-200 dark:bg-gray-600 flex items-center justify-center">
+                        <User className="w-3 h-3 text-gray-400" />
+                      </div>
+                      <span className="text-gray-500 dark:text-gray-400">Unassigned</span>
+                    </>
+                  )}
+                </div>
+                <ChevronDown className="w-4 h-4 text-gray-400" />
+              </button>
+
+              {/* Dropdown */}
+              {showAssignDropdown && (
+                <div className="absolute z-10 mt-1 w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg max-h-60 overflow-y-auto">
+                  {isLoadingUsers ? (
+                    <div className="px-3 py-2 text-sm text-gray-500">Loading users...</div>
+                  ) : users.length === 0 ? (
+                    <div className="px-3 py-2 text-sm text-gray-500">No users available</div>
+                  ) : (
+                    <>
+                      {task.assigned_to && (
+                        <button
+                          onClick={handleUnassign}
+                          disabled={isSubmitting}
+                          className="w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-50"
+                        >
+                          Unassign
+                        </button>
+                      )}
+                      {users.map((user) => (
+                        <button
+                          key={user.id}
+                          onClick={() => handleAssign(user.id)}
+                          disabled={isSubmitting || user.id === task.assigned_to}
+                          className={`w-full px-3 py-2 text-left text-sm flex items-center gap-2 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed ${
+                            user.id === task.assigned_to ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600' : 'text-gray-900 dark:text-white'
+                          }`}
+                        >
+                          <div className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white text-xs font-medium">
+                            {getUserInitials(user.full_name)}
+                          </div>
+                          <div className="flex flex-col">
+                            <span className="font-medium">{user.full_name}</span>
+                            <span className="text-xs text-gray-500">{user.email}</span>
+                          </div>
+                        </button>
+                      ))}
+                    </>
+                  )}
+                </div>
+              )}
             </div>
             <div>
               <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
