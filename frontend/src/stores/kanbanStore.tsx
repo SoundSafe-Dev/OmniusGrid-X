@@ -151,8 +151,18 @@ export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       if (filters.assignee_id) queryParams.append('assignee_id', filters.assignee_id);
       if (filters.status) queryParams.append('status', filters.status);
 
+      // Get dev-token from localStorage for dev mode
+      const devToken = localStorage.getItem('devToken');
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (devToken) {
+        headers['Authorization'] = `Bearer ${devToken}`;
+      }
+
       const response = await fetch(`${API_BASE}/api/v1/kanban/board?${queryParams.toString()}`, {
         credentials: 'include',
+        headers,
       });
 
       if (!response.ok) {
@@ -173,8 +183,17 @@ export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   // Fetch metrics
   const refreshMetrics = useCallback(async () => {
     try {
+      const devToken = localStorage.getItem('devToken');
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (devToken) {
+        headers['Authorization'] = `Bearer ${devToken}`;
+      }
+
       const response = await fetch(`${API_BASE}/api/v1/kanban/metrics`, {
         credentials: 'include',
+        headers,
       });
 
       if (response.ok) {
@@ -207,9 +226,17 @@ export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   // Move task
   const moveTask = useCallback(async (taskId: string, targetColumnId: string, position?: number) => {
     try {
+      const devToken = localStorage.getItem('devToken');
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (devToken) {
+        headers['Authorization'] = `Bearer ${devToken}`;
+      }
+
       const response = await fetch(`${API_BASE}/api/v1/kanban/tasks/${taskId}/move`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         credentials: 'include',
         body: JSON.stringify({ target_column_id: targetColumnId, position }),
       });
@@ -219,8 +246,8 @@ export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       }
 
       // Update local state optimistically
-      setTasks(prev => prev.map(t => 
-        t.id === taskId 
+      setTasks(prev => prev.map(t =>
+        t.id === taskId
           ? { ...t, column_id: targetColumnId, position: position ?? t.position }
           : t
       ));
@@ -236,9 +263,17 @@ export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   // Approve/reject task
   const approveTask = useCallback(async (taskId: string, action: 'approve' | 'reject', reason?: string) => {
     try {
+      const devToken = localStorage.getItem('devToken');
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (devToken) {
+        headers['Authorization'] = `Bearer ${devToken}`;
+      }
+
       const response = await fetch(`${API_BASE}/api/v1/kanban/tasks/${taskId}/approve`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         credentials: 'include',
         body: JSON.stringify({ action, reason }),
       });
@@ -257,8 +292,17 @@ export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   // Start task
   const startTask = useCallback(async (taskId: string) => {
     try {
+      const devToken = localStorage.getItem('devToken');
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (devToken) {
+        headers['Authorization'] = `Bearer ${devToken}`;
+      }
+
       const response = await fetch(`${API_BASE}/api/v1/kanban/tasks/${taskId}/start`, {
         method: 'POST',
+        headers,
         credentials: 'include',
       });
 
@@ -276,8 +320,17 @@ export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   // Complete task
   const completeTask = useCallback(async (taskId: string) => {
     try {
+      const devToken = localStorage.getItem('devToken');
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (devToken) {
+        headers['Authorization'] = `Bearer ${devToken}`;
+      }
+
       const response = await fetch(`${API_BASE}/api/v1/kanban/tasks/${taskId}/complete`, {
         method: 'POST',
+        headers,
         credentials: 'include',
       });
 
@@ -295,9 +348,17 @@ export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   // Create task
   const createTask = useCallback(async (taskData: Partial<Task>): Promise<Task | null> => {
     try {
+      const devToken = localStorage.getItem('devToken');
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (devToken) {
+        headers['Authorization'] = `Bearer ${devToken}`;
+      }
+
       const response = await fetch(`${API_BASE}/api/v1/kanban/tasks`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         credentials: 'include',
         body: JSON.stringify(taskData),
       });
@@ -319,9 +380,17 @@ export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   // Update task
   const updateTask = useCallback(async (taskId: string, updates: Partial<Task>) => {
     try {
+      const devToken = localStorage.getItem('devToken');
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (devToken) {
+        headers['Authorization'] = `Bearer ${devToken}`;
+      }
+
       const response = await fetch(`${API_BASE}/api/v1/kanban/tasks/${taskId}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         credentials: 'include',
         body: JSON.stringify(updates),
       });
@@ -331,16 +400,27 @@ export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       }
 
       await refreshBoard();
+      await refreshMetrics();
     } catch (err) {
+      console.error('Failed to update task:', err);
       throw err;
     }
-  }, [refreshBoard]);
+  }, [refreshBoard, refreshMetrics]);
 
   // Delete task
   const deleteTask = useCallback(async (taskId: string) => {
     try {
+      const devToken = localStorage.getItem('devToken');
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (devToken) {
+        headers['Authorization'] = `Bearer ${devToken}`;
+      }
+
       const response = await fetch(`${API_BASE}/api/v1/kanban/tasks/${taskId}`, {
         method: 'DELETE',
+        headers,
         credentials: 'include',
       });
 
@@ -351,10 +431,12 @@ export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       await refreshBoard();
       await refreshMetrics();
     } catch (err) {
+      console.error('Failed to delete task:', err);
       throw err;
     }
   }, [refreshBoard, refreshMetrics]);
 
+  // Context value
   const value: KanbanContextType = {
     board,
     columns,
