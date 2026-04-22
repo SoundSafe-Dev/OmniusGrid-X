@@ -10,9 +10,9 @@ import { KanbanFilters } from '../components/kanban/KanbanFilters';
 import { KanbanMetricsBar } from '../components/kanban/KanbanMetricsBar';
 import { CreateTaskModal } from '../components/kanban/CreateTaskModal';
 import { TaskDetailModal } from '../components/kanban/TaskDetailModal';
-import { KanbanProvider, useKanban } from '../stores/kanbanStore';
+import { KanbanProvider, useKanban, Task } from '../stores/kanbanStore';
 import { Button } from '../components/ui/Button';
-import { Plus, Filter, LayoutGrid, List } from 'lucide-react';
+import { Plus, Filter, LayoutGrid, List, AlertCircle, RefreshCw } from 'lucide-react';
 
 // Inner component that uses kanban context
 const KanbanContent: React.FC = () => {
@@ -26,6 +26,7 @@ const KanbanContent: React.FC = () => {
     metrics, 
     filters, 
     isLoading, 
+    error,
     setFilters, 
     refreshBoard,
     moveTask 
@@ -151,6 +152,21 @@ const KanbanContent: React.FC = () => {
         {isLoading ? (
           <div className="h-full flex items-center justify-center">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
+          </div>
+        ) : error ? (
+          <div className="h-full flex items-center justify-center">
+            <div className="text-center">
+              <AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
+              <p className="text-gray-600 dark:text-gray-400 mb-4">{error}</p>
+              <Button
+                variant="primary"
+                onClick={refreshBoard}
+                className="flex items-center gap-2 mx-auto"
+              >
+                <RefreshCw className="w-4 h-4" />
+                Retry
+              </Button>
+            </div>
           </div>
         ) : (
           <KanbanBoard
