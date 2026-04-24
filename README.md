@@ -300,6 +300,7 @@ OmniusGrid/
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
+| GET | `/api/v1/auth/users` | Get organization users (paginated) |
 | POST | `/admin/collectors/{id}/restart` | Restart collector |
 | POST | `/admin/assets/{id}/maintenance` | Set maintenance mode |
 | GET | `/admin/system/status` | System health status |
