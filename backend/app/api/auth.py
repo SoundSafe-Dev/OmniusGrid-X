@@ -253,19 +253,28 @@ async def get_organization_users(
 ):
     """Get all users in the organization for assignment"""
     if not current_user.organization_id:
-        return []
+        return {"items": [], "total": 0}
     
     result = await db.execute(
         select(User).where(User.organization_id == current_user.organization_id)
     )
     users = result.scalars().all()
     
-    return [
+    user_list = [
         {
             "id": str(user.id),
+            "name": user.full_name,
             "full_name": user.full_name,
             "email": user.email,
-            "role": user.role
+            "role": user.role,
+            "isActive": user.is_active,
+            "createdAt": user.created_at.isoformat() if user.created_at else None,
+            "updatedAt": user.updated_at.isoformat() if user.updated_at else None
         }
         for user in users
     ]
+    
+    return {
+        "items": user_list,
+        "total": len(user_list)
+    }
