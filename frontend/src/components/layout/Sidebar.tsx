@@ -41,6 +41,7 @@ const navItems: NavItem[] = [
     path: '/engines',
     label: 'AI Engines',
     icon: Brain,
+    adminOnly: true,
     children: [
       { path: '/engines/tactical', label: 'Tactical', icon: Brain },
       { path: '/engines/strategic', label: 'Strategic', icon: Brain },

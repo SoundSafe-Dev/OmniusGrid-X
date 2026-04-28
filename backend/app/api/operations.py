@@ -9,9 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db
 from app.db.models import Operation, Asset, PackMLState
+from app.api.auth import get_current_active_user
 from app.models.schemas import OperationCreate, OperationResponse
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
 
 @router.get("/", response_model=List[OperationResponse])
@@ -23,7 +24,7 @@ async def list_operations(
     end_time: Optional[datetime] = None,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """List operations with filtering"""
     query = select(Operation)
@@ -50,7 +51,7 @@ async def list_operations(
 async def get_active_operations(
     organization_id: Optional[UUID] = None,
     workcell_id: Optional[UUID] = None,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Get currently running operations"""
     query = select(Operation).where(Operation.status == 'running')
@@ -85,7 +86,7 @@ async def get_active_operations(
 @router.get("/{operation_id}", response_model=OperationResponse)
 async def get_operation(
     operation_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Get a single operation by ID"""
     result = await db.execute(
@@ -102,7 +103,7 @@ async def get_operation(
 @router.post("/", response_model=OperationResponse)
 async def create_operation(
     operation_data: OperationCreate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Start a new operation"""
     # Verify asset exists
@@ -129,7 +130,7 @@ async def complete_operation(
     operation_id: UUID,
     success: bool = True,
     metadata: Optional[dict] = None,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Mark an operation as completed"""
     result = await db.execute(
@@ -198,7 +199,7 @@ async def _calculate_state_durations(operation: Operation, db: AsyncSession):
 @router.get("/{operation_id}/packml-summary")
 async def get_operation_packml_summary(
     operation_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Get PackML state breakdown for an operation"""
     result = await db.execute(

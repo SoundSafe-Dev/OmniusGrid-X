@@ -9,15 +9,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db
 from app.db.models import Telemetry, Asset, PackMLState
+from app.api.auth import get_current_active_user
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
 
 @router.get("/{asset_id}/latest")
 async def get_latest_telemetry(
     asset_id: UUID,
     metric_name: Optional[str] = None,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Get latest telemetry for an asset"""
     # Verify asset exists
@@ -60,7 +61,7 @@ async def get_telemetry_history(
     aggregation: Optional[str] = Query(None, enum=["1min", "5min", "1hour"]),
     skip: int = Query(0, ge=0),
     limit: int = Query(1000, ge=1, le=10000),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Get telemetry history for an asset"""
     # Set default time range if not provided
@@ -111,7 +112,7 @@ async def get_telemetry_history(
 @router.get("/{asset_id}/metrics")
 async def get_available_metrics(
     asset_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Get list of available metrics for an asset"""
     result = await db.execute(

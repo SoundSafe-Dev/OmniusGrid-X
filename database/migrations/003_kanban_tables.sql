@@ -21,6 +21,26 @@ CREATE TABLE IF NOT EXISTS commands (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- If the `commands` table already existed (from older init scripts), `CREATE TABLE IF NOT EXISTS`
+-- won't backfill new columns. Ensure required columns exist before creating indexes.
+ALTER TABLE commands
+    ADD COLUMN IF NOT EXISTS organization_id UUID,
+    ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW(),
+    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'commands_organization_id_fkey'
+    ) THEN
+        ALTER TABLE commands
+            ADD CONSTRAINT commands_organization_id_fkey
+            FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE;
+    END IF;
+END $$;
+
 CREATE INDEX IF NOT EXISTS idx_commands_asset ON commands(asset_id);
 CREATE INDEX IF NOT EXISTS idx_commands_status ON commands(status);
 CREATE INDEX IF NOT EXISTS idx_commands_org ON commands(organization_id);
@@ -81,7 +101,9 @@ CREATE TABLE IF NOT EXISTS tasks (
     -- Relationships to OmniusGrid entities
     asset_id UUID REFERENCES assets(id) ON DELETE SET NULL,
     operation_id UUID REFERENCES operations(id) ON DELETE SET NULL,
-    alarm_id UUID REFERENCES alarms(id) ON DELETE SET NULL,
+    -- alarms has a composite primary key (id, occurred_at) in the base schema, so we cannot
+    -- create a FK to alarms(id) alone. Keep the reference as an unvalidated id pointer.
+    alarm_id UUID,
     command_id VARCHAR(255),
     work_order_id UUID,
     parent_task_id UUID REFERENCES tasks(id) ON DELETE SET NULL,

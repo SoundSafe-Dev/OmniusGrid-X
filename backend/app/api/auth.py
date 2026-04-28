@@ -10,7 +10,7 @@ from passlib.context import CryptContext
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.database import get_db
+from app.db.database import get_db, AsyncSessionLocal
 from app.db.models import User, Organization
 from app.models.schemas import Token, UserLogin, UserCreate
 from app.core.config import settings
@@ -22,6 +22,76 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # OAuth2 scheme
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v1/auth/login")
+
+# Console / admin-only API surface (dev login and real admins)
+ADMIN_CONSOLE_ROLES = frozenset({"admin"})
+
+DEV_ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
+DEV_USER_ID = UUID("00000000-0000-0000-0000-000000000001")
+
+
+async def get_or_create_dev_admin_user(db: AsyncSession) -> User:
+    """Bootstrap dev org + admin user for dev-token (HTTP or WebSocket)."""
+    org_result = await db.execute(select(Organization).where(Organization.id == DEV_ORG_ID))
+    org = org_result.scalar_one_or_none()
+    if not org:
+        import uuid as uuid_lib
+
+        org = Organization(
+            id=DEV_ORG_ID,
+            name="Dev Organization",
+            slug=f"dev-{uuid_lib.uuid4().hex[:8]}",
+        )
+        db.add(org)
+        await db.commit()
+
+    user_result = await db.execute(select(User).where(User.id == DEV_USER_ID))
+    user = user_result.scalar_one_or_none()
+    if not user:
+        user = User(
+            id=DEV_USER_ID,
+            email="admin@omniusgrid.com",
+            full_name="Dev Admin",
+            role="admin",
+            is_active=True,
+            organization_id=DEV_ORG_ID,
+            hashed_password="$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYHqF5pXa9W",
+        )
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+
+    return user
+
+
+async def resolve_websocket_user(token: Optional[str]) -> Optional[User]:
+    """Authenticate WebSocket clients (JWT or dev-token)."""
+    if not token:
+        return None
+    if token == "dev-token":
+        async with AsyncSessionLocal() as db:
+            return await get_or_create_dev_admin_user(db)
+    try:
+        payload = jwt.decode(
+            token,
+            settings.JWT_SECRET_KEY,
+            algorithms=[settings.JWT_ALGORITHM],
+        )
+        user_id = payload.get("sub")
+        if user_id is None:
+            return None
+        exp = payload.get("exp")
+        if exp and datetime.utcnow().timestamp() > exp:
+            return None
+    except JWTError:
+        return None
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+        if user and user.is_active:
+            return user
+    return None
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -79,53 +149,24 @@ async def get_current_active_user(
 ) -> User:
     # DEV MODE: Bypass authentication for dev-token
     if token == "dev-token":
-        # Create or get dev user from database
-        dev_org_id = UUID("00000000-0000-0000-0000-000000000001")
-        dev_user_id = UUID("00000000-0000-0000-0000-000000000001")
-
-        # Check if dev org exists, create if not
-        org_result = await db.execute(
-            select(Organization).where(Organization.id == dev_org_id)
-        )
-        org = org_result.scalar_one_or_none()
-        if not org:
-            # Use random slug to avoid conflicts
-            import uuid as uuid_lib
-            org = Organization(
-                id=dev_org_id,
-                name="Dev Organization",
-                slug=f"dev-{uuid_lib.uuid4().hex[:8]}"
-            )
-            db.add(org)
-            await db.commit()
-
-        # Check if dev user exists, create if not
-        user_result = await db.execute(
-            select(User).where(User.id == dev_user_id)
-        )
-        user = user_result.scalar_one_or_none()
-        if not user:
-            # Use a pre-h bcrypt password for "dev" to avoid runtime issues
-            # bcrypt hash of "dev" is: $2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYHqF5pXa9W
-            user = User(
-                id=dev_user_id,
-                email="admin@omniusgrid.com",
-                full_name="Dev Admin",
-                role="admin",
-                is_active=True,
-                organization_id=dev_org_id,
-                hashed_password="$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYHqF5pXa9W"
-            )
-            db.add(user)
-            await db.commit()
-            await db.refresh(user)
-
-        return user
+        return await get_or_create_dev_admin_user(db)
 
     # Normal authentication flow
     current_user = await get_current_user(token, db)
     if not current_user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
+    return current_user
+
+
+async def require_admin_user(
+    current_user: User = Depends(get_current_active_user),
+) -> User:
+    """All current OmniusGrid console features require admin (includes dev-token user)."""
+    if current_user.role not in ADMIN_CONSOLE_ROLES:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Administrator access required for this resource.",
+        )
     return current_user
 
 
@@ -207,7 +248,7 @@ async def get_current_user_info(
 
 @router.get("/users")
 async def get_organization_users(
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_admin_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Get all users in the organization for assignment"""

@@ -8,12 +8,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db
 from app.db.models import Asset, AssetType, Workcell, Organization
+from app.api.auth import get_current_active_user
 from app.models.schemas import (
     AssetCreate, AssetResponse, AssetUpdate,
     AssetTypeCreate, AssetTypeResponse
 )
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
 
 @router.get("/", response_model=List[AssetResponse])
@@ -24,7 +25,7 @@ async def list_assets(
     is_active: Optional[bool] = None,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """List assets with optional filtering"""
     query = select(Asset)
@@ -48,7 +49,7 @@ async def list_assets(
 @router.get("/{asset_id}", response_model=AssetResponse)
 async def get_asset(
     asset_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Get a single asset by ID"""
     result = await db.execute(
@@ -65,7 +66,7 @@ async def get_asset(
 @router.post("/", response_model=AssetResponse)
 async def create_asset(
     asset_data: AssetCreate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Create a new asset"""
     # Verify asset type exists
@@ -88,7 +89,7 @@ async def create_asset(
 async def update_asset(
     asset_id: UUID,
     asset_data: AssetUpdate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Update an existing asset"""
     result = await db.execute(
@@ -113,7 +114,7 @@ async def update_asset(
 @router.delete("/{asset_id}")
 async def delete_asset(
     asset_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Delete an asset (soft delete by deactivating)"""
     result = await db.execute(
@@ -133,7 +134,7 @@ async def delete_asset(
 @router.get("/types/", response_model=List[AssetTypeResponse])
 async def list_asset_types(
     category: Optional[str] = None,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """List asset types"""
     query = select(AssetType)
@@ -148,7 +149,7 @@ async def list_asset_types(
 @router.get("/{asset_id}/status")
 async def get_asset_status(
     asset_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Get current asset status including PackML state"""
     result = await db.execute(

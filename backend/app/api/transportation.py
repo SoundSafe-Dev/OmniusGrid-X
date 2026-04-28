@@ -21,8 +21,13 @@ from app.models.schemas import (
     FreightChargeCreate, FreightChargeResponse
 )
 from app.services.transportation_management import transportation_management_service
+from app.api.auth import get_current_active_user
 
-router = APIRouter(prefix="/transportation", tags=["transportation_management"])
+router = APIRouter(
+    prefix="/transportation",
+    tags=["transportation_management"],
+    dependencies=[Depends(get_current_active_user)],
+)
 
 
 # ==================== Carrier Endpoints ====================

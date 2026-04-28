@@ -1,5 +1,6 @@
 """API routes for AI Engine management"""
 
+from datetime import datetime
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -8,8 +9,9 @@ from app.services.tactical_engine import tactical_engine
 from app.services.strategic_engine import strategic_engine, StrategicRecommendation
 from app.services.mlops_pipeline import mlops_pipeline
 from app.services.cloud_gateway import cloud_gateway
+from app.api.auth import require_admin_user
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_admin_user)])
 
 
 # Pydantic models
@@ -170,6 +172,3 @@ async def force_cloud_flush():
     """Force immediate flush of queued data to cloud"""
     await cloud_gateway._flush_batch()
     return {"message": "Flush initiated"}
-
-
-from datetime import datetime

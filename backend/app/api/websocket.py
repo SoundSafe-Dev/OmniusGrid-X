@@ -6,7 +6,7 @@ import json
 import structlog
 
 from app.services.websocket_manager import websocket_manager
-from app.core.security import get_current_user_ws
+from app.api.auth import resolve_websocket_user
 
 logger = structlog.get_logger()
 router = APIRouter()
@@ -38,20 +38,17 @@ async def websocket_endpoint(
     - command_status: Command execution updates
     - connection_established: Initial connection confirmation
     """
-    # Validate authentication
-    user = None
-    if token:
-        try:
-            user = await get_current_user_ws(token)
-        except Exception as e:
-            await websocket.close(code=1008, reason="Authentication failed")
-            logger.warning("websocket_auth_failed", error=str(e))
-            return
-    
+    # User WebSocket: any authenticated user (includes dev-token user)
+    user = await resolve_websocket_user(token)
+    if not user:
+        await websocket.close(code=1008, reason="Authentication required")
+        logger.warning("websocket_auth_failed", reason="missing_token_or_invalid_token")
+        return
+
     # Default to user's organization if not specified
     if not organization_id and user:
         organization_id = str(user.organization_id)
-    
+
     if not organization_id:
         await websocket.close(code=1008, reason="Organization ID required")
         return

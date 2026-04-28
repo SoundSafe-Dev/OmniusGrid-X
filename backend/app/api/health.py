@@ -8,6 +8,8 @@ import asyncio
 
 from app.db.database import get_db
 from app.core.config import settings
+from app.db.models import User
+from app.api.auth import require_admin_user
 
 router = APIRouter()
 
@@ -140,7 +142,10 @@ async def metrics():
 
 # Manual override endpoints for on-site engineers
 @router.post("/admin/collectors/{collector_id}/restart")
-async def restart_collector(collector_id: str):
+async def restart_collector(
+    collector_id: str,
+    _: User = Depends(require_admin_user),
+):
     """Manual override: Restart a collector plugin"""
     # This would signal the edge agent to restart a specific collector
     # Implementation depends on command queue setup
@@ -152,7 +157,11 @@ async def restart_collector(collector_id: str):
 
 
 @router.post("/admin/assets/{asset_id}/maintenance")
-async def set_maintenance_mode(asset_id: str, enabled: bool = True):
+async def set_maintenance_mode(
+    asset_id: str,
+    _: User = Depends(require_admin_user),
+    enabled: bool = True,
+):
     """Manual override: Set asset to maintenance mode (blocks game-theoretic commands)"""
     from sqlalchemy import text
     
@@ -176,7 +185,7 @@ async def set_maintenance_mode(asset_id: str, enabled: bool = True):
 
 
 @router.post("/admin/database/vacuum")
-async def trigger_database_vacuum():
+async def trigger_database_vacuum(_: User = Depends(require_admin_user)):
     """Manual override: Trigger database vacuum (maintenance)"""
     from sqlalchemy import text
     
@@ -193,7 +202,7 @@ async def trigger_database_vacuum():
 
 
 @router.get("/admin/system/status")
-async def get_system_status():
+async def get_system_status(_: User = Depends(require_admin_user)):
     """Get comprehensive system status for engineers"""
     return {
         "services": {

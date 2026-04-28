@@ -26,8 +26,13 @@ from app.models.schemas import (
 from app.services.yard_management import (
     yard_management_service, dock_scheduler, DetentionCalculator
 )
+from app.api.auth import get_current_active_user
 
-router = APIRouter(prefix="/yard", tags=["yard_management"])
+router = APIRouter(
+    prefix="/yard",
+    tags=["yard_management"],
+    dependencies=[Depends(get_current_active_user)],
+)
 
 
 # ==================== Yard Trailer Endpoints ====================

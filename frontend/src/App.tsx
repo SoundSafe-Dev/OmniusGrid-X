@@ -1,6 +1,6 @@
 import { FC } from 'react'
 import { Routes, Route } from 'react-router-dom'
-import { Layout, ProtectedRoute } from './components'
+import { Layout, ProtectedRoute, AdminRoute } from './components'
 import { Login } from './pages/auth'
 
 // Existing pages
@@ -26,6 +26,8 @@ import { Users, Collectors, SystemHealth, Settings } from './pages/admin'
 // Logistics pages
 import { YardManagement, TransportationManagement } from './pages/logistics'
 
+import { UserAppPlaceholder } from './pages/user/UserAppPlaceholder'
+
 const App: FC = () => {
   return (
     <Routes>
@@ -34,6 +36,8 @@ const App: FC = () => {
 
         {/* Protected Routes */}
         <Route element={<ProtectedRoute />}>
+          <Route path="/app" element={<UserAppPlaceholder />} />
+
           <Route element={<Layout />}>
             {/* Dashboard */}
             <Route path="/" element={<Dashboard />} />
@@ -71,10 +75,12 @@ const App: FC = () => {
             <Route path="/logistics/transportation" element={<TransportationManagement />} />
 
             {/* Admin */}
-            <Route path="/admin/users" element={<Users />} />
-            <Route path="/admin/collectors" element={<Collectors />} />
-            <Route path="/admin/health" element={<SystemHealth />} />
-            <Route path="/admin/settings" element={<Settings />} />
+            <Route element={<AdminRoute />}>
+              <Route path="/admin/users" element={<Users />} />
+              <Route path="/admin/collectors" element={<Collectors />} />
+              <Route path="/admin/health" element={<SystemHealth />} />
+              <Route path="/admin/settings" element={<Settings />} />
+            </Route>
           </Route>
         </Route>
 

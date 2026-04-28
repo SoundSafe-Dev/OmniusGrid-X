@@ -7,8 +7,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db, AsyncSessionLocal
-from app.db.models import Command, Asset
-from app.api.auth import get_current_active_user
+from app.db.models import Command, Asset, User
+from app.api.auth import require_admin_user
 from app.services.command_executor import command_executor, CommandStatus
 from app.services.websocket_manager import websocket_manager
 
@@ -45,7 +45,7 @@ class CommandSubmitResponse(BaseModel):
 @router.post("/submit", response_model=CommandSubmitResponse)
 async def submit_command(
     request: CommandSubmitRequest,
-    current_user = Depends(get_current_active_user)
+    current_user: User = Depends(require_admin_user),
 ):
     """
     Submit a new command for execution on an asset.
@@ -93,7 +93,7 @@ async def submit_command(
 @router.get("/status/{command_id}", response_model=CommandResponse)
 async def get_command_status(
     command_id: str,
-    current_user = Depends(get_current_active_user)
+    current_user: User = Depends(require_admin_user),
 ):
     """Get status of a specific command"""
     status = await command_executor.get_command_status(command_id)
@@ -107,7 +107,7 @@ async def get_command_status(
 @router.post("/cancel/{command_id}")
 async def cancel_command(
     command_id: str,
-    current_user = Depends(get_current_active_user)
+    current_user: User = Depends(require_admin_user),
 ):
     """Cancel a pending or executing command"""
     success = await command_executor.cancel_command(
@@ -129,8 +129,8 @@ async def get_asset_commands(
     asset_id: str,
     status: Optional[str] = None,
     limit: int = 50,
-    current_user = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
+    current_user: User = Depends(require_admin_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """Get command history for an asset"""
     # Verify asset access
@@ -169,7 +169,7 @@ async def get_asset_commands(
 
 @router.get("/queue/status")
 async def get_queue_status(
-    current_user = Depends(get_current_active_user)
+    current_user: User = Depends(require_admin_user),
 ):
     """Get current command queue status"""
     return {
@@ -182,7 +182,7 @@ async def get_queue_status(
 @router.post("/asset/{asset_id}/emergency-stop")
 async def emergency_stop(
     asset_id: str,
-    current_user = Depends(get_current_active_user)
+    current_user: User = Depends(require_admin_user),
 ):
     """
     Emergency stop - immediately halt asset operation.

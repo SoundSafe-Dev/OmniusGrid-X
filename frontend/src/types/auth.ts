@@ -28,31 +28,46 @@ export interface Permission {
   action: 'create' | 'read' | 'update' | 'delete' | 'manage';
 }
 
+/** Technical console (current app) is admin-only at API and UI level. */
+export function isConsoleAdminUser(user: User | null | undefined): boolean {
+  return user?.role === 'admin';
+}
+
 export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
-  admin: [
-    { resource: '*', action: 'manage' },
-  ],
+  admin: [{ resource: '*', action: 'manage' }],
   operator: [
     { resource: 'assets', action: 'read' },
     { resource: 'assets', action: 'update' },
     { resource: 'alarms', action: 'read' },
     { resource: 'alarms', action: 'update' },
     { resource: 'telemetry', action: 'read' },
-    { resource: 'engines', action: 'read' },
-    { resource: 'engines', action: 'update' },
+    { resource: 'oee', action: 'read' },
+    { resource: 'kanban', action: 'read' },
+    { resource: 'kanban', action: 'update' },
+    { resource: 'fleet', action: 'read' },
+    { resource: 'logistics', action: 'read' },
   ],
   viewer: [
     { resource: 'assets', action: 'read' },
     { resource: 'alarms', action: 'read' },
     { resource: 'telemetry', action: 'read' },
-    { resource: 'engines', action: 'read' },
+    { resource: 'oee', action: 'read' },
+    { resource: 'kanban', action: 'read' },
+    { resource: 'fleet', action: 'read' },
+    { resource: 'logistics', action: 'read' },
   ],
   maintenance: [
     { resource: 'assets', action: 'read' },
     { resource: 'assets', action: 'update' },
     { resource: 'alarms', action: 'read' },
     { resource: 'alarms', action: 'update' },
+    { resource: 'telemetry', action: 'read' },
+    { resource: 'oee', action: 'read' },
+    { resource: 'kanban', action: 'read' },
+    { resource: 'kanban', action: 'update' },
     { resource: 'collectors', action: 'manage' },
+    { resource: 'fleet', action: 'read' },
+    { resource: 'logistics', action: 'read' },
   ],
 };
 
