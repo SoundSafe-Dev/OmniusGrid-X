@@ -11,14 +11,15 @@ const mockAssets: Asset[] = [
   {
     id: 'asset-1',
     name: 'Printer #1 (Bambu Labs X1)',
-    typeId: 'printer',
+    assetTypeId: 'printer',
     organizationId: 'org-1',
     workcellId: 'workcell-1',
     vendor: 'Bambu Labs',
     model: 'X1 Carbon',
     serialNumber: 'BLX1001',
-    currentPackMLState: 'Execute',
+    currentPackmlState: 'Execute',
     connectionConfig: { protocol: 'MQTT', endpoint: '192.168.1.100' },
+    isInMaintenance: false,
     isActive: true,
     lastSeen: new Date().toISOString(),
     createdAt: new Date().toISOString(),
@@ -27,14 +28,15 @@ const mockAssets: Asset[] = [
   {
     id: 'asset-2',
     name: 'Printer #2 (Bambu Labs X1)',
-    typeId: 'printer',
+    assetTypeId: 'printer',
     organizationId: 'org-1',
     workcellId: 'workcell-1',
     vendor: 'Bambu Labs',
     model: 'X1 Carbon',
     serialNumber: 'BLX1002',
-    currentPackMLState: 'Idle',
+    currentPackmlState: 'Idle',
     connectionConfig: { protocol: 'MQTT', endpoint: '192.168.1.101' },
+    isInMaintenance: false,
     isActive: true,
     lastSeen: new Date().toISOString(),
     createdAt: new Date().toISOString(),
@@ -43,14 +45,15 @@ const mockAssets: Asset[] = [
   {
     id: 'asset-3',
     name: 'Printer #3 (QIDI X-Max 3)',
-    typeId: 'printer',
+    assetTypeId: 'printer',
     organizationId: 'org-1',
     workcellId: 'workcell-1',
     vendor: 'QIDI',
     model: 'X-Max 3',
     serialNumber: 'QX3001',
-    currentPackMLState: 'Held',
+    currentPackmlState: 'Held',
     connectionConfig: { protocol: 'ScreenScrape', endpoint: '192.168.1.102' },
+    isInMaintenance: false,
     isActive: true,
     lastSeen: new Date().toISOString(),
     createdAt: new Date().toISOString(),
@@ -59,14 +62,15 @@ const mockAssets: Asset[] = [
   {
     id: 'asset-4',
     name: 'Conveyor Belt A',
-    typeId: 'conveyor',
+    assetTypeId: 'conveyor',
     organizationId: 'org-1',
     workcellId: 'workcell-2',
     vendor: 'Siemens',
     model: 'SIMATIC CF-100',
     serialNumber: 'SCF2001',
-    currentPackMLState: 'Execute',
+    currentPackmlState: 'Execute',
     connectionConfig: { protocol: 'OPC-UA', endpoint: 'opc.tcp://192.168.1.200' },
+    isInMaintenance: false,
     isActive: true,
     lastSeen: new Date().toISOString(),
     createdAt: new Date().toISOString(),
@@ -75,14 +79,15 @@ const mockAssets: Asset[] = [
   {
     id: 'asset-5',
     name: 'CNC Mill #1',
-    typeId: 'cnc',
+    assetTypeId: 'cnc',
     organizationId: 'org-1',
     workcellId: 'workcell-3',
     vendor: 'Haas',
     model: 'VF-2',
     serialNumber: 'HAAS001',
-    currentPackMLState: 'Idle',
+    currentPackmlState: 'Idle',
     connectionConfig: { protocol: 'MTConnect', endpoint: '192.168.1.150' },
+    isInMaintenance: false,
     isActive: true,
     lastSeen: new Date().toISOString(),
     createdAt: new Date().toISOString(),
@@ -358,24 +363,118 @@ export const mockApi = {
   },
   
   // Telemetry
-  getLatestTelemetry: async (_assetId: string): Promise<Record<string, TelemetryPoint>> => {
+  getLatestTelemetry: async (assetId: string): Promise<Record<string, TelemetryPoint>> => {
     await delay(MOCK_DELAY);
-    return {
-      'nozzle_temp': { metricName: 'nozzle_temp', value: 245.5, unit: '°C', timestamp: new Date().toISOString() },
-      'bed_temp': { metricName: 'bed_temp', value: 65.0, unit: '°C', timestamp: new Date().toISOString() },
-      'progress': { metricName: 'progress', value: 67.3, unit: '%', timestamp: new Date().toISOString() },
-      'print_speed': { metricName: 'print_speed', value: 150.0, unit: 'mm/s', timestamp: new Date().toISOString() },
-    };
+    
+    const asset = mockAssets.find(a => a.id === assetId);
+    const timestamp = new Date().toISOString();
+    
+    // Machine-specific telemetry based on asset type
+    switch (asset?.assetTypeId) {
+      case 'printer':
+        return {
+          'nozzle_temp': { metricName: 'nozzle_temp', value: 245.5 + Math.random() * 10, unit: '°C', timestamp },
+          'bed_temp': { metricName: 'bed_temp', value: 65.0 + Math.random() * 5, unit: '°C', timestamp },
+          'progress': { metricName: 'progress', value: 67.3 + Math.random() * 10, unit: '%', timestamp },
+          'print_speed': { metricName: 'print_speed', value: 150.0 + Math.random() * 20, unit: 'mm/s', timestamp },
+          'layer_height': { metricName: 'layer_height', value: 0.2, unit: 'mm', timestamp },
+          'filament_used': { metricName: 'filament_used', value: 1234.5, unit: 'g', timestamp },
+        };
+      
+      case 'conveyor':
+        return {
+          'speed': { metricName: 'speed', value: 2.5 + Math.random() * 0.5, unit: 'm/s', timestamp },
+          'load': { metricName: 'load', value: 85.2 + Math.random() * 10, unit: '%', timestamp },
+          'temperature': { metricName: 'temperature', value: 45.3 + Math.random() * 5, unit: '°C', timestamp },
+          'vibration': { metricName: 'vibration', value: 0.8 + Math.random() * 0.2, unit: 'g', timestamp },
+          'power_consumption': { metricName: 'power_consumption', value: 3.2 + Math.random() * 0.5, unit: 'kW', timestamp },
+        };
+      
+      case 'cnc':
+        return {
+          'spindle_rpm': { metricName: 'spindle_rpm', value: 12000 + Math.random() * 1000, unit: 'RPM', timestamp },
+          'feed_rate': { metricName: 'feed_rate', value: 500.0 + Math.random() * 50, unit: 'mm/min', timestamp },
+          'spindle_load': { metricName: 'spindle_load', value: 75.3 + Math.random() * 10, unit: '%', timestamp },
+          'tool_temperature': { metricName: 'tool_temperature', value: 35.2 + Math.random() * 3, unit: '°C', timestamp },
+          'cutting_force': { metricName: 'cutting_force', value: 1250.5 + Math.random() * 100, unit: 'N', timestamp },
+          'position_x': { metricName: 'position_x', value: 150.5, unit: 'mm', timestamp },
+          'position_y': { metricName: 'position_y', value: 75.3, unit: 'mm', timestamp },
+          'position_z': { metricName: 'position_z', value: -25.8, unit: 'mm', timestamp },
+        };
+      
+      default:
+        return {
+          'status': { metricName: 'status', value: 1, unit: '', timestamp },
+          'temperature': { metricName: 'temperature', value: 25.0 + Math.random() * 5, unit: '°C', timestamp },
+        };
+    }
   },
   
-  getTelemetryHistory: async (_assetId: string, _metricName: string): Promise<TelemetryPoint[]> => {
+  getTelemetryHistory: async (assetId: string, metricName: string): Promise<TelemetryPoint[]> => {
     await delay(MOCK_DELAY);
-    return Array.from({ length: 50 }, (_, i) => ({
-      metricName: 'nozzle_temp',
-      value: 240 + Math.random() * 20,
-      unit: '°C',
-      timestamp: new Date(Date.now() - (49 - i) * 60000).toISOString(),
-    }));
+    
+    const asset = mockAssets.find(a => a.id === assetId);
+    
+    // Generate machine-specific historical data
+    const generateHistory = (baseValue: number, variance: number, unit: string) => {
+      return Array.from({ length: 50 }, (_, i) => ({
+        metricName,
+        value: baseValue + (Math.random() - 0.5) * variance,
+        unit,
+        timestamp: new Date(Date.now() - (49 - i) * 60000).toISOString(),
+      }));
+    };
+    
+    switch (asset?.assetTypeId) {
+      case 'printer':
+        switch (metricName) {
+          case 'nozzle_temp':
+            return generateHistory(245, 20, '°C');
+          case 'bed_temp':
+            return generateHistory(65, 10, '°C');
+          case 'progress':
+            return generateHistory(50, 30, '%');
+          case 'print_speed':
+            return generateHistory(150, 50, 'mm/s');
+          default:
+            return generateHistory(100, 20, '');
+        }
+      
+      case 'conveyor':
+        switch (metricName) {
+          case 'speed':
+            return generateHistory(2.5, 1, 'm/s');
+          case 'load':
+            return generateHistory(80, 20, '%');
+          case 'temperature':
+            return generateHistory(45, 10, '°C');
+          case 'vibration':
+            return generateHistory(0.8, 0.4, 'g');
+          case 'power_consumption':
+            return generateHistory(3.2, 1, 'kW');
+          default:
+            return generateHistory(50, 20, '');
+        }
+      
+      case 'cnc':
+        switch (metricName) {
+          case 'spindle_rpm':
+            return generateHistory(12000, 2000, 'RPM');
+          case 'feed_rate':
+            return generateHistory(500, 200, 'mm/min');
+          case 'spindle_load':
+            return generateHistory(75, 25, '%');
+          case 'tool_temperature':
+            return generateHistory(35, 10, '°C');
+          case 'cutting_force':
+            return generateHistory(1250, 300, 'N');
+          default:
+            return generateHistory(100, 50, '');
+        }
+      
+      default:
+        return generateHistory(25, 10, '°C');
+    }
   },
   
   // Workcells & Organizations

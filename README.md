@@ -135,12 +135,26 @@ docker-compose exec timescaledb psql -U omniusgrid -d omniusgrid \
 | Service | URL | Credentials |
 |---------|-----|-------------|
 | Dashboard | http://localhost:9999 | - |
-| API | http://localhost:8000 | Bearer token |
-| API Docs | http://localhost:8000/docs | - |
+| API | http://localhost:8002 | Bearer token |
+| API Docs | http://localhost:8002/docs | - |
 | Grafana | http://localhost:3001 | `admin` / `omniusgrid_admin` |
 | Prometheus | http://localhost:9090 | - |
 | Alertmanager | http://localhost:9093 | - |
 | Redpanda Console | http://localhost:9644 | - |
+
+### Demo Data & Mock API
+
+The frontend includes a comprehensive mock API system for demonstration and development:
+
+- **Machine-Specific Telemetry**: Each asset type provides realistic telemetry data
+  - 3D Printers: Nozzle/bed temperature, print speed, progress, filament usage
+  - Conveyor Systems: Speed, load, temperature, vibration, power consumption  
+  - CNC Machines: Spindle RPM, feed rate, cutting force, position coordinates
+- **Dynamic Data**: Values include realistic variation to simulate real-time monitoring
+- **Asset Management**: 5 demo assets with different types and PackML states
+- **Historical Data**: Machine-specific historical telemetry with proper variance patterns
+
+To use mock data, the frontend API clients are configured with `USE_MOCK = true` in the respective API files.
 
 ---
 

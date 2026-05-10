@@ -3,18 +3,18 @@ import { useParams } from 'react-router-dom'
 import { useQuery } from 'react-query'
 import { ArrowLeft, Activity, Clock, Box } from 'lucide-react'
 import { Link } from 'react-router-dom'
-import { api } from '../api/client'
+import { assetsApi, telemetryApi } from '../api'
 
 const AssetDetail: FC = () => {
   const { id } = useParams<{ id: string }>()
   
   const { data: asset, isLoading } = useQuery(['asset', id], () =>
-    api.get(`/api/v1/assets/${id}`).then((res) => res.data)
+    assetsApi.get(id!)
   )
 
   const { data: telemetry } = useQuery(
     ['telemetry', id],
-    () => api.get(`/api/v1/telemetry/${id}/latest`).then((res) => res.data),
+    () => telemetryApi.getLatest(id!),
     { refetchInterval: 5000 }
   )
 
@@ -73,40 +73,57 @@ const AssetDetail: FC = () => {
             <div>
               <h1 className="text-2xl font-bold">{asset.name}</h1>
               <p className="text-opsgrid-text-secondary">
-                {asset.vendor} {asset.model} • {asset.serial_number}
+                {asset.vendor} {asset.model} • {asset.serialNumber}
               </p>
             </div>
           </div>
           <div className="flex items-center gap-3">
             <span
               className={`w-4 h-4 rounded-full ${getStatusColor(
-                asset.current_packml_state
-              )} ${asset.current_packml_state === 'Execute' ? 'animate-pulse' : ''}`}
+                asset.currentPackmlState
+              )} ${asset.currentPackmlState === 'Execute' ? 'animate-pulse' : ''}`}
             />
-            <span className="text-lg font-semibold">{asset.current_packml_state}</span>
+            <span className="text-lg font-semibold">{asset.currentPackmlState}</span>
           </div>
         </div>
       </div>
 
       {/* Telemetry */}
-      {telemetry && telemetry.value !== undefined && (
+      {telemetry && (
         <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-6">
           <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
             <Activity size={20} />
             Latest Telemetry
           </h2>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {Object.entries(telemetry).map(([key, value]) => {
-              if (typeof value === 'number' || typeof value === 'string') {
-                return (
-                  <div key={key} className="bg-opsgrid-bg rounded-lg p-4">
-                    <p className="text-sm text-opsgrid-text-secondary">{key}</p>
-                    <p className="text-xl font-semibold">{value}</p>
-                  </div>
-                )
-              }
-              return null
-            })}
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+            {Array.isArray(telemetry) || (typeof telemetry === 'object' && 'metricName' in telemetry) === false ? 
+              // Multiple metrics case
+              Object.entries(telemetry as Record<string, any>).map(([key, metric]) => (
+                <div key={key} className="bg-opsgrid-bg rounded-lg p-4">
+                  <p className="text-sm text-opsgrid-text-secondary capitalize">
+                    {key.replace('_', ' ')}
+                  </p>
+                  <p className="text-xl font-semibold">
+                    {metric.value}{metric.unit || ''}
+                  </p>
+                  <p className="text-xs text-opsgrid-text-secondary mt-1">
+                    {new Date(metric.timestamp).toLocaleTimeString()}
+                  </p>
+                </div>
+              )) : 
+              // Single metric case
+              <div className="bg-opsgrid-bg rounded-lg p-4">
+                <p className="text-sm text-opsgrid-text-secondary capitalize">
+                  {(telemetry as any).metricName?.replace('_', ' ')}
+                </p>
+                <p className="text-xl font-semibold">
+                  {(telemetry as any).value}{(telemetry as any).unit || ''}
+                </p>
+                <p className="text-xs text-opsgrid-text-secondary mt-1">
+                  {new Date((telemetry as any).timestamp).toLocaleString()}
+                </p>
+              </div>
+            }
           </div>
         </div>
       )}
@@ -120,17 +137,17 @@ const AssetDetail: FC = () => {
         <div className="space-y-2 text-sm">
           <div className="flex justify-between">
             <span className="text-opsgrid-text-secondary">Last Seen</span>
-            <span>{asset.last_seen ? new Date(asset.last_seen).toLocaleString() : 'Never'}</span>
+            <span>{asset.lastSeen ? new Date(asset.lastSeen).toLocaleString() : 'Never'}</span>
           </div>
           <div className="flex justify-between">
             <span className="text-opsgrid-text-secondary">Status</span>
-            <span className={asset.is_active ? 'text-status-running' : 'text-status-offline'}>
-              {asset.is_active ? 'Active' : 'Inactive'}
+            <span className={asset.isActive ? 'text-status-running' : 'text-status-offline'}>
+              {asset.isActive ? 'Active' : 'Inactive'}
             </span>
           </div>
           <div className="flex justify-between">
             <span className="text-opsgrid-text-secondary">Protocol</span>
-            <span>{asset.connection_config?.protocol || 'Unknown'}</span>
+            <span>{asset.connectionConfig?.protocol || 'Unknown'}</span>
           </div>
         </div>
       </div>
