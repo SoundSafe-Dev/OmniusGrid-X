@@ -1,0 +1,24 @@
+{
+  "modbus_errors": [
+    "Modbus Timeout", "Modbus CRC Error", "Modbus Slave Device Failure",
+    "Modbus Illegal Address", "Modbus Illegal Function", "Modbus Exception Response"
+  ],
+  "dtc_codes": [
+    "P0115", "P0128", "P0171", "P0172", "P0300", "P0301", "P0302",
+    "P0420", "P0440", "P0442", "P0446", "P0455", "P0500", "P0700"
+  ],
+  "packml_states": [
+    "Idle", "Starting", "Stopping", "Aborted", "Held",
+    "Execute", "Completing", "Complete", "Stopped"
+  ],
+  "alarm_codes": [
+    "ALM-001: Emergency Stop", "ALM-002: Over Temperature", "ALM-003: Low Pressure",
+    "ALM-004: Motor Overload", "ALM-005: Sensor Failure", "ALM-006: Communication Lost",
+    "ALM-007: Material Starvation", "ALM-008: Quality Threshold Exceeded",
+    "ALM-009: Safety Interlock", "ALM-010: Power Failure"
+  ],
+  "edge_anomalies": [
+    "Thermal Runaway", "Pressure Spike", "Flow Deviation", "Vibration Anomaly",
+    "Temperature Drift", "Humidity Excursion", "Power Surge", "Signal Noise"
+  ]
+}

@@ -3,11 +3,18 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from datetime import datetime
+from uuid import UUID
+from typing import Dict, Any
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.tactical_engine import tactical_engine
 from app.services.strategic_engine import strategic_engine, StrategicRecommendation
 from app.services.mlops_pipeline import mlops_pipeline
 from app.services.cloud_gateway import cloud_gateway
+from app.db.database import get_db
+from app.models.domain_interaction import CorrelationScenario
+from app.services.correlation_ai_engine import correlation_ai_engine
 
 router = APIRouter()
 
@@ -172,4 +179,51 @@ async def force_cloud_flush():
     return {"message": "Flush initiated"}
 
 
-from datetime import datetime
+# Correlation AI Engine Routes
+@router.post("/correlation/analyze")
+async def analyze_correlation(
+    scenario: CorrelationScenario,
+    db: AsyncSession = Depends(get_db)
+):
+    """Run AI correlation analysis on a scenario"""
+    try:
+        result = await correlation_ai_engine.analyze_scenario(scenario, db)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/correlation/scenarios")
+async def list_scenarios(
+    limit: int = 50,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db)
+):
+    """List generated correlation scenarios"""
+    try:
+        scenarios = await correlation_ai_engine.list_scenarios(limit, offset, db)
+        return {
+            "total": len(scenarios),
+            "limit": limit,
+            "offset": offset,
+            "scenarios": scenarios
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/correlation/generate")
+async def generate_synthetic_scenarios(
+    count: int = 100,
+    db: AsyncSession = Depends(get_db)
+):
+    """Generate synthetic correlation scenarios for training"""
+    try:
+        scenarios = await correlation_ai_engine.generate_synthetic_scenarios(count, db)
+        return {
+            "message": f"Generated {len(scenarios)} synthetic scenarios",
+            "count": len(scenarios),
+            "scenarios": scenarios[:10]  # Return first 10 as preview
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

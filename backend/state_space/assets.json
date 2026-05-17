@@ -1,0 +1,31 @@
+{
+  "bambu_printers": [
+    "Bambu-X1-001", "Bambu-X1-002", "Bambu-X1-003", "Bambu-X1-004",
+    "Bambu-P1S-001", "Bambu-P1S-002", "Bambu-P1S-003",
+    "Bambu-A1-001", "Bambu-A1-002"
+  ],
+  "plcs": [
+    "PLC-Line-1", "PLC-Line-2", "PLC-Line-3", "PLC-Line-4",
+    "PLC-Line-5", "PLC-Line-6", "PLC-Line-7", "PLC-Line-8",
+    "PLC-Packaging-01", "PLC-Packaging-02"
+  ],
+  "chillers": [
+    "VFD-Chiller-1", "VFD-Chiller-2", "VFD-Chiller-3",
+    "HVAC-Chiller-A", "HVAC-Chiller-B", "Process-Chiller-01"
+  ],
+  "geotab_devices": [
+    "DEV-001", "DEV-002", "DEV-003", "DEV-004", "DEV-005",
+    "DEV-006", "DEV-007", "DEV-008", "DEV-009", "DEV-010",
+    "DEV-011", "DEV-012", "DEV-013", "DEV-014", "DEV-015"
+  ],
+  "vfds": [
+    "VFD-Motor-01", "VFD-Motor-02", "VFD-Motor-03", "VFD-Motor-04",
+    "VFD-Conveyor-01", "VFD-Conveyor-02", "VFD-Pump-01", "VFD-Pump-02"
+  ],
+  "sensors": [
+    "Temp-Sensor-01", "Temp-Sensor-02", "Temp-Sensor-03",
+    "Pressure-Sensor-01", "Pressure-Sensor-02",
+    "Flow-Sensor-01", "Flow-Sensor-02",
+    "Vibration-Sensor-01", "Vibration-Sensor-02"
+  ]
+}

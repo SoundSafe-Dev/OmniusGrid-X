@@ -369,6 +369,42 @@ OmniusGrid/
 | GET | `/api/v1/geotab/fleet/summary` | Fleet-wide status overview |
 | POST | `/api/v1/geotab/webhook` | Real-time GeoTab event webhook |
 
+### Correlation AI Engine
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/v1/engines/correlation/analyze` | Run AI correlation analysis on scenario |
+| GET | `/api/v1/engines/correlation/scenarios` | List generated correlation scenarios |
+| POST | `/api/v1/engines/correlation/generate` | Generate synthetic scenarios for training |
+
+### Synthetic Data Generation
+
+The correlation AI model uses a synthetic data generation pipeline to create training datasets:
+
+```bash
+# Generate 10,000 scenarios with mock data
+cd backend
+python scripts/generate_dataset.py 10000 dataset/training_data.jsonl
+
+# Generate scenarios with LLM (Gemini Pro) for more realistic data
+python scripts/generate_dataset.py 10000 dataset/training_data.jsonl --use-llm --api-key YOUR_API_KEY
+
+# Or set API key as environment variable
+export GOOGLE_API_KEY=your_api_key
+python scripts/generate_dataset.py 10000 dataset/training_data.jsonl --use-llm
+```
+
+**State Space Files:**
+- `backend/state_space/assets.json` - Industrial assets (printers, PLCs, chillers, GeoTab devices)
+- `backend/state_space/errors.json` - Error codes (Modbus, DTC, PackML states, alarm codes)
+- `backend/state_space/logistics.json` - Logistics entities (trailers, carriers, drivers, shipments)
+- `backend/state_space/compliance.json` - Compliance standards (ISO, OSHA, DOT, CTPAT)
+
+**Output Format:**
+- JSONL format with system prompts, user inputs (DATA INGEST), and model outputs
+- Ready for Gemma 4 fine-tuning
+- Includes cross-domain correlation scenarios across 5 operational domains
+
 ### Kanban Task Management
 
 | Method | Endpoint | Description |
@@ -470,6 +506,11 @@ OmniusGrid/
 - **Data Thinning**: Feature vectors (not raw telemetry) transmitted to cloud
 - **MLOps**: Automated model download, validation, hot-swap, and rollback
 - **Two-Speed Architecture**: Tactical (real-time) + Strategic (macro-optimization)
+- **Correlation AI Engine**: Cross-domain correlation analysis using Gemma 4 fine-tuned model
+  - **Domain Interaction Component**: Pydantic-based schema validation for 5 operational domains (EDGE_AI_TELEMETRY, PRODUCTION_OEE, LOGISTICS_FLEET, COMPLIANCE_REGISTRIES, SYSTEM_INFRASTRUCTURE)
+  - **Synthetic Data Generation**: LLM-powered scenario generation using Google Gemini Pro for realistic training data
+  - **Fine-Tuning Dataset**: JSONL format with system prompts, user inputs (DATA INGEST), and model outputs
+  - **Runtime Inference**: Real-time correlation analysis with root cause identification, risk scoring, and actionable recommendations
 
 ### Operations Modes
 

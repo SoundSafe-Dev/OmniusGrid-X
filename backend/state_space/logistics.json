@@ -1,0 +1,33 @@
+{
+  "trailers": [
+    "TRK-001", "TRK-002", "TRK-003", "TRK-004", "TRK-005",
+    "TRK-006", "TRK-007", "TRK-008", "TRK-009", "TRK-010",
+    "TRK-011", "TRK-012", "TRK-013", "TRK-014", "TRK-015",
+    "TRK-8092", "TRK-4451", "TRK-7723", "TRK-3341", "TRK-5521"
+  ],
+  "carriers": [
+    "C-0001", "C-0002", "C-0003", "C-0004", "C-0005",
+    "C-0092", "C-0088", "C-0044", "C-0077", "C-0033"
+  ],
+  "drivers": [
+    "DRV-0001", "DRV-0002", "DRV-0003", "DRV-0004", "DRV-0005",
+    "DRV-0042", "DRV-0088", "DRV-0033", "DRV-0077", "DRV-0099"
+  ],
+  "shipments": [
+    "SHP-001", "SHP-002", "SHP-003", "SHP-004", "SHP-005",
+    "SHP-991", "SHP-3342", "SHP-7723", "SHP-5521", "SHP-8834"
+  ],
+  "dock_doors": [
+    "DOCK-01", "DOCK-02", "DOCK-03", "DOCK-04", "DOCK-05",
+    "DOCK-06", "DOCK-07", "DOCK-08", "DOCK-09", "DOCK-10"
+  ],
+  "routes": [
+    "ROUTE-001: Chicago to Detroit", "ROUTE-002: Detroit to Cleveland",
+    "ROUTE-003: Cleveland to Pittsburgh", "ROUTE-004: Pittsburgh to Philadelphia",
+    "ROUTE-005: Chicago to Milwaukee", "ROUTE-006: Milwaukee to Minneapolis"
+  ],
+  "load_plans": [
+    "LOAD-001", "LOAD-002", "LOAD-003", "LOAD-004", "LOAD-005",
+    "LOAD-882", "LOAD-773", "LOAD-554", "LOAD-335", "LOAD-116"
+  ]
+}

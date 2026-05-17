@@ -1,0 +1,34 @@
+{
+  "iso_standards": [
+    "ISO 22000: Food Safety Management",
+    "ISO 9001: Quality Management",
+    "ISO 14001: Environmental Management",
+    "ISO 45001: Occupational Health and Safety",
+    "ISO 50001: Energy Management"
+  ],
+  "osha_standards": [
+    "OSHA 1910.178: Powered Industrial Trucks",
+    "OSHA 1910.119: Process Safety Management",
+    "OSHA 1910.147: Lockout/Tagout",
+    "OSHA 1910.133: Eye and Face Protection",
+    "OSHA 1910.1200: Hazard Communication"
+  ],
+  "dot_regulations": [
+    "DOT 49 CFR Part 395: Hours of Service",
+    "DOT 49 CFR Part 392: Driving of Commercial Motor Vehicles",
+    "DOT 49 CFR Part 396: Inspection, Repair, and Maintenance",
+    "DOT 49 CFR Part 397: Transportation of Hazardous Materials"
+  ],
+  "ctpat_rules": [
+    "CTPAT Security Criteria: Business Partner Requirements",
+    "CTPAT Security Criteria: Conveyance Security",
+    "CTPAT Security Criteria: Physical Security",
+    "CTPAT Security Criteria: Procedural Security"
+  ],
+  "fsma_requirements": [
+    "FSMA Preventive Controls for Human Food",
+    "FSMA Sanitary Transportation Rule",
+    "FSMA Foreign Supplier Verification Program",
+    "FSMA Intentional Adulteration Rule"
+  ]
+}
