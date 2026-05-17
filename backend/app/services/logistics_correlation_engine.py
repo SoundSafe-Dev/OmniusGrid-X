@@ -19,6 +19,13 @@ from app.db.models import (
 )
 from app.services.yard_management import yard_management_service, DetentionCalculator
 from app.services.transportation_management import transportation_management_service
+from app.services.correlation_ai_engine import correlation_ai_engine
+from app.models.domain_interaction import (
+    DomainType,
+    CorrelationScenario,
+    CrossDomainLink,
+    OperationalMetric
+)
 
 logger = structlog.get_logger()
 
@@ -651,6 +658,142 @@ class LogisticsCorrelationEngine:
         self.dock_sync = DockProductionSynchronizer()
         self.risk_predictor = DetentionRiskPredictor()
         self.quality_correlator = LoadQualityCorrelator()
+        self.ai_engine = correlation_ai_engine
+    
+    async def convert_to_correlation_scenario(
+        self,
+        organization_id: UUID,
+        appointment_id: Optional[UUID] = None,
+        shipment_id: Optional[UUID] = None,
+        asset_id: Optional[UUID] = None,
+        db: Optional[AsyncSession] = None
+    ) -> CorrelationScenario:
+        """
+        Convert real-time API data into CorrelationScenario format for AI analysis.
+        
+        Args:
+            organization_id: Organization ID
+            appointment_id: Optional dock appointment ID
+            shipment_id: Optional shipment ID
+            asset_id: Optional asset ID
+            db: Database session
+            
+        Returns:
+            CorrelationScenario ready for AI analysis
+        """
+        async with (db or AsyncSessionLocal()) as session:
+            scenario_id = f"SCENARIO_LIVE_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
+            active_domains = []
+            domain_links = []
+            ingested_metrics = []
+            
+            # Collect data based on provided IDs
+            if appointment_id:
+                # Get appointment data
+                appt_result = await session.execute(
+                    select(DockAppointment).where(DockAppointment.id == appointment_id)
+                )
+                appointment = appt_result.scalar_one_or_none()
+                
+                if appointment:
+                    active_domains.append(DomainType.LOG)
+                    ingested_metrics.append(OperationalMetric(
+                        endpoint="/api/v1/logistics/dock-production-sync",
+                        payload_snapshot={
+                            "appointment_id": str(appointment.id),
+                            "scheduled_start": appointment.scheduled_start.isoformat() if appointment.scheduled_start else None,
+                            "status": appointment.status
+                        }
+                    ))
+            
+            if asset_id:
+                # Get asset data
+                asset_result = await session.execute(
+                    select(Asset).where(Asset.id == asset_id)
+                )
+                asset = asset_result.scalar_one_or_none()
+                
+                if asset:
+                    active_domains.append(DomainType.PROD)
+                    ingested_metrics.append(OperationalMetric(
+                        endpoint="/api/v1/oee/current/" + str(asset_id),
+                        payload_snapshot={
+                            "asset_id": str(asset.id),
+                            "asset_name": asset.name,
+                            "packml_state": asset.current_packml_state
+                        }
+                    ))
+            
+            if shipment_id:
+                # Get shipment data
+                shipment_result = await session.execute(
+                    select(Shipment).where(Shipment.id == shipment_id)
+                )
+                shipment = shipment_result.scalar_one_or_none()
+                
+                if shipment:
+                    active_domains.append(DomainType.LOG)
+                    ingested_metrics.append(OperationalMetric(
+                        endpoint="/api/v1/transportation/shipments/" + str(shipment_id),
+                        payload_snapshot={
+                            "shipment_number": shipment.shipment_number,
+                            "status": shipment.status,
+                            "priority": shipment.priority
+                        }
+                    ))
+            
+            # Create domain links if multiple domains
+            if len(active_domains) > 1:
+                for i in range(len(active_domains) - 1):
+                    domain_links.append(CrossDomainLink(
+                        source_domain=active_domains[i],
+                        target_domain=active_domains[i + 1],
+                        interaction_key=str(shipment_id or asset_id or appointment_id),
+                        severity_impact=0.7,
+                        correlation_type="temporal"
+                    ))
+            
+            return CorrelationScenario(
+                scenario_id=scenario_id,
+                active_domains=active_domains,
+                domain_links=domain_links,
+                ingested_metrics=ingested_metrics
+            )
+    
+    async def analyze_with_ai(
+        self,
+        organization_id: UUID,
+        appointment_id: Optional[UUID] = None,
+        shipment_id: Optional[UUID] = None,
+        asset_id: Optional[UUID] = None,
+        db: Optional[AsyncSession] = None
+    ) -> Dict[str, Any]:
+        """
+        Run AI correlation analysis on real-time data.
+        
+        Args:
+            organization_id: Organization ID
+            appointment_id: Optional dock appointment ID
+            shipment_id: Optional shipment ID
+            asset_id: Optional asset ID
+            db: Database session
+            
+        Returns:
+            AI analysis results
+        """
+        # Convert to CorrelationScenario
+        scenario = await self.convert_to_correlation_scenario(
+            organization_id=organization_id,
+            appointment_id=appointment_id,
+            shipment_id=shipment_id,
+            asset_id=asset_id,
+            db=db
+        )
+        
+        # Run AI analysis
+        analysis = await self.ai_engine.analyze_scenario(scenario, db)
+        
+        return analysis
     
     async def get_correlation_dashboard(
         self,
