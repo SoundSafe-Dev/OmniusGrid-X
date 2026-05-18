@@ -379,14 +379,14 @@ OmniusGrid/
 
 ### Synthetic Data Generation
 
-The correlation AI model uses a synthetic data generation pipeline to create training datasets:
+The correlation AI model uses a synthetic data generation pipeline to create training datasets with state space-based rule generation:
 
 ```bash
-# Generate 10,000 scenarios with mock data
+# Generate 10,000 scenarios using state space-based rules (no external API required)
 cd backend
 python scripts/generate_dataset.py 10000 dataset/training_data.jsonl
 
-# Generate scenarios with LLM (Gemini Pro) for more realistic data
+# Generate scenarios with LLM (Gemini Pro) for enhanced realism
 python scripts/generate_dataset.py 10000 dataset/training_data.jsonl --use-llm --api-key YOUR_API_KEY
 
 # Or set API key as environment variable
@@ -394,16 +394,23 @@ export GOOGLE_API_KEY=your_api_key
 python scripts/generate_dataset.py 10000 dataset/training_data.jsonl --use-llm
 ```
 
+**State Space-Based Generation:**
+- Uses rule-based logic with actual state space data for realistic scenarios
+- No external APIs required for default generation
+- Generates contextual root causes, tasks, commands, and compliance implications
+- Calculates risk scores based on domain criticality and link severity
+
 **State Space Files:**
 - `backend/state_space/assets.json` - Industrial assets (printers, PLCs, chillers, GeoTab devices)
 - `backend/state_space/errors.json` - Error codes (Modbus, DTC, PackML states, alarm codes)
 - `backend/state_space/logistics.json` - Logistics entities (trailers, carriers, drivers, shipments)
-- `backend/state_space/compliance.json` - Compliance standards (ISO, OSHA, DOT, CTPAT)
+- `backend/state_space/compliance.json` - Compliance standards (ISO, OSHA, DOT, CTPAT, FSMA)
 
 **Output Format:**
 - JSONL format with system prompts, user inputs (DATA INGEST), and model outputs
 - Ready for Gemma 4 fine-tuning
 - Includes cross-domain correlation scenarios across 5 operational domains
+- Realistic asset names, error codes, compliance standards, and API commands
 
 ### Kanban Task Management
 
