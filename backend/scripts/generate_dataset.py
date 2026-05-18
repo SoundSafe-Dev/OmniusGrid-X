@@ -33,182 +33,6 @@ except ImportError:
     print("Warning: google-generativeai not installed. LLM generation disabled.")
 
 
-class LLMGenerator:
-    """Generates realistic AI analysis using Google Gemini API"""
-    
-    def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or os.getenv("GOOGLE_API_KEY")
-        self.model = None
-        
-        if LLM_AVAILABLE and self.api_key:
-            try:
-                genai.configure(api_key=self.api_key)
-                self.model = genai.GenerativeModel('gemini-pro')
-                print("LLM Generator initialized with Gemini Pro")
-            except Exception as e:
-                print(f"Warning: Failed to initialize LLM: {e}")
-                self.model = None
-    
-    def is_available(self) -> bool:
-        """Check if LLM is available for generation"""
-        return self.model is not None
-    
-    def generate_ground_truth(
-        self,
-        domains: List[str],
-        metrics: List[Dict[str, Any]],
-        links: List[Dict[str, Any]]
-    ) -> Dict[str, Any]:
-        """
-        Generate realistic ground truth using LLM
-        
-        Args:
-            domains: List of active domain names
-            metrics: List of operational metrics
-            links: List of domain links
-            
-        Returns:
-            Dictionary with predicted_root_cause, risk_score, kanban_tasks, etc.
-        """
-        if not self.is_available():
-            return self._generate_mock_ground_truth(domains, links)
-        
-        # Construct prompt for LLM
-        prompt = self._construct_prompt(domains, metrics, links)
-        
-        try:
-            response = self.model.generate_content(prompt)
-            return self._parse_llm_response(response.text, domains)
-        except Exception as e:
-            print(f"LLM generation failed: {e}, falling back to mock")
-            return self._generate_mock_ground_truth(domains, links)
-    
-    def _construct_prompt(
-        self,
-        domains: List[str],
-        metrics: List[Dict[str, Any]],
-        links: List[Dict[str, Any]]
-    ) -> str:
-        """Construct prompt for LLM generation"""
-        prompt = f"""You are an expert industrial operations analyst for OmniusGrid. Analyze the following cross-domain scenario and provide a realistic correlation analysis.
-
-Active Domains: {', '.join(domains)}
-
-Operational Metrics:
-"""
-        for metric in metrics:
-            prompt += f"- {metric['endpoint']}: {metric['payload_snapshot']}\n"
-        
-        prompt += f"""
-Domain Links:
-"""
-        for link in links:
-            prompt += f"- {link['source_domain']} -> {link['target_domain']} (severity: {link['severity_impact']})\n"
-        
-        prompt += """
-Provide your analysis in the following JSON format:
-{
-    "predicted_root_cause": "Clear explanation of the root cause",
-    "risk_score": "Number between 0 and 100",
-    "target_kanban_tasks": [
-        {"title": "Task title", "priority": "low/medium/high/critical", "task_type": "type"}
-    ],
-    "remediation_commands": [
-        {"method": "HTTP method", "endpoint": "API endpoint", "description": "Description"}
-    ],
-    "compliance_implications": ["List of compliance standards if applicable"]
-}
-
-Respond ONLY with valid JSON, no additional text."""
-        
-        return prompt
-    
-    def _parse_llm_response(self, response_text: str, domains: List[str]) -> Dict[str, Any]:
-        """Parse LLM response into ground truth dictionary"""
-        try:
-            # Extract JSON from response
-            import re
-            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(0)
-                return json.loads(json_str)
-            else:
-                raise ValueError("No JSON found in response")
-        except Exception as e:
-            print(f"Failed to parse LLM response: {e}")
-            return self._generate_mock_ground_truth(domains, [])
-    
-    def _generate_mock_ground_truth(self, domains: List[str], links: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Generate mock ground truth when LLM is unavailable"""
-        domain_names = [d.value if hasattr(d, 'value') else str(d) for d in domains]
-        
-        root_causes = [
-            f"Cascading failure from {domain_names[0]} affecting {domain_names[1] if len(domain_names) > 1 else 'system'}",
-            f"Synchronized anomaly detected across {', '.join(domain_names)}",
-            f"Cross-domain dependency failure in {domain_names[0]} triggering {domain_names[1] if len(domain_names) > 1 else 'system-wide'} issues",
-            f"Operational misalignment between {domain_names[0]} and {domain_names[1] if len(domain_names) > 1 else 'infrastructure'}"
-        ]
-        
-        task_types = ["maintenance_pm", "maintenance_cm", "quality_inspection", "safety_check", "alarm_response"]
-        priorities = ["low", "medium", "high", "critical"]
-        
-        kanban_tasks = [
-            {
-                "title": f"Investigate {domain_names[0]} anomaly",
-                "priority": random.choice(priorities),
-                "task_type": random.choice(task_types)
-            }
-        ]
-        
-        if len(domains) > 1:
-            kanban_tasks.append({
-                "title": f"Coordinate response with {domain_names[1]} team",
-                "priority": random.choice(priorities),
-                "task_type": "custom"
-            })
-        
-        commands = []
-        for domain in domain_names:
-            if "EDGE" in domain:
-                commands.append({
-                    "method": "POST",
-                    "endpoint": "/api/v1/commands/asset/{asset_id}/emergency-stop",
-                    "description": "Execute emergency stop on affected asset"
-                })
-            elif "PROD" in domain:
-                commands.append({
-                    "method": "POST",
-                    "endpoint": "/api/v1/kanban/boards/1/tasks",
-                    "description": "Create maintenance task for production line"
-                })
-            elif "LOG" in domain:
-                commands.append({
-                    "method": "POST",
-                    "endpoint": "/api/v1/yard/dock/appointments",
-                    "description": "Reschedule dock appointment to prevent detention"
-                })
-            elif "COMP" in domain:
-                commands.append({
-                    "method": "POST",
-                    "endpoint": "/api/v1/registries/{id}/items",
-                    "description": "Log compliance near-miss incident"
-                })
-        
-        compliance_items = []
-        if any("COMP" in str(d) for d in domain_names):
-            compliance_items.append("ISO 22000 Food Safety")
-        if any("LOG" in str(d) for d in domain_names):
-            compliance_items.append("DOT HOS compliance")
-        
-        return {
-            "predicted_root_cause": random.choice(root_causes),
-            "risk_score": round(random.uniform(40, 95), 1),
-            "target_kanban_tasks": kanban_tasks,
-            "remediation_commands": commands[:2],
-            "compliance_implications": compliance_items if compliance_items else None
-        }
-
-
 class StateSpaceLoader:
     """Loads state space JSON files for randomization"""
     
@@ -240,12 +64,334 @@ class StateSpaceLoader:
         return random.choice(assets)
 
 
+class LLMGenerator:
+    """Generates realistic AI analysis using Google Gemini API or state space rules"""
+    
+    def __init__(self, api_key: Optional[str] = None, state_space: Optional[StateSpaceLoader] = None):
+        self.api_key = api_key or os.getenv("GOOGLE_API_KEY")
+        self.state_space = state_space
+        self.model = None
+        
+        if LLM_AVAILABLE and self.api_key:
+            try:
+                genai.configure(api_key=self.api_key)
+                self.model = genai.GenerativeModel('gemini-pro')
+                print("LLM Generator initialized with Gemini Pro")
+            except Exception as e:
+                print(f"Warning: Failed to initialize LLM: {e}")
+                self.model = None
+    
+    def is_available(self) -> bool:
+        """Check if LLM is available for generation"""
+        return self.model is not None
+    
+    def generate_ground_truth(
+        self,
+        domains: List[str],
+        metrics: List[Dict[str, Any]],
+        links: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Generate realistic ground truth using LLM or state space rules"""
+        if self.is_available():
+            return self._generate_with_llm(domains, metrics, links)
+        else:
+            return self._generate_with_state_space(domains, links)
+    
+    def _generate_with_llm(self, domains: List[str], metrics: List[Dict[str, Any]], links: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Generate using LLM"""
+        prompt = self._construct_prompt(domains, metrics, links)
+        try:
+            response = self.model.generate_content(prompt)
+            return self._parse_llm_response(response.text, domains)
+        except Exception as e:
+            print(f"LLM generation failed: {e}, falling back to state space")
+            return self._generate_with_state_space(domains, links)
+    
+    def _construct_prompt(self, domains: List[str], metrics: List[Dict[str, Any]], links: List[Dict[str, Any]]) -> str:
+        """Construct prompt for LLM generation"""
+        prompt = f"""You are an expert industrial operations analyst for OmniusGrid. Analyze the following cross-domain scenario and provide a realistic correlation analysis.
+
+Active Domains: {', '.join(domains)}
+
+Operational Metrics:
+"""
+        for metric in metrics:
+            prompt += f"- {metric['endpoint']}: {metric['payload_snapshot']}\n"
+        
+        prompt += f"""
+Domain Links:
+"""
+        for link in links:
+            prompt += f"- {link['source_domain']} -> {link['target_domain']} (severity: {link['severity_impact']})\n"
+        
+        prompt += """
+Provide your analysis in the following JSON format:
+{
+    "predicted_root_cause": "Clear explanation of the root cause",
+    "risk_score": "Number between 0 and 100",
+    "target_kanban_tasks": [
+        {"title": "Task title", "priority": "low/medium/high/critical", "task_type": "type"}
+    ],
+    "remediation_commands": [
+        {"method": "HTTP method", "endpoint": "API endpoint", "description": "Description"}
+    ],
+    "compliance_implications": ["List of compliance standards if applicable"]
+}
+
+Respond ONLY with valid JSON, no additional text."""
+        return prompt
+    
+    def _parse_llm_response(self, response_text: str, domains: List[str]) -> Dict[str, Any]:
+        """Parse LLM response into ground truth dictionary"""
+        try:
+            import re
+            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(0)
+                return json.loads(json_str)
+            else:
+                raise ValueError("No JSON found in response")
+        except Exception as e:
+            print(f"Failed to parse LLM response: {e}")
+            return self._generate_with_state_space(domains, [])
+    
+    def _generate_with_state_space(self, domains: List[str], links: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Generate realistic ground truth using state space rules"""
+        root_cause = self._analyze_root_cause_with_state_space(domains, links)
+        kanban_tasks = self._generate_tasks_with_state_space(domains)
+        commands = self._generate_commands_with_state_space(domains)
+        compliance_items = self._identify_compliance_with_state_space(domains)
+        risk_score = self._calculate_risk_with_state_space(domains, links)
+        
+        return {
+            "predicted_root_cause": root_cause,
+            "risk_score": risk_score,
+            "target_kanban_tasks": kanban_tasks,
+            "remediation_commands": commands[:3],
+            "compliance_implications": compliance_items if compliance_items else None
+        }
+    
+    def _analyze_root_cause_with_state_space(self, domains: List[str], links: List[Dict[str, Any]]) -> str:
+        """Analyze root cause using state space data"""
+        domain_map = {
+            "EDGE_AI_TELEMETRY": "edge telemetry",
+            "PRODUCTION_OEE": "production line",
+            "LOGISTICS_FLEET": "logistics fleet",
+            "COMPLIANCE_REGISTRIES": "compliance system",
+            "SYSTEM_INFRASTRUCTURE": "system infrastructure"
+        }
+        
+        if self.state_space:
+            edge_anomaly = self.state_space.get_random("errors", "edge_anomalies")
+            packml_state = self.state_space.get_random("errors", "packml_states")
+            alarm_code = self.state_space.get_random("errors", "alarm_codes")
+            asset = self.state_space.get_random_asset()
+        else:
+            edge_anomaly = "anomaly"
+            packml_state = "unknown"
+            alarm_code = "ALM-XXX"
+            asset = "asset"
+        
+        avg_severity = sum(link.get("severity_impact", 0.5) for link in links) / len(links) if links else 0.5
+        
+        if len(domains) == 1:
+            domain = domains[0]
+            if domain == "EDGE_AI_TELEMETRY":
+                return f"Edge telemetry anomaly detected: {edge_anomaly} on {asset}. Sensor data indicates potential equipment degradation. Immediate investigation required to prevent cascading failure."
+            elif domain == "PRODUCTION_OEE":
+                return f"Production line degradation detected: asset in {packml_state} state with {alarm_code}. OEE metrics below threshold. Root cause likely in equipment performance or scheduling."
+            elif domain == "LOGISTICS_FLEET":
+                trailer = self.state_space.get_random("logistics", "trailers") if self.state_space else "TRK-XXX"
+                return f"Logistics fleet issue detected: {trailer} experiencing operational delays. Dock appointment misalignment causing detention risk. Coordination required."
+            elif domain == "COMPLIANCE_REGISTRIES":
+                iso = self.state_space.get_random("compliance", "iso_standards") if self.state_space else "ISO standard"
+                return f"Compliance violation detected for {iso}. Operational procedures not meeting regulatory requirements. Process re-engineering required."
+            elif domain == "SYSTEM_INFRASTRUCTURE":
+                return f"Infrastructure degradation affecting {domain_map.get(domain, domain)}. Database or network performance issues causing operational impacts. Immediate remediation required."
+        
+        if "EDGE_AI_TELEMETRY" in domains and "PRODUCTION_OEE" in domains:
+            return f"Edge telemetry anomaly ({edge_anomaly} on {asset}) is directly impacting production OEE. Asset in {packml_state} state with {alarm_code}. Sensor calibration or equipment maintenance required."
+        
+        if "LOGISTICS_FLEET" in domains and "PRODUCTION_OEE" in domains:
+            trailer = self.state_space.get_random("logistics", "trailers") if self.state_space else "TRK-XXX"
+            dock = self.state_space.get_random("logistics", "dock_doors") if self.state_space else "DOCK-XX"
+            return f"Logistics delays with {trailer} at {dock} causing production line inefficiencies. Dock appointment misalignment with production schedules. Coordination between yard management and production required."
+        
+        if "SYSTEM_INFRASTRUCTURE" in domains:
+            other_domains = [d for d in domains if d != "SYSTEM_INFRASTRUCTURE"]
+            return f"Infrastructure degradation affecting {', '.join([domain_map.get(d, d) for d in other_domains])}. Network latency or database performance issues causing downstream operational impacts with severity {avg_severity:.2f}."
+        
+        if "COMPLIANCE_REGISTRIES" in domains:
+            iso = self.state_space.get_random("compliance", "iso_standards") if self.state_space else "ISO standard"
+            other_domains = [d for d in domains if d != "COMPLIANCE_REGISTRIES"]
+            return f"Compliance violation for {iso} detected in {', '.join([domain_map.get(d, d) for d in other_domains])}. Operational procedures not meeting regulatory requirements. Process re-engineering required."
+        
+        return f"Cascading anomaly across {', '.join([domain_map.get(d, d) for d in domains])}. Cross-domain dependency failure with severity {avg_severity:.2f}. Coordinated response required."
+    
+    def _generate_tasks_with_state_space(self, domains: List[str]) -> List[Dict[str, Any]]:
+        """Generate contextual kanban tasks using state space data"""
+        tasks = []
+        
+        if self.state_space:
+            asset = self.state_space.get_random_asset()
+            trailer = self.state_space.get_random("logistics", "trailers")
+        else:
+            asset = "asset"
+            trailer = "TRK-XXX"
+        
+        task_templates = {
+            "EDGE_AI_TELEMETRY": [
+                {"title": f"Calibrate edge sensors for {asset}", "priority": "high", "task_type": "maintenance_cm"},
+                {"title": "Review telemetry data quality metrics", "priority": "medium", "task_type": "quality_inspection"},
+                {"title": "Check edge agent connectivity and data transmission", "priority": "high", "task_type": "alarm_response"}
+            ],
+            "PRODUCTION_OEE": [
+                {"title": f"Analyze production line downtime for {asset}", "priority": "high", "task_type": "maintenance_cm"},
+                {"title": "Review and optimize production scheduling", "priority": "medium", "task_type": "custom"},
+                {"title": "Perform preventive maintenance on production equipment", "priority": "medium", "task_type": "maintenance_pm"}
+            ],
+            "LOGISTICS_FLEET": [
+                {"title": f"Review dock appointment scheduling for {trailer}", "priority": "high", "task_type": "custom"},
+                {"title": "Analyze detention and demurrage costs", "priority": "medium", "task_type": "custom"},
+                {"title": "Optimize trailer yard flow and dock assignment", "priority": "high", "task_type": "custom"}
+            ],
+            "COMPLIANCE_REGISTRIES": [
+                {"title": "Conduct compliance audit for affected processes", "priority": "critical", "task_type": "safety_check"},
+                {"title": "Update standard operating procedures", "priority": "high", "task_type": "custom"},
+                {"title": "Document compliance gaps and remediation plan", "priority": "high", "task_type": "custom"}
+            ],
+            "SYSTEM_INFRASTRUCTURE": [
+                {"title": "Investigate database performance degradation", "priority": "critical", "task_type": "maintenance_cm"},
+                {"title": "Review network latency and connectivity", "priority": "high", "task_type": "alarm_response"},
+                {"title": "Scale infrastructure resources if needed", "priority": "medium", "task_type": "custom"}
+            ]
+        }
+        
+        for domain in domains:
+            if domain in task_templates:
+                num_tasks = random.randint(1, 2)
+                selected_tasks = random.sample(task_templates[domain], min(num_tasks, len(task_templates[domain])))
+                tasks.extend(selected_tasks)
+        
+        return tasks[:4]
+    
+    def _generate_commands_with_state_space(self, domains: List[str]) -> List[Dict[str, Any]]:
+        """Generate relevant API commands using state space data"""
+        commands = []
+        
+        if self.state_space:
+            asset = self.state_space.get_random_asset()
+            trailer = self.state_space.get_random("logistics", "trailers")
+        else:
+            asset = "asset"
+            trailer = "TRK-XXX"
+        
+        command_templates = {
+            "EDGE_AI_TELEMETRY": [
+                {"method": "POST", "endpoint": f"/api/v1/commands/asset/{asset}/emergency-stop", "description": f"Execute emergency stop on {asset}"},
+                {"method": "POST", "endpoint": f"/api/v1/commands/asset/{asset}/restart", "description": f"Restart edge agent for {asset}"},
+                {"method": "GET", "endpoint": f"/api/v1/telemetry/latest/{asset}", "description": f"Verify current telemetry for {asset}"}
+            ],
+            "PRODUCTION_OEE": [
+                {"method": "POST", "endpoint": "/api/v1/kanban/boards/1/tasks", "description": "Create maintenance task for production line"},
+                {"method": "POST", "endpoint": "/api/v1/operations/{operation_id}/pause", "description": "Pause production operation for maintenance"},
+                {"method": "GET", "endpoint": f"/api/v1/oee/current/{asset}", "description": f"Check current OEE for {asset}"}
+            ],
+            "LOGISTICS_FLEET": [
+                {"method": "POST", "endpoint": "/api/v1/yard/dock/appointments", "description": f"Reschedule dock appointment for {trailer}"},
+                {"method": "POST", "endpoint": "/api/v1/logistics/predict-detention", "description": "Run detention risk prediction"},
+                {"method": "GET", "endpoint": "/api/v1/yard/dwell-times", "description": "Review current dwell time analytics"}
+            ],
+            "COMPLIANCE_REGISTRIES": [
+                {"method": "POST", "endpoint": "/api/v1/registries/{id}/items", "description": "Log compliance near-miss incident"},
+                {"method": "GET", "endpoint": "/api/v1/registries/{id}/compliance-score", "description": "Calculate current compliance score"},
+                {"method": "POST", "endpoint": "/api/v1/registries/{id}/items", "description": "Create corrective action item"}
+            ],
+            "SYSTEM_INFRASTRUCTURE": [
+                {"method": "GET", "endpoint": "/admin/system/status", "description": "Check system health status"},
+                {"method": "POST", "endpoint": "/admin/collectors/{id}/restart", "description": "Restart affected collectors"},
+                {"method": "GET", "endpoint": "/api/v1/dashboard/oee", "description": "Review system-wide metrics"}
+            ]
+        }
+        
+        for domain in domains:
+            if domain in command_templates:
+                selected = random.choice(command_templates[domain])
+                commands.append(selected)
+        
+        return commands
+    
+    def _identify_compliance_with_state_space(self, domains: List[str]) -> Optional[List[str]]:
+        """Identify compliance implications using state space data"""
+        if not self.state_space:
+            return None
+        
+        implications = []
+        
+        if "EDGE_AI_TELEMETRY" in domains:
+            iso = self.state_space.get_random("compliance", "iso_standards")
+            if iso:
+                implications.append(iso)
+        
+        if "PRODUCTION_OEE" in domains:
+            iso = self.state_space.get_random("compliance", "iso_standards")
+            osha = self.state_space.get_random("compliance", "osha_standards")
+            if iso:
+                implications.append(iso)
+            if osha:
+                implications.append(osha)
+        
+        if "LOGISTICS_FLEET" in domains:
+            dot = self.state_space.get_random("compliance", "dot_regulations")
+            fsma = self.state_space.get_random("compliance", "fsma_requirements")
+            if dot:
+                implications.append(dot)
+            if fsma:
+                implications.append(fsma)
+        
+        if "COMPLIANCE_REGISTRIES" in domains:
+            ctpat = self.state_space.get_random("compliance", "ctpat_rules")
+            if ctpat:
+                implications.append(ctpat)
+        
+        if "SYSTEM_INFRASTRUCTURE" in domains:
+            iso = self.state_space.get_random("compliance", "iso_standards")
+            if iso:
+                implications.append(iso)
+        
+        return list(set(implications)) if implications else None
+    
+    def _calculate_risk_with_state_space(self, domains: List[str], links: List[Dict[str, Any]]) -> float:
+        """Calculate risk score using domain criticality and link severity"""
+        criticality_weights = {
+            "EDGE_AI_TELEMETRY": 0.7,
+            "PRODUCTION_OEE": 0.9,
+            "LOGISTICS_FLEET": 0.6,
+            "COMPLIANCE_REGISTRIES": 0.95,
+            "SYSTEM_INFRASTRUCTURE": 0.85
+        }
+        
+        base_score = sum(criticality_weights.get(d, 0.5) for d in domains) / len(domains)
+        avg_severity = sum(link.get("severity_impact", 0.5) for link in links) / len(links) if links else 0.5
+        
+        risk_score = (base_score * 0.6 + avg_severity * 0.4) * 100
+        variance = random.uniform(-5, 5)
+        
+        return round(max(0, min(100, risk_score + variance)), 1)
+
+
 class ScenarioGenerator:
     """Generates synthetic correlation scenarios"""
     
     def __init__(self, state_space: StateSpaceLoader, llm_generator: Optional[LLMGenerator] = None):
         self.state_space = state_space
-        self.llm_generator = llm_generator
+        # Initialize LLMGenerator with state_space if not provided
+        if llm_generator is None:
+            self.llm_generator = LLMGenerator(state_space=state_space)
+        else:
+            # Update existing LLMGenerator with state_space
+            llm_generator.state_space = state_space
+            self.llm_generator = llm_generator
         self.scenario_count = 0
     
     def generate_scenario(self) -> CorrelationScenario:
@@ -342,82 +488,10 @@ class ScenarioGenerator:
         """Generate simulated AI analysis for training"""
         domain_names = [d.value for d in domains]
         
-        # Use LLM if available
-        if self.llm_generator and self.llm_generator.is_available():
-            metrics_dict = [m.model_dump() for m in metrics]
-            links_dict = [l.model_dump() for l in links]
-            return self.llm_generator.generate_ground_truth(domain_names, metrics_dict, links_dict)
-        
-        # Fallback to mock generation
-        # Generate root cause analysis
-        root_causes = [
-            f"Cascading failure from {domain_names[0]} affecting {domain_names[1] if len(domain_names) > 1 else 'system'}",
-            f"Synchronized anomaly detected across {', '.join(domain_names)}",
-            f"Cross-domain dependency failure in {domain_names[0]} triggering {domain_names[1] if len(domain_names) > 1 else 'system-wide'} issues",
-            f"Operational misalignment between {domain_names[0]} and {domain_names[1] if len(domain_names) > 1 else 'infrastructure'}"
-        ]
-        
-        # Generate kanban tasks
-        task_types = ["maintenance_pm", "maintenance_cm", "quality_inspection", "safety_check", "alarm_response"]
-        priorities = ["low", "medium", "high", "critical"]
-        
-        kanban_tasks = [
-            {
-                "title": f"Investigate {domain_names[0]} anomaly",
-                "priority": random.choice(priorities),
-                "task_type": random.choice(task_types)
-            }
-        ]
-        
-        if len(domains) > 1:
-            kanban_tasks.append({
-                "title": f"Coordinate response with {domain_names[1]} team",
-                "priority": random.choice(priorities),
-                "task_type": "custom"
-            })
-        
-        # Generate remediation commands
-        commands = []
-        for domain in domains:
-            if domain == DomainType.EDGE:
-                commands.append({
-                    "method": "POST",
-                    "endpoint": "/api/v1/commands/asset/{asset_id}/emergency-stop",
-                    "description": "Execute emergency stop on affected asset"
-                })
-            elif domain == DomainType.PROD:
-                commands.append({
-                    "method": "POST",
-                    "endpoint": "/api/v1/kanban/boards/1/tasks",
-                    "description": "Create maintenance task for production line"
-                })
-            elif domain == DomainType.LOG:
-                commands.append({
-                    "method": "POST",
-                    "endpoint": "/api/v1/yard/dock/appointments",
-                    "description": "Reschedule dock appointment to prevent detention"
-                })
-            elif domain == DomainType.COMP:
-                commands.append({
-                    "method": "POST",
-                    "endpoint": "/api/v1/registries/{id}/items",
-                    "description": "Log compliance near-miss incident"
-                })
-        
-        # Generate compliance implications
-        compliance_items = []
-        if DomainType.COMP in domains:
-            compliance_items.append(self.state_space.get_random("compliance", "iso_standards"))
-        if DomainType.LOG in domains:
-            compliance_items.append(random.choice(["DOT HOS compliance", "CTPAT security", "FSMA transportation"]))
-        
-        return {
-            "predicted_root_cause": random.choice(root_causes),
-            "risk_score": round(random.uniform(40, 95), 1),
-            "target_kanban_tasks": kanban_tasks,
-            "remediation_commands": commands[:2],  # Limit to 2 commands
-            "compliance_implications": compliance_items if compliance_items else None
-        }
+        # Use LLMGenerator for ground truth (uses state space rules if LLM unavailable)
+        metrics_dict = [m.model_dump() for m in metrics]
+        links_dict = [l.model_dump() for l in links]
+        return self.llm_generator.generate_ground_truth(domain_names, metrics_dict, links_dict)
 
 
 def generate_dataset(
@@ -435,11 +509,13 @@ def generate_dataset(
     llm_generator = None
     if use_llm:
         print("Initializing LLM generator...")
-        llm_generator = LLMGenerator(api_key)
+        llm_generator = LLMGenerator(api_key, state_space)
         if llm_generator.is_available():
             print("LLM generator ready - using Gemini Pro for realistic scenarios")
         else:
-            print("LLM generator not available - falling back to mock generation")
+            print("LLM generator not available - using state space-based generation")
+    else:
+        print("Using state space-based generation (no external API required)")
     
     print(f"Generating {num_scenarios} scenarios...")
     generator = ScenarioGenerator(state_space, llm_generator)
@@ -468,7 +544,7 @@ def generate_dataset(
     if use_llm and llm_generator.is_available():
         print("Generated using LLM (Gemini Pro)")
     else:
-        print("Generated using mock data")
+        print("Generated using state space-based rules (assets, errors, logistics, compliance data)")
 
 
 if __name__ == "__main__":
