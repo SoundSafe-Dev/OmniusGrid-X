@@ -593,6 +593,7 @@ python scripts/generate_dataset.py 10000 dataset/training_data.jsonl --use-llm
 
 ## Documentation
 
+- [OmniusGrid Glossary](OMNIUSGRID_GLOSSARY.md) - Backend & Frontend combined terminology reference (400+ terms)
 - [Hybrid Architecture](docs/HYBRID_ARCHITECTURE.md) - Human-in-the-Loop + Lights Out modes
 - [Gold Standard Architecture](docs/GOLD_STANDARD_ARCHITECTURE.md) - Edge AI + Cloud Training
 - [Implementation Summary](docs/IMPLEMENTATION_SUMMARY.md) - Complete feature inventory
