@@ -10,144 +10,218 @@
     "C-0092", "C-0088", "C-0044", "C-0077", "C-0033"
   ],
   "drivers": [
-    "DRV-0001", "DRV-0002", "DRV-0003", "DRV-0004", "DRV-0005",
-    "DRV-0042", "DRV-0088", "DRV-0033", "DRV-0077", "DRV-0099"
+    "DRV-0001", "DRV-0002", "DRV-0003", "DRV-0004", "DRV-0005", "DRV-0006", "DRV-0007", "DRV-0008", "DRV-0009", "DRV-0010",
+    "DRV-0011", "DRV-0012", "DRV-0013", "DRV-0014", "DRV-0015", "DRV-0016", "DRV-0017", "DRV-0018", "DRV-0019", "DRV-0020",
+    "DRV-0021", "DRV-0022", "DRV-0023", "DRV-0024", "DRV-0025", "DRV-0026", "DRV-0027", "DRV-0028", "DRV-0029", "DRV-0030"
   ],
   "shipments": [
     "SHP-001", "SHP-002", "SHP-003", "SHP-004", "SHP-005",
     "SHP-991", "SHP-3342", "SHP-7723", "SHP-5521", "SHP-8834"
   ],
   "dock_doors": [
-    "DOCK-01", "DOCK-02", "DOCK-03", "DOCK-04", "DOCK-05",
-    "DOCK-06", "DOCK-07", "DOCK-08", "DOCK-09", "DOCK-10"
+    "DOCK-01", "DOCK-02", "DOCK-03", "DOCK-04", "DOCK-05", "DOCK-06", "DOCK-07", "DOCK-08", "DOCK-09", "DOCK-10",
+    "DOCK-11", "DOCK-12", "DOCK-13", "DOCK-14", "DOCK-15", "DOCK-16", "DOCK-17", "DOCK-18", "DOCK-19", "DOCK-20",
+    "DOCK-21", "DOCK-22", "DOCK-23", "DOCK-24", "DOCK-25", "DOCK-26", "DOCK-27", "DOCK-28", "DOCK-29", "DOCK-30"
   ],
   "routes": [
-    "ROUTE-001: Chicago to Detroit", "ROUTE-002: Detroit to Cleveland",
-    "ROUTE-003: Cleveland to Pittsburgh", "ROUTE-004: Pittsburgh to Philadelphia",
-    "ROUTE-005: Chicago to Milwaukee", "ROUTE-006: Milwaukee to Minneapolis"
-  ],
-  "load_plans": [
-    "LOAD-001", "LOAD-002", "LOAD-003", "LOAD-004", "LOAD-005",
-    "LOAD-882", "LOAD-773", "LOAD-554", "LOAD-335", "LOAD-116"
+    "ROUTE-001: Pittsburgh to Cleveland", "ROUTE-002: Cleveland to Detroit", "ROUTE-003: Detroit to Chicago",
+    "ROUTE-004: Pittsburgh to Philadelphia", "ROUTE-005: Philadelphia to New York", "ROUTE-006: Chicago to Milwaukee",
+    "ROUTE-007: Milwaukee to Minneapolis", "ROUTE-008: Minneapolis to Denver", "ROUTE-009: Denver to Phoenix",
+    "ROUTE-010: Phoenix to Los Angeles", "ROUTE-011: Boston to New York", "ROUTE-012: New York to Washington DC",
+    "ROUTE-013: Atlanta to Miami", "ROUTE-014: Dallas to Houston", "ROUTE-015: Seattle to Portland",
+    "ROUTE-016: San Francisco to Los Angeles", "ROUTE-017: Chicago to St. Louis", "ROUTE-018: Denver to Salt Lake City",
+    "ROUTE-019: Phoenix to Las Vegas", "ROUTE-020: Minneapolis to Chicago"
   ],
   "third_party_logistics": [
-    "3PL-Provider-001", "3PL-Provider-002", "3PL-Provider-003",
-    "Logistics-Partner-A", "Logistics-Partner-B", "Freight-Management-Company"
-  ],
-  "freight_forwarders": [
-    "Forwarder-001", "Forwarder-002", "Forwarder-003",
-    "Global-Freight-A", "International-Forwarder-B", "Domestic-Forwarder-C"
-  ],
-  "customs_brokers": [
-    "Broker-001", "Broker-002", "Broker-003",
-    "Customs-Agent-A", "Customs-Agent-B", "Border-Broker-C"
-  ],
-  "cross_docking": [
-    "Cross-Dock-Station-001", "Cross-Dock-Station-002", "Cross-Dock-Station-003",
-    "Transfer-Hub-A", "Transfer-Hub-B"
+    "Logistics-Partner-A", "Logistics-Partner-B", "Logistics-Partner-C", "Logistics-Partner-D", "Logistics-Partner-E",
+    "Logistics-Partner-F", "Logistics-Partner-G", "Logistics-Partner-H", "Logistics-Partner-I", "Logistics-Partner-J"
   ],
   "detention_scenarios": {
     "driver_liability": [
-      "Driver arrived late to appointment window",
-      "Driver failed to provide correct documentation",
-      "Driver not present for unloading at arrival",
-      "Driver vehicle not ready for unloading",
+      "Driver fatigue or health issue causing delay",
       "Driver communication failure during wait",
-      "Driver fatigue or health issue causing delay"
+      "Driver documentation incomplete",
+      "Driver unauthorized departure from dock",
+      "Driver refused to comply with yard procedures",
+      "Driver rest period violation",
+      "Driver equipment misuse",
+      "Driver route deviation",
+      "Driver personal emergency",
+      "Driver training gap"
     ],
     "client_liability": [
-      "Receiving staff shortage causing unloading delay",
-      "Receiving equipment failure during unloading",
-      "Slow unloading process due to complexity",
-      "Documentation processing delays at receiving",
-      "Quality inspection backlog causing hold",
-      "Receiving shift handover causing delay"
+      "Client facility not ready for receiving",
+      "Client staff unavailable for unloading",
+      "Client equipment failure at dock",
+      "Client inventory space unavailable",
+      "Client scheduling conflict with appointment",
+      "Client quality hold on shipment",
+      "Client security protocol delay",
+      "Client receiving process breakdown",
+      "Client shift change delay",
+      "Client communication failure"
     ],
     "transport_liability": [
-      "Poor appointment scheduling by transport team",
-      "Lack of driver communication from dispatch",
-      "Inadequate route planning causing late arrival",
-      "Fleet coordination failure",
-      "Carrier capacity mismanagement",
-      "Transport communication breakdown"
+      "Transport company scheduling error",
+      "Transport equipment maintenance required",
+      "Transport route deviation due to weather",
+      "Transport communication system failure",
+      "Transport capacity constraint causing delay",
+      "Transport driver shortage",
+      "Transport fueling delay",
+      "Transport regulatory inspection delay",
+      "Transport documentation error",
+      "Transport breakdown en route"
     ],
     "yard_liability": [
-      "Dock assignment conflicts causing wait",
       "Yard capacity constraints preventing parking",
-      "Gate processing delays at entry",
-      "Yard traffic congestion blocking access",
       "Yard equipment unavailability",
-      "Yard staffing shortage at gate"
+      "Yard staff shortage causing delays",
+      "Yard process inefficiency",
+      "Yard security checkpoint delays",
+      "Yard maintenance activity blocking access",
+      "Yard scheduling system failure",
+      "Yard communication breakdown",
+      "Yard weather-related delay",
+      "Yard third-party service delay"
     ]
   },
   "yard_bottlenecks": {
     "dock_congestion": [
-      "All dock doors occupied",
+      "Dock door unavailability",
       "Dock equipment malfunction",
-      "Dock staffing shortage",
+      "Dock staff shortage",
       "Dock scheduling conflicts",
-      "Dock maintenance blocking doors",
-      "Dock safety incident blocking access"
+      "Dock space constraints",
+      "Dock maintenance in progress",
+      "Dock power outage",
+      "Dock network connectivity failure",
+      "Dock safety inspection delay",
+      "Dock cross-dock coordination failure"
     ],
     "gate_delays": [
-      "Gate processing system down",
-      "Gate staffing shortage",
+      "Gate throughput capacity exceeded",
+      "Gate security screening delays",
+      "Gate documentation verification delays",
       "Gate equipment failure",
-      "Gate documentation backlog",
-      "Gate security screening delay",
-      "Gate weather-related delay"
+      "Gate process inefficiency",
+      "Gate shift change bottleneck",
+      "Gate system integration failure",
+      "Gate weather-related slowdown",
+      "Gate regulatory inspection delay",
+      "Gate visitor management delay"
     ],
     "parking_constraints": [
-      "Yard parking at capacity",
-      "Trailer parking unavailability",
-      "Yard layout inefficiency",
-      "Yard access restrictions",
-      "Yard weather impacting parking",
-      "Yard construction reducing capacity"
+      "Parking space shortage",
+      "Parking lot congestion",
+      "Parking access delays",
+      "Parking navigation issues",
+      "Parking security delays",
+      "Parking maintenance blocking spaces",
+      "Parking lighting failure",
+      "Parking surface condition issue",
+      "Parking signage confusion",
+      "Parking overflow requirement"
     ]
   },
   "shop_floor_impacts": {
     "material_starvation": [
-      "Trailer delay causing material shortage",
-      "Dock unavailability preventing material receipt",
-      "Yard congestion blocking material delivery",
-      "Receiving delay causing line starvation",
-      "Quality hold preventing material release",
-      "Documentation issue blocking material use"
+      "Production line material shortage",
+      "Raw material depletion",
+      "Component unavailability",
+      "Inventory stockout",
+      "Supply chain disruption",
+      "Supplier delivery failure",
+      "Material quality hold",
+      "Material quarantine delay",
+      "Material handling equipment failure",
+      "Material storage location issue"
     ],
-    "production_impact": [
-      "Production line stop due to material shortage",
-      "Reduced production rate due to delays",
-      "Production schedule shift due to logistics",
-      "OEE degradation from logistics delays",
-      "Production rework due to material issues",
-      "Production changeover from logistics delays"
+    "production_delays": [
+      "Production schedule disruption",
+      "Line stoppage due to material unavailability",
+      "Shift change material handoff delay",
+      "Production queue backup",
+      "Work order sequencing delay",
+      "Equipment failure causing production halt",
+      "Quality inspection backlog",
+      "Maintenance intervention required",
+      "Operator unavailability",
+      "Tooling unavailability"
+    ],
+    "quality_impacts": [
+      "Material quality degradation",
+      "Component substitution causing quality issues",
+      "Material handling damage",
+      "Storage condition impact",
+      "Expired material usage",
+      "Material contamination",
+      "Temperature excursion impact",
+      "Humidity control failure",
+      "Material specification deviation",
+      "Material lot traceability issue"
     ]
   },
   "shipping_receiving": {
     "shipping_delays": [
-      "Shipping dock unavailability",
-      "Shipping equipment failure",
-      "Shipping staff shortage",
-      "Documentation processing delay",
+      "Shipping window missed",
       "Carrier pickup delay",
-      "Weather impacting shipping"
+      "Shipping documentation incomplete",
+      "Shipping capacity constraint",
+      "Shipping route disruption",
+      "Shipping equipment failure",
+      "Shipping weather delay",
+      "Shipping regulatory hold",
+      "Shipping communication failure",
+      "Shipping security delay"
     ],
     "receiving_bottlenecks": [
-      "Receiving lane congestion",
-      "Receiving equipment failure",
       "Receiving staff shortage",
-      "Quality inspection backlog",
-      "Documentation processing delay",
-      "Inventory system downtime"
+      "Receiving equipment failure",
+      "Receiving space constraints",
+      "Receiving process inefficiency",
+      "Receiving documentation delays",
+      "Receiving quality inspection backlog",
+      "Receiving system integration failure",
+      "Receiving shift change delay",
+      "Receiving training gap",
+      "Receiving third-party service delay"
     ],
     "cross_docking_issues": [
-      "Cross-dock station unavailability",
-      "Transfer hub congestion",
+      "Cross-dock timing mismatch",
+      "Cross-dock space constraints",
       "Cross-dock equipment failure",
-      "Transfer timing misalignment",
-      "Cross-dock staffing shortage",
-      "Cross-dock system integration issue"
+      "Cross-dock process breakdown",
+      "Cross-dock coordination failure",
+      "Cross-dock documentation error",
+      "Cross-dock quality hold",
+      "Cross-dock staff shortage",
+      "Cross-dock system failure",
+      "Cross-dock safety delay"
     ]
-  }
+  },
+  "dwell_times": [
+    "0.5 hours", "1 hour", "1.5 hours", "2 hours", "2.5 hours", "3 hours", "3.5 hours", "4 hours", "4.5 hours", "5 hours",
+    "5.5 hours", "6 hours", "6.5 hours", "7 hours", "7.5 hours", "8 hours", "8.5 hours", "9 hours", "9.5 hours", "10 hours",
+    "12 hours", "14 hours", "16 hours", "18 hours", "20 hours", "24 hours", "36 hours", "48 hours", "72 hours"
+  ],
+  "detention_costs": [
+    "$50", "$75", "$100", "$125", "$150", "$175", "$200", "$250", "$300", "$350",
+    "$400", "$450", "$500", "$600", "$700", "$800", "$900", "$1000", "$1200", "$1500",
+    "$2000", "$2500", "$3000", "$4000", "$5000", "$7500", "$10000", "$15000", "$20000"
+  ],
+  "appointment_adherence": [
+    "45%", "50%", "55%", "60%", "65%", "70%", "75%", "80%", "85%", "90%", "95%", "100%"
+  ],
+  "yard_utilization": [
+    "70%", "75%", "80%", "85%", "90%", "95%", "100%", "105%", "110%", "115%", "120%", "125%"
+  ],
+  "shipment_counts": [
+    "5 shipments", "8 shipments", "10 shipments", "12 shipments", "15 shipments", "18 shipments", "20 shipments",
+    "25 shipments", "30 shipments", "35 shipments", "40 shipments", "50 shipments", "60 shipments", "75 shipments", "100 shipments"
+  ],
+  "production_risk": [
+    "1 production line at risk", "2 production lines at risk", "3 production lines at risk", "4 production lines at risk",
+    "5 production lines at risk", "6 production lines at risk", "8 production lines at risk", "10 production lines at risk"
+  ]
 }

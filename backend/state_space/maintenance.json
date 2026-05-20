@@ -1,31 +1,44 @@
 {
   "equipment": [
-    "Machine-001", "Machine-002", "Machine-003", "Machine-004", "Machine-005",
-    "Asset-A", "Asset-B", "Asset-C", "Asset-D", "Asset-E"
+    "Machine-001", "Machine-002", "Machine-003", "Machine-004", "Machine-005", "Machine-006", "Machine-007", "Machine-008", "Machine-009", "Machine-010",
+    "Machine-011", "Machine-012", "Machine-013", "Machine-014", "Machine-015", "Machine-016", "Machine-017", "Machine-018", "Machine-019", "Machine-020",
+    "Asset-A", "Asset-B", "Asset-C", "Asset-D", "Asset-E", "Asset-F", "Asset-G", "Asset-H", "Asset-I", "Asset-J",
+    "Asset-K", "Asset-L", "Asset-M", "Asset-N", "Asset-O", "Asset-P", "Asset-Q", "Asset-R", "Asset-S", "Asset-T",
+    "EQ-001", "EQ-002", "EQ-003", "EQ-004", "EQ-005", "EQ-006", "EQ-007", "EQ-008", "EQ-009", "EQ-010",
+    "EQ-011", "EQ-012", "EQ-013", "EQ-014", "EQ-015", "EQ-016", "EQ-017", "EQ-018", "EQ-019", "EQ-020"
   ],
   "maintenance_types": [
     "Preventive", "Corrective", "Predictive", "Emergency", "Routine",
-    "Calibration", "Inspection", "Overhaul", "Upgrade", "Decommission"
+    "Calibration", "Inspection", "Overhaul", "Upgrade", "Decommission",
+    "Reconditioning", "Refurbishment", "Retrofit", "Modification", "Installation"
   ],
   "maintenance_schedules": [
     "Daily", "Weekly", "Monthly", "Quarterly", "Annually", "As-Needed",
-    "Hour-Based", "Cycle-Based", "Condition-Based", "Time-Based"
+    "Hour-Based", "Cycle-Based", "Condition-Based", "Time-Based",
+    "Shift-Based", "Run-Time-Based", "Load-Based", "Stress-Based", "Environment-Based"
   ],
   "work_order_status": [
     "Open", "In Progress", "Pending Parts", "Awaiting Approval", "Scheduled",
-    "On Hold", "Completed", "Closed", "Cancelled", "Recurring"
+    "On Hold", "Completed", "Closed", "Cancelled", "Recurring",
+    "Backlog", "Escalated", "Deferred", "Under Review", "Approved"
   ],
   "priority_levels": [
     "Critical", "High", "Medium", "Low", "Routine", "Emergency",
-    "Safety-Critical", "Quality-Critical", "Production-Critical"
+    "Safety-Critical", "Quality-Critical", "Production-Critical",
+    "Regulatory-Critical", "Environmental-Critical", "Customer-Critical"
   ],
   "failure_modes": [
     "Mechanical Failure", "Electrical Failure", "Software Failure", "Human Error",
-    "Wear and Tear", "Overload", "Environmental", "Aging", "Misuse"
+    "Wear and Tear", "Overload", "Environmental", "Aging", "Misuse",
+    "Corrosion", "Fatigue", "Erosion", "Thermal Stress", "Vibration Damage",
+    "Contamination", "Lubrication Failure", "Alignment Issue", "Balance Problem"
   ],
   "spare_parts": [
     "Part-001", "Part-002", "Part-003", "Part-004", "Part-005",
-    "Component-A", "Component-B", "Component-C", "Module-X", "Module-Y"
+    "Component-A", "Component-B", "Component-C", "Module-X", "Module-Y",
+    "Bearing-001", "Bearing-002", "Bearing-003", "Bearing-004", "Bearing-005",
+    "Motor-001", "Motor-002", "Motor-003", "Pump-001", "Pump-002",
+    "Valve-001", "Valve-002", "Valve-003", "Sensor-001", "Sensor-002"
   ],
   "predictive_indicators": {
     "vibration_analysis": [
@@ -34,7 +47,11 @@
       "Harmonic patterns indicating imbalance",
       "Bearing wear indicators",
       "Gear mesh frequency changes",
-      "Resonance condition detected"
+      "Resonance condition detected",
+      "Shaft misalignment detected",
+      "Looseness indicators",
+      "Cavitation detection",
+      "Belt drive wear"
     ],
     "thermal_analysis": [
       "Temperature trending upward",
@@ -42,7 +59,11 @@
       "Thermal pattern deviation",
       "Cooling system degradation",
       "Overheating condition",
-      "Thermal imaging anomaly"
+      "Thermal imaging anomaly",
+      "Heat exchanger fouling",
+      "Insulation breakdown",
+      "Thermal cycling stress",
+      "Ambient temperature impact"
     ],
     "oil_analysis": [
       "Particle count increase",
@@ -50,7 +71,11 @@
       "Viscosity change",
       "Acidity level increase",
       "Water contamination",
-      "Additive depletion"
+      "Additive depletion",
+      "Oxidation increase",
+      "Sediment buildup",
+      "Foaming detected",
+      "Color degradation"
     ],
     "performance_degradation": [
       "Efficiency decline",
@@ -58,7 +83,11 @@
       "Quality parameter drift",
       "Cycle time increase",
       "Power consumption rise",
-      "Output variance"
+      "Output variance",
+      "Yield reduction",
+      "Speed deviation",
+      "Torque fluctuation",
+      "Pressure variation"
     ]
   },
   "preventive_triggers": {
@@ -68,7 +97,11 @@
       "Operating hours threshold exceeded",
       "Cycle count limit reached",
       "Seasonal maintenance requirement",
-      "Regulatory inspection due"
+      "Regulatory inspection due",
+      "Warranty maintenance required",
+      "Service interval elapsed",
+      "Maintenance window available",
+      "Shutdown opportunity"
     ],
     "usage_based": [
       "Production volume threshold reached",
@@ -76,7 +109,11 @@
       "Load cycle count reached",
       "Operating condition threshold",
       "Environmental exposure limit",
-      "Stress cycle limit reached"
+      "Stress cycle limit reached",
+      "Production count milestone",
+      "Batch completion trigger",
+      "Shift completion requirement",
+      "Tool wear limit reached"
     ],
     "condition_based": [
       "Performance metric deviation",
@@ -84,7 +121,11 @@
       "Efficiency drop detected",
       "Wear indicator threshold",
       "Condition monitoring alert",
-      "Predictive model warning"
+      "Predictive model warning",
+      "Sensor threshold exceeded",
+      "Trend analysis alert",
+      "Pattern recognition trigger",
+      "Anomaly detection alert"
     ]
   },
   "maintenance_conflicts": {
@@ -94,7 +135,11 @@
       "Technician scheduling conflict",
       "Equipment access conflict",
       "Safety window conflict",
-      "Shutdown constraint"
+      "Shutdown constraint",
+      "Shift change conflict",
+      "Weekend maintenance conflict",
+      "Holiday scheduling issue",
+      "Third-party service delay"
     ],
     "resource_constraints": [
       "Spare parts unavailability",
@@ -102,7 +147,11 @@
       "Equipment unavailability",
       "Budget constraint",
       "Vendor lead time delay",
-      "Tooling unavailability"
+      "Tooling unavailability",
+      "Special equipment required",
+      "Certified personnel needed",
+      "External service dependency",
+      "Facility access restriction"
     ],
     "operational_impacts": [
       "Production downtime required",
@@ -110,7 +159,11 @@
       "Safety system bypass needed",
       "Operational capacity reduction",
       "Process interruption",
-      "System unavailability"
+      "System unavailability",
+      "Customer delivery impact",
+      "Inventory buffer depletion",
+      "Supply chain disruption",
+      "Regulatory compliance risk"
     ]
   },
   "maintenance_escalation": {
@@ -120,7 +173,11 @@
       "Trend analysis indicates impending failure",
       "Condition monitoring alert",
       "Predictive model confidence high",
-      "Risk assessment recommends action"
+      "Risk assessment recommends action",
+      "Failure probability exceeded threshold",
+      "Remaining useful life critical",
+      "Cost-benefit analysis supports action",
+      "Safety risk assessment elevated"
     ],
     "preventive_to_corrective": [
       "Maintenance window missed",
@@ -128,7 +185,11 @@
       "Condition deterioration accelerated",
       "Predictive failure occurred",
       "Emergency maintenance required",
-      "Safety concern escalated"
+      "Safety concern escalated",
+      "Quality impact imminent",
+      "Production stoppage required",
+      "Regulatory violation risk",
+      "Environmental impact concern"
     ],
     "corrective_to_emergency": [
       "Equipment failure in progress",
@@ -136,7 +197,11 @@
       "Production stoppage required",
       "Quality critical issue",
       "Environmental risk",
-      "Regulatory violation imminent"
+      "Regulatory violation imminent",
+      "Catastrophic failure risk",
+      "Personnel safety hazard",
+      "Asset damage critical",
+      "Business continuity threat"
     ]
   },
   "root_cause_analysis": {
@@ -146,7 +211,11 @@
       "Material degradation",
       "Fatigue failure",
       "Corrosion damage",
-      "Erosion effects"
+      "Erosion effects",
+      "Thermal aging",
+      "UV degradation",
+      "Chemical breakdown",
+      "Structural fatigue"
     ],
     "operational_stress": [
       "Overloading condition",
@@ -154,7 +223,11 @@
       "Thermal stress",
       "Mechanical stress",
       "Environmental stress",
-      "Process variation stress"
+      "Process variation stress",
+      "Shock loading",
+      "Vibration stress",
+      "Pressure stress",
+      "Flow stress"
     ],
     "maintenance_deficit": [
       "Preventive maintenance missed",
@@ -162,7 +235,11 @@
       "Maintenance quality issue",
       "Maintenance interval too long",
       "Maintenance procedure error",
-      "Maintenance documentation gap"
+      "Maintenance documentation gap",
+      "Training deficiency",
+      "Resource allocation insufficient",
+      "Planning oversight",
+      "Execution failure"
     ],
     "external_factors": [
       "Environmental conditions",
@@ -170,7 +247,48 @@
       "Supply chain issues",
       "Operator error",
       "Third-party component failure",
-      "External system interaction"
+      "External system interaction",
+      "Weather impact",
+      "Utility service disruption",
+      "Vendor quality issue",
+      "Regulatory requirement change"
     ]
-  }
+  },
+  "vibration_levels": [
+    "2mm/s", "3mm/s", "4mm/s", "5mm/s", "6mm/s", "7mm/s", "8mm/s", "9mm/s", "10mm/s", "12mm/s",
+    "15mm/s", "18mm/s", "20mm/s", "25mm/s", "30mm/s", "35mm/s", "40mm/s", "45mm/s", "50mm/s"
+  ],
+  "temperature_readings": [
+    "65°C", "70°C", "75°C", "80°C", "85°C", "90°C", "95°C", "100°C", "105°C", "110°C",
+    "115°C", "120°C", "125°C", "130°C", "140°C", "150°C", "160°C", "175°C", "200°C"
+  ],
+  "time_to_failure": [
+    "24 hours", "48 hours", "72 hours", "96 hours", "120 hours", "144 hours", "168 hours",
+    "240 hours", "336 hours", "504 hours", "720 hours", "1008 hours", "1440 hours"
+  ],
+  "maintenance_backlog": [
+    "5 work orders", "10 work orders", "15 work orders", "20 work orders", "25 work orders",
+    "30 work orders", "40 work orders", "50 work orders", "75 work orders", "100 work orders"
+  ],
+  "downtime_costs": [
+    "$500/hour", "$1,000/hour", "$2,000/hour", "$3,000/hour", "$5,000/hour",
+    "$7,500/hour", "$10,000/hour", "$15,000/hour", "$20,000/hour", "$50,000/hour"
+  ],
+  "technician_availability": [
+    "1 technician available", "2 technicians available", "3 technicians available",
+    "4 technicians available", "5 technicians available", "6 technicians available",
+    "8 technicians available", "10 technicians available", "12 technicians available"
+  ],
+  "maintenance_duration": [
+    "2 hours", "4 hours", "6 hours", "8 hours", "12 hours", "16 hours", "24 hours",
+    "32 hours", "40 hours", "48 hours", "72 hours", "96 hours", "120 hours"
+  ],
+  "oil_particle_multiplier": [
+    "2x increase", "3x increase", "4x increase", "5x increase", "6x increase",
+    "8x increase", "10x increase", "15x increase", "20x increase"
+  ],
+  "thermal_hotspot_delta": [
+    "15°C", "20°C", "25°C", "30°C", "35°C", "40°C", "45°C", "50°C",
+    "60°C", "70°C", "80°C", "90°C", "100°C"
+  ]
 }

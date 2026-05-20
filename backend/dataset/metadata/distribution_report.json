@@ -64,9 +64,9 @@
     "multi": 249993
   },
   "severity_distribution": {
-    "critical": 100218,
-    "high": 132677,
-    "low": 133511,
-    "medium": 133580
+    "critical": 100630,
+    "medium": 133098,
+    "high": 132976,
+    "low": 133282
   }
 }

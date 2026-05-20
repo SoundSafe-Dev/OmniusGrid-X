@@ -173,6 +173,144 @@ class LLMGenerator:
             receiving_issue = self._get_random_nested("logistics", "shipping_receiving", "receiving_bottlenecks")
             maintenance_conflict = self._get_random_nested("maintenance", "maintenance_conflicts", "scheduling_conflicts")
             shop_floor_impact = self._get_random_nested("logistics", "shop_floor_impacts", "material_starvation")
+            
+            # New exhaustive variables
+            dwell_time = self._get_random_nested("logistics", "dwell_times")
+            detention_cost = self._get_random_nested("logistics", "detention_costs")
+            appointment_adherence = self._get_random_nested("logistics", "appointment_adherence")
+            yard_utilization = self._get_random_nested("logistics", "yard_utilization")
+            shipment_count = self._get_random_nested("logistics", "shipment_counts")
+            production_risk = self._get_random_nested("logistics", "production_risk")
+            
+            vibration_level = self._get_random_nested("maintenance", "vibration_levels")
+            temperature_reading = self._get_random_nested("maintenance", "temperature_readings")
+            time_to_failure = self._get_random_nested("maintenance", "time_to_failure")
+            maintenance_backlog = self._get_random_nested("maintenance", "maintenance_backlog")
+            downtime_cost = self._get_random_nested("maintenance", "downtime_costs")
+            technician_availability = self._get_random_nested("maintenance", "technician_availability")
+            maintenance_duration = self._get_random_nested("maintenance", "maintenance_duration")
+            
+            oee_metric = self._get_random_nested("production_output", "oee_metrics")
+            throughput_reduction = self._get_random_nested("production_output", "throughput_reduction")
+            cycle_time_increase = self._get_random_nested("production_output", "cycle_time_increase")
+            quality_rate = self._get_random_nested("production_output", "quality_rate")
+            downtime_hours = self._get_random_nested("production_output", "downtime_hours")
+            production_loss = self._get_random_nested("production_output", "production_loss")
+            scrap_cost = self._get_random_nested("production_output", "scrap_costs")
+            rework_rate = self._get_random_nested("production_output", "rework_rate")
+            customer_return = self._get_random_nested("production_output", "customer_returns")
+            production_order = self._get_random_nested("production_output", "production_orders")
+            schedule_adherence = self._get_random_nested("production_output", "schedule_adherence")
+            equipment_efficiency = self._get_random_nested("production_output", "equipment_efficiency")
+            line_utilization = self._get_random_nested("production_output", "line_utilization")
+            
+            incident_severity = self._get_random_nested("safety", "incident_severity")
+            personnel_affected = self._get_random_nested("safety", "personnel_affected")
+            root_cause_deadline = self._get_random_nested("safety", "root_cause_deadline")
+            access_point = self._get_random_nested("safety", "access_points")
+            unauthorized_attempt = self._get_random_nested("safety", "unauthorized_attempts")
+            data_exposure = self._get_random_nested("safety", "data_exposure")
+            remediation_time = self._get_random_nested("safety", "remediation_time")
+            safety_cost = self._get_random_nested("safety", "safety_costs")
+            regulatory_fine = self._get_random_nested("safety", "regulatory_fines")
+            contributing_factor = self._get_random_nested("safety", "contributing_factors")
+            corrective_action = self._get_random_nested("safety", "corrective_actions")
+            near_miss_severity = self._get_random_nested("safety", "near_miss_severity")
+            incident_location = self._get_random_nested("safety", "incident_location")
+            injury_type = self._get_random_nested("safety", "injury_types")
+            
+            inventory_level = self._get_random_nested("material_replenishment", "inventory_levels")
+            replenishment_time = self._get_random_nested("material_replenishment", "replenishment_times")
+            safety_stock_level = self._get_random_nested("material_replenishment", "safety_stock_levels")
+            stockout_risk = self._get_random_nested("material_replenishment", "stockout_risk")
+            inventory_accuracy = self._get_random_nested("material_replenishment", "inventory_accuracy")
+            pick_rate_degradation = self._get_random_nested("material_replenishment", "pick_rate_degradation")
+            putaway_time_increase = self._get_random_nested("material_replenishment", "putaway_time_increase")
+            space_utilization = self._get_random_nested("material_replenishment", "space_utilization")
+            slot_availability = self._get_random_nested("material_replenishment", "slot_availability")
+            sku_stockout = self._get_random_nested("material_replenishment", "sku_stockouts")
+            inventory_buffer_day = self._get_random_nested("material_replenishment", "inventory_buffer_days")
+            order_fulfillment_accuracy = self._get_random_nested("material_replenishment", "order_fulfillment_accuracy")
+            supplier_scorecard = self._get_random_nested("material_replenishment", "supplier_scorecard")
+            supplier_performance = self._get_random_nested("material_replenishment", "supplier_performance")
+            supplier_defect_rate = self._get_random_nested("material_replenishment", "supplier_defect_rate")
+            inventory_turnover = self._get_random_nested("material_replenishment", "inventory_turnover")
+            carrying_cost = self._get_random_nested("material_replenishment", "carrying_costs")
+            stockout_cost = self._get_random_nested("material_replenishment", "stockout_costs")
+            expediting_cost = self._get_random_nested("material_replenishment", "expediting_costs")
+            transportation_cost = self._get_random_nested("material_replenishment", "transportation_costs")
+            warehouse_zone = self._get_random_nested("material_replenishment", "warehouse_zones")
+            zone_congestion = self._get_random_nested("material_replenishment", "zone_congestion")
+            material_starvation_risk = self._get_random_nested("material_replenishment", "material_starvation_risk")
+            receiving_throughput_degradation = self._get_random_nested("material_replenishment", "receiving_throughput_degradation")
+            dock_utilization = self._get_random_nested("material_replenishment", "dock_utilization")
+            trailer_queue = self._get_random_nested("material_replenishment", "trailer_queue")
+            detention_accumulation = self._get_random_nested("material_replenishment", "detention_accumulation")
+            
+            defect_rate = self._get_random_nested("quality_control", "defect_rates")
+            quality_scrap_cost = self._get_random_nested("quality_control", "scrap_costs")
+            quality_rework_rate = self._get_random_nested("quality_control", "rework_rate")
+            quality_customer_return = self._get_random_nested("quality_control", "customer_returns")
+            first_pass_yield = self._get_random_nested("quality_control", "first_pass_yield")
+            inspection_backlog = self._get_random_nested("quality_control", "inspection_backlog")
+            inspection_cycle_time = self._get_random_nested("quality_control", "inspection_cycle_time")
+            quality_assurance_resource = self._get_random_nested("quality_control", "quality_assurance_resources")
+            customer_complaint_rate = self._get_random_nested("quality_control", "customer_complaint_rate")
+            field_failure_rate = self._get_random_nested("quality_control", "field_failure_rate")
+            warranty_claim = self._get_random_nested("quality_control", "warranty_claims")
+            quality_cost = self._get_random_nested("quality_control", "quality_cost")
+            ppm_defect = self._get_random_nested("quality_control", "ppm_defects")
+            quality_gate = self._get_random_nested("quality_control", "quality_gates")
+            non_conformance = self._get_random_nested("quality_control", "non_conformances")
+            inspection_pass_rate = self._get_random_nested("quality_control", "inspection_pass_rate")
+            test_pass_rate = self._get_random_nested("quality_control", "test_pass_rate")
+            measurement_accuracy = self._get_random_nested("quality_control", "measurement_accuracy")
+            calibration_status = self._get_random_nested("quality_control", "calibration_status")
+            quality_metrics_deviation = self._get_random_nested("quality_control", "quality_metrics_deviation")
+            process_variation = self._get_random_nested("quality_control", "process_variation")
+            specification_deviation = self._get_random_nested("quality_control", "specification_deviation")
+            quality_documentation_gap = self._get_random_nested("quality_control", "quality_documentation_gap")
+            traceability_issue = self._get_random_nested("quality_control", "traceability_issue")
+            quality_hold_duration = self._get_random_nested("quality_control", "quality_hold_duration")
+            quality_rework_time = self._get_random_nested("quality_control", "rework_time")
+            quality_impact = self._get_random_nested("quality_control", "quality_impact")
+            capa_required = self._get_random_nested("quality_control", "capa_required")
+            regulatory_impact = self._get_random_nested("quality_control", "regulatory_impact")
+            quality_equipment_failure = self._get_random_nested("quality_control", "quality_equipment_failure")
+            inspection_frequency = self._get_random_nested("quality_control", "inspection_frequency")
+            sample_size = self._get_random_nested("quality_control", "sample_size")
+            acceptance_quality_limit = self._get_random_nested("quality_control", "acceptance_quality_limit")
+            
+            compliance_status = self._get_random_nested("compliance", "compliance_status")
+            violation_severity = self._get_random_nested("compliance", "violation_severity")
+            audit_frequency = self._get_random_nested("compliance", "audit_frequency")
+            compliance_regulatory_fine = self._get_random_nested("compliance", "regulatory_fines")
+            audit_finding = self._get_random_nested("compliance", "audit_findings")
+            corrective_action_deadline = self._get_random_nested("compliance", "corrective_action_deadline")
+            compliance_score = self._get_random_nested("compliance", "compliance_score")
+            certification_status = self._get_random_nested("compliance", "certification_status")
+            training_compliance = self._get_random_nested("compliance", "training_compliance")
+            documentation_compliance = self._get_random_nested("compliance", "documentation_compliance")
+            non_compliance_area = self._get_random_nested("compliance", "non_compliance_areas")
+            regulatory_deadline = self._get_random_nested("compliance", "regulatory_deadline")
+            audit_duration = self._get_random_nested("compliance", "audit_duration")
+            compliance_risk = self._get_random_nested("compliance", "compliance_risk")
+            standard_version = self._get_random_nested("compliance", "standard_version")
+            audit_type = self._get_random_nested("compliance", "audit_type")
+            certification_expiry = self._get_random_nested("compliance", "certification_expiry")
+            compliance_cost = self._get_random_nested("compliance", "compliance_cost")
+            penalty_accumulation = self._get_random_nested("compliance", "penalty_accumulation")
+            reporting_deadline = self._get_random_nested("compliance", "reporting_deadline")
+            compliance_data_breach_impact = self._get_random_nested("compliance", "data_breach_impact")
+            privacy_compliance = self._get_random_nested("compliance", "privacy_compliance")
+            environmental_compliance = self._get_random_nested("compliance", "environmental_compliance")
+            safety_compliance = self._get_random_nested("compliance", "safety_compliance")
+            quality_compliance = self._get_random_nested("compliance", "quality_compliance")
+            regulatory_authority = self._get_random_nested("compliance", "regulatory_authorities")
+            compliance_gap = self._get_random_nested("compliance", "compliance_gaps")
+            compliance_remediation_time = self._get_random_nested("compliance", "remediation_time")
+            audit_scope = self._get_random_nested("compliance", "audit_scope")
+            certification_body = self._get_random_nested("compliance", "certification_body")
         else:
             asset = "asset"
             trailer = "TRK-XXX"
@@ -193,6 +331,144 @@ class LLMGenerator:
             receiving_issue = "receiving bottleneck"
             maintenance_conflict = "scheduling conflict"
             shop_floor_impact = "material starvation"
+            
+            # Default values for exhaustive variables
+            dwell_time = "2 hours"
+            detention_cost = "$500"
+            appointment_adherence = "75%"
+            yard_utilization = "85%"
+            shipment_count = "10 shipments"
+            production_risk = "2 production lines at risk"
+            
+            vibration_level = "5mm/s"
+            temperature_reading = "80°C"
+            time_to_failure = "72 hours"
+            maintenance_backlog = "10 work orders"
+            downtime_cost = "$2,000/hour"
+            technician_availability = "2 technicians available"
+            maintenance_duration = "8 hours"
+            
+            oee_metric = "70%"
+            throughput_reduction = "25%"
+            cycle_time_increase = "30%"
+            quality_rate = "90%"
+            downtime_hours = "4 hours"
+            production_loss = "500 units"
+            scrap_cost = "$2,000"
+            rework_rate = "8%"
+            customer_return = "10%"
+            production_order = "3 production orders delayed"
+            schedule_adherence = "75%"
+            equipment_efficiency = "75%"
+            line_utilization = "80%"
+            
+            incident_severity = "Moderate"
+            personnel_affected = "2 personnel affected"
+            root_cause_deadline = "48 hours"
+            access_point = "2 access points"
+            unauthorized_attempt = "3 unauthorized access attempts"
+            data_exposure = "500 records"
+            remediation_time = "24 hours"
+            safety_cost = "$5,000"
+            regulatory_fine = "$10,000"
+            contributing_factor = "3 contributing factors identified"
+            corrective_action = "4 corrective actions recommended"
+            near_miss_severity = "Medium severity near-miss"
+            incident_location = "Production area"
+            injury_type = "Laceration"
+            
+            inventory_level = "1,000 units"
+            replenishment_time = "24 hours"
+            safety_stock_level = "500 units"
+            stockout_risk = "2 production lines at risk"
+            inventory_accuracy = "90%"
+            pick_rate_degradation = "20%"
+            putaway_time_increase = "30%"
+            space_utilization = "85%"
+            slot_availability = "10 slots available"
+            sku_stockout = "3 SKUs experiencing stockouts"
+            inventory_buffer_day = "15 days"
+            order_fulfillment_accuracy = "90%"
+            supplier_scorecard = "75/100"
+            supplier_performance = "80% on-time delivery"
+            supplier_defect_rate = "2%"
+            inventory_turnover = "10 turns/year"
+            carrying_cost = "$5,000/month"
+            stockout_cost = "$5,000"
+            expediting_cost = "$500"
+            transportation_cost = "$1,000"
+            warehouse_zone = "Zone A"
+            zone_congestion = "3 zones experiencing congestion"
+            material_starvation_risk = "2 production lines at risk"
+            receiving_throughput_degradation = "30%"
+            dock_utilization = "90%"
+            trailer_queue = "5 trailers queued"
+            detention_accumulation = "$100/hour"
+            
+            defect_rate = "3%"
+            quality_scrap_cost = "$2,000"
+            quality_rework_rate = "8%"
+            quality_customer_return = "10%"
+            first_pass_yield = "92%"
+            inspection_backlog = "100 units"
+            inspection_cycle_time = "40%"
+            quality_assurance_resource = "4 QA inspectors"
+            customer_complaint_rate = "1%"
+            field_failure_rate = "1%"
+            warranty_claim = "50 claims"
+            quality_cost = "$15,000"
+            ppm_defect = "500 PPM"
+            quality_gate = "3 quality gates failing"
+            non_conformance = "3 non-conformances logged"
+            inspection_pass_rate = "92%"
+            test_pass_rate = "92%"
+            measurement_accuracy = "98%"
+            calibration_status = "Calibration current"
+            quality_metrics_deviation = "10%"
+            process_variation = "10%"
+            specification_deviation = "0.5mm"
+            quality_documentation_gap = "Documentation incomplete"
+            traceability_issue = "Lot traceability issue"
+            quality_hold_duration = "8 hours"
+            quality_rework_time = "2 hours"
+            quality_impact = "10% increase in defects"
+            capa_required = "2 CAPAs required"
+            regulatory_impact = "ISO standard violation"
+            quality_equipment_failure = "CMM calibration drift"
+            inspection_frequency = "Daily"
+            sample_size = "25 units"
+            acceptance_quality_limit = "AQL 1.5"
+            
+            compliance_status = "Partially Compliant"
+            violation_severity = "Major Violation"
+            audit_frequency = "Annual"
+            compliance_regulatory_fine = "$25,000"
+            audit_finding = "3 findings"
+            corrective_action_deadline = "30 days"
+            compliance_score = "80/100"
+            certification_status = "Certified"
+            training_compliance = "90% trained"
+            documentation_compliance = "85% complete"
+            non_compliance_area = "3 areas non-compliant"
+            regulatory_deadline = "90 days"
+            audit_duration = "3 days"
+            compliance_risk = "Medium Risk"
+            standard_version = "ISO 9001:2015"
+            audit_type = "Internal Audit"
+            certification_expiry = "180 days to expiry"
+            compliance_cost = "$25,000"
+            penalty_accumulation = "$1,000/month"
+            reporting_deadline = "30 days"
+            compliance_data_breach_impact = "1,000 records affected"
+            privacy_compliance = "85% compliant"
+            environmental_compliance = "85% compliant"
+            safety_compliance = "90% compliant"
+            quality_compliance = "90% compliant"
+            regulatory_authority = "OSHA"
+            compliance_gap = "3 gaps identified"
+            compliance_remediation_time = "4 weeks"
+            audit_scope = "Full Scope Audit"
+            certification_body = "Registrar-A"
         
         avg_severity = sum(link.get("severity_impact", 0.5) for link in links) / len(links) if links else 0.5
         severity_level = "critical" if avg_severity > 0.8 else "high" if avg_severity > 0.6 else "medium" if avg_severity > 0.4 else "low"
@@ -208,24 +484,23 @@ class LLMGenerator:
                 ]
             elif domain == "PRODUCTION_OEE":
                 templates = [
-                    f"Production line degradation detected: asset {asset} in {packml_state} state with {alarm_code}. OEE metrics at {random.randint(45, 65)}% below threshold indicating equipment performance or scheduling inefficiency. Root cause analysis suggests {shop_floor_issue} with {random.randint(20, 40)}% throughput reduction. Equipment cycle time increased by {random.randint(15, 30)}%, quality rate dropped to {random.randint(85, 95)}%. Maintenance intervention required within 4 hours to prevent production stop.",
-                    f"Production efficiency decline on {asset} with {packml_state} state. {alarm_code} indicates potential equipment bottleneck or process constraint. Performance metrics suggest operational efficiency degradation requiring corrective action. Downtime accumulated {random.randint(2, 5)} hours this shift, scrap rate increased to {random.randint(3, 8)}%. Analysis suggests equipment performance issue or scheduling constraint impacting production throughput.",
-                    f"OEE metrics falling below acceptable threshold on {asset}. {alarm_code} in {packml_state} state indicates operational inefficiency. Analysis suggests equipment performance issue or scheduling constraint impacting production throughput. Overall Equipment Effectiveness at {random.randint(55, 70)}% (target: 85%+). Availability dropped to {random.randint(70, 85)}%, performance at {random.randint(60, 80)}%, quality at {random.randint(88, 96)}%."
+                    f"Production line degradation detected: asset {asset} in {packml_state} state with {alarm_code}. OEE metrics at {oee_metric} below threshold indicating equipment performance or scheduling inefficiency. Root cause analysis suggests {shop_floor_issue} with {throughput_reduction} throughput reduction. Equipment cycle time increased by {cycle_time_increase}, quality rate dropped to {quality_rate}. Maintenance intervention required within {downtime_hours} to prevent production stop. Production loss: {production_loss}, scrap cost: {scrap_cost}.",
+                    f"Production efficiency decline on {asset} with {packml_state} state. {alarm_code} indicates potential equipment bottleneck or process constraint. Performance metrics suggest operational efficiency degradation requiring corrective action. Downtime accumulated {downtime_hours} this shift, scrap rate increased to {rework_rate}. Analysis suggests equipment performance issue or scheduling constraint impacting production throughput. Rework rate: {rework_rate}, customer returns: {customer_return}.",
+                    f"OEE metrics falling below acceptable threshold on {asset}. {alarm_code} in {packml_state} state indicates operational inefficiency. Analysis suggests equipment performance issue or scheduling constraint impacting production throughput. Overall Equipment Effectiveness at {oee_metric} (target: 85%+). Schedule adherence at {schedule_adherence}, equipment efficiency at {equipment_efficiency}, line utilization at {line_utilization}. {production_order} delayed."
                 ]
             elif domain == "LOGISTICS_FLEET":
                 liability_options = ["driver_liability", "client_liability", "transport_liability", "yard_liability"]
                 liability = self._get_random_nested("logistics", "detention_scenarios", random.choice(liability_options)) if self.state_space else "driver_liability"
-                dwell_time = random.randint(2, 8)
                 templates = [
-                    f"Logistics fleet issue detected: {trailer} experiencing operational delays at {dock}. Dwell time exceeded threshold by {dwell_time} hours. Root cause analysis indicates {detention_scenario}. Liability determination suggests {liability.replace('_', ' ')} responsibility. Detention costs estimated at ${random.randint(200, 800)}. Coordination required between transport management, yard operations, and receiving to resolve bottleneck.",
-                    f"Trailer {trailer} dwell time exceeding thresholds at {dock}. Detention analysis identifies {detention_scenario}. Liability assessment indicates {liability.replace('_', ' ')} responsibility for delay. Process improvement needed in dock appointment scheduling. Current appointment adherence at {random.randint(45, 75)}%, target 95%+. Estimated demurrage costs ${random.randint(300, 1200)}.",
-                    f"Logistics coordination failure: {trailer} stuck at {dock} with {detention_scenario}. Multi-perspective analysis identifies {liability.replace('_', ' ')} as primary cause. Cross-functional coordination required to resolve. Impact on downstream operations: {random.randint(5, 15)} shipments delayed, potential production disruption if not resolved within {random.randint(4, 12)} hours."
+                    f"Logistics fleet issue detected: {trailer} experiencing operational delays at {dock}. Dwell time exceeded threshold by {dwell_time}. Root cause analysis indicates {detention_scenario}. Liability determination suggests {liability.replace('_', ' ')} responsibility. Detention costs estimated at {detention_cost}. Coordination required between transport management, yard operations, and receiving to resolve bottleneck. Yard utilization at {yard_utilization}, appointment adherence at {appointment_adherence}.",
+                    f"Trailer {trailer} dwell time exceeding thresholds at {dock}. Detention analysis identifies {detention_scenario}. Liability assessment indicates {liability.replace('_', ' ')} responsibility for delay. Process improvement needed in dock appointment scheduling. Current appointment adherence at {appointment_adherence}, target 95%+. Estimated demurrage costs {detention_cost}. {shipment_count} affected, {production_risk} if not resolved.",
+                    f"Logistics coordination failure: {trailer} stuck at {dock} with {detention_scenario}. Multi-perspective analysis identifies {liability.replace('_', ' ')} as primary cause. Cross-functional coordination required to resolve. Impact on downstream operations: {shipment_count} delayed, {production_risk} if not resolved within {dwell_time}. Yard utilization at {yard_utilization} causing capacity constraints."
                 ]
             elif domain == "COMPLIANCE_REGISTRIES":
                 templates = [
-                    f"Compliance violation detected for {iso}. Operational procedures not meeting regulatory requirements. Gap analysis indicates process re-engineering required to achieve compliance. Audit findings: {random.randint(3, 8)} non-conformities identified, {random.randint(1, 3)} critical issues requiring immediate remediation. Corrective action plan needed within {random.randint(7, 30)} days to avoid regulatory penalties.",
-                    f"Regulatory non-compliance identified for {iso}. Operational audit reveals gaps in current procedures. Corrective action plan needed to address compliance deficiencies. Risk assessment: {random.randint(2, 5)} high-risk areas requiring immediate attention. Potential fines up to ${random.randint(10000, 50000)} if not remediated within {random.randint(14, 45)} days.",
-                    f"Compliance audit failure for {iso}. Process deviations from regulatory standards identified. Risk assessment indicates immediate remediation required to prevent regulatory violations. Non-conformance rate: {random.randint(5, 15)}% above acceptable threshold. {random.randint(2, 4)} procedures require complete revision. Audit score: {random.randint(65, 78)}/100 (passing: 85+)."
+                    f"Compliance violation detected for {iso} ({standard_version}). Operational procedures not meeting regulatory requirements. Gap analysis indicates process re-engineering required to achieve compliance. Compliance status: {compliance_status}, violation severity: {violation_severity}. Audit findings: {audit_finding}, {non_compliance_area}. Corrective action plan needed within {corrective_action_deadline} to avoid regulatory fines of {compliance_regulatory_fine}. Compliance score: {compliance_score} (passing: 85+).",
+                    f"Regulatory non-compliance identified for {iso} by {regulatory_authority}. Operational audit reveals gaps in current procedures. Corrective action plan needed to address compliance deficiencies. Risk assessment: {compliance_risk}, audit type: {audit_type}. Potential fines up to {compliance_regulatory_fine} if not remediated within {regulatory_deadline}. Training compliance at {training_compliance}, documentation compliance at {documentation_compliance}.",
+                    f"Compliance audit failure for {iso}. Process deviations from regulatory standards identified. Risk assessment indicates immediate remediation required to prevent regulatory violations. Audit duration: {audit_duration}, audit scope: {audit_scope}. Certification status: {certification_status}, certification expiry: {certification_expiry}. Compliance cost: {compliance_cost}, penalty accumulation: {penalty_accumulation}. {compliance_gap} identified, remediation time: {compliance_remediation_time}."
                 ]
             elif domain == "SYSTEM_INFRASTRUCTURE":
                 templates = [
@@ -235,33 +510,33 @@ class LLMGenerator:
                 ]
             elif domain == "MAINTENANCE":
                 templates = [
-                    f"Maintenance operations issue detected: {predictive_indicator} indicates equipment degradation on {asset}. Predictive maintenance analysis suggests preventive maintenance window approaching. Resource coordination required. Vibration levels at {random.randint(8, 15)}mm/s (threshold: 5mm/s), temperature {random.randint(75, 95)}°C above normal. Estimated time to failure: {random.randint(48, 168)} hours if not addressed.",
-                    f"Predictive maintenance alert: {predictive_indicator} on {asset} indicates impending failure. Condition monitoring recommends immediate preventive maintenance to prevent corrective action. Oil analysis shows {random.randint(2, 5)}x increase in metal particles, thermal imaging indicates {random.randint(15, 35)}°C hotspot. Maintenance backlog: {random.randint(5, 15)} work orders pending.",
-                    f"Maintenance escalation scenario: {predictive_indicator} indicates equipment performance degradation. Risk assessment suggests transition from predictive to preventive maintenance required. Current maintenance schedule has {random.randint(3, 8)} conflicts with production requirements. Resource allocation: {random.randint(2, 4)} technicians available, {random.randint(1, 3)} required for this intervention."
+                    f"Maintenance operations issue detected: {predictive_indicator} indicates equipment degradation on {asset}. Predictive maintenance analysis suggests preventive maintenance window approaching. Resource coordination required. Vibration levels at {vibration_level} (threshold: 5mm/s), temperature {temperature_reading} above normal. Estimated time to failure: {time_to_failure} if not addressed. Maintenance backlog: {maintenance_backlog}, downtime cost: {downtime_cost}. Technician availability: {technician_availability}.",
+                    f"Predictive maintenance alert: {predictive_indicator} on {asset} indicates impending failure. Condition monitoring recommends immediate preventive maintenance to prevent corrective action. Oil analysis shows metal particle increase, thermal imaging indicates hotspot. Maintenance backlog: {maintenance_backlog} work orders pending. Estimated maintenance duration: {maintenance_duration}. Downtime cost: {downtime_cost}.",
+                    f"Maintenance escalation scenario: {predictive_indicator} indicates equipment performance degradation. Risk assessment suggests transition from predictive to preventive maintenance required. Current maintenance schedule has conflicts with production requirements. Resource allocation: {technician_availability}, {maintenance_duration} estimated for intervention. Time to failure: {time_to_failure} if not addressed."
                 ]
             elif domain == "SAFETY":
                 templates = [
-                    f"Safety management issue detected: {safety_scenario} identified. Risk assessment indicates immediate response required. Safety protocol activation and incident investigation needed. Incident severity: {severity_level.upper()}. Potential impact: {random.randint(1, 5)} personnel affected, estimated downtime {random.randint(2, 12)} hours. Root cause analysis required within {random.randint(24, 72)} hours per OSHA regulations.",
-                    f"Security scenario detected: {safety_scenario} affecting operations. Multi-factor analysis indicates security protocol enhancement required. Incident response team activation recommended. Security breach detected at {random.randint(1, 3)} access points, {random.randint(2, 6)} unauthorized access attempts logged. Review of security protocols and access controls required.",
-                    f"Operational safety concern: {safety_scenario} identified. Risk mitigation requires immediate action. Safety assessment and protocol review recommended. Near-miss incident recorded, potential severity: {severity_level.upper()}. Contributing factors: {random.randint(2, 4)} identified. Corrective actions: {random.randint(3, 6)} recommended to prevent recurrence."
+                    f"Safety management issue detected: {safety_scenario} identified at {incident_location}. Risk assessment indicates immediate response required. Safety protocol activation and incident investigation needed. Incident severity: {incident_severity}. Potential impact: {personnel_affected}, estimated downtime {downtime_hours}. Root cause analysis required within {root_cause_deadline} per OSHA regulations. Safety cost: {safety_cost}. Injury type: {injury_type}.",
+                    f"Security scenario detected: {safety_scenario} affecting operations. Multi-factor analysis indicates security protocol enhancement required. Incident response team activation recommended. Security breach detected at {access_point}, {unauthorized_attempt} logged. Data exposure: {data_exposure}. Remediation time: {remediation_time}. Regulatory fine: {regulatory_fine}. Contributing factors: {contributing_factor}. Corrective actions: {corrective_action}.",
+                    f"Operational safety concern: {safety_scenario} identified. Risk mitigation requires immediate action. Safety assessment and protocol review recommended. Near-miss incident recorded, potential severity: {near_miss_severity}. Incident location: {incident_location}. Contributing factors: {contributing_factor}. Corrective actions: {corrective_action} to prevent recurrence. Safety compliance at {safety_compliance}."
                 ]
             elif domain == "WAREHOUSE_MANAGEMENT":
                 templates = [
-                    f"Warehouse management issue detected: {bottleneck} in operations affecting throughput. Inventory accuracy at {random.randint(85, 95)}% (target: 99%+). Pick rate degraded by {random.randint(15, 35)}%, put-away time increased by {random.randint(20, 45)}%. Root cause analysis suggests process inefficiency or resource constraint. {random.randint(2, 5)} zones experiencing congestion.",
-                    f"Warehouse operations bottleneck: {bottleneck} causing operational delays. Space utilization at {random.randint(75, 95)}%, slot availability limited. Order fulfillment cycle time increased by {random.randint(30, 60)} minutes. Analysis suggests layout optimization or process re-engineering required. {random.randint(3, 8)} SKUs experiencing stockouts.",
-                    f"Warehouse performance degradation: {bottleneck} in specific operations area. Labor productivity down {random.randint(10, 30)}%, equipment utilization at {random.randint(60, 85)}%. Root cause indicates process or resource constraint affecting operations. Inventory turnover rate: {random.randint(8, 15)} turns/year (target: 20+)."
+                    f"Warehouse management issue detected: {bottleneck} in operations affecting throughput. Inventory accuracy at {inventory_accuracy} (target: 99%+). Pick rate degraded by {pick_rate_degradation}, put-away time increased by {putaway_time_increase}. Root cause analysis suggests process inefficiency or resource constraint. {zone_congestion}. Space utilization at {space_utilization}, slot availability: {slot_availability}.",
+                    f"Warehouse operations bottleneck: {bottleneck} causing operational delays. Space utilization at {space_utilization}, slot availability limited to {slot_availability}. Order fulfillment cycle time increased. Analysis suggests layout optimization or process re-engineering required. {sku_stockout}. Inventory buffer days: {inventory_buffer_day}, order fulfillment accuracy at {order_fulfillment_accuracy}.",
+                    f"Warehouse performance degradation: {bottleneck} in specific operations area. Labor productivity down, equipment utilization degraded. Root cause indicates process or resource constraint affecting operations. Inventory turnover rate: {inventory_turnover} (target: 20+). Carrying cost: {carrying_cost}. Stockout cost: {stockout_cost}. Warehouse zone: {warehouse_zone} experiencing issues."
                 ]
             elif domain == "SUPPLY_CHAIN":
                 templates = [
-                    f"Supply chain disruption detected: Supplier performance degradation affecting material availability. On-time delivery rate dropped to {random.randint(70, 88)}% (target: 95%+). {random.randint(2, 5)} suppliers experiencing delivery delays. Risk assessment suggests diversification or inventory buffer required. Impact on production: {random.randint(1, 3)} lines at risk of material starvation.",
-                    f"Supply chain bottleneck: {random.randint(2, 4)} critical components experiencing supply constraints. Lead times increased by {random.randint(30, 90)}%. Supplier quality issues detected: defect rate {random.randint(2, 8)}% (acceptable: <1%). Risk mitigation requires supplier development or alternative sourcing. Inventory buffer days: {random.randint(5, 15)} (target: 30+).",
-                    f"Supply chain performance degradation: Multiple suppliers showing performance issues. Order fulfillment accuracy at {random.randint(85, 95)}%, response time increased by {random.randint(20, 50)}%. Analysis suggests systemic supply chain risk requiring strategic review. Supplier scorecard: {random.randint(65, 82)}/100 average across {random.randint(8, 15)} suppliers."
+                    f"Supply chain disruption detected: Supplier performance degradation affecting material availability. On-time delivery rate dropped to {supplier_performance} (target: 95%+). Suppliers experiencing delivery delays. Risk assessment suggests diversification or inventory buffer required. Impact on production: {material_starvation_risk}. Supplier scorecard: {supplier_scorecard}.",
+                    f"Supply chain bottleneck: Critical components experiencing supply constraints. Lead times increased by {replenishment_time}. Supplier quality issues detected: defect rate {supplier_defect_rate} (acceptable: <1%). Risk mitigation requires supplier development or alternative sourcing. Inventory buffer days: {inventory_buffer_day} (target: 30+). Expediting cost: {expediting_cost}.",
+                    f"Supply chain performance degradation: Multiple suppliers showing performance issues. Order fulfillment accuracy at {order_fulfillment_accuracy}, response time increased. Analysis suggests systemic supply chain risk requiring strategic review. Supplier performance at {supplier_performance} average across suppliers. Transportation cost: {transportation_cost}. Inventory level: {inventory_level}."
                 ]
             elif domain == "QUALITY_CONTROL":
                 templates = [
-                    f"Quality control issue detected: Defect rate increased to {random.randint(3, 8)}% (target: <1%). {random.randint(2, 5)} quality gates failing inspection. Root cause analysis suggests process or equipment issue. Scrap costs: ${random.randint(1000, 5000)} this shift. Rework rate: {random.randint(5, 15)}% of production. Customer returns increased by {random.randint(20, 50)}% month-over-month.",
-                    f"Quality degradation alert: {random.randint(3, 6)} product lines showing quality issues. First pass yield dropped to {random.randint(85, 93)}% (target: 98%+). Analysis indicates process variation or equipment calibration issue. CAPA (Corrective and Preventive Action) required per {iso} standards. {random.randint(2, 4)} non-conformances logged.",
-                    f"Quality control bottleneck: Inspection backlog of {random.randint(50, 200)} units. Quality assurance resources constrained, inspection cycle time increased by {random.randint(40, 80)}%. Risk assessment suggests potential quality escapes if not addressed. Customer complaint rate: {random.uniform(0.5, 3):.1f}% (target: <0.1%)."
+                    f"Quality control issue detected: Defect rate increased to {defect_rate} (target: <1%). {quality_gate} failing inspection. Root cause analysis suggests process or equipment issue. Scrap costs: {quality_scrap_cost} this shift. Rework rate: {quality_rework_rate} of production. Customer returns increased by {quality_customer_return} month-over-month. First pass yield dropped to {first_pass_yield}.",
+                    f"Quality degradation alert: {quality_gate} product lines showing quality issues. First pass yield dropped to {first_pass_yield} (target: 98%+). Analysis indicates process variation or equipment calibration issue. CAPA (Corrective and Preventive Action) required per {iso} standards. {non_conformance} logged. Inspection backlog: {inspection_backlog} units, inspection cycle time increased by {inspection_cycle_time}.",
+                    f"Quality control bottleneck: Inspection backlog of {inspection_backlog} units. Quality assurance resources constrained, inspection cycle time increased by {inspection_cycle_time}. Risk assessment suggests potential quality escapes if not addressed. Customer complaint rate: {customer_complaint_rate} (target: <0.1%). Field failure rate: {field_failure_rate}. Warranty claims: {warranty_claim}. Quality cost: {quality_cost}. PPM defects: {ppm_defect}."
                 ]
             elif domain == "ENERGY_MANAGEMENT":
                 templates = [
@@ -294,25 +569,25 @@ class LLMGenerator:
             liability_options = ["driver_liability", "client_liability", "transport_liability", "yard_liability"]
             liability = self._get_random_nested("logistics", "detention_scenarios", random.choice(liability_options)) if self.state_space else "yard_liability"
             templates = [
-                f"Logistics delays with {trailer} at {dock} causing production line inefficiencies. Detention analysis identifies {detention_scenario} with {liability.replace('_', ' ')} responsibility. {shop_floor_impact} impacting production OEE. Production throughput reduced by {random.randint(25, 50)}%, {random.randint(3, 8)} production orders delayed. Cross-domain coordination required between logistics, production planning, and yard management.",
-                f"Production bottleneck caused by logistics misalignment: {trailer} delayed at {dock} due to {detention_scenario}. Liability assessment indicates {liability.replace('_', ' ')} responsibility. {shop_floor_impact} causing production efficiency degradation. Material starvation risk for {random.randint(2, 5)} production lines. Estimated production loss: {random.randint(500, 2000)} units, revenue impact ${random.randint(10000, 50000)}.",
-                f"Cross-domain failure: {trailer} stuck at {dock} causing {shop_floor_impact} on production line. Multi-perspective analysis identifies {liability.replace('_', ' ')} as primary cause. Integrated remediation strategy required. Production schedule adherence dropped to {random.randint(60, 80)}%, customer delivery risk for {random.randint(5, 15)} orders. Root cause: process misalignment between logistics appointment scheduling and production material requirements."
+                f"Logistics delays with {trailer} at {dock} causing production line inefficiencies. Detention analysis identifies {detention_scenario} with {liability.replace('_', ' ')} responsibility. {shop_floor_impact} impacting production OEE. Production throughput reduced by {throughput_reduction}, {production_order} delayed. Cross-domain coordination required between logistics, production planning, and yard management. Dwell time: {dwell_time}, detention cost: {detention_cost}.",
+                f"Production bottleneck caused by logistics misalignment: {trailer} delayed at {dock} due to {detention_scenario}. Liability assessment indicates {liability.replace('_', ' ')} responsibility. {shop_floor_impact} causing production efficiency degradation. Material starvation risk for {stockout_risk}. Estimated production loss: {production_loss}, revenue impact {scrap_cost}. OEE metrics at {oee_metric}, schedule adherence at {schedule_adherence}.",
+                f"Cross-domain failure: {trailer} stuck at {dock} causing {shop_floor_impact} on production line. Multi-perspective analysis identifies {liability.replace('_', ' ')} as primary cause. Integrated remediation strategy required. Production schedule adherence dropped to {schedule_adherence}, customer delivery risk for {shipment_count}. Root cause: process misalignment between logistics appointment scheduling and production material requirements. Yard utilization at {yard_utilization}."
             ]
             return random.choice(templates)
         
         if "LOGISTICS_FLEET" in domains and "WAREHOUSE_MANAGEMENT" in domains:
             templates = [
-                f"Logistics-warehouse coordination failure: {trailer} experiencing delays at {dock} due to {detention_scenario}. {receiving_issue} in warehouse operations causing detention. Cross-functional process integration required. Warehouse receiving throughput degraded by {random.randint(30, 60)}%, dock utilization at {random.randint(85, 110)}%. {random.randint(3, 8)} trailers queued for unloading.",
-                f"Yard-warehouse bottleneck: {trailer} delayed at {dock} with {detention_scenario}. {receiving_issue} preventing efficient receiving operations. Process synchronization needed between yard and warehouse. Put-away time increased by {random.randint(40, 90)}%, inventory accuracy at risk due to rushed processing. Detention costs accumulating at ${random.randint(50, 200)}/hour.",
-                f"Logistics-warehouse misalignment: {trailer} stuck at {dock} due to {detention_scenario}. {receiving_issue} in warehouse causing extended detention. Operational coordination required. Impact on downstream: {random.randint(5, 15)} orders delayed, potential stockout for {random.randint(2, 6)} SKUs. Root cause: lack of real-time visibility between yard operations and warehouse receiving."
+                f"Logistics-warehouse coordination failure: {trailer} experiencing delays at {dock} due to {detention_scenario}. {receiving_issue} in warehouse operations causing detention. Cross-functional process integration required. Warehouse receiving throughput degraded by {receiving_throughput_degradation}, dock utilization at {dock_utilization}. {trailer_queue} queued for unloading. Detention accumulation: {detention_accumulation}.",
+                f"Yard-warehouse bottleneck: {trailer} delayed at {dock} with {detention_scenario}. {receiving_issue} preventing efficient receiving operations. Process synchronization needed between yard and warehouse. Put-away time increased by {putaway_time_increase}, inventory accuracy at risk due to rushed processing. Space utilization at {space_utilization}, slot availability: {slot_availability}.",
+                f"Logistics-warehouse misalignment: {trailer} stuck at {dock} due to {detention_scenario}. {receiving_issue} in warehouse causing extended detention. Operational coordination required. Impact on downstream: {sku_stockout}, potential stockout for material. Root cause: lack of real-time visibility between yard operations and warehouse receiving. Inventory level: {inventory_level}, replenishment time: {replenishment_time}."
             ]
             return random.choice(templates)
         
         if "MAINTENANCE" in domains and "PRODUCTION_OEE" in domains:
             templates = [
-                f"Maintenance-production conflict: {maintenance_conflict} causing production OEE degradation. {predictive_indicator} indicates equipment requiring maintenance. Coordination between maintenance and production scheduling required. Production stop risk: {random.randint(2, 6)} hours if maintenance deferred. Equipment efficiency at {random.randint(60, 80)}%, quality rate dropping to {random.randint(85, 93)}.",
-                f"Production efficiency impacted by maintenance: {predictive_indicator} on {asset} indicates maintenance requirement. {maintenance_conflict} preventing optimal production scheduling. Integrated planning needed. Maintenance backlog: {random.randint(5, 15)} work orders, {random.randint(2, 5)} critical. Production capacity loss: {random.randint(15, 35)}% due to equipment performance degradation.",
-                f"Maintenance-production misalignment: {maintenance_conflict} causing production line inefficiency. Predictive maintenance window conflicts with production requirements. Resource coordination required. Downtime cost: ${random.randint(2000, 8000)}/hour for affected production line. Risk of cascading equipment failure if maintenance deferred beyond {random.randint(24, 72)} hours."
+                f"Maintenance-production conflict: {maintenance_conflict} causing production OEE degradation. {predictive_indicator} indicates equipment requiring maintenance. Coordination between maintenance and production scheduling required. Production stop risk: {downtime_hours} if maintenance deferred. Equipment efficiency at {equipment_efficiency}, quality rate dropping to {quality_rate}. OEE metrics at {oee_metric}. Maintenance backlog: {maintenance_backlog}, downtime cost: {downtime_cost}.",
+                f"Production efficiency impacted by maintenance: {predictive_indicator} on {asset} indicates maintenance requirement. {maintenance_conflict} preventing optimal production scheduling. Integrated planning needed. Maintenance backlog: {maintenance_backlog} work orders, critical. Production capacity loss: {throughput_reduction} due to equipment performance degradation. Maintenance duration: {maintenance_duration}, technician availability: {technician_availability}.",
+                f"Maintenance-production misalignment: {maintenance_conflict} causing production line inefficiency. Predictive maintenance window conflicts with production requirements. Resource coordination required. Downtime cost: {downtime_cost} for affected production line. Risk of cascading equipment failure if maintenance deferred beyond {time_to_failure}. Schedule adherence at {schedule_adherence}, production loss: {production_loss}."
             ]
             return random.choice(templates)
         
@@ -328,9 +603,9 @@ class LLMGenerator:
         if "COMPLIANCE_REGISTRIES" in domains:
             other_domains = [d for d in domains if d != "COMPLIANCE_REGISTRIES"]
             templates = [
-                f"Compliance violation for {iso} detected in {', '.join([domain_map.get(d, d) for d in other_domains])}. Operational procedures not meeting regulatory requirements. Process re-engineering required across affected domains. Audit findings: {random.randint(5, 12)} non-conformities, {random.randint(2, 4)} critical issues. Corrective action timeline: {random.randint(14, 45)} days.",
-                f"Regulatory non-compliance identified across {', '.join([domain_map.get(d, d) for d in other_domains])}. {iso} requirements not met in current processes. Cross-domain corrective action plan needed. Risk assessment: {random.randint(3, 8)} high-risk areas requiring immediate attention. Potential regulatory penalties up to ${random.randint(25000, 150000)}.",
-                f"Compliance audit failure for {iso} affecting {', '.join([domain_map.get(d, d) for d in other_domains])}. Process deviations from regulatory standards. Integrated remediation strategy required. Compliance score: {random.randint(60, 78)}/100 (passing: 85+). {random.randint(4, 9)} procedures require revision across affected domains."
+                f"Compliance violation for {iso} detected in {', '.join([domain_map.get(d, d) for d in other_domains])}. Operational procedures not meeting regulatory requirements. Process re-engineering required across affected domains. Audit findings: {audit_finding}, {non_compliance_area}. Corrective action timeline: {corrective_action_deadline}. Compliance status: {compliance_status}, violation severity: {violation_severity}. Compliance score: {compliance_score} (passing: 85+). Regulatory authority: {regulatory_authority}.",
+                f"Regulatory non-compliance identified across {', '.join([domain_map.get(d, d) for d in other_domains])}. {iso} requirements not met in current processes. Cross-domain corrective action plan needed. Risk assessment: {compliance_risk}, audit type: {audit_type}. Potential regulatory penalties up to {compliance_regulatory_fine}. Training compliance at {training_compliance}, documentation compliance at {documentation_compliance}. Audit frequency: {audit_frequency}.",
+                f"Compliance audit failure for {iso} affecting {', '.join([domain_map.get(d, d) for d in other_domains])}. Process deviations from regulatory standards. Integrated remediation strategy required. Compliance score: {compliance_score} (passing: 85+). {compliance_gap} across affected domains. Audit duration: {audit_duration}, audit scope: {audit_scope}. Certification status: {certification_status}, certification expiry: {certification_expiry}. Compliance cost: {compliance_cost}."
             ]
             return random.choice(templates)
         
