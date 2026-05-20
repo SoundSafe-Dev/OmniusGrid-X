@@ -12,8 +12,7 @@ import {
   PaginatedResponse,
   GeoLocation
 } from '../types';
-
-const USE_MOCK = true;
+import { USE_MOCK } from './mockMode';
 
 const MOCK_DELAY = 500;
 

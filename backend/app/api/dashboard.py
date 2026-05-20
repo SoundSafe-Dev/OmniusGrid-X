@@ -39,11 +39,11 @@ async def get_dashboard_overview(
     )
     active_assets = result.scalar()
     
-    # Assets by PackML state
-    result = await db.execute(
-        select(Asset.current_packml_state, func.count())
-        .group_by(Asset.current_packml_state)
-    )
+    # Assets by PackML state (scoped to org when filtering)
+    state_query = select(Asset.current_packml_state, func.count()).group_by(Asset.current_packml_state)
+    if organization_id:
+        state_query = state_query.where(Asset.organization_id == organization_id)
+    result = await db.execute(state_query)
     assets_by_state = {state: count for state, count in result.all()}
     
     # Active alarms

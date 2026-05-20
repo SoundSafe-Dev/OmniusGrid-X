@@ -69,7 +69,7 @@ class PackMLState(Base):
     state_entered_at = Column(DateTime(timezone=True), nullable=False)
     state_exited_at = Column(DateTime(timezone=True))
     duration_seconds = Column(Numeric)
-    meta_data = Column(JSON, default={})
+    meta_data = Column('metadata', JSON, default={})
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
 
@@ -82,7 +82,7 @@ class Telemetry(Base):
     value = Column(Numeric, nullable=False)
     unit = Column(String(50))
     packml_state = Column(String(50))
-    meta_data = Column(JSON, default={})
+    meta_data = Column('metadata', JSON, default={})
     sequence_num = Column(BigInteger)
 
 
@@ -102,7 +102,7 @@ class Alarm(Base):
     acknowledged_comment = Column(Text)
     occurred_at = Column(DateTime(timezone=True), nullable=False)
     cleared_at = Column(DateTime(timezone=True))
-    meta_data = Column(JSON, default={})
+    meta_data = Column('metadata', JSON, default={})
 
 
 class Operation(Base):
@@ -118,7 +118,7 @@ class Operation(Base):
     completed_at = Column(DateTime(timezone=True))
     planned_duration = Column(Numeric)
     actual_duration = Column(Numeric)
-    meta_data = Column(JSON, default={})
+    meta_data = Column('metadata', JSON, default={})
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
 

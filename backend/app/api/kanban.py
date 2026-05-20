@@ -35,14 +35,17 @@ router = APIRouter()
 async def get_organization_board(session: AsyncSession, organization_id: UUID) -> TaskBoard:
     """Get or create the unified kanban board for an organization"""
     result = await session.execute(
-        select(TaskBoard).where(
+        select(TaskBoard)
+        .where(
             and_(
                 TaskBoard.organization_id == organization_id,
-                TaskBoard.is_active == True
+                TaskBoard.is_active == True,
             )
         )
+        .order_by(TaskBoard.created_at.asc())
     )
-    board = result.scalar_one_or_none()
+    # Dev/demo seeds may have created more than one active board; prefer the oldest.
+    board = result.scalars().first()
     
     if not board:
         # Create default board
@@ -209,7 +212,7 @@ async def get_kanban_board(
         "board": board,
         "columns": column_responses,
         "tasks": tasks,
-        "view_config": filters.dict()
+        "view_config": filters.model_dump()
     }
 
 
@@ -325,7 +328,7 @@ async def create_task(
         command_id=task_data.command_id,
         parent_task_id=task_data.parent_task_id,
         tags=task_data.tags,
-        checklist_items=[item.dict() for item in task_data.checklist_items],
+        checklist_items=[item.model_dump() for item in task_data.checklist_items],
         custom_fields=task_data.custom_fields,
         color_code=task_data.color_code,
         completion_actions=task_data.completion_actions,
@@ -443,7 +446,7 @@ async def update_task(
         task.progress_percent = task_update.progress_percent
     
     if task_update.checklist_items is not None:
-        task.checklist_items = [item.dict() for item in task_update.checklist_items]
+        task.checklist_items = [item.model_dump() for item in task_update.checklist_items]
     
     if task_update.custom_fields is not None:
         task.custom_fields = task_update.custom_fields

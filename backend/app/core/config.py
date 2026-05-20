@@ -49,6 +49,9 @@ class Settings(BaseSettings):
     # Application
     DEBUG: bool = True
     LOG_LEVEL: str = "INFO"
+
+    # Mobile demo: accept any password for this email (issues a real JWT). Disable in production.
+    OMNIUS_DEMO_ANY_PASSWORD_LOGIN: bool = True
     
     class Config:
         env_file = ".env"

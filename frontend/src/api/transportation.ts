@@ -16,8 +16,7 @@ import {
   GeoTabDiagnostic,
   GeoTabException
 } from '../types';
-
-const USE_MOCK = true;
+import { USE_MOCK } from './mockMode';
 
 const MOCK_DELAY = 500;
 

@@ -1,8 +1,7 @@
 import { api } from './client';
 import { mockApi } from './mockApi';
+import { USE_MOCK } from './mockMode';
 import { Alarm, AlarmFilters, ActiveAlarmsResponse, AlarmAcknowledge, PaginatedResponse } from '../types';
-
-const USE_MOCK = true;
 
 export const alarmsApi = {
   list: async (filters?: AlarmFilters): Promise<PaginatedResponse<Alarm>> => {

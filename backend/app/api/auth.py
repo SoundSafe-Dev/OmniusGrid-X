@@ -29,6 +29,9 @@ ADMIN_CONSOLE_ROLES = frozenset({"admin"})
 DEV_ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
 DEV_USER_ID = UUID("00000000-0000-0000-0000-000000000001")
 
+OMNIUS_DEMO_EMAIL = "omnius@omniusgrid.com"
+OMNIUS_DEMO_USER_ID = UUID("00000000-0000-0000-0000-000000000002")
+
 
 async def get_or_create_dev_admin_user(db: AsyncSession) -> User:
     """Bootstrap dev org + admin user for dev-token (HTTP or WebSocket)."""
@@ -100,6 +103,49 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
+
+
+async def get_or_create_omnius_demo_user(db: AsyncSession) -> User:
+    """Bootstrap demo supervisor for mobile QA (same dev org as dev admin)."""
+    org_result = await db.execute(select(Organization).where(Organization.id == DEV_ORG_ID))
+    org = org_result.scalar_one_or_none()
+    if not org:
+        import uuid as uuid_lib
+
+        org = Organization(
+            id=DEV_ORG_ID,
+            name="Dev Organization",
+            slug=f"dev-{uuid_lib.uuid4().hex[:8]}",
+        )
+        db.add(org)
+        await db.commit()
+
+    result = await db.execute(select(User).where(User.email == OMNIUS_DEMO_EMAIL))
+    user = result.scalar_one_or_none()
+    if user:
+        if user.organization_id != DEV_ORG_ID:
+            user.organization_id = DEV_ORG_ID
+        if not user.is_active:
+            user.is_active = True
+        if not user.full_name:
+            user.full_name = "Omnius K. Patel"
+        await db.commit()
+        await db.refresh(user)
+        return user
+
+    user = User(
+        id=OMNIUS_DEMO_USER_ID,
+        email=OMNIUS_DEMO_EMAIL,
+        full_name="Omnius K. Patel",
+        role="operator",
+        is_active=True,
+        organization_id=DEV_ORG_ID,
+        hashed_password=get_password_hash("__omnius_demo_unused__"),
+    )
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+    return user
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
@@ -176,12 +222,26 @@ async def login(
     db: AsyncSession = Depends(get_db)
 ):
     """Login and get access token"""
+    email = (form_data.username or "").strip().lower()
+
+    # Demo supervisor: any password works when flag is on (mobile QA; set OMNIUS_DEMO_ANY_PASSWORD_LOGIN=false in prod).
+    if settings.OMNIUS_DEMO_ANY_PASSWORD_LOGIN and email == OMNIUS_DEMO_EMAIL:
+        user = await get_or_create_omnius_demo_user(db)
+        user.last_login = datetime.utcnow()
+        await db.commit()
+        access_token_expires = timedelta(minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
+        access_token = create_access_token(
+            data={"sub": str(user.id), "email": user.email, "role": user.role},
+            expires_delta=access_token_expires,
+        )
+        return {"access_token": access_token, "token_type": "bearer"}
+
     # Find user by email
     result = await db.execute(
         select(User).where(User.email == form_data.username)
     )
     user = result.scalar_one_or_none()
-    
+
     if not user or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

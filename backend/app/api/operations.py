@@ -76,7 +76,7 @@ async def get_active_operations(
                 "operation_name": op.operation_name,
                 "job_id": op.job_id,
                 "started_at": op.started_at.isoformat() if op.started_at else None,
-                "progress": op.metadata.get('progress') if op.metadata else None
+                "progress": op.meta_data.get('progress') if op.meta_data else None
             }
             for op in operations
         ]
@@ -155,9 +155,9 @@ async def complete_operation(
     operation.actual_duration = actual_duration
     
     if metadata:
-        current_metadata = operation.metadata or {}
+        current_metadata = operation.meta_data or {}
         current_metadata.update(metadata)
-        operation.metadata = current_metadata
+        operation.meta_data = current_metadata
     
     # Calculate PackML state durations for this operation
     await _calculate_state_durations(operation, db)

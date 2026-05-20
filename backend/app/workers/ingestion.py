@@ -158,7 +158,7 @@ class IngestionWorker:
                         value=float(value) if isinstance(value, (int, float)) else 0,
                         unit=self._infer_unit(metric_name),
                         packml_state=packml_state,
-                        metadata=payload,
+                        meta_data=payload,
                         sequence_num=data.get('sequence_num', 0)
                     )
                     session.add(telemetry)
@@ -241,7 +241,7 @@ class IngestionWorker:
             state=new_state,
             previous_state=previous_state,
             state_entered_at=timestamp,
-            metadata=data.get('metadata', {})
+            meta_data=data.get('metadata', {})
         )
         session.add(state_record)
         
@@ -294,7 +294,7 @@ class IngestionWorker:
             severity=data.get('severity', 'medium'),
             message=data.get('message', 'Unknown alarm'),
             description=data.get('description'),
-            metadata=data.get('metadata', {}),
+            meta_data=data.get('metadata', {}),
             occurred_at=datetime.utcnow()
         )
         session.add(alarm)

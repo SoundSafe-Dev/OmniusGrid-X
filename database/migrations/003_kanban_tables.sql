@@ -107,7 +107,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     command_id VARCHAR(255),
     work_order_id UUID,
     parent_task_id UUID REFERENCES tasks(id) ON DELETE SET NULL,
-    related_shipment_id UUID REFERENCES shipments(id) ON DELETE SET NULL,
+    -- Optional logistics link; no FK — `shipments` may not exist in minimal DB init
     rule_id UUID, -- Will add FK after task_rules table created
     
     -- Progress tracking
@@ -201,9 +201,16 @@ CREATE TABLE IF NOT EXISTS task_rules (
 );
 
 -- Add FK from tasks to task_rules (now that task_rules exists)
-ALTER TABLE tasks 
-ADD CONSTRAINT fk_task_rule 
-FOREIGN KEY (rule_id) REFERENCES task_rules(id) ON DELETE SET NULL;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'fk_task_rule'
+    ) THEN
+        ALTER TABLE tasks
+            ADD CONSTRAINT fk_task_rule
+            FOREIGN KEY (rule_id) REFERENCES task_rules(id) ON DELETE SET NULL;
+    END IF;
+END $$;
 
 -- Task Escalations (escalation log)
 CREATE TABLE IF NOT EXISTS task_escalations (
@@ -252,16 +259,20 @@ BEGIN
 END;
 $$ language 'plpgsql';
 
-CREATE TRIGGER update_task_boards_updated_at BEFORE UPDATE ON task_boards 
+DROP TRIGGER IF EXISTS update_task_boards_updated_at ON task_boards;
+CREATE TRIGGER update_task_boards_updated_at BEFORE UPDATE ON task_boards
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
-CREATE TRIGGER update_task_columns_updated_at BEFORE UPDATE ON task_columns 
+DROP TRIGGER IF EXISTS update_task_columns_updated_at ON task_columns;
+CREATE TRIGGER update_task_columns_updated_at BEFORE UPDATE ON task_columns
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
-CREATE TRIGGER update_tasks_updated_at BEFORE UPDATE ON tasks 
+DROP TRIGGER IF EXISTS update_tasks_updated_at ON tasks;
+CREATE TRIGGER update_tasks_updated_at BEFORE UPDATE ON tasks
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
-CREATE TRIGGER update_task_rules_updated_at BEFORE UPDATE ON task_rules 
+DROP TRIGGER IF EXISTS update_task_rules_updated_at ON task_rules;
+CREATE TRIGGER update_task_rules_updated_at BEFORE UPDATE ON task_rules
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- Comment on tables for documentation

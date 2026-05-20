@@ -17,8 +17,8 @@ import {
   mockDTCCountData,
   getMockKPIDataByRange,
 } from './mocks/kpiMocks';
+import { USE_MOCK } from './mockMode';
 
-const USE_MOCK = true;
 const MOCK_DELAY = 300;
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 

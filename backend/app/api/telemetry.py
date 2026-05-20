@@ -48,7 +48,7 @@ async def get_latest_telemetry(
         "value": float(latest.value),
         "unit": latest.unit,
         "packml_state": latest.packml_state,
-        "metadata": latest.metadata
+        "metadata": latest.meta_data
     }
 
 
@@ -103,7 +103,7 @@ async def get_telemetry_history(
                 "value": float(t.value),
                 "unit": t.unit,
                 "packml_state": t.packml_state,
-                "metadata": t.metadata
+                "metadata": t.meta_data
             }
             for t in telemetry_data
         ]

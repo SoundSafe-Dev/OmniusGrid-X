@@ -430,8 +430,8 @@ class OEECalculator:
             )
             asset = result.scalar_one_or_none()
             
-            if asset and asset.metadata:
-                return asset.metadata.get('ideal_cycle_time_seconds', 60.0)
+            if asset and asset.connection_config:
+                return float(asset.connection_config.get('ideal_cycle_time_seconds', 60.0))
             
             return 60.0  # Default 1 minute
     

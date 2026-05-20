@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 from uuid import UUID
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 
 # Asset Schemas
@@ -65,15 +65,19 @@ class AssetTypeResponse(AssetTypeCreate):
 
 # Alarm Schemas
 class AlarmCreate(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     asset_id: UUID
     alarm_code: str
     severity: str  # critical, high, medium, low, info
     message: str
     description: Optional[str] = None
-    metadata: Dict[str, Any] = {}
+    meta_data: Dict[str, Any] = Field(default_factory=dict, alias='metadata')
 
 
 class AlarmResponse(AlarmCreate):
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
     id: UUID
     is_active: bool
     is_acknowledged: bool
@@ -83,9 +87,6 @@ class AlarmResponse(AlarmCreate):
     occurred_at: datetime
     cleared_at: Optional[datetime]
 
-    class Config:
-        from_attributes = True
-
 
 class AlarmAcknowledge(BaseModel):
     comment: Optional[str] = None
@@ -93,14 +94,18 @@ class AlarmAcknowledge(BaseModel):
 
 # Operation Schemas
 class OperationCreate(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     asset_id: UUID
     operation_name: str
     job_id: Optional[str] = None
     planned_duration: Optional[int] = None  # seconds
-    metadata: Dict[str, Any] = {}
+    meta_data: Dict[str, Any] = Field(default_factory=dict, alias='metadata')
 
 
 class OperationResponse(OperationCreate):
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
     id: UUID
     status: str
     packml_state_durations: Dict[str, Any]
@@ -109,18 +114,17 @@ class OperationResponse(OperationCreate):
     actual_duration: Optional[int]
     created_at: datetime
 
-    class Config:
-        from_attributes = True
-
 
 # Telemetry Schemas
 class TelemetryPoint(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     timestamp: datetime
     metric_name: str
     value: float
     unit: Optional[str] = None
     packml_state: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = None
+    meta_data: Optional[Dict[str, Any]] = Field(default=None, alias='metadata')
 
 
 class TelemetryBatch(BaseModel):
@@ -813,9 +817,36 @@ class TaskBase(BaseModel):
     planned_duration: Optional[int] = None  # minutes
     due_date: Optional[datetime] = None
     estimated_effort_minutes: Optional[int] = None
-    tags: List[str] = []
-    checklist_items: List[TaskChecklistItem] = []
+    tags: List[str] = Field(default_factory=list)
+    checklist_items: List[TaskChecklistItem] = Field(default_factory=list)
     color_code: Optional[str] = None
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def _tags_from_db(cls, v: Any) -> List[str]:
+        if v is None:
+            return []
+        if isinstance(v, dict):
+            return []
+        if not isinstance(v, list):
+            return []
+        return [str(x) for x in v]
+
+    @field_validator("checklist_items", mode="before")
+    @classmethod
+    def _checklist_from_db(cls, v: Any) -> List[Any]:
+        if v is None:
+            return []
+        if not isinstance(v, list):
+            return []
+        out: List[Dict[str, Any]] = []
+        for item in v:
+            if isinstance(item, dict):
+                text = item.get("text") or item.get("label") or ""
+                out.append({"text": str(text), "completed": bool(item.get("completed", False))})
+            else:
+                out.append(item)
+        return out
 
 
 class TaskCreate(TaskBase):
@@ -877,6 +908,22 @@ class TaskResponse(TaskBase):
     updated_at: datetime
     completed_at: Optional[datetime]
     completed_by: Optional[UUID]
+
+    @field_validator("position", "progress_percent", "time_logged_minutes", mode="before")
+    @classmethod
+    def _nullable_ints(cls, v: Any) -> int:
+        if v is None:
+            return 0
+        return int(v)
+
+    @field_validator("custom_fields", "completion_actions", "completion_result", mode="before")
+    @classmethod
+    def _jsonb_dicts(cls, v: Any) -> Dict[str, Any]:
+        if v is None:
+            return {}
+        if isinstance(v, dict):
+            return v
+        return {}
 
     class Config:
         from_attributes = True
