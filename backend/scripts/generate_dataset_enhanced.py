@@ -102,7 +102,7 @@ class LLMGenerator:
         }
     
     def _analyze_root_cause_with_state_space(self, domains: List[str], links: List[Dict[str, Any]]) -> str:
-        """Analyze root cause using enhanced state space data with multi-perspective analysis"""
+        """Analyze root cause using enhanced state space data with detailed multi-perspective analysis"""
         domain_map = {
             "EDGE_AI_TELEMETRY": "edge telemetry",
             "PRODUCTION_OEE": "production line",
@@ -162,6 +162,17 @@ class LLMGenerator:
             shop_floor_issue = self._get_random_nested("production_output", "shop_floor_scenarios", "production_bottlenecks")
             predictive_indicator = self._get_random_nested("maintenance", "predictive_indicators", "vibration_analysis")
             safety_scenario = self._get_random_nested("safety", "security_scenarios", "physical_security")
+            edge_anomaly = self._get_random_nested("errors", "edge_anomalies")
+            packml_state = self._get_random_nested("errors", "packml_states")
+            alarm_code = self._get_random_nested("errors", "alarm_codes")
+            security_vuln = self._get_random_nested("errors", "security_vulnerabilities")
+            data_anomaly = self._get_random_nested("errors", "data_anomalies")
+            iso = self._get_random_nested("compliance", "iso_standards")
+            osha = self._get_random_nested("compliance", "osha_standards")
+            dot = self._get_random_nested("compliance", "dot_regulations")
+            receiving_issue = self._get_random_nested("logistics", "shipping_receiving", "receiving_bottlenecks")
+            maintenance_conflict = self._get_random_nested("maintenance", "maintenance_conflicts", "scheduling_conflicts")
+            shop_floor_impact = self._get_random_nested("logistics", "shop_floor_impacts", "material_starvation")
         else:
             asset = "asset"
             trailer = "TRK-XXX"
@@ -171,39 +182,165 @@ class LLMGenerator:
             shop_floor_issue = "shop floor issue"
             predictive_indicator = "predictive indicator"
             safety_scenario = "safety scenario"
+            edge_anomaly = "anomaly"
+            packml_state = "unknown"
+            alarm_code = "ALM-XXX"
+            security_vuln = "vulnerability"
+            data_anomaly = "data issue"
+            iso = "ISO standard"
+            osha = "OSHA standard"
+            dot = "DOT regulation"
+            receiving_issue = "receiving bottleneck"
+            maintenance_conflict = "scheduling conflict"
+            shop_floor_impact = "material starvation"
         
         avg_severity = sum(link.get("severity_impact", 0.5) for link in links) / len(links) if links else 0.5
+        severity_level = "critical" if avg_severity > 0.8 else "high" if avg_severity > 0.6 else "medium" if avg_severity > 0.4 else "low"
         
-        # Single-domain analysis
+        # Enhanced single-domain analysis with detailed templates
         if len(domains) == 1:
             domain = domains[0]
-            if domain == "LOGISTICS_FLEET":
+            if domain == "EDGE_AI_TELEMETRY":
+                templates = [
+                    f"Edge telemetry anomaly detected: {edge_anomaly} on {asset}. Sensor data indicates potential equipment degradation with progressive signal drift. Multi-sensor correlation suggests equipment performance issue requiring immediate investigation. Temperature readings show {random.randint(65, 85)}°C deviation from baseline, vibration patterns indicate mechanical stress. Predictive analysis recommends maintenance intervention within 24 hours to prevent cascading failure.",
+                    f"Telemetry monitoring system flagged {edge_anomaly} on {asset}. Data quality metrics indicate calibration drift affecting measurement accuracy by {random.randint(10, 25)}%. Condition monitoring suggests predictive maintenance window approaching. Historical trend analysis shows similar patterns preceded equipment failure in previous incidents. Immediate recalibration recommended to maintain measurement integrity.",
+                    f"Critical edge anomaly ({edge_anomaly}) detected on {asset}. Multi-sensor data fusion indicates equipment performance degradation with {random.randint(30, 50)}% efficiency loss. Predictive analysis recommends immediate intervention to prevent cascading failure. Correlated with {random.randint(2, 5)} other edge devices showing similar degradation patterns, suggesting systemic issue requiring fleet-wide assessment."
+                ]
+            elif domain == "PRODUCTION_OEE":
+                templates = [
+                    f"Production line degradation detected: asset {asset} in {packml_state} state with {alarm_code}. OEE metrics at {random.randint(45, 65)}% below threshold indicating equipment performance or scheduling inefficiency. Root cause analysis suggests {shop_floor_issue} with {random.randint(20, 40)}% throughput reduction. Equipment cycle time increased by {random.randint(15, 30)}%, quality rate dropped to {random.randint(85, 95)}%. Maintenance intervention required within 4 hours to prevent production stop.",
+                    f"Production efficiency decline on {asset} with {packml_state} state. {alarm_code} indicates potential equipment bottleneck or process constraint. Performance metrics suggest operational efficiency degradation requiring corrective action. Downtime accumulated {random.randint(2, 5)} hours this shift, scrap rate increased to {random.randint(3, 8)}%. Analysis suggests equipment performance issue or scheduling constraint impacting production throughput.",
+                    f"OEE metrics falling below acceptable threshold on {asset}. {alarm_code} in {packml_state} state indicates operational inefficiency. Analysis suggests equipment performance issue or scheduling constraint impacting production throughput. Overall Equipment Effectiveness at {random.randint(55, 70)}% (target: 85%+). Availability dropped to {random.randint(70, 85)}%, performance at {random.randint(60, 80)}%, quality at {random.randint(88, 96)}%."
+                ]
+            elif domain == "LOGISTICS_FLEET":
                 liability_options = ["driver_liability", "client_liability", "transport_liability", "yard_liability"]
                 liability = self._get_random_nested("logistics", "detention_scenarios", random.choice(liability_options)) if self.state_space else "driver_liability"
-                return f"Logistics fleet issue detected: {trailer} experiencing operational delays at {dock}. Root cause analysis indicates {detention_scenario}. Liability determination suggests {liability.replace('_', ' ')} responsibility. Coordination required."
-            elif domain == "PRODUCTION_OEE":
-                return f"Production line degradation detected: {asset} experiencing performance issues. OEE metrics below threshold indicating equipment performance or scheduling inefficiency. Root cause analysis suggests {shop_floor_issue}. Maintenance or process optimization required."
+                dwell_time = random.randint(2, 8)
+                templates = [
+                    f"Logistics fleet issue detected: {trailer} experiencing operational delays at {dock}. Dwell time exceeded threshold by {dwell_time} hours. Root cause analysis indicates {detention_scenario}. Liability determination suggests {liability.replace('_', ' ')} responsibility. Detention costs estimated at ${random.randint(200, 800)}. Coordination required between transport management, yard operations, and receiving to resolve bottleneck.",
+                    f"Trailer {trailer} dwell time exceeding thresholds at {dock}. Detention analysis identifies {detention_scenario}. Liability assessment indicates {liability.replace('_', ' ')} responsibility for delay. Process improvement needed in dock appointment scheduling. Current appointment adherence at {random.randint(45, 75)}%, target 95%+. Estimated demurrage costs ${random.randint(300, 1200)}.",
+                    f"Logistics coordination failure: {trailer} stuck at {dock} with {detention_scenario}. Multi-perspective analysis identifies {liability.replace('_', ' ')} as primary cause. Cross-functional coordination required to resolve. Impact on downstream operations: {random.randint(5, 15)} shipments delayed, potential production disruption if not resolved within {random.randint(4, 12)} hours."
+                ]
+            elif domain == "COMPLIANCE_REGISTRIES":
+                templates = [
+                    f"Compliance violation detected for {iso}. Operational procedures not meeting regulatory requirements. Gap analysis indicates process re-engineering required to achieve compliance. Audit findings: {random.randint(3, 8)} non-conformities identified, {random.randint(1, 3)} critical issues requiring immediate remediation. Corrective action plan needed within {random.randint(7, 30)} days to avoid regulatory penalties.",
+                    f"Regulatory non-compliance identified for {iso}. Operational audit reveals gaps in current procedures. Corrective action plan needed to address compliance deficiencies. Risk assessment: {random.randint(2, 5)} high-risk areas requiring immediate attention. Potential fines up to ${random.randint(10000, 50000)} if not remediated within {random.randint(14, 45)} days.",
+                    f"Compliance audit failure for {iso}. Process deviations from regulatory standards identified. Risk assessment indicates immediate remediation required to prevent regulatory violations. Non-conformance rate: {random.randint(5, 15)}% above acceptable threshold. {random.randint(2, 4)} procedures require complete revision. Audit score: {random.randint(65, 78)}/100 (passing: 85+)."
+                ]
+            elif domain == "SYSTEM_INFRASTRUCTURE":
+                templates = [
+                    f"Infrastructure degradation affecting {domain_map.get(domain, domain)}. Database or network performance issues causing operational impacts. Capacity analysis suggests resource scaling or optimization required. Database query response time increased by {random.randint(200, 500)}%, network latency averaging {random.randint(50, 150)}ms above baseline. System availability at {random.randint(92, 98)}% (target: 99.9%+).",
+                    f"System performance degradation in {domain_map.get(domain, domain)}. Network latency or database bottlenecks affecting downstream operations. Performance monitoring indicates infrastructure constraint. Memory utilization at {random.randint(75, 95)}%, CPU at {random.randint(60, 85)}%. Disk I/O throughput degraded by {random.randint(30, 50)}%. Capacity planning and resource scaling needed.",
+                    f"Infrastructure reliability issues in {domain_map.get(domain, domain)}. Resource constraints causing service degradation. Capacity planning required to address infrastructure limitations. Error rate increased to {random.uniform(0.5, 3):.1f}% (baseline: <0.1%). {random.randint(2, 5)} services experiencing intermittent failures. Load balancer showing uneven distribution across {random.randint(4, 8)} nodes."
+                ]
             elif domain == "MAINTENANCE":
-                return f"Maintenance operations issue detected: {predictive_indicator} indicates equipment degradation. Predictive maintenance analysis suggests preventive maintenance window approaching. Resource coordination required."
+                templates = [
+                    f"Maintenance operations issue detected: {predictive_indicator} indicates equipment degradation on {asset}. Predictive maintenance analysis suggests preventive maintenance window approaching. Resource coordination required. Vibration levels at {random.randint(8, 15)}mm/s (threshold: 5mm/s), temperature {random.randint(75, 95)}°C above normal. Estimated time to failure: {random.randint(48, 168)} hours if not addressed.",
+                    f"Predictive maintenance alert: {predictive_indicator} on {asset} indicates impending failure. Condition monitoring recommends immediate preventive maintenance to prevent corrective action. Oil analysis shows {random.randint(2, 5)}x increase in metal particles, thermal imaging indicates {random.randint(15, 35)}°C hotspot. Maintenance backlog: {random.randint(5, 15)} work orders pending.",
+                    f"Maintenance escalation scenario: {predictive_indicator} indicates equipment performance degradation. Risk assessment suggests transition from predictive to preventive maintenance required. Current maintenance schedule has {random.randint(3, 8)} conflicts with production requirements. Resource allocation: {random.randint(2, 4)} technicians available, {random.randint(1, 3)} required for this intervention."
+                ]
             elif domain == "SAFETY":
-                return f"Safety management issue detected: {safety_scenario} identified. Risk assessment indicates immediate response required. Safety protocol activation and incident investigation needed."
+                templates = [
+                    f"Safety management issue detected: {safety_scenario} identified. Risk assessment indicates immediate response required. Safety protocol activation and incident investigation needed. Incident severity: {severity_level.upper()}. Potential impact: {random.randint(1, 5)} personnel affected, estimated downtime {random.randint(2, 12)} hours. Root cause analysis required within {random.randint(24, 72)} hours per OSHA regulations.",
+                    f"Security scenario detected: {safety_scenario} affecting operations. Multi-factor analysis indicates security protocol enhancement required. Incident response team activation recommended. Security breach detected at {random.randint(1, 3)} access points, {random.randint(2, 6)} unauthorized access attempts logged. Review of security protocols and access controls required.",
+                    f"Operational safety concern: {safety_scenario} identified. Risk mitigation requires immediate action. Safety assessment and protocol review recommended. Near-miss incident recorded, potential severity: {severity_level.upper()}. Contributing factors: {random.randint(2, 4)} identified. Corrective actions: {random.randint(3, 6)} recommended to prevent recurrence."
+                ]
+            elif domain == "WAREHOUSE_MANAGEMENT":
+                templates = [
+                    f"Warehouse management issue detected: {bottleneck} in operations affecting throughput. Inventory accuracy at {random.randint(85, 95)}% (target: 99%+). Pick rate degraded by {random.randint(15, 35)}%, put-away time increased by {random.randint(20, 45)}%. Root cause analysis suggests process inefficiency or resource constraint. {random.randint(2, 5)} zones experiencing congestion.",
+                    f"Warehouse operations bottleneck: {bottleneck} causing operational delays. Space utilization at {random.randint(75, 95)}%, slot availability limited. Order fulfillment cycle time increased by {random.randint(30, 60)} minutes. Analysis suggests layout optimization or process re-engineering required. {random.randint(3, 8)} SKUs experiencing stockouts.",
+                    f"Warehouse performance degradation: {bottleneck} in specific operations area. Labor productivity down {random.randint(10, 30)}%, equipment utilization at {random.randint(60, 85)}%. Root cause indicates process or resource constraint affecting operations. Inventory turnover rate: {random.randint(8, 15)} turns/year (target: 20+)."
+                ]
+            elif domain == "SUPPLY_CHAIN":
+                templates = [
+                    f"Supply chain disruption detected: Supplier performance degradation affecting material availability. On-time delivery rate dropped to {random.randint(70, 88)}% (target: 95%+). {random.randint(2, 5)} suppliers experiencing delivery delays. Risk assessment suggests diversification or inventory buffer required. Impact on production: {random.randint(1, 3)} lines at risk of material starvation.",
+                    f"Supply chain bottleneck: {random.randint(2, 4)} critical components experiencing supply constraints. Lead times increased by {random.randint(30, 90)}%. Supplier quality issues detected: defect rate {random.randint(2, 8)}% (acceptable: <1%). Risk mitigation requires supplier development or alternative sourcing. Inventory buffer days: {random.randint(5, 15)} (target: 30+).",
+                    f"Supply chain performance degradation: Multiple suppliers showing performance issues. Order fulfillment accuracy at {random.randint(85, 95)}%, response time increased by {random.randint(20, 50)}%. Analysis suggests systemic supply chain risk requiring strategic review. Supplier scorecard: {random.randint(65, 82)}/100 average across {random.randint(8, 15)} suppliers."
+                ]
+            elif domain == "QUALITY_CONTROL":
+                templates = [
+                    f"Quality control issue detected: Defect rate increased to {random.randint(3, 8)}% (target: <1%). {random.randint(2, 5)} quality gates failing inspection. Root cause analysis suggests process or equipment issue. Scrap costs: ${random.randint(1000, 5000)} this shift. Rework rate: {random.randint(5, 15)}% of production. Customer returns increased by {random.randint(20, 50)}% month-over-month.",
+                    f"Quality degradation alert: {random.randint(3, 6)} product lines showing quality issues. First pass yield dropped to {random.randint(85, 93)}% (target: 98%+). Analysis indicates process variation or equipment calibration issue. CAPA (Corrective and Preventive Action) required per {iso} standards. {random.randint(2, 4)} non-conformances logged.",
+                    f"Quality control bottleneck: Inspection backlog of {random.randint(50, 200)} units. Quality assurance resources constrained, inspection cycle time increased by {random.randint(40, 80)}%. Risk assessment suggests potential quality escapes if not addressed. Customer complaint rate: {random.uniform(0.5, 3):.1f}% (target: <0.1%)."
+                ]
+            elif domain == "ENERGY_MANAGEMENT":
+                templates = [
+                    f"Energy management issue detected: Power consumption exceeding baseline by {random.randint(15, 35)}%. {random.randint(2, 4)} production lines showing energy inefficiency. Root cause suggests equipment performance degradation or process optimization opportunity. Energy cost impact: ${random.randint(2000, 8000)} per month. Carbon footprint increased by {random.randint(10, 30)}%.",
+                    f"Energy consumption anomaly: {random.randint(3, 6)} assets showing abnormal power usage patterns. Peak demand exceeded threshold {random.randint(2, 5)} times this week. Analysis suggests equipment maintenance or process adjustment required. Energy intensity: {random.uniform(1.5, 3.5):.1f} kWh/unit (target: <1.5 kWh/unit).",
+                    f"Operational efficiency concern: Energy utilization efficiency degraded. Power factor at {random.uniform(0.75, 0.92):.2f} (target: 0.95+). {random.randint(2, 5)} motors showing efficiency loss. Energy management system alerts: {random.randint(3, 8)} active. Recommendations: equipment maintenance or process optimization."
+                ]
+            elif domain == "CYBERSECURITY":
+                templates = [
+                    f"Cybersecurity incident detected: {security_vuln} identified in system. Risk assessment indicates immediate patching required. Vulnerability severity: {severity_level.upper()}. Potential impact: unauthorized access to {random.randint(1, 5)} systems. Security team activation recommended. Estimated remediation time: {random.randint(4, 48)} hours.",
+                    f"Security breach attempt detected: {random.randint(2, 6)} unauthorized access attempts logged. IP addresses: {random.randint(3, 8)} unique sources. Security protocols activated, investigation ongoing. Risk level: {severity_level.upper()}. Potential data exposure: {random.randint(100, 1000)} records. Incident response team engaged.",
+                    f"Cybersecurity vulnerability: {security_vuln} requires immediate attention. Security assessment reveals {random.randint(2, 5)} systems at risk. Patch management backlog: {random.randint(5, 15)} critical patches pending. Compliance impact: potential {iso} violation if not addressed within {random.randint(7, 30)} days."
+                ]
+            elif domain == "FINANCE":
+                templates = [
+                    f"Financial operations issue detected: Accounts receivable aging increased by {random.randint(15, 40)}%. {random.randint(2, 5)} customers showing payment delays. Cash flow impact: ${random.randint(50000, 200000)} at risk. Root cause analysis suggests billing process or customer communication issue. Days Sales Outstanding (DSO): {random.randint(40, 65)} days (target: 30 days).",
+                    f"Financial anomaly detected: {random.randint(2, 4)} transactions flagged for review. Discrepancy amount: ${random.randint(5000, 25000)}. Risk assessment suggests process control or system issue. Audit trail review required. Compliance implications: potential {dot} reporting requirements if material misstatement identified.",
+                    f"Financial performance degradation: Budget variance of {random.randint(10, 30)}% in {random.randint(2, 4)} cost centers. Expense review required. Working capital position: {random.randint(15, 35)}% below target. Analysis suggests operational efficiency or cost control issue. Financial forecasting accuracy: {random.randint(75, 90)}% (target: 95%+)."
+                ]
             else:
-                return f"Operational anomaly detected in {domain_map.get(domain, domain)}. Process deviation detected with severity {avg_severity:.2f}. Root cause analysis required to identify underlying cause."
+                templates = [
+                    f"Operational anomaly detected in {domain_map.get(domain, domain)}. Process deviation detected with severity {avg_severity:.2f} ({severity_level}). Performance metrics indicate {random.randint(15, 40)}% degradation from baseline. Root cause analysis required to identify underlying cause. {random.randint(2, 5)} operational indicators showing deviation. Impact assessment: {random.randint(1, 3)} downstream processes affected.",
+                    f"Performance degradation in {domain_map.get(domain, domain)}. Operational metrics indicating process deviation. Investigation needed to determine root cause and corrective action. Efficiency loss: {random.randint(20, 45)}%. Quality impact: {random.randint(5, 20)}% increase in defects or errors. Resource utilization: {random.randint(10, 30)}% above optimal.",
+                    f"Process anomaly in {domain_map.get(domain, domain)}. Performance metrics outside normal operating range. Analysis required to identify cause and implement corrective action. Cycle time increased by {random.randint(25, 60)}%, throughput decreased by {random.randint(15, 40)}%. {random.randint(2, 4)} contributing factors identified through preliminary analysis."
+                ]
+            return random.choice(templates)
         
-        # Multi-domain analysis
+        # Enhanced multi-domain analysis with detailed templates
         if "LOGISTICS_FLEET" in domains and "PRODUCTION_OEE" in domains:
             liability_options = ["driver_liability", "client_liability", "transport_liability", "yard_liability"]
             liability = self._get_random_nested("logistics", "detention_scenarios", random.choice(liability_options)) if self.state_space else "yard_liability"
-            return f"Logistics delays with {trailer} at {dock} causing production line inefficiencies. Detention analysis identifies {detention_scenario} with {liability.replace('_', ' ')} responsibility. {shop_floor_issue} impacting production OEE. Cross-domain coordination required."
+            templates = [
+                f"Logistics delays with {trailer} at {dock} causing production line inefficiencies. Detention analysis identifies {detention_scenario} with {liability.replace('_', ' ')} responsibility. {shop_floor_impact} impacting production OEE. Production throughput reduced by {random.randint(25, 50)}%, {random.randint(3, 8)} production orders delayed. Cross-domain coordination required between logistics, production planning, and yard management.",
+                f"Production bottleneck caused by logistics misalignment: {trailer} delayed at {dock} due to {detention_scenario}. Liability assessment indicates {liability.replace('_', ' ')} responsibility. {shop_floor_impact} causing production efficiency degradation. Material starvation risk for {random.randint(2, 5)} production lines. Estimated production loss: {random.randint(500, 2000)} units, revenue impact ${random.randint(10000, 50000)}.",
+                f"Cross-domain failure: {trailer} stuck at {dock} causing {shop_floor_impact} on production line. Multi-perspective analysis identifies {liability.replace('_', ' ')} as primary cause. Integrated remediation strategy required. Production schedule adherence dropped to {random.randint(60, 80)}%, customer delivery risk for {random.randint(5, 15)} orders. Root cause: process misalignment between logistics appointment scheduling and production material requirements."
+            ]
+            return random.choice(templates)
         
         if "LOGISTICS_FLEET" in domains and "WAREHOUSE_MANAGEMENT" in domains:
-            return f"Logistics-warehouse coordination failure: {trailer} experiencing delays at {dock} due to {detention_scenario}. {bottleneck} in warehouse operations causing detention. Cross-functional process integration required."
+            templates = [
+                f"Logistics-warehouse coordination failure: {trailer} experiencing delays at {dock} due to {detention_scenario}. {receiving_issue} in warehouse operations causing detention. Cross-functional process integration required. Warehouse receiving throughput degraded by {random.randint(30, 60)}%, dock utilization at {random.randint(85, 110)}%. {random.randint(3, 8)} trailers queued for unloading.",
+                f"Yard-warehouse bottleneck: {trailer} delayed at {dock} with {detention_scenario}. {receiving_issue} preventing efficient receiving operations. Process synchronization needed between yard and warehouse. Put-away time increased by {random.randint(40, 90)}%, inventory accuracy at risk due to rushed processing. Detention costs accumulating at ${random.randint(50, 200)}/hour.",
+                f"Logistics-warehouse misalignment: {trailer} stuck at {dock} due to {detention_scenario}. {receiving_issue} in warehouse causing extended detention. Operational coordination required. Impact on downstream: {random.randint(5, 15)} orders delayed, potential stockout for {random.randint(2, 6)} SKUs. Root cause: lack of real-time visibility between yard operations and warehouse receiving."
+            ]
+            return random.choice(templates)
         
         if "MAINTENANCE" in domains and "PRODUCTION_OEE" in domains:
-            return f"Maintenance-production conflict: {predictive_indicator} on {asset} indicates maintenance requirement. Scheduling conflicts causing production OEE degradation. Coordination between maintenance and production scheduling required."
+            templates = [
+                f"Maintenance-production conflict: {maintenance_conflict} causing production OEE degradation. {predictive_indicator} indicates equipment requiring maintenance. Coordination between maintenance and production scheduling required. Production stop risk: {random.randint(2, 6)} hours if maintenance deferred. Equipment efficiency at {random.randint(60, 80)}%, quality rate dropping to {random.randint(85, 93)}.",
+                f"Production efficiency impacted by maintenance: {predictive_indicator} on {asset} indicates maintenance requirement. {maintenance_conflict} preventing optimal production scheduling. Integrated planning needed. Maintenance backlog: {random.randint(5, 15)} work orders, {random.randint(2, 5)} critical. Production capacity loss: {random.randint(15, 35)}% due to equipment performance degradation.",
+                f"Maintenance-production misalignment: {maintenance_conflict} causing production line inefficiency. Predictive maintenance window conflicts with production requirements. Resource coordination required. Downtime cost: ${random.randint(2000, 8000)}/hour for affected production line. Risk of cascading equipment failure if maintenance deferred beyond {random.randint(24, 72)} hours."
+            ]
+            return random.choice(templates)
         
-        # Generic multi-domain
-        return f"Cascading anomaly across {', '.join([domain_map.get(d, d) for d in domains])}. Cross-domain dependency failure with severity {avg_severity:.2f}. Multi-perspective analysis required to identify root cause and implement coordinated response."
+        if "SYSTEM_INFRASTRUCTURE" in domains:
+            other_domains = [d for d in domains if d != "SYSTEM_INFRASTRUCTURE"]
+            templates = [
+                f"Infrastructure degradation affecting {', '.join([domain_map.get(d, d) for d in other_domains])}. Network latency or database performance issues causing downstream operational impacts with severity {avg_severity:.2f} ({severity_level}). Infrastructure optimization required. System response time increased by {random.randint(200, 600)}ms, error rate {random.uniform(0.5, 3):.1f}%. {random.randint(3, 8)} services experiencing degraded performance.",
+                f"System reliability issues impacting {', '.join([domain_map.get(d, d) for d in other_domains])}. Infrastructure bottlenecks causing cascading operational failures. Capacity planning and resource scaling needed. Database connection pool utilization at {random.randint(80, 98)}%, memory usage {random.randint(75, 95)}%. {random.randint(2, 5)} applications experiencing timeout errors.",
+                f"Infrastructure performance degradation affecting {', '.join([domain_map.get(d, d) for d in other_domains])}. Database or network constraints limiting system throughput. Performance optimization required. Disk I/O wait time increased by {random.randint(150, 400)}%, network packet loss {random.uniform(0.1, 1.5):.1f}%. {random.randint(4, 10)} critical processes showing degraded performance."
+            ]
+            return random.choice(templates)
+        
+        if "COMPLIANCE_REGISTRIES" in domains:
+            other_domains = [d for d in domains if d != "COMPLIANCE_REGISTRIES"]
+            templates = [
+                f"Compliance violation for {iso} detected in {', '.join([domain_map.get(d, d) for d in other_domains])}. Operational procedures not meeting regulatory requirements. Process re-engineering required across affected domains. Audit findings: {random.randint(5, 12)} non-conformities, {random.randint(2, 4)} critical issues. Corrective action timeline: {random.randint(14, 45)} days.",
+                f"Regulatory non-compliance identified across {', '.join([domain_map.get(d, d) for d in other_domains])}. {iso} requirements not met in current processes. Cross-domain corrective action plan needed. Risk assessment: {random.randint(3, 8)} high-risk areas requiring immediate attention. Potential regulatory penalties up to ${random.randint(25000, 150000)}.",
+                f"Compliance audit failure for {iso} affecting {', '.join([domain_map.get(d, d) for d in other_domains])}. Process deviations from regulatory standards. Integrated remediation strategy required. Compliance score: {random.randint(60, 78)}/100 (passing: 85+). {random.randint(4, 9)} procedures require revision across affected domains."
+            ]
+            return random.choice(templates)
+        
+        # Generic multi-domain with enhanced detail
+        templates = [
+            f"Cascading anomaly across {', '.join([domain_map.get(d, d) for d in domains])}. Cross-domain dependency failure with severity {avg_severity:.2f} ({severity_level}). Multi-perspective analysis required to identify root cause and implement coordinated response. {random.randint(3, 8)} operational indicators showing deviation. Impact assessment: {random.randint(2, 5)} downstream processes affected, estimated efficiency loss {random.randint(20, 50)}%.",
+            f"Multi-domain operational failure detected in {', '.join([domain_map.get(d, d) for d in domains])}. Cross-correlation analysis reveals dependency chain failure. Integrated remediation strategy needed across affected domains. Root cause indicators: {random.randint(2, 5)} identified. Recovery time estimate: {random.randint(4, 24)} hours. Business impact: ${random.randint(10000, 100000)} estimated.",
+            f"Systemic anomaly affecting {', '.join([domain_map.get(d, d) for d in domains])}. Process dependencies causing cascading operational impacts. Cross-functional response team required for coordinated resolution. {random.randint(4, 10)} contributing factors identified through preliminary analysis. Risk escalation: {severity_level.upper()} priority. Stakeholder notification required for {random.randint(2, 6)} business units."
+        ]
+        return random.choice(templates)
     
     def _get_random_nested(self, file_name: str, key: str, default_value: str = None) -> str:
         """Get random value from nested state space structure"""
