@@ -3,24 +3,141 @@
     "PLA-Filament-Black", "PLA-Filament-White", "ABS-Filament-Red", "PETG-Filament-Blue",
     "Nylon-Filament-Grey", "TPU-Filament-Orange", "Carbon-Fiber-Filament", "Wood-Filament-Brown",
     "Raw-Material-A", "Raw-Material-B", "Raw-Material-C", "Raw-Material-D",
-    "Component-X", "Component-Y", "Component-Z", "Subassembly-Alpha", "Subassembly-Beta"
+    "Component-X", "Component-Y", "Component-Z", "Subassembly-Alpha", "Subassembly-Beta",
+    "Material-MAT-001", "Material-MAT-002", "Material-MAT-003", "Material-MAT-004", "Material-MAT-005",
+    "Component-CMP-001", "Component-CMP-002", "Component-CMP-003", "Component-CMP-004", "Component-CMP-005",
+    "Raw-RAW-001", "Raw-RAW-002", "Raw-RAW-003", "Raw-RAW-004", "Raw-RAW-005"
   ],
   "suppliers": [
     "Supplier-001", "Supplier-002", "Supplier-003", "Supplier-004", "Supplier-005",
-    "Vendor-A", "Vendor-B", "Vendor-C", "Vendor-D", "Vendor-E"
+    "Vendor-A", "Vendor-B", "Vendor-C", "Vendor-D", "Vendor-E",
+    "Supplier-006", "Supplier-007", "Supplier-008", "Supplier-009", "Supplier-010",
+    "Vendor-F", "Vendor-G", "Vendor-H", "Vendor-I", "Vendor-J"
   ],
   "reorder_points": [
-    "Below 100 units", "Below 50 units", "Below 25 units", "Below 10 units", "Critical: 0 units"
+    "Below 1000 units", "Below 500 units", "Below 250 units", "Below 100 units", "Below 50 units",
+    "Below 25 units", "Below 10 units", "Critical: 0 units"
   ],
   "inventory_status": [
     "In Stock", "Low Stock", "Out of Stock", "Backordered", "Discontinued",
-    "On Order", "In Transit", "Quality Hold", "Quarantine", "Expiring Soon"
+    "On Order", "In Transit", "Quality Hold", "Quarantine", "Expiring Soon",
+    "Allocated", "Reserved", "Damaged", "Lost", "Stolen"
   ],
   "replenishment_triggers": [
     "Automatic Reorder Point", "Manual Requisition", "Safety Stock Breach",
-    "Demand Forecast", "Seasonal Adjustment", "Emergency Restock"
+    "Demand Forecast", "Seasonal Adjustment", "Emergency Restock",
+    "Minimum Order Quantity", "Economic Order Quantity", "Just-in-Time Trigger",
+    "Consolidated Order", "Bulk Order Discount"
   ],
   "lead_times": [
-    "Same Day", "1-2 Days", "3-5 Days", "1 Week", "2 Weeks", "1 Month", "Variable"
+    "Same Day", "1-2 Days", "3-5 Days", "1 Week", "2 Weeks", "3 Weeks",
+    "1 Month", "6 Weeks", "2 Months", "3 Months", "Variable"
+  ],
+  "inventory_levels": [
+    "10,000 units", "7,500 units", "5,000 units", "2,500 units", "1,000 units",
+    "750 units", "500 units", "250 units", "100 units", "50 units", "25 units", "10 units", "0 units"
+  ],
+  "replenishment_times": [
+    "2 hours", "4 hours", "6 hours", "8 hours", "12 hours", "16 hours", "24 hours",
+    "32 hours", "40 hours", "48 hours", "72 hours", "96 hours", "120 hours", "144 hours"
+  ],
+  "safety_stock_levels": [
+    "500 units", "750 units", "1,000 units", "1,500 units", "2,000 units",
+    "2,500 units", "3,000 units", "5,000 units", "7,500 units", "10,000 units"
+  ],
+  "stockout_risk": [
+    "1 production line at risk", "2 production lines at risk", "3 production lines at risk",
+    "4 production lines at risk", "5 production lines at risk", "6 production lines at risk",
+    "8 production lines at risk", "10 production lines at risk"
+  ],
+  "inventory_accuracy": [
+    "95%", "92%", "90%", "88%", "85%", "82%", "80%", "78%", "75%", "70%"
+  ],
+  "pick_rate_degradation": [
+    "10%", "15%", "20%", "25%", "30%", "35%", "40%", "45%", "50%", "60%"
+  ],
+  "putaway_time_increase": [
+    "10%", "15%", "20%", "25%", "30%", "40%", "45%", "60%", "75%", "90%"
+  ],
+  "cycle_time_increase": [
+    "10%", "15%", "20%", "25%", "30%", "35%", "40%", "50%", "60%", "75%"
+  ],
+  "throughput_decrease": [
+    "10%", "15%", "20%", "25%", "30%", "35%", "40%", "45%", "50%", "60%"
+  ],
+  "space_utilization": [
+    "65%", "70%", "75%", "80%", "85%", "90%", "95%", "100%", "105%", "110%", "115%", "120%"
+  ],
+  "slot_availability": [
+    "5 slots available", "10 slots available", "15 slots available", "20 slots available",
+    "25 slots available", "30 slots available", "40 slots available", "50 slots available"
+  ],
+  "sku_stockouts": [
+    "1 SKU experiencing stockout", "2 SKUs experiencing stockouts", "3 SKUs experiencing stockouts",
+    "4 SKUs experiencing stockouts", "5 SKUs experiencing stockouts", "8 SKUs experiencing stockouts",
+    "10 SKUs experiencing stockouts", "15 SKUs experiencing stockouts"
+  ],
+  "inventory_buffer_days": [
+    "5 days", "10 days", "15 days", "20 days", "25 days", "30 days", "45 days", "60 days"
+  ],
+  "order_fulfillment_accuracy": [
+    "85%", "88%", "90%", "92%", "93%", "94%", "95%", "96%", "97%", "98%"
+  ],
+  "response_time_increase": [
+    "10%", "15%", "20%", "25%", "30%", "40%", "50%", "60%", "75%", "100%"
+  ],
+  "supplier_scorecard": [
+    "65/100", "68/100", "70/100", "72/100", "75/100", "78/100", "80/100",
+    "82/100", "85/100", "88/100", "90/100", "92/100", "95/100"
+  ],
+  "supplier_performance": [
+    "70% on-time delivery", "75% on-time delivery", "80% on-time delivery", "85% on-time delivery",
+    "88% on-time delivery", "90% on-time delivery", "92% on-time delivery", "95% on-time delivery"
+  ],
+  "supplier_defect_rate": [
+    "0.1%", "0.25%", "0.5%", "0.75%", "1%", "1.5%", "2%", "2.5%", "3%", "4%", "5%", "8%"
+  ],
+  "inventory_turnover": [
+    "5 turns/year", "8 turns/year", "10 turns/year", "12 turns/year", "15 turns/year",
+    "18 turns/year", "20 turns/year", "25 turns/year", "30 turns/year"
+  ],
+  "carrying_costs": [
+    "$1,000/month", "$2,500/month", "$5,000/month", "$7,500/month", "$10,000/month",
+    "$15,000/month", "$20,000/month", "$25,000/month", "$50,000/month"
+  ],
+  "stockout_costs": [
+    "$1,000", "$2,500", "$5,000", "$7,500", "$10,000", "$15,000", "$25,000",
+    "$50,000", "$75,000", "$100,000", "$250,000"
+  ],
+  "expediting_costs": [
+    "$100", "$250", "$500", "$750", "$1,000", "$1,500", "$2,500", "$5,000"
+  ],
+  "transportation_costs": [
+    "$500", "$750", "$1,000", "$1,500", "$2,000", "$2,500", "$3,000", "$5,000"
+  ],
+  "warehouse_zones": [
+    "Zone A", "Zone B", "Zone C", "Zone D", "Zone E",
+    "Zone F", "Zone G", "Zone H", "Zone I", "Zone J"
+  ],
+  "zone_congestion": [
+    "2 zones experiencing congestion", "3 zones experiencing congestion", "4 zones experiencing congestion",
+    "5 zones experiencing congestion", "6 zones experiencing congestion", "8 zones experiencing congestion"
+  ],
+  "material_starvation_risk": [
+    "1 production line at risk", "2 production lines at risk", "3 production lines at risk",
+    "4 production lines at risk", "5 production lines at risk"
+  ],
+  "receiving_throughput_degradation": [
+    "20%", "25%", "30%", "35%", "40%", "45%", "50%", "60%"
+  ],
+  "dock_utilization": [
+    "80%", "85%", "90%", "95%", "100%", "105%", "110%", "115%", "120%"
+  ],
+  "trailer_queue": [
+    "3 trailers queued", "5 trailers queued", "8 trailers queued", "10 trailers queued",
+    "12 trailers queued", "15 trailers queued", "18 trailers queued", "20 trailers queued"
+  ],
+  "detention_accumulation": [
+    "$50/hour", "$75/hour", "$100/hour", "$125/hour", "$150/hour", "$200/hour", "$250/hour"
   ]
 }

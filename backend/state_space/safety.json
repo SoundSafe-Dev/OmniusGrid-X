@@ -1,31 +1,40 @@
 {
   "incident_types": [
     "Near-Miss", "First-Aid", "Medical-Treatment", "Lost-Time-Injury",
-    "Restricted-Work", "Fatality", "Property-Damage", "Environmental-Release"
+    "Restricted-Work", "Fatality", "Property-Damage", "Environmental-Release",
+    "Chemical-Exposure", "Fire-Incident", "Explosion-Hazard", "Electrical-Incident",
+    "Fall-Incident", "Struck-By-Incident", "Caught-In-Between", "Ergonomic-Injury"
   ],
   "hazard_categories": [
     "Chemical", "Electrical", "Mechanical", "Ergonomic", "Thermal",
-    "Noise", "Radiation", "Biological", "Psychosocial", "Falling"
+    "Noise", "Radiation", "Biological", "Psychosocial", "Falling",
+    "Striking", "Caught-In", "Confined-Space", "Pressure", "Vibration"
   ],
   "ppe_requirements": [
     "Safety-Glasses", "Hard-Hat", "Steel-Toe-Boots", "Gloves", "Hearing-Protection",
-    "Respirator", "High-Visibility-Vest", "Face-Shield", "Full-Body-Suit", "Fall-Protection"
+    "Respirator", "High-Visibility-Vest", "Face-Shield", "Full-Body-Suit", "Fall-Protection",
+    "Chemical-Resistant-Clothing", "Insulated-Gloves", "Arc-Flash-Protection", "Respiratory-Protection",
+    "Heat-Resistant-Gear", "Cold-Weather-Gear", "Radiation-Protection", "Biological-Protection"
   ],
   "safety_protocols": [
     "Lockout-Tagout", "Confined-Space", "Hot-Work", "Hazardous-Energy",
-    "Machine-Guarding", "Emergency-Response", "Evacuation", "Fire-Safety"
+    "Machine-Guarding", "Emergency-Response", "Evacuation", "Fire-Safety",
+    "Fall-Protection", "Electrical-Safety", "Chemical-Handling", "Pressure-Vessel",
+    "Respiratory-Protection", "Hazard-Communication", "Emergency-Shutdown"
   ],
   "risk_assessment_levels": [
     "Low-Risk", "Medium-Risk", "High-Risk", "Very-High-Risk", "Extreme-Risk",
-    "Acceptable", "Mitigation-Required", "Unacceptable"
+    "Acceptable", "Mitigation-Required", "Unacceptable", "Immediate-Action-Required"
   ],
   "safety_training": [
     "General-Safety", "Hazard-Recognition", "Emergency-Response", "Equipment-Specific",
-    "Chemical-Safety", "Ergonomics", "Fire-Safety", "First-Aid", "Rescue"
+    "Chemical-Safety", "Ergonomics", "Fire-Safety", "First-Aid", "Rescue",
+    "LOTO-Training", "Confined-Space-Training", "Electrical-Safety", "Fall-Protection"
   ],
   "inspection_types": [
     "Daily-Inspection", "Weekly-Inspection", "Monthly-Inspection", "Pre-Shift",
-    "Post-Incident", "Regulatory-Compliance", "Internal-Audit", "External-Audit"
+    "Post-Incident", "Regulatory-Compliance", "Internal-Audit", "External-Audit",
+    "Quarterly-Inspection", "Annual-Inspection", "Pre-Start-Inspection", "Post-Maintenance"
   ],
   "operational_efficiency": {
     "efficiency_metrics": [
@@ -34,7 +43,10 @@
       "Resource utilization",
       "Energy efficiency",
       "Labor productivity",
-      "Equipment uptime"
+      "Equipment uptime",
+      "Safety compliance rate",
+      "Incident reduction rate",
+      "Training completion rate"
     ],
     "efficiency_barriers": [
       "Process bottlenecks",
@@ -42,7 +54,10 @@
       "Staffing constraints",
       "Material shortages",
       "Quality issues",
-      "Safety protocol conflicts"
+      "Safety protocol conflicts",
+      "Regulatory constraints",
+      "Training gaps",
+      "Communication failures"
     ],
     "efficiency_improvements": [
       "Process optimization",
@@ -50,7 +65,9 @@
       "Staff training",
       "Automation implementation",
       "Lean manufacturing",
-      "Six Sigma initiatives"
+      "Six Sigma initiatives",
+      "Safety program enhancement",
+      "Technology adoption"
     ]
   },
   "security_scenarios": {
@@ -60,7 +77,11 @@
       "Lost badge or credential",
       "Perimeter breach",
       "Vehicle access violation",
-      "Package screening alert"
+      "Package screening alert",
+      "Security camera blind spot",
+      "Guard post unmanned",
+      "Access control malfunction",
+      "Fence breach detected"
     ],
     "cyber_security": [
       "Phishing attempt detected",
@@ -68,7 +89,11 @@
       "Unauthorized system access",
       "Data breach attempt",
       "Ransomware threat",
-      "Denial of service attack"
+      "Denial of service attack",
+      "SQL injection attempt",
+      "Credential theft",
+      "Network intrusion",
+      "Social engineering attack"
     ],
     "operational_security": [
       "Trade secret exposure risk",
@@ -76,7 +101,10 @@
       "Competitive intelligence gathering",
       "Insider threat detected",
       "Supply chain security breach",
-      "Third-party access violation"
+      "Third-party access violation",
+      "Document classification error",
+      "Information leakage",
+      "Physical document compromise"
     ]
   },
   "safety_incident_causation": {
@@ -86,7 +114,11 @@
       "Training deficiency",
       "Communication failure",
       "Procedural violation",
-      "Decision error"
+      "Decision error",
+      "Complacency",
+      "Distraction",
+      "Improper lifting technique",
+      "Rushing"
     ],
     "equipment_factors": [
       "Equipment failure",
@@ -94,7 +126,10 @@
       "Design flaw",
       "Wear and tear",
       "Calibration error",
-      "Component failure"
+      "Component failure",
+      "Guard missing",
+      "Safety device failure",
+      "Control system malfunction"
     ],
     "environmental_factors": [
       "Hazardous condition",
@@ -102,7 +137,10 @@
       "Lighting deficiency",
       "Noise level excessive",
       "Temperature extreme",
-      "Ventilation issue"
+      "Ventilation issue",
+      "Slippery surface",
+      "Obstructed pathway",
+      "Chemical exposure"
     ],
     "organizational_factors": [
       "Management system failure",
@@ -110,7 +148,10 @@
       "Resource constraint",
       "Production pressure",
       "Communication breakdown",
-      "Policy deficiency"
+      "Policy deficiency",
+      "Inadequate supervision",
+      "Poor planning",
+      "Staffing shortage"
     ]
   },
   "safety_protocol_violations": {
@@ -120,7 +161,10 @@
       "LOTO verification skipped",
       "LOTO removal unauthorized",
       "LOTO documentation missing",
-      "LOTO training deficiency"
+      "LOTO training deficiency",
+      "Group LOTO not implemented",
+      "Energy source not isolated",
+      "Lock device not applied"
     ],
     "confined_space": [
       "Entry permit missing",
@@ -128,7 +172,10 @@
       "Attendant not present",
       "Rescue plan inadequate",
       "Communication failure",
-      "Emergency equipment missing"
+      "Emergency equipment missing",
+      "Ventilation not provided",
+      "Isolation not verified",
+      "Entry log not maintained"
     ],
     "hot_work": [
       "Fire watch absent",
@@ -136,7 +183,10 @@
       "Flammable material present",
       "Spark containment inadequate",
       "Fire suppression unavailable",
-      "Area not cleared"
+      "Area not cleared",
+      "Gas testing not performed",
+      "Hot area boundaries not set",
+      "Fire extinguisher not available"
     ]
   },
   "safety_escalation": {
@@ -146,7 +196,10 @@
       "Corrective action not taken",
       "Training not updated",
       "Procedure not revised",
-      "Risk assessment not updated"
+      "Risk assessment not updated",
+      "Recurring similar incidents",
+      "Root cause not addressed",
+      "Safety culture issue"
     ],
     "incident_to_serious": [
       "Initial response inadequate",
@@ -154,7 +207,10 @@
       "Secondary hazards developed",
       "Evacuation incomplete",
       "Communication failure",
-      "Emergency equipment failure"
+      "Emergency equipment failure",
+      "Multiple injuries sustained",
+      "Fire spread occurred",
+      "Containment failed"
     ],
     "serious_to_critical": [
       "Multiple injuries occurred",
@@ -162,7 +218,73 @@
       "Environmental release",
       "Property damage extensive",
       "Regulatory violation",
-      "Public safety impact"
+      "Public safety impact",
+      "Catastrophic equipment damage",
+      "Business continuity threat",
+      "Media attention required"
     ]
-  }
+  },
+  "incident_severity": [
+    "Minor", "Moderate", "Serious", "Critical", "Catastrophic"
+  ],
+  "personnel_affected": [
+    "1 person affected", "2 personnel affected", "3 personnel affected", "4 personnel affected",
+    "5 personnel affected", "6 personnel affected", "8 personnel affected", "10 personnel affected",
+    "15 personnel affected", "20 personnel affected", "25 personnel affected", "30+ personnel affected"
+  ],
+  "downtime_hours": [
+    "1 hour", "2 hours", "4 hours", "6 hours", "8 hours", "12 hours", "16 hours",
+    "24 hours", "36 hours", "48 hours", "72 hours", "96 hours", "120 hours"
+  ],
+  "root_cause_deadline": [
+    "24 hours", "48 hours", "72 hours", "96 hours", "120 hours", "144 hours", "168 hours"
+  ],
+  "access_points": [
+    "1 access point", "2 access points", "3 access points", "4 access points", "5 access points",
+    "6 access points", "8 access points", "10 access points", "12 access points", "15 access points"
+  ],
+  "unauthorized_attempts": [
+    "1 unauthorized access attempt", "2 unauthorized access attempts", "3 unauthorized access attempts",
+    "4 unauthorized access attempts", "5 unauthorized access attempts", "6 unauthorized access attempts",
+    "8 unauthorized access attempts", "10 unauthorized access attempts", "15 unauthorized access attempts"
+  ],
+  "data_exposure": [
+    "100 records", "250 records", "500 records", "1,000 records", "2,500 records",
+    "5,000 records", "10,000 records", "25,000 records", "50,000 records", "100,000 records"
+  ],
+  "remediation_time": [
+    "4 hours", "8 hours", "12 hours", "16 hours", "24 hours", "32 hours", "40 hours",
+    "48 hours", "72 hours", "96 hours", "120 hours"
+  ],
+  "safety_costs": [
+    "$1,000", "$2,500", "$5,000", "$7,500", "$10,000", "$15,000", "$25,000",
+    "$50,000", "$75,000", "$100,000", "$250,000", "$500,000", "$1,000,000"
+  ],
+  "regulatory_fines": [
+    "$5,000", "$10,000", "$25,000", "$50,000", "$75,000", "$100,000",
+    "$250,000", "$500,000", "$1,000,000", "$2,500,000", "$5,000,000"
+  ],
+  "contributing_factors": [
+    "1 contributing factor identified", "2 contributing factors identified",
+    "3 contributing factors identified", "4 contributing factors identified",
+    "5 contributing factors identified", "6 contributing factors identified",
+    "8 contributing factors identified", "10 contributing factors identified"
+  ],
+  "corrective_actions": [
+    "1 corrective action recommended", "2 corrective actions recommended",
+    "3 corrective actions recommended", "4 corrective actions recommended",
+    "5 corrective actions recommended", "6 corrective actions recommended"
+  ],
+  "near_miss_severity": [
+    "Low severity near-miss", "Medium severity near-miss", "High severity near-miss",
+    "Critical severity near-miss"
+  ],
+  "incident_location": [
+    "Production area", "Warehouse", "Loading dock", "Maintenance area", "Office",
+    "Laboratory", "Outdoor area", "Parking lot", "Control room", "Utility area"
+  ],
+  "injury_types": [
+    "Laceration", "Burn", "Fracture", "Sprain/Strain", "Contusion",
+    "Electrical shock", "Chemical burn", "Respiratory issue", "Eye injury", "Head injury"
+  ]
 }

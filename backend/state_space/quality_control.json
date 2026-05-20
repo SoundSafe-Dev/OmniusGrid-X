@@ -2,30 +2,157 @@
   "inspection_points": [
     "Incoming-Inspection", "In-Process-Inspection", "Final-Inspection",
     "First-Article-Inspection", "In-Line-Inspection", "Sample-Inspection",
-    "100%-Inspection", "AQL-Sampling", "Statistical-Process-Control"
+    "100%-Inspection", "AQL-Sampling", "Statistical-Process-Control",
+    "Source-Inspection", "Layout-Inspection", "Process-Validation", "Calibration-Verification"
   ],
   "defect_types": [
     "Dimensional", "Cosmetic", "Functional", "Material", "Assembly",
-    "Contamination", "Missing-Feature", "Misalignment", "Surface-Defect", "Documentation"
+    "Contamination", "Missing-Feature", "Misalignment", "Surface-Defect", "Documentation",
+    "Electrical-Defect", "Mechanical-Defect", "Thermal-Defect", "Chemical-Defect", "Software-Defect"
   ],
   "quality_standards": [
     "ISO-9001", "ISO-13485", "AS9100", "IATF-16949", "ISO-22000",
-    "Industry-Standard-A", "Industry-Standard-B", "Customer-Specification"
+    "Industry-Standard-A", "Industry-Standard-B", "Customer-Specification",
+    "ISO-14001", "OHSAS-18001", "ISO-27001", "FDA-21CFR820", "CE-Marking"
   ],
   "inspection_status": [
     "Passed", "Failed", "Conditional-Pass", "Rework-Required", "Scrap",
-    "Quarantine", "Hold", "Pending-Review", "Retest", "Waived"
+    "Quarantine", "Hold", "Pending-Review", "Retest", "Waived",
+    "Deferred", "Customer-Return", "Supplier-Return", "Concession-Required"
   ],
   "non_conformance_types": [
     "Minor", "Major", "Critical", "Observation", "Opportunity",
-    "Systemic", "Isolated", "Recurring", "New-Issue"
+    "Systemic", "Isolated", "Recurring", "New-Issue",
+    "Safety-Critical", "Regulatory-Critical", "Customer-Critical"
   ],
   "rework_categories": [
     "Repair", "Reprocess", "Rework", "Scrap", "Accept-as-Is",
-    "Customer-Approval", "Supplier-Return", "Downgrade", "Salvage"
+    "Customer-Approval", "Supplier-Return", "Downgrade", "Salvage",
+    "Field-Repair", "In-House-Rework", "Vendor-Rework"
   ],
   "measurement_tools": [
     "Calipers", "Micrometers", "CMM", "Vision-System", "X-Ray",
-    "Ultrasonic", "Tensile-Tester", "Hardness-Tester", "Surface-Roughness"
+    "Ultrasonic", "Tensile-Tester", "Hardness-Tester", "Surface-Roughness",
+    "Coordinate-Measuring-Machine", "Optical-Comparator", "Profile-Projector", "Laser-Scanner"
+  ],
+  "defect_rates": [
+    "0.1%", "0.25%", "0.5%", "0.75%", "1%", "1.5%", "2%", "2.5%", "3%", "4%", "5%", "8%", "10%", "12%", "15%"
+  ],
+  "scrap_costs": [
+    "$500", "$750", "$1,000", "$1,500", "$2,000", "$2,500", "$3,000", "$5,000",
+    "$7,500", "$10,000", "$15,000", "$20,000", "$25,000", "$50,000", "$75,000"
+  ],
+  "rework_rate": [
+    "2%", "3%", "4%", "5%", "6%", "7%", "8%", "10%", "12%", "15%", "18%", "20%", "25%", "30%"
+  ],
+  "customer_returns": [
+    "5%", "8%", "10%", "12%", "15%", "18%", "20%", "25%", "30%", "35%", "40%", "50%"
+  ],
+  "first_pass_yield": [
+    "85%", "88%", "90%", "92%", "93%", "94%", "95%", "96%", "97%", "98%", "99%"
+  ],
+  "inspection_backlog": [
+    "50 units", "100 units", "200 units", "300 units", "500 units", "750 units", "1000 units",
+    "1500 units", "2000 units", "3000 units", "5000 units"
+  ],
+  "inspection_cycle_time": [
+    "10%", "15%", "20%", "25%", "30%", "40%", "50%", "60%", "75%", "80%", "100%"
+  ],
+  "quality_assurance_resources": [
+    "2 QA inspectors", "3 QA inspectors", "4 QA inspectors", "5 QA inspectors",
+    "6 QA inspectors", "8 QA inspectors", "10 QA inspectors", "12 QA inspectors"
+  ],
+  "customer_complaint_rate": [
+    "0.1%", "0.25%", "0.5%", "0.75%", "1%", "1.5%", "2%", "2.5%", "3%", "4%", "5%"
+  ],
+  "field_failure_rate": [
+    "0.1%", "0.25%", "0.5%", "0.75%", "1%", "1.5%", "2%", "2.5%", "3%", "4%", "5%"
+  ],
+  "warranty_claims": [
+    "10 claims", "25 claims", "50 claims", "75 claims", "100 claims", "150 claims",
+    "200 claims", "300 claims", "500 claims", "750 claims", "1000 claims"
+  ],
+  "quality_cost": [
+    "$5,000", "$10,000", "$15,000", "$25,000", "$50,000", "$75,000", "$100,000",
+    "$150,000", "$200,000", "$250,000", "$500,000"
+  ],
+  "ppm_defects": [
+    "100 PPM", "250 PPM", "500 PPM", "750 PPM", "1,000 PPM", "1,500 PPM",
+    "2,000 PPM", "2,500 PPM", "3,000 PPM", "5,000 PPM", "7,500 PPM", "10,000 PPM"
+  ],
+  "quality_gates": [
+    "2 quality gates failing", "3 quality gates failing", "4 quality gates failing", "5 quality gates failing",
+    "6 quality gates failing", "8 quality gates failing", "10 quality gates failing"
+  ],
+  "non_conformances": [
+    "1 non-conformance logged", "2 non-conformances logged", "3 non-conformances logged",
+    "4 non-conformances logged", "5 non-conformances logged", "6 non-conformances logged",
+    "8 non-conformances logged", "10 non-conformances logged"
+  ],
+  "inspection_pass_rate": [
+    "85%", "88%", "90%", "92%", "93%", "94%", "95%", "96%", "97%", "98%", "99%"
+  ],
+  "test_pass_rate": [
+    "85%", "88%", "90%", "92%", "93%", "94%", "95%", "96%", "97%", "98%", "99%"
+  ],
+  "measurement_accuracy": [
+    "95%", "96%", "97%", "98%", "99%", "99.5%", "99.9%"
+  ],
+  "calibration_status": [
+    "Calibration current", "Calibration overdue", "Calibration due soon", "Calibration expired",
+    "Calibration in progress", "Calibration scheduled"
+  ],
+  "quality_metrics_deviation": [
+    "5%", "8%", "10%", "12%", "15%", "18%", "20%", "25%", "30%"
+  ],
+  "process_variation": [
+    "5%", "8%", "10%", "12%", "15%", "18%", "20%", "25%", "30%"
+  ],
+  "specification_deviation": [
+    "0.1mm", "0.25mm", "0.5mm", "0.75mm", "1mm", "1.5mm", "2mm", "2.5mm", "3mm"
+  ],
+  "quality_documentation_gap": [
+    "Documentation incomplete", "Documentation missing", "Documentation outdated",
+    "Documentation not approved", "Documentation not signed", "Documentation not controlled"
+  ],
+  "traceability_issue": [
+    "Lot traceability issue", "Batch traceability issue", "Component traceability issue",
+    "Supplier traceability issue", "Material traceability issue"
+  ],
+  "quality_hold_duration": [
+    "2 hours", "4 hours", "6 hours", "8 hours", "12 hours", "16 hours", "24 hours",
+    "32 hours", "40 hours", "48 hours", "72 hours"
+  ],
+  "rework_time": [
+    "0.5 hours", "1 hour", "1.5 hours", "2 hours", "2.5 hours", "3 hours", "4 hours",
+    "5 hours", "6 hours", "8 hours", "10 hours"
+  ],
+  "quality_impact": [
+    "5% increase in defects", "8% increase in defects", "10% increase in defects",
+    "12% increase in defects", "15% increase in defects", "18% increase in defects",
+    "20% increase in defects", "25% increase in defects"
+  ],
+  "capa_required": [
+    "1 CAPA required", "2 CAPAs required", "3 CAPAs required", "4 CAPAs required",
+    "5 CAPAs required", "6 CAPAs required", "8 CAPAs required"
+  ],
+  "regulatory_impact": [
+    "ISO standard violation", "OSHA standard violation", "DOT regulation violation",
+    "FDA regulation violation", "CE marking violation", "Industry standard violation"
+  ],
+  "quality_equipment_failure": [
+    "CMM calibration drift", "Vision system malfunction", "Sensor failure",
+    "Measurement tool damage", "Calibration equipment failure"
+  ],
+  "inspection_frequency": [
+    "Every shift", "Daily", "Weekly", "Monthly", "Quarterly", "Per batch",
+    "Per lot", "Per order", "Per customer requirement"
+  ],
+  "sample_size": [
+    "5 units", "10 units", "20 units", "25 units", "50 units", "75 units",
+    "100 units", "125 units", "150 units", "200 units", "250 units"
+  ],
+  "acceptance_quality_limit": [
+    "AQL 0.65", "AQL 1.0", "AQL 1.5", "AQL 2.5", "AQL 4.0", "AQL 6.5"
   ]
 }

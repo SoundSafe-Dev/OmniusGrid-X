@@ -3,25 +3,36 @@
     "PROD-001-Widget-A", "PROD-002-Widget-B", "PROD-003-Widget-C", "PROD-004-Widget-D",
     "PROD-005-Assembly-Alpha", "PROD-006-Assembly-Beta", "PROD-007-Subassembly-X", "PROD-008-Subassembly-Y",
     "FINISHED-GOOD-001", "FINISHED-GOOD-002", "FINISHED-GOOD-003", "FINISHED-GOOD-004",
-    "CUSTOM-PRODUCT-A", "CUSTOM-PRODUCT-B", "CUSTOM-PRODUCT-C", "BATCH-LOT-001", "BATCH-LOT-002"
+    "CUSTOM-PRODUCT-A", "CUSTOM-PRODUCT-B", "CUSTOM-PRODUCT-C", "BATCH-LOT-001", "BATCH-LOT-002",
+    "PROD-009-Component-E", "PROD-010-Component-F", "PROD-011-Assembly-Gamma", "PROD-012-Assembly-Delta",
+    "FINISHED-GOOD-005", "FINISHED-GOOD-006", "FINISHED-GOOD-007", "FINISHED-GOOD-008",
+    "CUSTOM-PRODUCT-D", "CUSTOM-PRODUCT-E", "CUSTOM-PRODUCT-F", "BATCH-LOT-003", "BATCH-LOT-004"
   ],
   "production_lines": [
-    "Line-1", "Line-2", "Line-3", "Line-4", "Line-5",
-    "Cell-A", "Cell-B", "Cell-C", "Workstation-01", "Workstation-02"
+    "Line-1", "Line-2", "Line-3", "Line-4", "Line-5", "Line-6", "Line-7", "Line-8", "Line-9", "Line-10",
+    "Cell-A", "Cell-B", "Cell-C", "Cell-D", "Cell-E", "Cell-F", "Cell-G", "Cell-H", "Cell-I", "Cell-J",
+    "Workstation-01", "Workstation-02", "Workstation-03", "Workstation-04", "Workstation-05",
+    "Workstation-06", "Workstation-07", "Workstation-08", "Workstation-09", "Workstation-10",
+    "Station-Alpha", "Station-Beta", "Station-Gamma", "Station-Delta", "Station-Epsilon"
   ],
   "yield_rates": [
-    "95%", "92%", "88%", "85%", "80%", "75%", "70%", "65%", "60%", "55%"
+    "98%", "95%", "92%", "90%", "88%", "85%", "82%", "80%", "78%", "75%",
+    "72%", "70%", "68%", "65%", "62%", "60%", "58%", "55%", "52%", "50%"
   ],
   "output_metrics": [
     "Units per Hour", "Units per Shift", "Units per Day", "Total Production",
-    "Good Parts", "Rejected Parts", "Rework Parts", "Scrap Rate", "First Pass Yield"
+    "Good Parts", "Rejected Parts", "Rework Parts", "Scrap Rate", "First Pass Yield",
+    "Cycle Time", "Throughput Rate", "OEE", "Availability", "Performance", "Quality"
   ],
   "production_status": [
-    "Running", "Idle", "Setup", "Changeover", "Maintenance", "Starved", "Blocked", "Down"
+    "Running", "Idle", "Setup", "Changeover", "Maintenance", "Starved", "Blocked", "Down",
+    "Emergency Stop", "Quality Hold", "Material Wait", "Operator Wait", "Tooling Change",
+    "Cleaning", "Calibration", "Inspection", "Testing", "Packaging"
   ],
   "quality_metrics": [
     "Defect Rate", "Rework Rate", "Scrap Rate", "Customer Returns", "Warranty Claims",
-    "Quality Score", "Inspection Pass Rate", "Test Pass Rate"
+    "Quality Score", "Inspection Pass Rate", "Test Pass Rate", "First Pass Yield",
+    "Customer Complaint Rate", "Field Failure Rate", "Quality Cost", "PPM Defects"
   ],
   "shop_floor_scenarios": {
     "production_bottlenecks": [
@@ -30,7 +41,11 @@
       "Staffing shortage on Line-3",
       "Quality hold on Workstation-02",
       "Changeover delay on Line-2",
-      "Maintenance blocking Line-4"
+      "Maintenance blocking Line-4",
+      "Tooling unavailability at Cell-B",
+      "Operator shortage on Line-5",
+      "Quality inspection backlog",
+      "Material handling bottleneck"
     ],
     "equipment_issues": [
       "Machine breakdown",
@@ -38,7 +53,16 @@
       "Calibration drift detected",
       "Sensor malfunction",
       "Actuator failure",
-      "Control system error"
+      "Control system error",
+      "Motor failure",
+      "Hydraulic system failure",
+      "Pneumatic system leak",
+      "Electrical fault detected",
+      "Mechanical binding",
+      "Bearing failure",
+      "Gear damage",
+      "Belt breakage",
+      "Coupling failure"
     ],
     "material_issues": [
       "Raw material shortage",
@@ -46,7 +70,16 @@
       "Quality hold on incoming material",
       "Wrong material delivered",
       "Material specification mismatch",
-      "Material handling equipment failure"
+      "Material handling equipment failure",
+      "Material contamination",
+      "Material expiration",
+      "Storage condition failure",
+      "Material tracking error",
+      "Inventory discrepancy",
+      "Material damage in transit",
+      "Supplier quality issue",
+      "Material quarantine",
+      "Material certification missing"
     ],
     "staffing_issues": [
       "Operator absence",
@@ -54,7 +87,16 @@
       "Cross-training insufficient",
       "Shift handover delay",
       "Operator fatigue",
-      "Training in progress"
+      "Training in progress",
+      "Staff shortage",
+      "Overtime required",
+      "Contractor unavailability",
+      "Certification expired",
+      "Safety incident",
+      "Injury on shift",
+      "Scheduling conflict",
+      "Communication breakdown",
+      "Supervisor unavailability"
     ],
     "quality_issues": [
       "Dimensional non-conformance",
@@ -62,7 +104,16 @@
       "Assembly error",
       "Test failure",
       "Inspection backlog",
-      "Quality documentation gap"
+      "Quality documentation gap",
+      "Process variation",
+      "Specification deviation",
+      "Material quality issue",
+      "Workmanship defect",
+      "Test equipment failure",
+      "Calibration out of spec",
+      "Measurement error",
+      "Documentation error",
+      "Traceability issue"
     ]
   },
   "production_constraints": {
@@ -72,7 +123,15 @@
       "Labor capacity constraint",
       "Material flow bottleneck",
       "Storage capacity limit",
-      "Energy capacity constraint"
+      "Energy capacity constraint",
+      "Tooling capacity limit",
+      "Inspection capacity constraint",
+      "Packaging capacity limit",
+      "Shipping capacity limit",
+      "Utility capacity constraint",
+      "Floor space constraint",
+      "Environmental capacity limit",
+      "Regulatory capacity limit"
     ],
     "scheduling_conflicts": [
       "Production schedule overlap",
@@ -80,7 +139,14 @@
       "Changeover timing conflict",
       "Resource allocation conflict",
       "Priority level conflict",
-      "Customer deadline conflict"
+      "Customer deadline conflict",
+      "Shift scheduling conflict",
+      "Weekend production conflict",
+      "Holiday scheduling issue",
+      "Third-party service delay",
+      "Supplier delivery conflict",
+      "Quality inspection conflict",
+      "Testing schedule conflict"
     ],
     "process_constraints": [
       "Cycle time limit reached",
@@ -88,7 +154,15 @@
       "Changeover time bottleneck",
       "Process variation excessive",
       "Throughput limit reached",
-      "Yield constraint active"
+      "Yield constraint active",
+      "Temperature constraint",
+      "Pressure constraint",
+      "Humidity constraint",
+      "Clean room constraint",
+      "Chemical process constraint",
+      "Thermal process constraint",
+      "Mechanical constraint",
+      "Electrical constraint"
     ]
   },
   "production_escalation": {
@@ -98,7 +172,11 @@
       "Root cause not addressed",
       "Corrective action ineffective",
       "Monitoring insufficient",
-      "Preventive action not taken"
+      "Preventive action not taken",
+      "Trend analysis shows degradation",
+      "Performance metrics declining",
+      "Quality indicators worsening",
+      "Efficiency dropping consistently"
     ],
     "major_to_critical": [
       "Production line stoppage",
@@ -106,7 +184,11 @@
       "Safety risk identified",
       "Customer impact imminent",
       "Regulatory violation risk",
-      "Financial impact significant"
+      "Financial impact significant",
+      "Multiple lines affected",
+      "System-wide impact",
+      "Cascading failure risk",
+      "Business continuity threat"
     ],
     "critical_to_emergency": [
       "Complete production halt",
@@ -114,7 +196,11 @@
       "Environmental release",
       "Regulatory violation confirmed",
       "Customer delivery failure",
-      "Facility emergency"
+      "Facility emergency",
+      "Catastrophic equipment failure",
+      "Personnel injury",
+      "Fire or explosion",
+      "Toxic material release"
     ]
   },
   "shift_handover": {
@@ -124,7 +210,11 @@
       "Status not communicated",
       "Issues not escalated",
       "Quality data missing",
-      "Production data incomplete"
+      "Production data incomplete",
+      "Safety concerns not reported",
+      "Equipment status not updated",
+      "Material status unclear",
+      "Tooling condition unknown"
     ],
     "handover_delays": [
       "Previous shift overrun",
@@ -132,7 +222,56 @@
       "Communication breakdown",
       "Documentation delay",
       "Equipment not ready",
-      "Material not staged"
+      "Material not staged",
+      "Tooling not available",
+      "Quality inspection pending",
+      "Safety check incomplete",
+      "Production target unclear"
     ]
-  }
+  },
+  "oee_metrics": [
+    "45%", "50%", "55%", "60%", "62%", "65%", "68%", "70%", "72%", "75%",
+    "78%", "80%", "82%", "85%", "88%", "90%", "92%", "95%", "98%"
+  ],
+  "throughput_reduction": [
+    "10%", "15%", "20%", "25%", "30%", "35%", "40%", "45%", "50%", "55%", "60%"
+  ],
+  "cycle_time_increase": [
+    "10%", "15%", "20%", "25%", "30%", "35%", "40%", "45%", "50%", "60%", "75%"
+  ],
+  "quality_rate": [
+    "85%", "88%", "90%", "92%", "93%", "94%", "95%", "96%", "97%", "98%", "99%"
+  ],
+  "downtime_hours": [
+    "0.5 hours", "1 hour", "1.5 hours", "2 hours", "2.5 hours", "3 hours", "4 hours", "5 hours",
+    "6 hours", "8 hours", "10 hours", "12 hours", "16 hours", "24 hours", "36 hours", "48 hours"
+  ],
+  "production_loss": [
+    "50 units", "100 units", "200 units", "300 units", "500 units", "750 units", "1000 units",
+    "1500 units", "2000 units", "3000 units", "5000 units", "7500 units", "10000 units"
+  ],
+  "scrap_costs": [
+    "$500", "$750", "$1,000", "$1,500", "$2,000", "$2,500", "$3,000", "$5,000",
+    "$7,500", "$10,000", "$15,000", "$20,000", "$25,000", "$50,000", "$75,000"
+  ],
+  "rework_rate": [
+    "2%", "3%", "4%", "5%", "6%", "7%", "8%", "10%", "12%", "15%", "18%", "20%"
+  ],
+  "customer_returns": [
+    "5%", "8%", "10%", "12%", "15%", "18%", "20%", "25%", "30%", "35%", "40%", "50%"
+  ],
+  "production_orders": [
+    "1 production order delayed", "2 production orders delayed", "3 production orders delayed",
+    "4 production orders delayed", "5 production orders delayed", "8 production orders delayed",
+    "10 production orders delayed", "15 production orders delayed", "20 production orders delayed"
+  ],
+  "schedule_adherence": [
+    "45%", "50%", "55%", "60%", "65%", "70%", "75%", "80%", "85%", "90%", "95%", "100%"
+  ],
+  "equipment_efficiency": [
+    "55%", "60%", "65%", "70%", "75%", "80%", "85%", "90%", "95%", "98%"
+  ],
+  "line_utilization": [
+    "60%", "65%", "70%", "75%", "80%", "85%", "90%", "95%", "100%", "105%", "110%"
+  ]
 }
