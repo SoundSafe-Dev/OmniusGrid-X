@@ -1,0 +1,30 @@
+{
+  "workflow_types": [
+    "Approval-Workflow", "Review-Workflow", "Notification-Workflow",
+    "Escalation-Workflow", "Coordination-Workflow", "Automation-Workflow"
+  ],
+  "workflow_status": [
+    "Initiated", "In-Progress", "Pending-Approval", "Approved", "Rejected",
+    "Completed", "Cancelled", "On-Hold", "Escalated"
+  ],
+  "workflow_steps": [
+    "Initiation", "Validation", "Review", "Approval", "Execution",
+    "Notification", "Escalation", "Completion", "Archival"
+  ],
+  "approval_levels": [
+    "Single-Level", "Multi-Level", "Parallel", "Sequential",
+    "Delegated", "Conditional", "Automatic", "Emergency"
+  ],
+  "workflow_triggers": [
+    "Manual", "Automatic", "Scheduled", "Event-Based", "Condition-Based",
+    "Threshold-Based", "Time-Based", "API-Triggered"
+  ],
+  "workflow_rules": [
+    "Routing-Rules", "Approval-Rules", "Escalation-Rules",
+    "Notification-Rules", "Validation-Rules", "Business-Rules"
+  ],
+  "workflow_metrics": [
+    "Cycle-Time", "Throughput-Time", "Approval-Rate", "Rejection-Rate",
+    "Escalation-Rate", "Workflow-Efficiency", "User-Satisfaction"
+  ]
+}

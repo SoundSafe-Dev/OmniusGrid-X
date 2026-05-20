@@ -1,0 +1,30 @@
+{
+  "relationship_types": [
+    "Strategic-Partner", "Preferred-Vendor", "Approved-Vendor",
+    "Transactional", "Emerging", "Incumbent", "Single-Source"
+  ],
+  "partnership_levels": [
+    "Tier-1-Strategic", "Tier-2-Preferred", "Tier-3-Approved",
+    "Tier-4-Transactional", "Tier-5-Commodity"
+  ],
+  "collaboration_types": [
+    "Joint-Development", "Co-Innovation", "Shared-Risk",
+    "Revenue-Sharing", "Cost-Sharing", "Knowledge-Sharing"
+  ],
+  "scorecard_categories": [
+    "Quality", "Delivery", "Cost", "Innovation", "Service",
+    "Financial", "Compliance", "Sustainability"
+  ],
+  "strategic_initiatives": [
+    "Cost-Reduction", "Innovation", "Risk-Mitigation", "Market-Expansion",
+    "Technology-Adoption", "Sustainability", "Diversification"
+  ],
+  "relationship_status": [
+    "Active", "Under-Review", "Probation", "Suspended",
+    "Terminated", "Merged", "Acquired", "Restructured"
+  ],
+  "relationship_metrics": [
+    "Partnership-Score", "Collaboration-Index", "Integration-Level",
+    "Trust-Score", "Commitment-Level", "Strategic-Alignment"
+  ]
+}

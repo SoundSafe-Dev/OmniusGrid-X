@@ -1,0 +1,30 @@
+{
+  "twin_types": [
+    "Asset-Twin", "Process-Twin", "System-Twin", "Facility-Twin", "Supply-Chain-Twin",
+    "Product-Twin", "Logistics-Twin", "Energy-Twin", "Maintenance-Twin", "Quality-Twin"
+  ],
+  "simulation_models": [
+    "Physics-Based", "Data-Driven", "Hybrid", "Finite-Element", "Computational-Fluid-Dynamics",
+    "Discrete-Event", "Agent-Based", "Monte-Carlo", "Predictive", "Prescriptive"
+  ],
+  "virtual_entities": [
+    "Virtual-Asset", "Virtual-Line", "Virtual-Plant", "Virtual-Warehouse",
+    "Virtual-Fleet", "Virtual-Sensor", "Virtual-Process", "Virtual-System"
+  ],
+  "synchronization_status": [
+    "Real-Time", "Near-Real-Time", "Periodic", "Manual", "Offline",
+    "Out-of-Sync", "Drift-Detected", "Sync-Failed", "Sync-Pending"
+  ],
+  "scenario_testing": [
+    "What-If", "Optimization", "Risk-Assessment", "Failure-Analysis",
+    "Capacity-Planning", "Process-Improvement", "Cost-Analysis", "Time-Analysis"
+  ],
+  "twin_fidelity": [
+    "High-Fidelity", "Medium-Fidelity", "Low-Fidelity", "Conceptual",
+    "Detailed", "Approximate", "Statistical", "Deterministic"
+  ],
+  "use_cases": [
+    "Predictive-Maintenance", "Process-Optimization", "Training", "Testing",
+    "Design-Validation", "Performance-Analysis", "Troubleshooting", "Planning"
+  ]
+}

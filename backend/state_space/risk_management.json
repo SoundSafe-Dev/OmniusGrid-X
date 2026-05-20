@@ -1,0 +1,30 @@
+{
+  "risk_categories": [
+    "Operational", "Financial", "Strategic", "Compliance", "Reputational",
+    "Technology", "Cybersecurity", "Supply-Chain", "Market", "Environmental"
+  ],
+  "risk_levels": [
+    "Critical", "High", "Medium", "Low", "Negligible",
+    "Extreme", "Severe", "Moderate", "Minor", "Insignificant"
+  ],
+  "mitigation_strategies": [
+    "Avoidance", "Reduction", "Sharing", "Acceptance", "Transfer",
+    "Control", "Monitoring", "Contingency", "Insurance"
+  ],
+  "insurance_types": [
+    "Property", "Liability", "Cyber", "Business-Interruption",
+    "Workers-Compensation", "Product-Liability", "Professional-Liability"
+  ],
+  "business_continuity": [
+    "Disaster-Recovery", "Backup-Site", "Hot-Site", "Cold-Site",
+    "Recovery-Plan", "Continuity-Plan", "Crisis-Management"
+  ],
+  "risk_register_status": [
+    "Identified", "Assessed", "Mitigated", "Monitored", "Closed",
+    "Reopened", "Escalated", "Accepted", "Transferred"
+  ],
+  "risk_metrics": [
+    "Likelihood", "Impact", "Risk-Score", "Exposure", "Residual-Risk",
+    "Control-Effectiveness", "Trend-Analysis", "Early-Warning"
+  ]
+}

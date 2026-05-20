@@ -1,0 +1,30 @@
+{
+  "methodologies": [
+    "Lean-Manufacturing", "Six-Sigma", "Kaizen", "5S", "Just-in-Time",
+    "TPM", "TOC", "VSM", "SMED", "Poka-Yoke"
+  ],
+  "improvement_projects": [
+    "Waste-Reduction", "Cycle-Time-Reduction", "Quality-Improvement",
+    "Cost-Reduction", "Throughput-Increase", "Efficiency-Improvement"
+  ],
+  "value_stream_mapping": [
+    "Current-State", "Future-State", "Gap-Analysis", "Implementation",
+    "Monitoring", "Continuous-Improvement"
+  ],
+  "kaizen_events": [
+    "Rapid-Improvement", "Workshop", "Team-Based", "Focused",
+    "Week-Long", "Sprint", "Continuous"
+  ],
+  "process_metrics": [
+    "Cycle-Time", "Lead-Time", "Throughput", "Yield",
+    "First-Pass-Yield", "Overall-Equipment-Effectiveness", "Process-Capability"
+  ],
+  "waste_categories": [
+    "Overproduction", "Waiting", "Transportation", "Inventory",
+    "Motion", "Overprocessing", "Defects", "Underutilization"
+  ],
+  "improvement_status": [
+    "Identified", "Analyzed", "Implemented", "Validated",
+    "Standardized", "Sustained", "Regression", "Abandoned"
+  ]
+}

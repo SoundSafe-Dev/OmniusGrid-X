@@ -1,0 +1,31 @@
+{
+  "inspection_points": [
+    "Incoming-Inspection", "In-Process-Inspection", "Final-Inspection",
+    "First-Article-Inspection", "In-Line-Inspection", "Sample-Inspection",
+    "100%-Inspection", "AQL-Sampling", "Statistical-Process-Control"
+  ],
+  "defect_types": [
+    "Dimensional", "Cosmetic", "Functional", "Material", "Assembly",
+    "Contamination", "Missing-Feature", "Misalignment", "Surface-Defect", "Documentation"
+  ],
+  "quality_standards": [
+    "ISO-9001", "ISO-13485", "AS9100", "IATF-16949", "ISO-22000",
+    "Industry-Standard-A", "Industry-Standard-B", "Customer-Specification"
+  ],
+  "inspection_status": [
+    "Passed", "Failed", "Conditional-Pass", "Rework-Required", "Scrap",
+    "Quarantine", "Hold", "Pending-Review", "Retest", "Waived"
+  ],
+  "non_conformance_types": [
+    "Minor", "Major", "Critical", "Observation", "Opportunity",
+    "Systemic", "Isolated", "Recurring", "New-Issue"
+  ],
+  "rework_categories": [
+    "Repair", "Reprocess", "Rework", "Scrap", "Accept-as-Is",
+    "Customer-Approval", "Supplier-Return", "Downgrade", "Salvage"
+  ],
+  "measurement_tools": [
+    "Calipers", "Micrometers", "CMM", "Vision-System", "X-Ray",
+    "Ultrasonic", "Tensile-Tester", "Hardness-Tester", "Surface-Roughness"
+  ]
+}

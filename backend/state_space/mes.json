@@ -1,0 +1,30 @@
+{
+  "mes_functions": [
+    "Production-Tracking", "Quality-Management", "Inventory-Tracking",
+    "Maintenance-Management", "Resource-Allocation", "Scheduling"
+  ],
+  "production_tracking": [
+    "Real-Time-Monitoring", "Progress-Tracking", "Yield-Tracking",
+    "Downtime-Tracking", "Performance-Tracking"
+  ],
+  "shop_floor_control": [
+    "Dispatching", "Scheduling", "Routing", "Sequencing",
+    "Bottleneck-Management", "WIP-Control"
+  ],
+  "data_collection": [
+    "Manual", "Automated", "IoT-Sensors", "Machine-Integration",
+    "Barcode", "RFID", "Vision-System"
+  ],
+  "mes_status": [
+    "Running", "Idle", "Setup", "Changeover", "Maintenance",
+    "Starved", "Blocked", "Error"
+  ],
+  "integration_points": [
+    "ERP", "PLM", "SCM", "CRM", "QMS",
+    "WMS", "TMS", "APS", "BI", "IoT"
+  ],
+  "mes_metrics": [
+    "OEE", "Throughput", "Cycle-Time", "Yield",
+    "Downtime", "Quality-Rate", "WIP-Level", "Utilization"
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "inventory_items": [
+    "PLA-Filament-Black", "PLA-Filament-White", "ABS-Filament-Red", "PETG-Filament-Blue",
+    "Nylon-Filament-Grey", "TPU-Filament-Orange", "Carbon-Fiber-Filament", "Wood-Filament-Brown",
+    "Raw-Material-A", "Raw-Material-B", "Raw-Material-C", "Raw-Material-D",
+    "Component-X", "Component-Y", "Component-Z", "Subassembly-Alpha", "Subassembly-Beta"
+  ],
+  "suppliers": [
+    "Supplier-001", "Supplier-002", "Supplier-003", "Supplier-004", "Supplier-005",
+    "Vendor-A", "Vendor-B", "Vendor-C", "Vendor-D", "Vendor-E"
+  ],
+  "reorder_points": [
+    "Below 100 units", "Below 50 units", "Below 25 units", "Below 10 units", "Critical: 0 units"
+  ],
+  "inventory_status": [
+    "In Stock", "Low Stock", "Out of Stock", "Backordered", "Discontinued",
+    "On Order", "In Transit", "Quality Hold", "Quarantine", "Expiring Soon"
+  ],
+  "replenishment_triggers": [
+    "Automatic Reorder Point", "Manual Requisition", "Safety Stock Breach",
+    "Demand Forecast", "Seasonal Adjustment", "Emergency Restock"
+  ],
+  "lead_times": [
+    "Same Day", "1-2 Days", "3-5 Days", "1 Week", "2 Weeks", "1 Month", "Variable"
+  ]
+}

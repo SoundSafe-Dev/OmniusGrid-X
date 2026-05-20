@@ -1,0 +1,168 @@
+{
+  "incident_types": [
+    "Near-Miss", "First-Aid", "Medical-Treatment", "Lost-Time-Injury",
+    "Restricted-Work", "Fatality", "Property-Damage", "Environmental-Release"
+  ],
+  "hazard_categories": [
+    "Chemical", "Electrical", "Mechanical", "Ergonomic", "Thermal",
+    "Noise", "Radiation", "Biological", "Psychosocial", "Falling"
+  ],
+  "ppe_requirements": [
+    "Safety-Glasses", "Hard-Hat", "Steel-Toe-Boots", "Gloves", "Hearing-Protection",
+    "Respirator", "High-Visibility-Vest", "Face-Shield", "Full-Body-Suit", "Fall-Protection"
+  ],
+  "safety_protocols": [
+    "Lockout-Tagout", "Confined-Space", "Hot-Work", "Hazardous-Energy",
+    "Machine-Guarding", "Emergency-Response", "Evacuation", "Fire-Safety"
+  ],
+  "risk_assessment_levels": [
+    "Low-Risk", "Medium-Risk", "High-Risk", "Very-High-Risk", "Extreme-Risk",
+    "Acceptable", "Mitigation-Required", "Unacceptable"
+  ],
+  "safety_training": [
+    "General-Safety", "Hazard-Recognition", "Emergency-Response", "Equipment-Specific",
+    "Chemical-Safety", "Ergonomics", "Fire-Safety", "First-Aid", "Rescue"
+  ],
+  "inspection_types": [
+    "Daily-Inspection", "Weekly-Inspection", "Monthly-Inspection", "Pre-Shift",
+    "Post-Incident", "Regulatory-Compliance", "Internal-Audit", "External-Audit"
+  ],
+  "operational_efficiency": {
+    "efficiency_metrics": [
+      "Cycle time optimization",
+      "Throughput maximization",
+      "Resource utilization",
+      "Energy efficiency",
+      "Labor productivity",
+      "Equipment uptime"
+    ],
+    "efficiency_barriers": [
+      "Process bottlenecks",
+      "Equipment downtime",
+      "Staffing constraints",
+      "Material shortages",
+      "Quality issues",
+      "Safety protocol conflicts"
+    ],
+    "efficiency_improvements": [
+      "Process optimization",
+      "Equipment upgrade",
+      "Staff training",
+      "Automation implementation",
+      "Lean manufacturing",
+      "Six Sigma initiatives"
+    ]
+  },
+  "security_scenarios": {
+    "physical_security": [
+      "Unauthorized access attempt",
+      "Tailgating incident",
+      "Lost badge or credential",
+      "Perimeter breach",
+      "Vehicle access violation",
+      "Package screening alert"
+    ],
+    "cyber_security": [
+      "Phishing attempt detected",
+      "Malware infection",
+      "Unauthorized system access",
+      "Data breach attempt",
+      "Ransomware threat",
+      "Denial of service attack"
+    ],
+    "operational_security": [
+      "Trade secret exposure risk",
+      "Intellectual property theft",
+      "Competitive intelligence gathering",
+      "Insider threat detected",
+      "Supply chain security breach",
+      "Third-party access violation"
+    ]
+  },
+  "safety_incident_causation": {
+    "human_factors": [
+      "Operator error",
+      "Fatigue-related error",
+      "Training deficiency",
+      "Communication failure",
+      "Procedural violation",
+      "Decision error"
+    ],
+    "equipment_factors": [
+      "Equipment failure",
+      "Maintenance deficiency",
+      "Design flaw",
+      "Wear and tear",
+      "Calibration error",
+      "Component failure"
+    ],
+    "environmental_factors": [
+      "Hazardous condition",
+      "Weather impact",
+      "Lighting deficiency",
+      "Noise level excessive",
+      "Temperature extreme",
+      "Ventilation issue"
+    ],
+    "organizational_factors": [
+      "Management system failure",
+      "Safety culture issue",
+      "Resource constraint",
+      "Production pressure",
+      "Communication breakdown",
+      "Policy deficiency"
+    ]
+  },
+  "safety_protocol_violations": {
+    "lockout_tagout": [
+      "LOTO not performed",
+      "LOTO procedure incomplete",
+      "LOTO verification skipped",
+      "LOTO removal unauthorized",
+      "LOTO documentation missing",
+      "LOTO training deficiency"
+    ],
+    "confined_space": [
+      "Entry permit missing",
+      "Atmosphere testing skipped",
+      "Attendant not present",
+      "Rescue plan inadequate",
+      "Communication failure",
+      "Emergency equipment missing"
+    ],
+    "hot_work": [
+      "Fire watch absent",
+      "Hot work permit missing",
+      "Flammable material present",
+      "Spark containment inadequate",
+      "Fire suppression unavailable",
+      "Area not cleared"
+    ]
+  },
+  "safety_escalation": {
+    "near_miss_to_incident": [
+      "Near-miss pattern identified",
+      "Warning signs ignored",
+      "Corrective action not taken",
+      "Training not updated",
+      "Procedure not revised",
+      "Risk assessment not updated"
+    ],
+    "incident_to_serious": [
+      "Initial response inadequate",
+      "Medical response delayed",
+      "Secondary hazards developed",
+      "Evacuation incomplete",
+      "Communication failure",
+      "Emergency equipment failure"
+    ],
+    "serious_to_critical": [
+      "Multiple injuries occurred",
+      "Fatality or fatality risk",
+      "Environmental release",
+      "Property damage extensive",
+      "Regulatory violation",
+      "Public safety impact"
+    ]
+  }
+}

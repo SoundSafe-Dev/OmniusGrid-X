@@ -1,0 +1,27 @@
+{
+  "packaging_lines": [
+    "PKG-Line-1", "PKG-Line-2", "PKG-Line-3", "PKG-Line-4", "PKG-Line-5",
+    "Packaging-Station-A", "Packaging-Station-B", "Packaging-Station-C"
+  ],
+  "packaging_materials": [
+    "Cardboard-Box-Small", "Cardboard-Box-Medium", "Cardboard-Box-Large",
+    "Pallet-Standard", "Pallet-Heavy-Duty", "Shrink-Wrap", "Stretch-Film",
+    "Label-Standard", "Label-Premium", "Bubble-Wrap", "Foam-Inserts", "Divider-Boards"
+  ],
+  "packaging_types": [
+    "Standard Box", "Custom Box", "Palletized", "Shrink-Wrapped", "Bundled",
+    "Kit-Assembly", "Retail-Ready", "Bulk-Pack", "Eco-Friendly", "Luxury-Packaging"
+  ],
+  "quality_checks": [
+    "Label Accuracy", "Seal Integrity", "Weight Verification", "Dimension Check",
+    "Visual Inspection", "Barcode Scan", "Tamper Seal Check", "Expiration Date"
+  ],
+  "packaging_issues": [
+    "Label Misprint", "Seal Failure", "Wrong Material", "Dimension Error",
+    "Weight Variance", "Barcode Missing", "Damaged Packaging", "Contamination"
+  ],
+  "throughput_metrics": [
+    "Packages per Minute", "Packages per Hour", "Packages per Shift",
+    "Line Efficiency", "Changeover Time", "Downtime Percentage"
+  ]
+}

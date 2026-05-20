@@ -399,18 +399,32 @@ python scripts/generate_dataset.py 10000 dataset/training_data.jsonl --use-llm
 - No external APIs required for default generation
 - Generates contextual root causes, tasks, commands, and compliance implications
 - Calculates risk scores based on domain criticality and link severity
+- Multi-perspective root cause analysis with liability determination
+- Enhanced narrative templates for LLM-quality output without external API
 
 **State Space Files:**
-- `backend/state_space/assets.json` - Industrial assets (printers, PLCs, chillers, GeoTab devices)
-- `backend/state_space/errors.json` - Error codes (Modbus, DTC, PackML states, alarm codes)
-- `backend/state_space/logistics.json` - Logistics entities (trailers, carriers, drivers, shipments)
-- `backend/state_space/compliance.json` - Compliance standards (ISO, OSHA, DOT, CTPAT, FSMA)
+- `backend/state_space/assets.json` - Industrial assets (printers, PLCs, chillers, GeoTab devices, IoT gateways, industrial robots)
+- `backend/state_space/errors.json` - Error codes (Modbus, DTC, PackML states, alarm codes, security vulnerabilities, data anomalies, API errors)
+- `backend/state_space/logistics.json` - Logistics entities (trailers, carriers, drivers, shipments, detention scenarios, yard bottlenecks, shop floor impacts, shipping/receiving)
+- `backend/state_space/compliance.json` - Compliance standards (ISO, OSHA, DOT, CTPAT, FSMA, GDPR, CCPA)
+- `backend/state_space/maintenance.json` - Maintenance operations (predictive indicators, preventive triggers, maintenance conflicts, escalation paths)
+- `backend/state_space/safety.json` - Safety management (operational efficiency, security scenarios, safety incident causation, protocol violations)
+- `backend/state_space/production_output.json` - Production scenarios (shop floor scenarios, production constraints, escalation paths, shift handover)
+- `backend/state_space/client_yard_management.json` - Client yard scenarios (liability types, bottlenecks, root causes, dock status)
 
 **Output Format:**
 - JSONL format with system prompts, user inputs (DATA INGEST), and model outputs
 - Ready for Gemma 4 fine-tuning
-- Includes cross-domain correlation scenarios across 5 operational domains
+- Includes cross-domain correlation scenarios across 47 operational domains
 - Realistic asset names, error codes, compliance standards, and API commands
+- Comprehensive scenario coverage including:
+  - Detention liability scenarios (driver vs client vs transport vs yard)
+  - Shop floor operational scenarios (bottlenecks, equipment issues, material issues, staffing issues, quality issues)
+  - Shipping/receiving scenarios (shipping delays, receiving bottlenecks, cross-docking issues)
+  - Yard management bottleneck scenarios (dock congestion, gate delays, parking constraints)
+  - Client yard management scenarios (liability types, receiving capacity, communication issues)
+  - Preventative/predictive maintenance scenarios (predictive indicators, preventive triggers, maintenance conflicts)
+  - Security/safety/operational efficiency scenarios (physical security, cyber security, safety incident causation)
 
 ### Kanban Task Management
 

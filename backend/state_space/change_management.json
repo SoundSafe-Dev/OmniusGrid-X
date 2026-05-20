@@ -1,0 +1,30 @@
+{
+  "change_types": [
+    "System-Change", "Process-Change", "Organizational-Change",
+    "Technology-Change", "Policy-Change", "Strategic-Change"
+  ],
+  "change_categories": [
+    "Major", "Minor", "Standard", "Emergency", "Routine",
+    "Planned", "Unplanned", "Mandatory", "Optional"
+  ],
+  "approval_workflows": [
+    "Single-Approval", "Multi-Level", "Parallel", "Sequential",
+    "Delegated", "Escalated", "Emergency", "Standard"
+  ],
+  "impact_levels": [
+    "Critical", "High", "Medium", "Low", "Negligible",
+    "Enterprise-Wide", "Department-Wide", "Team-Wide", "Individual"
+  ],
+  "rollout_strategies": [
+    "Big-Bang", "Phased", "Pilot", "Parallel-Run", "Canary",
+    "Blue-Green", "Feature-Flag", "A-B-Testing"
+  ],
+  "change_status": [
+    "Requested", "Approved", "In-Progress", "Testing", "Deployed",
+    "Rolled-Back", "Completed", "Rejected", "Cancelled"
+  ],
+  "change_metrics": [
+    "Success-Rate", "Rollback-Rate", "User-Adoption", "Performance-Impact",
+    "Time-to-Complete", "Cost-Variance", "Risk-Score", "Stakeholder-Satisfaction"
+  ]
+}

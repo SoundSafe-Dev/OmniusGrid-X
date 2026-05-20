@@ -1,0 +1,30 @@
+{
+  "order_types": [
+    "Standard-Order", "Rush-Order", "Backorder", "Recurring-Order", "Custom-Order",
+    "Bulk-Order", "Sample-Order", "Replacement-Order", "Emergency-Order"
+  ],
+  "issue_categories": [
+    "Shipping-Delay", "Damaged-Product", "Wrong-Item", "Quality-Complaint",
+    "Billing-Error", "Missing-Parts", "Late-Delivery", "Packaging-Defect"
+  ],
+  "support_channels": [
+    "Phone", "Email", "Chat", "Portal", "Mobile-App",
+    "Social-Media", "In-Person", "Automated", "Self-Service"
+  ],
+  "service_levels": [
+    "Standard-Response", "Priority-Response", "Emergency-Response",
+    "24-7-Support", "Business-Hours", "Extended-Hours", "On-Call"
+  ],
+  "sla_metrics": [
+    "Response-Time", "Resolution-Time", "First-Contact-Resolution",
+    "Customer-Satisfaction", "Net-Promoter-Score", "Customer-Effort-Score"
+  ],
+  "order_status": [
+    "Received", "Processing", "In-Production", "Ready-to-Ship", "Shipped",
+    "In-Transit", "Delivered", "Cancelled", "Returned", "Refunded"
+  ],
+  "return_reasons": [
+    "Defective", "Wrong-Item", "No-Longer-Needed", "Damaged-in-Transit",
+    "Not-as-Described", "Late-Delivery", "Customer-Preference", "Duplicate-Order"
+  ]
+}

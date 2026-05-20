@@ -1,0 +1,30 @@
+{
+  "part_categories": [
+    "Wear-Parts", "Consumables", "Electrical", "Mechanical", "Hydraulic",
+    "Pneumatic", "Safety-Critical", "Non-Critical", "OEM", "Aftermarket"
+  ],
+  "inventory_status": [
+    "In-Stock", "Low-Stock", "Out-of-Stock", "On-Order", "Backordered",
+    "Discontinued", "Obsolete", "Quality-Hold", "Quarantine"
+  ],
+  "procurement_methods": [
+    "Stock", "Make-to-Order", "Just-in-Time", "Vendor-Managed",
+    "Consignment", "Blanket-Order", "Emergency"
+  ],
+  "criticality_levels": [
+    "Critical", "High", "Medium", "Low", "Non-Critical",
+    "Safety-Critical", "Production-Critical", "Quality-Critical"
+  ],
+  "lead_time_categories": [
+    "Same-Day", "1-2-Days", "1-Week", "2-Weeks", "1-Month",
+    "2-Months", "Variable", "Emergency", "Expedited"
+  ],
+  "storage_conditions": [
+    "Ambient", "Temperature-Controlled", "Humidity-Controlled",
+    "Clean-Room", "Hazardous-Materials", "Secure-Storage", "Outdoor"
+  ],
+  "spare_parts_metrics": [
+    "Stockout-Rate", "Carrying-Cost", "Ordering-Cost", "Service-Level",
+    "Inventory-Turnover", "Obsolete-Inventory", "Fill-Rate", "Lead-Time-Variance"
+  ]
+}

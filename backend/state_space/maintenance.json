@@ -1,0 +1,176 @@
+{
+  "equipment": [
+    "Machine-001", "Machine-002", "Machine-003", "Machine-004", "Machine-005",
+    "Asset-A", "Asset-B", "Asset-C", "Asset-D", "Asset-E"
+  ],
+  "maintenance_types": [
+    "Preventive", "Corrective", "Predictive", "Emergency", "Routine",
+    "Calibration", "Inspection", "Overhaul", "Upgrade", "Decommission"
+  ],
+  "maintenance_schedules": [
+    "Daily", "Weekly", "Monthly", "Quarterly", "Annually", "As-Needed",
+    "Hour-Based", "Cycle-Based", "Condition-Based", "Time-Based"
+  ],
+  "work_order_status": [
+    "Open", "In Progress", "Pending Parts", "Awaiting Approval", "Scheduled",
+    "On Hold", "Completed", "Closed", "Cancelled", "Recurring"
+  ],
+  "priority_levels": [
+    "Critical", "High", "Medium", "Low", "Routine", "Emergency",
+    "Safety-Critical", "Quality-Critical", "Production-Critical"
+  ],
+  "failure_modes": [
+    "Mechanical Failure", "Electrical Failure", "Software Failure", "Human Error",
+    "Wear and Tear", "Overload", "Environmental", "Aging", "Misuse"
+  ],
+  "spare_parts": [
+    "Part-001", "Part-002", "Part-003", "Part-004", "Part-005",
+    "Component-A", "Component-B", "Component-C", "Module-X", "Module-Y"
+  ],
+  "predictive_indicators": {
+    "vibration_analysis": [
+      "Vibration amplitude increase",
+      "Frequency spectrum shift",
+      "Harmonic patterns indicating imbalance",
+      "Bearing wear indicators",
+      "Gear mesh frequency changes",
+      "Resonance condition detected"
+    ],
+    "thermal_analysis": [
+      "Temperature trending upward",
+      "Hot spot detected",
+      "Thermal pattern deviation",
+      "Cooling system degradation",
+      "Overheating condition",
+      "Thermal imaging anomaly"
+    ],
+    "oil_analysis": [
+      "Particle count increase",
+      "Metal particle detection",
+      "Viscosity change",
+      "Acidity level increase",
+      "Water contamination",
+      "Additive depletion"
+    ],
+    "performance_degradation": [
+      "Efficiency decline",
+      "Throughput reduction",
+      "Quality parameter drift",
+      "Cycle time increase",
+      "Power consumption rise",
+      "Output variance"
+    ]
+  },
+  "preventive_triggers": {
+    "time_based": [
+      "Scheduled maintenance interval reached",
+      "Calendar-based maintenance due",
+      "Operating hours threshold exceeded",
+      "Cycle count limit reached",
+      "Seasonal maintenance requirement",
+      "Regulatory inspection due"
+    ],
+    "usage_based": [
+      "Production volume threshold reached",
+      "Run time limit exceeded",
+      "Load cycle count reached",
+      "Operating condition threshold",
+      "Environmental exposure limit",
+      "Stress cycle limit reached"
+    ],
+    "condition_based": [
+      "Performance metric deviation",
+      "Quality parameter drift",
+      "Efficiency drop detected",
+      "Wear indicator threshold",
+      "Condition monitoring alert",
+      "Predictive model warning"
+    ]
+  },
+  "maintenance_conflicts": {
+    "scheduling_conflicts": [
+      "Production schedule conflict",
+      "Resource unavailability",
+      "Technician scheduling conflict",
+      "Equipment access conflict",
+      "Safety window conflict",
+      "Shutdown constraint"
+    ],
+    "resource_constraints": [
+      "Spare parts unavailability",
+      "Technician shortage",
+      "Equipment unavailability",
+      "Budget constraint",
+      "Vendor lead time delay",
+      "Tooling unavailability"
+    ],
+    "operational_impacts": [
+      "Production downtime required",
+      "Quality impact during maintenance",
+      "Safety system bypass needed",
+      "Operational capacity reduction",
+      "Process interruption",
+      "System unavailability"
+    ]
+  },
+  "maintenance_escalation": {
+    "predictive_to_preventive": [
+      "Predictive indicator threshold reached",
+      "Early warning detected",
+      "Trend analysis indicates impending failure",
+      "Condition monitoring alert",
+      "Predictive model confidence high",
+      "Risk assessment recommends action"
+    ],
+    "preventive_to_corrective": [
+      "Maintenance window missed",
+      "Equipment failure before maintenance",
+      "Condition deterioration accelerated",
+      "Predictive failure occurred",
+      "Emergency maintenance required",
+      "Safety concern escalated"
+    ],
+    "corrective_to_emergency": [
+      "Equipment failure in progress",
+      "Safety risk immediate",
+      "Production stoppage required",
+      "Quality critical issue",
+      "Environmental risk",
+      "Regulatory violation imminent"
+    ]
+  },
+  "root_cause_analysis": {
+    "equipment_aging": [
+      "Normal wear and tear",
+      "Component lifespan exceeded",
+      "Material degradation",
+      "Fatigue failure",
+      "Corrosion damage",
+      "Erosion effects"
+    ],
+    "operational_stress": [
+      "Overloading condition",
+      "Cyclic stress accumulation",
+      "Thermal stress",
+      "Mechanical stress",
+      "Environmental stress",
+      "Process variation stress"
+    ],
+    "maintenance_deficit": [
+      "Preventive maintenance missed",
+      "Predictive maintenance not performed",
+      "Maintenance quality issue",
+      "Maintenance interval too long",
+      "Maintenance procedure error",
+      "Maintenance documentation gap"
+    ],
+    "external_factors": [
+      "Environmental conditions",
+      "Power quality issues",
+      "Supply chain issues",
+      "Operator error",
+      "Third-party component failure",
+      "External system interaction"
+    ]
+  }
+}

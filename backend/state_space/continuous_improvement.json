@@ -1,0 +1,30 @@
+{
+  "improvement_cycles": [
+    "PDCA", "DMAIC", "DMADV", "8D", "A3",
+    "Rapid-Cycle", "Lean-Six-Sigma", "Kaizen", "Plan-Do-Study-Act"
+  ],
+  "improvement_types": [
+    "Process-Improvement", "Quality-Improvement", "Cost-Reduction",
+    "Efficiency-Gain", "Safety-Enhancement", "Environmental-Impact"
+  ],
+  "improvement_teams": [
+    "Cross-Functional", "Department-Specific", "Process-Owner",
+    "Quality-Circle", "Kaizen-Team", "Green-Belt", "Black-Belt"
+  ],
+  "improvement_tools": [
+    "Root-Cause-Analysis", "Fishbone", "5-Whys", "Pareto",
+    "Control-Charts", "Process-Mapping", "Value-Stream-Mapping"
+  ],
+  "improvement_status": [
+    "Identified", "Prioritized", "In-Progress", "Implemented",
+    "Validated", "Sustained", "Standardized", "Abandoned"
+  ],
+  "improvement_metrics": [
+    "Improvement-Rate", "Savings-Achieved", "Quality-Gain",
+    "Efficiency-Improvement", "Time-Reduction", "Defect-Reduction"
+  ],
+  "improvement_frequency": [
+    "Continuous", "Daily", "Weekly", "Monthly", "Quarterly",
+    "As-Needed", "Event-Triggered", "Scheduled"
+  ]
+}

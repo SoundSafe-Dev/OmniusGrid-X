@@ -1,0 +1,30 @@
+{
+  "tool_categories": [
+    "Cutting-Tools", "Measuring-Tools", "Assembly-Tools", "Testing-Tools",
+    "Hand-Tools", "Power-Tools", "Specialized-Tools", "Calibration-Tools"
+  ],
+  "tool_status": [
+    "Available", "In-Use", "Maintenance", "Calibration", "Broken",
+    "Missing", "Reserved", "Quarantine", "Retired"
+  ],
+  "tool_types": [
+    "End-Mill", "Drill-Bit", "Tap", "Reamer", "Broach",
+    "Caliper", "Micrometer", "Gauge", "Fixture", "Jig"
+  ],
+  "maintenance_schedules": [
+    "Daily", "Weekly", "Monthly", "Quarterly", "As-Needed",
+    "After-Use", "Before-Use", "Hour-Based", "Cycle-Based"
+  ],
+  "tool_tracking": [
+    "RFID", "Barcode", "QR-Code", "Manual-Log", "Automated-System",
+    "Smart-Tool", "IoT-Enabled", "GPS-Tracking"
+  ],
+  "tool_lifecycle": [
+    "Procurement", "Calibration", "Usage", "Maintenance", "Refurbishment",
+    "Reconditioning", "Disposal", "Replacement"
+  ],
+  "tool_metrics": [
+    "Utilization-Rate", "Tool-Life", "Maintenance-Interval", "Calibration-Accuracy",
+    "Breakdown-Rate", "Cost-per-Use", "Availability", "Efficiency"
+  ]
+}

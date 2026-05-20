@@ -1,0 +1,30 @@
+{
+  "suppliers": [
+    "SUP-001-Primary", "SUP-002-Secondary", "SUP-003-Backup", "SUP-004-Strategic",
+    "SUP-005-Local", "SUP-006-Global", "SUP-007-Distribution", "SUP-008-Manufacturer"
+  ],
+  "supplier_tiers": [
+    "Tier-1-Critical", "Tier-2-Important", "Tier-3-Support", "Tier-4-Commodity",
+    "Single-Source", "Multiple-Source", "Preferred-Partner", "Approved-Vendor"
+  ],
+  "procurement_methods": [
+    "Purchase-Order", "Blanket-Order", "Contract", "Spot-Buy", "Consignment",
+    "Vendor-Managed-Inventory", "Just-in-Time", "Safety-Stock"
+  ],
+  "supplier_performance": [
+    "On-Time-Delivery", "Quality-Rating", "Cost-Competitiveness", "Responsiveness",
+    "Technical-Capability", "Financial-Stability", "Compliance-Status"
+  ],
+  "supply_chain_risks": [
+    "Supplier-Bankruptcy", "Geopolitical-Risk", "Natural-Disaster", "Transportation-Disruption",
+    "Quality-Issues", "Price-Volatility", "Capacity-Constraints", "Regulatory-Changes"
+  ],
+  "lead_time_categories": [
+    "Same-Day", "1-3-Days", "1-Week", "2-Weeks", "1-Month",
+    "2-Months", "Quarterly", "Variable", "Seasonal"
+  ],
+  "procurement_status": [
+    "Pending", "Approved", "Ordered", "In-Transit", "Received",
+    "Inspected", "Accepted", "Rejected", "Backordered", "Cancelled"
+  ]
+}

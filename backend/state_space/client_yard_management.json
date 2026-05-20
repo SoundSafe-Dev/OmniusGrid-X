@@ -1,0 +1,188 @@
+{
+  "liability_types": {
+    "driver": [
+      "Late arrival at dock",
+      "Incorrect documentation",
+      "Vehicle not ready for unloading",
+      "Driver unavailable for unloading",
+      "Driver fatigue or health issue",
+      "Driver communication failure"
+    ],
+    "client_receiving": [
+      "Receiving staff shortage",
+      "Receiving equipment failure",
+      "Slow unloading process",
+      "Documentation processing delays",
+      "Quality inspection backlog",
+      "Receiving shift handover delay"
+    ],
+    "transport_management": [
+      "Poor appointment scheduling",
+      "Lack of driver communication",
+      "Inadequate route planning",
+      "Fleet coordination failure",
+      "Carrier capacity mismanagement",
+      "Transport communication breakdown"
+    ],
+    "yard_management": [
+      "Dock assignment conflicts",
+      "Yard capacity constraints",
+      "Gate processing delays",
+      "Yard traffic congestion",
+      "Equipment unavailability",
+      "Yard staffing shortage"
+    ]
+  },
+  "bottleneck_types": {
+    "dock_congestion": [
+      "Dock door unavailability",
+      "Dock equipment failure",
+      "Dock staffing shortage",
+      "Dock scheduling conflicts",
+      "Dock maintenance in progress",
+      "Dock safety incident"
+    ],
+    "yard_capacity": [
+      "Yard space constraints",
+      "Trailer parking unavailability",
+      "Yard traffic gridlock",
+      "Yard access restrictions",
+      "Yard layout inefficiency",
+      "Yard weather impacts"
+    ],
+    "receiving_delays": [
+      "Receiving staff shortage",
+      "Receiving equipment failure",
+      "Quality inspection delays",
+      "Documentation processing backlog",
+      "Inventory system downtime",
+      "Receiving shift change delay"
+    ]
+  },
+  "root_causes": {
+    "unloading_delays": [
+      "Receiving equipment malfunction",
+      "Receiving staff unavailability",
+      "Complex unloading requirements",
+      "Product quality hold",
+      "Documentation issues",
+      "Safety protocol activation"
+    ],
+    "appointment_misalignment": [
+      "Scheduling system error",
+      "Communication breakdown",
+      "Last-minute schedule changes",
+      "Double booking",
+      "Appointment window too narrow",
+      "Carrier schedule not updated"
+    ],
+    "equipment_failure": [
+      "Dock door malfunction",
+      "Conveyor system failure",
+      "Forklift unavailability",
+      "Scanning equipment failure",
+      "Weigh scale malfunction",
+      "Gate system failure"
+    ],
+    "staffing_shortages": [
+      "Scheduling error",
+      "Unexpected absenteeism",
+      "Training in progress",
+      "Cross-training limitation",
+      "Shift handover delay",
+      "Emergency response"
+    ]
+  },
+  "client_dock_status": {
+    "available": [
+      "Dock ready for assignment",
+      "Dock equipment operational",
+      "Receiving staff present",
+      "Documentation system online",
+      "Safety clearance granted",
+      "Quality inspection ready"
+    ],
+    "unavailable": [
+      "Dock under maintenance",
+      "Dock equipment failure",
+      "Receiving staff shortage",
+      "Safety inspection pending",
+      "Quality hold in place",
+      "System downtime"
+    ]
+  },
+  "receiving_capacity": {
+    "high_capacity": [
+      "Multiple receiving lanes active",
+      "Extended receiving hours",
+      "Additional staffing available",
+      "Overflow receiving area",
+      "Express receiving lanes",
+      "Automated receiving systems"
+    ],
+    "limited_capacity": [
+      "Single receiving lane",
+      "Standard receiving hours",
+      "Minimum staffing",
+      "No overflow capacity",
+      "Manual receiving only",
+      "System processing delays"
+    ]
+  },
+  "communication_issues": {
+    "internal": [
+      "Receiving team miscommunication",
+      "Yard management notification failure",
+      "Inventory system sync delay",
+      "Quality inspection miscommunication",
+      "Documentation processing error",
+      "Shift handover information gap"
+    ],
+    "external": [
+      "Carrier communication failure",
+      "Driver notification delay",
+      "Client system integration issue",
+      "Third-party logistics miscommunication",
+      "EDI transmission failure",
+      "Portal access problems"
+    ]
+  },
+  "process_misalignment": {
+    "scheduling": [
+      "Appointment window mismatch",
+      "Operating hours conflict",
+      "Priority level disagreement",
+      "Lead time expectation gap",
+      "Service level disagreement",
+      "Capacity planning misalignment"
+    ],
+    "procedures": [
+      "Unloading protocol differences",
+      "Documentation requirement mismatch",
+      "Quality inspection variance",
+      "Safety protocol differences",
+      "System integration issues",
+      "Process standardization gap"
+    ]
+  },
+  "performance_metrics": {
+    "detention_time": {
+      "thresholds": [
+        "Free time: 0-2 hours",
+        "Warning: 2-4 hours",
+        "Critical: 4-6 hours",
+        "Severe: 6+ hours"
+      ]
+    },
+    "dock_utilization": {
+      "optimal": "85-95%",
+      "underutilized": "< 70%",
+      "overutilized": "> 95%"
+    },
+    "receiving_throughput": {
+      "high": "> 50 trailers/day",
+      "medium": "30-50 trailers/day",
+      "low": "< 30 trailers/day"
+    }
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "contract_types": [
+    "Purchase-Agreement", "Service-Agreement", "License-Agreement",
+    "Partnership-Agreement", "Employment-Agreement", "Consulting-Agreement"
+  ],
+  "sla_types": [
+    "Uptime-Guarantee", "Response-Time", "Resolution-Time", "Throughput",
+    "Availability", "Performance", "Quality-Metrics"
+  ],
+  "contract_status": [
+    "Draft", "Under-Review", "Negotiating", "Signed", "Active",
+    "Expiring", "Expired", "Terminated", "Renewed"
+  ],
+  "vendor_contracts": [
+    "Master-Services-Agreement", "Statement-of-Work", "Purchase-Order",
+    "Blanket-Purchase-Agreement", "Framework-Agreement"
+  ],
+  "legal_terms": [
+    "Indemnification", "Liability-Limitation", "Confidentiality",
+    "Non-Disclosure", "Non-Compete", "Termination", "Force-Majeure"
+  ],
+  "contract_renewal": [
+    "Auto-Renewal", "Manual-Renewal", "Option-to-Renew", "Evergreen",
+    "Fixed-Term", "Rolling-Term", "Open-Ended"
+  ],
+  "contract_metrics": [
+    "Contract-Value", "Duration", "Renewal-Rate", "Compliance-Rate",
+    "SLA-Achievement", "Vendor-Performance", "Risk-Score"
+  ]
+}

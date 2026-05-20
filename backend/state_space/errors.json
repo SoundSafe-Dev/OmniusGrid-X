@@ -20,5 +20,26 @@
   "edge_anomalies": [
     "Thermal Runaway", "Pressure Spike", "Flow Deviation", "Vibration Anomaly",
     "Temperature Drift", "Humidity Excursion", "Power Surge", "Signal Noise"
+  ],
+  "security_vulnerabilities": [
+    "CVE-2024-001", "CVE-2024-002", "CVE-2024-003", "Zero-Day-Exploit",
+    "Authentication-Bypass", "Privilege-Escalation", "SQL-Injection", "XSS-Attack"
+  ],
+  "data_anomalies": [
+    "Data-Drift", "Outlier-Detection", "Missing-Data", "Corrupted-Data",
+    "Inconsistent-Data", "Duplicate-Data", "Stale-Data", "Data-Quality-Issue"
+  ],
+  "api_errors": [
+    "404-Not-Found", "500-Internal-Error", "503-Service-Unavailable",
+    "401-Unauthorized", "403-Forbidden", "429-Too-Many-Requests",
+    "Timeout-Error", "Connection-Refused", "Rate-Limit-Exceeded"
+  ],
+  "system_errors": [
+    "Memory-Leak", "CPU-Spike", "Disk-Full", "Network-Partition",
+    "Database-Connection-Failed", "Service-Crash", "Deadlock", "Race-Condition"
+  ],
+  "business_errors": [
+    "Validation-Failed", "Business-Rule-Violation", "Constraint-Violation",
+    "Workflow-Failure", "Approval-Rejected", "Policy-Violation", "Compliance-Failure"
   ]
 }

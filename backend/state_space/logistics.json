@@ -29,5 +29,125 @@
   "load_plans": [
     "LOAD-001", "LOAD-002", "LOAD-003", "LOAD-004", "LOAD-005",
     "LOAD-882", "LOAD-773", "LOAD-554", "LOAD-335", "LOAD-116"
-  ]
+  ],
+  "third_party_logistics": [
+    "3PL-Provider-001", "3PL-Provider-002", "3PL-Provider-003",
+    "Logistics-Partner-A", "Logistics-Partner-B", "Freight-Management-Company"
+  ],
+  "freight_forwarders": [
+    "Forwarder-001", "Forwarder-002", "Forwarder-003",
+    "Global-Freight-A", "International-Forwarder-B", "Domestic-Forwarder-C"
+  ],
+  "customs_brokers": [
+    "Broker-001", "Broker-002", "Broker-003",
+    "Customs-Agent-A", "Customs-Agent-B", "Border-Broker-C"
+  ],
+  "cross_docking": [
+    "Cross-Dock-Station-001", "Cross-Dock-Station-002", "Cross-Dock-Station-003",
+    "Transfer-Hub-A", "Transfer-Hub-B"
+  ],
+  "detention_scenarios": {
+    "driver_liability": [
+      "Driver arrived late to appointment window",
+      "Driver failed to provide correct documentation",
+      "Driver not present for unloading at arrival",
+      "Driver vehicle not ready for unloading",
+      "Driver communication failure during wait",
+      "Driver fatigue or health issue causing delay"
+    ],
+    "client_liability": [
+      "Receiving staff shortage causing unloading delay",
+      "Receiving equipment failure during unloading",
+      "Slow unloading process due to complexity",
+      "Documentation processing delays at receiving",
+      "Quality inspection backlog causing hold",
+      "Receiving shift handover causing delay"
+    ],
+    "transport_liability": [
+      "Poor appointment scheduling by transport team",
+      "Lack of driver communication from dispatch",
+      "Inadequate route planning causing late arrival",
+      "Fleet coordination failure",
+      "Carrier capacity mismanagement",
+      "Transport communication breakdown"
+    ],
+    "yard_liability": [
+      "Dock assignment conflicts causing wait",
+      "Yard capacity constraints preventing parking",
+      "Gate processing delays at entry",
+      "Yard traffic congestion blocking access",
+      "Yard equipment unavailability",
+      "Yard staffing shortage at gate"
+    ]
+  },
+  "yard_bottlenecks": {
+    "dock_congestion": [
+      "All dock doors occupied",
+      "Dock equipment malfunction",
+      "Dock staffing shortage",
+      "Dock scheduling conflicts",
+      "Dock maintenance blocking doors",
+      "Dock safety incident blocking access"
+    ],
+    "gate_delays": [
+      "Gate processing system down",
+      "Gate staffing shortage",
+      "Gate equipment failure",
+      "Gate documentation backlog",
+      "Gate security screening delay",
+      "Gate weather-related delay"
+    ],
+    "parking_constraints": [
+      "Yard parking at capacity",
+      "Trailer parking unavailability",
+      "Yard layout inefficiency",
+      "Yard access restrictions",
+      "Yard weather impacting parking",
+      "Yard construction reducing capacity"
+    ]
+  },
+  "shop_floor_impacts": {
+    "material_starvation": [
+      "Trailer delay causing material shortage",
+      "Dock unavailability preventing material receipt",
+      "Yard congestion blocking material delivery",
+      "Receiving delay causing line starvation",
+      "Quality hold preventing material release",
+      "Documentation issue blocking material use"
+    ],
+    "production_impact": [
+      "Production line stop due to material shortage",
+      "Reduced production rate due to delays",
+      "Production schedule shift due to logistics",
+      "OEE degradation from logistics delays",
+      "Production rework due to material issues",
+      "Production changeover from logistics delays"
+    ]
+  },
+  "shipping_receiving": {
+    "shipping_delays": [
+      "Shipping dock unavailability",
+      "Shipping equipment failure",
+      "Shipping staff shortage",
+      "Documentation processing delay",
+      "Carrier pickup delay",
+      "Weather impacting shipping"
+    ],
+    "receiving_bottlenecks": [
+      "Receiving lane congestion",
+      "Receiving equipment failure",
+      "Receiving staff shortage",
+      "Quality inspection backlog",
+      "Documentation processing delay",
+      "Inventory system downtime"
+    ],
+    "cross_docking_issues": [
+      "Cross-dock station unavailability",
+      "Transfer hub congestion",
+      "Cross-dock equipment failure",
+      "Transfer timing misalignment",
+      "Cross-dock staffing shortage",
+      "Cross-dock system integration issue"
+    ]
+  }
 }

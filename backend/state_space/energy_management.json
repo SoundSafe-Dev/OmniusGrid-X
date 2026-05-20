@@ -1,0 +1,30 @@
+{
+  "utility_types": [
+    "Electricity", "Natural-Gas", "Water", "Steam", "Compressed-Air",
+    "Fuel-Oil", "Propane", "Diesel", "Renewable-Solar", "Renewable-Wind"
+  ],
+  "energy_meters": [
+    "Meter-001-Main", "Meter-002-Line1", "Meter-003-Line2", "Meter-004-Line3",
+    "Meter-005-HVAC", "Meter-006-Lighting", "Meter-007-Process", "Meter-008-Compressed-Air"
+  ],
+  "energy_consumption_metrics": [
+    "kWh-Consumption", "Peak-Demand", "Power-Factor", "Energy-Intensity",
+    "Specific-Energy", "Baseline-Usage", "Actual-Usage", "Variance"
+  ],
+  "sustainability_metrics": [
+    "Carbon-Footprint", "CO2-Emissions", "Energy-Efficiency", "Renewable-Percentage",
+    "Waste-Reduction", "Water-Usage", "Recycling-Rate", "Green-Certification"
+  ],
+  "energy_status": [
+    "Normal", "High-Usage", "Low-Usage", "Peak-Demand", "Off-Peak",
+    "Efficient", "Inefficient", "Optimized", "Degraded"
+  ],
+  "cost_centers": [
+    "Production", "HVAC", "Lighting", "Process-Heating", "Process-Cooling",
+    "Compressed-Air", "Motors", "Lighting-Exterior", "Auxiliary"
+  ],
+  "efficiency_measures": [
+    "LED-Retrofit", "VFD-Installation", "Heat-Recovery", "Insulation",
+    "Process-Optimization", "Scheduling-Optimization", "Equipment-Upgrade"
+  ]
+}

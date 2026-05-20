@@ -1,0 +1,30 @@
+{
+  "facility_types": [
+    "Manufacturing-Plant", "Warehouse", "Distribution-Center", "Office-Building",
+    "R&D-Facility", "Quality-Lab", "Data-Center", "Maintenance-Shop"
+  ],
+  "building_systems": [
+    "HVAC", "Electrical", "Plumbing", "Fire-Suppression", "Security-System",
+    "Elevators", "Lighting", "Access-Control", "Parking", "Landscaping"
+  ],
+  "maintenance_areas": [
+    "Preventive", "Corrective", "Predictive", "Emergency", "Routine",
+    "Scheduled", "On-Demand", "Contracted"
+  ],
+  "space_utilization": [
+    "Production-Floor", "Storage-Area", "Office-Space", "Common-Areas",
+    "Loading-Docks", "Utility-Rooms", "Restrooms", "Break-Rooms"
+  ],
+  "facility_status": [
+    "Operational", "Under-Maintenance", "Partial-Shutdown", "Full-Shutdown",
+    "Renovation", "Expansion", "Decommissioning", "Planning"
+  ],
+  "compliance_areas": [
+    "Building-Code", "Fire-Safety", "ADA-Compliance", "Environmental",
+    "Zoning", "Permits", "Inspections", "Certifications"
+  ],
+  "facility_metrics": [
+    "Occupancy-Rate", "Utilization-Rate", "Energy-Consumption", "Maintenance-Cost",
+    "Space-Efficiency", "Compliance-Score", "Safety-Incidents", "Downtime"
+  ]
+}
