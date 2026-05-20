@@ -1,0 +1,89 @@
+{
+  "json_validation": {
+    "total": 94,
+    "valid": 94,
+    "invalid": 0,
+    "errors": []
+  },
+  "duplicate_detection": {
+    "duplicates_found": 0,
+    "duplicate_ids": []
+  },
+  "domain_coverage": {
+    "in_tolerance": true,
+    "out_of_tolerance": {},
+    "domain_distribution": {
+      "EDGE_AI_TELEMETRY": 2,
+      "PRODUCTION_OEE": 2,
+      "LOGISTICS_FLEET": 2,
+      "COMPLIANCE_REGISTRIES": 2,
+      "SYSTEM_INFRASTRUCTURE": 2,
+      "MATERIAL_REPLENISHMENT": 2,
+      "PRODUCTION_OUTPUT": 2,
+      "PACKAGING": 2,
+      "DISTRIBUTION": 2,
+      "MAINTENANCE": 2,
+      "QUALITY_CONTROL": 2,
+      "ENERGY_MANAGEMENT": 2,
+      "WORKFORCE_MANAGEMENT": 2,
+      "SUPPLY_CHAIN": 2,
+      "WAREHOUSE_MANAGEMENT": 2,
+      "CUSTOMER_SERVICE": 2,
+      "FINANCE": 2,
+      "SAFETY": 2,
+      "ENVIRONMENTAL": 2,
+      "PLANNING_SCHEDULING": 2,
+      "CYBERSECURITY": 2,
+      "DIGITAL_TWIN": 2,
+      "IT_OT_INTEGRATION": 2,
+      "DATA_ANALYTICS": 2,
+      "PROJECT_MANAGEMENT": 2,
+      "HR_ORGANIZATIONAL": 2,
+      "REGULATORY_AUDIT": 2,
+      "RISK_MANAGEMENT": 2,
+      "INNOVATION_RD": 2,
+      "CONTRACT_MANAGEMENT": 2,
+      "ASSET_LIFECYCLE": 2,
+      "PROCESS_OPTIMIZATION": 2,
+      "SUPPLIER_RELATIONSHIP": 2,
+      "INVENTORY_OPTIMIZATION": 2,
+      "CHANGE_MANAGEMENT": 2,
+      "KNOWLEDGE_MANAGEMENT": 2,
+      "BUSINESS_INTELLIGENCE": 2,
+      "CONTINUOUS_IMPROVEMENT": 2,
+      "PRODUCT_LIFECYCLE": 2,
+      "MANUFACTURING_EXECUTION_SYSTEM": 2,
+      "FACILITIES_MANAGEMENT": 2,
+      "TOOL_MANAGEMENT": 2,
+      "CALIBRATION": 2,
+      "SPARE_PARTS": 2,
+      "DOCUMENT_MANAGEMENT": 2,
+      "WORKFLOW_MANAGEMENT": 2,
+      "ESG": 2
+    }
+  },
+  "single_multi_ratio": {
+    "in_tolerance": true,
+    "actual_ratio": 0.5,
+    "target_ratio": 0.5,
+    "single_count": 47,
+    "multi_count": 47,
+    "min_threshold": 0.45,
+    "max_threshold": 0.55
+  },
+  "severity_distribution": {
+    "distribution": {
+      "high": 0.30851063829787234,
+      "low": 0.26595744680851063,
+      "medium": 0.22340425531914893,
+      "critical": 0.20212765957446807
+    },
+    "counts": {
+      "high": 29,
+      "low": 25,
+      "medium": 21,
+      "critical": 19
+    },
+    "total": 94
+  }
+}
