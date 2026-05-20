@@ -1,0 +1,30 @@
+{
+  "ml_models": [
+    "Regression", "Classification", "Clustering", "Anomaly-Detection",
+    "Time-Series", "Recommendation", "NLP", "Computer-Vision", "Reinforcement-Learning"
+  ],
+  "analytics_pipelines": [
+    "ETL", "ELT", "Batch-Processing", "Stream-Processing",
+    "Real-Time", "Near-Real-Time", "Scheduled", "On-Demand"
+  ],
+  "data_sources": [
+    "Operational", "Transactional", "External", "Social", "Sensor",
+    "Log", "IoT", "Third-Party", "Public", "Internal"
+  ],
+  "bi_dashboards": [
+    "Executive-Dashboard", "Operational-Dashboard", "Financial-Dashboard",
+    "Quality-Dashboard", "Safety-Dashboard", "Environmental-Dashboard"
+  ],
+  "data_lakes": [
+    "Structured", "Unstructured", "Semi-Structured", "Raw", "Processed",
+    "Curated", "Sandbox", "Archive", "Hot", "Cold"
+  ],
+  "analytics_types": [
+    "Descriptive", "Diagnostic", "Predictive", "Prescriptive",
+    "Cognitive", "Real-Time", "Batch", "Ad-Hoc"
+  ],
+  "data_quality": [
+    "Accuracy", "Completeness", "Consistency", "Timeliness",
+    "Validity", "Uniqueness", "Integrity", "Reliability"
+  ]
+}

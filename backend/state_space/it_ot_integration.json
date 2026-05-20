@@ -1,0 +1,30 @@
+{
+  "network_topology": [
+    "Star", "Mesh", "Ring", "Bus", "Tree", "Hybrid",
+    "Hierarchical", "Full-Mesh", "Partial-Mesh", "Point-to-Point"
+  ],
+  "data_bridges": [
+    "OPC-UA-Bridge", "MQTT-Bridge", "Modbus-Bridge", "HTTP-Bridge",
+    "REST-API-Bridge", "WebSocket-Bridge", "Kafka-Bridge", "SQL-Bridge"
+  ],
+  "protocol_gateways": [
+    "OPC-UA-Gateway", "MQTT-Gateway", "Modbus-Gateway", "BACnet-Gateway",
+    "EtherNet-IP-Gateway", "PROFINET-Gateway", "CC-Link-Gateway", "DeviceNet-Gateway"
+  ],
+  "convergence_points": [
+    "Edge-Gateway", "Cloud-Gateway", "Data-Lake", "Message-Broker",
+    "API-Gateway", "Service-Bus", "Event-Hub", "Stream-Processor"
+  ],
+  "integration_patterns": [
+    "Request-Response", "Publish-Subscribe", "Event-Driven", "Batch",
+    "Streaming", "Polling", "Push", "Pull"
+  ],
+  "security_layers": [
+    "Network-Security", "Application-Security", "Data-Security",
+    "Device-Security", "Identity-Security", "Endpoint-Security"
+  ],
+  "integration_status": [
+    "Connected", "Disconnected", "Degraded", "Error",
+    "Reconnecting", "Maintenance", "Upgrading", "Configuring"
+  ]
+}

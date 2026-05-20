@@ -1,0 +1,26 @@
+{
+  "warehouses": [
+    "WH-East-001", "WH-West-002", "WH-North-003", "WH-South-004", "WH-Central-005",
+    "Distribution-Center-A", "Distribution-Center-B", "Fulfillment-Center-01"
+  ],
+  "shipping_methods": [
+    "Standard Ground", "Expedited Ground", "Next Day Air", "Second Day Air",
+    "Freight LTL", "Freight FTL", "Ocean Freight", "Air Freight", "Local Delivery"
+  ],
+  "carriers": [
+    "Carrier-A", "Carrier-B", "Carrier-C", "Carrier-D", "Carrier-E",
+    "FedEx", "UPS", "DHL", "USPS", "Regional-Carrier-01"
+  ],
+  "distribution_channels": [
+    "Direct-to-Customer", "Retail-Distribution", "Wholesale-Distributor",
+    "E-commerce", "B2B-Direct", "OEM-Supply", "Third-Party-Logistics"
+  ],
+  "fulfillment_status": [
+    "Pending", "Picking", "Packing", "Shipped", "In Transit", "Delivered",
+    "Delayed", "Backordered", "Cancelled", "Return-Processing"
+  ],
+  "delivery_issues": [
+    "Late Shipment", "Damaged in Transit", "Lost Package", "Wrong Address",
+    "Delivery Exception", "Weather Delay", "Carrier Issue", "Customs Hold"
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "patent_categories": [
+    "Utility-Patent", "Design-Patent", "Plant-Patent", "Software-Patent",
+    "Process-Patent", "Business-Method-Patent"
+  ],
+  "research_projects": [
+    "Basic-Research", "Applied-Research", "Development", "Prototyping",
+    "Testing", "Validation", "Commercialization", "Scale-Up"
+  ],
+  "technology_transfer": [
+    "Internal", "External", "Licensing", "Joint-Venture",
+    "Spin-Out", "Acquisition", "Partnership", "Collaboration"
+  ],
+  "innovation_types": [
+    "Product-Innovation", "Process-Innovation", "Business-Model-Innovation",
+    "Service-Innovation", "Market-Innovation", "Organizational-Innovation"
+  ],
+  "rd_phases": [
+    "Discovery", "Feasibility", "Development", "Testing",
+    "Pilot", "Launch", "Scale", "Maturity"
+  ],
+  "intellectual_property": [
+    "Patent", "Trademark", "Copyright", "Trade-Secret",
+    "Know-How", "Confidential-Information", "Proprietary-Technology"
+  ],
+  "innovation_metrics": [
+    "R&D-Spending", "Patent-Count", "New-Product-Count", "Time-to-Market",
+    "Innovation-Rate", "Technology-Adoption", "ROI", "Success-Rate"
+  ]
+}

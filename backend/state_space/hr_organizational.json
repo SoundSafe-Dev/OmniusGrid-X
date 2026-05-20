@@ -1,0 +1,30 @@
+{
+  "departments": [
+    "Operations", "Maintenance", "Quality", "Engineering", "IT",
+    "HR", "Finance", "Sales", "Marketing", "Logistics"
+  ],
+  "org_structure": [
+    "Functional", "Divisional", "Matrix", "Flat", "Hierarchical",
+    "Network", "Team-Based", "Circular", "Hybrid"
+  ],
+  "performance_reviews": [
+    "Annual", "Semi-Annual", "Quarterly", "Monthly", "360-Degree",
+    "Self-Assessment", "Manager-Assessment", "Peer-Assessment"
+  ],
+  "succession_planning": [
+    "Critical-Role", "Key-Person", "Leadership-Pipeline", "Talent-Pool",
+    "Ready-Now", "Ready-in-1-Year", "Ready-in-2-Years", "Future-Potential"
+  ],
+  "employee_status": [
+    "Active", "On-Leave", "Terminated", "Retired", "Resigned",
+    "Suspended", "Probation", "Contract", "Temporary"
+  ],
+  "compensation_types": [
+    "Salary", "Hourly", "Commission", "Bonus", "Stock-Options",
+    "Benefits", "Perks", "Overtime", "Shift-Differential"
+  ],
+  "organizational_metrics": [
+    "Turnover-Rate", "Retention-Rate", "Engagement-Score", "Productivity",
+    "Absenteeism", "Training-Hours", "Promotion-Rate", "Diversity-Metrics"
+  ]
+}

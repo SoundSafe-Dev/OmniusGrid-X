@@ -1,0 +1,30 @@
+{
+  "knowledge_types": [
+    "Explicit-Knowledge", "Tacit-Knowledge", "Procedural-Knowledge",
+    "Declarative-Knowledge", "Strategic-Knowledge", "Operational-Knowledge"
+  ],
+  "document_types": [
+    "Policy", "Procedure", "Manual", "Guideline", "Standard",
+    "Template", "Checklist", "Form", "Report", "Record"
+  ],
+  "knowledge_sources": [
+    "Internal-Experts", "External-Experts", "Documentation",
+    "Best-Practices", "Lessons-Learned", "Case-Studies", "Research"
+  ],
+  "sharing_mechanisms": [
+    "Knowledge-Base", "Wiki", "Forums", "Mentoring", "Training",
+    "Communities-of-Practice", "Collaboration-Tools", "Social-Learning"
+  ],
+  "knowledge_status": [
+    "Published", "Draft", "Under-Review", "Archived", "Deprecated",
+    "Classified", "Restricted", "Public", "Internal"
+  ],
+  "capture_methods": [
+    "Documentation", "Interviews", "Observation", "Surveys",
+    "Workshops", "Brainstorming", "After-Action-Reviews", "Retrospectives"
+  ],
+  "knowledge_metrics": [
+    "Knowledge-Base-Size", "Usage-Frequency", "Search-Success-Rate",
+    "Knowledge-Sharing-Rate", "Time-to-Find", "User-Satisfaction"
+  ]
+}

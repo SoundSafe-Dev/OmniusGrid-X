@@ -1,0 +1,30 @@
+{
+  "lifecycle_phases": [
+    "Concept", "Design", "Development", "Testing", "Launch",
+    "Growth", "Maturity", "Decline", "End-of-Life"
+  ],
+  "product_categories": [
+    "New-Product", "Existing-Product", "Variant", "Custom",
+    "Standard", "Configurable", "Modular", "Platform"
+  ],
+  "development_stages": [
+    "Research", "Prototyping", "Pilot", "Validation",
+    "Scale-Up", "Commercialization", "Launch", "Post-Launch"
+  ],
+  "product_status": [
+    "Concept", "In-Development", "Testing", "Launched",
+    "Active", "Discontinued", "Retired", "Archived"
+  ],
+  "version_control": [
+    "Major-Version", "Minor-Version", "Patch-Version",
+    "Beta", "Alpha", "RC", "Stable", "Legacy"
+  ],
+  "lifecycle_metrics": [
+    "Time-to-Market", "Development-Cost", "Sales-Revenue",
+    "Market-Share", "Customer-Adoption", "Product-Lifetime", "Profitability"
+  ],
+  "portfolio_management": [
+    "Star", "Cash-Cow", "Question-Mark", "Dog",
+    "High-Growth", "High-Market-Share", "Low-Growth", "Low-Market-Share"
+  ]
+}

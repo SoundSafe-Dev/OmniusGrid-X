@@ -27,5 +27,21 @@
     "Pressure-Sensor-01", "Pressure-Sensor-02",
     "Flow-Sensor-01", "Flow-Sensor-02",
     "Vibration-Sensor-01", "Vibration-Sensor-02"
+  ],
+  "iot_gateways": [
+    "IoT-Gateway-Edge-001", "IoT-Gateway-Edge-002", "IoT-Gateway-Cloud-001",
+    "Edge-Compute-Node-01", "Edge-Compute-Node-02", "IoT-Hub-001"
+  ],
+  "industrial_robots": [
+    "Robot-Arm-001", "Robot-Arm-002", "Robot-Arm-003",
+    "Cobot-001", "Cobot-002", "AGV-001", "AGV-002", "AMR-001"
+  ],
+  "edge_devices": [
+    "Edge-Server-001", "Edge-Server-002", "Edge-Controller-001",
+    "Embedded-Controller-001", "Smart-Gateway-001"
+  ],
+  "conveyor_systems": [
+    "Conveyor-Line-1", "Conveyor-Line-2", "Conveyor-Line-3",
+    "Sorter-001", "Accumulator-001", "Divert-001"
   ]
 }

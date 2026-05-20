@@ -1,0 +1,30 @@
+{
+  "waste_types": [
+    "Solid-Waste", "Liquid-Waste", "Hazardous-Waste", "Recyclable",
+    "Organic-Waste", "Electronic-Waste", "Packaging-Waste", "Scrap-Material"
+  ],
+  "emissions_types": [
+    "CO2", "NOx", "SO2", "Particulate-Matter", "VOCs",
+    "Water-Discharge", "Noise-Pollution", "Light-Pollution", "Thermal-Pollution"
+  ],
+  "sustainability_goals": [
+    "Carbon-Neutral", "Zero-Waste", "Renewable-Energy", "Water-Reduction",
+    "Energy-Efficiency", "Sustainable-Sourcing", "Circular-Economy", "Green-Manufacturing"
+  ],
+  "compliance_standards": [
+    "EPA-Regulations", "ISO-14001", "REACH", "RoHS", "WEEE",
+    "Local-Environmental-Code", "State-Regulations", "International-Standards"
+  ],
+  "environmental_metrics": [
+    "Carbon-Footprint", "Energy-Consumption", "Water-Usage", "Waste-Generation",
+    "Recycling-Rate", "Emissions-Intensity", "Resource-Efficiency", "Renewable-Percentage"
+  ],
+  "waste_management": [
+    "Recycling", "Composting", "Landfill", "Incineration", "Waste-to-Energy",
+    "Recovery", "Reuse", "Treatment", "Disposal"
+  ],
+  "environmental_status": [
+    "Compliant", "Non-Compliant", "Exceeding-Target", "Below-Target",
+    "Improving", "Degraded", "Critical", "Investigation-Required"
+  ]
+}

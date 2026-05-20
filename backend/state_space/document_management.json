@@ -1,0 +1,30 @@
+{
+  "document_types": [
+    "Policy", "Procedure", "Work-Instruction", "Manual", "Standard",
+    "Form", "Template", "Checklist", "Report", "Record"
+  ],
+  "document_status": [
+    "Draft", "Under-Review", "Approved", "Published", "Archived",
+    "Deprecated", "Superseded", "Classified", "Restricted"
+  ],
+  "version_control": [
+    "Version-1.0", "Version-2.0", "Draft-v1", "Draft-v2", "Final",
+    "Revision-A", "Revision-B", "Minor-Update", "Major-Update"
+  ],
+  "access_levels": [
+    "Public", "Internal", "Confidential", "Restricted", "Classified",
+    "Role-Based", "Department-Based", "Individual-Based"
+  ],
+  "document_categories": [
+    "Quality", "Safety", "Environmental", "Technical", "Administrative",
+    "Legal", "Financial", "Operational", "Training", "Compliance"
+  ],
+  "retention_policies": [
+    "Permanent", "7-Years", "5-Years", "3-Years", "1-Year",
+    "Regulatory-Requirement", "Legal-Requirement", "Business-Need"
+  ],
+  "document_metrics": [
+    "Document-Count", "Access-Frequency", "Update-Frequency",
+    "Compliance-Rate", "Version-Control-Compliance", "User-Adoption"
+  ]
+}

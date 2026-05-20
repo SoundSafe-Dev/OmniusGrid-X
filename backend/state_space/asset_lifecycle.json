@@ -1,0 +1,30 @@
+{
+  "lifecycle_stages": [
+    "Procurement", "Installation", "Commissioning", "Operation",
+    "Maintenance", "Upgrade", "Decommission", "Disposal"
+  ],
+  "procurement_methods": [
+    "Purchase", "Lease", "Rental", "Capital-Lease", "Operating-Lease",
+    "Finance", "Rent-to-Own", "Subscription"
+  ],
+  "deployment_status": [
+    "Planned", "Ordered", "Shipped", "Received", "Installed",
+    "Configured", "Tested", "Deployed", "Operational"
+  ],
+  "retirement_reasons": [
+    "End-of-Life", "Obsolete", "Replaced", "Failed", "Damaged",
+    "No-Longer-Needed", "Cost-Prohibitive", "Upgraded"
+  ],
+  "disposal_methods": [
+    "Recycle", "Resale", "Donate", "Scrap", "Landfill",
+    "Return-to-Vendor", "Trade-In", "Refurbish"
+  ],
+  "asset_health": [
+    "New", "Like-New", "Good", "Fair", "Poor",
+    "Critical", "End-of-Life", "Retired"
+  ],
+  "lifecycle_metrics": [
+    "Total-Cost-of-Ownership", "Asset-Age", "Utilization-Rate",
+    "Maintenance-Cost", "Downtime", "Replacement-Cost", "Residual-Value"
+  ]
+}

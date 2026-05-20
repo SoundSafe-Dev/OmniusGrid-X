@@ -30,5 +30,24 @@
     "FSMA Sanitary Transportation Rule",
     "FSMA Foreign Supplier Verification Program",
     "FSMA Intentional Adulteration Rule"
+  ],
+  "gdpr_requirements": [
+    "GDPR Article 17: Right to Erasure",
+    "GDPR Article 21: Right to Object",
+    "GDPR Article 25: Data Protection by Design",
+    "GDPR Article 32: Data Security",
+    "GDPR Article 33: Data Breach Notification"
+  ],
+  "ccpa_requirements": [
+    "CCPA Right to Know",
+    "CCPA Right to Delete",
+    "CCPA Right to Opt-Out",
+    "CCPA Right to Non-Discrimination",
+    "CCPA Data Portability"
+  ],
+  "industry_specific": [
+    "Pharma-GMP-21CFR", "Medical-Device-13485", "Automotive-IATF-16949",
+    "Aerospace-AS9100", "AEC-Q100", "ITAR-Export-Control",
+    "SOC-2-Type-II", "HIPAA-Healthcare", "PCI-DSS-Payment-Card"
   ]
 }

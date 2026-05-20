@@ -1,0 +1,138 @@
+{
+  "products": [
+    "PROD-001-Widget-A", "PROD-002-Widget-B", "PROD-003-Widget-C", "PROD-004-Widget-D",
+    "PROD-005-Assembly-Alpha", "PROD-006-Assembly-Beta", "PROD-007-Subassembly-X", "PROD-008-Subassembly-Y",
+    "FINISHED-GOOD-001", "FINISHED-GOOD-002", "FINISHED-GOOD-003", "FINISHED-GOOD-004",
+    "CUSTOM-PRODUCT-A", "CUSTOM-PRODUCT-B", "CUSTOM-PRODUCT-C", "BATCH-LOT-001", "BATCH-LOT-002"
+  ],
+  "production_lines": [
+    "Line-1", "Line-2", "Line-3", "Line-4", "Line-5",
+    "Cell-A", "Cell-B", "Cell-C", "Workstation-01", "Workstation-02"
+  ],
+  "yield_rates": [
+    "95%", "92%", "88%", "85%", "80%", "75%", "70%", "65%", "60%", "55%"
+  ],
+  "output_metrics": [
+    "Units per Hour", "Units per Shift", "Units per Day", "Total Production",
+    "Good Parts", "Rejected Parts", "Rework Parts", "Scrap Rate", "First Pass Yield"
+  ],
+  "production_status": [
+    "Running", "Idle", "Setup", "Changeover", "Maintenance", "Starved", "Blocked", "Down"
+  ],
+  "quality_metrics": [
+    "Defect Rate", "Rework Rate", "Scrap Rate", "Customer Returns", "Warranty Claims",
+    "Quality Score", "Inspection Pass Rate", "Test Pass Rate"
+  ],
+  "shop_floor_scenarios": {
+    "production_bottlenecks": [
+      "Equipment failure on Line-1",
+      "Material shortage at Cell-A",
+      "Staffing shortage on Line-3",
+      "Quality hold on Workstation-02",
+      "Changeover delay on Line-2",
+      "Maintenance blocking Line-4"
+    ],
+    "equipment_issues": [
+      "Machine breakdown",
+      "Tool wear exceeding limits",
+      "Calibration drift detected",
+      "Sensor malfunction",
+      "Actuator failure",
+      "Control system error"
+    ],
+    "material_issues": [
+      "Raw material shortage",
+      "Component unavailability",
+      "Quality hold on incoming material",
+      "Wrong material delivered",
+      "Material specification mismatch",
+      "Material handling equipment failure"
+    ],
+    "staffing_issues": [
+      "Operator absence",
+      "Skill gap for operation",
+      "Cross-training insufficient",
+      "Shift handover delay",
+      "Operator fatigue",
+      "Training in progress"
+    ],
+    "quality_issues": [
+      "Dimensional non-conformance",
+      "Surface defect detected",
+      "Assembly error",
+      "Test failure",
+      "Inspection backlog",
+      "Quality documentation gap"
+    ]
+  },
+  "production_constraints": {
+    "capacity_constraints": [
+      "Maximum production rate reached",
+      "Equipment capacity limit",
+      "Labor capacity constraint",
+      "Material flow bottleneck",
+      "Storage capacity limit",
+      "Energy capacity constraint"
+    ],
+    "scheduling_conflicts": [
+      "Production schedule overlap",
+      "Maintenance window conflict",
+      "Changeover timing conflict",
+      "Resource allocation conflict",
+      "Priority level conflict",
+      "Customer deadline conflict"
+    ],
+    "process_constraints": [
+      "Cycle time limit reached",
+      "Setup time excessive",
+      "Changeover time bottleneck",
+      "Process variation excessive",
+      "Throughput limit reached",
+      "Yield constraint active"
+    ]
+  },
+  "production_escalation": {
+    "minor_to_major": [
+      "Minor issue pattern detected",
+      "Multiple minor issues accumulating",
+      "Root cause not addressed",
+      "Corrective action ineffective",
+      "Monitoring insufficient",
+      "Preventive action not taken"
+    ],
+    "major_to_critical": [
+      "Production line stoppage",
+      "Quality critical issue",
+      "Safety risk identified",
+      "Customer impact imminent",
+      "Regulatory violation risk",
+      "Financial impact significant"
+    ],
+    "critical_to_emergency": [
+      "Complete production halt",
+      "Safety incident occurred",
+      "Environmental release",
+      "Regulatory violation confirmed",
+      "Customer delivery failure",
+      "Facility emergency"
+    ]
+  },
+  "shift_handover": {
+    "handover_issues": [
+      "Information not transferred",
+      "Incomplete documentation",
+      "Status not communicated",
+      "Issues not escalated",
+      "Quality data missing",
+      "Production data incomplete"
+    ],
+    "handover_delays": [
+      "Previous shift overrun",
+      "Current shift early start",
+      "Communication breakdown",
+      "Documentation delay",
+      "Equipment not ready",
+      "Material not staged"
+    ]
+  }
+}

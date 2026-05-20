@@ -1,0 +1,30 @@
+{
+  "optimization_methods": [
+    "EOQ", "Safety-Stock", "Min-Max", "JIT", "VMI",
+    "CPFR", "ABC-Analysis", "Demand-Forecasting", "Simulation"
+  ],
+  "demand_patterns": [
+    "Seasonal", "Trend", "Cyclical", "Random", "Lumpy",
+    "Stable", "Growing", "Declining", "Volatile"
+  ],
+  "forecasting_methods": [
+    "Moving-Average", "Exponential-Smoothing", "ARIMA", "Machine-Learning",
+    "Collaborative", "Qualitative", "Quantitative", "Hybrid"
+  ],
+  "inventory_policies": [
+    "Push", "Pull", "Hybrid", "Make-to-Stock", "Make-to-Order",
+    "Assemble-to-Order", "Engineer-to-Order"
+  ],
+  "abc_classification": [
+    "A-Class-High-Value", "B-Class-Medium-Value", "C-Class-Low-Value",
+    "Critical", "Important", "Standard", "Non-Critical"
+  ],
+  "stockout_risks": [
+    "High", "Medium", "Low", "Critical", "Acceptable",
+    "Calculated", "Estimated", "Actual"
+  ],
+  "inventory_metrics": [
+    "Turnover-Ratio", "Days-Sales-of-Inventory", "Stockout-Rate",
+    "Carrying-Cost", "Ordering-Cost", "Service-Level", "Fill-Rate"
+  ]
+}

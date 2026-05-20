@@ -304,23 +304,41 @@
 | Term | Definition | Backend/Frontend |
 |------|------------|------------------|
 | **Correlation AI Engine** | AI service analyzing cross-domain scenarios to identify root causes and recommend actions | Both |
-| **Domain Type** | Operational domain category (EDGE_AI_TELEMETRY, PRODUCTION_OEE, LOGISTICS_FLEET, COMPLIANCE_REGISTRIES, SYSTEM_INFRASTRUCTURE) | Backend |
+| **Domain Type** | Operational domain category (47 domains including EDGE_AI_TELEMETRY, PRODUCTION_OEE, LOGISTICS_FLEET, COMPLIANCE_REGISTRIES, SYSTEM_INFRASTRUCTURE, and 42 additional operational domains) | Backend |
 | **Correlation Scenario** | Structured representation of operational event across multiple domains with links | Backend |
 | **Cross-Domain Link** | Relationship between domains with severity impact and causal description | Backend |
 | **Operational Metric** | Key performance indicator within a domain (e.g., OEE, detention rate, alarm count) | Backend |
-| **Domain Interaction Component** | Pydantic-based schema validation for 5 operational domains | Backend |
+| **Domain Interaction Component** | Pydantic-based schema validation for 47 operational domains | Backend |
 | **Synthetic Data Generation** | LLM-powered creation of training scenarios using state space rules | Backend |
-| **State Space** | Collection of valid entities (assets, errors, logistics, compliance) for realistic scenario generation | Backend |
+| **State Space** | Collection of valid entities (assets, errors, logistics, compliance, maintenance, safety, production, client yard) for realistic scenario generation | Backend |
 | **Gemma 4** | Google AI model used for correlation inference (placeholder in current implementation) | Backend |
 | **Fine-Tuning Dataset** | JSONL format training data with system prompts, user inputs, and model outputs | Backend |
-| **Root Cause Analysis** | AI identification of primary trigger in cascading failure scenarios | Backend |
+| **Root Cause Analysis** | AI identification of primary trigger in cascading failure scenarios with multi-perspective analysis | Backend |
+| **Multi-Perspective Analysis** | Root cause analysis considering multiple viewpoints (driver, client, transport, yard) for liability determination | Backend |
+| **Liability Determination** | Process of identifying responsible party for operational issues (driver, client, transport management, yard management) | Backend |
 | **Risk Scoring** | AI assessment of scenario severity based on domain criticality and link severity | Backend |
 | **Target Kanban Tasks** | AI-recommended tasks to address identified issues | Backend |
 | **Remediation Commands** | AI-recommended API commands to execute for resolution | Backend |
 | **Compliance Implications** | AI-identified regulatory standards impacted by scenario | Backend |
 | **Scenario Validation** | Pydantic schema verification of scenario data structure | Backend |
-| **State Space Loader** | Utility loading state space JSON files for scenario generation | Backend |
-| **Scenario Generator** | Component creating synthetic scenarios using state space data | Backend |
+| **State Space Loader** | Utility loading state space JSON files for scenario generation with nested category support | Backend |
+| **Scenario Generator** | Component creating synthetic scenarios using state space data with enhanced narrative templates | Backend |
+| **Detention Scenario** | Logistics scenario identifying root cause of trailer delay with liability assignment | Backend |
+| **Yard Bottleneck** | Operational constraint in yard operations (dock congestion, gate delays, parking constraints) | Backend |
+| **Shop Floor Impact** | Production line effect from logistics delays (material starvation, production stop, OEE degradation) | Backend |
+| **Predictive Indicator** | Early warning sign of equipment failure (vibration analysis, thermal analysis, oil analysis, performance degradation) | Backend |
+| **Preventive Trigger** | Condition requiring preventive maintenance (time-based, usage-based, condition-based) | Backend |
+| **Maintenance Conflict** | Scheduling or resource constraint preventing maintenance (production schedule conflict, resource unavailability) | Backend |
+| **Maintenance Escalation** | Transition from predictive to preventive to corrective to emergency maintenance | Backend |
+| **Safety Incident Causation** | Root cause analysis of safety events (human factors, equipment factors, environmental factors, organizational factors) | Backend |
+| **Safety Protocol Violation** | Breach of safety procedures (LOTO violations, confined space violations, hot work violations) | Backend |
+| **Operational Efficiency** | Performance metrics and barriers affecting productivity (cycle time, throughput, resource utilization) | Backend |
+| **Security Scenario** | Physical, cyber, or operational security event (unauthorized access, phishing, trade secret exposure) | Backend |
+| **Production Constraint** | Limitation affecting production output (capacity constraints, scheduling conflicts, process constraints) | Backend |
+| **Shift Handover** | Process of transferring information between shift changes with potential communication gaps | Backend |
+| **Client Yard Scenario** | External yard management scenario with liability types and receiving capacity issues | Backend |
+| **Narrative Template** | Pre-defined text pattern for generating realistic root cause descriptions with multiple variations | Backend |
+| **Severity Context** | Contextual description based on severity level (critical, high, medium, low) for actionable recommendations | Backend |
 
 ---
 
@@ -504,6 +522,6 @@
 
 ---
 
-**Document Version:** 1.0  
-**Last Updated:** 2026-05-19  
+**Document Version:** 1.1  
+**Last Updated:** 2026-05-20  
 **System:** OmniusGrid v0.1.0  

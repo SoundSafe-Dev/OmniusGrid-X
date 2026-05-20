@@ -1,0 +1,30 @@
+{
+  "project_types": [
+    "Capital-Project", "Maintenance-Project", "IT-Project", "Process-Improvement",
+    "Compliance-Project", "R&D-Project", "Construction-Project", "Software-Project"
+  ],
+  "milestones": [
+    "Kickoff", "Design-Complete", "Development-Complete", "Testing-Complete",
+    "Deployment", "Go-Live", "Project-Close", "Handover"
+  ],
+  "project_phases": [
+    "Initiation", "Planning", "Execution", "Monitoring", "Closing",
+    "Feasibility", "Design", "Development", "Testing", "Deployment"
+  ],
+  "resource_types": [
+    "Human", "Equipment", "Budget", "Time", "Materials",
+    "Software", "Hardware", "External", "Vendor", "Contractor"
+  ],
+  "project_status": [
+    "Not-Started", "In-Planning", "Active", "On-Hold", "Delayed",
+    "Completed", "Cancelled", "At-Risk", "Over-Budget", "Behind-Schedule"
+  ],
+  "methodologies": [
+    "Waterfall", "Agile", "Scrum", "Kanban", "Lean", "Hybrid",
+    "Critical-Path", "PRINCE2", "PMI", "Six-Sigma"
+  ],
+  "project_metrics": [
+    "Schedule-Variance", "Cost-Variance", "Scope-Variance", "Quality-Metrics",
+    "Resource-Utilization", "Risk-Index", "Stakeholder-Satisfaction", "ROI"
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "audit_types": [
+    "Financial-Audit", "Compliance-Audit", "Quality-Audit", "Safety-Audit",
+    "Environmental-Audit", "IT-Audit", "Operational-Audit", "Supply-Chain-Audit"
+  ],
+  "audit_standards": [
+    "GAAP", "IFRS", "SOX", "ISO-9001", "ISO-14001",
+    "OSHA", "EPA", "FDA", "Industry-Specific", "Internal-Policy"
+  ],
+  "audit_findings": [
+    "Material-Weakness", "Significant-Deficiency", "Observation",
+    "Recommendation", "Compliance-Issue", "Control-Gap", "Process-Issue"
+  ],
+  "certifications": [
+    "ISO-Certification", "Industry-Certification", "Professional-Certification",
+    "Safety-Certification", "Quality-Certification", "Environmental-Certification"
+  ],
+  "regulatory_changes": [
+    "New-Regulation", "Updated-Regulation", "Repealed-Regulation",
+    "Compliance-Deadline", "Grace-Period", "Transition-Period"
+  ],
+  "audit_status": [
+    "Scheduled", "In-Progress", "Completed", "Follow-Up-Required",
+    "Remediation-In-Progress", "Closed", "Overdue", "Cancelled"
+  ],
+  "audit_frequency": [
+    "Annual", "Semi-Annual", "Quarterly", "Monthly", "Ad-Hoc",
+    "Trigger-Based", "Risk-Based", "Continuous"
+  ]
+}

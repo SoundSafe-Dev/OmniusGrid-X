@@ -1,0 +1,30 @@
+{
+  "calibration_types": [
+    "Dimensional", "Electrical", "Temperature", "Pressure", "Flow",
+    "Force", "Torque", "Mass", "Volume", "Time"
+  ],
+  "calibration_standards": [
+    "ISO-17025", "NIST-Traceable", "ISO-9001", "ANSI", "ASTM",
+    "Industry-Specific", "Customer-Specification", "Internal-Standard"
+  ],
+  "calibration_methods": [
+    "In-House", "Third-Party", "OEM", "Field-Calibration", "Lab-Calibration",
+    "Remote-Calibration", "Automated", "Manual"
+  ],
+  "calibration_status": [
+    "Calibrated", "Due-for-Calibration", "Overdue", "Out-of-Tolerance",
+    "In-Progress", "Failed", "Quarantined", "Decalibrated"
+  ],
+  "calibration_interval": [
+    "Monthly", "Quarterly", "Semi-Annual", "Annual", "Biennial",
+    "Hour-Based", "Cycle-Based", "Risk-Based", "As-Needed"
+  ],
+  "calibration_equipment": [
+    "CMM", "Calipers", "Micrometers", "Gauges", "Test-Benches",
+    "Reference-Standards", "Calibration-Software", "Environmental-Chambers"
+  ],
+  "calibration_metrics": [
+    "Measurement-Uncertainty", "Accuracy", "Precision", "Repeatability",
+    "Reproducibility", "Traceability", "Compliance-Rate", "Calibration-Cost"
+  ]
+}

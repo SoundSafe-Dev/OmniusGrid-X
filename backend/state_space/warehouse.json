@@ -1,0 +1,30 @@
+{
+  "storage_zones": [
+    "Zone-A-Receiving", "Zone-B-Bulk", "Zone-C-Picking", "Zone-D-Packing",
+    "Zone-E-Shipping", "Zone-F-Cold-Storage", "Zone-G-Hazardous", "Zone-H-Returns"
+  ],
+  "storage_types": [
+    "Rack-Shelving", "Bin-Shelving", "Pallet-Racking", "Mezzanine", "Drive-In",
+    "Flow-Rack", "Cantilever", "Vertical-Lift", "Carousel", "Automated-ASRS"
+  ],
+  "picking_methods": [
+    "Piece-Picking", "Case-Picking", "Pallet-Picking", "Batch-Picking",
+    "Zone-Picking", "Wave-Picking", "Cluster-Picking", "Pick-to-Light", "Voice-Picking"
+  ],
+  "inventory_accuracy": [
+    "99.5%+", "98-99%", "95-98%", "90-95%", "Below-90%",
+    "Cycle-Count-Required", "Physical-Count-Required", "Investigation-Needed"
+  ],
+  "warehouse_operations": [
+    "Receiving", "Put-Away", "Storage", "Picking", "Packing",
+    "Shipping", "Cross-Docking", "Returns-Processing", "Inventory-Cycle-Count"
+  ],
+  "material_handling": [
+    "Forklift", "Pallet-Jack", "Conveyor", "AGV", "Manual-Handling",
+    "Crane", "Hoist", "Robotic-Arm", "Cart", "Dolly"
+  ],
+  "warehouse_metrics": [
+    "Throughput", "Utilization", "Cycle-Time", "Order-Accuracy", "Inventory-Turns",
+    "Space-Utilization", "Labor-Productivity", "Dock-to-Stock-Time"
+  ]
+}

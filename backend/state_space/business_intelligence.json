@@ -1,0 +1,30 @@
+{
+  "bi_tools": [
+    "Power-BI", "Tableau", "Looker", "Qlik", "MicroStrategy",
+    "Domo", "Sisense", "Spotfire", "ThoughtSpot", "Custom"
+  ],
+  "report_types": [
+    "Executive-Dashboard", "Operational-Report", "Financial-Report",
+    "Quality-Report", "Performance-Report", "Trend-Analysis"
+  ],
+  "data_visualization": [
+    "Charts", "Graphs", "Maps", "Heatmaps", "Treemaps",
+    "Scorecards", "KPIs", "Gauges", "Tables", "Cross-Tabulations"
+  ],
+  "kpi_categories": [
+    "Financial", "Operational", "Quality", "Safety", "Environmental",
+    "Customer", "Employee", "Strategic", "Compliance", "Risk"
+  ],
+  "data_warehouse": [
+    "Enterprise-Data-Warehouse", "Data-Mart", "Operational-Data-Store",
+    "Data-Lake", "Data-Vault", "Hub-and-Spoke", "Federation"
+  ],
+  "analytics_types": [
+    "Descriptive", "Diagnostic", "Predictive", "Prescriptive",
+    "Ad-Hoc", "Self-Service", "Embedded", "Automated"
+  ],
+  "bi_metrics": [
+    "Report-Usage", "Dashboard-Adoption", "Query-Performance",
+    "Data-Freshness", "User-Engagement", "Decision-Impact"
+  ]
+}

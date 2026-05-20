@@ -1,0 +1,30 @@
+{
+  "production_plans": [
+    "Daily-Plan", "Weekly-Plan", "Monthly-Plan", "Quarterly-Plan", "Annual-Plan",
+    "Shift-Plan", "Campaign-Plan", "Project-Plan", "Rolling-Plan"
+  ],
+  "capacity_types": [
+    "Design-Capacity", "Effective-Capacity", "Rated-Capacity", "Actual-Capacity",
+    "Theoretical-Capacity", "Demonstrated-Capacity", "Excess-Capacity"
+  ],
+  "scheduling_methods": [
+    "Make-to-Order", "Make-to-Stock", "Assemble-to-Order", "Engineer-to-Order",
+    "Just-in-Time", "Batch-Production", "Continuous-Production", "Job-Shop"
+  ],
+  "planning_horizons": [
+    "Short-Term", "Medium-Term", "Long-Term", "Strategic", "Tactical",
+    "Operational", "Real-Time", "Rolling-Horizon"
+  ],
+  "resource_constraints": [
+    "Labor-Availability", "Equipment-Availability", "Material-Availability",
+    "Energy-Availability", "Space-Availability", "Budget-Limit", "Time-Constraint"
+  ],
+  "optimization_objectives": [
+    "Maximize-Throughput", "Minimize-Cost", "Minimize-Latency", "Maximize-Quality",
+    "Balance-Workload", "Reduce-Changeovers", "Optimize-Inventory", "Maximize-Utilization"
+  ],
+  "planning_status": [
+    "Draft", "Under-Review", "Approved", "In-Progress", "Completed",
+    "Revised", "Cancelled", "On-Hold", "Archived"
+  ]
+}

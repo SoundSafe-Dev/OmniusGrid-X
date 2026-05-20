@@ -1,0 +1,30 @@
+{
+  "cost_centers": [
+    "Production", "Maintenance", "Quality", "Logistics", "Warehousing",
+    "Administration", "Sales", "Marketing", "Research-Development", "IT"
+  ],
+  "budget_categories": [
+    "Operating-Expense", "Capital-Expenditure", "Labor-Cost", "Material-Cost",
+    "Utility-Cost", "Maintenance-Cost", "Training-Cost", "Compliance-Cost"
+  ],
+  "variance_types": [
+    "Favorable-Variance", "Unfavorable-Variance", "Material-Variance",
+    "Labor-Variance", "Overhead-Variance", "Efficiency-Variance", "Price-Variance"
+  ],
+  "financial_metrics": [
+    "Revenue", "Gross-Margin", "Operating-Margin", "Net-Profit", "EBITDA",
+    "ROI", "ROA", "ROE", "Cash-Flow", "Working-Capital"
+  ],
+  "expense_categories": [
+    "Direct-Materials", "Direct-Labor", "Manufacturing-Overhead", "Selling-Expense",
+    "Administrative-Expense", "R&D-Expense", "Depreciation", "Interest-Expense", "Tax-Expense"
+  ],
+  "cost_drivers": [
+    "Volume-Based", "Activity-Based", "Time-Based", "Transaction-Based",
+    "Complexity-Based", "Resource-Based", "Step-Fixed", "Mixed-Cost"
+  ],
+  "financial_status": [
+    "On-Budget", "Under-Budget", "Over-Budget", "Critical-Over-Budget",
+    "Cost-Savings-Achieved", "Cost-Reduction-Needed", "Investment-Required"
+  ]
+}

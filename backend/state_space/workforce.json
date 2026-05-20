@@ -1,0 +1,30 @@
+{
+  "roles": [
+    "Operator", "Technician", "Maintenance", "Quality-Inspector", "Supervisor",
+    "Manager", "Engineer", "Forklift-Operator", "Material-Handler", "Safety-Officer"
+  ],
+  "skills": [
+    "Machine-Operation", "Quality-Inspection", "Preventive-Maintenance", "Forklift-Certified",
+    "Hazardous-Materials", "PLC-Programming", "Welding", "Electrical", "Machining", "Assembly"
+  ],
+  "shifts": [
+    "Day-Shift", "Night-Shift", "Graveyard-Shift", "Rotating-Shift", "Flexible-Schedule",
+    "Weekend-Shift", "Overtime-Shift", "On-Call", "Part-Time", "Seasonal"
+  ],
+  "attendance_status": [
+    "Present", "Absent", "Late", "Early-Departure", "Sick-Leave",
+    "Vacation", "Holiday", "Training", "Meeting", "Remote"
+  ],
+  "performance_metrics": [
+    "Productivity-Rate", "Quality-Rate", "Attendance-Rate", "Safety-Record",
+    "Training-Completion", "Skill-Certification", "Efficiency-Score"
+  ],
+  "labor_categories": [
+    "Direct-Labor", "Indirect-Labor", "Skilled-Labor", "Unskilled-Labor",
+    "Temporary-Labor", "Contract-Labor", "Management", "Support-Staff"
+  ],
+  "training_types": [
+    "Onboarding", "Safety-Training", "Skills-Training", "Certification",
+    "Cross-Training", "Refresher-Training", "Compliance-Training", "Leadership"
+  ]
+}
