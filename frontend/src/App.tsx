@@ -26,6 +26,10 @@ import { Users, Collectors, SystemHealth, Settings } from './pages/admin'
 // Logistics pages
 import { YardManagement, TransportationManagement } from './pages/logistics'
 
+// NLP & Intake pages
+import { CorrelationAIPane } from './components/nlp/CorrelationAIPane'
+import { IntakeInbox } from './pages/intake/IntakeInbox'
+
 const App: FC = () => {
   return (
     <Routes>
@@ -69,6 +73,10 @@ const App: FC = () => {
             {/* Logistics - YMS & TMS */}
             <Route path="/logistics/yard" element={<YardManagement />} />
             <Route path="/logistics/transportation" element={<TransportationManagement />} />
+
+            {/* NLP & Intake */}
+            <Route path="/nlp" element={<CorrelationAIPane />} />
+            <Route path="/intake" element={<IntakeInbox />} />
 
             {/* Admin */}
             <Route path="/admin/users" element={<Users />} />
