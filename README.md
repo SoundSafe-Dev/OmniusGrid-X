@@ -377,6 +377,69 @@ OmniusGrid/
 | GET | `/api/v1/engines/correlation/scenarios` | List generated correlation scenarios |
 | POST | `/api/v1/engines/correlation/generate` | Generate synthetic scenarios for training |
 
+### Correlation AI Integration with Registries and Kanban
+
+The correlation AI engine integrates with the actionable registries and Kanban task management systems to automatically create tasks, registry items, and correlations based on AI analysis results.
+
+**Integration Features:**
+- **47 Operational Domain Registries**: Each of the 47 operational domains has a dedicated registry with compliance standards and default items
+- **Automatic Task Creation**: AI analysis automatically creates Kanban tasks with appropriate priority based on risk score
+- **Registry Item Generation**: Creates registry items for affected domains with severity levels and completion criteria
+- **Data Correlation Mapping**: Links registry items to Kanban tasks for traceability and impact analysis
+- **Alerting System Integration**: Sends alert notifications for high-risk scenarios (risk score > 50)
+
+**Integration API Endpoints:**
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/v1/engines/correlation/integration/analyze` | Run correlation analysis and auto-integrate with registries/Kanban |
+| POST | `/api/v1/engines/correlation/integration/initialize-registries` | Initialize all 47 domain registries for organization |
+| GET | `/api/v1/engines/correlation/integration/registry-mapping` | Get domain to registry mapping configuration |
+| GET | `/api/v1/engines/correlation/integration/task-type-mapping` | Get task type mapping for AI recommendations |
+| POST | `/api/v1/engines/correlation/integration/test-integration` | Test integration with sample data |
+
+**Registry Initialization Script:**
+
+```bash
+# Initialize registries for all organizations
+python backend/scripts/initialize_correlation_registries.py
+
+# Initialize registries for specific organization
+python backend/scripts/initialize_correlation_registries.py <organization_id>
+```
+
+**Domain to Registry Mapping:**
+
+Each of the 47 operational domains is mapped to a registry configuration with:
+- Registry type (compliance or operational)
+- Registry category (safety, quality, maintenance, logistics, etc.)
+- Frequency requirements (daily, weekly, monthly, quarterly, etc.)
+- Priority level (low, medium, high, critical)
+- Compliance standards (ISO, OSHA, DOT, CTPAT, etc.)
+
+**Kanban Task Type Mapping:**
+
+AI-recommended tasks are mapped to Kanban task types:
+- `custom` - General coordination and investigation tasks
+- `maintenance_cm` - Corrective maintenance tasks
+- `maintenance_pm` - Preventive maintenance tasks
+- `production_job` - Production-related tasks
+- `quality_inspection` - Quality inspection tasks
+- `safety_check` - Safety-related tasks
+- `alarm_response` - Alarm response tasks
+- `command_execution` - Command execution tasks
+
+**Integration Workflow:**
+
+1. Correlation AI analyzes operational metrics and identifies anomalies
+2. AI determines affected domains and calculates risk score
+3. System automatically creates registry items for affected domains
+4. Kanban tasks are created based on AI recommendations
+5. Data correlations link registry items to tasks for traceability
+6. Alert notifications sent for high-risk scenarios
+7. Tasks tracked through Kanban board with progress updates
+8. Risk scores updated as tasks are completed
+
 ### Synthetic Data Generation
 
 The correlation AI model uses a synthetic data generation pipeline to create training datasets with state space-based rule generation:
