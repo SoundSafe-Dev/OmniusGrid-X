@@ -440,6 +440,102 @@ AI-recommended tasks are mapped to Kanban task types:
 7. Tasks tracked through Kanban board with progress updates
 8. Risk scores updated as tasks are completed
 
+### NLP Correlation AI Assistant
+
+The NLP Correlation AI Assistant provides a natural language interface for interacting with the correlation AI engine, allowing users to ask questions about operational data, identify correlations, and receive actionable insights without needing to understand the underlying data structures.
+
+**Features:**
+- **Natural Language Queries**: Ask questions in plain English about production issues, logistics delays, maintenance needs, or compliance concerns
+- **Real-time Analysis**: AI analyzes queries and determines relevant operational domains automatically
+- **Risk Scoring**: Provides risk scores (0-100) with color-coded severity indicators (Critical: >75, High: >50, Medium: >25, Low: <25)
+- **Domain Detection**: Automatically identifies relevant operational domains from the query context
+- **Recommended Actions**: Suggests specific actions and Kanban tasks based on the analysis
+- **Auto-Integration**: Optional automatic integration with Kanban task management
+- **Conversation History**: Maintains context across multi-turn conversations
+
+**NLP API Endpoints:**
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/v1/nlp/correlation/query` | Process natural language query to correlation AI |
+| POST | `/api/v1/nlp/correlation/chat` | Chat interface for multi-turn conversations |
+
+**Frontend Component:**
+
+The CorrelationAIPane component (`/nlp`) provides:
+- Chat interface with message history
+- Auto-scroll to latest messages
+- Risk score display with color-coded badges
+- Domain analysis visualization
+- Recommended actions with task details
+- Auto-integrate toggle for Kanban integration
+- Loading states during analysis
+
+**Example Queries:**
+
+- "What's causing the production delays on Cell-H?"
+- "Analyze the logistics fleet detention issues"
+- "Check for maintenance anomalies on equipment"
+- "Review compliance violations for ISO 9001"
+- "Identify correlations between warehouse bottlenecks and production OEE"
+
+### Intake Inbox
+
+The Intake Inbox provides a centralized location for uploading operational data (spreadsheets, reports, images) that the correlation AI can analyze to provide actionable insights. Users can upload files and query the AI for analysis, receiving risk assessments, domain correlations, and recommended actions.
+
+**Features:**
+- **Multi-Format Upload**: Supports spreadsheets (CSV, Excel), reports (PDF, Word), images (PNG, JPG), and documents (Text, Markdown)
+- **Automatic Type Detection**: File type auto-detection based on extension
+- **Data Processing**: Extracts and processes data from uploaded files for AI analysis
+- **AI Analysis**: Correlation AI analyzes uploaded data and provides insights
+- **Risk Assessment**: Calculates risk scores and identifies affected domains
+- **Analysis Results**: Displays detailed analysis with risk scores, domains, and recommendations
+- **Search & Filter**: Search items by title/description and filter by status
+- **Status Tracking**: Track upload status (pending, analyzing, analyzed, error)
+
+**Intake API Endpoints:**
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/v1/nlp/correlation/intake/upload` | Upload data file to Intake Inbox |
+| POST | `/api/v1/nlp/correlation/intake/analyze` | Analyze uploaded data with correlation AI |
+| GET | `/api/v1/nlp/correlation/intake/list` | List intake items with pagination and filtering |
+| GET | `/api/v1/nlp/correlation/intake/{id}` | Get specific intake item details |
+
+**Frontend Page:**
+
+The IntakeInbox page (`/intake`) provides:
+- Drag-and-drop file upload interface
+- File type selection with auto-detection
+- Title and description fields for organization
+- Upload progress indicator
+- Intake items list with status badges
+- Analysis trigger button
+- Analysis results display with:
+  - Risk score with color coding
+  - Domain analysis
+  - Detailed AI analysis text
+  - Recommended actions
+- Search functionality
+- Status filter (all, pending, analyzed, error)
+
+**Supported File Types:**
+
+- **Spreadsheets**: CSV, XLSX, XLS
+- **Reports**: PDF, DOCX, DOC
+- **Images**: PNG, JPG, JPEG
+- **Documents**: TXT, MD
+
+**Analysis Workflow:**
+
+1. User uploads file with title and description
+2. System processes file content based on type
+3. User triggers analysis (or queries with specific question)
+4. Correlation AI analyzes data and identifies patterns
+5. AI provides risk assessment and domain correlations
+6. System displays recommended actions and Kanban task suggestions
+7. Results can be auto-integrated with Kanban task management
+
 ### Synthetic Data Generation
 
 The correlation AI model uses a synthetic data generation pipeline to create training datasets with state space-based rule generation:
