@@ -18,6 +18,8 @@ import {
   Sun,
   Moon,
   Kanban as KanbanIcon,
+  MessageSquare,
+  Inbox,
 } from 'lucide-react';
 import { useUIStore, useAuthStore } from '../../stores';
 import { cn } from '../../utils';
@@ -76,6 +78,8 @@ const navItems: NavItem[] = [
       { path: '/logistics/transportation', label: 'Transportation (TMS)', icon: Truck },
     ],
   },
+  { path: '/nlp', label: 'Correlation AI', icon: MessageSquare },
+  { path: '/intake', label: 'Intake Inbox', icon: Inbox },
   {
     path: '/admin',
     label: 'Admin',
