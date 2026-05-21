@@ -41,7 +41,10 @@ class CorrelationAIEngine:
     async def analyze_scenario(
         self,
         scenario: CorrelationScenario,
-        db: AsyncSession
+        db: AsyncSession,
+        organization_id: Optional[UUID] = None,
+        user_id: Optional[UUID] = None,
+        auto_integrate: bool = True
     ) -> Dict[str, Any]:
         """
         Run AI correlation analysis on a scenario.
@@ -49,6 +52,9 @@ class CorrelationAIEngine:
         Args:
             scenario: The correlation scenario to analyze
             db: Database session for context
+            organization_id: Organization ID for integration (optional)
+            user_id: User ID for integration (optional)
+            auto_integrate: Whether to automatically integrate with registries and kanban
             
         Returns:
             AI analysis with root cause, risk score, and recommendations
@@ -56,7 +62,8 @@ class CorrelationAIEngine:
         logger.info(
             "analyzing_correlation_scenario",
             scenario_id=scenario.scenario_id,
-            active_domains=[d.value for d in scenario.active_domains]
+            active_domains=[d.value for d in scenario.active_domains],
+            auto_integrate=auto_integrate
         )
         
         # Placeholder for actual AI inference
@@ -84,6 +91,33 @@ class CorrelationAIEngine:
             scenario_id=scenario.scenario_id,
             risk_score=analysis["risk_score"]
         )
+        
+        # Auto-integrate with registries and kanban if requested
+        if auto_integrate and organization_id and user_id:
+            try:
+                from app.services.correlation_registry_integration import correlation_registry_integration
+                
+                integration_input = {
+                    "correlation_analysis": analysis["predicted_root_cause"],
+                    "risk_score": analysis["risk_score"],
+                    "recommended_kanban_tasks": analysis["target_kanban_tasks"],
+                    "recommended_actions": analysis["remediation_commands"],
+                    "compliance_implications": analysis["compliance_implications"]
+                }
+                
+                integration_result = await correlation_registry_integration.process_correlation_analysis(
+                    integration_input,
+                    organization_id,
+                    db,
+                    user_id
+                )
+                
+                analysis["integration_result"] = integration_result
+                logger.info("auto_integration_complete", integration_result=integration_result)
+                
+            except Exception as e:
+                logger.error("auto_integration_failed", error=str(e))
+                analysis["integration_error"] = str(e)
         
         return analysis
     
