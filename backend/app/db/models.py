@@ -763,3 +763,55 @@ class DataCorrelation(Base):
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+# ==================== NLP Analysis Session Models ====================
+
+class AnalysisSession(Base):
+    """Analysis sessions for NLP correlation AI"""
+    __tablename__ = "analysis_sessions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
+    title = Column(String(500), nullable=False)
+    description = Column(Text)
+    status = Column(String(50), default="active")  # active, archived, deleted
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    last_accessed_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    context_snapshot = Column(JSON, default=dict)  # User context snapshot at session creation
+    goals_snapshot = Column(JSON, default=dict)  # User goals snapshot at session creation
+    meta_data = Column(JSON, default=dict)
+
+
+class SessionDataSource(Base):
+    """Data sources used in analysis sessions"""
+    __tablename__ = "session_data_sources"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id = Column(UUID(as_uuid=True), ForeignKey("analysis_sessions.id"), nullable=False)
+    source_type = Column(String(50), nullable=False)  # intake, upload, system
+    source_id = Column(UUID(as_uuid=True))  # ID from source table (intake_id, etc.)
+    file_name = Column(String(255))
+    data_type = Column(String(50))  # spreadsheet, report, image, document
+    processed_data = Column(JSON, default=dict)
+    added_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    meta_data = Column(JSON, default=dict)
+
+
+class SessionMessage(Base):
+    """Chat messages with session context"""
+    __tablename__ = "session_messages"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id = Column(UUID(as_uuid=True), ForeignKey("analysis_sessions.id"), nullable=False)
+    role = Column(String(20), nullable=False)  # user, assistant, system
+    content = Column(Text, nullable=False)
+    analysis = Column(JSON, default=dict)  # AI analysis result
+    risk_score = Column(Numeric)
+    domains = Column(JSON, default=list)  # List of domains analyzed
+    actions = Column(JSON, default=list)  # Recommended actions
+    timestamp = Column(DateTime(timezone=True), default=datetime.utcnow)
+    context_used = Column(JSON, default=dict)  # Context snapshot used for this message
+    meta_data = Column(JSON, default=dict)
