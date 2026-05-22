@@ -529,12 +529,155 @@ The IntakeInbox page (`/intake`) provides:
 **Analysis Workflow:**
 
 1. User uploads file with title and description
-2. System processes file content based on type
-3. User triggers analysis (or queries with specific question)
-4. Correlation AI analyzes data and identifies patterns
-5. AI provides risk assessment and domain correlations
-6. System displays recommended actions and Kanban task suggestions
-7. Results can be auto-integrated with Kanban task management
+2. System auto-detects file type and processes data
+3. Status set to "pending" initially
+4. User triggers AI analysis
+5. Correlation AI analyzes data and provides insights
+6. Status updated to "analyzed" with results
+7. Results include risk score, domains, analysis, and recommended actions
+
+### NLP Analysis Sessions
+
+The NLP Analysis Sessions feature provides a comprehensive session-based interface for analyzing operational data with the correlation AI. Users can create sessions, add multiple data sources (from Intake Inbox or direct uploads), maintain conversation history, and receive context-aware insights based on their goals and preferences.
+
+**Features:**
+- **Session Management**: Create, save, resume, and delete analysis sessions
+- **Auto-Generated Titles**: Session titles automatically generated from query context and domains
+- **Multi-Source Data**: Combine multiple data sources (Intake Inbox items, uploaded files) in a single session
+- **Full Chat History**: Search and view chat history across all sessions with session organization
+- **Context-Aware AI**: Correlation AI uses session context (data sources, conversation history, user goals)
+- **Real-Time Data Integration**: Pull in telemetry, alarms, Kanban tasks, and registries as context
+- **User Context Panel**: Display user role, priorities, and active goals
+- **Data Source Management**: Upload files directly or select from Intake Inbox via drag-drop, dialog, or sidebar picker
+
+**Analysis Sessions API Endpoints:**
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/v1/nlp/sessions` | Create new analysis session |
+| GET | `/api/v1/nlp/sessions` | List user's analysis sessions |
+| GET | `/api/v1/nlp/sessions/{id}` | Get session details |
+| PUT | `/api/v1/nlp/sessions/{id}` | Update session (title, description) |
+| DELETE | `/api/v1/nlp/sessions/{id}` | Delete session |
+| POST | `/api/v1/nlp/sessions/{id}/resume` | Resume a session |
+| POST | `/api/v1/nlp/sessions/{id}/data/intake` | Add data from Intake Inbox |
+| POST | `/api/v1/nlp/sessions/{id}/data/upload` | Upload new data to session |
+| GET | `/api/v1/nlp/sessions/{id}/data` | List session data sources |
+| DELETE | `/api/v1/nlp/sessions/{id}/data/{source_id}` | Remove data source |
+| POST | `/api/v1/nlp/sessions/{id}/chat` | Send message in session context |
+| GET | `/api/v1/nlp/sessions/{id}/messages` | Get session messages |
+| POST | `/api/v1/nlp/sessions/{id}/generate-title` | Generate session title from context |
+| GET | `/api/v1/nlp/sessions/chat/history` | Get full chat history across all sessions |
+| GET | `/api/v1/nlp/sessions/chat/search` | Search/filter historical chats |
+| GET | `/api/v1/nlp/sessions/{id}/context/telemetry` | Fetch relevant telemetry |
+| GET | `/api/v1/nlp/sessions/{id}/context/alarms` | Fetch relevant alarms |
+| GET | `/api/v1/nlp/sessions/{id}/context/kanban` | Fetch relevant Kanban tasks |
+| GET | `/api/v1/nlp/sessions/{id}/context/registries` | Fetch relevant registry items |
+
+**Frontend Components:**
+
+The enhanced `/nlp` page provides a three-panel layout:
+
+- **Left Sidebar**:
+  - SessionList: Browse and manage analysis sessions with search
+  - DataSourcesPanel: Upload files and manage session data sources
+  - Drag-and-drop zone for file uploads
+  - "Add from Intake" button for Intake Inbox selection
+
+- **Center Panel**:
+  - Chat interface with session-based conversation
+  - Session header showing title and data source count
+  - Message display with risk scores and domain badges
+  - "Add Data" button for Intake Inbox dialog
+  - "History" button for full chat history modal
+  - Auto-integrate toggle
+
+- **Right Sidebar**:
+  - ContextPanel: Display user context (role, department, priorities)
+  - Active goals with progress tracking
+  - RealTimeDataPanel: View telemetry, alarms, Kanban, registries
+  - Tabbed interface for different data types
+
+**Data Source Integration:**
+
+Three methods to add data to sessions:
+1. **Drag-and-Drop**: Drop files directly into the DataSourcesPanel
+2. **Selection Dialog**: Open IntakeSelectorDialog to browse and select from Intake Inbox
+3. **Direct Upload**: Use file picker to upload new files
+
+**Session Context:**
+
+The correlation AI uses the following context when analyzing queries:
+- **Data Sources**: All data sources added to the session (file names, types, processed data)
+- **Conversation History**: Previous messages in the session (last 10 messages)
+- **User Context**: User role, department, priorities (from context snapshot)
+- **User Goals**: Active goals and targets (from goals snapshot)
+
+**Auto-Title Generation:**
+
+Session titles are automatically generated based on:
+- First few user queries in the session
+- Extracted keywords and domain patterns
+- Domain detection (LOGISTICS_FLEET, MAINTENANCE, PRODUCTION_OEE, QUALITY_CONTROL, SAFETY, COMPLIANCE)
+- Title format: "{Domain} Analysis - {Keywords}" or "{Keywords} Analysis"
+
+**Chat History:**
+
+- Full chat history across all sessions
+- Organized by session with session titles and dates
+- Search by keyword across all messages
+- Filter by session, date range, domain, risk score
+- Export functionality
+
+**Real-Time Data Integration:**
+
+The RealTimeDataPanel provides context from:
+- **Telemetry**: Relevant telemetry data based on session domains
+- **Alarms**: Active alarms related to session topics
+- **Kanban Tasks**: Relevant Kanban tasks for recommended actions
+- **Registries**: Registry items for compliance context
+
+**Session Persistence:**
+
+- Sessions auto-save on every message
+- Context snapshot saved at session creation
+- Last accessed timestamp updated on each interaction
+- Sessions can be archived or soft-deleted
+- Configurable TTL for inactive session cleanup
+
+**Database Models:**
+
+- `AnalysisSession`: Session metadata (title, description, status, context snapshot, goals snapshot)
+- `SessionDataSource`: Data sources linked to sessions (source type, file name, data type, processed data)
+- `SessionMessage`: Chat messages with session context (role, content, analysis, risk score, domains, actions)
+
+**Analysis Workflow:**
+
+1. User creates new session or resumes existing session
+2. User adds data sources (upload files or select from Intake Inbox)
+3. User sends natural language query
+4. System builds context (data sources, conversation history, user context/goals)
+5. Correlation AI analyzes query with full session context
+6. AI returns insights with risk scores, domains, and recommended actions
+7. Messages saved to session with context snapshot
+8. Session title auto-generated after first few queries
+9. User can view full chat history and search across sessions
+10. Real-time data available in right sidebar for additional context
+
+**Example Session Workflow:**
+
+```
+1. User clicks "New Session" button
+2. Session created with default title
+3. User uploads production report spreadsheet
+4. User adds Intake Inbox item (detention analysis)
+5. User asks: "Analyze production delays and detention costs"
+6. AI analyzes with context from both data sources
+7. AI provides insights correlating production issues with logistics delays
+8. Session title auto-generated: "Logistics Fleet Analysis - Production, Detention"
+9. User continues conversation with context maintained
+10. User can view history, search, or resume session later
+```
 
 ### Synthetic Data Generation
 

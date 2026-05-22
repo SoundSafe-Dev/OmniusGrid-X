@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from app.api import assets, telemetry, alarms, operations, auth, dashboard, health, engines
-from app.api import yard, transportation, logistics_correlation, websocket, commands, oee, kanban, registries, geotab, correlation_integration, nlp_correlation
+from app.api import yard, transportation, logistics_correlation, websocket, commands, oee, kanban, registries, geotab, correlation_integration, nlp_correlation, analysis_sessions
 from app.core.config import settings
 from app.db.database import init_db
 from app.services.websocket_manager import websocket_manager
@@ -68,6 +68,7 @@ app.include_router(websocket.router, tags=["WebSocket"])
 app.include_router(geotab.router, prefix="/api/v1", tags=["GeoTab"])
 app.include_router(correlation_integration.router, tags=["Correlation Integration"])
 app.include_router(nlp_correlation.router, tags=["NLP Correlation"])
+app.include_router(analysis_sessions.router, tags=["Analysis Sessions"])
 
 
 @app.get("/")
