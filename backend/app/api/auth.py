@@ -80,8 +80,8 @@ async def get_current_active_user(
     # DEV MODE: Bypass authentication for dev-token
     if token == "dev-token":
         # Create or get dev user from database
-        dev_org_id = UUID("00000000-0000-0000-0000-000000000001")
-        dev_user_id = UUID("00000000-0000-0000-0000-000000000001")
+        dev_org_id = "00000000-0000-0000-0000-000000000001"
+        dev_user_id = "00000000-0000-0000-0000-000000000001"
 
         # Check if dev org exists, create if not
         org_result = await db.execute(

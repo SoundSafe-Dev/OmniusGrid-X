@@ -32,7 +32,7 @@ router = APIRouter()
 
 # ==================== Helper Functions ====================
 
-async def get_organization_board(session: AsyncSession, organization_id: UUID) -> TaskBoard:
+async def get_organization_board(session: AsyncSession, organization_id: str) -> TaskBoard:
     """Get or create the unified kanban board for an organization"""
     result = await session.execute(
         select(TaskBoard).where(
@@ -77,7 +77,7 @@ async def get_organization_board(session: AsyncSession, organization_id: UUID) -
     return board
 
 
-async def get_column_by_type(session: AsyncSession, board_id: UUID, column_type: str) -> TaskColumn:
+async def get_column_by_type(session: AsyncSession, board_id: str, column_type: str) -> TaskColumn:
     """Get column by type for a board"""
     result = await session.execute(
         select(TaskColumn).where(
@@ -92,8 +92,8 @@ async def get_column_by_type(session: AsyncSession, board_id: UUID, column_type:
 
 async def log_task_comment(
     session: AsyncSession,
-    task_id: UUID,
-    user_id: Optional[UUID],
+    task_id: str,
+    user_id: Optional[str],
     content: str,
     comment_type: str = "system",
     extra_data: Dict[str, Any] = None
@@ -359,7 +359,7 @@ async def create_task(
 
 @router.get("/tasks/{task_id}", response_model=TaskResponse)
 async def get_task(
-    task_id: UUID,
+    task_id: str,
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
@@ -377,7 +377,7 @@ async def get_task(
 
 @router.put("/tasks/{task_id}", response_model=TaskResponse)
 async def update_task(
-    task_id: UUID,
+    task_id: str,
     task_update: TaskUpdate,
     background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_db),
@@ -481,7 +481,7 @@ async def update_task(
 
 @router.delete("/tasks/{task_id}")
 async def delete_task(
-    task_id: UUID,
+    task_id: str,
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
@@ -515,7 +515,7 @@ async def delete_task(
 
 @router.post("/tasks/{task_id}/move", response_model=TaskResponse)
 async def move_task(
-    task_id: UUID,
+    task_id: str,
     move_request: TaskMoveRequest,
     background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_db),
@@ -603,7 +603,7 @@ async def move_task(
 
 @router.post("/tasks/{task_id}/approve", response_model=TaskResponse)
 async def approve_task(
-    task_id: UUID,
+    task_id: str,
     approval: TaskApprovalRequest,
     background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_db),
@@ -698,7 +698,7 @@ async def approve_task(
 
 @router.post("/tasks/{task_id}/start", response_model=TaskResponse)
 async def start_task(
-    task_id: UUID,
+    task_id: str,
     background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
@@ -764,7 +764,7 @@ async def start_task(
 
 @router.post("/tasks/{task_id}/complete", response_model=TaskResponse)
 async def complete_task(
-    task_id: UUID,
+    task_id: str,
     background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
@@ -848,7 +848,7 @@ async def complete_task(
     return task
 
 
-async def execute_completion_actions(task_id: UUID, actions: Dict[str, Any], organization_id: str):
+async def execute_completion_actions(task_id: str, actions: Dict[str, Any], organization_id: str):
     """Execute actions when task is completed"""
     results = {}
     
@@ -919,7 +919,7 @@ async def execute_completion_actions(task_id: UUID, actions: Dict[str, Any], org
 
 @router.get("/tasks/{task_id}/comments", response_model=List[TaskCommentResponse])
 async def get_task_comments(
-    task_id: UUID,
+    task_id: str,
     limit: int = Query(50, ge=1, le=200),
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
@@ -936,7 +936,7 @@ async def get_task_comments(
 
 @router.post("/tasks/{task_id}/comments", response_model=TaskCommentResponse)
 async def add_task_comment(
-    task_id: UUID,
+    task_id: str,
     comment: TaskCommentBase,
     background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_db),
@@ -977,7 +977,7 @@ async def add_task_comment(
 
 @router.post("/tasks/{task_id}/timer/start", response_model=TaskTimerResponse)
 async def start_task_timer(
-    task_id: UUID,
+    task_id: str,
     timer_data: TaskTimerStart,
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
@@ -1022,7 +1022,7 @@ async def start_task_timer(
 
 @router.post("/tasks/{task_id}/timer/stop", response_model=TaskTimerResponse)
 async def stop_task_timer(
-    task_id: UUID,
+    task_id: str,
     timer_data: TaskTimerStop,
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
@@ -1074,7 +1074,7 @@ async def stop_task_timer(
 
 @router.get("/tasks/{task_id}/time-logs", response_model=List[TaskTimerResponse])
 async def get_task_time_logs(
-    task_id: UUID,
+    task_id: str,
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
@@ -1333,7 +1333,7 @@ async def create_task_rule(
 
 @router.put("/rules/{rule_id}", response_model=TaskRuleResponse)
 async def update_task_rule(
-    rule_id: UUID,
+    rule_id: str,
     rule_update: TaskRuleUpdate,
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
@@ -1384,7 +1384,7 @@ async def update_task_rule(
 
 @router.post("/rules/{rule_id}/test", response_model=TaskRuleTestResponse)
 async def test_task_rule(
-    rule_id: UUID,
+    rule_id: str,
     test_data: TaskRuleTestRequest,
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
@@ -1514,7 +1514,7 @@ async def get_premade_rules(
 
 @router.delete("/rules/{rule_id}")
 async def delete_task_rule(
-    rule_id: UUID,
+    rule_id: str,
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):

@@ -1139,6 +1139,8 @@ The correlation AI model seamlessly integrates with OmniusGrid's Kanban task man
   - **Approval Workflows**: Task approval/rejection with reason tracking
   - **Task Types**: Support for YMS, TMS, logistics, production, maintenance, safety, alarms, commands, materials, and changeovers
   - **Progress Tracking**: Progress bars, checklists, time logging, and due date management
+  - **Delete Confirmation**: In-UI confirmation dialog for task deletion (no browser alerts)
+  - **SQLite Compatibility**: Full UUID string support for local development without PostgreSQL
 - **Compliance & Registries**:
   - **Actionable Registries**: Compliance registries (OSHA, ISO) and internal operational registries
   - **Registry Items**: Individual compliance items with severity levels, completion criteria, and verification methods

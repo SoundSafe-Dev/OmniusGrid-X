@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     """Application settings"""
     
     # Database
-    DATABASE_URL: str = "postgresql://opsgrid:opsgrid_dev_password@timescaledb:5432/opsgrid"
+    DATABASE_URL: str = "sqlite+aiosqlite:///./opsgrid.db"
     
     # Message Broker
     REDPANDA_URL: str = "redpanda:29092"
@@ -35,9 +35,9 @@ class Settings(BaseSettings):
     # MLOps
     MODEL_REGISTRY_URL: str = "https://models.opsgrid.io"
     MODEL_REGISTRY_API_KEY: str = ""
-    LOCAL_MODEL_DIR: str = "/models"
+    LOCAL_MODEL_DIR: str = "./models"
     MODEL_POLL_INTERVAL: int = 300  # 5 minutes
-    TACTICAL_MODEL_PATH: str = "/models/tactical_v1.pt"
+    TACTICAL_MODEL_PATH: str = "./models/tactical_v1.pt"
     
     # Edge
     EDGE_NODE_ID: str = "edge-001"

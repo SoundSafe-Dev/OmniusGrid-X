@@ -1,4 +1,4 @@
-import { FC, ReactNode } from 'react';
+import { FC } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard,
@@ -39,6 +39,8 @@ const navItems: NavItem[] = [
   { path: '/alarms', label: 'Alarms', icon: Bell },
   { path: '/oee', label: 'OEE', icon: BarChart3 },
   { path: '/kanban', label: 'Kanban Board', icon: KanbanIcon },
+  { path: '/nlp', label: 'Correlation AI', icon: MessageSquare },
+  { path: '/intake', label: 'Intake Inbox', icon: Inbox },
   {
     path: '/engines',
     label: 'AI Engines',
@@ -78,8 +80,6 @@ const navItems: NavItem[] = [
       { path: '/logistics/transportation', label: 'Transportation (TMS)', icon: Truck },
     ],
   },
-  { path: '/nlp', label: 'Correlation AI', icon: MessageSquare },
-  { path: '/intake', label: 'Intake Inbox', icon: Inbox },
   {
     path: '/admin',
     label: 'Admin',

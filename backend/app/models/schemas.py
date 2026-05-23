@@ -759,12 +759,12 @@ class TaskBoardBase(BaseModel):
 
 
 class TaskBoardCreate(TaskBoardBase):
-    organization_id: UUID
+    organization_id: str
 
 
 class TaskBoardResponse(TaskBoardBase):
-    id: UUID
-    organization_id: UUID
+    id: str
+    organization_id: str
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -784,12 +784,12 @@ class TaskColumnBase(BaseModel):
 
 
 class TaskColumnCreate(TaskColumnBase):
-    board_id: UUID
+    board_id: str
 
 
 class TaskColumnResponse(TaskColumnBase):
-    id: UUID
-    board_id: UUID
+    id: str
+    board_id: str
     created_at: datetime
     updated_at: datetime
     task_count: Optional[int] = 0  # Computed field
@@ -819,14 +819,14 @@ class TaskBase(BaseModel):
 
 
 class TaskCreate(TaskBase):
-    board_id: UUID
-    column_id: UUID
-    assigned_to: Optional[UUID] = None
-    asset_id: Optional[UUID] = None
-    operation_id: Optional[UUID] = None
-    alarm_id: Optional[UUID] = None
+    board_id: str
+    column_id: str
+    assigned_to: Optional[str] = None
+    asset_id: Optional[str] = None
+    operation_id: Optional[str] = None
+    alarm_id: Optional[str] = None
     command_id: Optional[str] = None
-    parent_task_id: Optional[UUID] = None
+    parent_task_id: Optional[str] = None
     custom_fields: Dict[str, Any] = {}
     completion_actions: Dict[str, Any] = {}
 
@@ -836,8 +836,8 @@ class TaskUpdate(BaseModel):
     description: Optional[str] = None
     priority: Optional[str] = None
     status: Optional[str] = None
-    assigned_to: Optional[UUID] = None
-    column_id: Optional[UUID] = None
+    assigned_to: Optional[str] = None
+    column_id: Optional[str] = None
     position: Optional[int] = None
     progress_percent: Optional[int] = None
     checklist_items: Optional[List[TaskChecklistItem]] = None
@@ -847,43 +847,43 @@ class TaskUpdate(BaseModel):
 
 
 class TaskResponse(TaskBase):
-    id: UUID
-    board_id: UUID
-    column_id: UUID
+    id: str
+    board_id: str
+    column_id: str
     position: int
-    assigned_to: Optional[UUID]
-    assigned_by: Optional[UUID]
+    assigned_to: Optional[str]
+    assigned_by: Optional[str]
     assigned_at: Optional[datetime]
     actual_start: Optional[datetime]
     actual_end: Optional[datetime]
-    asset_id: Optional[UUID]
-    operation_id: Optional[UUID]
-    alarm_id: Optional[UUID]
+    asset_id: Optional[str]
+    operation_id: Optional[str]
+    alarm_id: Optional[str]
     command_id: Optional[str]
-    work_order_id: Optional[UUID]
-    parent_task_id: Optional[UUID]
-    rule_id: Optional[UUID]
+    work_order_id: Optional[str]
+    parent_task_id: Optional[str]
+    rule_id: Optional[str]
     progress_percent: int
     time_logged_minutes: int
     custom_fields: Dict[str, Any]
     approval_status: str
-    approved_by: Optional[UUID]
+    approved_by: Optional[str]
     approved_at: Optional[datetime]
     rejection_reason: Optional[str]
     completion_actions: Dict[str, Any]
     completion_result: Dict[str, Any]
-    created_by: Optional[UUID]
+    created_by: Optional[str]
     created_at: datetime
     updated_at: datetime
     completed_at: Optional[datetime]
-    completed_by: Optional[UUID]
+    completed_by: Optional[str]
 
     class Config:
         from_attributes = True
 
 
 class TaskMoveRequest(BaseModel):
-    target_column_id: UUID
+    target_column_id: str
     position: Optional[int] = None
 
 

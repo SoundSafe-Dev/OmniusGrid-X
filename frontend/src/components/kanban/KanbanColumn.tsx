@@ -46,12 +46,25 @@ export const KanbanColumn: React.FC<KanbanColumnProps> = ({
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
+    e.stopPropagation();
     onDragOver(column.id);
   };
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
+    e.stopPropagation();
     onDrop(column.id);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    // Only trigger if actually leaving the column (not just entering a child element)
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX;
+    const y = e.clientY;
+
+    if (x < rect.left || x >= rect.right || y < rect.top || y >= rect.bottom) {
+      onDragLeave();
+    }
   };
 
   const toggleGroup = (taskType: string) => {
@@ -84,7 +97,7 @@ export const KanbanColumn: React.FC<KanbanColumnProps> = ({
         isDragOver ? 'bg-blue-50 dark:bg-blue-900/20 ring-2 ring-blue-400' : ''
       }`}
       onDragOver={handleDragOver}
-      onDragLeave={onDragLeave}
+      onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
       {/* Column Header */}

@@ -34,6 +34,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
   const [users, setUsers] = useState<User[]>([]);
   const [showAssignDropdown, setShowAssignDropdown] = useState(false);
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   // Fetch users when modal opens
   useEffect(() => {
@@ -49,7 +50,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
         });
         if (response.ok) {
           const data = await response.json();
-          setUsers(data);
+          setUsers(data.items || []);
         }
       } catch (error) {
         console.error('Failed to fetch users:', error);
@@ -159,15 +160,22 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
   };
 
   const handleDelete = async () => {
-    if (!confirm('Are you sure you want to delete this task?')) return;
-    
+    setShowDeleteConfirm(true);
+  };
+
+  const confirmDelete = async () => {
     setIsSubmitting(true);
     try {
       await deleteTask(task.id);
+      setShowDeleteConfirm(false);
       onClose();
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const cancelDelete = () => {
+    setShowDeleteConfirm(false);
   };
 
   // Priority badge
@@ -523,6 +531,39 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
             </div>
           </div>
         </div>
+
+        {/* Delete Confirmation Dialog */}
+        {showDeleteConfirm && (
+          <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-10">
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 max-w-sm w-full mx-4">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
+                  <AlertCircle className="w-5 h-5 text-red-600 dark:text-red-400" />
+                </div>
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Delete Task</h3>
+              </div>
+              <p className="text-gray-600 dark:text-gray-400 mb-6">
+                Are you sure you want to delete this task? This action cannot be undone.
+              </p>
+              <div className="flex gap-3 justify-end">
+                <Button
+                  variant="outline"
+                  onClick={cancelDelete}
+                  disabled={isSubmitting}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="danger"
+                  onClick={confirmDelete}
+                  loading={isSubmitting}
+                >
+                  Delete
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
