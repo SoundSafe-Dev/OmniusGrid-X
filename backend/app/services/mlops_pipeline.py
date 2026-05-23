@@ -24,8 +24,14 @@ class ModelArtifactRegistry:
     def __init__(self):
         self.registry_url = settings.MODEL_REGISTRY_URL or 'https://models.opsgrid.io'
         self.api_key = settings.MODEL_REGISTRY_API_KEY
-        self.local_model_dir = Path(settings.LOCAL_MODEL_DIR or '/models')
-        self.local_model_dir.mkdir(parents=True, exist_ok=True)
+        self.local_model_dir = Path(settings.LOCAL_MODEL_DIR or './models')
+        try:
+            self.local_model_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            # Fallback to temp directory if default location is not writable
+            import tempfile
+            self.local_model_dir = Path(tempfile.gettempdir()) / 'opsgrid_models'
+            self.local_model_dir.mkdir(parents=True, exist_ok=True)
     
     async def check_for_updates(self, current_version: str) -> Optional[Dict]:
         """Check if newer model version available"""

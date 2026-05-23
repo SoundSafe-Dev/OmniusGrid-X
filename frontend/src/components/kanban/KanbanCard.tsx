@@ -4,11 +4,10 @@
 
 import React from 'react';
 import { Task } from '../../stores/kanbanStore';
-import { 
-  AlertCircle, 
-  Clock, 
-  User, 
-  CheckSquare, 
+import {
+  AlertCircle,
+  Clock,
+  CheckSquare,
   MessageSquare,
   Wrench,
   Factory,
@@ -35,13 +34,13 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
 }) => {
   const handleDragStart = (e: React.DragEvent) => {
     e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', task.id);
     onDragStart();
   };
 
   // Calculate checklist progress
   const checklistTotal = task.checklist_items?.length || 0;
   const checklistCompleted = task.checklist_items?.filter((i: { completed: boolean }) => i.completed).length || 0;
-  const checklistProgress = checklistTotal > 0 ? (checklistCompleted / checklistTotal) * 100 : 0;
 
   // Check if overdue
   const isOverdue = task.due_date && new Date(task.due_date) < new Date() && task.status !== 'completed';

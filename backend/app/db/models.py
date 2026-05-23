@@ -4,29 +4,35 @@ import uuid
 from datetime import datetime
 from typing import Optional, List
 from sqlalchemy import Column, String, DateTime, Boolean, Numeric, JSON, ForeignKey, Text, BigInteger, Integer
-from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
 
+# SQLite-compatible UUID column type
+def UUIDColumn():
+    return Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+
+def UUIDForeignKey(foreign_key):
+    return Column(String(36), ForeignKey(foreign_key))
+
 
 class Organization(Base):
     __tablename__ = "organizations"
-    
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     name = Column(String(255), nullable=False)
     slug = Column(String(100), unique=True, nullable=False)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     settings = Column(JSON, default={})
-    
+
     assets = relationship("Asset", back_populates="organization")
 
 
 class AssetType(Base):
     __tablename__ = "asset_types"
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = UUIDColumn()
     name = Column(String(100), nullable=False)
     category = Column(String(100), nullable=False)
     packml_config = Column(JSON, default={})
@@ -39,11 +45,11 @@ class AssetType(Base):
 
 class Asset(Base):
     __tablename__ = "assets"
-    
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
-    workcell_id = Column(UUID(as_uuid=True), ForeignKey("workcells.id"))
-    asset_type_id = Column(UUID(as_uuid=True), ForeignKey("asset_types.id"), nullable=False)
+
+    id = UUIDColumn()
+    organization_id = UUIDForeignKey("organizations.id")
+    workcell_id = UUIDForeignKey("workcells.id")
+    asset_type_id = UUIDForeignKey("asset_types.id")
     name = Column(String(255), nullable=False)
     serial_number = Column(String(255))
     vendor = Column(String(100))
@@ -62,8 +68,8 @@ class Asset(Base):
 class PackMLState(Base):
     __tablename__ = "packml_states"
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    asset_id = Column(UUID(as_uuid=True), ForeignKey("assets.id"), nullable=False)
+    id = UUIDColumn()
+    asset_id = UUIDForeignKey("assets.id")
     state = Column(String(50), nullable=False)
     previous_state = Column(String(50))
     state_entered_at = Column(DateTime(timezone=True), nullable=False)
@@ -75,9 +81,9 @@ class PackMLState(Base):
 
 class Telemetry(Base):
     __tablename__ = "telemetry"
-    
+
     time = Column(DateTime(timezone=True), primary_key=True)
-    asset_id = Column(UUID(as_uuid=True), ForeignKey("assets.id"), primary_key=True)
+    asset_id = Column(String(36), ForeignKey("assets.id"), primary_key=True)
     metric_name = Column(String(100), primary_key=True)
     value = Column(Numeric, nullable=False)
     unit = Column(String(50))
@@ -89,15 +95,15 @@ class Telemetry(Base):
 class Alarm(Base):
     __tablename__ = "alarms"
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    asset_id = Column(UUID(as_uuid=True), ForeignKey("assets.id"), nullable=False)
+    id = UUIDColumn()
+    asset_id = UUIDForeignKey("assets.id")
     alarm_code = Column(String(100), nullable=False)
     severity = Column(String(20), nullable=False)
     message = Column(Text, nullable=False)
     description = Column(Text)
     is_active = Column(Boolean, default=True)
     is_acknowledged = Column(Boolean, default=False)
-    acknowledged_by = Column(UUID(as_uuid=True))
+    acknowledged_by = Column(String(36))
     acknowledged_at = Column(DateTime(timezone=True))
     acknowledged_comment = Column(Text)
     occurred_at = Column(DateTime(timezone=True), nullable=False)
@@ -108,8 +114,8 @@ class Alarm(Base):
 class Operation(Base):
     __tablename__ = "operations"
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    asset_id = Column(UUID(as_uuid=True), ForeignKey("assets.id"), nullable=False)
+    id = UUIDColumn()
+    asset_id = UUIDForeignKey("assets.id")
     operation_name = Column(String(255), nullable=False)
     job_id = Column(String(255))
     status = Column(String(50), nullable=False)
@@ -125,8 +131,8 @@ class Operation(Base):
 class Workcell(Base):
     __tablename__ = "workcells"
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
+    id = UUIDColumn()
+    organization_id = UUIDForeignKey("organizations.id")
     name = Column(String(255), nullable=False)
     description = Column(Text)
     location = Column(String(255))
@@ -140,10 +146,10 @@ class YardTrailer(Base):
     """Trailer inventory in the yard"""
     __tablename__ = "yard_trailers"
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
+    id = UUIDColumn()
+    organization_id = UUIDForeignKey("organizations.id")
     trailer_number = Column(String(50), nullable=False)
-    carrier_id = Column(UUID(as_uuid=True), ForeignKey("carriers.id"))
+    carrier_id = UUIDForeignKey("carriers.id")
     trailer_type = Column(String(50))  # dry_van, reefer, flatbed, etc.
     status = Column(String(50), default="checked_in")  # checked_in, docked, yard, checked_out
     yard_location = Column(String(100))  # grid position or zone
@@ -152,9 +158,9 @@ class YardTrailer(Base):
     weight_lbs = Column(Numeric)
     check_in_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     check_out_at = Column(DateTime(timezone=True))
-    dock_door_id = Column(UUID(as_uuid=True), ForeignKey("dock_doors.id"))
-    driver_id = Column(UUID(as_uuid=True), ForeignKey("drivers.id"))
-    shipment_id = Column(UUID(as_uuid=True), ForeignKey("shipments.id"))
+    dock_door_id = UUIDForeignKey("dock_doors.id")
+    driver_id = UUIDForeignKey("drivers.id")
+    shipment_id = UUIDForeignKey("shipments.id")
     temperature_setpoint = Column(Numeric)  # for reefers
     temperature_actual = Column(Numeric)
     meta_data = Column(JSON, default={})
@@ -166,13 +172,13 @@ class DockDoor(Base):
     """Dock door scheduling and status"""
     __tablename__ = "dock_doors"
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
+    id = UUIDColumn()
+    organization_id = UUIDForeignKey("organizations.id")
     door_number = Column(String(50), nullable=False)
     door_type = Column(String(50))  # inbound, outbound, cross_dock
     status = Column(String(50), default="available")  # available, occupied, maintenance
     equipment_capabilities = Column(JSON, default={})  # forklift, pallet_jack, etc.
-    current_trailer_id = Column(UUID(as_uuid=True), ForeignKey("yard_trailers.id"))
+    current_trailer_id = UUIDForeignKey("yard_trailers.id")
     last_occupied_at = Column(DateTime(timezone=True))
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
@@ -183,13 +189,13 @@ class YardMove(Base):
     """Jockey/yard truck movements"""
     __tablename__ = "yard_moves"
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
-    trailer_id = Column(UUID(as_uuid=True), ForeignKey("yard_trailers.id"), nullable=False)
+    id = UUIDColumn()
+    organization_id = UUIDForeignKey("organizations.id")
+    trailer_id = UUIDForeignKey("yard_trailers.id")
     from_location = Column(String(100), nullable=False)
     to_location = Column(String(100), nullable=False)
     move_type = Column(String(50))  # check_in, dock, yard_relocate, check_out
-    jockey_driver_id = Column(UUID(as_uuid=True), ForeignKey("drivers.id"))
+    jockey_driver_id = UUIDForeignKey("drivers.id")
     started_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     completed_at = Column(DateTime(timezone=True))
     duration_seconds = Column(Numeric)
@@ -201,10 +207,10 @@ class DriverWaitTime(Base):
     """Track driver detention/wait times"""
     __tablename__ = "driver_wait_times"
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
-    driver_id = Column(UUID(as_uuid=True), ForeignKey("drivers.id"), nullable=False)
-    trailer_id = Column(UUID(as_uuid=True), ForeignKey("yard_trailers.id"))
+    id = UUIDColumn()
+    organization_id = UUIDForeignKey("organizations.id")
+    driver_id = UUIDForeignKey("drivers.id")
+    trailer_id = UUIDForeignKey("yard_trailers.id")
     check_in_at = Column(DateTime(timezone=True), nullable=False)
     docked_at = Column(DateTime(timezone=True))
     unloaded_at = Column(DateTime(timezone=True))
@@ -226,15 +232,15 @@ class YardCheckPoint(Base):
     """Gate and checkpoint tracking"""
     __tablename__ = "yard_checkpoints"
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
-    trailer_id = Column(UUID(as_uuid=True), ForeignKey("yard_trailers.id"), nullable=False)
+    id = UUIDColumn()
+    organization_id = UUIDForeignKey("organizations.id")
+    trailer_id = UUIDForeignKey("yard_trailers.id")
     checkpoint_type = Column(String(50), nullable=False)  # gate_in, guard_shack, weigh_station, gate_out
     checkpoint_name = Column(String(100))
     passed_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     weight_lbs = Column(Numeric)
     inspection_status = Column(String(50))  # passed, failed, pending
-    inspector_id = Column(UUID(as_uuid=True))
+    inspector_id = Column(String(36))
     meta_data = Column(JSON, default={})
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
@@ -245,8 +251,8 @@ class Carrier(Base):
     """Carrier profiles and compliance"""
     __tablename__ = "carriers"
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
+    id = UUIDColumn()
+    organization_id = UUIDForeignKey("organizations.id")
     carrier_name = Column(String(255), nullable=False)
     dot_number = Column(String(50))
     mc_number = Column(String(50))
@@ -267,9 +273,9 @@ class Driver(Base):
     """Driver profiles and HOS compliance"""
     __tablename__ = "drivers"
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
-    carrier_id = Column(UUID(as_uuid=True), ForeignKey("carriers.id"))
+    id = UUIDColumn()
+    organization_id = UUIDForeignKey("organizations.id")
+    carrier_id = UUIDForeignKey("carriers.id")
     first_name = Column(String(100), nullable=False)
     last_name = Column(String(100), nullable=False)
     license_number = Column(String(100))
@@ -294,11 +300,11 @@ class Shipment(Base):
     """Shipment lifecycle tracking"""
     __tablename__ = "shipments"
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
-    carrier_id = Column(UUID(as_uuid=True), ForeignKey("carriers.id"))
-    driver_id = Column(UUID(as_uuid=True), ForeignKey("drivers.id"))
-    trailer_id = Column(UUID(as_uuid=True), ForeignKey("yard_trailers.id"))
+    id = UUIDColumn()
+    organization_id = UUIDForeignKey("organizations.id")
+    carrier_id = UUIDForeignKey("carriers.id")
+    driver_id = UUIDForeignKey("drivers.id")
+    trailer_id = UUIDForeignKey("yard_trailers.id")
     shipment_number = Column(String(100), nullable=False)
     pro_number = Column(String(100))  # Progressive Rotating Order
     bol_number = Column(String(100))  # Bill of Lading
@@ -317,7 +323,7 @@ class Shipment(Base):
     temperature_required = Column(Boolean, default=False)
     temperature_min = Column(Numeric)
     temperature_max = Column(Numeric)
-    route_id = Column(UUID(as_uuid=True), ForeignKey("routes.id"))
+    route_id = UUIDForeignKey("routes.id")
     meta_data = Column(JSON, default={})
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
@@ -327,8 +333,8 @@ class Route(Base):
     """Optimized routes for shipments"""
     __tablename__ = "routes"
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
+    id = UUIDColumn()
+    organization_id = UUIDForeignKey("organizations.id")
     route_name = Column(String(255))
     origin = Column(JSON, default={}, nullable=False)
     destination = Column(JSON, default={}, nullable=False)
@@ -347,11 +353,11 @@ class LoadPlan(Base):
     """Product-to-trailer load planning"""
     __tablename__ = "load_plans"
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
-    shipment_id = Column(UUID(as_uuid=True), ForeignKey("shipments.id"), nullable=False)
-    trailer_id = Column(UUID(as_uuid=True), ForeignKey("yard_trailers.id"))
-    planned_by = Column(UUID(as_uuid=True))
+    id = UUIDColumn()
+    organization_id = UUIDForeignKey("organizations.id")
+    shipment_id = UUIDForeignKey("shipments.id")
+    trailer_id = UUIDForeignKey("yard_trailers.id")
+    planned_by = Column(String(36))
     planned_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     load_sequence = Column(JSON, default=[])  # order of loading
     weight_distribution = Column(JSON, default={})  # axle weights
@@ -369,10 +375,10 @@ class FreightCharge(Base):
     """Freight billing and charges"""
     __tablename__ = "freight_charges"
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
-    shipment_id = Column(UUID(as_uuid=True), ForeignKey("shipments.id"), nullable=False)
-    carrier_id = Column(UUID(as_uuid=True), ForeignKey("carriers.id"))
+    id = UUIDColumn()
+    organization_id = UUIDForeignKey("organizations.id")
+    shipment_id = UUIDForeignKey("shipments.id")
+    carrier_id = UUIDForeignKey("carriers.id")
     charge_type = Column(String(50), nullable=False)  # linehaul, fuel, detention, demurrage, accessorial
     charge_description = Column(String(255))
     rate_basis = Column(String(50))  # per_mile, per_pound, flat, hourly
@@ -383,7 +389,7 @@ class FreightCharge(Base):
     is_billed = Column(Boolean, default=False)
     billed_at = Column(DateTime(timezone=True))
     invoice_number = Column(String(100))
-    approved_by = Column(UUID(as_uuid=True))
+    approved_by = Column(String(36))
     approved_at = Column(DateTime(timezone=True))
     meta_data = Column(JSON, default={})
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
@@ -396,20 +402,20 @@ class DockAppointment(Base):
     """Link dock schedules to production"""
     __tablename__ = "dock_appointments"
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
-    dock_door_id = Column(UUID(as_uuid=True), ForeignKey("dock_doors.id"), nullable=False)
-    trailer_id = Column(UUID(as_uuid=True), ForeignKey("yard_trailers.id"))
-    shipment_id = Column(UUID(as_uuid=True), ForeignKey("shipments.id"))
-    operation_id = Column(UUID(as_uuid=True), ForeignKey("operations.id"))  # linked production job
+    id = UUIDColumn()
+    organization_id = UUIDForeignKey("organizations.id")
+    dock_door_id = UUIDForeignKey("dock_doors.id")
+    trailer_id = UUIDForeignKey("yard_trailers.id")
+    shipment_id = UUIDForeignKey("shipments.id")
+    operation_id = UUIDForeignKey("operations.id")  # linked production job
     appointment_type = Column(String(50))  # pickup, delivery, transfer
     scheduled_start = Column(DateTime(timezone=True), nullable=False)
     scheduled_end = Column(DateTime(timezone=True), nullable=False)
     actual_start = Column(DateTime(timezone=True))
     actual_end = Column(DateTime(timezone=True))
     status = Column(String(50), default="scheduled")  # scheduled, in_progress, completed, cancelled, no_show
-    carrier_id = Column(UUID(as_uuid=True), ForeignKey("carriers.id"))
-    driver_id = Column(UUID(as_uuid=True), ForeignKey("drivers.id"))
+    carrier_id = UUIDForeignKey("carriers.id")
+    driver_id = UUIDForeignKey("drivers.id")
     priority = Column(String(20), default="normal")
     compliance_required = Column(Boolean, default=False)  # FDA, etc.
     meta_data = Column(JSON, default={})
@@ -421,12 +427,12 @@ class TruckAssetCorrelation(Base):
     """Correlate truck arrivals with manufacturing asset readiness"""
     __tablename__ = "truck_asset_correlations"
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
-    shipment_id = Column(UUID(as_uuid=True), ForeignKey("shipments.id"))
-    trailer_id = Column(UUID(as_uuid=True), ForeignKey("yard_trailers.id"))
-    asset_id = Column(UUID(as_uuid=True), ForeignKey("assets.id"))
-    operation_id = Column(UUID(as_uuid=True), ForeignKey("operations.id"))
+    id = UUIDColumn()
+    organization_id = UUIDForeignKey("organizations.id")
+    shipment_id = UUIDForeignKey("shipments.id")
+    trailer_id = UUIDForeignKey("yard_trailers.id")
+    asset_id = UUIDForeignKey("assets.id")
+    operation_id = UUIDForeignKey("operations.id")
     truck_arrived_at = Column(DateTime(timezone=True))
     asset_ready_at = Column(DateTime(timezone=True))
     asset_completion_forecast = Column(DateTime(timezone=True))
@@ -444,17 +450,17 @@ class LoadQualityLog(Base):
     """Track shipping defects and correlate to manufacturing"""
     __tablename__ = "load_quality_logs"
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
-    shipment_id = Column(UUID(as_uuid=True), ForeignKey("shipments.id"))
-    trailer_id = Column(UUID(as_uuid=True), ForeignKey("yard_trailers.id"))
-    asset_id = Column(UUID(as_uuid=True), ForeignKey("assets.id"))  # source asset
-    operation_id = Column(UUID(as_uuid=True), ForeignKey("operations.id"))
+    id = UUIDColumn()
+    organization_id = UUIDForeignKey("organizations.id")
+    shipment_id = UUIDForeignKey("shipments.id")
+    trailer_id = UUIDForeignKey("yard_trailers.id")
+    asset_id = UUIDForeignKey("assets.id")  # source asset
+    operation_id = UUIDForeignKey("operations.id")
     defect_type = Column(String(100))  # wrong_product, damaged, short, over, temp_excursion
     severity = Column(String(20))  # minor, major, critical
     quantity_affected = Column(Numeric)
-    root_cause_asset = Column(UUID(as_uuid=True), ForeignKey("assets.id"))
-    root_cause_operation = Column(UUID(as_uuid=True), ForeignKey("operations.id"))
+    root_cause_asset = UUIDForeignKey("assets.id")
+    root_cause_operation = UUIDForeignKey("operations.id")
     manufacturing_correlation_score = Column(Numeric)  # confidence of manufacturing root cause
     carrier_liable = Column(Boolean, default=False)
     claim_filed = Column(Boolean, default=False)
@@ -469,11 +475,11 @@ class User(Base):
     """User authentication and authorization"""
     __tablename__ = "users"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = UUIDColumn()
     email = Column(String(255), unique=True, nullable=False)
     hashed_password = Column(String(255), nullable=False)
     full_name = Column(String(255))
-    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"))
+    organization_id = UUIDForeignKey("organizations.id")
     role = Column(String(50), default="operator")
     is_active = Column(Boolean, default=True)
     last_login = Column(DateTime(timezone=True))
@@ -485,20 +491,20 @@ class Command(Base):
     """Command execution log for actionable decisions"""
     __tablename__ = "commands"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    asset_id = Column(UUID(as_uuid=True), ForeignKey("assets.id"), nullable=False)
+    id = UUIDColumn()
+    asset_id = UUIDForeignKey("assets.id")
     command_type = Column(String(50), nullable=False)
     action_id = Column(String(255), nullable=False)
     parameters = Column(JSON, default=dict)
     status = Column(String(50), default="pending")  # pending, executing, completed, failed, cancelled
     priority = Column(String(20), default="normal")  # low, normal, high, critical
     issued_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    issued_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
+    issued_by = UUIDForeignKey("users.id")
     executed_at = Column(DateTime(timezone=True))
     completed_at = Column(DateTime(timezone=True))
     result = Column(JSON, default=dict)
     error_message = Column(Text)
-    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"))
+    organization_id = UUIDForeignKey("organizations.id")
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
@@ -509,8 +515,8 @@ class TaskBoard(Base):
     """Unified kanban board configuration per organization"""
     __tablename__ = "task_boards"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
+    id = UUIDColumn()
+    organization_id = UUIDForeignKey("organizations.id")
     name = Column(String(255), nullable=False, default="Main Operations Board")
     board_type = Column(String(50), default="unified")  # unified, production, maintenance, quality, safety, logistics
     default_view_config = Column(JSON, default={
@@ -528,8 +534,8 @@ class TaskColumn(Base):
     """Kanban columns (swimlanes) - standard 6 columns"""
     __tablename__ = "task_columns"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    board_id = Column(UUID(as_uuid=True), ForeignKey("task_boards.id"), nullable=False)
+    id = UUIDColumn()
+    board_id = UUIDForeignKey("task_boards.id")
     name = Column(String(100), nullable=False)
     position = Column(Integer, nullable=False)  # order in board
     wip_limit = Column(Integer, default=5)  # max tasks allowed
@@ -545,9 +551,9 @@ class Task(Base):
     """Central work item for actionable decision-making"""
     __tablename__ = "tasks"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    board_id = Column(UUID(as_uuid=True), ForeignKey("task_boards.id"), nullable=False)
-    column_id = Column(UUID(as_uuid=True), ForeignKey("task_columns.id"), nullable=False)
+    id = UUIDColumn()
+    board_id = UUIDForeignKey("task_boards.id")
+    column_id = UUIDForeignKey("task_columns.id")
     position = Column(Integer, default=0)  # order within column
 
     # Basic info
@@ -558,8 +564,8 @@ class Task(Base):
     status = Column(String(50), default="draft")  # draft, ready, in_progress, blocked, completed, cancelled
 
     # Assignments
-    assigned_to = Column(UUID(as_uuid=True), ForeignKey("users.id"))
-    assigned_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
+    assigned_to = UUIDForeignKey("users.id")
+    assigned_by = UUIDForeignKey("users.id")
     assigned_at = Column(DateTime(timezone=True))
 
     # Scheduling
@@ -570,13 +576,13 @@ class Task(Base):
     actual_end = Column(DateTime(timezone=True))
 
     # Relationships to OmniusGrid entities
-    asset_id = Column(UUID(as_uuid=True), ForeignKey("assets.id"))
-    operation_id = Column(UUID(as_uuid=True), ForeignKey("operations.id"))
-    alarm_id = Column(UUID(as_uuid=True))
+    asset_id = UUIDForeignKey("assets.id")
+    operation_id = UUIDForeignKey("operations.id")
+    alarm_id = Column(String(36))
     command_id = Column(String(255))  # Command ID (string format)
-    work_order_id = Column(UUID(as_uuid=True))
-    parent_task_id = Column(UUID(as_uuid=True), ForeignKey("tasks.id"))
-    rule_id = Column(UUID(as_uuid=True), ForeignKey("task_rules.id"))  # Rule that created this task
+    work_order_id = Column(String(36))
+    parent_task_id = UUIDForeignKey("tasks.id")
+    rule_id = UUIDForeignKey("task_rules.id")  # Rule that created this task
 
     # Progress tracking
     progress_percent = Column(Integer, default=0)  # 0-100
@@ -591,7 +597,7 @@ class Task(Base):
 
     # Approval workflow
     approval_status = Column(String(50), default="pending")  # pending, approved, rejected
-    approved_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
+    approved_by = UUIDForeignKey("users.id")
     approved_at = Column(DateTime(timezone=True))
     rejection_reason = Column(Text)
 
@@ -600,20 +606,20 @@ class Task(Base):
     completion_result = Column(JSON, default=dict)  # Log of what actions were taken
 
     # Audit
-    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
+    created_by = UUIDForeignKey("users.id")
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     completed_at = Column(DateTime(timezone=True))
-    completed_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
+    completed_by = UUIDForeignKey("users.id")
 
 
 class TaskComment(Base):
     """Activity feed for tasks"""
     __tablename__ = "task_comments"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    task_id = Column(UUID(as_uuid=True), ForeignKey("tasks.id"), nullable=False)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
+    id = UUIDColumn()
+    task_id = UUIDForeignKey("tasks.id")
+    user_id = UUIDForeignKey("users.id")
     comment_type = Column(String(50), default="comment")  # comment, system, time_log, status_change, approval_action
     content = Column(Text)
     extra_data = Column(JSON, default=dict)  # { "before_state": "...", "after_state": "..." }
@@ -624,9 +630,9 @@ class TaskTimer(Base):
     """Time tracking for tasks"""
     __tablename__ = "task_timers"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    task_id = Column(UUID(as_uuid=True), ForeignKey("tasks.id"), nullable=False)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    id = UUIDColumn()
+    task_id = UUIDForeignKey("tasks.id")
+    user_id = UUIDForeignKey("users.id")
     started_at = Column(DateTime(timezone=True), nullable=False)
     ended_at = Column(DateTime(timezone=True))
     duration_minutes = Column(Integer, default=0)
@@ -639,8 +645,8 @@ class TaskRule(Base):
     """Rules registry for automated task creation"""
     __tablename__ = "task_rules"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
+    id = UUIDColumn()
+    organization_id = UUIDForeignKey("organizations.id")
     rule_name = Column(String(255), nullable=False)
     description = Column(Text)
     is_active = Column(Boolean, default=True)
@@ -651,15 +657,15 @@ class TaskRule(Base):
     trigger_conditions = Column(JSON, default=dict)  # { "severity": "critical", "asset_type": "3d_printer" }
 
     # Task template
-    target_board_id = Column(UUID(as_uuid=True), ForeignKey("task_boards.id"))
-    target_column_id = Column(UUID(as_uuid=True), ForeignKey("task_columns.id"))
+    target_board_id = UUIDForeignKey("task_boards.id")
+    target_column_id = UUIDForeignKey("task_columns.id")
     task_template = Column(JSON, default=dict)  # { "title": "...", "description": "...", "priority": "high", "task_type": "alarm_response" }
 
     # Automation settings
     auto_approve_emergency = Column(Boolean, default=False)
     auto_approve_timeout_minutes = Column(Integer, default=30)
     assignee_rule = Column(String(50), default="asset_owner")  # round_robin, asset_owner, supervisor, specific_user
-    specific_assignee_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
+    specific_assignee_id = UUIDForeignKey("users.id")
     notify_users = Column(JSON, default=list)  # User IDs to notify
 
     # Completion actions
@@ -669,7 +675,7 @@ class TaskRule(Base):
     escalation_config = Column(JSON, default=dict)  # { "levels": [{"time_minutes": 15, "level": 1, "channels": ["push", "email"]}] }
 
     # Audit
-    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
+    created_by = UUIDForeignKey("users.id")
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
@@ -678,9 +684,9 @@ class TaskEscalation(Base):
     """Escalation log for tasks"""
     __tablename__ = "task_escalations"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    task_id = Column(UUID(as_uuid=True), ForeignKey("tasks.id"), nullable=False)
-    rule_id = Column(UUID(as_uuid=True), ForeignKey("task_rules.id"))
+    id = UUIDColumn()
+    task_id = UUIDForeignKey("tasks.id")
+    rule_id = UUIDForeignKey("task_rules.id")
     escalation_level = Column(Integer, nullable=False)  # 1-5
     triggered_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     resolved_at = Column(DateTime(timezone=True))
@@ -694,8 +700,8 @@ class ActionableRegistry(Base):
     """Actionable registries for compliance and operational requirements"""
     __tablename__ = "actionable_registries"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
+    id = UUIDColumn()
+    organization_id = UUIDForeignKey("organizations.id")
     registry_name = Column(String(255), nullable=False)  # e.g., "OSHA 1910.147", "ISO 9001:2015"
     registry_type = Column(String(50), nullable=False)  # safety, quality, environmental, operational, regulatory
     registry_category = Column(String(100))  # sub-category within type
@@ -707,12 +713,12 @@ class ActionableRegistry(Base):
     last_completed_date = Column(DateTime(timezone=True))
     compliance_score = Column(Integer, default=0)  # 0-100
     priority_level = Column(String(20), default="medium")  # low, medium, high, critical
-    assigned_owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
-    assigned_team_id = Column(UUID)  # team reference if applicable
+    assigned_owner_id = UUIDForeignKey("users.id")
+    assigned_team_id = Column(String(36))  # team reference if applicable
     reference_url = Column(String(500))  # link to official documentation
     checklist_requirements = Column(JSON, default=list)  # [{id, requirement, completed, notes}]
     meta_data = Column(JSON, default=dict)
-    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
+    created_by = UUIDForeignKey("users.id")
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
@@ -721,8 +727,8 @@ class ActionableRegistryItem(Base):
     """Individual actionable items within a registry"""
     __tablename__ = "actionable_registry_items"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    registry_id = Column(UUID(as_uuid=True), ForeignKey("actionable_registries.id"), nullable=False)
+    id = UUIDColumn()
+    registry_id = UUIDForeignKey("actionable_registries.id")
     item_code = Column(String(100), nullable=False)  # e.g., "1910.147(a)(1)"
     item_name = Column(String(255), nullable=False)
     item_description = Column(Text)
@@ -732,7 +738,7 @@ class ActionableRegistryItem(Base):
     completion_criteria = Column(Text)
     verification_method = Column(String(255))  # inspection, test, documentation, audit
     estimated_effort_minutes = Column(Integer)
-    related_task_id = Column(UUID(as_uuid=True), ForeignKey("tasks.id"))
+    related_task_id = UUIDForeignKey("tasks.id")
     last_completed_at = Column(DateTime(timezone=True))
     next_due_at = Column(DateTime(timezone=True))
     completion_frequency = Column(String(50))  # daily, weekly, monthly, quarterly, annually
@@ -747,20 +753,20 @@ class DataCorrelation(Base):
     """Data correlation mapping for tasks and actionable items"""
     __tablename__ = "data_correlations"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
+    id = UUIDColumn()
+    organization_id = UUIDForeignKey("organizations.id")
     correlation_type = Column(String(50), nullable=False)  # task_to_registry, task_to_asset, task_to_alarm, registry_to_asset
     source_type = Column(String(50), nullable=False)  # task, registry_item, asset, alarm, operation
-    source_id = Column(UUID(as_uuid=True))
+    source_id = Column(String(36))
     target_type = Column(String(50), nullable=False)  # task, registry_item, asset, alarm, operation
-    target_id = Column(UUID(as_uuid=True))
+    target_id = Column(String(36))
     correlation_strength = Column(Integer, default=50)  # 0-100, strength of correlation
     correlation_method = Column(String(50), default="manual")  # manual, automated, ai_suggested
     confidence_score = Column(Integer, default=0)  # 0-100, confidence in correlation
     is_active = Column(Boolean, default=True)
     is_bidirectional = Column(Boolean, default=False)
     correlation_meta_data = Column(JSON, default=dict)  # additional context
-    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
+    created_by = UUIDForeignKey("users.id")
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
@@ -771,9 +777,9 @@ class AnalysisSession(Base):
     """Analysis sessions for NLP correlation AI"""
     __tablename__ = "analysis_sessions"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
+    id = UUIDColumn()
+    user_id = UUIDForeignKey("users.id")
+    organization_id = UUIDForeignKey("organizations.id")
     title = Column(String(500), nullable=False)
     description = Column(Text)
     status = Column(String(50), default="active")  # active, archived, deleted
@@ -789,10 +795,10 @@ class SessionDataSource(Base):
     """Data sources used in analysis sessions"""
     __tablename__ = "session_data_sources"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    session_id = Column(UUID(as_uuid=True), ForeignKey("analysis_sessions.id"), nullable=False)
+    id = UUIDColumn()
+    session_id = UUIDForeignKey("analysis_sessions.id")
     source_type = Column(String(50), nullable=False)  # intake, upload, system
-    source_id = Column(UUID(as_uuid=True))  # ID from source table (intake_id, etc.)
+    source_id = Column(String(36))  # ID from source table (intake_id, etc.)
     file_name = Column(String(255))
     data_type = Column(String(50))  # spreadsheet, report, image, document
     processed_data = Column(JSON, default=dict)
@@ -804,8 +810,8 @@ class SessionMessage(Base):
     """Chat messages with session context"""
     __tablename__ = "session_messages"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    session_id = Column(UUID(as_uuid=True), ForeignKey("analysis_sessions.id"), nullable=False)
+    id = UUIDColumn()
+    session_id = UUIDForeignKey("analysis_sessions.id")
     role = Column(String(20), nullable=False)  # user, assistant, system
     content = Column(Text, nullable=False)
     analysis = Column(JSON, default=dict)  # AI analysis result

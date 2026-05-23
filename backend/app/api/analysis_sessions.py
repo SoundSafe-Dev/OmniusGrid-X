@@ -7,7 +7,7 @@ API endpoints for managing analysis sessions, data sources, and session-based ch
 from typing import List, Dict, Any, Optional
 from uuid import UUID
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, UploadFile, File, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_
 from pydantic import BaseModel, Field
@@ -1025,7 +1025,7 @@ async def get_chat_history(
 
 @router.get("/chat/search", response_model=List[SessionMessageResponse])
 async def search_chat_history(
-    q: str = Field(..., description="Search query"),
+    q: str = Query(..., description="Search query"),
     limit: int = 50,
     offset: int = 0,
     session_id: Optional[UUID] = None,
