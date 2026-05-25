@@ -1,17 +1,16 @@
-import { FC, ReactNode } from 'react';
+import { forwardRef, ReactNode, HTMLAttributes } from 'react';
 import { cn } from '../../utils';
 
-interface CardProps {
+interface CardProps extends HTMLAttributes<HTMLDivElement> {
   children: ReactNode;
   title?: string;
   subtitle?: string;
   action?: ReactNode;
-  className?: string;
   noPadding?: boolean;
   hover?: boolean;
 }
 
-export const Card: FC<CardProps> = ({
+export const Card = forwardRef<HTMLDivElement, CardProps>(({
   children,
   title,
   subtitle,
@@ -19,14 +18,17 @@ export const Card: FC<CardProps> = ({
   className,
   noPadding = false,
   hover = false,
-}) => {
+  ...props
+}, ref) => {
   return (
     <div
+      ref={ref}
       className={cn(
         'bg-opsgrid-panel border border-opsgrid-border rounded-lg overflow-hidden',
         hover && 'hover:border-opsgrid-border-emphasis transition-colors cursor-pointer',
         className
       )}
+      {...props}
     >
       {(title || subtitle || action) && (
         <div className="px-4 py-3 border-b border-opsgrid-border flex items-center justify-between">
@@ -42,4 +44,6 @@ export const Card: FC<CardProps> = ({
       <div className={cn(!noPadding && 'p-4')}>{children}</div>
     </div>
   );
-};
+});
+
+Card.displayName = 'Card';

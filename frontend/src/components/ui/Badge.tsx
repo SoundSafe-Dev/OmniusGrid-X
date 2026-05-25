@@ -1,15 +1,14 @@
-import { FC, ReactNode } from 'react';
+import { forwardRef, ReactNode, HTMLAttributes } from 'react';
 import { cn, STATUS_COLORS } from '../../utils';
 import { AlarmSeverity, PackMLState } from '../../types';
 import { Tooltip, TooltipTrigger, TooltipContent } from './Tooltip';
 
 type BadgeVariant = AlarmSeverity | PackMLState | 'default' | 'success' | 'warning' | 'error' | 'info' | 'neutral';
 
-interface BadgeProps {
+interface BadgeProps extends HTMLAttributes<HTMLSpanElement> {
   children: ReactNode;
   variant?: BadgeVariant;
   size?: 'sm' | 'md';
-  className?: string;
   dot?: boolean;
   pulse?: boolean;
   tooltip?: string;
@@ -26,7 +25,7 @@ const variantMap: Record<BadgeVariant, string> = {
   ...STATUS_COLORS,
 };
 
-export const Badge: FC<BadgeProps> = ({
+export const Badge = forwardRef<HTMLSpanElement, BadgeProps>(({
   children,
   variant = 'default',
   size = 'sm',
@@ -34,7 +33,8 @@ export const Badge: FC<BadgeProps> = ({
   dot = false,
   pulse = false,
   tooltip,
-}) => {
+  ...props
+}, ref) => {
   const sizeClasses = {
     sm: 'px-2 py-0.5 text-xs',
     md: 'px-3 py-1 text-sm',
@@ -42,12 +42,14 @@ export const Badge: FC<BadgeProps> = ({
 
   const badgeContent = (
     <span
+      ref={ref}
       className={cn(
         'inline-flex items-center gap-1.5 font-medium rounded-full',
         variantMap[variant] || variantMap.default,
         sizeClasses[size],
         className
       )}
+      {...props}
     >
       {dot && (
         <span
@@ -73,4 +75,6 @@ export const Badge: FC<BadgeProps> = ({
   }
 
   return badgeContent;
-};
+});
+
+Badge.displayName = 'Badge';
