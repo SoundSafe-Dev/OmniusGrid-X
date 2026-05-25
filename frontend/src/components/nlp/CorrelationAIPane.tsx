@@ -3,6 +3,7 @@ import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { Badge } from '../ui/Badge';
+import { Tooltip, TooltipTrigger, TooltipContent } from '../ui';
 import { analysisSessionsApi, AnalysisSession, SessionMessage } from '../../api/analysisSessions';
 import { SessionList } from './SessionList';
 import { DataSourcesPanel } from './DataSourcesPanel';
@@ -24,19 +25,9 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
   const [autoIntegrate, setAutoIntegrate] = useState(true);
   const [showIntakeDialog, setShowIntakeDialog] = useState(false);
   const [showChatHistory, setShowChatHistory] = useState(false);
+  const [dataSourcesKey, setDataSourcesKey] = useState(0);
+  const [sessionListKey, setSessionListKey] = useState(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  // User context and goals (placeholder - will be fetched from user context API)
-  const [userContext] = useState({
-    role: 'Production Manager',
-    department: 'Operations',
-    priorities: ['Quality', 'Efficiency', 'Safety']
-  });
-
-  const [goals] = useState([
-    { title: 'Reduce downtime by 15%', progress: 65, deadline: '2024-12-31' },
-    { title: 'Improve OEE to 85%', progress: 42, deadline: '2024-12-31' }
-  ]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -48,11 +39,17 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
 
   const handleCreateNewSession = async () => {
     try {
+      console.log('[CorrelationAIPane] Creating new session...');
       const session = await analysisSessionsApi.createSession({});
+      console.log('[CorrelationAIPane] Session created:', session);
       setCurrentSession(session);
       setMessages([]);
+      // Force refresh session list
+      console.log('[CorrelationAIPane] Refreshing session list, key:', sessionListKey + 1);
+      setSessionListKey(prev => prev + 1);
     } catch (error) {
-      console.error('Error creating session:', error);
+      console.error('[CorrelationAIPane] Error creating session:', error);
+      alert('Failed to create session. Check console for details.');
     }
   };
 
@@ -70,7 +67,8 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
     if (!currentSession) return;
     try {
       await analysisSessionsApi.addIntakeData(currentSession.id, intakeId);
-      // Reload data sources
+      // Force refresh of data sources panel
+      setDataSourcesKey(prev => prev + 1);
     } catch (error) {
       console.error('Error adding intake data:', error);
     }
@@ -140,12 +138,14 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
       {/* Left Sidebar - Sessions and Data Sources */}
       <div className="w-72 flex flex-col gap-4">
         <SessionList
+          key={sessionListKey}
           onSessionSelect={handleSessionSelect}
           onNewSession={handleCreateNewSession}
           currentSessionId={currentSession?.id}
         />
         {currentSession && (
           <DataSourcesPanel
+            key={dataSourcesKey}
             sessionId={currentSession.id}
             onDataSourceAdded={() => {/* Refresh */}}
           />
@@ -166,23 +166,38 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
             )}
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => setShowIntakeDialog(true)}>
-              <Inbox className="w-4 h-4 mr-2" />
-              Add Data
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => setShowChatHistory(true)}>
-              <History className="w-4 h-4 mr-2" />
-              History
-            </Button>
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={autoIntegrate}
-                onChange={(e) => setAutoIntegrate(e.target.checked)}
-                className="rounded"
-              />
-              Auto-integrate
-            </label>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="outline" size="sm" onClick={() => setShowIntakeDialog(true)}>
+                  <Inbox className="w-4 h-4 mr-2" />
+                  Add Data
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Upload operational data for AI analysis</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="outline" size="sm" onClick={() => setShowChatHistory(true)}>
+                  <History className="w-4 h-4 mr-2" />
+                  History
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>View chat history and previous sessions</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={autoIntegrate}
+                    onChange={(e) => setAutoIntegrate(e.target.checked)}
+                    className="rounded"
+                  />
+                  Auto-integrate
+                </label>
+              </TooltipTrigger>
+              <TooltipContent>Automatically create Kanban tasks from AI recommendations</TooltipContent>
+            </Tooltip>
           </div>
         </div>
 
@@ -218,18 +233,28 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
                   >
                     {message.role === 'assistant' && message.risk_score !== undefined && (
                       <div className="mb-3">
-                        <Badge variant={getRiskScoreVariant(message.risk_score)}>
-                          {getRiskScoreLabel(message.risk_score)} Risk: {message.risk_score.toFixed(1)}/100
-                        </Badge>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Badge variant={getRiskScoreVariant(message.risk_score)}>
+                              {getRiskScoreLabel(message.risk_score)} Risk: {message.risk_score.toFixed(1)}/100
+                            </Badge>
+                          </TooltipTrigger>
+                          <TooltipContent>AI-assessed risk severity (0-100)</TooltipContent>
+                        </Tooltip>
                       </div>
                     )}
 
                     {message.domains && message.domains.length > 0 && (
                       <div className="mb-2 flex flex-wrap gap-1">
                         {message.domains.map((domain) => (
-                          <Badge key={domain} variant="info" className="text-xs">
-                            {domain}
-                          </Badge>
+                          <Tooltip key={domain}>
+                            <TooltipTrigger asChild>
+                              <Badge variant="info" className="text-xs">
+                                {domain}
+                              </Badge>
+                            </TooltipTrigger>
+                            <TooltipContent>Operational domain: {domain}</TooltipContent>
+                          </Tooltip>
                         ))}
                       </div>
                     )}
@@ -281,27 +306,29 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
               disabled={!currentSession || isLoading}
               className="flex-1"
             />
-            <Button
-              onClick={handleSendMessage}
-              disabled={!currentSession || isLoading || !input.trim()}
-              className="px-4"
-            >
-              {isLoading ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Send className="w-4 h-4" />
-              )}
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  onClick={handleSendMessage}
+                  disabled={!currentSession || isLoading || !input.trim()}
+                  className="px-4"
+                >
+                  {isLoading ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Send className="w-4 h-4" />
+                  )}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Submit query to Correlation AI</TooltipContent>
+            </Tooltip>
           </div>
         </div>
       </Card>
 
       {/* Right Sidebar - Context and Real-Time Data */}
       <div className="w-72 flex flex-col gap-4">
-        <ContextPanel
-          userContext={userContext}
-          goals={goals}
-        />
+        <ContextPanel />
         {currentSession && (
           <RealTimeDataPanel sessionId={currentSession.id} />
         )}

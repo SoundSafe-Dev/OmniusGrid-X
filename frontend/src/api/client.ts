@@ -1,7 +1,22 @@
 import axios, { AxiosError, AxiosResponse } from 'axios'
 import { ApiError } from '../types'
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+// Use window.location.hostname to dynamically determine API URL
+const getApiUrl = () => {
+  // @ts-ignore
+  const envUrl = import.meta.env?.VITE_API_URL
+  if (envUrl) return envUrl
+  
+  // If accessing from IP, use IP for API calls too
+  const hostname = window.location.hostname
+  if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
+    return `http://${hostname}:8000`
+  }
+  
+  return 'http://localhost:8000'
+}
+
+const API_URL = getApiUrl()
 
 export const api = axios.create({
   baseURL: API_URL,

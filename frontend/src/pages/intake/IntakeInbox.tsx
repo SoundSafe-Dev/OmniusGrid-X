@@ -3,6 +3,7 @@ import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Badge } from '../../components/ui/Badge';
+import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
 import { nlpCorrelationApi, IntakeItem } from '../../api/nlpCorrelation';
 import { Upload, FileText, Image, FileSpreadsheet, Loader2, CheckCircle, Search } from 'lucide-react';
 
@@ -203,23 +204,28 @@ export const IntakeInbox: React.FC = () => {
           </div>
 
           <div className="flex justify-end">
-            <Button
-              onClick={handleUpload}
-              disabled={!selectedFile || !title || uploading}
-              className="min-w-[120px]"
-            >
-              {uploading ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Uploading...
-                </>
-              ) : (
-                <>
-                  <Upload className="w-4 h-4 mr-2" />
-                  Upload
-                </>
-              )}
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  onClick={handleUpload}
+                  disabled={!selectedFile || !title || uploading}
+                  className="min-w-[120px]"
+                >
+                  {uploading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Uploading...
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="w-4 h-4 mr-2" />
+                      Upload
+                    </>
+                  )}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Upload file for AI analysis</TooltipContent>
+            </Tooltip>
           </div>
         </div>
       </Card>
@@ -294,28 +300,38 @@ export const IntakeInbox: React.FC = () => {
                   </div>
                   <div className="flex flex-col gap-2 ml-4">
                     {item.status === 'pending' && (
-                      <Button
-                        size="sm"
-                        onClick={() => handleAnalyze(item.id)}
-                        disabled={analyzing === item.id}
-                      >
-                        {analyzing === item.id ? (
-                          <>
-                            <Loader2 className="w-3 h-3 mr-2 animate-spin" />
-                            Analyzing...
-                          </>
-                        ) : (
-                          <>
-                            <CheckCircle className="w-3 h-3 mr-2" />
-                            Analyze
-                          </>
-                        )}
-                      </Button>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            size="sm"
+                            onClick={() => handleAnalyze(item.id)}
+                            disabled={analyzing === item.id}
+                          >
+                            {analyzing === item.id ? (
+                              <>
+                                <Loader2 className="w-3 h-3 mr-2 animate-spin" />
+                                Analyzing...
+                              </>
+                            ) : (
+                              <>
+                                <CheckCircle className="w-3 h-3 mr-2" />
+                                Analyze
+                              </>
+                            )}
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Run AI correlation analysis on this item</TooltipContent>
+                      </Tooltip>
                     )}
                     {item.analysis_result && (
-                      <Button variant="outline" size="sm">
-                        View Results
-                      </Button>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button variant="outline" size="sm">
+                            View Results
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>View detailed analysis results</TooltipContent>
+                      </Tooltip>
                     )}
                   </div>
                 </div>

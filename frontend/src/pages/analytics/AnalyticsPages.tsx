@@ -1,6 +1,7 @@
 import { FC, useState } from 'react';
 import { Activity, AlertTriangle, Wrench } from 'lucide-react';
 import { Card, Badge, SkeletonCard } from '../../components';
+import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
 
 export const AssetHealth: FC = () => {
   return (
@@ -8,26 +9,36 @@ export const AssetHealth: FC = () => {
       <Card title="Fleet Health Overview" subtitle="Asset health distribution">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {['Excellent', 'Good', 'Fair', 'Poor'].map((status, i) => (
-            <div key={status} className="p-4 bg-opsgrid-bg rounded-lg text-center">
-              <p className="text-3xl font-bold text-opsgrid-primary">{[12, 8, 3, 1][i]}</p>
-              <p className="text-sm text-opsgrid-text-secondary">{status}</p>
-            </div>
+            <Tooltip key={status}>
+              <TooltipTrigger asChild>
+                <div className="p-4 bg-opsgrid-bg rounded-lg text-center">
+                  <p className="text-3xl font-bold text-opsgrid-primary">{[12, 8, 3, 1][i]}</p>
+                  <p className="text-sm text-opsgrid-text-secondary">{status}</p>
+                </div>
+              </TooltipTrigger>
+              <TooltipContent>Assets with {status.toLowerCase()} health condition</TooltipContent>
+            </Tooltip>
           ))}
         </div>
       </Card>
 
       <Card title="At-Risk Assets" subtitle="Assets requiring attention">
         <div className="space-y-2">
-          <div className="flex items-center justify-between p-3 bg-opsgrid-bg rounded-lg">
-            <div className="flex items-center gap-3">
-              <AlertTriangle className="text-status-warning" size={20} />
-              <div>
-                <p className="font-medium">Printer #3 (Bambu Labs X1)</p>
-                <p className="text-sm text-opsgrid-text-secondary">Vibration anomaly detected</p>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="flex items-center justify-between p-3 bg-opsgrid-bg rounded-lg">
+                <div className="flex items-center gap-3">
+                  <AlertTriangle className="text-status-warning" size={20} />
+                  <div>
+                    <p className="font-medium">Printer #3 (Bambu Labs X1)</p>
+                    <p className="text-sm text-opsgrid-text-secondary">Vibration anomaly detected</p>
+                  </div>
+                </div>
+                <Badge variant="warning" size="sm">Fair</Badge>
               </div>
-            </div>
-            <Badge variant="warning" size="sm">Fair</Badge>
-          </div>
+            </TooltipTrigger>
+            <TooltipContent>At-risk asset requiring maintenance attention</TooltipContent>
+          </Tooltip>
         </div>
       </Card>
     </div>
@@ -39,16 +50,21 @@ export const PredictiveMaintenance: FC = () => {
     <div className="space-y-6">
       <Card title="Upcoming Maintenance" subtitle="Scheduled maintenance tasks">
         <div className="space-y-2">
-          <div className="flex items-center justify-between p-3 bg-opsgrid-bg rounded-lg">
-            <div className="flex items-center gap-3">
-              <Wrench className="text-opsgrid-primary" size={20} />
-              <div>
-                <p className="font-medium">Preventive Maintenance - Line A</p>
-                <p className="text-sm text-opsgrid-text-secondary">Due in 3 days</p>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="flex items-center justify-between p-3 bg-opsgrid-bg rounded-lg">
+                <div className="flex items-center gap-3">
+                  <Wrench className="text-opsgrid-primary" size={20} />
+                  <div>
+                    <p className="font-medium">Preventive Maintenance - Line A</p>
+                    <p className="text-sm text-opsgrid-text-secondary">Due in 3 days</p>
+                  </div>
+                </div>
+                <Badge variant="info" size="sm">Scheduled</Badge>
               </div>
-            </div>
-            <Badge variant="info" size="sm">Scheduled</Badge>
-          </div>
+            </TooltipTrigger>
+            <TooltipContent>Scheduled preventive maintenance task</TooltipContent>
+          </Tooltip>
         </div>
       </Card>
     </div>

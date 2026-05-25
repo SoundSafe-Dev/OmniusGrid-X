@@ -15,7 +15,7 @@ import structlog
 
 from app.db.database import get_db
 from app.api.auth import get_current_active_user
-from app.db.models import User
+from app.db.models import User, IntakeItem
 from app.services.correlation_ai_engine import correlation_ai_engine
 from app.services.correlation_registry_integration import correlation_registry_integration
 
@@ -241,30 +241,40 @@ async def upload_to_intake(
     # Process file content based on type
     processed_data = await _process_uploaded_file(content, data_type, file.filename)
     
-    # Store in database (for now, we'll use a simple in-memory approach)
-    # In production, this should be stored in a proper database table or file storage
+    # Store in database
+    import base64
+    file_content_b64 = base64.b64encode(content).decode('utf-8')
     
-    intake_item = {
-        "id": str(UUID(int(datetime.utcnow().timestamp()))),
-        "title": title or file.filename,
-        "description": description,
-        "data_type": data_type,
-        "category": category,
-        "file_name": file.filename,
-        "status": "pending",
-        "processed_data": processed_data,
-        "created_at": datetime.utcnow().isoformat(),
-        "analyzed_at": None,
-        "analysis_result": None,
-        "user_id": str(current_user.id),
-        "organization_id": str(current_user.organization_id)
+    intake_item = IntakeItem(
+        user_id=current_user.id,
+        organization_id=current_user.organization_id,
+        title=title or file.filename,
+        description=description,
+        data_type=data_type,
+        category=category,
+        file_name=file.filename,
+        file_content=file_content_b64,
+        processed_data=processed_data,
+        status="pending"
+    )
+    
+    db.add(intake_item)
+    await db.commit()
+    await db.refresh(intake_item)
+    
+    logger.info("intake_upload_complete", intake_id=str(intake_item.id))
+    
+    return {
+        "id": str(intake_item.id),
+        "title": intake_item.title,
+        "description": intake_item.description,
+        "data_type": intake_item.data_type,
+        "category": intake_item.category,
+        "file_name": intake_item.file_name,
+        "status": intake_item.status,
+        "created_at": intake_item.created_at.isoformat(),
+        "analyzed_at": intake_item.analyzed_at.isoformat() if intake_item.analyzed_at else None
     }
-    
-    # Store in a simple in-memory cache (in production, use database)
-    # For now, we'll just return the item
-    logger.info("intake_upload_complete", intake_id=intake_item["id"])
-    
-    return intake_item
 
 
 @router.post("/intake/analyze")
@@ -330,7 +340,8 @@ async def list_intake_items(
     limit: int = 50,
     offset: int = 0,
     status: Optional[str] = None,
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
 ):
     """
     List items in Intake Inbox.
@@ -345,26 +356,79 @@ async def list_intake_items(
         status=status
     )
     
-    # In production, retrieve from database
-    # For now, return empty list
+    # Build query
+    from sqlalchemy import select, func
+    query = select(IntakeItem).where(IntakeItem.user_id == current_user.id)
+    
+    if status:
+        query = query.where(IntakeItem.status == status)
+    
+    # Get total count
+    count_query = select(func.count()).select_from(query.subquery())
+    count_result = await db.execute(count_query)
+    total = count_result.scalar()
+    
+    # Get items
+    query = query.order_by(IntakeItem.created_at.desc())
+    query = query.limit(limit).offset(offset)
+    result = await db.execute(query)
+    items = result.scalars().all()
+    
     return {
-        "items": [],
-        "total": 0
+        "items": [
+            {
+                "id": str(item.id),
+                "title": item.title,
+                "description": item.description,
+                "data_type": item.data_type,
+                "category": item.category,
+                "file_name": item.file_name,
+                "status": item.status,
+                "created_at": item.created_at.isoformat(),
+                "analyzed_at": item.analyzed_at.isoformat() if item.analyzed_at else None
+            }
+            for item in items
+        ],
+        "total": total
     }
 
 
 @router.get("/intake/{intake_id}")
 async def get_intake_item(
     intake_id: UUID,
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Get details of a specific Intake Inbox item.
     """
     logger.info("intake_get_item", user_id=str(current_user.id), intake_id=str(intake_id))
     
-    # In production, retrieve from database
-    raise HTTPException(status_code=404, detail="Intake item not found")
+    # Retrieve from database
+    from sqlalchemy import select
+    query = select(IntakeItem).where(
+        IntakeItem.id == intake_id,
+        IntakeItem.user_id == current_user.id
+    )
+    result = await db.execute(query)
+    item = result.scalar_one_or_none()
+    
+    if not item:
+        raise HTTPException(status_code=404, detail="Intake item not found")
+    
+    return {
+        "id": str(item.id),
+        "title": item.title,
+        "description": item.description,
+        "data_type": item.data_type,
+        "category": item.category,
+        "file_name": item.file_name,
+        "status": item.status,
+        "processed_data": item.processed_data,
+        "analysis_result": item.analysis_result,
+        "created_at": item.created_at.isoformat(),
+        "analyzed_at": item.analyzed_at.isoformat() if item.analyzed_at else None
+    }
 
 
 # ==================== Helper Functions ====================

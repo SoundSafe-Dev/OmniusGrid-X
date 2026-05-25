@@ -24,7 +24,7 @@ export const DataSourcesPanel: React.FC<DataSourcesPanelProps> = ({
     if (sessionId) {
       loadDataSources();
     }
-  }, [sessionId]);
+  }, [sessionId, onDataSourceAdded]);
 
   const loadDataSources = async () => {
     setIsLoading(true);

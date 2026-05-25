@@ -3,7 +3,7 @@
 from datetime import datetime, timedelta
 from typing import Optional
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Header
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -21,7 +21,14 @@ router = APIRouter()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # OAuth2 scheme
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v1/auth/login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v1/auth/login", auto_error=False)
+
+
+async def get_token_from_header(authorization: Optional[str] = Header(None)) -> Optional[str]:
+    """Extract token from Authorization header without OAuth2 validation"""
+    if authorization and authorization.startswith("Bearer "):
+        return authorization[7:]  # Remove "Bearer " prefix
+    return None
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -75,10 +82,14 @@ async def get_current_user(
 
 async def get_current_active_user(
     token: str = Depends(oauth2_scheme),
+    header_token: Optional[str] = Depends(get_token_from_header),
     db: AsyncSession = Depends(get_db)
 ) -> User:
     # DEV MODE: Bypass authentication for dev-token
-    if token == "dev-token":
+    # Check both OAuth2 token and header token
+    actual_token = token or header_token
+    
+    if actual_token == "dev-token":
         # Create or get dev user from database
         dev_org_id = "00000000-0000-0000-0000-000000000001"
         dev_user_id = "00000000-0000-0000-0000-000000000001"
@@ -123,7 +134,18 @@ async def get_current_active_user(
         return user
 
     # Normal authentication flow
-    current_user = await get_current_user(token, db)
+    if not actual_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    try:
+        current_user = await get_current_user(actual_token, db)
+    except HTTPException:
+        raise
+
     if not current_user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
     return current_user

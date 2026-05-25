@@ -1,11 +1,13 @@
 import { FC, ButtonHTMLAttributes } from 'react';
 import { cn } from '../../utils';
+import { Tooltip, TooltipTrigger, TooltipContent } from './Tooltip';
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: 'primary' | 'secondary' | 'danger' | 'ghost' | 'outline';
   size?: 'sm' | 'md' | 'lg';
   loading?: boolean;
   fullWidth?: boolean;
+  tooltip?: string;
 }
 
 export const Button: FC<ButtonProps> = ({
@@ -16,6 +18,7 @@ export const Button: FC<ButtonProps> = ({
   fullWidth = false,
   disabled,
   className,
+  tooltip,
   ...props
 }) => {
   const baseClasses =
@@ -40,7 +43,7 @@ export const Button: FC<ButtonProps> = ({
     lg: 'px-6 py-3 text-base',
   };
 
-  return (
+  const buttonContent = (
     <button
       className={cn(
         baseClasses,
@@ -77,4 +80,17 @@ export const Button: FC<ButtonProps> = ({
       {children}
     </button>
   );
+
+  if (tooltip) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          {buttonContent}
+        </TooltipTrigger>
+        <TooltipContent>{tooltip}</TooltipContent>
+      </Tooltip>
+    );
+  }
+
+  return buttonContent;
 };

@@ -5,6 +5,7 @@ import { Card, Badge, Button, SkeletonCard } from '../../components';
 import { enginesApi } from '../../api';
 import { StrategicRecommendation } from '../../types';
 import { formatDateTime, formatPercentage } from '../../utils';
+import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
 
 export const StrategicEngine: FC = () => {
   const queryClient = useQueryClient();
@@ -47,37 +48,52 @@ export const StrategicEngine: FC = () => {
     <div className="space-y-6">
       {/* Summary */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card className="p-4">
-          <div className="flex items-center gap-3">
-            <Lightbulb className="w-8 h-8 text-opsgrid-primary" />
-            <div>
-              <p className="text-2xl font-bold">{pendingRecs.length}</p>
-              <p className="text-sm text-opsgrid-text-secondary">Pending Recommendations</p>
-            </div>
-          </div>
-        </Card>
-        <Card className="p-4">
-          <div className="flex items-center gap-3">
-            <CheckCircle className="w-8 h-8 text-status-running" />
-            <div>
-              <p className="text-2xl font-bold">
-                {historyRecs.filter((r) => r.status === 'approved').length}
-              </p>
-              <p className="text-sm text-opsgrid-text-secondary">Approved</p>
-            </div>
-          </div>
-        </Card>
-        <Card className="p-4">
-          <div className="flex items-center gap-3">
-            <XCircle className="w-8 h-8 text-status-alarm" />
-            <div>
-              <p className="text-2xl font-bold">
-                {historyRecs.filter((r) => r.status === 'rejected').length}
-              </p>
-              <p className="text-sm text-opsgrid-text-secondary">Rejected</p>
-            </div>
-          </div>
-        </Card>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Card className="p-4">
+              <div className="flex items-center gap-3">
+                <Lightbulb className="w-8 h-8 text-opsgrid-primary" />
+                <div>
+                  <p className="text-2xl font-bold">{pendingRecs.length}</p>
+                  <p className="text-sm text-opsgrid-text-secondary">Pending Recommendations</p>
+                </div>
+              </div>
+            </Card>
+          </TooltipTrigger>
+          <TooltipContent>Recommendations awaiting your review</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Card className="p-4">
+              <div className="flex items-center gap-3">
+                <CheckCircle className="w-8 h-8 text-status-running" />
+                <div>
+                  <p className="text-2xl font-bold">
+                    {historyRecs.filter((r) => r.status === 'approved').length}
+                  </p>
+                  <p className="text-sm text-opsgrid-text-secondary">Approved</p>
+                </div>
+              </div>
+            </Card>
+          </TooltipTrigger>
+          <TooltipContent>Total approved recommendations</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Card className="p-4">
+              <div className="flex items-center gap-3">
+                <XCircle className="w-8 h-8 text-status-alarm" />
+                <div>
+                  <p className="text-2xl font-bold">
+                    {historyRecs.filter((r) => r.status === 'rejected').length}
+                  </p>
+                  <p className="text-sm text-opsgrid-text-secondary">Rejected</p>
+                </div>
+              </div>
+            </Card>
+          </TooltipTrigger>
+          <TooltipContent>Total rejected recommendations</TooltipContent>
+        </Tooltip>
       </div>
 
       {/* Pending Recommendations */}
@@ -191,14 +207,24 @@ const RecommendationCard: FC<RecommendationCardProps> = ({ rec, onApprove, onRej
       </div>
 
       <div className="flex items-center gap-3">
-        <Button variant="primary" size="sm" onClick={onApprove}>
-          <CheckCircle size={16} className="mr-1" />
-          Approve
-        </Button>
-        <Button variant="secondary" size="sm" onClick={onReject}>
-          <XCircle size={16} className="mr-1" />
-          Reject
-        </Button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button variant="primary" size="sm" onClick={onApprove}>
+              <CheckCircle size={16} className="mr-1" />
+              Approve
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Approve this recommendation for implementation</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button variant="secondary" size="sm" onClick={onReject}>
+              <XCircle size={16} className="mr-1" />
+              Reject
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Reject this recommendation</TooltipContent>
+        </Tooltip>
       </div>
     </div>
   );

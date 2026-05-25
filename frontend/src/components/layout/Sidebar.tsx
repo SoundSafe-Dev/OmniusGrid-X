@@ -24,6 +24,7 @@ import {
 import { useUIStore, useAuthStore } from '../../stores';
 import { cn } from '../../utils';
 import { useAuth } from '../../hooks';
+import { Tooltip, TooltipTrigger, TooltipContent } from '../ui';
 
 interface NavItem {
   path: string;
@@ -31,65 +32,71 @@ interface NavItem {
   icon: typeof LayoutDashboard;
   children?: NavItem[];
   adminOnly?: boolean;
+  description?: string;
 }
 
 const navItems: NavItem[] = [
-  { path: '/', label: 'Dashboard', icon: LayoutDashboard },
-  { path: '/assets', label: 'Assets', icon: Box },
-  { path: '/alarms', label: 'Alarms', icon: Bell },
-  { path: '/oee', label: 'OEE', icon: BarChart3 },
-  { path: '/kanban', label: 'Kanban Board', icon: KanbanIcon },
-  { path: '/nlp', label: 'Correlation AI', icon: MessageSquare },
-  { path: '/intake', label: 'Intake Inbox', icon: Inbox },
+  { path: '/', label: 'Dashboard', icon: LayoutDashboard, description: 'Overview of fleet status, assets, and active alarms' },
+  { path: '/assets', label: 'Assets', icon: Box, description: 'Manage and monitor manufacturing equipment' },
+  { path: '/alarms', label: 'Alarms', icon: Bell, description: 'View and acknowledge system alarms' },
+  { path: '/oee', label: 'OEE', icon: BarChart3, description: 'Overall Equipment Effectiveness analytics' },
+  { path: '/kanban', label: 'Kanban Board', icon: KanbanIcon, description: 'Task management and workflow tracking' },
+  { path: '/nlp', label: 'Correlation AI', icon: MessageSquare, description: 'AI-powered cross-domain analysis' },
+  { path: '/intake', label: 'Intake Inbox', icon: Inbox, description: 'Upload operational data for AI analysis' },
   {
     path: '/engines',
     label: 'AI Engines',
     icon: Brain,
+    description: 'Tactical, Strategic, MLOps, and Cloud Gateway',
     children: [
-      { path: '/engines/tactical', label: 'Tactical', icon: Brain },
-      { path: '/engines/strategic', label: 'Strategic', icon: Brain },
-      { path: '/engines/mlops', label: 'MLOps', icon: Brain },
-      { path: '/engines/cloud', label: 'Cloud Gateway', icon: Globe },
+      { path: '/engines/tactical', label: 'Tactical', icon: Brain, description: 'Edge inference engine for real-time control' },
+      { path: '/engines/strategic', label: 'Strategic', icon: Brain, description: 'Cloud-based optimization and scenario analysis' },
+      { path: '/engines/mlops', label: 'MLOps', icon: Brain, description: 'Model lifecycle management and deployment' },
+      { path: '/engines/cloud', label: 'Cloud Gateway', icon: Globe, description: 'Secure edge-to-cloud communication' },
     ],
   },
   {
     path: '/analytics',
     label: 'Analytics',
     icon: LineChart,
+    description: 'Operational data visualization',
     children: [
-      { path: '/analytics/telemetry', label: 'Telemetry', icon: LineChart },
-      { path: '/analytics/health', label: 'Asset Health', icon: LineChart },
-      { path: '/analytics/maintenance', label: 'Maintenance', icon: LineChart },
+      { path: '/analytics/telemetry', label: 'Telemetry', icon: LineChart, description: 'Real-time sensor data charts' },
+      { path: '/analytics/health', label: 'Asset Health', icon: LineChart, description: 'Equipment performance metrics' },
+      { path: '/analytics/maintenance', label: 'Maintenance', icon: LineChart, description: 'Predictive maintenance analytics' },
     ],
   },
   {
     path: '/fleet',
     label: 'Fleet',
     icon: Globe,
+    description: 'Fleet management and tracking',
     children: [
-      { path: '/fleet', label: 'Overview', icon: Globe },
-      { path: '/fleet/organization', label: 'Organization', icon: Globe },
+      { path: '/fleet', label: 'Overview', icon: Globe, description: 'Fleet-wide status summary' },
+      { path: '/fleet/organization', label: 'Organization', icon: Globe, description: 'Organizational hierarchy view' },
     ],
   },
   {
     path: '/logistics',
     label: 'Logistics',
     icon: Truck,
+    description: 'Yard and transportation management',
     children: [
-      { path: '/logistics/yard', label: 'Yard (YMS)', icon: Warehouse },
-      { path: '/logistics/transportation', label: 'Transportation (TMS)', icon: Truck },
+      { path: '/logistics/yard', label: 'Yard (YMS)', icon: Warehouse, description: 'Yard Management System for trailers' },
+      { path: '/logistics/transportation', label: 'Transportation (TMS)', icon: Truck, description: 'Transportation Management System' },
     ],
   },
   {
     path: '/admin',
     label: 'Admin',
     icon: Settings,
+    description: 'System administration',
     adminOnly: true,
     children: [
-      { path: '/admin/users', label: 'Users', icon: Users },
-      { path: '/admin/collectors', label: 'Collectors', icon: Box },
-      { path: '/admin/health', label: 'System Health', icon: LayoutDashboard },
-      { path: '/admin/settings', label: 'Settings', icon: Settings },
+      { path: '/admin/users', label: 'Users', icon: Users, description: 'User and role management' },
+      { path: '/admin/collectors', label: 'Collectors', icon: Box, description: 'Data collector configuration' },
+      { path: '/admin/health', label: 'System Health', icon: LayoutDashboard, description: 'Infrastructure status monitoring' },
+      { path: '/admin/settings', label: 'Settings', icon: Settings, description: 'System configuration' },
     ],
   },
 ];
@@ -127,9 +134,14 @@ export const Sidebar: FC<SidebarProps> = ({ mobile = false, onClose }) => {
       return (
         <div className="space-y-1">
           {!sidebarCollapsed && (
-            <div className="px-4 py-2 text-xs font-medium text-opsgrid-text-secondary uppercase tracking-wider">
-              {item.label}
-            </div>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div className="px-4 py-2 text-xs font-medium text-opsgrid-text-secondary uppercase tracking-wider">
+                  {item.label}
+                </div>
+              </TooltipTrigger>
+              <TooltipContent side="right">{item.description}</TooltipContent>
+            </Tooltip>
           )}
           {item.children?.map((child) => (
             <NavLink
@@ -147,8 +159,15 @@ export const Sidebar: FC<SidebarProps> = ({ mobile = false, onClose }) => {
                 )
               }
             >
-              <Icon size={18} />
-              {!sidebarCollapsed && <span className="text-sm">{child.label}</span>}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className="flex items-center gap-3 w-full">
+                    <Icon size={18} />
+                    {!sidebarCollapsed && <span className="text-sm">{child.label}</span>}
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent side="right">{child.description}</TooltipContent>
+              </Tooltip>
             </NavLink>
           ))}
         </div>
@@ -169,8 +188,15 @@ export const Sidebar: FC<SidebarProps> = ({ mobile = false, onClose }) => {
           )
         }
       >
-        <Icon size={20} />
-        {!sidebarCollapsed && <span>{item.label}</span>}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div className="flex items-center gap-3 w-full">
+              <Icon size={20} />
+              {!sidebarCollapsed && <span>{item.label}</span>}
+            </div>
+          </TooltipTrigger>
+          <TooltipContent side="right">{item.description}</TooltipContent>
+        </Tooltip>
       </NavLink>
     );
   };
@@ -196,12 +222,17 @@ export const Sidebar: FC<SidebarProps> = ({ mobile = false, onClose }) => {
           </div>
         )}
         {!mobile && (
-          <button
-            onClick={toggleSidebar}
-            className="p-1 rounded hover:bg-opsgrid-border text-opsgrid-text-secondary"
-          >
-            {sidebarCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
-          </button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={toggleSidebar}
+                className="p-1 rounded hover:bg-opsgrid-border text-opsgrid-text-secondary"
+              >
+                {sidebarCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="right">{sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}</TooltipContent>
+          </Tooltip>
         )}
       </div>
 
@@ -216,51 +247,72 @@ export const Sidebar: FC<SidebarProps> = ({ mobile = false, onClose }) => {
       <div className="p-4 border-t border-opsgrid-border">
         {!sidebarCollapsed || mobile ? (
           <div className="space-y-3">
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-full bg-opsgrid-primary/20 flex items-center justify-center">
-                <span className="text-opsgrid-primary font-medium">
-                  {user?.name?.charAt(0).toUpperCase() || 'U'}
-                </span>
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-opsgrid-text truncate">{user?.name}</p>
-                <p className="text-xs text-opsgrid-text-secondary capitalize">{user?.role}</p>
-              </div>
-            </div>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-full bg-opsgrid-primary/20 flex items-center justify-center">
+                    <span className="text-opsgrid-primary font-medium">
+                      {user?.name?.charAt(0).toUpperCase() || 'U'}
+                    </span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-opsgrid-text truncate">{user?.name}</p>
+                    <p className="text-xs text-opsgrid-text-secondary capitalize">{user?.role}</p>
+                  </div>
+                </div>
+              </TooltipTrigger>
+              <TooltipContent side="right">Current user: {user?.name} ({user?.role})</TooltipContent>
+            </Tooltip>
             <div className="flex items-center gap-2">
-              <button
-                onClick={toggleTheme}
-                className="flex items-center gap-2 flex-1 px-3 py-2 rounded-lg text-opsgrid-text-secondary hover:bg-opsgrid-hover hover:text-opsgrid-text transition-colors"
-                title={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
-              >
-                {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
-                <span className="text-sm">{theme === 'dark' ? 'Light' : 'Dark'}</span>
-              </button>
-              <button
-                onClick={handleLogout}
-                className="flex items-center justify-center p-2 rounded-lg text-opsgrid-text-secondary hover:bg-opsgrid-hover hover:text-opsgrid-text transition-colors"
-                title="Logout"
-              >
-                <LogOut size={16} />
-              </button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={toggleTheme}
+                    className="flex items-center gap-2 flex-1 px-3 py-2 rounded-lg text-opsgrid-text-secondary hover:bg-opsgrid-hover hover:text-opsgrid-text transition-colors"
+                  >
+                    {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+                    <span className="text-sm">{theme === 'dark' ? 'Light' : 'Dark'}</span>
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="right">{theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={handleLogout}
+                    className="flex items-center justify-center p-2 rounded-lg text-opsgrid-text-secondary hover:bg-opsgrid-hover hover:text-opsgrid-text transition-colors"
+                  >
+                    <LogOut size={16} />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="right">Sign out of OmniusGrid</TooltipContent>
+              </Tooltip>
             </div>
           </div>
         ) : (
           <div className="flex flex-col gap-2">
-            <button
-              onClick={toggleTheme}
-              className="flex items-center justify-center w-full p-2 rounded-lg text-opsgrid-text-secondary hover:bg-opsgrid-hover hover:text-opsgrid-text transition-colors"
-              title={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
-            >
-              {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
-            </button>
-            <button
-              onClick={handleLogout}
-              className="flex items-center justify-center w-full p-2 rounded-lg text-opsgrid-text-secondary hover:bg-opsgrid-hover hover:text-opsgrid-text transition-colors"
-              title="Logout"
-            >
-              <LogOut size={20} />
-            </button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={toggleTheme}
+                  className="flex items-center justify-center w-full p-2 rounded-lg text-opsgrid-text-secondary hover:bg-opsgrid-hover hover:text-opsgrid-text transition-colors"
+                >
+                  {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="right">{theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={handleLogout}
+                  className="flex items-center justify-center w-full p-2 rounded-lg text-opsgrid-text-secondary hover:bg-opsgrid-hover hover:text-opsgrid-text transition-colors"
+                >
+                  <LogOut size={20} />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="right">Sign out of OmniusGrid</TooltipContent>
+            </Tooltip>
           </div>
         )}
       </div>

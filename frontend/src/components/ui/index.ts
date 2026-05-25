@@ -6,3 +6,4 @@ export { Badge } from './Badge';
 export { Table } from './Table';
 export { Skeleton, SkeletonCard, SkeletonTable } from './Skeleton';
 export { ChartContainer } from './ChartContainer';
+export { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from './Tooltip';

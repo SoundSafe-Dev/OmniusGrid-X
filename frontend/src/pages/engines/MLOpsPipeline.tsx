@@ -4,6 +4,7 @@ import { Cpu, History, RotateCcw, Download, CheckCircle } from 'lucide-react';
 import { Card, Badge, Button, Select, SkeletonCard } from '../../components';
 import { enginesApi } from '../../api';
 import { formatDateTime } from '../../utils';
+import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
 
 export const MLOpsPipeline: FC = () => {
   const queryClient = useQueryClient();
@@ -45,25 +46,45 @@ export const MLOpsPipeline: FC = () => {
     <div className="space-y-6">
       {/* Current Model */}
       <Card title="Current Model" subtitle="Active deployment">
-        <div className="flex items-center justify-between p-4 bg-opsgrid-bg rounded-lg">
-          <div className="flex items-center gap-4">
-            <div className="p-3 bg-opsgrid-primary/20 rounded-lg">
-              <Cpu className="w-6 h-6 text-opsgrid-primary" />
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div className="flex items-center justify-between p-4 bg-opsgrid-bg rounded-lg">
+              <div className="flex items-center gap-4">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className="p-3 bg-opsgrid-primary/20 rounded-lg">
+                      <Cpu className="w-6 h-6 text-opsgrid-primary" />
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent>ML model icon</TooltipContent>
+                </Tooltip>
+                <div>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <p className="text-lg font-semibold">{status?.currentModel || 'No model deployed'}</p>
+                    </TooltipTrigger>
+                    <TooltipContent>Currently deployed model version</TooltipContent>
+                  </Tooltip>
+                  {status?.lastDeploymentAt && (
+                    <p className="text-sm text-opsgrid-text-secondary">
+                      Deployed {formatDateTime(status.lastDeploymentAt)}
+                    </p>
+                  )}
+                </div>
+              </div>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Badge variant="success" size="md">
+                    <CheckCircle size={14} className="mr-1" />
+                    Active
+                  </Badge>
+                </TooltipTrigger>
+                <TooltipContent>Model is currently active in production</TooltipContent>
+              </Tooltip>
             </div>
-            <div>
-              <p className="text-lg font-semibold">{status?.currentModel || 'No model deployed'}</p>
-              {status?.lastDeploymentAt && (
-                <p className="text-sm text-opsgrid-text-secondary">
-                  Deployed {formatDateTime(status.lastDeploymentAt)}
-                </p>
-              )}
-            </div>
-          </div>
-          <Badge variant="success" size="md">
-            <CheckCircle size={14} className="mr-1" />
-            Active
-          </Badge>
-        </div>
+          </TooltipTrigger>
+          <TooltipContent>Current ML model deployment information</TooltipContent>
+        </Tooltip>
       </Card>
 
       {/* Deploy New Model */}
@@ -78,37 +99,47 @@ export const MLOpsPipeline: FC = () => {
               options={availableVersions.map((v) => ({ value: v, label: v }))}
             />
           </div>
-          <Button
-            variant="primary"
-            disabled={!selectedVersion || deployMutation.isLoading}
-            loading={deployMutation.isLoading}
-            onClick={() => deployMutation.mutate(selectedVersion)}
-          >
-            <Download size={16} className="mr-1" />
-            Deploy
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="primary"
+                disabled={!selectedVersion || deployMutation.isLoading}
+                loading={deployMutation.isLoading}
+                onClick={() => deployMutation.mutate(selectedVersion)}
+              >
+                <Download size={16} className="mr-1" />
+                Deploy
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Deploy selected model version to production</TooltipContent>
+          </Tooltip>
         </div>
       </Card>
 
       {/* Rollback */}
       <Card title="Rollback" subtitle="Revert to previous version">
-        <div className="flex items-center justify-between p-4 bg-opsgrid-bg rounded-lg">
-          <div>
-            <p className="font-medium">Quick Rollback</p>
-            <p className="text-sm text-opsgrid-text-secondary">
-              Revert to the previous model version immediately
-            </p>
-          </div>
-          <Button
-            variant="danger"
-            disabled={rollbackMutation.isLoading || deploymentHistory.length < 2}
-            loading={rollbackMutation.isLoading}
-            onClick={() => rollbackMutation.mutate()}
-          >
-            <RotateCcw size={16} className="mr-1" />
-            Rollback
-          </Button>
-        </div>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div className="flex items-center justify-between p-4 bg-opsgrid-bg rounded-lg">
+              <div>
+                <p className="font-medium">Quick Rollback</p>
+                <p className="text-sm text-opsgrid-text-secondary">
+                  Revert to the previous model version immediately
+                </p>
+              </div>
+              <Button
+                variant="danger"
+                disabled={rollbackMutation.isLoading || deploymentHistory.length < 2}
+                loading={rollbackMutation.isLoading}
+                onClick={() => rollbackMutation.mutate()}
+              >
+                <RotateCcw size={16} className="mr-1" />
+                Rollback
+              </Button>
+            </div>
+          </TooltipTrigger>
+          <TooltipContent>Revert to the previous model version</TooltipContent>
+        </Tooltip>
       </Card>
 
       {/* Deployment History */}
