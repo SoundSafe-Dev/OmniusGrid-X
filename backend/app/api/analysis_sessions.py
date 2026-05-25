@@ -15,7 +15,7 @@ import structlog
 
 from app.db.database import get_db
 from app.api.auth import get_current_active_user
-from app.db.models import User, AnalysisSession, SessionDataSource, SessionMessage
+from app.db.models import User, AnalysisSession, SessionDataSource, SessionMessage, IntakeItem
 from app.services.correlation_ai_engine import correlation_ai_engine
 
 logger = structlog.get_logger()
@@ -141,6 +141,14 @@ async def create_session(
     await db.commit()
     await db.refresh(session)
     
+    # Ensure session is persisted by querying it back
+    verify_query = select(AnalysisSession).where(AnalysisSession.id == session.id)
+    verify_result = await db.execute(verify_query)
+    verified_session = verify_result.scalar_one_or_none()
+    if not verified_session:
+        raise HTTPException(status_code=500, detail="Failed to persist session")
+    session = verified_session
+    
     # Get counts
     data_sources_count = 0
     messages_count = 0
@@ -173,24 +181,28 @@ async def list_sessions(
     """
     List user's analysis sessions.
     """
-    logger.info("list_sessions", user_id=str(current_user.id))
+    logger.info("list_sessions", user_id=str(current_user.id), status=status)
     
-    # Build query
+    # Build query - use distinct to avoid duplicates
     query = select(AnalysisSession).where(AnalysisSession.user_id == current_user.id)
     
     if status:
         query = query.where(AnalysisSession.status == status)
     
+    query = query.distinct()
     query = query.order_by(AnalysisSession.last_accessed_at.desc())
     query = query.limit(limit).offset(offset)
     
     result = await db.execute(query)
     sessions = result.scalars().all()
     
+    logger.info("list_sessions_result", count=len(sessions), session_ids=[str(s.id) for s in sessions])
+    
     # Get total count
     count_query = select(AnalysisSession).where(AnalysisSession.user_id == current_user.id)
     if status:
         count_query = count_query.where(AnalysisSession.status == status)
+    count_query = count_query.distinct()
     count_result = await db.execute(count_query)
     total = len(count_result.scalars().all())
     
@@ -240,13 +252,21 @@ async def get_session(
     """
     logger.info("get_session", user_id=str(current_user.id), session_id=str(session_id))
     
-    # Get session
-    query = select(AnalysisSession).where(
-        and_(
-            AnalysisSession.id == session_id,
-            AnalysisSession.user_id == current_user.id
+    # Convert UUID to string to ensure proper comparison with String column
+    session_id_str = str(session_id)
+    
+    # Get session - in dev mode, allow access regardless of user_id
+    if current_user.id == "00000000-0000-0000-0000-000000000001":
+        # Dev mode: get session without user_id check
+        query = select(AnalysisSession).where(AnalysisSession.id == session_id_str)
+    else:
+        # Normal mode: check ownership
+        query = select(AnalysisSession).where(
+            and_(
+                AnalysisSession.id == session_id_str,
+                AnalysisSession.user_id == current_user.id
+            )
         )
-    )
     result = await db.execute(query)
     session = result.scalar_one_or_none()
     
@@ -295,10 +315,13 @@ async def update_session(
     """
     logger.info("update_session", user_id=str(current_user.id), session_id=str(session_id))
     
+    # Convert UUID to string to ensure proper comparison with String column
+    session_id_str = str(session_id)
+    
     # Get session
     query = select(AnalysisSession).where(
         and_(
-            AnalysisSession.id == session_id,
+            AnalysisSession.id == session_id_str,
             AnalysisSession.user_id == current_user.id
         )
     )
@@ -345,24 +368,32 @@ async def update_session(
     )
 
 
-@router.delete("/{session_id}")
+@router.delete("/{session_id}", status_code=204)
 async def delete_session(
     session_id: UUID,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
-    Delete an analysis session.
+    Delete an analysis session (soft delete).
     """
     logger.info("delete_session", user_id=str(current_user.id), session_id=str(session_id))
     
-    # Get session
-    query = select(AnalysisSession).where(
-        and_(
-            AnalysisSession.id == session_id,
-            AnalysisSession.user_id == current_user.id
+    # Convert UUID to string to ensure proper comparison with String column
+    session_id_str = str(session_id)
+    
+    # Get session - in dev mode, allow deletion regardless of user_id
+    if current_user.id == "00000000-0000-0000-0000-000000000001":
+        # Dev mode: get session without user_id check
+        query = select(AnalysisSession).where(AnalysisSession.id == session_id_str)
+    else:
+        # Normal mode: check ownership
+        query = select(AnalysisSession).where(
+            and_(
+                AnalysisSession.id == session_id_str,
+                AnalysisSession.user_id == current_user.id
+            )
         )
-    )
     result = await db.execute(query)
     session = result.scalar_one_or_none()
     
@@ -374,8 +405,36 @@ async def delete_session(
     session.updated_at = datetime.utcnow()
     
     await db.commit()
+
+
+@router.post("/cleanup-orphaned")
+async def cleanup_orphaned_sessions(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Clean up orphaned sessions that exist in database but are inconsistent.
+    This is a dev/debug endpoint to fix database corruption.
+    """
+    logger.info("cleanup_orphaned_sessions", user_id=str(current_user.id))
     
-    return {"message": "Session deleted successfully"}
+    # Only allow in dev mode
+    if current_user.id != "00000000-0000-0000-0000-000000000001":
+        raise HTTPException(status_code=403, detail="Cleanup only available in dev mode")
+    
+    # Hard delete all sessions for user to clear corruption
+    from sqlalchemy import delete
+    delete_stmt = delete(AnalysisSession).where(AnalysisSession.user_id == current_user.id)
+    result = await db.execute(delete_stmt)
+    deleted_count = result.rowcount
+    await db.commit()
+    
+    logger.info("cleanup_orphaned_sessions_complete", deleted_count=deleted_count)
+    
+    return {
+        "message": f"Deleted {deleted_count} sessions to clear database corruption",
+        "deleted_count": deleted_count
+    }
 
 
 @router.post("/{session_id}/resume", response_model=SessionResponse)
@@ -389,10 +448,13 @@ async def resume_session(
     """
     logger.info("resume_session", user_id=str(current_user.id), session_id=str(session_id))
     
+    # Convert UUID to string to ensure proper comparison with String column
+    session_id_str = str(session_id)
+    
     # Get session
     query = select(AnalysisSession).where(
         and_(
-            AnalysisSession.id == session_id,
+            AnalysisSession.id == session_id_str,
             AnalysisSession.user_id == current_user.id
         )
     )
@@ -449,10 +511,13 @@ async def add_intake_data(
     """
     logger.info("add_intake_data", user_id=str(current_user.id), session_id=str(session_id), intake_id=str(intake_id))
     
+    # Convert UUID to string to ensure proper comparison with String column
+    session_id_str = str(session_id)
+    
     # Verify session ownership
     session_query = select(AnalysisSession).where(
         and_(
-            AnalysisSession.id == session_id,
+            AnalysisSession.id == session_id_str,
             AnalysisSession.user_id == current_user.id
         )
     )
@@ -462,15 +527,27 @@ async def add_intake_data(
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     
-    # TODO: Fetch intake item from intake system
-    # For now, create a placeholder data source
+    # Fetch intake item from database
+    intake_query = select(IntakeItem).where(
+        and_(
+            IntakeItem.id == intake_id,
+            IntakeItem.user_id == current_user.id
+        )
+    )
+    intake_result = await db.execute(intake_query)
+    intake_item = intake_result.scalar_one_or_none()
+    
+    if not intake_item:
+        raise HTTPException(status_code=404, detail="Intake item not found")
+    
+    # Create data source from intake item
     data_source = SessionDataSource(
         session_id=session_id,
         source_type="intake",
         source_id=intake_id,
-        file_name="Intake Item",
-        data_type="document",
-        processed_data={}
+        file_name=intake_item.file_name,
+        data_type=intake_item.data_type,
+        processed_data=intake_item.processed_data
     )
     
     db.add(data_source)
@@ -501,10 +578,13 @@ async def upload_data_to_session(
     """
     logger.info("upload_data_to_session", user_id=str(current_user.id), session_id=str(session_id), filename=file.filename)
     
+    # Convert UUID to string to ensure proper comparison with String column
+    session_id_str = str(session_id)
+    
     # Verify session ownership
     session_query = select(AnalysisSession).where(
         and_(
-            AnalysisSession.id == session_id,
+            AnalysisSession.id == session_id_str,
             AnalysisSession.user_id == current_user.id
         )
     )
@@ -559,13 +639,21 @@ async def list_session_data(
     """
     logger.info("list_session_data", user_id=str(current_user.id), session_id=str(session_id))
     
-    # Verify session ownership
-    session_query = select(AnalysisSession).where(
-        and_(
-            AnalysisSession.id == session_id,
-            AnalysisSession.user_id == current_user.id
+    # Convert UUID to string to ensure proper comparison with String column
+    session_id_str = str(session_id)
+    
+    # Verify session ownership - in dev mode, allow access regardless of user_id
+    if current_user.id == "00000000-0000-0000-0000-000000000001":
+        # Dev mode: get session without user_id check
+        session_query = select(AnalysisSession).where(AnalysisSession.id == session_id_str)
+    else:
+        # Normal mode: check ownership
+        session_query = select(AnalysisSession).where(
+            and_(
+                AnalysisSession.id == session_id_str,
+                AnalysisSession.user_id == current_user.id
+            )
         )
-    )
     session_result = await db.execute(session_query)
     session = session_result.scalar_one_or_none()
     
@@ -604,10 +692,14 @@ async def remove_data_source(
     """
     logger.info("remove_data_source", user_id=str(current_user.id), session_id=str(session_id), source_id=str(source_id))
     
+    # Convert UUID to string to ensure proper comparison with String column
+    session_id_str = str(session_id)
+    source_id_str = str(source_id)
+    
     # Verify session ownership
     session_query = select(AnalysisSession).where(
         and_(
-            AnalysisSession.id == session_id,
+            AnalysisSession.id == session_id_str,
             AnalysisSession.user_id == current_user.id
         )
     )
@@ -620,8 +712,8 @@ async def remove_data_source(
     # Get and delete data source
     query = select(SessionDataSource).where(
         and_(
-            SessionDataSource.id == source_id,
-            SessionDataSource.session_id == session_id
+            SessionDataSource.id == source_id_str,
+            SessionDataSource.session_id == session_id_str
         )
     )
     result = await db.execute(query)
@@ -650,10 +742,13 @@ async def session_chat(
     """
     logger.info("session_chat", user_id=str(current_user.id), session_id=str(session_id))
     
+    # Convert UUID to string to ensure proper comparison with String column
+    session_id_str = str(session_id)
+    
     # Verify session ownership
     session_query = select(AnalysisSession).where(
         and_(
-            AnalysisSession.id == session_id,
+            AnalysisSession.id == session_id_str,
             AnalysisSession.user_id == current_user.id
         )
     )
@@ -826,13 +921,21 @@ async def get_session_messages(
     """
     logger.info("get_session_messages", user_id=str(current_user.id), session_id=str(session_id))
     
-    # Verify session ownership
-    session_query = select(AnalysisSession).where(
-        and_(
-            AnalysisSession.id == session_id,
-            AnalysisSession.user_id == current_user.id
+    # Convert UUID to string to ensure proper comparison with String column
+    session_id_str = str(session_id)
+    
+    # Verify session ownership - in dev mode, allow access regardless of user_id
+    if current_user.id == "00000000-0000-0000-0000-000000000001":
+        # Dev mode: get session without user_id check
+        session_query = select(AnalysisSession).where(AnalysisSession.id == session_id_str)
+    else:
+        # Normal mode: check ownership
+        session_query = select(AnalysisSession).where(
+            and_(
+                AnalysisSession.id == session_id_str,
+                AnalysisSession.user_id == current_user.id
+            )
         )
-    )
     session_result = await db.execute(session_query)
     session = session_result.scalar_one_or_none()
     
@@ -1084,37 +1187,73 @@ async def get_session_telemetry_context(
     """
     logger.info("get_session_telemetry_context", user_id=str(current_user.id), session_id=str(session_id))
     
-    # Verify session ownership
-    session_query = select(AnalysisSession).where(
-        and_(
-            AnalysisSession.id == session_id,
-            AnalysisSession.user_id == current_user.id
+    # Convert UUID to string to ensure proper comparison with String column
+    session_id_str = str(session_id)
+    
+    # Verify session ownership - in dev mode, allow access regardless of user_id
+    if current_user.id == "00000000-0000-0000-0000-000000000001":
+        # Dev mode: get session without user_id check
+        session_query = select(AnalysisSession).where(AnalysisSession.id == session_id_str)
+    else:
+        # Normal mode: check ownership
+        session_query = select(AnalysisSession).where(
+            and_(
+                AnalysisSession.id == session_id_str,
+                AnalysisSession.user_id == current_user.id
+            )
         )
-    )
     session_result = await db.execute(session_query)
     session = session_result.scalar_one_or_none()
     
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     
-    # Get session messages to determine relevant domains
-    msg_query = select(SessionMessage).where(SessionMessage.session_id == session_id)
-    msg_result = await db.execute(msg_query)
-    messages = msg_result.scalars().all()
+    # Fetch recent telemetry from organization
+    from app.db.models import Telemetry, Asset
+    from datetime import datetime, timedelta
     
-    # Extract domains from messages
-    domains = set()
-    for msg in messages:
-        if msg.domains:
-            domains.update(msg.domains)
+    # Get assets from organization
+    asset_query = select(Asset).where(Asset.organization_id == current_user.organization_id)
+    asset_result = await db.execute(asset_query)
+    assets = asset_result.scalars().all()
     
-    # TODO: Fetch actual telemetry based on domains
-    # For now, return placeholder
+    if not assets:
+        return {
+            "session_id": str(session_id),
+            "telemetry": [],
+            "message": "No assets found in organization"
+        }
+    
+    # Get recent telemetry (last 1 hour)
+    time_threshold = datetime.utcnow() - timedelta(hours=1)
+    telemetry_data = []
+    
+    for asset in assets[:5]:  # Limit to 5 assets for performance
+        telemetry_query = select(Telemetry).where(
+            and_(
+                Telemetry.asset_id == asset.id,
+                Telemetry.time >= time_threshold
+            )
+        ).order_by(Telemetry.time.desc()).limit(limit)
+        
+        telemetry_result = await db.execute(telemetry_query)
+        telemetry_items = telemetry_result.scalars().all()
+        
+        for item in telemetry_items:
+            telemetry_data.append({
+                "asset_id": str(item.asset_id),
+                "asset_name": asset.name,
+                "metric_name": item.metric_name,
+                "value": float(item.value),
+                "unit": item.unit,
+                "timestamp": item.time.isoformat(),
+                "packml_state": item.packml_state
+            })
+    
     return {
         "session_id": str(session_id),
-        "domains": list(domains),
-        "telemetry": [],
-        "message": "Telemetry integration to be implemented"
+        "telemetry": telemetry_data[:limit],
+        "count": len(telemetry_data)
     }
 
 
@@ -1130,25 +1269,75 @@ async def get_session_alarms_context(
     """
     logger.info("get_session_alarms_context", user_id=str(current_user.id), session_id=str(session_id))
     
-    # Verify session ownership
-    session_query = select(AnalysisSession).where(
-        and_(
-            AnalysisSession.id == session_id,
-            AnalysisSession.user_id == current_user.id
+    # Convert UUID to string to ensure proper comparison with String column
+    session_id_str = str(session_id)
+    
+    # Verify session ownership - in dev mode, allow access regardless of user_id
+    if current_user.id == "00000000-0000-0000-0000-000000000001":
+        # Dev mode: get session without user_id check
+        session_query = select(AnalysisSession).where(AnalysisSession.id == session_id_str)
+    else:
+        # Normal mode: check ownership
+        session_query = select(AnalysisSession).where(
+            and_(
+                AnalysisSession.id == session_id_str,
+                AnalysisSession.user_id == current_user.id
+            )
         )
-    )
     session_result = await db.execute(session_query)
     session = session_result.scalar_one_or_none()
     
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     
-    # TODO: Fetch actual alarms based on session domains
-    # For now, return placeholder
+    # Fetch recent alarms from organization
+    from app.db.models import Alarm, Asset
+    from datetime import datetime, timedelta
+    
+    # Get assets from organization
+    asset_query = select(Asset).where(Asset.organization_id == current_user.organization_id)
+    asset_result = await db.execute(asset_query)
+    assets = asset_result.scalars().all()
+    
+    if not assets:
+        return {
+            "session_id": str(session_id),
+            "alarms": [],
+            "message": "No assets found in organization"
+        }
+    
+    # Get recent alarms (last 24 hours)
+    time_threshold = datetime.utcnow() - timedelta(hours=24)
+    alarm_data = []
+    
+    for asset in assets[:5]:  # Limit to 5 assets for performance
+        alarm_query = select(Alarm).where(
+            and_(
+                Alarm.asset_id == asset.id,
+                Alarm.occurred_at >= time_threshold
+            )
+        ).order_by(Alarm.occurred_at.desc()).limit(limit)
+        
+        alarm_result = await db.execute(alarm_query)
+        alarm_items = alarm_result.scalars().all()
+        
+        for item in alarm_items:
+            alarm_data.append({
+                "id": str(item.id),
+                "asset_id": str(item.asset_id),
+                "asset_name": asset.name,
+                "alarm_code": item.alarm_code,
+                "severity": item.severity,
+                "is_active": item.is_active,
+                "is_acknowledged": item.is_acknowledged,
+                "occurred_at": item.occurred_at.isoformat(),
+                "description": item.description
+            })
+    
     return {
         "session_id": str(session_id),
-        "alarms": [],
-        "message": "Alarm integration to be implemented"
+        "alarms": alarm_data[:limit],
+        "count": len(alarm_data)
     }
 
 
@@ -1164,25 +1353,69 @@ async def get_session_kanban_context(
     """
     logger.info("get_session_kanban_context", user_id=str(current_user.id), session_id=str(session_id))
     
-    # Verify session ownership
-    session_query = select(AnalysisSession).where(
-        and_(
-            AnalysisSession.id == session_id,
-            AnalysisSession.user_id == current_user.id
+    # Convert UUID to string to ensure proper comparison with String column
+    session_id_str = str(session_id)
+    
+    # Verify session ownership - in dev mode, allow access regardless of user_id
+    if current_user.id == "00000000-0000-0000-0000-000000000001":
+        # Dev mode: get session without user_id check
+        session_query = select(AnalysisSession).where(AnalysisSession.id == session_id_str)
+    else:
+        # Normal mode: check ownership
+        session_query = select(AnalysisSession).where(
+            and_(
+                AnalysisSession.id == session_id_str,
+                AnalysisSession.user_id == current_user.id
+            )
         )
-    )
     session_result = await db.execute(session_query)
     session = session_result.scalar_one_or_none()
     
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     
-    # TODO: Fetch actual Kanban tasks based on session domains
-    # For now, return placeholder
+    # Fetch Kanban tasks from organization
+    from app.db.models import Task, TaskBoard
+    
+    # Get the organization's board first
+    board_query = select(TaskBoard).where(
+        TaskBoard.organization_id == current_user.organization_id
+    )
+    board_result = await db.execute(board_query)
+    board = board_result.scalar_one_or_none()
+    
+    if not board:
+        return {
+            "session_id": str(session_id),
+            "tasks": [],
+            "message": "No kanban board found for organization"
+        }
+    
+    # Get tasks from the board
+    task_query = select(Task).where(
+        Task.board_id == board.id
+    ).order_by(Task.created_at.desc()).limit(limit)
+    
+    task_result = await db.execute(task_query)
+    tasks = task_result.scalars().all()
+    
+    task_data = []
+    for task in tasks:
+        task_data.append({
+            "id": str(task.id),
+            "title": task.title,
+            "status": task.status,
+            "priority": task.priority,
+            "assigned_to": str(task.assigned_to) if task.assigned_to else None,
+            "column_id": str(task.column_id) if task.column_id else None,
+            "created_at": task.created_at.isoformat(),
+            "progress_percent": task.progress_percent
+        })
+    
     return {
         "session_id": str(session_id),
-        "tasks": [],
-        "message": "Kanban integration to be implemented"
+        "tasks": task_data,
+        "count": len(task_data)
     }
 
 
@@ -1198,23 +1431,68 @@ async def get_session_registries_context(
     """
     logger.info("get_session_registries_context", user_id=str(current_user.id), session_id=str(session_id))
     
-    # Verify session ownership
-    session_query = select(AnalysisSession).where(
-        and_(
-            AnalysisSession.id == session_id,
-            AnalysisSession.user_id == current_user.id
+    # Convert UUID to string to ensure proper comparison with String column
+    session_id_str = str(session_id)
+    
+    # Verify session ownership - in dev mode, allow access regardless of user_id
+    if current_user.id == "00000000-0000-0000-0000-000000000001":
+        # Dev mode: get session without user_id check
+        session_query = select(AnalysisSession).where(AnalysisSession.id == session_id_str)
+    else:
+        # Normal mode: check ownership
+        session_query = select(AnalysisSession).where(
+            and_(
+                AnalysisSession.id == session_id_str,
+                AnalysisSession.user_id == current_user.id
+            )
         )
-    )
     session_result = await db.execute(session_query)
     session = session_result.scalar_one_or_none()
     
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     
-    # TODO: Fetch actual registry items based on session domains
-    # For now, return placeholder
+    # Fetch registry items from organization
+    from app.db.models import ActionableRegistry, ActionableRegistryItem
+    
+    # Get registries
+    registry_query = select(ActionableRegistry).where(
+        ActionableRegistry.organization_id == current_user.organization_id
+    )
+    registry_result = await db.execute(registry_query)
+    registries = registry_result.scalars().all()
+    
+    if not registries:
+        return {
+            "session_id": str(session_id),
+            "registry_items": [],
+            "message": "No registries found in organization"
+        }
+    
+    # Get registry items
+    registry_ids = [r.id for r in registries]
+    items_query = select(ActionableRegistryItem).where(
+        ActionableRegistryItem.registry_id.in_(registry_ids)
+    ).order_by(ActionableRegistryItem.created_at.desc()).limit(limit)
+    
+    items_result = await db.execute(items_query)
+    items = items_result.scalars().all()
+    
+    item_data = []
+    for item in items:
+        item_data.append({
+            "id": str(item.id),
+            "registry_id": str(item.registry_id),
+            "title": item.title,
+            "severity": item.severity,
+            "status": item.status,
+            "completion_criteria": item.completion_criteria,
+            "created_at": item.created_at.isoformat(),
+            "due_date": item.due_date.isoformat() if item.due_date else None
+        })
+    
     return {
         "session_id": str(session_id),
-        "registry_items": [],
-        "message": "Registry integration to be implemented"
+        "registry_items": item_data,
+        "count": len(item_data)
     }

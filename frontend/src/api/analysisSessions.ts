@@ -1,10 +1,10 @@
 /**
  * Analysis Sessions API Client
- * 
+ *
  * API client for managing analysis sessions, data sources, and session-based chat.
  */
 
-const API_BASE = (import.meta as any).env.VITE_API_BASE_URL || 'http://localhost:8000';
+import { api } from './client';
 
 // ==================== Types ====================
 
@@ -82,127 +82,76 @@ export interface SessionMessage {
  * Create a new analysis session
  */
 export async function createSession(request: CreateSessionRequest): Promise<AnalysisSession> {
-  const response = await fetch(`${API_BASE}/api/v1/nlp/sessions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    credentials: 'include',
-    body: JSON.stringify(request),
-  });
-
-  if (!response.ok) {
-    throw new Error('Failed to create session');
-  }
-
-  return response.json();
+  const response = await api.post<AnalysisSession>('/api/v1/nlp/sessions', request);
+  return response.data;
 }
 
 /**
  * List user's analysis sessions
  */
 export async function listSessions(limit: number = 50, offset: number = 0, status?: string): Promise<SessionListResponse> {
-  const params = new URLSearchParams({
+  const params: any = {
     limit: limit.toString(),
     offset: offset.toString(),
-  });
+    _t: Date.now(), // Cache-busting timestamp
+  };
 
   if (status) {
-    params.append('status', status);
+    params.status = status;
   }
 
-  const response = await fetch(`${API_BASE}/api/v1/nlp/sessions?${params}`, {
-    credentials: 'include',
-  });
-
-  if (!response.ok) {
-    throw new Error('Failed to list sessions');
-  }
-
-  return response.json();
+  const response = await api.get<SessionListResponse>('/api/v1/nlp/sessions', { params });
+  return response.data;
 }
 
 /**
  * Get details of a specific analysis session
  */
 export async function getSession(sessionId: string): Promise<AnalysisSession> {
-  const response = await fetch(`${API_BASE}/api/v1/nlp/sessions/${sessionId}`, {
-    credentials: 'include',
-  });
-
-  if (!response.ok) {
-    throw new Error('Failed to get session');
-  }
-
-  return response.json();
+  const response = await api.get<AnalysisSession>(`/api/v1/nlp/sessions/${sessionId}`);
+  return response.data;
 }
 
 /**
  * Update an analysis session
  */
 export async function updateSession(sessionId: string, request: UpdateSessionRequest): Promise<AnalysisSession> {
-  const response = await fetch(`${API_BASE}/api/v1/nlp/sessions/${sessionId}`, {
-    method: 'PUT',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    credentials: 'include',
-    body: JSON.stringify(request),
-  });
-
-  if (!response.ok) {
-    throw new Error('Failed to update session');
-  }
-
-  return response.json();
+  const response = await api.put<AnalysisSession>(`/api/v1/nlp/sessions/${sessionId}`, request);
+  return response.data;
 }
 
 /**
  * Delete an analysis session
  */
 export async function deleteSession(sessionId: string): Promise<{ message: string }> {
-  const response = await fetch(`${API_BASE}/api/v1/nlp/sessions/${sessionId}`, {
-    method: 'DELETE',
-    credentials: 'include',
-  });
+  const response = await api.delete<{ message: string }>(`/api/v1/nlp/sessions/${sessionId}`);
+  return response.data;
+}
 
-  if (!response.ok) {
-    throw new Error('Failed to delete session');
-  }
-
-  return response.json();
+/**
+ * Clean up orphaned sessions (dev/debug only)
+ */
+export async function cleanupOrphanedSessions(): Promise<{ message: string; deleted_count: number }> {
+  const response = await api.post<{ message: string; deleted_count: number }>('/api/v1/nlp/sessions/cleanup-orphaned');
+  return response.data;
 }
 
 /**
  * Resume an analysis session
  */
 export async function resumeSession(sessionId: string): Promise<AnalysisSession> {
-  const response = await fetch(`${API_BASE}/api/v1/nlp/sessions/${sessionId}/resume`, {
-    method: 'POST',
-    credentials: 'include',
-  });
-
-  if (!response.ok) {
-    throw new Error('Failed to resume session');
-  }
-
-  return response.json();
+  const response = await api.post<AnalysisSession>(`/api/v1/nlp/sessions/${sessionId}/resume`);
+  return response.data;
 }
 
 /**
  * Add data from Intake Inbox to session
  */
 export async function addIntakeData(sessionId: string, intakeId: string): Promise<DataSource> {
-  const response = await fetch(`${API_BASE}/api/v1/nlp/sessions/${sessionId}/data/intake?intake_id=${intakeId}`, {
-    method: 'POST',
-    credentials: 'include',
+  const response = await api.post<DataSource>(`/api/v1/nlp/sessions/${sessionId}/data/intake`, null, {
+    params: { intake_id: intakeId }
   });
-
-  if (!response.ok) {
-    throw new Error('Failed to add intake data');
-  }
-
-  return response.json();
+  return response.data;
 }
 
 /**
@@ -217,128 +166,71 @@ export async function uploadDataToSession(
   formData.append('file', file);
   formData.append('data_type', dataType);
 
-  const response = await fetch(`${API_BASE}/api/v1/nlp/sessions/${sessionId}/data/upload`, {
-    method: 'POST',
-    credentials: 'include',
-    body: formData,
+  const response = await api.post<DataSource>(`/api/v1/nlp/sessions/${sessionId}/data/upload`, formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
   });
-
-  if (!response.ok) {
-    throw new Error('Failed to upload data');
-  }
-
-  return response.json();
+  return response.data;
 }
 
 /**
  * List data sources in a session
  */
 export async function listSessionData(sessionId: string): Promise<DataSource[]> {
-  const response = await fetch(`${API_BASE}/api/v1/nlp/sessions/${sessionId}/data`, {
-    credentials: 'include',
-  });
-
-  if (!response.ok) {
-    throw new Error('Failed to list session data');
-  }
-
-  return response.json();
+  const response = await api.get<DataSource[]>(`/api/v1/nlp/sessions/${sessionId}/data`);
+  return response.data;
 }
 
 /**
  * Remove a data source from session
  */
 export async function removeDataSource(sessionId: string, sourceId: string): Promise<{ message: string }> {
-  const response = await fetch(`${API_BASE}/api/v1/nlp/sessions/${sessionId}/data/${sourceId}`, {
-    method: 'DELETE',
-    credentials: 'include',
-  });
-
-  if (!response.ok) {
-    throw new Error('Failed to remove data source');
-  }
-
-  return response.json();
+  const response = await api.delete<{ message: string }>(`/api/v1/nlp/sessions/${sessionId}/data/${sourceId}`);
+  return response.data;
 }
 
 /**
  * Send message in session context
  */
 export async function sessionChat(sessionId: string, request: SessionChatRequest): Promise<SessionChatResponse> {
-  const response = await fetch(`${API_BASE}/api/v1/nlp/sessions/${sessionId}/chat`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    credentials: 'include',
-    body: JSON.stringify(request),
-  });
-
-  if (!response.ok) {
-    throw new Error('Failed to send chat message');
-  }
-
-  return response.json();
+  const response = await api.post<SessionChatResponse>(`/api/v1/nlp/sessions/${sessionId}/chat`, request);
+  return response.data;
 }
 
 /**
  * Get messages in a session
  */
 export async function getSessionMessages(sessionId: string, limit: number = 100, offset: number = 0): Promise<SessionMessage[]> {
-  const params = new URLSearchParams({
-    limit: limit.toString(),
-    offset: offset.toString(),
+  const response = await api.get<SessionMessage[]>(`/api/v1/nlp/sessions/${sessionId}/messages`, {
+    params: { limit, offset }
   });
-
-  const response = await fetch(`${API_BASE}/api/v1/nlp/sessions/${sessionId}/messages?${params}`, {
-    credentials: 'include',
-  });
-
-  if (!response.ok) {
-    throw new Error('Failed to get session messages');
-  }
-
-  return response.json();
+  return response.data;
 }
 
 /**
  * Generate session title from context and queries
  */
 export async function generateSessionTitle(sessionId: string): Promise<AnalysisSession> {
-  const response = await fetch(`${API_BASE}/api/v1/nlp/sessions/${sessionId}/generate-title`, {
-    method: 'POST',
-    credentials: 'include',
-  });
-
-  if (!response.ok) {
-    throw new Error('Failed to generate session title');
-  }
-
-  return response.json();
+  const response = await api.post<AnalysisSession>(`/api/v1/nlp/sessions/${sessionId}/generate-title`);
+  return response.data;
 }
 
 /**
  * Get full chat history across all sessions
  */
 export async function getChatHistory(limit: number = 100, offset: number = 0, sessionId?: string): Promise<SessionMessage[]> {
-  const params = new URLSearchParams({
+  const params: any = {
     limit: limit.toString(),
     offset: offset.toString(),
-  });
+  };
 
   if (sessionId) {
-    params.append('session_id', sessionId);
+    params.session_id = sessionId;
   }
 
-  const response = await fetch(`${API_BASE}/api/v1/nlp/sessions/chat/history?${params}`, {
-    credentials: 'include',
-  });
-
-  if (!response.ok) {
-    throw new Error('Failed to get chat history');
-  }
-
-  return response.json();
+  const response = await api.get<SessionMessage[]>('/api/v1/nlp/sessions/chat/history', { params });
+  return response.data;
 }
 
 /**
@@ -350,101 +242,58 @@ export async function searchChatHistory(
   offset: number = 0,
   sessionId?: string
 ): Promise<SessionMessage[]> {
-  const params = new URLSearchParams({
+  const params: any = {
     q: query,
     limit: limit.toString(),
     offset: offset.toString(),
-  });
+  };
 
   if (sessionId) {
-    params.append('session_id', sessionId);
+    params.session_id = sessionId;
   }
 
-  const response = await fetch(`${API_BASE}/api/v1/nlp/sessions/chat/search?${params}`, {
-    credentials: 'include',
-  });
-
-  if (!response.ok) {
-    throw new Error('Failed to search chat history');
-  }
-
-  return response.json();
+  const response = await api.get<SessionMessage[]>('/api/v1/nlp/sessions/chat/search', { params });
+  return response.data;
 }
 
 /**
  * Get session telemetry context
  */
 export async function getSessionTelemetryContext(sessionId: string, limit: number = 50): Promise<any> {
-  const params = new URLSearchParams({
-    limit: limit.toString(),
+  const response = await api.get<any>(`/api/v1/nlp/sessions/${sessionId}/context/telemetry`, {
+    params: { limit }
   });
-
-  const response = await fetch(`${API_BASE}/api/v1/nlp/sessions/${sessionId}/context/telemetry?${params}`, {
-    credentials: 'include',
-  });
-
-  if (!response.ok) {
-    throw new Error('Failed to get telemetry context');
-  }
-
-  return response.json();
+  return response.data;
 }
 
 /**
  * Get session alarms context
  */
 export async function getSessionAlarmsContext(sessionId: string, limit: number = 50): Promise<any> {
-  const params = new URLSearchParams({
-    limit: limit.toString(),
+  const response = await api.get<any>(`/api/v1/nlp/sessions/${sessionId}/context/alarms`, {
+    params: { limit }
   });
-
-  const response = await fetch(`${API_BASE}/api/v1/nlp/sessions/${sessionId}/context/alarms?${params}`, {
-    credentials: 'include',
-  });
-
-  if (!response.ok) {
-    throw new Error('Failed to get alarms context');
-  }
-
-  return response.json();
+  return response.data;
 }
 
 /**
  * Get session Kanban context
  */
 export async function getSessionKanbanContext(sessionId: string, limit: number = 50): Promise<any> {
-  const params = new URLSearchParams({
-    limit: limit.toString(),
+  const response = await api.get<any>(`/api/v1/nlp/sessions/${sessionId}/context/kanban`, {
+    params: { limit }
   });
-
-  const response = await fetch(`${API_BASE}/api/v1/nlp/sessions/${sessionId}/context/kanban?${params}`, {
-    credentials: 'include',
-  });
-
-  if (!response.ok) {
-    throw new Error('Failed to get Kanban context');
-  }
-
-  return response.json();
+  return response.data;
 }
 
 /**
  * Get session registries context
  */
 export async function getSessionRegistriesContext(sessionId: string, limit: number = 50): Promise<any> {
-  const params = new URLSearchParams({
-    limit: limit.toString(),
+  const response = await api.get<any>(`/api/v1/nlp/sessions/${sessionId}/context/registries`, {
+    params: { limit }
   });
-
-  const response = await fetch(`${API_BASE}/api/v1/nlp/sessions/${sessionId}/context/registries?${params}`, {
-    credentials: 'include',
-  });
-
-  if (!response.ok) {
-    throw new Error('Failed to get registries context');
-  }
-
-  return response.json();
+  return response.data;
 }
 
 // Export as a single object for convenience
@@ -454,6 +303,7 @@ export const analysisSessionsApi = {
   getSession,
   updateSession,
   deleteSession,
+  cleanupOrphanedSessions,
   resumeSession,
   addIntakeData,
   uploadDataToSession,

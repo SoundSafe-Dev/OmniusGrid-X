@@ -156,6 +156,26 @@ The frontend includes a comprehensive mock API system for demonstration and deve
 
 To use mock data, the frontend API clients are configured with `USE_MOCK = true` in the respective API files.
 
+### Demo Kanban Tasks
+
+For development and demo purposes, the system includes a seed script to populate the Kanban board with realistic task cards. This should be run after initial database setup to ensure the Kanban board displays demo data until client/site integration.
+
+**Run the demo task seed script:**
+
+```bash
+cd backend
+python scripts/seed_demo_kanban.py
+```
+
+**Demo Tasks Include:**
+- **In Progress**: Conveyor belt jam investigation, Hydraulic Press temperature alarm response
+- **Triage**: CNC Machine preventive maintenance, Steel sheets material request
+- **Backlog**: Quality inspections, safety checks, OEE analysis, firmware updates, operator training
+- **Review**: Changeover tasks, vibration investigations
+- **Done**: Load cell calibration
+
+**Important:** This seed script should be run during initial setup and after any database reset. The demo tasks provide a realistic starting point for demonstrations and development until actual client/site data integration is implemented.
+
 ---
 
 ## Project Structure
@@ -644,6 +664,7 @@ The RealTimeDataPanel provides context from:
 - Last accessed timestamp updated on each interaction
 - Sessions can be archived or soft-deleted
 - Configurable TTL for inactive session cleanup
+- UUID handling: All session endpoints use string conversion for proper database comparison with String(36) columns
 
 **Database Models:**
 

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { analysisSessionsApi, AnalysisSession } from '../../api/analysisSessions';
-import { Plus, Trash2, Clock, FileText, MessageSquare } from 'lucide-react';
+import { Plus, Trash2, Clock, FileText, MessageSquare, RefreshCw } from 'lucide-react';
 import { Button } from '../ui/Button';
 
 interface SessionListProps {
@@ -8,41 +8,72 @@ interface SessionListProps {
   onNewSession: () => void;
   currentSessionId?: string;
   className?: string;
+  refreshTrigger?: number;
 }
 
 export const SessionList: React.FC<SessionListProps> = ({
   onSessionSelect,
   onNewSession,
   currentSessionId,
-  className = ''
+  className = '',
+  refreshTrigger
 }) => {
   const [sessions, setSessions] = useState<AnalysisSession[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
-  useEffect(() => {
-    loadSessions();
-  }, []);
-
   const loadSessions = async () => {
     setIsLoading(true);
     try {
+      console.log('[SessionList] Loading sessions...');
       const response = await analysisSessionsApi.listSessions(50, 0, 'active');
+      console.log('[SessionList] Loaded sessions:', response.sessions.length, response.sessions.map(s => ({ id: s.id, title: s.title })));
       setSessions(response.sessions);
     } catch (error) {
-      console.error('Error loading sessions:', error);
+      console.error('[SessionList] Error loading sessions:', error);
+      // On error, clear sessions to avoid showing stale data
+      setSessions([]);
     } finally {
       setIsLoading(false);
     }
   };
 
+  useEffect(() => {
+    loadSessions();
+  }, [refreshTrigger]);
+
   const handleDeleteSession = async (sessionId: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    // Immediately remove from local state for better UX
+    setSessions(sessions.filter(s => s.id !== sessionId));
+    
     try {
       await analysisSessionsApi.deleteSession(sessionId);
-      setSessions(sessions.filter(s => s.id !== sessionId));
-    } catch (error) {
+      // Reload sessions to ensure backend state is reflected
+      await loadSessions();
+    } catch (error: any) {
       console.error('Error deleting session:', error);
+      // If session doesn't exist (404), it's already gone, which is fine
+      if (error.response?.status !== 404) {
+        // On other errors, reload to sync state
+        await loadSessions();
+      }
+    }
+  };
+
+  const handleCleanupOrphaned = async () => {
+    if (!confirm('This will delete ALL sessions to fix database corruption. Continue?')) {
+      return;
+    }
+    
+    try {
+      const result = await analysisSessionsApi.cleanupOrphanedSessions();
+      console.log('[SessionList] Cleanup result:', result);
+      alert(`Cleaned up ${result.deleted_count} orphaned sessions`);
+      await loadSessions();
+    } catch (error) {
+      console.error('[SessionList] Error cleaning up orphaned sessions:', error);
+      alert('Failed to clean up orphaned sessions. Check console for details.');
     }
   };
 
@@ -56,10 +87,16 @@ export const SessionList: React.FC<SessionListProps> = ({
       <div className="p-4 border-b border-opsgrid-border">
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-sm font-semibold text-opsgrid-text">Sessions</h3>
-          <Button size="sm" onClick={onNewSession}>
-            <Plus className="w-4 h-4 mr-1" />
-            New
-          </Button>
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" onClick={handleCleanupOrphaned}>
+              <RefreshCw className="w-4 h-4 mr-1" />
+              Clean
+            </Button>
+            <Button size="sm" onClick={onNewSession}>
+              <Plus className="w-4 h-4 mr-1" />
+              New
+            </Button>
+          </div>
         </div>
         <input
           type="text"
