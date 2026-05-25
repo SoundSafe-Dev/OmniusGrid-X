@@ -7,12 +7,36 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db, AsyncSessionLocal
-from app.db.models import Command, Asset
+from app.db.models import Command, Asset, User
 from app.api.auth import get_current_active_user
 from app.services.command_executor import command_executor, CommandStatus
 from app.services.websocket_manager import websocket_manager
 
 router = APIRouter()
+
+
+def check_command_permission(user: User, action_id: str) -> bool:
+    """
+    Check if user has permission to execute a command.
+    
+    Permission levels:
+    - admin: Full command access including emergency stop
+    - operator: Standard command access (no emergency stop)
+    - viewer: No command access (read-only)
+    """
+    if user.role == "viewer":
+        return False
+    
+    if user.role == "admin":
+        return True
+    
+    if user.role == "operator":
+        # Operators cannot execute emergency stop
+        if action_id == "emergency_stop":
+            return False
+        return True
+    
+    return False
 
 
 class CommandSubmitRequest(BaseModel):
@@ -57,6 +81,13 @@ async def submit_command(
     - `emergency_stop`: Immediate stop (safety critical)
     - `set_temperature`: Adjust nozzle/bed temp (params: target_temp, component)
     """
+    # Check user permissions
+    if not check_command_permission(current_user, request.action_id):
+        raise HTTPException(
+            status_code=403, 
+            detail=f"User role '{current_user.role}' does not have permission to execute action '{request.action_id}'"
+        )
+    
     # Verify asset exists and user has access
     async with AsyncSessionLocal() as session:
         result = await session.execute(
@@ -67,10 +98,9 @@ async def submit_command(
         if not asset:
             raise HTTPException(status_code=404, detail="Asset not found")
         
-        # TODO: Verify user has permission for this asset
-        # For now, allow if same organization
+        # Verify user has access to this asset (same organization)
         if asset.organization_id != current_user.organization_id:
-            raise HTTPException(status_code=403, detail="Access denied")
+            raise HTTPException(status_code=403, detail="Access denied: asset belongs to different organization")
     
     # Submit command
     command_id = await command_executor.submit_command(
@@ -187,7 +217,15 @@ async def emergency_stop(
     """
     Emergency stop - immediately halt asset operation.
     High priority command that bypasses normal queue.
+    Requires admin role.
     """
+    # Check user permissions (emergency stop requires admin)
+    if not check_command_permission(current_user, "emergency_stop"):
+        raise HTTPException(
+            status_code=403,
+            detail="Emergency stop requires admin role"
+        )
+    
     async with AsyncSessionLocal() as session:
         result = await session.execute(
             select(Asset).where(Asset.id == asset_id)
@@ -196,6 +234,10 @@ async def emergency_stop(
         
         if not asset:
             raise HTTPException(status_code=404, detail="Asset not found")
+        
+        # Verify user has access to this asset (same organization)
+        if asset.organization_id != current_user.organization_id:
+            raise HTTPException(status_code=403, detail="Access denied: asset belongs to different organization")
     
     # Submit with high priority (short timeout)
     command_id = await command_executor.submit_command(
