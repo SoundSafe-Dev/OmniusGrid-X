@@ -19,9 +19,7 @@ limiter = Limiter(
     key_func=get_remote_address,
     storage_uri=settings.REDIS_URL,
     default_limits=["1000/hour"],  # Global limit
-    headers_enabled=True,
-    header_name="X-RateLimit",
-    header_prefix="RateLimit"
+    headers_enabled=True
 )
 
 

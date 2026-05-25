@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 from typing import Optional, List
-from sqlalchemy import Column, String, DateTime, Boolean, Numeric, JSON, ForeignKey, Text, BigInteger, Integer
+from sqlalchemy import Column, String, DateTime, Boolean, Numeric, JSON, ForeignKey, Text, BigInteger, Integer, ARRAY, Date, UUID
 from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
@@ -952,7 +952,7 @@ class AuditLog(Base):
     organization_id = UUIDForeignKey("organizations.id", nullable=True)
     action = Column(String(100), nullable=False)
     resource_type = Column(String(50), nullable=True)
-    resource_id = UUIDForeignKey(None, nullable=True)
+    resource_id = Column(String(36), nullable=True)  # Polymorphic - can reference any table
     details = Column(JSON, default={}, nullable=False)
     ip_address = Column(String(45), nullable=True)  # IPv6 compatible
     user_agent = Column(Text, nullable=True)
@@ -977,7 +977,7 @@ class APIKey(Base):
     created_by = UUIDForeignKey("users.id", nullable=True)
     revoked_at = Column(DateTime(timezone=True), nullable=True)
     revoked_by = UUIDForeignKey("users.id", nullable=True)
-    metadata = Column(JSON, default={})
+    meta_data = Column(JSON, default={})
 
 
 class Permission(Base):
@@ -1016,7 +1016,7 @@ class UserSession(Base):
     expires_at = Column(DateTime(timezone=True), nullable=False)
     is_active = Column(Boolean, nullable=False, default=True)
     revoked_at = Column(DateTime(timezone=True), nullable=True)
-    metadata = Column(JSON, default={})
+    meta_data = Column(JSON, default={})
 
 
 class ConsentRecord(Base):
@@ -1032,7 +1032,7 @@ class ConsentRecord(Base):
     ip_address = Column(String(45), nullable=True)
     user_agent = Column(Text, nullable=True)
     withdrawn_at = Column(DateTime(timezone=True), nullable=True)
-    metadata = Column(JSON, default={})
+    meta_data = Column(JSON, default={})
 
 
 class DataProcessingRecord(Base):
@@ -1066,7 +1066,7 @@ class SecurityAsset(Base):
     status = Column(String(50), default="active")
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
-    metadata = Column(JSON, default={})
+    meta_data = Column(JSON, default={})
 
 
 class VendorRiskAssessment(Base):
@@ -1104,6 +1104,7 @@ class IntegrationConfiguration(Base):
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
     created_by = UUIDForeignKey("users.id", nullable=True)
+    meta_data = Column(JSON, default={})
 
 
 class DataResidencyTag(Base):
@@ -1116,5 +1117,5 @@ class DataResidencyTag(Base):
     region = Column(String(50), nullable=False, default="USA")
     tagged_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     tagged_by = UUIDForeignKey("users.id", nullable=True)
-    metadata = Column(JSON, default={})
+    meta_data = Column(JSON, default={})
 
