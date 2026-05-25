@@ -183,13 +183,12 @@ async def list_sessions(
     """
     logger.info("list_sessions", user_id=str(current_user.id), status=status)
     
-    # Build query - use distinct to avoid duplicates
+    # Build query
     query = select(AnalysisSession).where(AnalysisSession.user_id == current_user.id)
     
     if status:
         query = query.where(AnalysisSession.status == status)
     
-    query = query.distinct()
     query = query.order_by(AnalysisSession.last_accessed_at.desc())
     query = query.limit(limit).offset(offset)
     
@@ -199,12 +198,12 @@ async def list_sessions(
     logger.info("list_sessions_result", count=len(sessions), session_ids=[str(s.id) for s in sessions])
     
     # Get total count
-    count_query = select(AnalysisSession).where(AnalysisSession.user_id == current_user.id)
+    from sqlalchemy import func
+    count_query = select(func.count()).select_from(AnalysisSession).where(AnalysisSession.user_id == current_user.id)
     if status:
         count_query = count_query.where(AnalysisSession.status == status)
-    count_query = count_query.distinct()
     count_result = await db.execute(count_query)
-    total = len(count_result.scalars().all())
+    total = count_result.scalar()
     
     # Build response with counts
     session_responses = []
