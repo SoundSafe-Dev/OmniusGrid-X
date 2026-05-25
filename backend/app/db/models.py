@@ -481,6 +481,10 @@ class User(Base):
     full_name = Column(String(255))
     organization_id = UUIDForeignKey("organizations.id")
     role = Column(String(50), default="operator")
+    department = Column(String(100))
+    priorities = Column(JSON, default=[])
+    user_context = Column(JSON, default={})
+    user_goals = Column(JSON, default=[])
     is_active = Column(Boolean, default=True)
     last_login = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
@@ -820,4 +824,25 @@ class SessionMessage(Base):
     actions = Column(JSON, default=list)  # Recommended actions
     timestamp = Column(DateTime(timezone=True), default=datetime.utcnow)
     context_used = Column(JSON, default=dict)  # Context snapshot used for this message
+    meta_data = Column(JSON, default=dict)
+
+
+class IntakeItem(Base):
+    """Intake Inbox items for NLP correlation AI analysis"""
+    __tablename__ = "intake_items"
+
+    id = UUIDColumn()
+    user_id = UUIDForeignKey("users.id")
+    organization_id = UUIDForeignKey("organizations.id")
+    title = Column(String(255), nullable=False)
+    description = Column(Text)
+    data_type = Column(String(50))  # spreadsheet, report, image, document
+    category = Column(String(100), default="general")
+    file_name = Column(String(255))
+    file_content = Column(Text)  # Base64 encoded or file path
+    processed_data = Column(JSON, default={})
+    status = Column(String(50), default="pending")  # pending, analyzing, analyzed, error
+    analysis_result = Column(JSON, default={})
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    analyzed_at = Column(DateTime(timezone=True))
     meta_data = Column(JSON, default=dict)

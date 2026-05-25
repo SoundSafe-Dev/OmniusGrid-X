@@ -1,34 +1,51 @@
-import React from 'react';
-import { User, Target, Settings } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { User, Target, Settings, Loader2 } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
+import { userContextApi, UserContext } from '../../api/userContext';
+import { ContextManagementModal } from './ContextManagementModal';
 
 interface ContextPanelProps {
-  userContext?: {
-    role?: string;
-    department?: string;
-    priorities?: string[];
-  };
-  goals?: Array<{
-    title: string;
-    progress: number;
-    deadline?: string;
-  }>;
   className?: string;
 }
 
-export const ContextPanel: React.FC<ContextPanelProps> = ({
-  userContext,
-  goals = [],
-  className = ''
-}) => {
+export const ContextPanel: React.FC<ContextPanelProps> = ({ className = '' }) => {
+  const [userContext, setUserContext] = useState<UserContext | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [showManageModal, setShowManageModal] = useState(false);
+
+  useEffect(() => {
+    loadUserContext();
+  }, []);
+
+  const loadUserContext = async () => {
+    setIsLoading(true);
+    try {
+      const context = await userContextApi.getUserContext();
+      setUserContext(context);
+    } catch (error) {
+      console.error('Failed to load user context:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleContextUpdated = () => {
+    loadUserContext();
+  };
+
+  const goals = userContext?.user_goals || [];
+
   return (
     <div className={`flex flex-col h-full ${className}`}>
       <div className="p-4 border-b border-opsgrid-border">
         <h3 className="text-sm font-semibold text-opsgrid-text mb-3">Context</h3>
         
-        {/* User Context */}
-        {userContext && (
+        {isLoading ? (
+          <div className="flex items-center justify-center py-4">
+            <Loader2 className="w-4 h-4 animate-spin text-opsgrid-text-secondary" />
+          </div>
+        ) : userContext ? (
           <div className="space-y-2 mb-4">
             <div className="flex items-center gap-2">
               <User className="w-4 h-4 text-opsgrid-text-secondary" />
@@ -56,6 +73,8 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({
               </div>
             )}
           </div>
+        ) : (
+          <p className="text-xs text-opsgrid-text-secondary">Failed to load context</p>
         )}
       </div>
 
@@ -66,12 +85,16 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({
           <h3 className="text-sm font-semibold text-opsgrid-text">Active Goals</h3>
         </div>
         
-        {goals.length === 0 ? (
+        {isLoading ? (
+          <div className="flex items-center justify-center py-4">
+            <Loader2 className="w-4 h-4 animate-spin text-opsgrid-text-secondary" />
+          </div>
+        ) : goals.length === 0 ? (
           <p className="text-xs text-opsgrid-text-secondary">No active goals</p>
         ) : (
           <div className="space-y-3">
-            {goals.map((goal, index) => (
-              <div key={index} className="p-3 bg-opsgrid-bg rounded border border-opsgrid-border">
+            {goals.map((goal) => (
+              <div key={goal.id} className="p-3 bg-opsgrid-bg rounded border border-opsgrid-border">
                 <div className="flex items-start justify-between mb-2">
                   <p className="text-sm font-medium text-opsgrid-text flex-1">{goal.title}</p>
                   <Badge variant={goal.progress >= 75 ? 'success' : goal.progress >= 50 ? 'warning' : 'info'} className="text-xs">
@@ -96,11 +119,20 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({
       </div>
 
       <div className="p-4 border-t border-opsgrid-border">
-        <Button variant="outline" size="sm" className="w-full">
+        <Button variant="outline" size="sm" className="w-full" onClick={() => setShowManageModal(true)}>
           <Settings className="w-4 h-4 mr-2" />
           Manage Context
         </Button>
       </div>
+
+      {showManageModal && (
+        <ContextManagementModal
+          isOpen={showManageModal}
+          onClose={() => setShowManageModal(false)}
+          onContextUpdated={handleContextUpdated}
+          initialContext={userContext || undefined}
+        />
+      )}
     </div>
   );
 };

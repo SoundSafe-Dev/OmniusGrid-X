@@ -1128,6 +1128,15 @@ The correlation AI model seamlessly integrates with OmniusGrid's Kanban task man
 - **Authentication**: JWT-based auth with role-based access control (RBAC)
 - **Real-time Updates**: WebSocket integration for live telemetry and alarms
 - **Responsive Design**: Mobile-first layout with collapsible sidebar
+- **Enhanced Tooltips**: Comprehensive tooltip system across all pages
+  - Radix UI-based tooltips with consistent positioning (side="top", align="start")
+  - Non-redundant tooltips that provide additional context beyond visible text
+  - Tooltips on all interactive elements (buttons, cards, tabs, badges, icons)
+  - Page-specific tooltips: Dashboard (active alarms), Assets, Alarms, OEE, Kanban, Login
+  - Engine pages: CloudGateway, MLOpsPipeline, StrategicEngine, TacticalEngine
+  - Logistics pages: TransportationManagement (8 tabs), YardManagement (4 tabs)
+  - Fleet pages: Overview cards and site items
+  - Admin pages: User management actions
 - **AI Engine Dashboards**:
   - Tactical Engine: Monitor <100ms edge inference with safety controls
   - Strategic Engine: Approve/reject cloud optimization recommendations
@@ -1149,7 +1158,13 @@ The correlation AI model seamlessly integrates with OmniusGrid's Kanban task man
   - **Detention Risk Prediction**: ML-based prediction of detention events
   - **Fleet Telematics**: Live vehicle status, fuel monitoring, exception reporting (speeding, harsh braking)
 - **Administration**:
-  - User management with role assignment
+  - **User Management**: Fully functional user management system with CRUD operations
+    - Create new users with name, email, password, role assignment (Admin/Operator/Viewer)
+    - Edit existing user details and permissions
+    - Delete users with confirmation dialog
+    - Role-based access control (RBAC) integration
+    - Modal-based UI with form validation
+    - Real-time user list updates via React Query cache invalidation
   - Collector configuration and restart controls
   - System health monitoring
   - Application settings and preferences

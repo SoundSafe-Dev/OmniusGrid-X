@@ -2,6 +2,7 @@ import { FC } from 'react'
 import { useQuery, useMutation, useQueryClient } from 'react-query'
 import { AlertTriangle, CheckCircle, Bell } from 'lucide-react'
 import { alarmsApi } from '../api'
+import { Tooltip, TooltipTrigger, TooltipContent } from '../components/ui'
 
 const Alarms: FC = () => {
   const queryClient = useQueryClient()
@@ -38,6 +39,16 @@ const Alarms: FC = () => {
     }
   }
 
+  const getSeverityDescription = (severity: string) => {
+    switch (severity) {
+      case 'critical': return 'Critical: Immediate action required, potential safety issue';
+      case 'high': return 'High: Prompt action required';
+      case 'medium': return 'Medium: Address soon';
+      case 'low': return 'Low: Monitor, no immediate action';
+      default: return severity;
+    }
+  }
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -50,43 +61,63 @@ const Alarms: FC = () => {
     <div className="space-y-6">
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-4">
-          <div className="flex items-center gap-3">
-            <Bell className="text-opsgrid-primary" size={24} />
-            <div>
-              <p className="text-sm text-opsgrid-text-secondary">Total Alarms</p>
-              <p className="text-2xl font-bold">{alarms?.length || 0}</p>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-4">
+              <div className="flex items-center gap-3">
+                <Bell className="text-opsgrid-primary" size={24} />
+                <div>
+                  <p className="text-sm text-opsgrid-text-secondary">Total Alarms</p>
+                  <p className="text-2xl font-bold">{alarms?.length || 0}</p>
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
+          </TooltipTrigger>
+          <TooltipContent>All alarms in system history</TooltipContent>
+        </Tooltip>
         
-        <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-4">
-          <div className="flex items-center gap-3">
-            <AlertTriangle className="text-status-alarm" size={24} />
-            <div>
-              <p className="text-sm text-opsgrid-text-secondary">Active</p>
-              <p className="text-2xl font-bold">{activeAlarms?.count || 0}</p>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-4">
+              <div className="flex items-center gap-3">
+                <AlertTriangle className="text-status-alarm" size={24} />
+                <div>
+                  <p className="text-sm text-opsgrid-text-secondary">Active</p>
+                  <p className="text-2xl font-bold">{activeAlarms?.count || 0}</p>
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
+          </TooltipTrigger>
+          <TooltipContent>Currently active, unacknowledged alarms</TooltipContent>
+        </Tooltip>
         
-        <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-4">
-          <div className="flex items-center gap-3">
-            <CheckCircle className="text-status-running" size={24} />
-            <div>
-              <p className="text-sm text-opsgrid-text-secondary">Acknowledged</p>
-              <p className="text-2xl font-bold">
-                {(alarms?.length || 0) - (activeAlarms?.count || 0)}
-              </p>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-4">
+              <div className="flex items-center gap-3">
+                <CheckCircle className="text-status-running" size={24} />
+                <div>
+                  <p className="text-sm text-opsgrid-text-secondary">Acknowledged</p>
+                  <p className="text-2xl font-bold">
+                    {(alarms?.length || 0) - (activeAlarms?.count || 0)}
+                  </p>
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
+          </TooltipTrigger>
+          <TooltipContent>Alarms that have been acknowledged</TooltipContent>
+        </Tooltip>
       </div>
 
       {/* Alarms List */}
       <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg">
         <div className="p-4 border-b border-opsgrid-border">
-          <h2 className="text-lg font-semibold">Alarm History</h2>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <h2 className="text-lg font-semibold">Alarm History</h2>
+            </TooltipTrigger>
+            <TooltipContent>Complete history of all system alarms</TooltipContent>
+          </Tooltip>
         </div>
         
         <div className="divide-y divide-opsgrid-border">
@@ -98,13 +129,18 @@ const Alarms: FC = () => {
               }`}
             >
               <div className="flex items-center gap-4">
-                <span
-                  className={`px-2 py-1 rounded text-xs font-medium ${getSeverityColor(
-                    alarm.severity
-                  )}`}
-                >
-                  {alarm.severity}
-                </span>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span
+                      className={`px-2 py-1 rounded text-xs font-medium ${getSeverityColor(
+                        alarm.severity
+                      )}`}
+                    >
+                      {alarm.severity}
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>{getSeverityDescription(alarm.severity)}</TooltipContent>
+                </Tooltip>
                 
                 <div>
                   <p className="font-medium">{alarm.message}</p>
@@ -115,23 +151,33 @@ const Alarms: FC = () => {
               </div>
               
               <div className="flex items-center gap-4">
-                <span
-                  className={`px-2 py-1 rounded text-xs ${
-                    alarm.is_active
-                      ? 'bg-status-alarm/20 text-status-alarm'
-                      : 'bg-status-running/20 text-status-running'
-                  }`}
-                >
-                  {alarm.is_active ? 'Active' : 'Cleared'}
-                </span>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span
+                      className={`px-2 py-1 rounded text-xs ${
+                        alarm.is_active
+                          ? 'bg-status-alarm/20 text-status-alarm'
+                          : 'bg-status-running/20 text-status-running'
+                      }`}
+                    >
+                      {alarm.is_active ? 'Active' : 'Cleared'}
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>{alarm.is_active ? 'Alarm is currently active' : 'Alarm has been cleared'}</TooltipContent>
+                </Tooltip>
                 
                 {alarm.is_active && !alarm.is_acknowledged && (
-                  <button
-                    onClick={() => acknowledgeMutation.mutate(alarm.id)}
-                    className="px-3 py-1 bg-opsgrid-primary text-white rounded text-sm hover:bg-opsgrid-primary/80"
-                  >
-                    Acknowledge
-                  </button>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={() => acknowledgeMutation.mutate(alarm.id)}
+                        className="px-3 py-1 bg-opsgrid-primary text-white rounded text-sm hover:bg-opsgrid-primary/80"
+                      >
+                        Acknowledge
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>Mark alarm as acknowledged</TooltipContent>
+                  </Tooltip>
                 )}
                 
                 {alarm.is_acknowledged && (

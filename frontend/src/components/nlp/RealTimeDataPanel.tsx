@@ -71,27 +71,157 @@ export const RealTimeDataPanel: React.FC<RealTimeDataPanelProps> = ({
 
     const data = { telemetry, alarms, kanban, registries }[activeTab];
 
-    if (!data || data.message) {
+    if (!data) {
       return (
         <div className="text-center py-8">
-          <p className="text-sm text-opsgrid-text-secondary">
-            {data?.message || 'No data available'}
-          </p>
-          <p className="text-xs text-opsgrid-text-secondary mt-2">
-            Integration to be implemented
-          </p>
+          <p className="text-sm text-opsgrid-text-secondary">No data available</p>
         </div>
       );
     }
 
-    // Render actual data when integration is complete
-    return (
-      <div className="space-y-2">
-        <p className="text-xs text-opsgrid-text-secondary">
-          {activeTab.charAt(0).toUpperCase() + activeTab.slice(1)} data will be displayed here
-        </p>
-      </div>
-    );
+    if (data.message) {
+      return (
+        <div className="text-center py-8">
+          <p className="text-sm text-opsgrid-text-secondary">{data.message}</p>
+        </div>
+      );
+    }
+
+    // Render actual data based on active tab
+    switch (activeTab) {
+      case 'telemetry':
+        const telemetryItems = data.telemetry || [];
+        if (telemetryItems.length === 0) {
+          return <p className="text-sm text-opsgrid-text-secondary">No telemetry data</p>;
+        }
+        return (
+          <div className="space-y-2">
+            <p className="text-xs text-opsgrid-text-secondary">Count: {data.count || telemetryItems.length}</p>
+            {telemetryItems.slice(0, 10).map((item: any, idx: number) => (
+              <div key={idx} className="p-2 bg-opsgrid-bg rounded border border-opsgrid-border">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-medium text-opsgrid-text">{item.asset_name}</span>
+                  <span className="text-xs text-opsgrid-text-secondary">{new Date(item.timestamp).toLocaleTimeString()}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-opsgrid-text">{item.metric_name}</span>
+                  <span className="text-xs font-medium text-opsgrid-text">
+                    {item.value} {item.unit || ''}
+                  </span>
+                </div>
+                {item.packml_state && (
+                  <span className="text-xs text-opsgrid-text-secondary mt-1">State: {item.packml_state}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        );
+
+      case 'alarms':
+        const alarmItems = data.alarms || [];
+        if (alarmItems.length === 0) {
+          return <p className="text-sm text-opsgrid-text-secondary">No alarms</p>;
+        }
+        return (
+          <div className="space-y-2">
+            <p className="text-xs text-opsgrid-text-secondary">Count: {data.count || alarmItems.length}</p>
+            {alarmItems.slice(0, 10).map((item: any) => (
+              <div key={item.id} className="p-2 bg-opsgrid-bg rounded border border-opsgrid-border">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-medium text-opsgrid-text">{item.asset_name}</span>
+                  <span className={`text-xs px-2 py-0.5 rounded ${
+                    item.severity === 'critical' ? 'bg-red-100 text-red-800' :
+                    item.severity === 'high' ? 'bg-orange-100 text-orange-800' :
+                    item.severity === 'medium' ? 'bg-yellow-100 text-yellow-800' :
+                    'bg-gray-100 text-gray-800'
+                  }`}>
+                    {item.severity}
+                  </span>
+                </div>
+                <p className="text-xs text-opsgrid-text mb-1">{item.alarm_code}</p>
+                {item.description && (
+                  <p className="text-xs text-opsgrid-text-secondary">{item.description}</p>
+                )}
+                <div className="flex items-center gap-2 mt-1">
+                  <span className={`text-xs ${item.is_active ? 'text-red-500' : 'text-green-500'}`}>
+                    {item.is_active ? 'Active' : 'Cleared'}
+                  </span>
+                  {item.is_acknowledged && (
+                    <span className="text-xs text-opsgrid-text-secondary">Acknowledged</span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        );
+
+      case 'kanban':
+        const taskItems = data.tasks || [];
+        if (taskItems.length === 0) {
+          return <p className="text-sm text-opsgrid-text-secondary">No tasks</p>;
+        }
+        return (
+          <div className="space-y-2">
+            <p className="text-xs text-opsgrid-text-secondary">Count: {data.count || taskItems.length}</p>
+            {taskItems.slice(0, 10).map((item: any) => (
+              <div key={item.id} className="p-2 bg-opsgrid-bg rounded border border-opsgrid-border">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-medium text-opsgrid-text">{item.title}</span>
+                  <span className={`text-xs px-2 py-0.5 rounded ${
+                    item.priority === 'critical' ? 'bg-red-100 text-red-800' :
+                    item.priority === 'high' ? 'bg-orange-100 text-orange-800' :
+                    item.priority === 'medium' ? 'bg-yellow-100 text-yellow-800' :
+                    'bg-gray-100 text-gray-800'
+                  }`}>
+                    {item.priority}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-xs text-opsgrid-text-secondary">
+                  <span>{item.status}</span>
+                  {item.progress_percent !== undefined && (
+                    <span>{item.progress_percent}%</span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        );
+
+      case 'registries':
+        const registryItems = data.registry_items || [];
+        if (registryItems.length === 0) {
+          return <p className="text-sm text-opsgrid-text-secondary">No registry items</p>;
+        }
+        return (
+          <div className="space-y-2">
+            <p className="text-xs text-opsgrid-text-secondary">Count: {data.count || registryItems.length}</p>
+            {registryItems.slice(0, 10).map((item: any) => (
+              <div key={item.id} className="p-2 bg-opsgrid-bg rounded border border-opsgrid-border">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-medium text-opsgrid-text">{item.title}</span>
+                  <span className={`text-xs px-2 py-0.5 rounded ${
+                    item.severity === 'critical' ? 'bg-red-100 text-red-800' :
+                    item.severity === 'high' ? 'bg-orange-100 text-orange-800' :
+                    item.severity === 'medium' ? 'bg-yellow-100 text-yellow-800' :
+                    'bg-gray-100 text-gray-800'
+                  }`}>
+                    {item.severity}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-xs text-opsgrid-text-secondary">
+                  <span>{item.status}</span>
+                  {item.due_date && (
+                    <span>Due: {new Date(item.due_date).toLocaleDateString()}</span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        );
+
+      default:
+        return <p className="text-sm text-opsgrid-text-secondary">Unknown tab</p>;
+    }
   };
 
   return (

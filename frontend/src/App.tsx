@@ -2,6 +2,7 @@ import { FC } from 'react'
 import { Routes, Route } from 'react-router-dom'
 import { Layout, ProtectedRoute } from './components'
 import { Login } from './pages/auth'
+import { TooltipProvider } from './components/ui'
 
 // Existing pages
 import Dashboard from './pages/Dashboard'
@@ -32,7 +33,8 @@ import { IntakeInbox } from './pages/intake/IntakeInbox'
 
 const App: FC = () => {
   return (
-    <Routes>
+    <TooltipProvider>
+      <Routes>
         {/* Public Routes */}
         <Route path="/login" element={<Login />} />
 
@@ -97,6 +99,7 @@ const App: FC = () => {
           </div>
         } />
       </Routes>
+    </TooltipProvider>
   )
 }
 

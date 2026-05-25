@@ -13,6 +13,7 @@ import { format } from 'date-fns';
 import { Activity, Wifi, WifiOff } from 'lucide-react';
 import { websocketManager } from '../../api';
 import { ChartContainer } from '../ui';
+import { Tooltip as UITooltip, TooltipTrigger, TooltipContent } from '../ui';
 
 interface TelemetryDataPoint {
   timestamp: number;
@@ -181,27 +182,37 @@ export const RealtimeTelemetryChart: FC<RealtimeTelemetryChartProps> = ({
       title={title || `Real-time Telemetry - ${assetName || assetId}`}
       subtitle={
         <div className="flex items-center gap-4">
-          <span className="flex items-center gap-1">
-            {connected ? (
-              <>
-                <Wifi className="w-3 h-3 text-green-500" />
-                <span className="text-green-500 text-xs">Live</span>
-              </>
-            ) : (
-              <>
-                <WifiOff className="w-3 h-3 text-red-500" />
-                <span className="text-red-500 text-xs">Disconnected</span>
-              </>
-            )}
-          </span>
+          <UITooltip>
+            <TooltipTrigger asChild>
+              <span className="flex items-center gap-1">
+                {connected ? (
+                  <>
+                    <Wifi className="w-3 h-3 text-green-500" />
+                    <span className="text-green-500 text-xs">Live</span>
+                  </>
+                ) : (
+                  <>
+                    <WifiOff className="w-3 h-3 text-red-500" />
+                    <span className="text-red-500 text-xs">Disconnected</span>
+                  </>
+                )}
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>{connected ? 'Real-time WebSocket connection active' : 'WebSocket connection not established'}</TooltipContent>
+          </UITooltip>
           {lastUpdate && (
             <span className="text-xs text-opsgrid-text-secondary">
               Last update: {format(lastUpdate, 'HH:mm:ss')}
             </span>
           )}
-          <span className="text-xs text-opsgrid-text-secondary">
-            Window: {timeWindow / 60}min
-          </span>
+          <UITooltip>
+            <TooltipTrigger asChild>
+              <span className="text-xs text-opsgrid-text-secondary">
+                Window: {timeWindow / 60}min
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>Time window for displayed data</TooltipContent>
+          </UITooltip>
         </div>
       }
       height={height}
@@ -214,21 +225,27 @@ export const RealtimeTelemetryChart: FC<RealtimeTelemetryChartProps> = ({
             const stat = stats[metric];
             if (!stat) return null;
             return (
-              <div
-                key={metric}
-                className="px-3 py-1.5 bg-opsgrid-bg rounded-lg"
-                style={{ borderLeft: `3px solid ${metricColors[metric]}` }}
-              >
-                <span className="text-xs text-opsgrid-text-secondary block">
-                  {formatMetricName(metric)}
-                </span>
-                <span className="text-sm font-medium">
-                  {stat.latest.toFixed(1)}
-                </span>
-                <span className="text-xs text-opsgrid-text-secondary ml-1">
-                  (avg: {stat.avg.toFixed(1)})
-                </span>
-              </div>
+              <UITooltip key={metric}>
+                <TooltipTrigger asChild>
+                  <div
+                    className="px-3 py-1.5 bg-opsgrid-bg rounded-lg"
+                    style={{ borderLeft: `3px solid ${metricColors[metric]}` }}
+                  >
+                    <span className="text-xs text-opsgrid-text-secondary block">
+                      {formatMetricName(metric)}
+                    </span>
+                    <span className="text-sm font-medium">
+                      {stat.latest.toFixed(1)}
+                    </span>
+                    <span className="text-xs text-opsgrid-text-secondary ml-1">
+                      (avg: {stat.avg.toFixed(1)})
+                    </span>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {formatMetricName(metric)}: Min {stat.min.toFixed(1)}, Max {stat.max.toFixed(1)}, Avg {stat.avg.toFixed(1)}
+                </TooltipContent>
+              </UITooltip>
             );
           })}
         </div>

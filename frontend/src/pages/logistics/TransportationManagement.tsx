@@ -1,9 +1,9 @@
 import { FC, useState, useEffect } from 'react';
 import { useQuery } from 'react-query';
-import { 
-  Truck, 
-  MapPin, 
-  User, 
+import {
+  Truck,
+  MapPin,
+  User,
   Building2,
   Clock,
   AlertTriangle,
@@ -25,17 +25,17 @@ import {
   Wrench
 } from 'lucide-react';
 import { transportationApi, geoTabApi, fleetTrackerApi } from '../../api';
-import { 
-  FleetTrackerMap, 
-  GeofencingPanel, 
-  HealthSecurityPanel, 
-  MaintenancePanel, 
-  PerformancePanel 
+import {
+  FleetTrackerMap,
+  GeofencingPanel,
+  HealthSecurityPanel,
+  MaintenancePanel,
+  PerformancePanel
 } from '../../components';
-import type { 
-  Carrier, 
-  Driver, 
-  Shipment, 
+import type {
+  Carrier,
+  Driver,
+  Shipment,
   Vehicle,
   ShipmentFilters,
   GeoLocation,
@@ -43,6 +43,7 @@ import type {
   FleetVehiclePosition,
   ShipmentRoute
 } from '../../types';
+import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
 
 const TRANSPORT_QUERY_KEY = 'transportation';
 
@@ -153,39 +154,89 @@ export const TransportationManagement: FC = () => {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Truck className="w-6 h-6 text-opsgrid-primary" />
-            Transportation Management System (TMS)
-          </h1>
-          <p className="text-opsgrid-text-secondary mt-1">
-            Fleet tracking, shipment management, and GeoTab telematics integration
-          </p>
-        </div>
-        <button
-          onClick={() => refetchShipments()}
-          className="flex items-center gap-2 px-4 py-2 bg-opsgrid-panel border border-opsgrid-border rounded-lg hover:bg-opsgrid-border transition-colors"
-        >
-          <RefreshCw className="w-4 h-4" />
-          Refresh
-        </button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div>
+              <h1 className="text-2xl font-bold flex items-center gap-2">
+                <Truck className="w-6 h-6 text-opsgrid-primary" />
+                Transportation Management System (TMS)
+              </h1>
+              <p className="text-opsgrid-text-secondary mt-1">
+                Fleet tracking, shipment management, and GeoTab telematics integration
+              </p>
+            </div>
+          </TooltipTrigger>
+          <TooltipContent>Transportation management system overview</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              onClick={() => refetchShipments()}
+              className="flex items-center gap-2 px-4 py-2 bg-opsgrid-panel border border-opsgrid-border rounded-lg hover:bg-opsgrid-border transition-colors"
+            >
+              <RefreshCw className="w-4 h-4" />
+              Refresh
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>Refresh transportation data</TooltipContent>
+        </Tooltip>
       </div>
 
       {/* Stats Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4">
-        <StatCard label="Total Shipments" value={stats.totalShipments} icon={Package} />
-        <StatCard label="In Transit" value={stats.inTransit} icon={Navigation} color="text-blue-500" />
-        <StatCard label="Delivered" value={stats.delivered} icon={CheckCircle2} color="text-green-500" />
-        <StatCard label="Planned" value={stats.planned} icon={Calendar} color="text-gray-400" />
-        <StatCard label="Active Drivers" value={stats.activeDrivers} icon={User} color="text-blue-500" />
-        <StatCard 
-          label="HOS Violations" 
-          value={stats.hosViolations} 
-          icon={AlertTriangle} 
-          color={stats.hosViolations > 0 ? 'text-red-500' : 'text-green-500'}
-        />
-        <StatCard label="Carriers" value={stats.totalCarriers} icon={Building2} />
-        <StatCard label="CT-PAT Cert" value={stats.ctpatCertified} icon={Shield} color="text-green-500" />
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <StatCard label="Total Shipments" value={stats.totalShipments} icon={Package} />
+          </TooltipTrigger>
+          <TooltipContent>Total shipments in the system</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <StatCard label="In Transit" value={stats.inTransit} icon={Navigation} color="text-blue-500" />
+          </TooltipTrigger>
+          <TooltipContent>Shipments currently in transit</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <StatCard label="Delivered" value={stats.delivered} icon={CheckCircle2} color="text-green-500" />
+          </TooltipTrigger>
+          <TooltipContent>Successfully delivered shipments</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <StatCard label="Planned" value={stats.planned} icon={Calendar} color="text-gray-400" />
+          </TooltipTrigger>
+          <TooltipContent>Planned shipments awaiting dispatch</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <StatCard label="Active Drivers" value={stats.activeDrivers} icon={User} color="text-blue-500" />
+          </TooltipTrigger>
+          <TooltipContent>Currently active drivers</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <StatCard
+              label="HOS Violations"
+              value={stats.hosViolations}
+              icon={AlertTriangle}
+              color={stats.hosViolations > 0 ? 'text-red-500' : 'text-green-500'}
+            />
+          </TooltipTrigger>
+          <TooltipContent>Hours of Service violations</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <StatCard label="Carriers" value={stats.totalCarriers} icon={Building2} />
+          </TooltipTrigger>
+          <TooltipContent>Total carriers in the network</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <StatCard label="CT-PAT Cert" value={stats.ctpatCertified} icon={Shield} color="text-green-500" />
+          </TooltipTrigger>
+          <TooltipContent>CT-PAT certified carriers</TooltipContent>
+        </Tooltip>
       </div>
 
       {/* Fleet Tracker Map - Persistent across all tabs */}
@@ -273,27 +324,31 @@ export const TransportationManagement: FC = () => {
       <div className="border-b border-opsgrid-border">
         <div className="flex gap-1 flex-wrap">
           {[
-            { id: 'shipments', label: 'Shipments', icon: Package },
-            { id: 'fleet', label: 'Fleet & Drivers', icon: Truck },
-            { id: 'carriers', label: 'Carriers', icon: Building2 },
-            { id: 'compliance', label: 'Compliance', icon: Shield },
-            { id: 'geofencing', label: 'Geofencing', icon: MapPin },
-            { id: 'health', label: 'Health & Security', icon: Activity },
-            { id: 'maintenance', label: 'Maintenance', icon: Wrench },
-            { id: 'performance', label: 'Performance', icon: Gauge },
+            { id: 'shipments', label: 'Shipments', icon: Package, tooltip: 'View and manage all shipments' },
+            { id: 'fleet', label: 'Fleet & Drivers', icon: Truck, tooltip: 'Monitor fleet vehicles and driver HOS compliance' },
+            { id: 'carriers', label: 'Carriers', icon: Building2, tooltip: 'Manage carrier information and certifications' },
+            { id: 'compliance', label: 'Compliance', icon: Shield, tooltip: 'View compliance status and violations' },
+            { id: 'geofencing', label: 'Geofencing', icon: MapPin, tooltip: 'Configure and monitor geofence zones' },
+            { id: 'health', label: 'Health & Security', icon: Activity, tooltip: 'Monitor vehicle health and security status' },
+            { id: 'maintenance', label: 'Maintenance', icon: Wrench, tooltip: 'Track vehicle maintenance schedules' },
+            { id: 'performance', label: 'Performance', icon: Gauge, tooltip: 'View fleet performance metrics' },
           ].map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id as typeof activeTab)}
-              className={`flex items-center gap-2 px-3 py-2 border-b-2 transition-colors text-sm ${
-                activeTab === tab.id
-                  ? 'border-opsgrid-primary text-opsgrid-primary'
-                  : 'border-transparent text-opsgrid-text-secondary hover:text-opsgrid-text'
-              }`}
-            >
-              <tab.icon className="w-4 h-4" />
-              {tab.label}
-            </button>
+            <Tooltip key={tab.id}>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => setActiveTab(tab.id as typeof activeTab)}
+                  className={`flex items-center gap-2 px-3 py-2 border-b-2 transition-colors text-sm ${
+                    activeTab === tab.id
+                      ? 'border-opsgrid-primary text-opsgrid-primary'
+                      : 'border-transparent text-opsgrid-text-secondary hover:text-opsgrid-text'
+                  }`}
+                >
+                  <tab.icon className="w-4 h-4" />
+                  {tab.label}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>{tab.tooltip}</TooltipContent>
+            </Tooltip>
           ))}
         </div>
       </div>

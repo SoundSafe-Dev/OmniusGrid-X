@@ -1,10 +1,10 @@
 import { FC, useState, useEffect } from 'react';
 import { useQuery } from 'react-query';
-import { 
-  Truck, 
-  Warehouse, 
-  Clock, 
-  AlertTriangle, 
+import {
+  Truck,
+  Warehouse,
+  Clock,
+  AlertTriangle,
   MapPin,
   CheckCircle2,
   ArrowRightLeft,
@@ -17,13 +17,14 @@ import {
   Package
 } from 'lucide-react';
 import { yardApi, geoTabYardApi } from '../../api';
-import { 
-  YardTrailer, 
-  DockDoor, 
-  DockAppointment, 
+import {
+  YardTrailer,
+  DockDoor,
+  DockAppointment,
   DetentionAlert,
-  TrailerFilters 
+  TrailerFilters
 } from '../../types';
+import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
 
 const YARD_QUERY_KEY = 'yard';
 
@@ -129,44 +130,94 @@ export const YardManagement: FC = () => {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Warehouse className="w-6 h-6 text-opsgrid-primary" />
-            Yard Management System (YMS)
-          </h1>
-          <p className="text-opsgrid-text-secondary mt-1">
-            Real-time trailer tracking, dock scheduling, and detention management
-          </p>
-        </div>
-        <button
-          onClick={() => refetchTrailers()}
-          className="flex items-center gap-2 px-4 py-2 bg-opsgrid-panel border border-opsgrid-border rounded-lg hover:bg-opsgrid-border transition-colors"
-        >
-          <RefreshCw className="w-4 h-4" />
-          Refresh
-        </button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div>
+              <h1 className="text-2xl font-bold flex items-center gap-2">
+                <Warehouse className="w-6 h-6 text-opsgrid-primary" />
+                Yard Management System (YMS)
+              </h1>
+              <p className="text-opsgrid-text-secondary mt-1">
+                Real-time trailer tracking, dock scheduling, and detention management
+              </p>
+            </div>
+          </TooltipTrigger>
+          <TooltipContent>Yard management system overview</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              onClick={() => refetchTrailers()}
+              className="flex items-center gap-2 px-4 py-2 bg-opsgrid-panel border border-opsgrid-border rounded-lg hover:bg-opsgrid-border transition-colors"
+            >
+              <RefreshCw className="w-4 h-4" />
+              Refresh
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>Refresh yard data</TooltipContent>
+        </Tooltip>
       </div>
 
       {/* Stats Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4">
-        <StatCard label="Total Trailers" value={stats.totalTrailers} icon={Truck} />
-        <StatCard label="In Yard" value={stats.inYard} icon={Warehouse} color="text-blue-500" />
-        <StatCard label="Docked" value={stats.docked} icon={CheckCircle2} color="text-green-500" />
-        <StatCard label="In Transit" value={stats.inTransit} icon={ArrowRightLeft} color="text-yellow-500" />
-        <StatCard 
-          label="Detention Risk" 
-          value={stats.detentionRisk} 
-          icon={AlertTriangle} 
-          color={stats.detentionRisk > 0 ? 'text-red-500' : 'text-green-500'}
-        />
-        <StatCard 
-          label="Detention Cost" 
-          value={`$${stats.totalDetentionCost}`} 
-          icon={DollarSign} 
-          color={stats.totalDetentionCost > 0 ? 'text-red-500' : 'text-green-500'}
-        />
-        <StatCard label="Available Doors" value={stats.availableDoors} icon={Warehouse} color="text-green-500" />
-        <StatCard label="Today's Appts" value={stats.todayAppointments} icon={Calendar} color="text-blue-500" />
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <StatCard label="Total Trailers" value={stats.totalTrailers} icon={Truck} />
+          </TooltipTrigger>
+          <TooltipContent>Total number of trailers in the system</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <StatCard label="In Yard" value={stats.inYard} icon={Warehouse} color="text-blue-500" />
+          </TooltipTrigger>
+          <TooltipContent>Trailers currently in the yard</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <StatCard label="Docked" value={stats.docked} icon={CheckCircle2} color="text-green-500" />
+          </TooltipTrigger>
+          <TooltipContent>Trailers currently docked at doors</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <StatCard label="In Transit" value={stats.inTransit} icon={ArrowRightLeft} color="text-yellow-500" />
+          </TooltipTrigger>
+          <TooltipContent>Trailers currently in transit</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <StatCard
+              label="Detention Risk"
+              value={stats.detentionRisk}
+              icon={AlertTriangle}
+              color={stats.detentionRisk > 0 ? 'text-red-500' : 'text-green-500'}
+            />
+          </TooltipTrigger>
+          <TooltipContent>Trailers at risk of detention fees</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <StatCard
+              label="Detention Cost"
+              value={`$${stats.totalDetentionCost}`}
+              icon={DollarSign}
+              color={stats.totalDetentionCost > 0 ? 'text-red-500' : 'text-green-500'}
+            />
+          </TooltipTrigger>
+          <TooltipContent>Total detention costs incurred</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <StatCard label="Available Doors" value={stats.availableDoors} icon={Warehouse} color="text-green-500" />
+          </TooltipTrigger>
+          <TooltipContent>Dock doors currently available</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <StatCard label="Today's Appts" value={stats.todayAppointments} icon={Calendar} color="text-blue-500" />
+          </TooltipTrigger>
+          <TooltipContent>Scheduled appointments for today</TooltipContent>
+        </Tooltip>
       </div>
 
       {/* Dwell Time Alert */}
@@ -219,23 +270,27 @@ export const YardManagement: FC = () => {
       <div className="border-b border-opsgrid-border">
         <div className="flex gap-1">
           {[
-            { id: 'trailers', label: 'Trailers', icon: Truck },
-            { id: 'doors', label: 'Dock Doors', icon: Warehouse },
-            { id: 'appointments', label: 'Appointments', icon: Calendar },
-            { id: 'detention', label: 'Detention', icon: DollarSign },
+            { id: 'trailers', label: 'Trailers', icon: Truck, tooltip: 'View all trailers' },
+            { id: 'doors', label: 'Dock Doors', icon: Warehouse, tooltip: 'View dock door status' },
+            { id: 'appointments', label: 'Appointments', icon: Calendar, tooltip: 'View scheduled appointments' },
+            { id: 'detention', label: 'Detention', icon: DollarSign, tooltip: 'View detention alerts and costs' },
           ].map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id as typeof activeTab)}
-              className={`flex items-center gap-2 px-4 py-2 border-b-2 transition-colors ${
-                activeTab === tab.id
-                  ? 'border-opsgrid-primary text-opsgrid-primary'
-                  : 'border-transparent text-opsgrid-text-secondary hover:text-opsgrid-text'
-              }`}
-            >
-              <tab.icon className="w-4 h-4" />
-              {tab.label}
-            </button>
+            <Tooltip key={tab.id}>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => setActiveTab(tab.id as typeof activeTab)}
+                  className={`flex items-center gap-2 px-4 py-2 border-b-2 transition-colors ${
+                    activeTab === tab.id
+                      ? 'border-opsgrid-primary text-opsgrid-primary'
+                      : 'border-transparent text-opsgrid-text-secondary hover:text-opsgrid-text'
+                  }`}
+                >
+                  <tab.icon className="w-4 h-4" />
+                  {tab.label}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>{tab.tooltip}</TooltipContent>
+            </Tooltip>
           ))}
         </div>
       </div>

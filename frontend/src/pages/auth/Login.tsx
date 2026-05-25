@@ -3,6 +3,7 @@ import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { Factory, Eye, EyeOff, AlertCircle, Zap } from 'lucide-react';
 import { useAuthStore } from '../../stores';
 import { Input, Button } from '../../components';
+import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
 
 const DEV_MODE = true; // Set to false for production
 
@@ -54,16 +55,31 @@ export const Login: FC = () => {
       <div className="w-full max-w-md">
         {/* Logo & Header */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-opsgrid-primary/20 rounded-xl mb-4">
-            <Factory className="w-8 h-8 text-opsgrid-primary" />
-          </div>
-          <h1 className="text-2xl font-bold text-opsgrid-text">OmniusGrid</h1>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="inline-flex items-center justify-center w-16 h-16 bg-opsgrid-primary/20 rounded-xl mb-4">
+                <Factory className="w-8 h-8 text-opsgrid-primary" />
+              </div>
+            </TooltipTrigger>
+            <TooltipContent>OmniusGrid Logo</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <h1 className="text-2xl font-bold text-opsgrid-text">OmniusGrid</h1>
+            </TooltipTrigger>
+            <TooltipContent>Universal Manufacturing Data Feed Dashboard</TooltipContent>
+          </Tooltip>
           <p className="text-opsgrid-text-secondary mt-1">Universal Manufacturing Data Feed Dashboard</p>
           {DEV_MODE && (
-            <div className="mt-2 inline-flex items-center gap-1 px-3 py-1 bg-status-warning/20 text-status-warning rounded-full text-xs">
-              <Zap size={12} />
-              DEV MODE - Login with "dev" / any password
-            </div>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div className="mt-2 inline-flex items-center gap-1 px-3 py-1 bg-status-warning/20 text-status-warning rounded-full text-xs">
+                  <Zap size={12} />
+                  DEV MODE - Login with "dev" / any password
+                </div>
+              </TooltipTrigger>
+              <TooltipContent>Development mode enabled - use "dev" as username</TooltipContent>
+            </Tooltip>
           )}
         </div>
 
@@ -102,36 +118,56 @@ export const Login: FC = () => {
                   required
                   disabled={isLoading}
                 />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-[30px] text-opsgrid-text-secondary hover:text-opsgrid-text"
-                >
-                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                </button>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-3 top-[30px] text-opsgrid-text-secondary hover:text-opsgrid-text"
+                    >
+                      {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>{showPassword ? 'Hide password' : 'Show password'}</TooltipContent>
+                </Tooltip>
               </div>
 
               <div className="flex items-center justify-between">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={rememberMe}
-                    onChange={(e) => setRememberMe(e.target.checked)}
-                    className="w-4 h-4 rounded border-opsgrid-border bg-opsgrid-bg text-opsgrid-primary focus:ring-opsgrid-primary"
-                  />
-                  <span className="text-sm text-opsgrid-text-secondary">Remember me</span>
-                </label>
-                <Link
-                  to="/forgot-password"
-                  className="text-sm text-opsgrid-primary hover:underline"
-                >
-                  Forgot password?
-                </Link>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={rememberMe}
+                        onChange={(e) => setRememberMe(e.target.checked)}
+                        className="w-4 h-4 rounded border-opsgrid-border bg-opsgrid-bg text-opsgrid-primary focus:ring-opsgrid-primary"
+                      />
+                      <span className="text-sm text-opsgrid-text-secondary">Remember me</span>
+                    </label>
+                  </TooltipTrigger>
+                  <TooltipContent>Keep me signed in on this device</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Link
+                      to="/forgot-password"
+                      className="text-sm text-opsgrid-primary hover:underline"
+                    >
+                      Forgot password?
+                    </Link>
+                  </TooltipTrigger>
+                  <TooltipContent>Reset your password</TooltipContent>
+                </Tooltip>
               </div>
 
-              <Button type="submit" fullWidth loading={isLoading}>
-                Sign In
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button type="submit" fullWidth loading={isLoading}>
+                    Sign In
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Sign in to your account</TooltipContent>
+              </Tooltip>
             </form>
           </div>
 

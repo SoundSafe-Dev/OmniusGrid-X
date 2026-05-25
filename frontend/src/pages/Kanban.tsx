@@ -12,6 +12,7 @@ import { CreateTaskModal } from '../components/kanban/CreateTaskModal';
 import { TaskDetailModal } from '../components/kanban/TaskDetailModal';
 import { KanbanProvider, useKanban, Task } from '../stores/kanbanStore';
 import { Button } from '../components/ui/Button';
+import { Tooltip, TooltipTrigger, TooltipContent } from '../components/ui';
 import { Plus, Filter, LayoutGrid, List, AlertCircle, RefreshCw } from 'lucide-react';
 
 // Inner component that uses kanban context
@@ -69,63 +70,86 @@ const KanbanContent: React.FC = () => {
       {/* Header */}
       <div className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-4 py-3">
         <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-semibold text-gray-900 dark:text-white">
-              Operations Board
-            </h1>
-            <p className="text-sm text-gray-500 dark:text-gray-400">
-              Actionable decision-making kanban
-            </p>
-          </div>
-          
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div>
+                <h1 className="text-xl font-semibold text-gray-900 dark:text-white">
+                  Operations Board
+                </h1>
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  Actionable decision-making kanban
+                </p>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent>Kanban board for managing operational tasks and decisions</TooltipContent>
+          </Tooltip>
+
           <div className="flex items-center gap-3">
             {/* View Toggle */}
             <div className="flex items-center bg-gray-100 dark:bg-gray-700 rounded-lg p-1">
-              <button
-                onClick={() => setViewMode('board')}
-                className={`p-2 rounded-md transition-colors ${
-                  viewMode === 'board' 
-                    ? 'bg-white dark:bg-gray-600 shadow-sm text-blue-600' 
-                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-900'
-                }`}
-                title="Board View"
-              >
-                <LayoutGrid className="w-4 h-4" />
-              </button>
-              <button
-                onClick={() => setViewMode('list')}
-                className={`p-2 rounded-md transition-colors ${
-                  viewMode === 'list' 
-                    ? 'bg-white dark:bg-gray-600 shadow-sm text-blue-600' 
-                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-900'
-                }`}
-                title="List View"
-              >
-                <List className="w-4 h-4" />
-              </button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={() => setViewMode('board')}
+                    className={`p-2 rounded-md transition-colors ${
+                      viewMode === 'board'
+                        ? 'bg-white dark:bg-gray-600 shadow-sm text-blue-600'
+                        : 'text-gray-600 dark:text-gray-400 hover:text-gray-900'
+                    }`}
+                  >
+                    <LayoutGrid className="w-4 h-4" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>Switch to board view</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={() => setViewMode('list')}
+                    className={`p-2 rounded-md transition-colors ${
+                      viewMode === 'list'
+                        ? 'bg-white dark:bg-gray-600 shadow-sm text-blue-600'
+                        : 'text-gray-600 dark:text-gray-400 hover:text-gray-900'
+                    }`}
+                  >
+                    <List className="w-4 h-4" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>Switch to list view</TooltipContent>
+              </Tooltip>
             </div>
 
             {/* Filter Toggle */}
-            <Button
-              variant={showFilters ? 'primary' : 'outline'}
-              size="sm"
-              onClick={() => setShowFilters(!showFilters)}
-              className="flex items-center gap-2"
-            >
-              <Filter className="w-4 h-4" />
-              Filters
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant={showFilters ? 'primary' : 'outline'}
+                  size="sm"
+                  onClick={() => setShowFilters(!showFilters)}
+                  className="flex items-center gap-2"
+                >
+                  <Filter className="w-4 h-4" />
+                  Filters
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Toggle filter panel</TooltipContent>
+            </Tooltip>
 
             {/* Create Task Button */}
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={() => setIsCreateModalOpen(true)}
-              className="flex items-center gap-2"
-            >
-              <Plus className="w-4 h-4" />
-              New Task
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => setIsCreateModalOpen(true)}
+                  className="flex items-center gap-2"
+                >
+                  <Plus className="w-4 h-4" />
+                  New Task
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Create a new task</TooltipContent>
+            </Tooltip>
           </div>
         </div>
 
@@ -156,16 +180,26 @@ const KanbanContent: React.FC = () => {
         ) : error ? (
           <div className="h-full flex items-center justify-center">
             <div className="text-center">
-              <AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
+                </TooltipTrigger>
+                <TooltipContent>Error loading kanban board</TooltipContent>
+              </Tooltip>
               <p className="text-gray-600 dark:text-gray-400 mb-4">{error}</p>
-              <Button
-                variant="primary"
-                onClick={refreshBoard}
-                className="flex items-center gap-2 mx-auto"
-              >
-                <RefreshCw className="w-4 h-4" />
-                Retry
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="primary"
+                    onClick={refreshBoard}
+                    className="flex items-center gap-2 mx-auto"
+                  >
+                    <RefreshCw className="w-4 h-4" />
+                    Retry
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Retry loading the kanban board</TooltipContent>
+              </Tooltip>
             </div>
           </div>
         ) : (

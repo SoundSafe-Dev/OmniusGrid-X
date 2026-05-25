@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from app.api import assets, telemetry, alarms, operations, auth, dashboard, health, engines
-from app.api import yard, transportation, logistics_correlation, websocket, commands, oee, kanban, registries, geotab, correlation_integration, nlp_correlation, analysis_sessions
+from app.api import yard, transportation, logistics_correlation, websocket, commands, oee, kanban, registries, geotab, correlation_integration, nlp_correlation, analysis_sessions, user_context
 from app.core.config import settings
 from app.db.database import init_db
 from app.services.websocket_manager import websocket_manager
@@ -38,13 +38,7 @@ app = FastAPI(
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:9999",
-        "http://localhost:5173",
-        "http://localhost:3000",
-        "http://192.168.1.235:3000",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=["*"],  # Allow all origins for development
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -71,6 +65,7 @@ app.include_router(geotab.router, prefix="/api/v1", tags=["GeoTab"])
 app.include_router(correlation_integration.router, tags=["Correlation Integration"])
 app.include_router(nlp_correlation.router, tags=["NLP Correlation"])
 app.include_router(analysis_sessions.router, tags=["Analysis Sessions"])
+app.include_router(user_context.router, tags=["User Context"])
 
 
 @app.get("/")

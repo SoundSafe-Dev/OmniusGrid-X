@@ -4,6 +4,7 @@ import { Cloud, Upload, Wifi, WifiOff, Shield, Clock } from 'lucide-react';
 import { Card, Badge, Button, SkeletonCard } from '../../components';
 import { enginesApi } from '../../api';
 import { formatBytes, formatDateTime, formatDuration } from '../../utils';
+import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
 
 export const CloudGateway: FC = () => {
   const queryClient = useQueryClient();
@@ -38,97 +39,132 @@ export const CloudGateway: FC = () => {
       {/* Connection Status */}
       <Card className="p-6">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div className={`p-4 rounded-xl ${isConnected ? 'bg-status-running/20' : 'bg-status-offline/20'}`}>
-              {isConnected ? (
-                <Cloud className="w-10 h-10 text-status-running" />
-              ) : (
-                <Cloud className="w-10 h-10 text-status-offline" />
-              )}
-            </div>
-            <div>
-              <h2 className="text-2xl font-bold">{isConnected ? 'Connected' : 'Disconnected'}</h2>
-              <p className="text-opsgrid-text-secondary">
-                {isConnected
-                  ? `Last sync: ${status?.lastSyncAt ? formatDateTime(status.lastSyncAt) : 'Never'}`
-                  : status?.lastDisconnectedAt
-                  ? `Disconnected at: ${formatDateTime(status.lastDisconnectedAt)}`
-                  : 'Connection status unknown'}
-              </p>
-            </div>
-          </div>
-          <Badge variant={isConnected ? 'success' : 'error'} size="md">
-            {isConnected ? 'Online' : 'Offline'}
-          </Badge>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="flex items-center gap-4">
+                <div className={`p-4 rounded-xl ${isConnected ? 'bg-status-running/20' : 'bg-status-offline/20'}`}>
+                  {isConnected ? (
+                    <Cloud className="w-10 h-10 text-status-running" />
+                  ) : (
+                    <Cloud className="w-10 h-10 text-status-offline" />
+                  )}
+                </div>
+                <div>
+                  <h2 className="text-2xl font-bold">{isConnected ? 'Connected' : 'Disconnected'}</h2>
+                  <p className="text-opsgrid-text-secondary">
+                    {isConnected
+                      ? `Last sync: ${status?.lastSyncAt ? formatDateTime(status.lastSyncAt) : 'Never'}`
+                      : status?.lastDisconnectedAt
+                      ? `Disconnected at: ${formatDateTime(status.lastDisconnectedAt)}`
+                      : 'Connection status unknown'}
+                  </p>
+                </div>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent>Cloud gateway connection status and sync information</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Badge variant={isConnected ? 'success' : 'error'} size="md">
+                {isConnected ? 'Online' : 'Offline'}
+              </Badge>
+            </TooltipTrigger>
+            <TooltipContent>{isConnected ? 'Gateway is connected to cloud' : 'Gateway is disconnected from cloud'}</TooltipContent>
+          </Tooltip>
         </div>
       </Card>
 
       {/* Quick Stats */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card className="p-4">
-          <div className="flex items-center gap-3">
-            <Upload className="w-5 h-5 text-opsgrid-primary" />
-            <div>
-              <p className="text-sm text-opsgrid-text-secondary">Data Sent</p>
-              <p className="font-medium">{egress ? formatBytes(egress.totalBytesSent) : '—'}</p>
-            </div>
-          </div>
-        </Card>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Card className="p-4">
+              <div className="flex items-center gap-3">
+                <Upload className="w-5 h-5 text-opsgrid-primary" />
+                <div>
+                  <p className="text-sm text-opsgrid-text-secondary">Data Sent</p>
+                  <p className="font-medium">{egress ? formatBytes(egress.totalBytesSent) : '—'}</p>
+                </div>
+              </div>
+            </Card>
+          </TooltipTrigger>
+          <TooltipContent>Total data sent to cloud</TooltipContent>
+        </Tooltip>
 
-        <Card className="p-4">
-          <div className="flex items-center gap-3">
-            <Shield className="w-5 h-5 text-opsgrid-primary" />
-            <div>
-              <p className="text-sm text-opsgrid-text-secondary">Compression</p>
-              <p className="font-medium">
-                {egress ? `${(egress.compressionRatio * 100).toFixed(0)}%` : '—'}
-              </p>
-            </div>
-          </div>
-        </Card>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Card className="p-4">
+              <div className="flex items-center gap-3">
+                <Shield className="w-5 h-5 text-opsgrid-primary" />
+                <div>
+                  <p className="text-sm text-opsgrid-text-secondary">Compression</p>
+                  <p className="font-medium">
+                    {egress ? `${(egress.compressionRatio * 100).toFixed(0)}%` : '—'}
+                  </p>
+                </div>
+              </div>
+            </Card>
+          </TooltipTrigger>
+          <TooltipContent>Data compression ratio</TooltipContent>
+        </Tooltip>
 
-        <Card className="p-4">
-          <div className="flex items-center gap-3">
-            <Wifi className="w-5 h-5 text-opsgrid-primary" />
-            <div>
-              <p className="text-sm text-opsgrid-text-secondary">Bandwidth</p>
-              <p className="font-medium">
-                {egress ? `${egress.averageBandwidthKbps.toFixed(1)} Kbps` : '—'}
-              </p>
-            </div>
-          </div>
-        </Card>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Card className="p-4">
+              <div className="flex items-center gap-3">
+                <Wifi className="w-5 h-5 text-opsgrid-primary" />
+                <div>
+                  <p className="text-sm text-opsgrid-text-secondary">Bandwidth</p>
+                  <p className="font-medium">
+                    {egress ? `${egress.averageBandwidthKbps.toFixed(1)} Kbps` : '—'}
+                  </p>
+                </div>
+              </div>
+            </Card>
+          </TooltipTrigger>
+          <TooltipContent>Average bandwidth usage</TooltipContent>
+        </Tooltip>
 
-        <Card className="p-4">
-          <div className="flex items-center gap-3">
-            <Clock className="w-5 h-5 text-opsgrid-primary" />
-            <div>
-              <p className="text-sm text-opsgrid-text-secondary">Queue Depth</p>
-              <p className="font-medium">{egress?.queueDepth || 0} items</p>
-            </div>
-          </div>
-        </Card>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Card className="p-4">
+              <div className="flex items-center gap-3">
+                <Clock className="w-5 h-5 text-opsgrid-primary" />
+                <div>
+                  <p className="text-sm text-opsgrid-text-secondary">Queue Depth</p>
+                  <p className="font-medium">{egress?.queueDepth || 0} items</p>
+                </div>
+              </div>
+            </Card>
+          </TooltipTrigger>
+          <TooltipContent>Number of items in upload queue</TooltipContent>
+        </Tooltip>
       </div>
 
       {/* Flush Controls */}
       <Card title="Data Flush" subtitle="Force immediate sync to cloud">
-        <div className="flex items-center justify-between p-4 bg-opsgrid-bg rounded-lg">
-          <div>
-            <p className="font-medium">Manual Flush</p>
-            <p className="text-sm text-opsgrid-text-secondary">
-              Immediately send all queued data to the cloud
-            </p>
-          </div>
-          <Button
-            variant="primary"
-            disabled={!isConnected || flushMutation.isLoading}
-            loading={flushMutation.isLoading}
-            onClick={() => flushMutation.mutate()}
-          >
-            <Upload size={16} className="mr-1" />
-            Flush Now
-          </Button>
-        </div>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div className="flex items-center justify-between p-4 bg-opsgrid-bg rounded-lg">
+              <div>
+                <p className="font-medium">Manual Flush</p>
+                <p className="text-sm text-opsgrid-text-secondary">
+                  Immediately send all queued data to the cloud
+                </p>
+              </div>
+              <Button
+                variant="primary"
+                disabled={!isConnected || flushMutation.isLoading}
+                loading={flushMutation.isLoading}
+                onClick={() => flushMutation.mutate()}
+              >
+                <Upload size={16} className="mr-1" />
+                Flush Now
+              </Button>
+            </div>
+          </TooltipTrigger>
+          <TooltipContent>Force immediate data sync to cloud</TooltipContent>
+        </Tooltip>
       </Card>
 
       {/* Security Info */}

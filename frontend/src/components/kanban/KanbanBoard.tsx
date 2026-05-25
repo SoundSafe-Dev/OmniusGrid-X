@@ -3,8 +3,9 @@
  */
 
 import React, { useState, useCallback } from 'react';
-import { TaskColumn as TaskColumnType, Task, TaskChecklistItem } from '../../stores/kanbanStore';
+import { TaskColumn as TaskColumnType, Task } from '../../stores/kanbanStore';
 import { KanbanColumn } from './KanbanColumn';
+import { Tooltip, TooltipTrigger, TooltipContent } from '../ui';
 
 interface KanbanBoardProps {
   board: { id: string } | null;
@@ -153,10 +154,26 @@ const PriorityBadge: React.FC<{ priority: string }> = ({ priority }) => {
     emergency: 'bg-red-200 text-red-900 dark:bg-red-800 dark:text-red-100 animate-pulse',
   };
 
+  const getPriorityDescription = (p: string) => {
+    switch (p) {
+      case 'low': return 'Low priority, can be deferred';
+      case 'medium': return 'Medium priority, address soon';
+      case 'high': return 'High priority, address promptly';
+      case 'critical': return 'Critical priority, immediate action';
+      case 'emergency': return 'Emergency, requires immediate intervention';
+      default: return p;
+    }
+  };
+
   return (
-    <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${colors[priority] || colors.medium}`}>
-      {priority}
-    </span>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${colors[priority] || colors.medium}`}>
+          {priority}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{getPriorityDescription(priority)}</TooltipContent>
+    </Tooltip>
   );
 };
 
@@ -170,10 +187,27 @@ const StatusBadge: React.FC<{ status: string }> = ({ status }) => {
     cancelled: 'bg-gray-100 text-gray-600',
   };
 
+  const getStatusDescription = (s: string) => {
+    switch (s) {
+      case 'draft': return 'Task is being defined';
+      case 'ready': return 'Task is ready to start';
+      case 'in_progress': return 'Task is actively being worked on';
+      case 'blocked': return 'Task is blocked by dependency';
+      case 'completed': return 'Task has been completed';
+      case 'cancelled': return 'Task was cancelled';
+      default: return s;
+    }
+  };
+
   return (
-    <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${colors[status] || colors.draft}`}>
-      {status.replace('_', ' ')}
-    </span>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${colors[status] || colors.draft}`}>
+          {status.replace('_', ' ')}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{getStatusDescription(status)}</TooltipContent>
+    </Tooltip>
   );
 };
 

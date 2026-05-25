@@ -6,6 +6,7 @@ import React, { useState } from 'react';
 import { TaskColumn as TaskColumnType, Task } from '../../stores/kanbanStore';
 import { KanbanCard } from './KanbanCard';
 import { AlertCircle, ChevronDown, ChevronRight } from 'lucide-react';
+import { Tooltip, TooltipTrigger, TooltipContent } from '../ui';
 
 interface KanbanColumnProps {
   column: TaskColumnType;
@@ -81,6 +82,18 @@ export const KanbanColumn: React.FC<KanbanColumnProps> = ({
 
   const wipWarning = column.wip_limit > 0 && tasks.length > column.wip_limit;
 
+  const getColumnDescription = (columnType: string) => {
+    switch (columnType) {
+      case 'backlog': return 'Tasks awaiting prioritization';
+      case 'triage': return 'Tasks being assessed and prioritized';
+      case 'in_progress': return 'Tasks currently being worked on';
+      case 'review': return 'Tasks awaiting approval or verification';
+      case 'done': return 'Completed tasks';
+      case 'rejected': return 'Tasks that were cancelled or rejected';
+      default: return columnType;
+    }
+  };
+
   // Group tasks by type
   const groupedTasks = tasks.reduce((acc: Record<string, Task[]>, task) => {
     const type = task.task_type;
@@ -101,53 +114,68 @@ export const KanbanColumn: React.FC<KanbanColumnProps> = ({
       onDrop={handleDrop}
     >
       {/* Column Header */}
-      <div
-        className="flex items-center justify-between p-3 rounded-t-lg"
-        style={{ backgroundColor: column.color + '20' }}
-      >
-        <div className="flex items-center gap-2">
+      <Tooltip>
+        <TooltipTrigger asChild>
           <div
-            className="w-3 h-3 rounded-full"
-            style={{ backgroundColor: column.color }}
-          />
-          <h3 className="font-semibold text-gray-900 dark:text-white text-sm">
-            {column.name}
-          </h3>
-          <span className="text-xs text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded-full">
-            {tasks.length}
-          </span>
-        </div>
-
-        <div className="flex items-center gap-2">
-          {wipWarning && (
-            <div className="flex items-center text-orange-600 dark:text-orange-400" title="WIP limit exceeded">
-              <AlertCircle className="w-4 h-4" />
+            className="flex items-center justify-between p-3 rounded-t-lg"
+            style={{ backgroundColor: column.color + '20' }}
+          >
+            <div className="flex items-center gap-2">
+              <div
+                className="w-3 h-3 rounded-full"
+                style={{ backgroundColor: column.color }}
+              />
+              <h3 className="font-semibold text-gray-900 dark:text-white text-sm">
+                {column.name}
+              </h3>
+              <span className="text-xs text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded-full">
+                {tasks.length}
+              </span>
             </div>
-          )}
-          <button className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
-            <ChevronDown className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
+
+            <div className="flex items-center gap-2">
+              {wipWarning && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className="flex items-center text-orange-600 dark:text-orange-400">
+                      <AlertCircle className="w-4 h-4" />
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent>WIP limit exceeded</TooltipContent>
+                </Tooltip>
+              )}
+              <button className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+                <ChevronDown className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </TooltipTrigger>
+        <TooltipContent>{getColumnDescription(column.column_type)}</TooltipContent>
+      </Tooltip>
 
       {/* WIP Limit Indicator */}
       {column.wip_limit > 0 && (
-        <div className="px-3 py-1 bg-gray-50 dark:bg-gray-800/50 text-xs">
-          <div className="flex items-center justify-between">
-            <span className="text-gray-500 dark:text-gray-400">WIP Limit</span>
-            <span className={`font-medium ${wipWarning ? 'text-orange-600' : 'text-gray-700 dark:text-gray-300'}`}>
-              {tasks.length} / {column.wip_limit}
-            </span>
-          </div>
-          <div className="mt-1 h-1 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
-            <div
-              className={`h-full rounded-full transition-all ${
-                wipWarning ? 'bg-orange-500' : 'bg-green-500'
-              }`}
-              style={{ width: `${Math.min((tasks.length / column.wip_limit) * 100, 100)}%` }}
-            />
-          </div>
-        </div>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div className="px-3 py-1 bg-gray-50 dark:bg-gray-800/50 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-gray-500 dark:text-gray-400">WIP Limit</span>
+                <span className={`font-medium ${wipWarning ? 'text-orange-600' : 'text-gray-700 dark:text-gray-300'}`}>
+                  {tasks.length} / {column.wip_limit}
+                </span>
+              </div>
+              <div className="mt-1 h-1 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all ${
+                    wipWarning ? 'bg-orange-500' : 'bg-green-500'
+                  }`}
+                  style={{ width: `${Math.min((tasks.length / column.wip_limit) * 100, 100)}%` }}
+                />
+              </div>
+            </div>
+          </TooltipTrigger>
+          <TooltipContent>Work In Progress limit: maximum {column.wip_limit} tasks in this column</TooltipContent>
+        </Tooltip>
       )}
 
       {/* Tasks Container */}

@@ -1,17 +1,26 @@
 import { FC, ReactNode, ThHTMLAttributes, TdHTMLAttributes } from 'react';
 import { cn } from '../../utils';
+import { Tooltip, TooltipTrigger, TooltipContent } from './Tooltip';
 
 interface TableProps {
   children: ReactNode;
   className?: string;
 }
 
+interface TableHeaderProps extends ThHTMLAttributes<HTMLTableHeaderCellElement> {
+  tooltip?: string;
+}
+
+interface TableCellProps extends TdHTMLAttributes<HTMLTableCellElement> {
+  tooltip?: string;
+}
+
 export const Table: FC<TableProps> & {
   Head: FC<TableProps>;
   Body: FC<TableProps>;
   Row: FC<TableProps>;
-  Header: FC<ThHTMLAttributes<HTMLTableHeaderCellElement>>;
-  Cell: FC<TdHTMLAttributes<HTMLTableCellElement>>;
+  Header: FC<TableHeaderProps>;
+  Cell: FC<TableCellProps>;
 } = ({ children, className }) => {
   return (
     <div className="overflow-x-auto">
@@ -42,11 +51,30 @@ const Row: FC<TableProps> = ({ children, className }) => {
   );
 };
 
-const Header: FC<ThHTMLAttributes<HTMLTableHeaderCellElement>> = ({
+const Header: FC<TableHeaderProps> = ({
   children,
   className,
+  tooltip,
   ...props
 }) => {
+  if (tooltip) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <th
+            className={cn(
+              'px-4 py-3 text-sm font-medium text-opsgrid-text-secondary',
+              className
+            )}
+            {...props}
+          >
+            {children}
+          </th>
+        </TooltipTrigger>
+        <TooltipContent>{tooltip}</TooltipContent>
+      </Tooltip>
+    );
+  }
   return (
     <th
       className={cn(
@@ -60,11 +88,27 @@ const Header: FC<ThHTMLAttributes<HTMLTableHeaderCellElement>> = ({
   );
 };
 
-const Cell: FC<TdHTMLAttributes<HTMLTableCellElement>> = ({
+const Cell: FC<TableCellProps> = ({
   children,
   className,
+  tooltip,
   ...props
 }) => {
+  if (tooltip) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <td
+            className={cn('px-4 py-3 text-sm text-opsgrid-text', className)}
+            {...props}
+          >
+            {children}
+          </td>
+        </TooltipTrigger>
+        <TooltipContent>{tooltip}</TooltipContent>
+      </Tooltip>
+    );
+  }
   return (
     <td
       className={cn('px-4 py-3 text-sm text-opsgrid-text', className)}

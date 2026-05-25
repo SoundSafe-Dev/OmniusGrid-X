@@ -40,11 +40,24 @@ async def get_organization_board(session: AsyncSession, organization_id: str) ->
                 TaskBoard.organization_id == organization_id,
                 TaskBoard.is_active == True
             )
-        )
+        ).order_by(TaskBoard.created_at)
     )
     board = result.scalar_one_or_none()
     
+    # If no active board exists, check for inactive boards and deactivate them, then create a new one
     if not board:
+        # Check if there are any boards (active or inactive) for this org
+        all_boards_result = await session.execute(
+            select(TaskBoard).where(TaskBoard.organization_id == organization_id)
+        )
+        all_boards = all_boards_result.scalars().all()
+        
+        if all_boards:
+            # Deactivate all existing boards
+            for existing_board in all_boards:
+                existing_board.is_active = False
+            await session.commit()
+        
         # Create default board
         board = TaskBoard(
             organization_id=organization_id,
