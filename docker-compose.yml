@@ -5,6 +5,7 @@ services:
   redpanda:
     image: docker.redpanda.com/redpandadata/redpanda:v23.3.5
     container_name: omniusgrid-redpanda
+    restart: unless-stopped
     command:
       - redpanda
       - start
@@ -37,6 +38,7 @@ services:
   timescaledb:
     image: timescale/timescaledb:latest-pg15
     container_name: omniusgrid-timescaledb
+    restart: unless-stopped
     environment:
       POSTGRES_USER: omniusgrid
       POSTGRES_PASSWORD: omniusgrid_dev_password
@@ -60,6 +62,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: omniusgrid-backend
+    restart: unless-stopped
     environment:
       DATABASE_URL: postgresql://omniusgrid:omniusgrid_dev_password@timescaledb:5432/omniusgrid
       REDPANDA_URL: redpanda:29092
@@ -106,6 +109,7 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     container_name: omniusgrid-frontend
+    restart: unless-stopped
     ports:
       - "9999:3000"
     volumes:
@@ -115,7 +119,8 @@ services:
       REACT_APP_API_URL: http://localhost:8002
       REACT_APP_WS_URL: ws://localhost:8002
     depends_on:
-      - backend
+      backend:
+        condition: service_started
     networks:
       - omniusgrid-network
 
