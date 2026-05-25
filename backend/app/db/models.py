@@ -846,3 +846,97 @@ class IntakeItem(Base):
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     analyzed_at = Column(DateTime(timezone=True))
     meta_data = Column(JSON, default=dict)
+
+
+# ==================== GeoTab Integration Models ====================
+
+class GeoTabTrip(Base):
+    """GeoTab trip data for fleet tracking"""
+    __tablename__ = "geotab_trips"
+
+    id = UUIDColumn()
+    device_id = Column(String(100), nullable=False, index=True)
+    driver_id = UUIDForeignKey("drivers.id", nullable=True)
+    vehicle_id = Column(String(100))  # VIN or internal vehicle ID
+    organization_id = UUIDForeignKey("organizations.id", nullable=True)
+    
+    # Trip timing
+    start_time = Column(DateTime(timezone=True), nullable=False)
+    end_time = Column(DateTime(timezone=True), nullable=True)
+    duration_seconds = Column(Integer, nullable=True)
+    
+    # Location data
+    start_location = Column(JSON)  # {latitude, longitude, address}
+    end_location = Column(JSON)  # {latitude, longitude, address}
+    distance_miles = Column(Numeric(10, 2), nullable=True)
+    
+    # Trip details
+    start_odometer = Column(Numeric(10, 2))
+    end_odometer = Column(Numeric(10, 2))
+    idle_time_seconds = Column(Integer, default=0)
+    
+    # Status
+    status = Column(String(50), default="active")  # active, completed, cancelled
+    meta_data = Column(JSON, default=dict)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class GeoTabDiagnostic(Base):
+    """GeoTab vehicle diagnostic trouble codes"""
+    __tablename__ = "geotab_diagnostics"
+
+    id = UUIDColumn()
+    device_id = Column(String(100), nullable=False, index=True)
+    vehicle_id = Column(String(100))
+    organization_id = UUIDForeignKey("organizations.id", nullable=True)
+    
+    # Diagnostic data
+    dtc_code = Column(String(20), nullable=False)  # e.g., "P0115"
+    severity = Column(String(20), default="medium")  # low, medium, high, critical
+    description = Column(Text)
+    
+    # Status
+    status = Column(String(50), default="active")  # active, cleared, resolved
+    first_seen_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    last_seen_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    cleared_at = Column(DateTime(timezone=True), nullable=True)
+    
+    # Additional vehicle health data
+    battery_voltage = Column(Numeric(5, 2))
+    fuel_level = Column(Numeric(5, 2))
+    odometer = Column(BigInteger)
+    engine_hours = Column(Numeric(10, 2))
+    
+    meta_data = Column(JSON, default=dict)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class GeoTabException(Base):
+    """GeoTab exception events (speeding, harsh braking, HOS violations)"""
+    __tablename__ = "geotab_exceptions"
+
+    id = UUIDColumn()
+    device_id = Column(String(100), nullable=False, index=True)
+    driver_id = UUIDForeignKey("drivers.id", nullable=True)
+    organization_id = UUIDForeignKey("organizations.id", nullable=True)
+    
+    # Exception details
+    exception_type = Column(String(50), nullable=False)  # harsh_braking, speeding, hos_violation, idle_time, seat_belt
+    severity = Column(String(20), default="medium")  # low, medium, high, critical
+    
+    # Event data
+    timestamp = Column(DateTime(timezone=True), nullable=False, index=True)
+    location = Column(JSON)  # {latitude, longitude, address}
+    
+    # Exception-specific data
+    details = Column(JSON)  # {value, threshold, duration, etc.}
+    
+    # Processing status
+    acknowledged = Column(Boolean, default=False)
+    acknowledged_by = UUIDForeignKey("users.id", nullable=True)
+    acknowledged_at = Column(DateTime(timezone=True), nullable=True)
+    
+    meta_data = Column(JSON, default=dict)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)

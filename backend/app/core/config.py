@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     # Message Broker
     REDPANDA_URL: str = "redpanda:29092"
     REDPANDA_TOPICS_PREFIX: str = "opsgrid"
+    REDPANDA_COMMAND_TOPIC: str = "opsgrid.commands"
     
     # Security
     JWT_SECRET_KEY: str = "dev_secret_key_change_in_production"

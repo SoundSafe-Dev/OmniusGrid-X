@@ -12,10 +12,12 @@ from enum import Enum
 import structlog
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from aiokafka import AIOKafkaProducer
 
 from app.db.database import AsyncSessionLocal
 from app.db.models import Command, Asset
 from app.services.websocket_manager import websocket_manager
+from app.core.config import settings
 
 logger = structlog.get_logger()
 
@@ -57,11 +59,28 @@ class CommandExecutor:
         self._worker_task: Optional[asyncio.Task] = None
         self._timeout_seconds = 60
         self._max_retries = 3
+        self._producer: Optional[AIOKafkaProducer] = None
     
     async def start(self):
         """Start the command executor"""
         logger.info("command_executor_starting")
         self._running = True
+        
+        # Initialize Redpanda producer
+        try:
+            self._producer = AIOKafkaProducer(
+                bootstrap_servers=settings.REDPANDA_URL,
+                value_serializer=lambda v: json.dumps(v).encode('utf-8'),
+                acks='all',
+                retries=3,
+                compression_type='gzip'
+            )
+            await self._producer.start()
+            logger.info("redpanda_producer_started", url=settings.REDPANDA_URL)
+        except Exception as e:
+            logger.error("redpanda_producer_start_failed", error=str(e))
+            self._producer = None
+        
         self._worker_task = asyncio.create_task(self._command_worker())
         
         # Start timeout monitor
@@ -80,6 +99,14 @@ class CommandExecutor:
                 await self._worker_task
             except asyncio.CancelledError:
                 pass
+        
+        # Stop Redpanda producer
+        if self._producer:
+            try:
+                await self._producer.stop()
+                logger.info("redpanda_producer_stopped")
+            except Exception as e:
+                logger.error("redpanda_producer_stop_failed", error=str(e))
         
         logger.info("command_executor_stopped")
     
@@ -321,31 +348,59 @@ class CommandExecutor:
         parameters: Dict
     ) -> CommandResult:
         """
-        Send command to edge agent via message broker.
-        This is a placeholder - actual implementation would use Redpanda/Kafka.
+        Send command to edge agent via Redpanda message broker.
         """
         try:
-            # TODO: Implement actual Redpanda producer
-            # For now, simulate success
-            logger.debug(
-                "sending_command_to_edge",
-                asset_id=asset_id,
-                action=action_id
-            )
+            # Check if producer is available
+            if not self._producer:
+                logger.warning("redpanda_producer_not_available", asset_id=asset_id)
+                return CommandResult(
+                    success=False,
+                    message="Redpanda producer not available",
+                    error_code="PRODUCER_UNAVAILABLE"
+                )
             
-            # Simulate network delay
-            await asyncio.sleep(0.1)
+            # Build command message
+            command_message = {
+                'asset_id': asset_id,
+                'action_id': action_id,
+                'parameters': parameters,
+                'timestamp': datetime.utcnow().isoformat(),
+                'message_type': 'command'
+            }
+            
+            # Determine topic (use asset-specific topic or global command topic)
+            topic = f"{settings.REDPANDA_TOPICS_PREFIX}.commands.{asset_id}"
+            
+            # Send to Redpanda
+            await self._producer.send_and_wait(topic, command_message)
+            
+            logger.info(
+                "command_sent_to_redpanda",
+                asset_id=asset_id,
+                action=action_id,
+                topic=topic
+            )
             
             return CommandResult(
                 success=True,
-                message="Command sent to edge agent",
-                data={'sent_at': datetime.utcnow().isoformat()}
+                message="Command sent to edge agent via Redpanda",
+                data={
+                    'sent_at': datetime.utcnow().isoformat(),
+                    'topic': topic
+                }
             )
         
         except Exception as e:
+            logger.error(
+                "redpanda_send_failed",
+                asset_id=asset_id,
+                action=action_id,
+                error=str(e)
+            )
             return CommandResult(
                 success=False,
-                message=str(e),
+                message=f"Failed to send command: {str(e)}",
                 error_code="SEND_FAILED"
             )
     

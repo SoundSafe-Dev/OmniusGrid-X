@@ -25,16 +25,17 @@ OmniusGrid is a resilient manufacturing operations platform designed for Industr
 |--------|----------|
 | **Data Collection** | 7 industrial protocols (MQTT, OPC-UA, Modbus, Screen Scraping/OCR, File Watching) |
 | **Real-time Pipeline** | WebSocket broadcasting, subscription management, live telemetry/state/alarms |
-| **Command Executor** | Queued commands with retries, timeouts, cancellation, emergency stop |
+| **Command Executor** | Queued commands with retries, timeouts, cancellation, emergency stop, Redpanda integration |
 | **OEE Automation** | Automated OEE calculation from PackML states and telemetry part counting |
-| **Edge AI** | <100ms inference loops, TorchScript models, automated model lifecycle |
+| **Edge AI** | <100ms inference loops, TorchScript models, automated model lifecycle, graceful fallback |
 | **Observability** | Prometheus metrics, Loki logs, Grafana dashboards, TimescaleDB |
 | **Security** | mTLS device authentication, certificate generation, zero-trust networking, audit trails |
 | **DevOps** | GitHub Actions CI/CD, Kubernetes manifests (staging/production), auto-scaling |
 | **Operations** | K3s-orchestrated, Patroni HA, automatic disaster recovery |
-| **Logistics** | YMS/TMS with GeoTab telematics, detention billing, HOS compliance, dock-production sync |
+| **Logistics** | YMS/TMS with GeoTab telematics, detention billing, HOS compliance, dock-production sync, webhook processing |
 | **Task Management** | Kanban board with task grouping, assignment, approval workflows |
 | **Compliance** | Actionable registries (OSHA, ISO, internal), data correlation mapping, scoring |
+| **Analytics** | Recharts integration with temperature trends, vibration analysis, OEE metrics, asset health distribution |
 
 ---
 
