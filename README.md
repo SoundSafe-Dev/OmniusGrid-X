@@ -118,13 +118,28 @@ flowchart TB
 git clone https://github.com/SoundSafe-ai/Omnius-Grid.git
 cd OmniusGrid
 
-# Start all services
+# Start backend services (recommended)
+./start.sh
+
+# This script:
+# - Starts Redpanda, TimescaleDB, and Backend API
+# - Waits for services to be healthy
+# - Ensures backend is ready before frontend starts
+
+# Then start the frontend
+cd frontend && npm run dev
+```
+
+**Alternative: Start all services with Docker Compose**
+
+```bash
+# Start all services (including frontend in Docker)
 docker-compose up -d
 
 # Verify service health
 docker-compose ps
 
-# Initialize database schema
+# Initialize database schema (if needed)
 docker-compose exec timescaledb psql -U omniusgrid -d omniusgrid \
   -f /docker-entrypoint-initdb.d/001_init.sql
 docker-compose exec timescaledb psql -U omniusgrid -d omniusgrid \
