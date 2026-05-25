@@ -45,6 +45,7 @@ class LocalTacticalEngine:
         self.model_path = settings.TACTICAL_MODEL_PATH or '/models/tactical_v1.pt'
         self.model = None
         self.model_version = "unknown"
+        self._model_loaded = False
         self._decision_handlers: List[Callable] = []
         self._inference_queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
         self._running = False
@@ -72,14 +73,24 @@ class LocalTacticalEngine:
             
             # Extract version from filename
             self.model_version = path.split('/')[-1].replace('.pt', '')
+            self._model_loaded = True
             
             logger.info("tactical_model_loaded", 
                        path=path,
                        version=self.model_version)
             
+        except FileNotFoundError:
+            logger.warning(
+                "tactical_model_not_found",
+                path=model_path or self.model_path,
+                message="Model file not found, operating in simulation mode"
+            )
+            self._model_loaded = False
+            self.model_version = "simulation"
         except Exception as e:
             logger.error("tactical_model_load_failed", error=str(e))
-            raise
+            self._model_loaded = False
+            self.model_version = "simulation"
     
     async def hot_swap_model(self, new_model_path: str):
         """Hot-swap model with zero downtime"""
@@ -109,6 +120,10 @@ class LocalTacticalEngine:
             safety_action = self._check_safety_thresholds(feature_vector)
             if safety_action:
                 return safety_action
+            
+            # If model not loaded, use simulation mode
+            if not self._model_loaded:
+                return self._simulate_decision(feature_vector, start_time)
             
             # Prepare input tensor
             features = self._vector_to_tensor(feature_vector)
@@ -163,6 +178,55 @@ class LocalTacticalEngine:
             )
         
         return None
+    
+    def _simulate_decision(self, feature_vector: Dict, start_time: datetime) -> TacticalDecision:
+        """
+        Generate simulated decision when model is not loaded.
+        Uses rule-based heuristics based on feature values.
+        """
+        features = feature_vector.get('features', {})
+        asset_id = feature_vector.get('asset_id', 'unknown')
+        
+        # Calculate latency
+        latency_ms = (datetime.utcnow() - start_time).total_seconds() * 1000
+        
+        # Rule-based decision logic
+        action_type = 'no_change'
+        parameters = {}
+        confidence = 0.7
+        reasoning = "Simulation mode - rule-based decision"
+        
+        # Check for concerning patterns
+        temp_nozzle = features.get('temp_nozzle_mean', 0)
+        vibration = features.get('vibration_mean', 0)
+        print_speed = features.get('print_speed_mean', 0)
+        
+        if temp_nozzle > 250:  # Approaching max
+            action_type = 'reduce_speed'
+            parameters = {'speed_delta_percent': -10, 'reason': 'high_temperature'}
+            confidence = 0.8
+            reasoning = f"Nozzle temp {temp_nozzle}°C high, reducing speed"
+        elif vibration > 5:  # Elevated vibration
+            action_type = 'reduce_speed'
+            parameters = {'speed_delta_percent': -15, 'reason': 'elevated_vibration'}
+            confidence = 0.85
+            reasoning = f"Vibration {vibration}g elevated, reducing speed"
+        elif print_speed > 100:  # Very high speed
+            action_type = 'reduce_speed'
+            parameters = {'speed_delta_percent': -5, 'reason': 'speed_optimization'}
+            confidence = 0.6
+            reasoning = "Optimizing speed for quality"
+        
+        return TacticalDecision(
+            asset_id=asset_id,
+            timestamp=datetime.utcnow(),
+            action_type=action_type,
+            parameters=parameters,
+            confidence=confidence,
+            reasoning=reasoning,
+            model_version=self.model_version,
+            latency_ms=latency_ms
+        )
     
     def _vector_to_tensor(self, vector: Dict) -> Any:
         """Convert feature vector to PyTorch tensor"""

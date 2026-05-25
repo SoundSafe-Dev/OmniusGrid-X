@@ -7,10 +7,12 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 from uuid import UUID
 import structlog
+import random
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 
-from app.db.models import Driver, Carrier
+from app.db.models import Driver, Carrier, GeoTabTrip, GeoTabDiagnostic, GeoTabException
 
 logger = structlog.get_logger()
 
@@ -116,25 +118,134 @@ class GeoTabService:
     ) -> Dict[str, Any]:
         """Handle incoming GeoTab webhook events"""
         event_type = webhook_data.get("type", "unknown")
+        device_id = webhook_data.get("device_id")
         
         logger.info(
             "geotab_webhook_received",
             event_type=event_type,
-            device_id=webhook_data.get("device_id")
+            device_id=device_id
         )
         
-        # Process different event types
-        if event_type == "exception":
-            # Handle exception event
-            pass
-        elif event_type == "status_change":
-            # Handle status change
-            pass
-        elif event_type == "location_update":
-            # Handle location update
-            pass
+        try:
+            # Validate webhook data
+            if not device_id:
+                logger.warning("geotab_webhook_missing_device_id", data=webhook_data)
+                return {"processed": False, "error": "Missing device_id"}
+            
+            # Process different event types
+            if event_type == "exception":
+                await self._process_exception_webhook(webhook_data, db)
+            elif event_type == "status_change":
+                await self._process_status_change_webhook(webhook_data, db)
+            elif event_type == "location_update":
+                await self._process_location_update_webhook(webhook_data, db)
+            elif event_type == "diagnostic":
+                await self._process_diagnostic_webhook(webhook_data, db)
+            else:
+                logger.warning("geotab_webhook_unknown_type", event_type=event_type)
+            
+            return {"processed": True, "event_type": event_type}
+            
+        except Exception as e:
+            logger.error(
+                "geotab_webhook_processing_failed",
+                event_type=event_type,
+                device_id=device_id,
+                error=str(e)
+            )
+            return {"processed": False, "error": str(e)}
+    
+    async def _process_exception_webhook(self, webhook_data: Dict[str, Any], db: AsyncSession):
+        """Process exception event webhook"""
+        try:
+            exception = GeoTabException(
+                device_id=webhook_data.get("device_id"),
+                driver_id=webhook_data.get("driver_id"),
+                organization_id=webhook_data.get("organization_id"),
+                exception_type=webhook_data.get("exception_type"),
+                severity=webhook_data.get("severity", "medium"),
+                timestamp=datetime.fromisoformat(webhook_data.get("timestamp", datetime.utcnow().isoformat())),
+                location=webhook_data.get("location"),
+                details=webhook_data.get("details", {})
+            )
+            
+            db.add(exception)
+            await db.commit()
+            
+            logger.info(
+                "geotab_exception_stored",
+                device_id=webhook_data.get("device_id"),
+                exception_type=webhook_data.get("exception_type")
+            )
+            
+        except SQLAlchemyError as e:
+            await db.rollback()
+            logger.error("geotab_exception_store_failed", error=str(e))
+            raise
+    
+    async def _process_status_change_webhook(self, webhook_data: Dict[str, Any], db: AsyncSession):
+        """Process status change webhook (e.g., HOS status)"""
+        # Update driver HOS status if applicable
+        driver_id = webhook_data.get("driver_id")
+        if driver_id and db:
+            try:
+                result = await db.execute(
+                    select(Driver).where(Driver.id == driver_id)
+                )
+                driver = result.scalar_one_or_none()
+                if driver:
+                    driver.hos_current_status = webhook_data.get("hos_status")
+                    driver.hos_drive_hours_today = webhook_data.get("drive_hours_today", driver.hos_drive_hours_today)
+                    driver.hos_on_duty_hours_today = webhook_data.get("on_duty_hours_today", driver.hos_on_duty_hours_today)
+                    await db.commit()
+                    logger.info("geotab_driver_status_updated", driver_id=driver_id)
+            except SQLAlchemyError as e:
+                await db.rollback()
+                logger.error("geotab_status_update_failed", error=str(e))
+    
+    async def _process_location_update_webhook(self, webhook_data: Dict[str, Any], db: AsyncSession):
+        """Process location update webhook for trip tracking"""
+        # Could be used to update active trip or start new trip
+        device_id = webhook_data.get("device_id")
+        location = webhook_data.get("location")
         
-        return {"processed": True}
+        logger.debug(
+            "geotab_location_update",
+            device_id=device_id,
+            location=location
+        )
+        # Trip tracking logic would go here
+        # For now, just log the update
+    
+    async def _process_diagnostic_webhook(self, webhook_data: Dict[str, Any], db: AsyncSession):
+        """Process diagnostic trouble code webhook"""
+        try:
+            diagnostic = GeoTabDiagnostic(
+                device_id=webhook_data.get("device_id"),
+                vehicle_id=webhook_data.get("vehicle_id"),
+                organization_id=webhook_data.get("organization_id"),
+                dtc_code=webhook_data.get("dtc_code"),
+                severity=webhook_data.get("severity", "medium"),
+                description=webhook_data.get("description"),
+                battery_voltage=webhook_data.get("battery_voltage"),
+                fuel_level=webhook_data.get("fuel_level"),
+                odometer=webhook_data.get("odometer"),
+                engine_hours=webhook_data.get("engine_hours")
+            )
+            
+            db.add(diagnostic)
+            await db.commit()
+            
+            logger.info(
+                "geotab_diagnostic_stored",
+                device_id=webhook_data.get("device_id"),
+                dtc_code=webhook_data.get("dtc_code")
+            )
+            
+        except SQLAlchemyError as e:
+            await db.rollback()
+            logger.error("geotab_diagnostic_store_failed", error=str(e))
+            raise
     
     async def get_driver_hos(
         self,
