@@ -48,6 +48,7 @@ export interface Task {
   rejection_reason?: string;
   completion_actions: Record<string, any>;
   completion_result: Record<string, any>;
+  comment_count: number;
   created_by?: string;
   created_at: string;
   updated_at: string;

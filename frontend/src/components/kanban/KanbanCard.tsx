@@ -188,10 +188,13 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
               </div>
             )}
 
-            {/* Comments indicator (placeholder) */}
-            <div className="flex items-center gap-1 text-xs text-gray-400">
-              <MessageSquare className="w-3 h-3" />
-            </div>
+            {/* Comments indicator */}
+            {task.comment_count > 0 && (
+              <div className="flex items-center gap-1 text-xs text-blue-500">
+                <MessageSquare className="w-3 h-3" />
+                <span>{task.comment_count}</span>
+              </div>
+            )}
           </div>
         </div>
 
