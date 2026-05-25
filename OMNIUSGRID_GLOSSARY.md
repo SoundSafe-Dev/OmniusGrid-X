@@ -21,6 +21,8 @@
 - [Correlation AI Engine](#correlation-ai-engine)
 - [Frontend Architecture](#frontend-architecture)
 - [Security & Authentication](#security--authentication)
+- [Compliance Frameworks](#compliance-frameworks)
+- [Testing Infrastructure](#testing-infrastructure)
 - [Observability & Monitoring](#observability--monitoring)
 
 ---
@@ -390,10 +392,80 @@
 | **Zero-Trust** | Security model assuming no implicit trust, requiring continuous verification | Backend |
 | **Purdue Model** | Network segmentation isolating manufacturing from enterprise zones | Backend |
 | **API Key** | Secret token for programmatic API access (e.g., GeoTab integration) | Backend |
+| **API Key Hash** | SHA256 hash of API key stored in database for security | Backend |
+| **API Key Scope** | Permission scope assigned to API key (read, write, admin) | Backend |
+| **API Key Expiration** | Date when API key becomes invalid | Backend |
+| **Rate Limiting** | API request rate control (100 req/min per user, 1000 req/min global) | Backend |
+| **Slowapi** | Python library for rate limiting with Redis backend | Backend |
+| **CSRF Protection** | Cross-site request forgery prevention middleware for state-changing operations | Backend |
+| **CSRF Token** | Security token validating request origin | Backend |
+| **Session Management** | User session tracking with refresh, invalidation, and limits | Backend |
+| **Session Timeout** | Maximum session duration (30 minutes) | Backend |
+| **Concurrent Sessions** | Maximum simultaneous sessions per user (3) | Backend |
+| **Session Invalidation** | Process of revoking active user sessions | Backend |
+| **Secrets Management** | Secure storage and encryption of sensitive configuration | Backend |
+| **Fernet** | Symmetric encryption algorithm (AES-128) for secrets | Backend |
+| **Key Rotation** | Periodic replacement of encryption keys | Backend |
+| **Security Headers** | HTTP response headers for security (CSP, HSTS, X-Frame-Options) | Backend |
+| **Content Security Policy** | CSP header controlling resource loading sources | Backend |
+| **HSTS** | HTTP Strict Transport Security header enforcing HTTPS | Backend |
+| **X-Frame-Options** | Header preventing clickjacking attacks | Backend |
+| **Permissions-Policy** | Header controlling browser feature access | Backend |
 | **Session** | User authentication state with expiration and refresh capability | Frontend |
 | **Login Credentials** | Email and password for user authentication | Frontend |
 | **Remember Me** | Option to persist session across browser restarts | Frontend |
 | **Dev Token** | Development mode authentication bypass token | Frontend |
+
+---
+
+## Compliance Frameworks
+
+| Term | Definition | Backend/Frontend |
+|------|------------|------------------|
+| **GDPR** | General Data Protection Regulation - EU data protection law | Both |
+| **Right to be Forgotten** | GDPR right allowing users to request deletion of personal data | Backend |
+| **Data Portability** | GDPR right allowing users to export their data in machine-readable format | Backend |
+| **Consent Management** | System for tracking user consent for data processing activities | Backend |
+| **Consent Record** | Database record of user consent with type, date, method, and withdrawal status | Backend |
+| **Data Processing Record** | GDPR documentation of data processing activities, categories, purposes, and legal basis | Backend |
+| **SOC 2** | Service Organization Control 2 - security compliance framework for service providers | Both |
+| **Vendor Risk Assessment** | Evaluation of third-party vendor security posture and compliance | Backend |
+| **Security Asset** | ISO 27001 tracked asset with classification, owner, and location | Backend |
+| **Asset Classification** | ISO 27001 categorization (public, internal, confidential, restricted) | Backend |
+| **Asset Inventory** | ISO 27001 comprehensive list of all organizational assets | Backend |
+| **ISO 27001** | International standard for information security management systems | Both |
+| **Cryptography** | ISO 27001 encryption standards and key management practices | Backend |
+| **Key Rotation** | Periodic replacement of encryption keys (90-day cycle for certificates) | Backend |
+| **Access Control** | ISO 27001 policies for granting and revoking system access | Backend |
+| **Data Residency** | Geographic location control for data storage (USA compliance) | Backend |
+| **Data Residency Tag** | Database record linking data to geographic region for compliance | Backend |
+| **Compliance Report** | Automated generation of compliance status across frameworks | Backend |
+| **Compliance Summary** | Aggregated view of compliance metrics across GDPR, SOC 2, and ISO 27001 | Backend |
+
+---
+
+## Testing Infrastructure
+
+| Term | Definition | Backend/Frontend |
+|------|------------|------------------|
+| **k6** | Modern load testing tool for performance testing | Backend |
+| **Load Test** | Performance test simulating high user load (1000 concurrent users, 10k req/sec) | Backend |
+| **Concurrent Users** | Number of simultaneous users during load test | Backend |
+| **Requests Per Second** | Target throughput metric for load testing | Backend |
+| **Response Time Threshold** | Performance target (95% under 500ms, 99% under 1s) | Backend |
+| **Error Rate Threshold** | Maximum acceptable error rate (<1%) | Backend |
+| **Chaos Engineering** | Practice of testing system resilience by introducing failures | Backend |
+| **Failure Scenario** | Specific test case for chaos engineering (database failure, network partition) | Backend |
+| **Database Failover** | Chaos test simulating primary database failure | Backend |
+| **Message Broker Failure** | Chaos test simulating Redpanda unavailability | Backend |
+| **Backend Crash** | Chaos test simulating backend service termination | Backend |
+| **Network Partition** | Chaos test simulating network connectivity loss | Backend |
+| **High Latency** | Chaos test simulating degraded network performance | Backend |
+| **Resource Exhaustion** | Chaos test simulating CPU/memory constraints | Backend |
+| **Certificate Expiration** | Chaos test simulating expired TLS certificates | Backend |
+| **Data Loss Scenario** | Chaos test simulating data corruption or deletion | Backend |
+| **RTO** | Recovery Time Objective - target time to restore service after failure | Backend |
+| **RPO** | Recovery Point Objective - maximum acceptable data loss | Backend |
 
 ---
 
