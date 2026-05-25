@@ -1,4 +1,4 @@
-import { FC, ButtonHTMLAttributes } from 'react';
+import { forwardRef, ButtonHTMLAttributes } from 'react';
 import { cn } from '../../utils';
 import { Tooltip, TooltipTrigger, TooltipContent } from './Tooltip';
 
@@ -10,7 +10,7 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   tooltip?: string;
 }
 
-export const Button: FC<ButtonProps> = ({
+export const Button = forwardRef<HTMLButtonElement, ButtonProps>(({
   children,
   variant = 'primary',
   size = 'md',
@@ -20,7 +20,7 @@ export const Button: FC<ButtonProps> = ({
   className,
   tooltip,
   ...props
-}) => {
+}, ref) => {
   const baseClasses =
     'inline-flex items-center justify-center font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-opsgrid-bg disabled:opacity-50 disabled:cursor-not-allowed';
 
@@ -45,6 +45,7 @@ export const Button: FC<ButtonProps> = ({
 
   const buttonContent = (
     <button
+      ref={ref}
       className={cn(
         baseClasses,
         variantClasses[variant],
@@ -93,4 +94,6 @@ export const Button: FC<ButtonProps> = ({
   }
 
   return buttonContent;
-};
+});
+
+Button.displayName = 'Button';
