@@ -185,3 +185,9 @@ POST /api/v1/gdpr/processing-records
 - [GDPR Regulation (EU) 2016/679](https://eur-lex.europa.eu/eli/reg/2016/679/oj)
 - [ICO GDPR Guide](https://ico.org.uk/for-organisations/guide-to-data-protection/guide-to-the-general-data-protection-regulation-gdpr/)
 - [EDPB Guidelines](https://edpb.europa.eu/)
+
+---
+
+**Document Version:** 1.0  
+**Last Updated:** 2026-05-25  
+**Component:** GDPR Compliance

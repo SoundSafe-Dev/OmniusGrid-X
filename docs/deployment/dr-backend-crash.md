@@ -349,3 +349,9 @@ kubectl logs $POD -n $NAMESPACE | grep -i "redpanda\|kafka" || echo "No Redpanda
 ### Configuration Error
 **Symptoms:** "ValidationError" or config errors
 **Solution:** Review environment variables and config files
+
+---
+
+**Document Version:** 1.0  
+**Last Updated:** 2026-05-25  
+**Component:** Disaster Recovery - Backend Crash

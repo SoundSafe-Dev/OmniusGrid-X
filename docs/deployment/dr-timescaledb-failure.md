@@ -269,3 +269,9 @@ psql -U omniusgrid -d omniusgrid -c "SELECT version();"
 - [pgBackRest Configuration](../../infra/pgbackrest/pgbackrest.conf)
 - [Patroni Configuration](../../infra/k8s/base/timescaledb-statefulset.yaml)
 - [Database Schema](../../database/migrations/001_init.sql)
+
+---
+
+**Document Version:** 1.0  
+**Last Updated:** 2026-05-25  
+**Component:** Disaster Recovery - TimescaleDB Failure
