@@ -5,13 +5,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from app.api import assets, telemetry, alarms, operations, auth, dashboard, health, engines
-from app.api import yard, transportation, logistics_correlation, websocket, commands, oee, kanban, registries, geotab, correlation_integration, nlp_correlation, analysis_sessions, user_context, audit
+from app.api import yard, transportation, logistics_correlation, websocket, commands, oee, kanban, registries, geotab, correlation_integration, nlp_correlation, analysis_sessions, user_context, audit, api_keys, gdpr, compliance, data_residency
 from app.core.config import settings
 from app.db.database import init_db
 from app.services.websocket_manager import websocket_manager
 from app.services.command_executor import command_executor
 from app.services.oee_calculator import oee_calculator
 from app.middleware.audit import AuditLoggingMiddleware
+from app.middleware.security_headers import SecurityHeadersMiddleware
+from app.middleware.csrf import CSRFMiddleware
+from app.middleware.rate_limit import limiter
 
 
 @asynccontextmanager
@@ -56,11 +59,19 @@ app = FastAPI(
     - `403 Forbidden`: Insufficient permissions for the requested resource
     - `404 Not Found`: Resource does not exist
     - `422 Unprocessable Entity`: Validation error in request body
+    - `429 Too Many Requests`: Rate limit exceeded
     - `500 Internal Server Error`: Server-side error
     
     ## Rate Limiting
     
-    Rate limiting is not currently implemented. All endpoints are unlimited.
+    Rate limiting is implemented with the following limits:
+    - Per user: 100 requests per minute
+    - Global: 1000 requests per minute
+    
+    Rate limit headers are included in responses:
+    - `X-RateLimit-Limit`: Request limit
+    - `X-RateLimit-Remaining`: Remaining requests
+    - `X-RateLimit-Reset`: Reset time (Unix timestamp)
     """,
     version="0.1.0",
     lifespan=lifespan,
@@ -107,6 +118,9 @@ app = FastAPI(
     ]
 )
 
+# Apply rate limiter to the app
+app.state.limiter = limiter
+
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
@@ -115,6 +129,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# CSRF middleware (optional, can be disabled for API-only usage)
+# Uncomment to enable CSRF protection
+# app.add_middleware(CSRFMiddleware)
+
+# Security headers middleware
+app.add_middleware(SecurityHeadersMiddleware)
 
 # Audit logging middleware
 app.add_middleware(AuditLoggingMiddleware)
@@ -142,6 +163,10 @@ app.include_router(nlp_correlation.router, tags=["NLP Correlation"])
 app.include_router(analysis_sessions.router, tags=["Analysis Sessions"])
 app.include_router(user_context.router, tags=["User Context"])
 app.include_router(audit.router, prefix="/api/v1/audit", tags=["Audit Logs"])
+app.include_router(api_keys.router, prefix="/api/v1/api-keys", tags=["API Keys"])
+app.include_router(gdpr.router, prefix="/api/v1/gdpr", tags=["GDPR Compliance"])
+app.include_router(compliance.router, prefix="/api/v1/compliance", tags=["Compliance"])
+app.include_router(data_residency.router, prefix="/api/v1/data-residency", tags=["Data Residency"])
 
 
 @app.get("/")

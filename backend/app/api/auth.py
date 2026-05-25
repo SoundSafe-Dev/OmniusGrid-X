@@ -3,7 +3,7 @@
 from datetime import datetime, timedelta
 from typing import Optional
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, status, Header
+from fastapi import APIRouter, Depends, HTTPException, status, Header, Request
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -14,6 +14,7 @@ from app.db.database import get_db
 from app.db.models import User, Organization
 from app.models.schemas import Token, UserLogin, UserCreate
 from app.core.config import settings
+from app.middleware.rate_limit import rate_limit
 
 router = APIRouter()
 
@@ -152,7 +153,9 @@ async def get_current_active_user(
 
 
 @router.post("/login", response_model=Token, summary="Login with email and password", description="Authenticate user credentials and return a JWT access token. The token must be included in the Authorization header for subsequent requests.")
+@rate_limit("10/minute")  # Stricter limit for login
 async def login(
+    request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_db)
 ):

@@ -1253,6 +1253,21 @@ The correlation AI model seamlessly integrates with OmniusGrid's Kanban task man
 - **Enhanced API Documentation**: Comprehensive OpenAPI/Swagger documentation with detailed descriptions, authentication flows, error codes, and examples
 - **Automated Recovery Scripts**: Shell scripts for TimescaleDB, Redpanda, and backend service recovery
 - **Disaster Recovery Runbooks**: Detailed runbooks for TimescaleDB failure, Redpanda failure, backend crash, network partition, and data center outage scenarios with RTO/RPO targets
+- **Rate Limiting**: API rate limiting with 100 req/min per user and 1000 req/min global limits using slowapi and Redis
+- **API Key Authentication**: Secure API key management for external integrations with scope-based access control
+- **RBAC Enforcement**: Role-based access control with Admin, Operator, and Viewer roles with granular permissions
+- **CSRF Protection**: Cross-site request forgery protection middleware for state-changing operations
+- **Session Management**: Enhanced session management with refresh, invalidation, and concurrent session limits (max 3)
+- **Certificate Rotation**: Automated 90-day certificate rotation script with graceful service reload
+- **Secrets Management**: File-based secrets management with Fernet encryption (AES-128) and key rotation
+- **Security Headers**: Comprehensive security headers including CSP, HSTS, X-Frame-Options, and Permissions-Policy
+- **GDPR Compliance**: Right to be forgotten, data portability, consent management, and data processing records
+- **SOC 2 Compliance**: Vendor risk assessments, security asset management, and compliance reporting
+- **ISO 27001 Compliance**: Asset inventory, classification, cryptography management, and access controls
+- **Data Residency Controls**: USA data residency tagging and validation for compliance
+- **Compliance Documentation**: Comprehensive documentation for GDPR, SOC 2, and ISO 27001 frameworks
+- **Load Testing**: k6 load testing suite targeting 1000 concurrent users and 10k req/sec
+- **Chaos Engineering**: Automated chaos engineering tests for MES-related failure scenarios
 
 ---
 
