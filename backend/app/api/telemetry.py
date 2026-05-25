@@ -13,7 +13,7 @@ from app.db.models import Telemetry, Asset, PackMLState
 router = APIRouter()
 
 
-@router.get("/{asset_id}/latest")
+@router.get("/{asset_id}/latest", summary="Get latest telemetry", description="Retrieve the most recent telemetry data point for a specific asset, optionally filtered by metric name.")
 async def get_latest_telemetry(
     asset_id: UUID,
     metric_name: Optional[str] = None,
@@ -51,7 +51,7 @@ async def get_latest_telemetry(
     }
 
 
-@router.get("/{asset_id}/history")
+@router.get("/{asset_id}/history", summary="Get telemetry history", description="Retrieve historical telemetry data for an asset with optional time range, metric filtering, and aggregation. Defaults to last 24 hours if no time range specified.")
 async def get_telemetry_history(
     asset_id: UUID,
     metric_name: Optional[str] = None,
@@ -108,7 +108,7 @@ async def get_telemetry_history(
         ]
 
 
-@router.get("/{asset_id}/metrics")
+@router.get("/{asset_id}/metrics", summary="List available metrics", description="Retrieve a list of all metric names that have been recorded for a specific asset.")
 async def get_available_metrics(
     asset_id: UUID,
     db: AsyncSession = Depends(get_db)

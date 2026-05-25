@@ -1250,6 +1250,9 @@ The correlation AI model seamlessly integrates with OmniusGrid's Kanban task man
 - **Zero-Trust Security**: mTLS device provisioning with certificate revocation
 - **Immutable Audit Trail**: Tamper-evident logging with cryptographic hash chaining
 - **Disaster Recovery**: pgBackRest WAL archiving to S3 with point-in-time recovery
+- **Enhanced API Documentation**: Comprehensive OpenAPI/Swagger documentation with detailed descriptions, authentication flows, error codes, and examples
+- **Automated Recovery Scripts**: Shell scripts for TimescaleDB, Redpanda, and backend service recovery
+- **Disaster Recovery Runbooks**: Detailed runbooks for TimescaleDB failure, Redpanda failure, backend crash, network partition, and data center outage scenarios with RTO/RPO targets
 
 ---
 

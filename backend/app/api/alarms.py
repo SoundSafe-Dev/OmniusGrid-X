@@ -14,7 +14,7 @@ from app.models.schemas import AlarmCreate, AlarmResponse, AlarmAcknowledge
 router = APIRouter()
 
 
-@router.get("/", response_model=List[AlarmResponse])
+@router.get("/", response_model=List[AlarmResponse], summary="List alarms", description="Retrieve a paginated list of alarms with optional filtering by asset, severity, acknowledgment status, and time range. Defaults to last 24 hours if no time range specified.")
 async def list_alarms(
     asset_id: Optional[UUID] = None,
     is_active: Optional[bool] = None,
@@ -53,7 +53,7 @@ async def list_alarms(
     return alarms
 
 
-@router.get("/active")
+@router.get("/active", summary="List active alarms", description="Retrieve all currently active (unacknowledged) alarms with severity-based ordering. Used for real-time monitoring dashboards.")
 async def get_active_alarms(
     organization_id: Optional[UUID] = None,
     severity: Optional[str] = None,
@@ -93,7 +93,7 @@ async def get_active_alarms(
     }
 
 
-@router.get("/{alarm_id}", response_model=AlarmResponse)
+@router.get("/{alarm_id}", response_model=AlarmResponse, summary="Get alarm details", description="Retrieve detailed information about a specific alarm including its history, acknowledgment status, and related asset.")
 async def get_alarm(
     alarm_id: UUID,
     db: AsyncSession = Depends(get_db)
@@ -110,7 +110,7 @@ async def get_alarm(
     return alarm
 
 
-@router.post("/{alarm_id}/acknowledge")
+@router.post("/{alarm_id}/acknowledge", summary="Acknowledge alarm", description="Mark an alarm as acknowledged with optional notes. Acknowledged alarms remain active but are tracked as reviewed by an operator.")
 async def acknowledge_alarm(
     alarm_id: UUID,
     ack_data: AlarmAcknowledge,
@@ -140,7 +140,7 @@ async def acknowledge_alarm(
     return alarm
 
 
-@router.post("/{alarm_id}/clear")
+@router.post("/{alarm_id}/clear", summary="Clear alarm", description="Mark an alarm as resolved/cleared. This should only be done when the underlying issue has been fixed.")
 async def clear_alarm(
     alarm_id: UUID,
     db: AsyncSession = Depends(get_db)
@@ -163,7 +163,7 @@ async def clear_alarm(
     return alarm
 
 
-@router.post("/acknowledge-all")
+@router.post("/acknowledge-all", summary="Acknowledge all active alarms", description="Bulk acknowledge all currently active alarms, optionally filtered by asset and severity. Used during shift handover or after maintenance.")
 async def acknowledge_all_alarms(
     asset_id: Optional[UUID] = None,
     severity: Optional[str] = None,
