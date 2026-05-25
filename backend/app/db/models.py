@@ -12,14 +12,14 @@ Base = declarative_base()
 def UUIDColumn():
     return Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
 
-def UUIDForeignKey(foreign_key):
-    return Column(String(36), ForeignKey(foreign_key))
+def UUIDForeignKey(foreign_key, nullable=False):
+    return Column(String(36), ForeignKey(foreign_key), nullable=nullable)
 
 
 class Organization(Base):
     __tablename__ = "organizations"
 
-    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    id = UUIDColumn()
     name = Column(String(255), nullable=False)
     slug = Column(String(100), unique=True, nullable=False)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
