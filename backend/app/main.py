@@ -5,12 +5,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from app.api import assets, telemetry, alarms, operations, auth, dashboard, health, engines
-from app.api import yard, transportation, logistics_correlation, websocket, commands, oee, kanban, registries, geotab, correlation_integration, nlp_correlation, analysis_sessions, user_context
+from app.api import yard, transportation, logistics_correlation, websocket, commands, oee, kanban, registries, geotab, correlation_integration, nlp_correlation, analysis_sessions, user_context, audit
 from app.core.config import settings
 from app.db.database import init_db
 from app.services.websocket_manager import websocket_manager
 from app.services.command_executor import command_executor
 from app.services.oee_calculator import oee_calculator
+from app.middleware.audit import AuditLoggingMiddleware
 
 
 @asynccontextmanager
@@ -29,10 +30,81 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="OpsGrid API",
-    description="Universal Manufacturing Data Feed Dashboard API",
+    title="OmniusGrid API",
+    description="""
+    Universal Manufacturing Data Feed Dashboard API for Industry 4.0 operations.
+    
+    ## Authentication
+    
+    The API uses JWT Bearer token authentication. Include the token in the Authorization header:
+    
+    ```
+    Authorization: Bearer <your_jwt_token>
+    ```
+    
+    ### Development Mode
+    
+    For development, you can use the `dev-token` bypass:
+    
+    ```
+    Authorization: Bearer dev-token
+    ```
+    
+    ## Error Codes
+    
+    - `401 Unauthorized`: Invalid or missing authentication token
+    - `403 Forbidden`: Insufficient permissions for the requested resource
+    - `404 Not Found`: Resource does not exist
+    - `422 Unprocessable Entity`: Validation error in request body
+    - `500 Internal Server Error`: Server-side error
+    
+    ## Rate Limiting
+    
+    Rate limiting is not currently implemented. All endpoints are unlimited.
+    """,
     version="0.1.0",
-    lifespan=lifespan
+    lifespan=lifespan,
+    contact={
+        "name": "SoundSafe",
+        "email": "support@soundsafe.ai",
+    },
+    license_info={
+        "name": "Proprietary",
+    },
+    openapi_tags=[
+        {
+            "name": "Authentication",
+            "description": "User authentication and token management"
+        },
+        {
+            "name": "Assets",
+            "description": "Manufacturing asset management and monitoring"
+        },
+        {
+            "name": "Telemetry",
+            "description": "Real-time sensor data and historical metrics"
+        },
+        {
+            "name": "Alarms",
+            "description": "Alarm notifications and acknowledgment"
+        },
+        {
+            "name": "Commands",
+            "description": "Command execution to industrial equipment"
+        },
+        {
+            "name": "OEE",
+            "description": "Overall Equipment Effectiveness metrics"
+        },
+        {
+            "name": "Kanban",
+            "description": "Task management and workflow tracking"
+        },
+        {
+            "name": "Registries",
+            "description": "Compliance and operational registries"
+        },
+    ]
 )
 
 # CORS middleware
@@ -43,6 +115,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Audit logging middleware
+app.add_middleware(AuditLoggingMiddleware)
 
 # Include routers
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])
@@ -66,6 +141,7 @@ app.include_router(correlation_integration.router, tags=["Correlation Integratio
 app.include_router(nlp_correlation.router, tags=["NLP Correlation"])
 app.include_router(analysis_sessions.router, tags=["Analysis Sessions"])
 app.include_router(user_context.router, tags=["User Context"])
+app.include_router(audit.router, prefix="/api/v1/audit", tags=["Audit Logs"])
 
 
 @app.get("/")

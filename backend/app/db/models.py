@@ -940,3 +940,21 @@ class GeoTabException(Base):
     
     meta_data = Column(JSON, default=dict)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class AuditLog(Base):
+    """Security audit log for tracking sensitive operations with tamper-evident hash chaining"""
+    __tablename__ = "audit_logs"
+
+    id = UUIDColumn()
+    timestamp = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    user_id = UUIDForeignKey("users.id", nullable=True)
+    organization_id = UUIDForeignKey("organizations.id", nullable=True)
+    action = Column(String(100), nullable=False)
+    resource_type = Column(String(50), nullable=True)
+    resource_id = UUIDForeignKey(None, nullable=True)
+    details = Column(JSON, default={}, nullable=False)
+    ip_address = Column(String(45), nullable=True)  # IPv6 compatible
+    user_agent = Column(Text, nullable=True)
+    hash_chain = Column(String(64), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)

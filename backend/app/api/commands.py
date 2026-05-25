@@ -66,7 +66,7 @@ class CommandSubmitResponse(BaseModel):
     message: str
 
 
-@router.post("/submit", response_model=CommandSubmitResponse)
+@router.post("/submit", response_model=CommandSubmitResponse, summary="Submit command to asset", description="Submit a new command for execution on an industrial asset. Commands are queued and executed asynchronously with automatic retries.\n\n**Common actions:**\n- `set_speed`: Adjust print/processing speed (params: speed_percent)\n- `pause_job`: Pause current operation\n- `resume_job`: Resume paused operation\n- `emergency_stop`: Immediate stop (safety critical, admin only)\n- `set_temperature`: Adjust nozzle/bed temp (params: target_temp, component)")
 async def submit_command(
     request: CommandSubmitRequest,
     current_user = Depends(get_current_active_user)

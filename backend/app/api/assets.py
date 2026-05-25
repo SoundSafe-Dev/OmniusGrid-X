@@ -16,7 +16,7 @@ from app.models.schemas import (
 router = APIRouter()
 
 
-@router.get("/", response_model=List[AssetResponse])
+@router.get("/", response_model=List[AssetResponse], summary="List all assets", description="Retrieve a paginated list of manufacturing assets with optional filtering by organization, workcell, asset type, and active status.")
 async def list_assets(
     organization_id: Optional[UUID] = None,
     workcell_id: Optional[UUID] = None,
@@ -45,7 +45,7 @@ async def list_assets(
     return assets
 
 
-@router.get("/{asset_id}", response_model=AssetResponse)
+@router.get("/{asset_id}", response_model=AssetResponse, summary="Get asset details", description="Retrieve detailed information about a specific asset including its configuration, PackML state, and connection settings.")
 async def get_asset(
     asset_id: UUID,
     db: AsyncSession = Depends(get_db)
@@ -62,7 +62,7 @@ async def get_asset(
     return asset
 
 
-@router.post("/", response_model=AssetResponse)
+@router.post("/", response_model=AssetResponse, summary="Create a new asset", description="Register a new manufacturing asset with the system. Requires a valid asset type ID and organization ID.")
 async def create_asset(
     asset_data: AssetCreate,
     db: AsyncSession = Depends(get_db)
@@ -84,7 +84,7 @@ async def create_asset(
     return asset
 
 
-@router.put("/{asset_id}", response_model=AssetResponse)
+@router.put("/{asset_id}", response_model=AssetResponse, summary="Update asset", description="Modify an existing asset's configuration. Only provided fields will be updated (partial update).")
 async def update_asset(
     asset_id: UUID,
     asset_data: AssetUpdate,
@@ -110,7 +110,7 @@ async def update_asset(
     return asset
 
 
-@router.delete("/{asset_id}")
+@router.delete("/{asset_id}", summary="Deactivate asset", description="Soft delete an asset by setting its active status to false. The asset remains in the database but is excluded from queries.")
 async def delete_asset(
     asset_id: UUID,
     db: AsyncSession = Depends(get_db)
@@ -130,7 +130,7 @@ async def delete_asset(
     return {"message": "Asset deactivated successfully"}
 
 
-@router.get("/types/", response_model=List[AssetTypeResponse])
+@router.get("/types/", response_model=List[AssetTypeResponse], summary="List asset types", description="Retrieve all available asset types with optional filtering by category (e.g., 3d_printer, cnc, robot).")
 async def list_asset_types(
     category: Optional[str] = None,
     db: AsyncSession = Depends(get_db)
@@ -145,7 +145,7 @@ async def list_asset_types(
     return result.scalars().all()
 
 
-@router.get("/{asset_id}/status")
+@router.get("/{asset_id}/status", summary="Get asset status", description="Retrieve the current operational status of an asset including PackML state, active status, last seen timestamp, and connection configuration.")
 async def get_asset_status(
     asset_id: UUID,
     db: AsyncSession = Depends(get_db)

@@ -151,7 +151,7 @@ async def get_current_active_user(
     return current_user
 
 
-@router.post("/login", response_model=Token)
+@router.post("/login", response_model=Token, summary="Login with email and password", description="Authenticate user credentials and return a JWT access token. The token must be included in the Authorization header for subsequent requests.")
 async def login(
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_db)
@@ -184,7 +184,7 @@ async def login(
     return {"access_token": access_token, "token_type": "bearer"}
 
 
-@router.post("/register")
+@router.post("/register", summary="Register a new user", description="Create a new user account. **WARNING**: This endpoint is for development only and should be disabled in production.")
 async def register(
     user_data: UserCreate,
     db: AsyncSession = Depends(get_db)
@@ -212,7 +212,7 @@ async def register(
     return {"message": "User created successfully", "user_id": str(user.id)}
 
 
-@router.get("/me")
+@router.get("/me", summary="Get current user information", description="Retrieve the authenticated user's profile information including email, name, role, and organization.")
 async def get_current_user_info(
     current_user: User = Depends(get_current_active_user)
 ):
@@ -227,7 +227,7 @@ async def get_current_user_info(
     }
 
 
-@router.get("/users")
+@router.get("/users", summary="Get organization users", description="Retrieve all users in the current user's organization. Used for task assignment and team management.")
 async def get_organization_users(
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
