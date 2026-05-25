@@ -283,3 +283,9 @@ curl -X POST http://localhost:8000/api/v1/nlp/correlation/query \
 - **PEFT (LoRA)**: https://huggingface.co/docs/peft
 - **DeepSpeed**: https://www.deepspeed.ai/
 - **Weights & Biases**: https://wandb.ai/
+
+---
+
+**Document Version:** 1.1  
+**Last Updated:** 2026-05-25  
+**Component:** Gemma 4 Training Curriculum

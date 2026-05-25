@@ -507,6 +507,6 @@ Debug output includes:
 
 ---
 
-**Document Version:** 1.0  
-**Last Updated:** 2026-05-20  
+**Document Version:** 1.1  
+**Last Updated:** 2026-05-25  
 **Component:** Correlation AI Engine  

@@ -380,3 +380,9 @@ GET /api/v1/compliance/report/generate?framework=soc2
 - [AICPA SOC 2 Guide](https://www.aicpa.org/soc4so)
 - [CSA Cloud Controls Matrix](https://cloudsecurityalliance.org/)
 - [NIST Cybersecurity Framework](https://www.nist.gov/cyberframework)
+
+---
+
+**Document Version:** 1.0  
+**Last Updated:** 2026-05-25  
+**Component:** SOC 2 Compliance

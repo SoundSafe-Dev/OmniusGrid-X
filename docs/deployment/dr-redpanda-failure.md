@@ -310,3 +310,9 @@ rpk group list --brokers localhost:9092
 - `alarms` - Alarm notifications
 - `state_changes` - PackML state transitions
 - `websocket` - WebSocket message distribution
+
+---
+
+**Document Version:** 1.0  
+**Last Updated:** 2026-05-25  
+**Component:** Disaster Recovery - Redpanda Failure

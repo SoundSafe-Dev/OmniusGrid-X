@@ -394,3 +394,9 @@ kubectl logs edge-agent-0 -n omniusgrid --tail=50
 ### External Service Partition
 **Symptoms:** Cannot reach external APIs
 **Solution:** Check internet connectivity, DNS, firewall rules, implement fallback
+
+---
+
+**Document Version:** 1.0  
+**Last Updated:** 2026-05-25  
+**Component:** Disaster Recovery - Network Partition
