@@ -20,6 +20,20 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     
+    # Rate Limiting
+    RATE_LIMIT_ENABLED: bool = True
+    RATE_LIMIT_PER_USER: str = "100/minute"
+    RATE_LIMIT_GLOBAL: str = "1000/minute"
+    RATE_LIMIT_BURST: int = 10
+    
+    # Security Headers
+    SECURITY_HEADERS_ENABLED: bool = True
+    CSP_ENABLED: bool = True
+    HSTS_ENABLED: bool = True
+    HSTS_MAX_AGE: int = 31536000  # 1 year
+    HSTS_INCLUDE_SUBDOMAINS: bool = True
+    HSTS_PRELOAD: bool = True
+    
     # mTLS (for production)
     MTLS_ENABLED: bool = False
     MTLS_CA_CERT_PATH: str = "/certs/ca.crt"

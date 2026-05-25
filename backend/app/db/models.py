@@ -958,3 +958,163 @@ class AuditLog(Base):
     user_agent = Column(Text, nullable=True)
     hash_chain = Column(String(64), nullable=False)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class APIKey(Base):
+    """API keys for external integrations"""
+    __tablename__ = "api_keys"
+
+    id = UUIDColumn()
+    key_hash = Column(String(64), nullable=False, unique=True)
+    key_prefix = Column(String(8), nullable=False)
+    name = Column(String(255), nullable=False)
+    organization_id = UUIDForeignKey("organizations.id", nullable=True)
+    scopes = Column(ARRAY(String), nullable=False, default=lambda: ["read"])
+    is_active = Column(Boolean, nullable=False, default=True)
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+    last_used_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_by = UUIDForeignKey("users.id", nullable=True)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+    revoked_by = UUIDForeignKey("users.id", nullable=True)
+    metadata = Column(JSON, default={})
+
+
+class Permission(Base):
+    """Permissions for RBAC"""
+    __tablename__ = "permissions"
+
+    id = UUIDColumn()
+    name = Column(String(100), nullable=False, unique=True)
+    description = Column(Text, nullable=True)
+    resource = Column(String(50), nullable=False)
+    action = Column(String(50), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class RolePermission(Base):
+    """Role to permission mapping"""
+    __tablename__ = "role_permissions"
+
+    id = UUIDColumn()
+    role = Column(String(50), nullable=False)
+    permission_id = UUIDForeignKey("permissions.id", nullable=False)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class UserSession(Base):
+    """User session management"""
+    __tablename__ = "user_sessions"
+
+    id = UUIDColumn()
+    user_id = UUIDForeignKey("users.id", nullable=False)
+    token_hash = Column(String(64), nullable=False, unique=True)
+    ip_address = Column(String(45), nullable=True)
+    user_agent = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    last_activity_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+    metadata = Column(JSON, default={})
+
+
+class ConsentRecord(Base):
+    """GDPR consent records"""
+    __tablename__ = "consent_records"
+
+    id = UUIDColumn()
+    user_id = UUIDForeignKey("users.id", nullable=True)
+    consent_type = Column(String(50), nullable=False)
+    consent_given = Column(Boolean, nullable=False)
+    consent_date = Column(DateTime(timezone=True), default=datetime.utcnow)
+    consent_method = Column(String(50), nullable=True)
+    ip_address = Column(String(45), nullable=True)
+    user_agent = Column(Text, nullable=True)
+    withdrawn_at = Column(DateTime(timezone=True), nullable=True)
+    metadata = Column(JSON, default={})
+
+
+class DataProcessingRecord(Base):
+    """GDPR data processing records"""
+    __tablename__ = "data_processing_records"
+
+    id = UUIDColumn()
+    organization_id = UUIDForeignKey("organizations.id", nullable=True)
+    processing_activity = Column(String(255), nullable=False)
+    data_categories = Column(ARRAY(String), nullable=False)
+    purposes = Column(ARRAY(String), nullable=False)
+    recipients = Column(ARRAY(String), nullable=True)
+    retention_period = Column(String(100), nullable=True)
+    security_measures = Column(ARRAY(String), nullable=True)
+    legal_basis = Column(String(100), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class SecurityAsset(Base):
+    """ISO 27001 security assets"""
+    __tablename__ = "security_assets"
+
+    id = UUIDColumn()
+    asset_type = Column(String(50), nullable=False)
+    asset_name = Column(String(255), nullable=False)
+    asset_id = Column(String(255), nullable=True)
+    owner_id = UUIDForeignKey("users.id", nullable=True)
+    classification = Column(String(50), nullable=True)
+    location = Column(String(255), nullable=True)
+    status = Column(String(50), default="active")
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    metadata = Column(JSON, default={})
+
+
+class VendorRiskAssessment(Base):
+    """SOC 2 vendor risk assessments"""
+    __tablename__ = "vendor_risk_assessments"
+
+    id = UUIDColumn()
+    vendor_name = Column(String(255), nullable=False)
+    vendor_type = Column(String(50), nullable=True)
+    risk_level = Column(String(50), nullable=True)
+    assessment_date = Column(Date, nullable=True)
+    next_review_date = Column(Date, nullable=True)
+    assessor_id = UUIDForeignKey("users.id", nullable=True)
+    findings = Column(ARRAY(String), nullable=True)
+    controls = Column(ARRAY(String), nullable=True)
+    status = Column(String(50), default="pending")
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class IntegrationConfiguration(Base):
+    """External integration configurations"""
+    __tablename__ = "integration_configurations"
+
+    id = UUIDColumn()
+    integration_type = Column(String(50), nullable=False)
+    integration_name = Column(String(255), nullable=False)
+    organization_id = UUIDForeignKey("organizations.id", nullable=True)
+    configuration = Column(JSON, nullable=False)
+    authentication = Column(JSON, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    health_check_url = Column(String(500), nullable=True)
+    last_health_check = Column(DateTime(timezone=True), nullable=True)
+    health_status = Column(String(50), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_by = UUIDForeignKey("users.id", nullable=True)
+
+
+class DataResidencyTag(Base):
+    """Data residency tags for compliance"""
+    __tablename__ = "data_residency_tags"
+
+    id = UUIDColumn()
+    table_name = Column(String(100), nullable=False)
+    record_id = Column(UUID(as_uuid=False), nullable=False)
+    region = Column(String(50), nullable=False, default="USA")
+    tagged_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    tagged_by = UUIDForeignKey("users.id", nullable=True)
+    metadata = Column(JSON, default={})
+
