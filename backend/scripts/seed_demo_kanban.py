@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # Add parent directory to path
-sys.path.insert(0, "/Users/hamaddada/Downloads/OmniusGrid/backend")
+sys.path.insert(0, "/app")
 
 from app.db.database import AsyncSessionLocal
 from app.db.models import TaskBoard, TaskColumn, Task, User, Organization
@@ -230,6 +230,9 @@ async def seed_demo_tasks():
                 task_type=task_data.get("task_type", "custom"),
                 priority=task_data.get("priority", "medium"),
                 status="completed" if column_type == "done" else "in_progress" if column_type == "in_progress" else "ready",
+                assigned_to="00000000-0000-0000-0000-000000000001",  # Assign to dev user
+                assigned_by="00000000-0000-0000-0000-000000000001",
+                assigned_at=datetime.utcnow() - timedelta(hours=i),
                 estimated_effort_minutes=task_data.get("estimated_effort_minutes"),
                 due_date=task_data.get("due_date"),
                 tags=task_data.get("tags", []),
