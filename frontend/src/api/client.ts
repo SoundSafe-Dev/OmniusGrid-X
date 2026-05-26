@@ -13,7 +13,7 @@ const getApiUrl = () => {
     return `http://${hostname}:8000`
   }
   
-  return 'http://localhost:8000'
+  return 'http://localhost:8002'
 }
 
 const API_URL = getApiUrl()
@@ -29,7 +29,7 @@ export const api = axios.create({
 // Request interceptor - add auth token
 api.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('accessToken')
+    const token = localStorage.getItem('accessToken') || localStorage.getItem('devToken') || 'dev-token'
     if (token) {
       config.headers.Authorization = `Bearer ${token}`
     }

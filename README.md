@@ -150,13 +150,24 @@ docker-compose exec timescaledb psql -U omniusgrid -d omniusgrid \
 
 | Service | URL | Credentials |
 |---------|-----|-------------|
-| Dashboard | http://localhost:9999 | - |
-| API | http://localhost:8002 | Bearer token |
+| Dashboard | http://localhost:9999 | Login with `dev` / any password (dev mode) |
+| API | http://localhost:8002 | Bearer token (auto-generated in dev mode) |
 | API Docs | http://localhost:8002/docs | - |
 | Grafana | http://localhost:3001 | `admin` / `omniusgrid_admin` |
 | Prometheus | http://localhost:9090 | - |
 | Alertmanager | http://localhost:9093 | - |
 | Redpanda Console | http://localhost:9644 | - |
+
+### Development Mode Authentication
+
+The application includes a development mode that bypasses normal authentication:
+
+- **Username**: `dev`
+- **Password**: Any password
+- **Backend**: Accepts `dev-token` as a valid Bearer token
+- **Frontend**: Automatically sets `dev-token` in localStorage when logging in with `dev` username
+
+This mode is intended for development and testing purposes only.
 
 ### Demo Data & Mock API
 

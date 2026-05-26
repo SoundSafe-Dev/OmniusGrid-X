@@ -118,8 +118,8 @@ app = FastAPI(
     ]
 )
 
-# Apply rate limiter to the app
-app.state.limiter = limiter
+# Apply rate limiter to the app (disabled for debugging)
+# app.state.limiter = limiter
 
 # CORS middleware
 app.add_middleware(
@@ -134,11 +134,11 @@ app.add_middleware(
 # Uncomment to enable CSRF protection
 # app.add_middleware(CSRFMiddleware)
 
-# Security headers middleware
-app.add_middleware(SecurityHeadersMiddleware)
+# Security headers middleware (disabled for debugging)
+# app.add_middleware(SecurityHeadersMiddleware)
 
-# Audit logging middleware
-app.add_middleware(AuditLoggingMiddleware)
+# Audit logging middleware (disabled for debugging)
+# app.add_middleware(AuditLoggingMiddleware)
 
 # Include routers
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])

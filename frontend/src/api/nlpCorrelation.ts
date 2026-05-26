@@ -1,6 +1,4 @@
-import axios from 'axios';
-
-const API_BASE = (import.meta as any).env.VITE_API_BASE || 'http://localhost:8002';
+import { api } from './client';
 
 export interface NLPQueryRequest {
   query: string;
@@ -59,13 +57,13 @@ export interface ChatMessage {
 export const nlpCorrelationApi = {
   // NLP Query
   async queryNLP(request: NLPQueryRequest): Promise<NLPQueryResponse> {
-    const response = await axios.post(`${API_BASE}/api/v1/nlp/correlation/query`, request);
+    const response = await api.post(`/api/v1/nlp/correlation/query`, request);
     return response.data;
   },
 
   // Chat interface
   async chat(message: string, conversationHistory?: ChatMessage[]): Promise<ChatMessage> {
-    const response = await axios.post(`${API_BASE}/api/v1/nlp/correlation/chat`, null, {
+    const response = await api.post(`/api/v1/nlp/correlation/chat`, null, {
       params: {
         message,
         conversation_history: conversationHistory
@@ -89,7 +87,7 @@ export const nlpCorrelationApi = {
     formData.append('data_type', data_type);
     formData.append('category', category);
 
-    const response = await axios.post(`${API_BASE}/api/v1/nlp/correlation/intake/upload`, formData, {
+    const response = await api.post(`/api/v1/nlp/correlation/intake/upload`, formData, {
       headers: {
         'Content-Type': 'multipart/form-data'
       }
@@ -102,7 +100,7 @@ export const nlpCorrelationApi = {
     query?: string,
     auto_integrate: boolean = true
   ): Promise<any> {
-    const response = await axios.post(`${API_BASE}/api/v1/nlp/correlation/intake/analyze`, null, {
+    const response = await api.post(`/api/v1/nlp/correlation/intake/analyze`, null, {
       params: {
         intake_id,
         query,
@@ -113,14 +111,14 @@ export const nlpCorrelationApi = {
   },
 
   async listIntakeItems(limit: number = 50, offset: number = 0, status?: string): Promise<{ items: IntakeItem[]; total: number }> {
-    const response = await axios.get(`${API_BASE}/api/v1/nlp/correlation/intake/list`, {
+    const response = await api.get(`/api/v1/nlp/correlation/intake/list`, {
       params: { limit, offset, status }
     });
     return response.data;
   },
 
   async getIntakeItem(intake_id: string): Promise<IntakeItem> {
-    const response = await axios.get(`${API_BASE}/api/v1/nlp/correlation/intake/${intake_id}`);
+    const response = await api.get(`/api/v1/nlp/correlation/intake/${intake_id}`);
     return response.data;
   }
 };
