@@ -247,7 +247,7 @@ export const OrganizationTree: FC = () => {
 
   return (
     <Card title="Organization Structure" subtitle="Hierarchical view of assets">
-      <div className="p-4 bg-opsgrid-bg rounded-lg max-h-96 overflow-y-auto">
+      <div className="p-4 bg-opsgrid-bg rounded-lg h-[calc(100vh-250px)] overflow-y-auto">
         {renderNode(orgData)}
       </div>
     </Card>
