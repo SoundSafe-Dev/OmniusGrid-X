@@ -1,4 +1,10 @@
-"""Assets API Routes"""
+"""Assets API Routes.
+
+All endpoints scope queries to the authenticated user's organization
+via :func:`app.core.tenant.get_tenant_org_id`. Cross-tenant access
+returns 404 (not 403) to avoid leaking existence of resources in other
+organizations.
+"""
 
 from typing import List, Optional
 from uuid import UUID
@@ -6,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.tenant import get_tenant_org_id
 from app.db.database import get_db
 from app.db.models import Asset, AssetType, Workcell, Organization
 from app.models.schemas import (
@@ -16,154 +23,169 @@ from app.models.schemas import (
 router = APIRouter()
 
 
-@router.get("/", response_model=List[AssetResponse], summary="List all assets", description="Retrieve a paginated list of manufacturing assets with optional filtering by organization, workcell, asset type, and active status.")
+@router.get("/", response_model=List[AssetResponse], summary="List all assets", description="Retrieve a paginated list of manufacturing assets in the authenticated user's organization, with optional filtering by workcell, asset type, and active status.")
 async def list_assets(
-    organization_id: Optional[UUID] = None,
     workcell_id: Optional[UUID] = None,
     asset_type_id: Optional[UUID] = None,
     is_active: Optional[bool] = None,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
-    db: AsyncSession = Depends(get_db)
+    org_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_db),
 ):
-    """List assets with optional filtering"""
-    query = select(Asset)
-    
-    if organization_id:
-        query = query.where(Asset.organization_id == organization_id)
+    """List assets within the authenticated user's organization."""
+    query = select(Asset).where(Asset.organization_id == org_id)
+
     if workcell_id:
         query = query.where(Asset.workcell_id == workcell_id)
     if asset_type_id:
         query = query.where(Asset.asset_type_id == asset_type_id)
     if is_active is not None:
         query = query.where(Asset.is_active == is_active)
-    
+
     query = query.offset(skip).limit(limit)
     result = await db.execute(query)
-    assets = result.scalars().all()
-    
-    return assets
+    return result.scalars().all()
 
 
-@router.get("/{asset_id}", response_model=AssetResponse, summary="Get asset details", description="Retrieve detailed information about a specific asset including its configuration, PackML state, and connection settings.")
+@router.get("/{asset_id}", response_model=AssetResponse, summary="Get asset details", description="Retrieve detailed information about a specific asset including its configuration, PackML state, and connection settings. Returns 404 if the asset belongs to a different organization.")
 async def get_asset(
     asset_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    org_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Get a single asset by ID"""
+    """Get a single asset by ID, scoped to the user's organization."""
     result = await db.execute(
-        select(Asset).where(Asset.id == asset_id)
+        select(Asset).where(
+            Asset.id == asset_id,
+            Asset.organization_id == org_id,
+        )
     )
     asset = result.scalar_one_or_none()
-    
+
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
-    
+
     return asset
 
 
-@router.post("/", response_model=AssetResponse, summary="Create a new asset", description="Register a new manufacturing asset with the system. Requires a valid asset type ID and organization ID.")
+@router.post("/", response_model=AssetResponse, summary="Create a new asset", description="Register a new manufacturing asset in the authenticated user's organization. The organization is derived from the JWT — any client-supplied organization_id in the request body is ignored.")
 async def create_asset(
     asset_data: AssetCreate,
-    db: AsyncSession = Depends(get_db)
+    org_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Create a new asset"""
-    # Verify asset type exists
+    """Create a new asset in the authenticated user's organization."""
     result = await db.execute(
         select(AssetType).where(AssetType.id == asset_data.asset_type_id)
     )
     if not result.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Asset type not found")
-    
-    # Create asset
-    asset = Asset(**asset_data.model_dump())
+
+    # Server-side override: ignore any client-supplied organization_id and
+    # bind the new asset to the authenticated user's organization.
+    payload = asset_data.model_dump()
+    payload["organization_id"] = org_id
+    asset = Asset(**payload)
+
     db.add(asset)
     await db.commit()
     await db.refresh(asset)
-    
+
     return asset
 
 
-@router.put("/{asset_id}", response_model=AssetResponse, summary="Update asset", description="Modify an existing asset's configuration. Only provided fields will be updated (partial update).")
+@router.put("/{asset_id}", response_model=AssetResponse, summary="Update asset", description="Modify an existing asset's configuration. Only provided fields will be updated (partial update). Returns 404 if the asset belongs to a different organization.")
 async def update_asset(
     asset_id: UUID,
     asset_data: AssetUpdate,
-    db: AsyncSession = Depends(get_db)
+    org_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Update an existing asset"""
+    """Update an asset within the authenticated user's organization."""
     result = await db.execute(
-        select(Asset).where(Asset.id == asset_id)
+        select(Asset).where(
+            Asset.id == asset_id,
+            Asset.organization_id == org_id,
+        )
     )
     asset = result.scalar_one_or_none()
-    
+
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
-    
-    # Update fields
+
     update_data = asset_data.model_dump(exclude_unset=True)
     for field, value in update_data.items():
         setattr(asset, field, value)
-    
+
     await db.commit()
     await db.refresh(asset)
-    
+
     return asset
 
 
-@router.delete("/{asset_id}", summary="Deactivate asset", description="Soft delete an asset by setting its active status to false. The asset remains in the database but is excluded from queries.")
+@router.delete("/{asset_id}", summary="Deactivate asset", description="Soft delete an asset by setting its active status to false. Returns 404 if the asset belongs to a different organization.")
 async def delete_asset(
     asset_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    org_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Delete an asset (soft delete by deactivating)"""
+    """Deactivate an asset within the authenticated user's organization."""
     result = await db.execute(
-        select(Asset).where(Asset.id == asset_id)
+        select(Asset).where(
+            Asset.id == asset_id,
+            Asset.organization_id == org_id,
+        )
     )
     asset = result.scalar_one_or_none()
-    
+
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
-    
+
     asset.is_active = False
     await db.commit()
-    
+
     return {"message": "Asset deactivated successfully"}
 
 
-@router.get("/types/", response_model=List[AssetTypeResponse], summary="List asset types", description="Retrieve all available asset types with optional filtering by category (e.g., 3d_printer, cnc, robot).")
+@router.get("/types/", response_model=List[AssetTypeResponse], summary="List asset types", description="Retrieve all available asset types with optional filtering by category (e.g., 3d_printer, cnc, robot). Asset types are a global catalog and are not tenant-scoped.")
 async def list_asset_types(
     category: Optional[str] = None,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
-    """List asset types"""
+    """List asset types (global catalog, not tenant-scoped)."""
     query = select(AssetType)
-    
+
     if category:
         query = query.where(AssetType.category == category)
-    
+
     result = await db.execute(query)
     return result.scalars().all()
 
 
-@router.get("/{asset_id}/status", summary="Get asset status", description="Retrieve the current operational status of an asset including PackML state, active status, last seen timestamp, and connection configuration.")
+@router.get("/{asset_id}/status", summary="Get asset status", description="Retrieve the current operational status of an asset including PackML state, active status, last seen timestamp, and connection configuration. Returns 404 if the asset belongs to a different organization.")
 async def get_asset_status(
     asset_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    org_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Get current asset status including PackML state"""
+    """Get asset status, scoped to the user's organization."""
     result = await db.execute(
-        select(Asset).where(Asset.id == asset_id)
+        select(Asset).where(
+            Asset.id == asset_id,
+            Asset.organization_id == org_id,
+        )
     )
     asset = result.scalar_one_or_none()
-    
+
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
-    
+
     return {
         "asset_id": str(asset.id),
         "name": asset.name,
         "current_packml_state": asset.current_packml_state,
         "is_active": asset.is_active,
         "last_seen": asset.last_seen.isoformat() if asset.last_seen else None,
-        "connection_config": asset.connection_config
+        "connection_config": asset.connection_config,
     }
