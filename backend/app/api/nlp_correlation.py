@@ -15,9 +15,11 @@ import structlog
 
 from app.db.database import get_db
 from app.api.auth import get_current_active_user
-from app.db.models import User, IntakeItem
+from app.db.models import User
+from app.db.models import IntakeItem as IntakeItemModel
 from app.services.correlation_ai_engine import correlation_ai_engine
 from app.services.correlation_registry_integration import correlation_registry_integration
+from sqlalchemy import select, func
 
 logger = structlog.get_logger()
 
@@ -357,11 +359,10 @@ async def list_intake_items(
     )
     
     # Build query
-    from sqlalchemy import select, func
-    query = select(IntakeItem).where(IntakeItem.user_id == current_user.id)
+    query = select(IntakeItemModel).where(IntakeItemModel.user_id == current_user.id)
     
     if status:
-        query = query.where(IntakeItem.status == status)
+        query = query.where(IntakeItemModel.status == status)
     
     # Get total count
     count_query = select(func.count()).select_from(query.subquery())
@@ -369,7 +370,7 @@ async def list_intake_items(
     total = count_result.scalar()
     
     # Get items
-    query = query.order_by(IntakeItem.created_at.desc())
+    query = query.order_by(IntakeItemModel.created_at.desc())
     query = query.limit(limit).offset(offset)
     result = await db.execute(query)
     items = result.scalars().all()

@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     
     # Rate Limiting
-    RATE_LIMIT_ENABLED: bool = True
+    RATE_LIMIT_ENABLED: bool = False
     RATE_LIMIT_PER_USER: str = "100/minute"
     RATE_LIMIT_GLOBAL: str = "1000/minute"
     RATE_LIMIT_BURST: int = 10
