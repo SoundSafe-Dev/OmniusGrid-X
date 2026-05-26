@@ -568,8 +568,8 @@ class Task(Base):
     status = Column(String(50), default="draft")  # draft, ready, in_progress, blocked, completed, cancelled
 
     # Assignments
-    assigned_to = UUIDForeignKey("users.id")
-    assigned_by = UUIDForeignKey("users.id")
+    assigned_to = UUIDForeignKey("users.id", nullable=True)
+    assigned_by = UUIDForeignKey("users.id", nullable=True)
     assigned_at = Column(DateTime(timezone=True))
 
     # Scheduling
@@ -580,13 +580,13 @@ class Task(Base):
     actual_end = Column(DateTime(timezone=True))
 
     # Relationships to OmniusGrid entities
-    asset_id = UUIDForeignKey("assets.id")
-    operation_id = UUIDForeignKey("operations.id")
+    asset_id = UUIDForeignKey("assets.id", nullable=True)
+    operation_id = UUIDForeignKey("operations.id", nullable=True)
     alarm_id = Column(String(36))
     command_id = Column(String(255))  # Command ID (string format)
     work_order_id = Column(String(36))
-    parent_task_id = UUIDForeignKey("tasks.id")
-    rule_id = UUIDForeignKey("task_rules.id")  # Rule that created this task
+    parent_task_id = UUIDForeignKey("tasks.id", nullable=True)
+    rule_id = UUIDForeignKey("task_rules.id", nullable=True)  # Rule that created this task
 
     # Progress tracking
     progress_percent = Column(Integer, default=0)  # 0-100
