@@ -9,12 +9,12 @@ from typing import Dict, List, Any, Optional, Callable
 from dataclasses import dataclass
 import structlog
 
-from omniusgrid_agent.collectors.mqtt import BambuCollector, MQTTCollector
-from omniusgrid_agent.collectors.screen_scraper import QidiCollector, SovolCollector
-from omniusgrid_agent.collectors.file_watcher import OrcaSlicerCollector
-from omniusgrid_agent.collectors.opcua_collector import OPCUACollector
-from omniusgrid_agent.collectors.modbus_collector import ModbusCollector
-from omniusgrid_agent.buffer.store_forward import StoreForwardBuffer
+from opsgrid_agent.collectors.mqtt import BambuCollector, MQTTCollector
+from opsgrid_agent.collectors.screen_scraper import QidiCollector, SovolCollector
+from opsgrid_agent.collectors.file_watcher import OrcaSlicerCollector
+from opsgrid_agent.collectors.opcua_collector import OPCUACollector
+from opsgrid_agent.collectors.modbus_collector import ModbusCollector
+from opsgrid_agent.buffer.store_forward import StoreForwardBuffer
 
 logger = structlog.get_logger()
 

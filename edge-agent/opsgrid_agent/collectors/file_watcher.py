@@ -14,7 +14,7 @@ import structlog
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler, FileCreatedEvent, FileModifiedEvent
 
-from omniusgrid_agent.packml import PackMLStateMapper, create_mapper_for_asset_type
+from opsgrid_agent.packml import PackMLStateMapper, create_mapper_for_asset_type
 
 logger = structlog.get_logger()
 
