@@ -12,6 +12,8 @@ from asyncua.common.subscription import DataChangeNotif
 
 from opsgrid_agent.packml import PackMLStateMapper, create_mapper_for_asset_type
 
+from ..resilience import CircuitBreaker, ExponentialBackoff
+
 logger = structlog.get_logger()
 
 
@@ -19,6 +21,13 @@ class OPCUACollector:
     """
     OPC-UA collector for industrial equipment.
     Supports subscription-based data collection for real-time updates.
+
+    Reconnect behaviour:
+        Connection attempts are guarded by an :class:`ExponentialBackoff`
+        (1s -> 60s) and a :class:`CircuitBreaker` (opens after 5
+        consecutive failures, 30s initial cooldown up to 5 min). This
+        avoids the previous fixed 5-second retry that could overload a
+        recovering PLC after a network blip.
     """
     
     def __init__(
@@ -32,7 +41,9 @@ class OPCUACollector:
         private_key_path: Optional[str] = None,
         nodes_to_monitor: Optional[List[str]] = None,
         packml_mappings: Optional[Dict[str, str]] = None,
-        on_message_callback: Optional[Callable] = None
+        on_message_callback: Optional[Callable] = None,
+        backoff: Optional[ExponentialBackoff] = None,
+        breaker: Optional[CircuitBreaker] = None,
     ):
         self.server_url = server_url
         self.asset_id = asset_id
@@ -56,9 +67,29 @@ class OPCUACollector:
         self._running = False
         self._connected = False
         self._last_values: Dict[str, Any] = {}
-        
+
         # Node cache
         self._nodes: Dict[str, Node] = {}
+
+        # Reconnect resilience. Defaults intentionally match the MQTT
+        # collector so a single agent's collectors behave consistently
+        # under broker / PLC outages.
+        #
+        # TODO(tune): These defaults are a first-pass conservative guess.
+        # Adjust the values below once we have production telemetry on real
+        # PLC outage patterns, or pass a tuned ExponentialBackoff /
+        # CircuitBreaker instance from the coordinator for per-deployment
+        # overrides without touching this file.
+        self._backoff = backoff or ExponentialBackoff(
+            initial=1.0, cap=60.0, multiplier=2.0
+        )
+        self._breaker = breaker or CircuitBreaker(
+            failure_threshold=5,
+            initial_cooldown=30.0,
+            cooldown_cap=300.0,
+            cooldown_multiplier=2.0,
+            name=f"opcua:{asset_id}",
+        )
     
     async def start(self):
         """Start the OPC-UA collector"""
@@ -71,10 +102,26 @@ class OPCUACollector:
         self._running = True
         
         while self._running:
+            # Pause if the breaker has tripped after repeated failures.
+            if not self._breaker.allow():
+                wait = self._breaker.time_until_retry()
+                logger.info(
+                    "opcua_circuit_open",
+                    asset_id=self.asset_id,
+                    wait_seconds=wait,
+                )
+                await asyncio.sleep(wait)
+                continue
+
             try:
                 await self._connect()
                 await self._setup_subscription()
-                
+
+                # Connection (and subscription) succeeded — reset backoff so
+                # the *next* failure starts from the bottom of the curve.
+                self._backoff.reset()
+                self._breaker.record_success()
+
                 # Keep connection alive
                 while self._running and self._connected:
                     await asyncio.sleep(1)
@@ -89,7 +136,14 @@ class OPCUACollector:
                 
             except Exception as e:
                 logger.error("opcua_collector_error", error=str(e))
-                await asyncio.sleep(5)  # Retry delay
+                self._breaker.record_failure()
+                delay = self._backoff.next_delay()
+                logger.info(
+                    "opcua_reconnect_backoff",
+                    asset_id=self.asset_id,
+                    delay_seconds=delay,
+                )
+                await asyncio.sleep(delay)
         
         await self._disconnect()
         logger.info("opcua_collector_stopped", asset_id=self.asset_id)
