@@ -343,4 +343,4 @@ async def test_integration(
 
 # Import for background task
 from datetime import datetime
-from sqlalchemy import func
+from sqlalchemy import func, select
