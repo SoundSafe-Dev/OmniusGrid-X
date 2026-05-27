@@ -1,7 +1,7 @@
 # OmniusGrid
 
 <p align="center">
-  <strong>Universal Manufacturing Data Feed Dashboard</strong><br>
+  <strong>Data Correlation for Industry 4.0</strong><br>
   Production-grade IIoT platform with edge AI inference, cloud training, and comprehensive observability
 </p>
 

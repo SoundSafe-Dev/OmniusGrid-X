@@ -214,7 +214,7 @@ export const Sidebar: FC<SidebarProps> = ({ mobile = false, onClose }) => {
         {!sidebarCollapsed || mobile ? (
           <div>
             <h1 className="text-xl font-bold text-opsgrid-primary">OmniusGrid</h1>
-            <p className="text-xs text-opsgrid-text-secondary">Universal Data Feed</p>
+            <p className="text-xs text-opsgrid-text-secondary">Data Correlation for Industry 4.0</p>
           </div>
         ) : (
           <div className="w-8 h-8 bg-opsgrid-primary rounded-lg flex items-center justify-center mx-auto">
