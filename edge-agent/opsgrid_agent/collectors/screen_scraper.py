@@ -14,7 +14,7 @@ import pytesseract
 from PIL import Image
 import httpx
 
-from omniusgrid_agent.packml import PackMLStateMapper, create_mapper_for_asset_type
+from opsgrid_agent.packml import PackMLStateMapper, create_mapper_for_asset_type
 
 logger = structlog.get_logger()
 
