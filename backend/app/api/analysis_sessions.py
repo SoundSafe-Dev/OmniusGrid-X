@@ -183,13 +183,12 @@ async def list_sessions(
     """
     logger.info("list_sessions", user_id=str(current_user.id), status=status)
     
-    # Build query - use distinct to avoid duplicates
+    # Build query
     query = select(AnalysisSession).where(AnalysisSession.user_id == current_user.id)
     
     if status:
         query = query.where(AnalysisSession.status == status)
     
-    query = query.distinct()
     query = query.order_by(AnalysisSession.last_accessed_at.desc())
     query = query.limit(limit).offset(offset)
     
@@ -202,7 +201,6 @@ async def list_sessions(
     count_query = select(AnalysisSession).where(AnalysisSession.user_id == current_user.id)
     if status:
         count_query = count_query.where(AnalysisSession.status == status)
-    count_query = count_query.distinct()
     count_result = await db.execute(count_query)
     total = len(count_result.scalars().all())
     
@@ -210,12 +208,12 @@ async def list_sessions(
     session_responses = []
     for session in sessions:
         # Get data sources count
-        ds_query = select(SessionDataSource).where(SessionDataSource.session_id == session.id)
+        ds_query = select(SessionDataSource).where(SessionDataSource.session_id == str(session.id))
         ds_result = await db.execute(ds_query)
         data_sources_count = len(ds_result.scalars().all())
         
         # Get messages count
-        msg_query = select(SessionMessage).where(SessionMessage.session_id == session.id)
+        msg_query = select(SessionMessage).where(SessionMessage.session_id == str(session.id))
         msg_result = await db.execute(msg_query)
         messages_count = len(msg_result.scalars().all())
         
@@ -278,7 +276,7 @@ async def get_session(
     await db.commit()
     
     # Get counts
-    ds_query = select(SessionDataSource).where(SessionDataSource.session_id == session.id)
+    ds_query = select(SessionDataSource).where(SessionDataSource.session_id == str(session.id))
     ds_result = await db.execute(ds_query)
     data_sources_count = len(ds_result.scalars().all())
     
@@ -343,7 +341,7 @@ async def update_session(
     await db.refresh(session)
     
     # Get counts
-    ds_query = select(SessionDataSource).where(SessionDataSource.session_id == session.id)
+    ds_query = select(SessionDataSource).where(SessionDataSource.session_id == str(session.id))
     ds_result = await db.execute(ds_query)
     data_sources_count = len(ds_result.scalars().all())
     
@@ -472,7 +470,7 @@ async def resume_session(
     await db.refresh(session)
     
     # Get counts
-    ds_query = select(SessionDataSource).where(SessionDataSource.session_id == session.id)
+    ds_query = select(SessionDataSource).where(SessionDataSource.session_id == str(session.id))
     ds_result = await db.execute(ds_query)
     data_sources_count = len(ds_result.scalars().all())
     
@@ -542,7 +540,7 @@ async def add_intake_data(
     
     # Create data source from intake item
     data_source = SessionDataSource(
-        session_id=session_id,
+        session_id=session_id_str,
         source_type="intake",
         source_id=intake_id,
         file_name=intake_item.file_name,
@@ -605,7 +603,7 @@ async def upload_data_to_session(
     
     # Create data source
     data_source = SessionDataSource(
-        session_id=session_id,
+        session_id=session_id_str,
         source_type="upload",
         source_id=None,
         file_name=file.filename,
@@ -661,7 +659,7 @@ async def list_session_data(
         raise HTTPException(status_code=404, detail="Session not found")
     
     # Get data sources
-    query = select(SessionDataSource).where(SessionDataSource.session_id == session_id)
+    query = select(SessionDataSource).where(SessionDataSource.session_id == session_id_str)
     query = query.order_by(SessionDataSource.added_at.asc())
     result = await db.execute(query)
     data_sources = result.scalars().all()
@@ -772,12 +770,12 @@ async def session_chat(
     db.add(user_message)
     
     # Get session data sources
-    ds_query = select(SessionDataSource).where(SessionDataSource.session_id == session_id)
+    ds_query = select(SessionDataSource).where(SessionDataSource.session_id == session_id_str)
     ds_result = await db.execute(ds_query)
     data_sources = ds_result.scalars().all()
     
     # Get previous session messages for context
-    msg_query = select(SessionMessage).where(SessionMessage.session_id == session_id)
+    msg_query = select(SessionMessage).where(SessionMessage.session_id == session_id_str)
     msg_query = msg_query.order_by(SessionMessage.timestamp.desc())
     msg_query = msg_query.limit(10)
     msg_result = await db.execute(msg_query)
@@ -943,7 +941,7 @@ async def get_session_messages(
         raise HTTPException(status_code=404, detail="Session not found")
     
     # Get messages
-    query = select(SessionMessage).where(SessionMessage.session_id == session_id)
+    query = select(SessionMessage).where(SessionMessage.session_id == session_id_str)
     query = query.order_by(SessionMessage.timestamp.asc())
     query = query.limit(limit).offset(offset)
     result = await db.execute(query)
@@ -1056,11 +1054,11 @@ async def generate_session_title(
     await db.refresh(session)
     
     # Get counts
-    ds_query = select(SessionDataSource).where(SessionDataSource.session_id == session.id)
+    ds_query = select(SessionDataSource).where(SessionDataSource.session_id == str(session.id))
     ds_result = await db.execute(ds_query)
     data_sources_count = len(ds_result.scalars().all())
     
-    msg_count_query = select(SessionMessage).where(SessionMessage.session_id == session.id)
+    msg_count_query = select(SessionMessage).where(SessionMessage.session_id == str(session.id))
     msg_count_result = await db.execute(msg_count_query)
     messages_count = len(msg_count_result.scalars().all())
     
