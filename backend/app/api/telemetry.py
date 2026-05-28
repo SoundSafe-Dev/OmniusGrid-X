@@ -11,13 +11,14 @@ organizations.
 from typing import List, Optional
 from uuid import UUID
 from datetime import datetime, timedelta
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.tenant import get_tenant_org_id
 from app.db.database import get_db
 from app.db.models import Telemetry, Asset, PackMLState
+from app.middleware.rate_limit import rate_limit
 
 router = APIRouter()
 
@@ -44,7 +45,9 @@ async def _verify_asset_in_org(
 
 
 @router.get("/{asset_id}/latest", summary="Get latest telemetry", description="Retrieve the most recent telemetry data point for a specific asset, optionally filtered by metric name. Returns 404 if the asset belongs to a different organization.")
+@rate_limit("100/minute")
 async def get_latest_telemetry(
+    request: Request,
     asset_id: UUID,
     metric_name: Optional[str] = None,
     org_id: UUID = Depends(get_tenant_org_id),
@@ -77,7 +80,9 @@ async def get_latest_telemetry(
 
 
 @router.get("/{asset_id}/history", summary="Get telemetry history", description="Retrieve historical telemetry data for an asset with optional time range, metric filtering, and aggregation. Defaults to last 24 hours if no time range specified. Returns 404 if the asset belongs to a different organization.")
+@rate_limit("60/minute")
 async def get_telemetry_history(
+    request: Request,
     asset_id: UUID,
     metric_name: Optional[str] = None,
     start_time: Optional[datetime] = Query(None),
@@ -128,7 +133,9 @@ async def get_telemetry_history(
 
 
 @router.get("/{asset_id}/metrics", summary="List available metrics", description="Retrieve a list of all metric names that have been recorded for a specific asset. Returns 404 if the asset belongs to a different organization.")
+@rate_limit("100/minute")
 async def get_available_metrics(
+    request: Request,
     asset_id: UUID,
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_db),

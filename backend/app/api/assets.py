@@ -8,13 +8,14 @@ organizations.
 
 from typing import List, Optional
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.tenant import get_tenant_org_id
 from app.db.database import get_db
 from app.db.models import Asset, AssetType, Workcell, Organization
+from app.middleware.rate_limit import rate_limit
 from app.models.schemas import (
     AssetCreate, AssetResponse, AssetUpdate,
     AssetTypeCreate, AssetTypeResponse
@@ -24,7 +25,9 @@ router = APIRouter()
 
 
 @router.get("/", response_model=List[AssetResponse], summary="List all assets", description="Retrieve a paginated list of manufacturing assets in the authenticated user's organization, with optional filtering by workcell, asset type, and active status.")
+@rate_limit("100/minute")
 async def list_assets(
+    request: Request,
     workcell_id: Optional[UUID] = None,
     asset_type_id: Optional[UUID] = None,
     is_active: Optional[bool] = None,
@@ -49,7 +52,9 @@ async def list_assets(
 
 
 @router.get("/{asset_id}", response_model=AssetResponse, summary="Get asset details", description="Retrieve detailed information about a specific asset including its configuration, PackML state, and connection settings. Returns 404 if the asset belongs to a different organization.")
+@rate_limit("100/minute")
 async def get_asset(
+    request: Request,
     asset_id: UUID,
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_db),
@@ -70,7 +75,9 @@ async def get_asset(
 
 
 @router.post("/", response_model=AssetResponse, summary="Create a new asset", description="Register a new manufacturing asset in the authenticated user's organization. The organization is derived from the JWT — any client-supplied organization_id in the request body is ignored.")
+@rate_limit("30/minute")
 async def create_asset(
+    request: Request,
     asset_data: AssetCreate,
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_db),
@@ -96,7 +103,9 @@ async def create_asset(
 
 
 @router.put("/{asset_id}", response_model=AssetResponse, summary="Update asset", description="Modify an existing asset's configuration. Only provided fields will be updated (partial update). Returns 404 if the asset belongs to a different organization.")
+@rate_limit("30/minute")
 async def update_asset(
+    request: Request,
     asset_id: UUID,
     asset_data: AssetUpdate,
     org_id: UUID = Depends(get_tenant_org_id),
@@ -125,7 +134,9 @@ async def update_asset(
 
 
 @router.delete("/{asset_id}", summary="Deactivate asset", description="Soft delete an asset by setting its active status to false. Returns 404 if the asset belongs to a different organization.")
+@rate_limit("30/minute")
 async def delete_asset(
+    request: Request,
     asset_id: UUID,
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_db),
@@ -149,7 +160,9 @@ async def delete_asset(
 
 
 @router.get("/types/", response_model=List[AssetTypeResponse], summary="List asset types", description="Retrieve all available asset types with optional filtering by category (e.g., 3d_printer, cnc, robot). Asset types are a global catalog and are not tenant-scoped.")
+@rate_limit("100/minute")
 async def list_asset_types(
+    request: Request,
     category: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
@@ -164,7 +177,9 @@ async def list_asset_types(
 
 
 @router.get("/{asset_id}/status", summary="Get asset status", description="Retrieve the current operational status of an asset including PackML state, active status, last seen timestamp, and connection configuration. Returns 404 if the asset belongs to a different organization.")
+@rate_limit("100/minute")
 async def get_asset_status(
+    request: Request,
     asset_id: UUID,
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_db),
