@@ -14,7 +14,9 @@ from app.services.oee_calculator import oee_calculator
 from app.middleware.audit import AuditLoggingMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.middleware.csrf import CSRFMiddleware
-from app.middleware.rate_limit import limiter
+from app.middleware.rate_limit import limiter, rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
 
 @asynccontextmanager
@@ -118,8 +120,11 @@ app = FastAPI(
     ]
 )
 
-# Apply rate limiter to the app (disabled for debugging)
-# app.state.limiter = limiter
+# Rate limiting (gated on settings.RATE_LIMIT_ENABLED)
+if settings.RATE_LIMIT_ENABLED:
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
+    app.add_middleware(SlowAPIMiddleware)
 
 # CORS middleware
 app.add_middleware(
