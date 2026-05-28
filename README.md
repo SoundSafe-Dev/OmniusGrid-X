@@ -1,7 +1,7 @@
 # OmniusGrid
 
 <p align="center">
-  <strong>Universal Manufacturing Data Feed Dashboard</strong><br>
+  <strong>Data Correlation for Industry 4.0</strong><br>
   Production-grade IIoT platform with edge AI inference, cloud training, and comprehensive observability
 </p>
 
@@ -168,6 +168,27 @@ The application includes a development mode that bypasses normal authentication:
 - **Frontend**: Automatically sets `dev-token` in localStorage when logging in with `dev` username
 
 This mode is intended for development and testing purposes only.
+
+### Local Development Setup
+
+For local development, the frontend should be run directly (not via Docker) to avoid native module issues:
+
+```bash
+# Start backend services only
+docker-compose up -d timescaledb backend
+
+# Start frontend separately
+cd frontend
+npm install
+npm run dev -- --port 9999
+```
+
+**Important Configuration Notes:**
+- Frontend runs on port 9999, backend on port 8002
+- All API clients configured to use `http://localhost:8002`
+- WebSocket connections use `ws://localhost:8002/ws`
+- CORS is configured to allow all origins for development
+- Database models use String(36) for UUID columns to ensure PostgreSQL compatibility
 
 ### Demo Data & Mock API
 

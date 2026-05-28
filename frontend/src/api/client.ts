@@ -10,7 +10,7 @@ const getApiUrl = () => {
   // If accessing from IP, use IP for API calls too
   const hostname = window.location.hostname
   if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
-    return `http://${hostname}:8000`
+    return `http://${hostname}:8002`
   }
   
   return 'http://localhost:8002'
