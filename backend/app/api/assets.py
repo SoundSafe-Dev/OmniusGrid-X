@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.tenant import get_tenant_org_id
+from app.core.tenant import get_tenant_org_id, get_tenant_db
 from app.db.database import get_db
 from app.db.models import Asset, AssetType, Workcell, Organization
 from app.middleware.rate_limit import rate_limit
@@ -34,7 +34,7 @@ async def list_assets(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
     org_id: UUID = Depends(get_tenant_org_id),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     """List assets within the authenticated user's organization."""
     query = select(Asset).where(Asset.organization_id == org_id)
@@ -57,7 +57,7 @@ async def get_asset(
     request: Request,
     asset_id: UUID,
     org_id: UUID = Depends(get_tenant_org_id),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     """Get a single asset by ID, scoped to the user's organization."""
     result = await db.execute(
@@ -80,7 +80,7 @@ async def create_asset(
     request: Request,
     asset_data: AssetCreate,
     org_id: UUID = Depends(get_tenant_org_id),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     """Create a new asset in the authenticated user's organization."""
     result = await db.execute(
@@ -109,7 +109,7 @@ async def update_asset(
     asset_id: UUID,
     asset_data: AssetUpdate,
     org_id: UUID = Depends(get_tenant_org_id),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     """Update an asset within the authenticated user's organization."""
     result = await db.execute(
@@ -139,7 +139,7 @@ async def delete_asset(
     request: Request,
     asset_id: UUID,
     org_id: UUID = Depends(get_tenant_org_id),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     """Deactivate an asset within the authenticated user's organization."""
     result = await db.execute(
@@ -182,7 +182,7 @@ async def get_asset_status(
     request: Request,
     asset_id: UUID,
     org_id: UUID = Depends(get_tenant_org_id),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     """Get asset status, scoped to the user's organization."""
     result = await db.execute(

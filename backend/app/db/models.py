@@ -8,12 +8,15 @@ from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
 
-# SQLite-compatible UUID column type
+# Primary-key / foreign-key UUID columns. Use SQLAlchemy's UUID type so
+# the ORM matches the Postgres schema in database/migrations (native
+# ``uuid``). On Postgres this maps to native ``uuid``; on SQLite it falls
+# back to CHAR(32), preserving local-dev compatibility.
 def UUIDColumn():
-    return Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    return Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
 def UUIDForeignKey(foreign_key, nullable=False):
-    return Column(String(36), ForeignKey(foreign_key), nullable=nullable)
+    return Column(UUID(as_uuid=True), ForeignKey(foreign_key), nullable=nullable)
 
 
 class Organization(Base):
@@ -83,7 +86,7 @@ class Telemetry(Base):
     __tablename__ = "telemetry"
 
     time = Column(DateTime(timezone=True), primary_key=True)
-    asset_id = Column(String(36), ForeignKey("assets.id"), primary_key=True)
+    asset_id = Column(UUID(as_uuid=True), ForeignKey("assets.id"), primary_key=True)
     metric_name = Column(String(100), primary_key=True)
     value = Column(Numeric, nullable=False)
     unit = Column(String(50))

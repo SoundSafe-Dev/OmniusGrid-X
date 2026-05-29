@@ -15,8 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.tenant import get_tenant_org_id
-from app.db.database import get_db
+from app.core.tenant import get_tenant_org_id, get_tenant_db
 from app.db.models import Telemetry, Asset, PackMLState
 from app.middleware.rate_limit import rate_limit
 
@@ -51,7 +50,7 @@ async def get_latest_telemetry(
     asset_id: UUID,
     metric_name: Optional[str] = None,
     org_id: UUID = Depends(get_tenant_org_id),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     """Get latest telemetry for an asset in the user's organization."""
     await _verify_asset_in_org(db, asset_id, org_id)
@@ -91,7 +90,7 @@ async def get_telemetry_history(
     skip: int = Query(0, ge=0),
     limit: int = Query(1000, ge=1, le=10000),
     org_id: UUID = Depends(get_tenant_org_id),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     """Get telemetry history for an asset in the user's organization."""
     if not end_time:
@@ -138,7 +137,7 @@ async def get_available_metrics(
     request: Request,
     asset_id: UUID,
     org_id: UUID = Depends(get_tenant_org_id),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     """List metric names for an asset in the user's organization."""
     await _verify_asset_in_org(db, asset_id, org_id)
