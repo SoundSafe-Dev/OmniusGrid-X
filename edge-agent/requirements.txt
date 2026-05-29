@@ -4,13 +4,14 @@ aiosqlite==0.19.0
 pydantic==2.5.0
 pydantic-settings==2.1.0
 structlog==23.2.0
-opencv-python==4.8.1.80
+numpy<2
+opencv-python==4.8.1.78
 pytesseract==0.3.10
 Pillow==10.1.0
 watchdog==3.0.0
 pyserial==3.5
-opcua-client==0.8.1
-pymodbus==3.6.0
+asyncua==1.1.5
+pymodbus==3.6.1
 httpx==0.25.2
 python-dotenv==1.0.0
 prometheus-client==0.19.0

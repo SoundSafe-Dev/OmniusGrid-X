@@ -15,6 +15,7 @@ from opsgrid_agent.collectors.file_watcher import OrcaSlicerCollector
 from opsgrid_agent.collectors.opcua_collector import OPCUACollector
 from opsgrid_agent.collectors.modbus_collector import ModbusCollector
 from opsgrid_agent.buffer.store_forward import StoreForwardBuffer
+from opsgrid_agent import metrics
 
 logger = structlog.get_logger()
 
@@ -179,6 +180,8 @@ class UnifiedCollectorCoordinator:
                 '_coordinator_received_at': asyncio.get_event_loop().time(),
             }
             
+            metrics.record_collector_message(asset_id, collector_type)
+
             # Store in buffer for store-and-forward
             await self.buffer.store_message(enriched_message)
             
@@ -186,7 +189,9 @@ class UnifiedCollectorCoordinator:
             if self.kafka_producer:
                 try:
                     await self._forward_to_kafka(enriched_message)
+                    metrics.record_kafka_success()
                 except Exception as e:
+                    metrics.record_kafka_error()
                     # Already in buffer, will retry later
                     logger.debug(
                         "immediate_forward_failed",
@@ -245,6 +250,7 @@ class UnifiedCollectorCoordinator:
                     1 for t in self.collector_tasks.values()
                     if not t.done()
                 )
+                metrics.refresh_collector_stats(active_count, len(self.configs))
                 logger.info(
                     "collector_health_check",
                     active=active_count,
