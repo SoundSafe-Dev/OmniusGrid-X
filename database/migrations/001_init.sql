@@ -164,6 +164,7 @@ SELECT create_hypertable('alarms', 'occurred_at', if_not_exists => TRUE);
 CREATE TABLE commands (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     asset_id UUID NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     command_type VARCHAR(100) NOT NULL, -- 'operator', 'engine', 'system'
     action_id VARCHAR(100) NOT NULL, -- matches action_space definition
     parameters JSONB NOT NULL,
