@@ -11,6 +11,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, Field
+import math
 import structlog
 
 from app.db.database import get_db
@@ -24,6 +25,388 @@ from sqlalchemy import select, func
 logger = structlog.get_logger()
 
 router = APIRouter(prefix="/api/v1/nlp/correlation", tags=["NLP Correlation"])
+
+
+def _json_safe(value: Any) -> Any:
+    """Convert pandas/numpy values into JSON-safe Python values."""
+    if value is None:
+        return None
+    if hasattr(value, "item"):
+        value = value.item()
+    if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+        return None
+    if hasattr(value, "isoformat") and not isinstance(value, (str, bytes)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    return value
+
+
+def _round_metric(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(numeric) or math.isinf(numeric):
+        return None
+    return round(numeric, 3)
+
+
+def _find_column(columns: List[str], keywords: List[str]) -> Optional[str]:
+    lower_lookup = {str(column).lower(): column for column in columns}
+    for keyword in keywords:
+        for lower_name, original_name in lower_lookup.items():
+            if keyword in lower_name:
+                return original_name
+    return None
+
+
+def _records_for_model(df: Any, limit: int = 5) -> List[Dict[str, Any]]:
+    if df.empty:
+        return []
+    return _json_safe(df.head(limit).where(df.notna(), None).to_dict(orient="records"))
+
+
+def _numeric_profile(df: Any) -> Dict[str, Any]:
+    profile: Dict[str, Any] = {}
+    numeric_df = df.select_dtypes(include="number")
+    for column in numeric_df.columns[:25]:
+        series = numeric_df[column].dropna()
+        if series.empty:
+            continue
+
+        first_value = series.iloc[0]
+        last_value = series.iloc[-1]
+        delta = last_value - first_value
+        percent_change = None
+        if first_value != 0:
+            percent_change = (delta / abs(first_value)) * 100
+
+        profile[str(column)] = {
+            "count": int(series.count()),
+            "min": _round_metric(series.min()),
+            "max": _round_metric(series.max()),
+            "mean": _round_metric(series.mean()),
+            "median": _round_metric(series.median()),
+            "sum": _round_metric(series.sum()),
+            "first": _round_metric(first_value),
+            "last": _round_metric(last_value),
+            "first_to_last_delta": _round_metric(delta),
+            "first_to_last_percent_change": _round_metric(percent_change),
+        }
+    return profile
+
+
+def _categorical_profile(df: Any) -> Dict[str, Any]:
+    profile: Dict[str, Any] = {}
+    for column in df.columns[:30]:
+        series = df[column].dropna()
+        if series.empty:
+            continue
+        unique_count = int(series.nunique())
+        if unique_count > 25 and not df[column].dtype == "object":
+            continue
+        counts = series.astype(str).value_counts().head(8)
+        profile[str(column)] = {
+            "unique_count": unique_count,
+            "top_values": _json_safe(counts.to_dict()),
+        }
+    return profile
+
+
+def _operational_profile(df: Any) -> Dict[str, Any]:
+    columns = [str(column) for column in df.columns]
+    planned_col = _find_column(columns, ["planned_units", "planned", "target"])
+    actual_col = _find_column(columns, ["actual_units", "actual", "produced"])
+    downtime_col = _find_column(columns, ["downtime"])
+    defect_col = _find_column(columns, ["defect"])
+    vibration_col = _find_column(columns, ["vibration"])
+    loss_col = _find_column(columns, ["estimated_loss", "loss", "cost"])
+    delay_col = _find_column(columns, ["delay_reason", "delay"])
+    maintenance_col = _find_column(columns, ["maintenance"])
+    priority_col = _find_column(columns, ["priority"])
+
+    metrics: Dict[str, Any] = {}
+    working_df = df.copy()
+
+    if planned_col and actual_col:
+        planned = working_df[planned_col]
+        actual = working_df[actual_col]
+        working_df["_actual_gap"] = planned - actual
+        working_df["_attainment_pct"] = (actual / planned.replace(0, math.nan)) * 100
+        metrics["planned_vs_actual"] = {
+            "planned_total": _round_metric(planned.sum()),
+            "actual_total": _round_metric(actual.sum()),
+            "shortfall_total": _round_metric((planned - actual).sum()),
+            "average_attainment_pct": _round_metric(working_df["_attainment_pct"].mean()),
+            "worst_shortfall": _round_metric(working_df["_actual_gap"].max()),
+        }
+
+    for source_col, label in [
+        (downtime_col, "downtime"),
+        (defect_col, "defects"),
+        (vibration_col, "vibration"),
+        (loss_col, "estimated_loss"),
+    ]:
+        if not source_col:
+            continue
+        series = working_df[source_col].dropna()
+        if series.empty:
+            continue
+        metrics[label] = {
+            "total": _round_metric(series.sum()),
+            "average": _round_metric(series.mean()),
+            "min": _round_metric(series.min()),
+            "max": _round_metric(series.max()),
+            "first": _round_metric(series.iloc[0]),
+            "last": _round_metric(series.iloc[-1]),
+            "first_to_last_delta": _round_metric(series.iloc[-1] - series.iloc[0]),
+        }
+
+    for source_col, label in [
+        (delay_col, "delay_reason_counts"),
+        (maintenance_col, "maintenance_status_counts"),
+        (priority_col, "priority_counts"),
+    ]:
+        if source_col:
+            metrics[label] = _json_safe(
+                working_df[source_col].dropna().astype(str).value_counts().head(8).to_dict()
+            )
+
+    return metrics
+
+
+def _row_context_columns(df: Any) -> List[str]:
+    keywords = [
+        "date", "shift", "facility", "production_line", "line", "asset_id", "asset_name",
+        "planned", "actual", "downtime", "defect", "temperature", "vibration",
+        "maintenance", "delay", "priority", "estimated_loss", "loss",
+    ]
+    selected = [
+        column for column in df.columns
+        if any(keyword in str(column).lower() for keyword in keywords)
+    ]
+    return selected[:16] or list(df.columns[:12])
+
+
+def _top_rows_by_signal(df: Any) -> Dict[str, List[Dict[str, Any]]]:
+    top_rows: Dict[str, List[Dict[str, Any]]] = {}
+    columns = [str(column) for column in df.columns]
+    context_columns = _row_context_columns(df)
+    signals = {
+        "highest_downtime_rows": _find_column(columns, ["downtime"]),
+        "highest_defect_rows": _find_column(columns, ["defect"]),
+        "highest_vibration_rows": _find_column(columns, ["vibration"]),
+        "highest_loss_rows": _find_column(columns, ["estimated_loss", "loss", "cost"]),
+    }
+
+    planned_col = _find_column(columns, ["planned_units", "planned", "target"])
+    actual_col = _find_column(columns, ["actual_units", "actual", "produced"])
+    working_df = df.copy()
+    if planned_col and actual_col:
+        working_df["_actual_gap"] = working_df[planned_col] - working_df[actual_col]
+        signals["largest_actual_vs_planned_shortfall_rows"] = "_actual_gap"
+
+    for label, column in signals.items():
+        if not column or column not in working_df:
+            continue
+        ranked = working_df.sort_values(column, ascending=False).head(5).copy()
+        display_columns = context_columns.copy()
+        if column.startswith("_"):
+            display_columns.append(column)
+        top_rows[label] = _records_for_model(ranked[display_columns], limit=5)
+
+    return top_rows
+
+
+def _group_profile(df: Any) -> Dict[str, Any]:
+    columns = [str(column) for column in df.columns]
+    group_columns = [
+        _find_column(columns, ["production_line", "line"]),
+        _find_column(columns, ["asset_id", "asset"]),
+        _find_column(columns, ["facility"]),
+        _find_column(columns, ["shift"]),
+    ]
+    group_columns = [column for column in group_columns if column]
+
+    downtime_col = _find_column(columns, ["downtime"])
+    defect_col = _find_column(columns, ["defect"])
+    vibration_col = _find_column(columns, ["vibration"])
+    loss_col = _find_column(columns, ["estimated_loss", "loss", "cost"])
+    planned_col = _find_column(columns, ["planned_units", "planned", "target"])
+    actual_col = _find_column(columns, ["actual_units", "actual", "produced"])
+
+    working_df = df.copy()
+    if planned_col and actual_col:
+        working_df["_actual_gap"] = working_df[planned_col] - working_df[actual_col]
+        working_df["_attainment_pct"] = (working_df[actual_col] / working_df[planned_col].replace(0, math.nan)) * 100
+
+    value_columns = [
+        (downtime_col, "downtime_total", "sum"),
+        (defect_col, "defect_total", "sum"),
+        (vibration_col, "vibration_avg", "mean"),
+        (loss_col, "estimated_loss_total", "sum"),
+        ("_actual_gap", "actual_shortfall_total", "sum"),
+        ("_attainment_pct", "attainment_pct_avg", "mean"),
+    ]
+
+    profile: Dict[str, Any] = {}
+    for group_col in group_columns:
+        rows = []
+        for value, group in working_df.groupby(group_col, dropna=True):
+            row: Dict[str, Any] = {"value": _json_safe(value), "rows": int(len(group))}
+            for source_col, label, agg in value_columns:
+                if not source_col or source_col not in group:
+                    continue
+                series = group[source_col].dropna()
+                if series.empty:
+                    continue
+                metric_value = series.sum() if agg == "sum" else series.mean()
+                row[label] = _round_metric(metric_value)
+            rows.append(row)
+
+        if rows:
+            rows.sort(
+                key=lambda item: (
+                    item.get("downtime_total") or 0,
+                    item.get("defect_total") or 0,
+                    item.get("estimated_loss_total") or 0,
+                    item.get("actual_shortfall_total") or 0,
+                ),
+                reverse=True,
+            )
+            profile[str(group_col)] = rows[:8]
+
+    return profile
+
+
+def _build_spreadsheet_profile(df: Any) -> Dict[str, Any]:
+    return {
+        "numeric_summary": _numeric_profile(df),
+        "categorical_summary": _categorical_profile(df),
+        "operational_summary": _operational_profile(df),
+        "group_summary": _group_profile(df),
+        "highest_risk_rows": _top_rows_by_signal(df),
+        "first_rows": _records_for_model(df, limit=5),
+        "last_rows": _records_for_model(df.tail(5), limit=5),
+    }
+
+
+def _format_finding_value(value: Any) -> str:
+    if value is None:
+        return "n/a"
+    if isinstance(value, float):
+        return f"{value:,.1f}" if value % 1 else f"{value:,.0f}"
+    if isinstance(value, int):
+        return f"{value:,}"
+    return str(value)
+
+
+def _top_group_label(profile: Dict[str, Any], group_name: str, metric_name: str) -> Optional[str]:
+    groups = profile.get("group_summary", {}).get(group_name) or []
+    if not groups:
+        return None
+    top_group = groups[0]
+    value = top_group.get("value")
+    metric = top_group.get(metric_name)
+    if value is None or metric is None:
+        return None
+    return f"{group_name}={value} ({metric_name}={_format_finding_value(metric)})"
+
+
+def _row_label(row: Dict[str, Any]) -> str:
+    preferred = [
+        "date", "shift", "facility", "production_line", "asset_id", "asset_name",
+        "planned_units", "actual_units", "downtime", "downtime_minutes",
+        "defect_count", "vibration", "maintenance_status", "delay_reason",
+        "priority", "estimated_loss",
+    ]
+    parts = []
+    for key in preferred:
+        if key in row and row[key] is not None:
+            parts.append(f"{key}={_format_finding_value(row[key])}")
+    if parts:
+        return "; ".join(parts)
+    return "; ".join(f"{key}={_format_finding_value(value)}" for key, value in list(row.items())[:10])
+
+
+def _build_spreadsheet_findings(df: Any, profile: Dict[str, Any]) -> List[str]:
+    findings: List[str] = []
+    operational = profile.get("operational_summary", {})
+
+    planned = operational.get("planned_vs_actual")
+    if planned:
+        findings.append(
+            "Production shortfall: planned_total="
+            f"{_format_finding_value(planned.get('planned_total'))}, actual_total="
+            f"{_format_finding_value(planned.get('actual_total'))}, shortfall_total="
+            f"{_format_finding_value(planned.get('shortfall_total'))}, average_attainment_pct="
+            f"{_format_finding_value(planned.get('average_attainment_pct'))}."
+        )
+
+    for key, label in [
+        ("downtime", "Downtime"),
+        ("defects", "Defects"),
+        ("vibration", "Vibration"),
+        ("estimated_loss", "Estimated loss"),
+    ]:
+        metric = operational.get(key)
+        if not metric:
+            continue
+        findings.append(
+            f"{label}: total={_format_finding_value(metric.get('total'))}, "
+            f"average={_format_finding_value(metric.get('average'))}, max={_format_finding_value(metric.get('max'))}, "
+            f"first={_format_finding_value(metric.get('first'))}, last={_format_finding_value(metric.get('last'))}."
+        )
+
+    for key, label in [
+        ("delay_reason_counts", "Delay reasons"),
+        ("maintenance_status_counts", "Maintenance status"),
+        ("priority_counts", "Priority"),
+    ]:
+        counts = operational.get(key)
+        if counts:
+            top_counts = ", ".join(f"{name}={count}" for name, count in list(counts.items())[:5])
+            findings.append(f"{label}: {top_counts}.")
+
+    group_summary = profile.get("group_summary", {})
+    for group_name in ["production_line", "asset_id", "facility", "shift"]:
+        if group_name not in group_summary:
+            continue
+        group_bits = []
+        for metric_name in [
+            "downtime_total",
+            "defect_total",
+            "estimated_loss_total",
+            "actual_shortfall_total",
+        ]:
+            label = _top_group_label(profile, group_name, metric_name)
+            if label:
+                group_bits.append(label)
+        if group_bits:
+            findings.append(f"Worst {group_name} signals: " + " | ".join(group_bits[:3]) + ".")
+
+    high_risk_rows = profile.get("highest_risk_rows", {})
+    for key, label in [
+        ("highest_downtime_rows", "Highest downtime row"),
+        ("highest_defect_rows", "Highest defect row"),
+        ("highest_vibration_rows", "Highest vibration row"),
+        ("highest_loss_rows", "Highest loss row"),
+        ("largest_actual_vs_planned_shortfall_rows", "Largest production shortfall row"),
+    ]:
+        rows = high_risk_rows.get(key) or []
+        if rows:
+            findings.append(f"{label}: {_row_label(rows[0])}.")
+
+    findings.append(
+        "Specific next-action guidance: tie actions to the worst production_line, asset_id, shift, "
+        "delay_reason, maintenance_status, downtime, defect_count, vibration, and estimated_loss values above."
+    )
+    return findings[:18]
 
 
 # ==================== Request/Response Schemas ====================
@@ -504,20 +887,28 @@ async def _process_uploaded_file(content: bytes, data_type: str, filename: str) 
             import pandas as pd
             import io
             
-            if filename.endswith('.csv'):
+            if filename.lower().endswith('.csv'):
                 df = pd.read_csv(io.BytesIO(content))
-            elif filename.endswith(('.xlsx', '.xls')):
-                df = pd.read_excel(io.BytesIO(content))
+            elif filename.lower().endswith('.xlsx'):
+                df = pd.read_excel(io.BytesIO(content), engine='openpyxl')
+            elif filename.lower().endswith('.xls'):
+                df = pd.read_excel(io.BytesIO(content), engine='xlrd')
             else:
                 df = pd.read_csv(io.StringIO(content.decode('utf-8')))
             
+            full_sheet_profile = _build_spreadsheet_profile(df) if not df.empty else {}
+            distilled_findings = _build_spreadsheet_findings(df, full_sheet_profile) if full_sheet_profile else []
+
             return {
                 "type": "spreadsheet",
                 "rows": len(df),
                 "columns": len(df.columns),
-                "column_names": df.columns.tolist(),
-                "sample_data": df.head(5).to_dict(orient='records'),
-                "summary": df.describe().to_dict() if not df.empty else {}
+                "column_names": [str(column) for column in df.columns.tolist()],
+                "sample_data": _records_for_model(df, limit=5),
+                "tail_sample_data": _records_for_model(df.tail(5), limit=5),
+                "summary": _json_safe(df.describe().to_dict()) if not df.empty else {},
+                "full_sheet_profile": full_sheet_profile,
+                "distilled_findings": distilled_findings,
             }
         
         elif data_type == "image":

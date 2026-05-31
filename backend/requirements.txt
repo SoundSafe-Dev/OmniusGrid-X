@@ -25,6 +25,9 @@ cryptography==41.0.7
 # ML Inference
 torch==2.1.0
 numpy==1.24.3
+pandas==2.2.2
+openpyxl==3.1.5
+xlrd==2.0.1
 
 # Cloud Gateway
 aiomqtt==1.2.1
@@ -33,3 +36,10 @@ aiohttp==3.9.1
 # AI/ML for Correlation Engine
 google-generativeai==0.3.0
 faker==20.1.0
+transformers
+peft
+accelerate
+safetensors
+
+
+greenlet==3.1.1

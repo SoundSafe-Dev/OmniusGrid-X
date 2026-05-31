@@ -54,10 +54,10 @@ export const RealTimeDataPanel: React.FC<RealTimeDataPanelProps> = ({
   };
 
   const tabs = [
-    { id: 'telemetry' as const, label: 'Telemetry', icon: Activity },
+    { id: 'telemetry' as const, label: 'Live', icon: Activity },
     { id: 'alarms' as const, label: 'Alarms', icon: AlertTriangle },
     { id: 'kanban' as const, label: 'Kanban', icon: CheckSquare },
-    { id: 'registries' as const, label: 'Registries', icon: FileText },
+    { id: 'registries' as const, label: 'Regs', icon: FileText },
   ];
 
   const renderContent = () => {
@@ -229,27 +229,34 @@ export const RealTimeDataPanel: React.FC<RealTimeDataPanelProps> = ({
       <div className="p-4 border-b border-opsgrid-border">
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-sm font-semibold text-opsgrid-text">Real-Time Data</h3>
-          <Button variant="outline" size="sm" onClick={loadData} disabled={isLoading}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={loadData}
+            disabled={isLoading}
+            className="bg-white text-gray-900 border-gray-300 hover:bg-gray-100"
+          >
             <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
           </Button>
         </div>
         
         {/* Tabs */}
-        <div className="flex gap-1">
+        <div className="grid grid-cols-4 gap-1 w-full">
           {tabs.map((tab) => {
             const Icon = tab.icon;
             return (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center gap-2 px-3 py-2 rounded-md text-xs transition-colors ${
+                className={`min-w-0 flex items-center justify-center gap-1 px-1.5 py-2 rounded-md text-[11px] transition-colors ${
                   activeTab === tab.id
-                    ? 'bg-opsgrid-primary text-white'
+                    ? 'bg-white text-gray-900 border border-gray-300'
                     : 'bg-opsgrid-bg text-opsgrid-text hover:bg-opsgrid-border'
                 }`}
+                title={tab.id === 'registries' ? 'Registries' : tab.label}
               >
-                <Icon className="w-3 h-3" />
-                {tab.label}
+                <Icon className="w-3 h-3 shrink-0" />
+                <span className="truncate">{tab.label}</span>
               </button>
             );
           })}

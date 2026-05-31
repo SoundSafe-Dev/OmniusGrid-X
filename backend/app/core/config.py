@@ -54,6 +54,13 @@ class Settings(BaseSettings):
     MODEL_POLL_INTERVAL: int = 300  # 5 minutes
     TACTICAL_MODEL_PATH: str = "./models/tactical_v1.pt"
     
+    # Correlation AI / Gemma LoRA
+    CORRELATION_MODEL_ENABLED: bool = False
+    CORRELATION_BASE_MODEL: str = "google/gemma-4-E4B-it"
+    CORRELATION_ADAPTER_PATH: str = "./checkpoints/best_lora_v2"
+    CORRELATION_MAX_NEW_TOKENS: int = 512
+    CORRELATION_TEMPERATURE: float = 0.2
+    
     # Edge
     EDGE_NODE_ID: str = "edge-001"
     ORGANIZATION_ID: str = "dev-org"

@@ -29,7 +29,15 @@ export const api = axios.create({
 // Request interceptor - add auth token
 api.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('accessToken') || localStorage.getItem('devToken') || 'dev-token'
+    const url = config.url || ''
+    const useDevToken =
+      url.includes('/api/v1/nlp/sessions') ||
+      url.includes('/api/v1/nlp/correlation')
+
+    const token = useDevToken
+      ? 'dev-token'
+      : localStorage.getItem('accessToken') || localStorage.getItem('devToken') || 'dev-token'
+
     if (token) {
       config.headers.Authorization = `Bearer ${token}`
     }

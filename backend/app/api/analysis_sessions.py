@@ -4,23 +4,180 @@ Analysis Sessions API Endpoints
 API endpoints for managing analysis sessions, data sources, and session-based chat.
 """
 
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 from uuid import UUID
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, UploadFile, File, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, or_
+from sqlalchemy import select, and_, or_, func
 from pydantic import BaseModel, Field
 import structlog
 
 from app.db.database import get_db
 from app.api.auth import get_current_active_user
 from app.db.models import User, AnalysisSession, SessionDataSource, SessionMessage, IntakeItem
+from app.api.nlp_correlation import _process_uploaded_file
 from app.services.correlation_ai_engine import correlation_ai_engine
 
 logger = structlog.get_logger()
 
 router = APIRouter(prefix="/api/v1/nlp/sessions", tags=["Analysis Sessions"])
+
+DEV_USER_ID = "00000000-0000-0000-0000-000000000001"
+
+
+def _user_id_str(user: User) -> str:
+    return str(user.id).strip().lower()
+
+
+def _is_dev_user(user: User) -> bool:
+    return _user_id_str(user) == DEV_USER_ID.lower()
+
+
+def _session_id_str(session_id: Union[UUID, str]) -> str:
+    return str(session_id).strip().lower()
+
+
+async def _get_analysis_session(
+    db: AsyncSession,
+    session_id: Union[UUID, str],
+    current_user: User,
+) -> AnalysisSession:
+    """Resolve a session for the current user (dev user can access any session)."""
+    sid = _session_id_str(session_id)
+    uid = _user_id_str(current_user)
+
+    if _is_dev_user(current_user):
+        query = select(AnalysisSession).where(AnalysisSession.id == sid)
+    else:
+        query = select(AnalysisSession).where(
+            and_(AnalysisSession.id == sid, AnalysisSession.user_id == uid)
+        )
+
+    result = await db.execute(query)
+    session = result.scalar_one_or_none()
+
+    if session is None:
+        result = await db.execute(
+            select(AnalysisSession).where(func.lower(AnalysisSession.id) == sid)
+        )
+        session = result.scalar_one_or_none()
+        if session is not None and not _is_dev_user(current_user):
+            if str(session.user_id).strip().lower() != uid:
+                session = None
+
+    if session is None:
+        logger.warning(
+            "analysis_session_not_found",
+            session_id=sid,
+            user_id=uid,
+            dev_mode=_is_dev_user(current_user),
+        )
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    return session
+
+
+def _is_lightweight_chat(message: str) -> bool:
+    normalized = message.strip().lower()
+    if not normalized:
+        return True
+
+    greetings = {
+        "hi",
+        "hello",
+        "hey",
+        "yo",
+        "sup",
+        "good morning",
+        "good afternoon",
+        "good evening",
+    }
+    if normalized in greetings:
+        return True
+
+    analysis_keywords = (
+        "analyze",
+        "analyse",
+        "summarize",
+        "summarise",
+        "spreadsheet",
+        "excel",
+        "csv",
+        "file",
+        "columns",
+        "rows",
+        "risk",
+        "risks",
+        "root cause",
+        "correlation",
+        "recommend",
+        "actions",
+        "operational",
+        "operations",
+        "maintenance",
+        "compliance",
+        "inventory",
+        "logistics",
+        "production",
+        "oee",
+        "quality",
+        "delay",
+        "delays",
+        "trend",
+        "patterns",
+    )
+    if any(keyword in normalized for keyword in analysis_keywords):
+        return False
+
+    lightweight_prefixes = (
+        "thanks",
+        "thank you",
+        "who are you",
+        "what can you do",
+        "what do you",
+        "what are you",
+        "what should i ask",
+        "help",
+        "how does this work",
+        "explain yourself",
+    )
+    lightweight_phrases = (
+        "help with",
+        "really help",
+        "can you help",
+        "are you able",
+        "what kind of assistant",
+    )
+    return normalized.startswith(lightweight_prefixes) or any(
+        phrase in normalized for phrase in lightweight_phrases
+    )
+
+
+def _build_lightweight_chat_response(message: str, data_source_count: int) -> str:
+    normalized = message.strip().lower()
+
+    if normalized in {"hi", "hello", "hey", "yo", "sup", "good morning", "good afternoon", "good evening"}:
+        if data_source_count:
+            return (
+                "Hi. I can help you inspect the uploaded file, explain what columns mean, "
+                "spot patterns, summarize risks, or turn findings into next actions. "
+                "Ask something like: \"summarize this file\" or \"what should I pay attention to here?\""
+            )
+        return (
+            "Hi. I can help with operations questions, uploaded Excel/CSV files, risk summaries, "
+            "root-cause analysis, and recommended next actions. Upload a file or ask a question to get started."
+        )
+
+    if normalized.startswith(("who are you", "what can you do", "what do you", "what are you", "help", "how does this work")) or "help with" in normalized or "really help" in normalized:
+        return (
+            "I can chat normally and also help with operations analysis. In this page, I'm best at "
+            "looking at uploaded Excel/CSV files, explaining what the data seems to show, spotting possible "
+            "risks or patterns, and turning findings into next actions. If the file is filler data, I can still "
+            "summarize its columns and structure, but I won't pretend it proves a real operational issue."
+        )
+
+    return "You're welcome. What would you like to analyze or talk through next?"
 
 
 # ==================== Request/Response Schemas ====================
@@ -183,8 +340,13 @@ async def list_sessions(
     """
     logger.info("list_sessions", user_id=str(current_user.id), status=status)
     
-    # Build query
-    query = select(AnalysisSession).where(AnalysisSession.user_id == current_user.id)
+    # Build query (dev user sees all sessions for demo stability)
+    if _is_dev_user(current_user):
+        query = select(AnalysisSession)
+    else:
+        query = select(AnalysisSession).where(
+            AnalysisSession.user_id == _user_id_str(current_user)
+        )
     
     if status:
         query = query.where(AnalysisSession.status == status)
@@ -198,8 +360,12 @@ async def list_sessions(
     logger.info("list_sessions_result", count=len(sessions), session_ids=[str(s.id) for s in sessions])
     
     # Get total count
-    from sqlalchemy import func
-    count_query = select(func.count()).select_from(AnalysisSession).where(AnalysisSession.user_id == current_user.id)
+    if _is_dev_user(current_user):
+        count_query = select(func.count()).select_from(AnalysisSession)
+    else:
+        count_query = select(func.count()).select_from(AnalysisSession).where(
+            AnalysisSession.user_id == _user_id_str(current_user)
+        )
     if status:
         count_query = count_query.where(AnalysisSession.status == status)
     count_result = await db.execute(count_query)
@@ -251,26 +417,8 @@ async def get_session(
     """
     logger.info("get_session", user_id=str(current_user.id), session_id=str(session_id))
     
-    # Convert UUID to string to ensure proper comparison with String column
-    session_id_str = str(session_id)
-    
-    # Get session - in dev mode, allow access regardless of user_id
-    if current_user.id == "00000000-0000-0000-0000-000000000001":
-        # Dev mode: get session without user_id check
-        query = select(AnalysisSession).where(AnalysisSession.id == session_id_str)
-    else:
-        # Normal mode: check ownership
-        query = select(AnalysisSession).where(
-            and_(
-                AnalysisSession.id == session_id_str,
-                AnalysisSession.user_id == current_user.id
-            )
-        )
-    result = await db.execute(query)
-    session = result.scalar_one_or_none()
-    
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    session_id_str = _session_id_str(session_id)
+    session = await _get_analysis_session(db, session_id, current_user)
     
     # Update last accessed
     session.last_accessed_at = datetime.utcnow()
@@ -577,37 +725,34 @@ async def upload_data_to_session(
     """
     logger.info("upload_data_to_session", user_id=str(current_user.id), session_id=str(session_id), filename=file.filename)
     
-    # Convert UUID to string to ensure proper comparison with String column
-    session_id_str = str(session_id)
-    
-    # Verify session ownership
-    session_query = select(AnalysisSession).where(
-        and_(
-            AnalysisSession.id == session_id_str,
-            AnalysisSession.user_id == current_user.id
-        )
-    )
-    session_result = await db.execute(session_query)
-    session = session_result.scalar_one_or_none()
-    
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    session_id_str = _session_id_str(session_id)
+    await _get_analysis_session(db, session_id, current_user)
     
     # Read file content
     content = await file.read()
-    
-    # Process file (simplified for now)
-    processed_data = {
-        "size": len(content),
-        "filename": file.filename
-    }
+    filename = file.filename or "upload"
+
+    # Auto-detect spreadsheets so direct session uploads match Intake parsing.
+    ext = filename.split(".")[-1].lower() if "." in filename else ""
+    if ext in ("csv", "xlsx", "xls"):
+        data_type = "spreadsheet"
+
+    processed_data = await _process_uploaded_file(content, data_type, filename)
+    processed_data["size"] = len(content)
+    processed_data["filename"] = filename
+
+    if processed_data.get("error"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Could not parse spreadsheet: {processed_data['error']}",
+        )
     
     # Create data source
     data_source = SessionDataSource(
         session_id=session_id_str,
         source_type="upload",
         source_id=None,
-        file_name=file.filename,
+        file_name=filename,
         data_type=data_type,
         processed_data=processed_data
     )
@@ -638,26 +783,8 @@ async def list_session_data(
     """
     logger.info("list_session_data", user_id=str(current_user.id), session_id=str(session_id))
     
-    # Convert UUID to string to ensure proper comparison with String column
-    session_id_str = str(session_id)
-    
-    # Verify session ownership - in dev mode, allow access regardless of user_id
-    if current_user.id == "00000000-0000-0000-0000-000000000001":
-        # Dev mode: get session without user_id check
-        session_query = select(AnalysisSession).where(AnalysisSession.id == session_id_str)
-    else:
-        # Normal mode: check ownership
-        session_query = select(AnalysisSession).where(
-            and_(
-                AnalysisSession.id == session_id_str,
-                AnalysisSession.user_id == current_user.id
-            )
-        )
-    session_result = await db.execute(session_query)
-    session = session_result.scalar_one_or_none()
-    
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    session_id_str = _session_id_str(session_id)
+    await _get_analysis_session(db, session_id, current_user)
     
     # Get data sources
     query = select(SessionDataSource).where(SessionDataSource.session_id == session_id_str)
@@ -741,28 +868,15 @@ async def session_chat(
     """
     logger.info("session_chat", user_id=str(current_user.id), session_id=str(session_id))
     
-    # Convert UUID to string to ensure proper comparison with String column
-    session_id_str = str(session_id)
-    
-    # Verify session ownership
-    session_query = select(AnalysisSession).where(
-        and_(
-            AnalysisSession.id == session_id_str,
-            AnalysisSession.user_id == current_user.id
-        )
-    )
-    session_result = await db.execute(session_query)
-    session = session_result.scalar_one_or_none()
-    
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    session_id_str = _session_id_str(session_id)
+    session = await _get_analysis_session(db, session_id, current_user)
     
     # Update session last accessed
     session.last_accessed_at = datetime.utcnow()
     
     # Save user message
     user_message = SessionMessage(
-        session_id=session_id,
+        session_id=session_id_str,
         role="user",
         content=request.message,
         timestamp=datetime.utcnow(),
@@ -774,7 +888,7 @@ async def session_chat(
     ds_query = select(SessionDataSource).where(SessionDataSource.session_id == session_id_str)
     ds_result = await db.execute(ds_query)
     data_sources = ds_result.scalars().all()
-    
+
     # Get previous session messages for context
     msg_query = select(SessionMessage).where(SessionMessage.session_id == session_id_str)
     msg_query = msg_query.order_by(SessionMessage.timestamp.desc())
@@ -802,23 +916,58 @@ async def session_chat(
         "user_goals": session.goals_snapshot
     }
     
-    # Integrate with correlation AI
+    # Let the model handle the conversation naturally. It can still use uploaded
+    # data context, but it does not force every response into risk/task format.
     try:
-        from app.api.nlp_correlation import _extract_domains_from_query, _extract_metrics_from_query
-        from app.models.domain_interaction import CorrelationScenario, DomainType, OperationalMetric
+        analysis_result = await correlation_ai_engine.chat(request.message, context=context)
+        ai_content = analysis_result.get("response_text") or analysis_result.get("predicted_root_cause", "")
+
+        assistant_message = SessionMessage(
+            session_id=session_id_str,
+            role="assistant",
+            content=ai_content,
+            analysis=analysis_result,
+            risk_score=analysis_result.get("risk_score"),
+            domains=[],
+            actions=analysis_result.get("remediation_commands", []),
+            timestamp=datetime.utcnow(),
+            context_used=context
+        )
+        db.add(assistant_message)
+
+        await db.commit()
+        await db.refresh(assistant_message)
+
+        return SessionChatResponse(
+            role=assistant_message.role,
+            content=assistant_message.content,
+            analysis=assistant_message.analysis,
+            risk_score=assistant_message.risk_score,
+            domains=assistant_message.domains,
+            actions=assistant_message.actions,
+            timestamp=assistant_message.timestamp
+        )
+    except Exception as e:
+        logger.exception("correlation_chat_error", error=str(e))
+
+    # Legacy structured analysis fallback for non-chat deployments.
+    try:
+        from app.api.nlp_correlation import _extract_domains_from_query
+        from app.models.domain_interaction import CorrelationScenario, DomainType
         
         # Extract domains from query
         domains = _extract_domains_from_query(request.message)
+        if not domains and data_sources:
+            domains = ["DATA_ANALYTICS"]
         domain_types = [DomainType(d) for d in domains] if domains else []
         
-        # Extract operational metrics from query and context
-        operational_metrics = _extract_metrics_from_query(request.message, context)
+        context["user_question"] = request.message
         
         # Create correlation scenario
         scenario = CorrelationScenario(
             scenario_id=f"session-{session_id}-{int(datetime.utcnow().timestamp())}",
             active_domains=domain_types,
-            operational_metrics=operational_metrics,
+            ingested_metrics=[],
             domain_links=[]
         )
         
@@ -828,7 +977,8 @@ async def session_chat(
             db,
             organization_id=current_user.organization_id,
             user_id=current_user.id,
-            auto_integrate=request.auto_integrate
+            auto_integrate=request.auto_integrate,
+            context=context
         )
         
         # Extract results
@@ -839,8 +989,8 @@ async def session_chat(
         compliance_implications = analysis_result.get("compliance_implications")
         
         # Format AI response
-        ai_content = correlation_analysis
-        if recommended_commands:
+        ai_content = analysis_result.get("response_text") or correlation_analysis
+        if recommended_commands and not analysis_result.get("response_text"):
             ai_content += "\n\nRecommended Actions:\n" + "\n".join([
                 f"- {cmd.get('description', cmd.get('command', str(cmd)))}"
                 for cmd in recommended_commands
@@ -851,7 +1001,7 @@ async def session_chat(
         
         # Save assistant message
         assistant_message = SessionMessage(
-            session_id=session_id,
+            session_id=session_id_str,
             role="assistant",
             content=ai_content,
             analysis=analysis_result,
@@ -877,11 +1027,11 @@ async def session_chat(
         )
         
     except Exception as e:
-        logger.error("correlation_ai_error", error=str(e))
+        logger.exception("correlation_ai_error", error=str(e))
         
         # Fallback response if AI integration fails
         assistant_message = SessionMessage(
-            session_id=session_id,
+            session_id=session_id_str,
             role="assistant",
             content=f"I received your query: {request.message}\n\nI'm processing this with the context of {len(data_sources)} data sources. The correlation AI integration is being set up.",
             analysis={},

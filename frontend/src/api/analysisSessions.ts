@@ -194,7 +194,11 @@ export async function removeDataSource(sessionId: string, sourceId: string): Pro
  * Send message in session context
  */
 export async function sessionChat(sessionId: string, request: SessionChatRequest): Promise<SessionChatResponse> {
-  const response = await api.post<SessionChatResponse>(`/api/v1/nlp/sessions/${sessionId}/chat`, request);
+  const response = await api.post<SessionChatResponse>(
+    `/api/v1/nlp/sessions/${sessionId}/chat`,
+    request,
+    { timeout: 180000 }
+  );
   return response.data;
 }
 
