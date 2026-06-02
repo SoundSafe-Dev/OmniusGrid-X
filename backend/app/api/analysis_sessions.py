@@ -6,7 +6,7 @@ API endpoints for managing analysis sessions, data sources, and session-based ch
 
 from typing import List, Dict, Any, Optional, Union
 from uuid import UUID
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, UploadFile, File, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_, func
@@ -24,6 +24,18 @@ logger = structlog.get_logger()
 router = APIRouter(prefix="/api/v1/nlp/sessions", tags=["Analysis Sessions"])
 
 DEV_USER_ID = "00000000-0000-0000-0000-000000000001"
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _as_utc(value: Optional[datetime]) -> Optional[datetime]:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def _user_id_str(user: User) -> str:
@@ -249,6 +261,7 @@ class SessionChatResponse(BaseModel):
     risk_score: Optional[float]
     domains: Optional[List[str]]
     actions: Optional[List[Dict[str, Any]]]
+    follow_up_questions: Optional[List[str]] = None
     timestamp: datetime
 
 
@@ -421,7 +434,7 @@ async def get_session(
     session = await _get_analysis_session(db, session_id, current_user)
     
     # Update last accessed
-    session.last_accessed_at = datetime.utcnow()
+    session.last_accessed_at = _utc_now()
     await db.commit()
     
     # Get counts
@@ -612,7 +625,7 @@ async def resume_session(
         raise HTTPException(status_code=404, detail="Session not found")
     
     # Update last accessed
-    session.last_accessed_at = datetime.utcnow()
+    session.last_accessed_at = _utc_now()
     session.updated_at = datetime.utcnow()
     
     await db.commit()
@@ -879,7 +892,7 @@ async def session_chat(
         session_id=session_id_str,
         role="user",
         content=request.message,
-        timestamp=datetime.utcnow(),
+        timestamp=_utc_now(),
         context_used={"session_id": str(session_id)}
     )
     db.add(user_message)
@@ -930,7 +943,7 @@ async def session_chat(
             risk_score=analysis_result.get("risk_score"),
             domains=[],
             actions=analysis_result.get("remediation_commands", []),
-            timestamp=datetime.utcnow(),
+            timestamp=_utc_now(),
             context_used=context
         )
         db.add(assistant_message)
@@ -945,7 +958,8 @@ async def session_chat(
             risk_score=assistant_message.risk_score,
             domains=assistant_message.domains,
             actions=assistant_message.actions,
-            timestamp=assistant_message.timestamp
+            follow_up_questions=analysis_result.get("follow_up_questions", []),
+            timestamp=_as_utc(assistant_message.timestamp)
         )
     except Exception as e:
         logger.exception("correlation_chat_error", error=str(e))
@@ -965,7 +979,7 @@ async def session_chat(
         
         # Create correlation scenario
         scenario = CorrelationScenario(
-            scenario_id=f"session-{session_id}-{int(datetime.utcnow().timestamp())}",
+            scenario_id=f"session-{session_id}-{int(_utc_now().timestamp())}",
             active_domains=domain_types,
             ingested_metrics=[],
             domain_links=[]
@@ -1008,7 +1022,7 @@ async def session_chat(
             risk_score=risk_score,
             domains=domains_analyzed,
             actions=recommended_commands,
-            timestamp=datetime.utcnow(),
+            timestamp=_utc_now(),
             context_used=context
         )
         db.add(assistant_message)
@@ -1023,7 +1037,8 @@ async def session_chat(
             risk_score=assistant_message.risk_score,
             domains=assistant_message.domains,
             actions=assistant_message.actions,
-            timestamp=assistant_message.timestamp
+            follow_up_questions=analysis_result.get("follow_up_questions", []),
+            timestamp=_as_utc(assistant_message.timestamp)
         )
         
     except Exception as e:
@@ -1038,7 +1053,7 @@ async def session_chat(
             risk_score=None,
             domains=[],
             actions=[],
-            timestamp=datetime.utcnow(),
+            timestamp=_utc_now(),
             context_used=context
         )
         db.add(assistant_message)
@@ -1053,7 +1068,8 @@ async def session_chat(
             risk_score=assistant_message.risk_score,
             domains=assistant_message.domains,
             actions=assistant_message.actions,
-            timestamp=assistant_message.timestamp
+            follow_up_questions=[],
+            timestamp=_as_utc(assistant_message.timestamp)
         )
 
 
@@ -1070,26 +1086,8 @@ async def get_session_messages(
     """
     logger.info("get_session_messages", user_id=str(current_user.id), session_id=str(session_id))
     
-    # Convert UUID to string to ensure proper comparison with String column
-    session_id_str = str(session_id)
-    
-    # Verify session ownership - in dev mode, allow access regardless of user_id
-    if current_user.id == "00000000-0000-0000-0000-000000000001":
-        # Dev mode: get session without user_id check
-        session_query = select(AnalysisSession).where(AnalysisSession.id == session_id_str)
-    else:
-        # Normal mode: check ownership
-        session_query = select(AnalysisSession).where(
-            and_(
-                AnalysisSession.id == session_id_str,
-                AnalysisSession.user_id == current_user.id
-            )
-        )
-    session_result = await db.execute(session_query)
-    session = session_result.scalar_one_or_none()
-    
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    session_id_str = _session_id_str(session_id)
+    await _get_analysis_session(db, session_id, current_user)
     
     # Get messages
     query = select(SessionMessage).where(SessionMessage.session_id == session_id_str)
@@ -1108,7 +1106,7 @@ async def get_session_messages(
             risk_score=msg.risk_score,
             domains=msg.domains,
             actions=msg.actions,
-            timestamp=msg.timestamp
+            timestamp=_as_utc(msg.timestamp)
         )
         for msg in messages
     ]
@@ -1126,24 +1124,14 @@ async def generate_session_title(
     Generate session title from context and queries.
     """
     logger.info("generate_session_title", user_id=str(current_user.id), session_id=str(session_id))
-    
-    # Get session
-    query = select(AnalysisSession).where(
-        and_(
-            AnalysisSession.id == session_id,
-            AnalysisSession.user_id == current_user.id
-        )
-    )
-    result = await db.execute(query)
-    session = result.scalar_one_or_none()
-    
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
-    
+
+    session_id_str = _session_id_str(session_id)
+    session = await _get_analysis_session(db, session_id, current_user)
+
     # Get session messages to analyze for title generation
     msg_query = select(SessionMessage).where(
         and_(
-            SessionMessage.session_id == session_id,
+            SessionMessage.session_id == session_id_str,
             SessionMessage.role == "user"
         )
     )
@@ -1205,11 +1193,11 @@ async def generate_session_title(
     await db.refresh(session)
     
     # Get counts
-    ds_query = select(SessionDataSource).where(SessionDataSource.session_id == str(session.id))
+    ds_query = select(SessionDataSource).where(SessionDataSource.session_id == session_id_str)
     ds_result = await db.execute(ds_query)
     data_sources_count = len(ds_result.scalars().all())
     
-    msg_count_query = select(SessionMessage).where(SessionMessage.session_id == str(session.id))
+    msg_count_query = select(SessionMessage).where(SessionMessage.session_id == session_id_str)
     msg_count_result = await db.execute(msg_count_query)
     messages_count = len(msg_count_result.scalars().all())
     
@@ -1269,7 +1257,7 @@ async def get_chat_history(
             risk_score=msg.risk_score,
             domains=msg.domains,
             actions=msg.actions,
-            timestamp=msg.timestamp
+            timestamp=_as_utc(msg.timestamp)
         )
         for msg in messages
     ]
@@ -1316,7 +1304,7 @@ async def search_chat_history(
             risk_score=msg.risk_score,
             domains=msg.domains,
             actions=msg.actions,
-            timestamp=msg.timestamp
+            timestamp=_as_utc(msg.timestamp)
         )
         for msg in messages
     ]

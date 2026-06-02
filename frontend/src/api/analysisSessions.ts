@@ -61,6 +61,7 @@ export interface SessionChatResponse {
   risk_score?: number;
   domains?: string[];
   actions?: Record<string, any>[];
+  follow_up_questions?: string[];
   timestamp: string;
 }
 
@@ -73,6 +74,7 @@ export interface SessionMessage {
   risk_score?: number;
   domains?: string[];
   actions?: Record<string, any>[];
+  follow_up_questions?: string[];
   timestamp: string;
 }
 

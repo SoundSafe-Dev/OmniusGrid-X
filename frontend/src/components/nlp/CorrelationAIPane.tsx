@@ -16,11 +16,124 @@ interface CorrelationAIPaneProps {
   className?: string;
 }
 
+const ANALYSIS_PROGRESS_STEPS = [
+  'Reading the uploaded spreadsheet',
+  'Identifying the important columns and totals',
+  'Looking for rows with high cost, delays, defects, or downtime',
+  'Connecting delay reasons to assets, shifts, and maintenance status',
+  'Generating response',
+];
+
+const CHAT_PROGRESS_STEPS = [
+  'Reading your question',
+  'Checking the current session context',
+  'Thinking through the best response',
+  'Generating response',
+];
+
+const splitInlineMarkdown = (text: string) => {
+  const parts = text.split(/(\*\*[^*]+\*\*)/g);
+  return parts.map((part, index) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return <strong key={index}>{part.slice(2, -2)}</strong>;
+    }
+    return <React.Fragment key={index}>{part}</React.Fragment>;
+  });
+};
+
+const prettifyKeyValueText = (text: string) =>
+  text
+    .replace(/\basset_id=/g, '**Asset ID:** ')
+    .replace(/\basset_name=/g, '**Asset name:** ')
+    .replace(/\bproduction_line=/g, '**Production line:** ')
+    .replace(/\bshift=/g, '**Shift:** ')
+    .replace(/\bmaintenance_status=/g, '**Maintenance status:** ')
+    .replace(/\bpriority=/g, '**Priority:** ')
+    .replace(/\bdowntime_minutes=/g, '**Downtime:** ')
+    .replace(/\bdowntime=/g, '**Downtime:** ')
+    .replace(/\bdefect_count=/g, '**Defect count:** ')
+    .replace(/\bvibration_level=/g, '**Vibration:** ')
+    .replace(/\bvibration=/g, '**Vibration:** ')
+    .replace(/\bestimated_cost_impact_usd=/g, '**Estimated cost impact:** ');
+
+const normalizeAssistantContent = (content: string) =>
+  prettifyKeyValueText(content)
+    .replace(/\s+(#{1,4}\s+)/g, '\n$1')
+    .replace(/\s+\*\s+/g, '\n* ')
+    .replace(/\s+-\s+\*\*/g, '\n- **')
+    .replace(/\s+(For [A-Z][^:\n]{2,60}:)/g, '\n\n$1')
+    .replace(/\s+\|\s+/g, '\n')
+    .replace(/;\s+(?=\*\*[A-Z])/g, '\n- ');
+
+const FormattedMessageContent = ({ content, isAssistant }: { content: string; isAssistant: boolean }) => {
+  if (!isAssistant) {
+    return <p className="text-sm whitespace-pre-wrap text-white">{content}</p>;
+  }
+
+  const normalized = normalizeAssistantContent(content);
+  const lines = normalized.split('\n');
+
+  return (
+    <div className="space-y-2 text-sm text-gray-900">
+      {lines.map((rawLine, index) => {
+        const line = rawLine.trim();
+        if (!line) {
+          return <div key={index} className="h-1" />;
+        }
+
+        const headingMatch = line.match(/^#{1,4}\s+(.+)$/);
+        if (headingMatch) {
+          return (
+            <p key={index} className="pt-1 font-semibold text-gray-950">
+              {splitInlineMarkdown(headingMatch[1])}
+            </p>
+          );
+        }
+
+        if (/^[A-Z][A-Za-z0-9 +/&-]{2,60}:$/.test(line)) {
+          return (
+            <p key={index} className="pt-2 font-semibold text-gray-950">
+              {line}
+            </p>
+          );
+        }
+
+        const bulletMatch = line.match(/^[-*]\s+(.+)$/);
+        if (bulletMatch) {
+          return (
+            <div key={index} className="flex gap-2 pl-1">
+              <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-gray-500" />
+              <p className="leading-relaxed">{splitInlineMarkdown(bulletMatch[1])}</p>
+            </div>
+          );
+        }
+
+        const numberedMatch = line.match(/^(\d+)[.)]\s+(.+)$/);
+        if (numberedMatch) {
+          return (
+            <div key={index} className="flex gap-2 pl-1">
+              <span className="min-w-5 text-gray-500">{numberedMatch[1]}.</span>
+              <p className="leading-relaxed">{splitInlineMarkdown(numberedMatch[2])}</p>
+            </div>
+          );
+        }
+
+        return (
+          <p key={index} className="leading-relaxed">
+            {splitInlineMarkdown(line)}
+          </p>
+        );
+      })}
+    </div>
+  );
+};
+
 export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className }) => {
   const [currentSession, setCurrentSession] = useState<AnalysisSession | null>(null);
   const [messages, setMessages] = useState<SessionMessage[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [activeProgressStep, setActiveProgressStep] = useState(0);
   const [autoIntegrate, setAutoIntegrate] = useState(true);
   const [showIntakeDialog, setShowIntakeDialog] = useState(false);
   const [showChatHistory, setShowChatHistory] = useState(false);
@@ -29,6 +142,10 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
   const [pendingUpload, setPendingUpload] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const dataSourcesRef = useRef<DataSourcesPanelHandle>(null);
+  const progressTimerRef = useRef<number | null>(null);
+  const activeProgressSteps = (currentSession?.data_sources_count || 0) > 0
+    ? ANALYSIS_PROGRESS_STEPS
+    : CHAT_PROGRESS_STEPS;
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -36,7 +153,13 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [messages, activeProgressStep, isLoading]);
+
+  useEffect(() => {
+    return () => {
+      if (progressTimerRef.current) window.clearInterval(progressTimerRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     if (!pendingUpload || !currentSession) return;
@@ -173,19 +296,28 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
     setMessages((prev) => [...prev, userMessage]);
     setInput('');
     setIsLoading(true);
+    setActiveProgressStep(0);
+    const requestProgressSteps = activeProgressSteps;
+    if (progressTimerRef.current) window.clearInterval(progressTimerRef.current);
+    progressTimerRef.current = window.setInterval(() => {
+      const maxStep = requestProgressSteps.length - 1;
+      setActiveProgressStep((step) => Math.min(step + 1, maxStep));
+    }, 1300);
 
     const appendAssistantMessage = (response: any, sessionId: string) => {
+      setIsLoading(false);
       setMessages((prev) => [
         ...prev,
         {
           id: crypto.randomUUID(),
           session_id: sessionId,
           role: response.role,
-          content: response.content,
+          content: response.content || '',
           analysis: response.analysis,
           risk_score: normalizeRiskScore(response.risk_score),
           domains: response.domains,
           actions: response.actions,
+          follow_up_questions: response.follow_up_questions || response.analysis?.follow_up_questions,
           timestamp: response.timestamp
         }
       ]);
@@ -252,6 +384,10 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
         },
       ]);
     } finally {
+      if (progressTimerRef.current) {
+        window.clearInterval(progressTimerRef.current);
+        progressTimerRef.current = null;
+      }
       setIsLoading(false);
     }
   };
@@ -272,6 +408,20 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
       e.preventDefault();
       handleSendMessage();
     }
+  };
+
+  const handleFollowUpClick = (question: string) => {
+    setInput(question);
+    window.setTimeout(() => {
+      document.getElementById('correlation-chat-input')?.focus();
+    }, 0);
+  };
+
+  const getFollowUpQuestions = (message: SessionMessage): string[] => {
+    const questions = message.follow_up_questions || message.analysis?.follow_up_questions || [];
+    return Array.isArray(questions)
+      ? questions.filter((question): question is string => typeof question === 'string').slice(0, 3)
+      : [];
   };
 
   const getRiskScoreVariant = (score: number) => {
@@ -387,7 +537,7 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
           </div>
         </div>
 
-        <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-4 bg-[#161616]">
+        <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-4 bg-opsgrid-bg">
           {!currentSession ? (
             <div className="h-full min-h-0 rounded-xl border border-gray-300 bg-white text-center text-gray-900 flex flex-col items-center justify-center px-8">
               <Plus className="w-12 h-12 mb-4 text-gray-400" />
@@ -405,11 +555,14 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
             </div>
           ) : (
             <div className="space-y-4 overflow-x-hidden">
-              {messages.map((message, index) => (
-                <div
-                  key={index}
-                  className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                >
+              {messages.map((message, index) => {
+                const followUpQuestions = message.role === 'assistant' ? getFollowUpQuestions(message) : [];
+
+                return (
+                <div key={index} className="space-y-2">
+                  <div
+                    className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                  >
                   <div
                     className={`max-w-[80%] rounded-lg p-4 ${
                       message.role === 'user'
@@ -450,9 +603,10 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
                       </div>
                     )}
 
-                    <p className={`text-sm whitespace-pre-wrap ${message.role === 'assistant' ? 'text-gray-900' : 'text-white'}`}>
-                      {message.content}
-                    </p>
+                    <FormattedMessageContent
+                      content={message.content}
+                      isAssistant={message.role === 'assistant'}
+                    />
 
                     {message.actions && message.actions.length > 0 && (
                       <div className="mt-3 pt-3 border-t border-gray-200">
@@ -473,13 +627,55 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
                     </p>
                   </div>
                 </div>
-              ))}
+                  {followUpQuestions.length > 0 && (
+                    <div className="ml-8 flex max-w-[72%] flex-wrap gap-1.5">
+                      {followUpQuestions.map((question) => (
+                        <button
+                          key={question}
+                          type="button"
+                          onClick={() => handleFollowUpClick(question)}
+                          className="rounded-md border border-gray-300/80 bg-gray-100/90 px-2.5 py-1.5 text-left text-[11px] leading-snug text-gray-700 shadow-sm transition hover:bg-gray-200 hover:text-gray-950 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                        >
+                          {question}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                );
+              })}
               {isLoading && (
                 <div className="flex justify-start">
-                  <div className="bg-white border border-gray-200 shadow-sm rounded-lg p-4">
-                    <div className="flex items-center gap-2">
+                  <div className="bg-white border border-gray-200 shadow-sm rounded-lg p-4 max-w-[80%]">
+                    <div className="flex items-center gap-2 mb-3">
                       <Loader2 className="w-4 h-4 animate-spin text-blue-500" />
-                      <span className="text-sm text-gray-600">Analyzing...</span>
+                      <span className="text-sm font-medium text-gray-900">
+                        {(currentSession?.data_sources_count || 0) > 0 ? 'Working through the analysis' : 'Working on a response'}
+                      </span>
+                    </div>
+                    <div className="space-y-2">
+                      {activeProgressSteps.map((step, stepIndex) => {
+                        const isComplete = stepIndex < activeProgressStep;
+                        const isActive = stepIndex === activeProgressStep;
+
+                        return (
+                          <div
+                            key={step}
+                            className={`flex items-center gap-2 text-xs ${
+                              isActive ? 'text-gray-900' : 'text-gray-500'
+                            }`}
+                          >
+                            {isComplete ? (
+                              <CheckCircle className="w-3.5 h-3.5 text-green-500" />
+                            ) : isActive ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-500" />
+                            ) : (
+                              <span className="w-3.5 h-3.5 rounded-full border border-gray-300" />
+                            )}
+                            <span>{step}</span>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 </div>
@@ -492,6 +688,7 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
         <div className="p-4 border-t border-opsgrid-border shrink-0">
           <div className="flex gap-2 min-w-0">
             <Input
+              id="correlation-chat-input"
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyPress={handleKeyPress}
