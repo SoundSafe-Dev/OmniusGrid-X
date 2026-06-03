@@ -34,6 +34,9 @@ aiohttp==3.9.1
 google-generativeai==0.3.0
 faker==20.1.0
 
+# Profiling (Task 2 — per-request memory tracking; optional, code degrades gracefully if absent)
+psutil==5.9.8
+
 # Testing (Task 5 — tenant isolation integration tests)
 pytest==7.4.4
 pytest-asyncio==0.23.3

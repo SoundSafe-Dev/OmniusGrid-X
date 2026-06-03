@@ -15,6 +15,7 @@ from app.middleware.audit import AuditLoggingMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.middleware.csrf import CSRFMiddleware
 from app.middleware.rate_limit import limiter, rate_limit_exceeded_handler
+from app.middleware.profiling import setup_profiling
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
@@ -144,6 +145,9 @@ app.add_middleware(
 
 # Audit logging middleware (disabled for debugging)
 # app.add_middleware(AuditLoggingMiddleware)
+
+# Performance profiling (Task 2 — gated off via PROFILING_ENABLED, default False)
+setup_profiling(app)
 
 # Include routers
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])
