@@ -11,7 +11,7 @@ groups:
         annotations:
           summary: "TimescaleDB is down"
           description: "TimescaleDB has been down for more than 1 minute. All data ingestion is halted."
-          runbook_url: "https://wiki/runbooks/timescaledb-down"
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/deployment/dr-timescaledb-failure.md"
 
       # CRITICAL: Message broker down
       - alert: RedpandaDown
@@ -23,6 +23,7 @@ groups:
         annotations:
           summary: "Redpanda message broker is down"
           description: "Redpanda has been down for more than 1 minute. Edge agents are buffering locally."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/deployment/dr-redpanda-failure.md"
 
       # CRITICAL: Disk space
       - alert: DiskSpaceCritical
@@ -45,6 +46,7 @@ groups:
         annotations:
           summary: "OpsGrid Backend API is down"
           description: "Backend API has been down for more than 2 minutes. Dashboard inaccessible."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/deployment/dr-backend-crash.md"
 
       # HIGH: Memory pressure
       - alert: HighMemoryUsage
