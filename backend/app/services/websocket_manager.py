@@ -61,30 +61,39 @@ class WebSocketManager:
         self._queue_task: Optional[asyncio.Task] = None
     
     async def connect(self):
-        """Initialize WebSocket manager and Kafka consumer"""
-        try:
-            self.consumer = AIOKafkaConsumer(
-                bootstrap_servers=settings.REDPANDA_URL,
-                value_deserializer=lambda m: json.loads(m.decode('utf-8')),
-                group_id='opsgrid-websocket-broadcast',
-                auto_offset_reset='latest',
-            )
-            await self.consumer.start()
-            
-            # Subscribe to telemetry topics
-            self.consumer.subscribe(pattern='^telemetry\\..*')
-            
-            self._running = True
-            
-            # Start broadcast loop
-            asyncio.create_task(self._broadcast_loop())
-            
-            # Start queue processor for ingestion worker messages
-            self._queue_task = asyncio.create_task(self._process_message_queue())
-            
-            logger.info("websocket_manager_connected")
-        except Exception as e:
-            logger.error("websocket_manager_connection_failed", error=str(e))
+        """Start the manager. The Kafka consumer is (re)created inside the
+        broadcast loop with exponential backoff, so a broker that is down at
+        startup no longer blocks the app or kills the loop permanently."""
+        self._running = True
+
+        # Start queue processor for ingestion worker messages
+        self._queue_task = asyncio.create_task(self._process_message_queue())
+
+        # Broadcast loop owns the consumer lifecycle + reconnection
+        asyncio.create_task(self._broadcast_loop())
+
+        logger.info("websocket_manager_started")
+
+    async def _create_consumer(self) -> AIOKafkaConsumer:
+        """Build, start, and subscribe a fresh Kafka consumer."""
+        consumer = AIOKafkaConsumer(
+            bootstrap_servers=settings.REDPANDA_URL,
+            value_deserializer=lambda m: json.loads(m.decode('utf-8')),
+            group_id='opsgrid-websocket-broadcast',
+            auto_offset_reset='latest',
+        )
+        await consumer.start()
+        consumer.subscribe(pattern='^telemetry\\..*')
+        return consumer
+
+    async def _safe_stop_consumer(self):
+        """Stop the current consumer, swallowing errors, and clear it."""
+        if self.consumer is not None:
+            try:
+                await self.consumer.stop()
+            except Exception:
+                pass
+            self.consumer = None
     
     async def disconnect(self):
         """Clean up connections"""
@@ -98,8 +107,7 @@ class WebSocketManager:
             except asyncio.CancelledError:
                 pass
         
-        if self.consumer:
-            await self.consumer.stop()
+        await self._safe_stop_consumer()
         logger.info("websocket_manager_disconnected")
     
     async def connect_client(self, websocket: WebSocket, organization_id: str):
@@ -322,32 +330,53 @@ class WebSocketManager:
                 del self.subscriptions[conn]
 
     async def _broadcast_loop(self):
-        """Continuously consume from Kafka and broadcast to clients"""
-        try:
-            async for msg in self.consumer:
+        """Continuously consume from Kafka and broadcast to clients.
+
+        Owns the consumer lifecycle: if the broker drops or the consumer
+        errors, the consumer is recreated with exponential backoff (1s -> 30s
+        cap) instead of the loop exiting permanently."""
+        backoff = 1.0
+        backoff_cap = 30.0
+
+        while self._running:
+            try:
+                if self.consumer is None:
+                    self.consumer = await self._create_consumer()
+                    logger.info("websocket_consumer_connected")
+                backoff = 1.0  # reset after a successful (re)connect
+
+                async for msg in self.consumer:
+                    if not self._running:
+                        break
+
+                    try:
+                        # Parse topic to extract organization
+                        topic_parts = msg.topic.split('.')
+                        if len(topic_parts) >= 2:
+                            organization_id = topic_parts[1]
+
+                            # Broadcast to relevant clients
+                            await self.broadcast_to_organization(
+                                organization_id,
+                                {
+                                    'type': 'telemetry',
+                                    'topic': msg.topic,
+                                    'data': msg.value,
+                                    'timestamp': msg.timestamp
+                                }
+                            )
+                    except Exception as e:
+                        logger.error("broadcast_error", error=str(e))
+
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                await self._safe_stop_consumer()
                 if not self._running:
                     break
-                
-                try:
-                    # Parse topic to extract organization
-                    topic_parts = msg.topic.split('.')
-                    if len(topic_parts) >= 2:
-                        organization_id = topic_parts[1]
-                        
-                        # Broadcast to relevant clients
-                        await self.broadcast_to_organization(
-                            organization_id,
-                            {
-                                'type': 'telemetry',
-                                'topic': msg.topic,
-                                'data': msg.value,
-                                'timestamp': msg.timestamp
-                            }
-                        )
-                except Exception as e:
-                    logger.error("broadcast_error", error=str(e))
-        except Exception as e:
-            logger.error("broadcast_loop_error", error=str(e))
+                logger.error("broadcast_loop_error", error=str(e), reconnect_in_seconds=backoff)
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, backoff_cap)
 
 
 # Global instance
