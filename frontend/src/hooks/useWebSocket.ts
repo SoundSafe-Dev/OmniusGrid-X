@@ -1,14 +1,20 @@
 import { useEffect, useCallback } from 'react';
 import { websocketManager } from '../api';
+import type { ConnectionStatus } from '../api/websocket';
 import { useRealtimeStore, useAuthStore } from '../stores';
+import { useFallbackPolling } from './useFallbackPolling';
 import { TelemetryPoint, Alarm, PackMLState, TacticalDecision } from '../types';
 
 export function useWebSocket() {
   const {
     connected,
     connecting,
+    connectionState,
+    pollingFallback,
     setConnected,
     setConnecting,
+    setConnectionState,
+    setPollingFallback,
     setConnectionError,
     updateTelemetry,
     addAlarm,
@@ -20,6 +26,9 @@ export function useWebSocket() {
 
   const { isAuthenticated, accessToken } = useAuthStore();
 
+  // Drives REST polling for alarms + asset state once the socket gives up.
+  useFallbackPolling();
+
   useEffect(() => {
     if (!isAuthenticated) {
       websocketManager.disconnect();
@@ -29,11 +38,13 @@ export function useWebSocket() {
     setConnecting(true);
     websocketManager.connect(accessToken || undefined);
 
-    const unsubscribeStatus = websocketManager.subscribe<{ connected: boolean }>(
+    const unsubscribeStatus = websocketManager.subscribe<ConnectionStatus>(
       'connection_status',
-      ({ connected }) => {
+      ({ connected, state, pollingFallback }) => {
         setConnected(connected);
-        setConnecting(false);
+        setConnecting(state === 'connecting' || state === 'reconnecting');
+        setConnectionState(state);
+        setPollingFallback(pollingFallback);
       }
     );
 
@@ -77,6 +88,8 @@ export function useWebSocket() {
     accessToken,
     setConnected,
     setConnecting,
+    setConnectionState,
+    setPollingFallback,
     setConnectionError,
     updateTelemetry,
     addAlarm,
@@ -93,6 +106,8 @@ export function useWebSocket() {
   return {
     connected,
     connecting,
+    connectionState,
+    pollingFallback,
     reconnect,
   };
 }
