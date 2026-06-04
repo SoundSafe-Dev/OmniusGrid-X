@@ -60,7 +60,24 @@ class Settings(BaseSettings):
     
     # Redis
     REDIS_URL: str = "redis://redis:6379/0"
-    
+
+    # Keycloak / SSO (Task 6 — disabled by default)
+    KEYCLOAK_ENABLED: bool = False
+    KEYCLOAK_URL: str = ""
+    KEYCLOAK_REALM: str = ""
+    KEYCLOAK_CLIENT_ID: str = ""
+    KEYCLOAK_CLIENT_SECRET: str = ""
+    KEYCLOAK_ADMIN_USERNAME: str = ""
+    KEYCLOAK_ADMIN_PASSWORD: str = ""
+    # Fallback org for JIT-provisioning SSO users whose token carries no
+    # organization_id claim (per Hamad: option (a) primary, (b) safety net).
+    # Defaults to the seeded dev org (see auth.py / migrations 005-008); admins
+    # can move users to the right org afterward.
+    # NOTE: in a real multi-tenant deployment where Keycloak brokers several
+    # customer orgs through one realm, rely on the token claim and set this to ""
+    # so users aren't silently merged into one tenant.
+    KEYCLOAK_DEFAULT_ORGANIZATION_ID: str = "00000000-0000-0000-0000-000000000001"
+
     # Application
     DEBUG: bool = True
     LOG_LEVEL: str = "INFO"

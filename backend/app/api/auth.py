@@ -134,18 +134,30 @@ async def get_current_active_user(
 
         return user
 
-    # Normal authentication flow
+    # Normal authentication: local JWT first, then Keycloak SSO when enabled.
     if not actual_token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Could not validate credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
+    current_user: Optional[User] = None
+
     try:
         current_user = await get_current_user(actual_token, db)
     except HTTPException:
-        raise
+        if settings.KEYCLOAK_ENABLED:
+            from app.core.sso import authenticate_sso_token
+
+            current_user = await authenticate_sso_token(actual_token, db)
+
+    if current_user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     if not current_user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
