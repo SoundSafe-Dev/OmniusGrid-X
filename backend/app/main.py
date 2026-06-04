@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from app.api import assets, telemetry, alarms, operations, auth, dashboard, health, engines
-from app.api import yard, transportation, logistics_correlation, websocket, commands, oee, kanban, registries, geotab, correlation_integration, nlp_correlation, analysis_sessions, user_context, audit, api_keys, gdpr, compliance, data_residency, feature_flags
+from app.api import yard, transportation, logistics_correlation, websocket, commands, oee, kanban, registries, geotab, correlation_integration, nlp_correlation, analysis_sessions, user_context, audit, api_keys, gdpr, compliance, data_residency, feature_flags, sso, bulk_operations
 from app.core.config import settings
 from app.db.database import init_db
 from app.services.websocket_manager import websocket_manager
@@ -177,6 +177,8 @@ app.include_router(gdpr.router, prefix="/api/v1/gdpr", tags=["GDPR Compliance"])
 app.include_router(compliance.router, prefix="/api/v1/compliance", tags=["Compliance"])
 app.include_router(data_residency.router, prefix="/api/v1/data-residency", tags=["Data Residency"])
 app.include_router(feature_flags.router, prefix="/api/v1/feature-flags", tags=["Feature Flags"])
+app.include_router(sso.router, prefix="/api/v1/sso", tags=["SSO"])
+app.include_router(bulk_operations.router, prefix="/api/v1/bulk", tags=["Bulk Operations"])
 
 
 @app.get("/")
