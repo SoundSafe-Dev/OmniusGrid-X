@@ -4,10 +4,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr
 
-try:
-    from app.services.keycloak_service import keycloak_service
-except ImportError:
-    keycloak_service = None
+from app.services.keycloak_service import get_keycloak_service
 from app.core.config import settings
 
 router = APIRouter()
@@ -63,7 +60,7 @@ async def keycloak_login(request: KeycloakLoginRequest):
         )
     
     try:
-        token_info = await keycloak_service.get_token(
+        token_info = await get_keycloak_service().get_token(
             username=request.username,
             password=request.password
         )
@@ -97,7 +94,7 @@ async def keycloak_refresh_token(request: KeycloakTokenRefreshRequest):
         )
     
     try:
-        token_info = await keycloak_service.refresh_token(
+        token_info = await get_keycloak_service().refresh_token(
             refresh_token=request.refresh_token
         )
         
@@ -129,7 +126,7 @@ async def keycloak_logout(request: KeycloakLogoutRequest):
         )
     
     try:
-        await keycloak_service.logout(refresh_token=request.refresh_token)
+        await get_keycloak_service().logout(refresh_token=request.refresh_token)
         return {"message": "Logged out successfully"}
         
     except HTTPException:
@@ -153,7 +150,7 @@ async def keycloak_userinfo(access_token: str):
         )
     
     try:
-        user_info = await keycloak_service.get_user_info(access_token=access_token)
+        user_info = await get_keycloak_service().get_user_info(access_token=access_token)
         return user_info
         
     except HTTPException:
@@ -180,7 +177,7 @@ async def keycloak_create_user(request: KeycloakUserCreate):
         )
     
     try:
-        user_id = await keycloak_service.create_user(
+        user_id = await get_keycloak_service().create_user(
             username=request.username,
             email=request.email,
             first_name=request.first_name,
@@ -216,7 +213,7 @@ async def keycloak_update_user(user_id: str, request: KeycloakUserUpdate):
         )
     
     try:
-        await keycloak_service.update_user(
+        await get_keycloak_service().update_user(
             user_id=user_id,
             email=request.email,
             first_name=request.first_name,
@@ -247,7 +244,7 @@ async def keycloak_delete_user(user_id: str):
         )
     
     try:
-        await keycloak_service.delete_user(user_id=user_id)
+        await get_keycloak_service().delete_user(user_id=user_id)
         return {"message": "User deleted successfully"}
         
     except HTTPException:
@@ -271,7 +268,7 @@ async def keycloak_get_user_roles(user_id: str):
         )
     
     try:
-        roles = await keycloak_service.get_user_roles(user_id=user_id)
+        roles = await get_keycloak_service().get_user_roles(user_id=user_id)
         return {"user_id": user_id, "roles": roles}
         
     except HTTPException:
@@ -295,7 +292,7 @@ async def keycloak_assign_roles(user_id: str, roles: list[str]):
         )
     
     try:
-        await keycloak_service.assign_roles(user_id=user_id, roles=roles)
+        await get_keycloak_service().assign_roles(user_id=user_id, roles=roles)
         return {"message": "Roles assigned successfully"}
         
     except HTTPException:
@@ -320,10 +317,10 @@ async def keycloak_manage_mfa(request: KeycloakMFARequest):
     
     try:
         if request.enable:
-            await keycloak_service.enable_mfa(user_id=request.user_id)
+            await get_keycloak_service().enable_mfa(user_id=request.user_id)
             return {"message": "MFA enabled successfully"}
         else:
-            await keycloak_service.disable_mfa(user_id=request.user_id)
+            await get_keycloak_service().disable_mfa(user_id=request.user_id)
             return {"message": "MFA disabled successfully"}
             
     except HTTPException:
@@ -347,7 +344,7 @@ async def keycloak_get_org_users(organization_id: str):
         )
     
     try:
-        users = await keycloak_service.get_users_by_organization(
+        users = await get_keycloak_service().get_users_by_organization(
             organization_id=organization_id
         )
         return {
@@ -380,7 +377,7 @@ async def keycloak_sync_user(keycloak_user_id: str):
         )
     
     try:
-        user_data = await keycloak_service.sync_user_from_keycloak(
+        user_data = await get_keycloak_service().sync_user_from_keycloak(
             keycloak_user_id=keycloak_user_id
         )
         return user_data
