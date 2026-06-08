@@ -6,7 +6,22 @@ from typing import Optional, List
 from sqlalchemy import Column, String, DateTime, Boolean, Numeric, JSON, ForeignKey, Text, BigInteger, Integer, ARRAY, Date, UUID
 from sqlalchemy.orm import declarative_base, relationship
 
+from app.core.config import settings
+
 Base = declarative_base()
+
+
+def StringListColumn(nullable: bool = False, default=None):
+    """Use JSON for SQLite local dev; PostgreSQL ARRAY in production."""
+    if settings.DATABASE_URL.startswith("sqlite"):
+        kwargs = {"nullable": nullable}
+        if default is not None:
+            kwargs["default"] = default
+        return Column(JSON, **kwargs)
+    kwargs = {"nullable": nullable}
+    if default is not None:
+        kwargs["default"] = default
+    return Column(ARRAY(String), **kwargs)
 
 # SQLite-compatible UUID column type
 def UUIDColumn():
@@ -969,7 +984,7 @@ class APIKey(Base):
     key_prefix = Column(String(8), nullable=False)
     name = Column(String(255), nullable=False)
     organization_id = UUIDForeignKey("organizations.id", nullable=True)
-    scopes = Column(JSON, nullable=False, default=lambda: ["read"])
+    scopes = StringListColumn(nullable=False, default=lambda: ["read"])
     is_active = Column(Boolean, nullable=False, default=True)
     expires_at = Column(DateTime(timezone=True), nullable=True)
     last_used_at = Column(DateTime(timezone=True), nullable=True)
@@ -1042,11 +1057,11 @@ class DataProcessingRecord(Base):
     id = UUIDColumn()
     organization_id = UUIDForeignKey("organizations.id", nullable=True)
     processing_activity = Column(String(255), nullable=False)
-    data_categories = Column(JSON, nullable=False)
-    purposes = Column(JSON, nullable=False)
-    recipients = Column(JSON, nullable=True)
+    data_categories = StringListColumn(nullable=False)
+    purposes = StringListColumn(nullable=False)
+    recipients = StringListColumn(nullable=True)
     retention_period = Column(String(100), nullable=True)
-    security_measures = Column(JSON, nullable=True)
+    security_measures = StringListColumn(nullable=True)
     legal_basis = Column(String(100), nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -1080,8 +1095,8 @@ class VendorRiskAssessment(Base):
     assessment_date = Column(Date, nullable=True)
     next_review_date = Column(Date, nullable=True)
     assessor_id = UUIDForeignKey("users.id", nullable=True)
-    findings = Column(JSON, nullable=True)
-    controls = Column(JSON, nullable=True)
+    findings = StringListColumn(nullable=True)
+    controls = StringListColumn(nullable=True)
     status = Column(String(50), default="pending")
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -1120,7 +1135,7 @@ class DataResidencyTag(Base):
 
     id = UUIDColumn()
     table_name = Column(String(100), nullable=False)
-    record_id = Column(UUID(as_uuid=False), nullable=False)
+    record_id = Column(String(36), nullable=False)
     region = Column(String(50), nullable=False, default="USA")
     tagged_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     tagged_by = UUIDForeignKey("users.id", nullable=True)

@@ -1,35 +1,56 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useImperativeHandle } from 'react';
 import { analysisSessionsApi, DataSource } from '../../api/analysisSessions';
-import { Upload, FileText, Trash2, X } from 'lucide-react';
+import { Upload, FileText, Trash2, Loader2 } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
 
 interface DataSourcesPanelProps {
   sessionId: string;
   onDataSourceAdded?: () => void;
+  onSessionMissing?: () => Promise<string | null>;
   className?: string;
 }
 
-export const DataSourcesPanel: React.FC<DataSourcesPanelProps> = ({
-  sessionId,
-  onDataSourceAdded,
-  className = ''
-}) => {
+export type DataSourcesPanelHandle = {
+  openFilePicker: () => void;
+};
+
+export const DataSourcesPanel = React.forwardRef<DataSourcesPanelHandle, DataSourcesPanelProps>(
+  function DataSourcesPanel(
+    {
+      sessionId,
+      onDataSourceAdded,
+      onSessionMissing,
+      className = '',
+    },
+    ref
+  ) {
   const [dataSources, setDataSources] = useState<DataSource[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [uploadStatus, setUploadStatus] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useImperativeHandle(ref, () => ({
+    openFilePicker: () => fileInputRef.current?.click(),
+  }));
 
   useEffect(() => {
     if (sessionId) {
       loadDataSources();
     }
-  }, [sessionId, onDataSourceAdded]);
+  }, [sessionId]);
 
-  const loadDataSources = async () => {
+  const isSessionNotFound = (error: any) =>
+    error?.response?.status === 404 &&
+    String(error?.response?.data?.detail || '').toLowerCase().includes('session not found');
+
+  const loadDataSources = async (targetSessionId = sessionId) => {
     setIsLoading(true);
     try {
-      const sources = await analysisSessionsApi.listSessionData(sessionId);
+      const sources = await analysisSessionsApi.listSessionData(targetSessionId);
       setDataSources(sources);
     } catch (error) {
       console.error('Error loading data sources:', error);
@@ -38,37 +59,86 @@ export const DataSourcesPanel: React.FC<DataSourcesPanelProps> = ({
     }
   };
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      setSelectedFile(e.target.files[0]);
+  const inferDataType = (fileName: string) => {
+    const ext = fileName.split('.').pop()?.toLowerCase();
+    if (ext === 'csv' || ext === 'xlsx' || ext === 'xls') {
+      return 'spreadsheet';
+    }
+    if (ext === 'pdf' || ext === 'docx' || ext === 'doc') {
+      return 'report';
+    }
+    if (ext === 'png' || ext === 'jpg' || ext === 'jpeg') {
+      return 'image';
+    }
+    return 'document';
+  };
+
+  const uploadFiles = async (files: File[]) => {
+    if (!files.length || !sessionId || isUploading) return;
+
+    setIsUploading(true);
+    setUploadError(null);
+    setUploadStatus(`Uploading ${files.length} file${files.length === 1 ? '' : 's'}...`);
+
+    try {
+      let activeSessionId = sessionId;
+
+      for (const file of files) {
+        const dataType = inferDataType(file.name);
+        setUploadStatus(`Uploading ${file.name}...`);
+        try {
+          await analysisSessionsApi.uploadDataToSession(activeSessionId, file, dataType);
+        } catch (error: any) {
+          if (isSessionNotFound(error) && onSessionMissing) {
+            setUploadStatus('Session expired. Creating a fresh session and retrying upload...');
+            const replacementSessionId = await onSessionMissing();
+            if (replacementSessionId) {
+              activeSessionId = replacementSessionId;
+              await analysisSessionsApi.uploadDataToSession(activeSessionId, file, dataType);
+              continue;
+            }
+          }
+
+          throw error;
+        }
+      }
+
+      setUploadStatus(`Added ${files.length} data source${files.length === 1 ? '' : 's'} to this session.`);
+      await loadDataSources(activeSessionId);
+      onDataSourceAdded?.();
+    } catch (error: any) {
+      console.error('Error uploading file:', error);
+      const detail =
+        error?.response?.data?.detail ||
+        error?.message ||
+        'Upload failed. Check SSH tunnel, backend health, and file format.';
+      setUploadError(typeof detail === 'string' ? detail : JSON.stringify(detail));
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
     }
   };
 
-  const handleUpload = async () => {
-    if (!selectedFile || !sessionId) return;
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    uploadFiles(files);
+  };
 
-    setIsUploading(true);
-    try {
-      // Determine data type from file extension
-      const ext = selectedFile.name.split('.').pop()?.toLowerCase();
-      let dataType = 'document';
-      if (ext === 'csv' || ext === 'xlsx' || ext === 'xls') {
-        dataType = 'spreadsheet';
-      } else if (ext === 'pdf' || ext === 'docx' || ext === 'doc') {
-        dataType = 'report';
-      } else if (ext === 'png' || ext === 'jpg' || ext === 'jpeg') {
-        dataType = 'image';
-      }
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragging(false);
+    uploadFiles(Array.from(e.dataTransfer.files || []));
+  };
 
-      await analysisSessionsApi.uploadDataToSession(sessionId, selectedFile, dataType);
-      setSelectedFile(null);
-      loadDataSources();
-      onDataSourceAdded?.();
-    } catch (error) {
-      console.error('Error uploading file:', error);
-    } finally {
-      setIsUploading(false);
-    }
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = () => {
+    setIsDragging(false);
   };
 
   const handleRemove = async (sourceId: string) => {
@@ -95,52 +165,81 @@ export const DataSourcesPanel: React.FC<DataSourcesPanelProps> = ({
 
   return (
     <div className={`flex flex-col h-full ${className}`}>
-      <div className="p-4 border-b border-opsgrid-border">
-        <h3 className="text-sm font-semibold text-opsgrid-text mb-3">Data Sources</h3>
+      <div className="p-4 border-b border-opsgrid-border shrink-0">
+        <h3 className="text-sm font-semibold text-opsgrid-text mb-1">Upload data for AI</h3>
+        <p className="text-xs text-opsgrid-text-secondary mb-3">
+          Drop Excel/CSV here or use <strong>Upload Excel</strong> in the chat header.
+        </p>
         
-        {/* Upload Section */}
-        <div className="space-y-2">
-          {selectedFile ? (
-            <div className="flex items-center justify-between p-2 bg-opsgrid-bg rounded border border-opsgrid-border">
-              <div className="flex items-center gap-2 flex-1 min-w-0">
-                <FileText className="w-4 h-4 text-opsgrid-text-secondary flex-shrink-0" />
-                <span className="text-xs text-opsgrid-text truncate">{selectedFile.name}</span>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setSelectedFile(null)}
-                className="px-2"
-              >
-                <X className="w-3 h-3" />
-              </Button>
-            </div>
-          ) : (
-            <div className="border-2 border-dashed border-opsgrid-border rounded-lg p-3 text-center">
-              <input
-                type="file"
-                onChange={handleFileSelect}
-                className="hidden"
-                id="file-upload"
-                accept=".csv,.xlsx,.xls,.pdf,.docx,.doc,.png,.jpg,.jpeg,.txt,.md"
-              />
-              <label htmlFor="file-upload">
-                <Button variant="outline" size="sm" className="w-full">
-                  <Upload className="w-4 h-4 mr-2" />
-                  Upload File
-                </Button>
-              </label>
-            </div>
-          )}
-          
-          {selectedFile && (
-            <Button
-              onClick={handleUpload}
+        <div className="space-y-3">
+          <div
+            onDrop={handleDrop}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            className={`border-2 border-dashed rounded-lg p-4 text-center transition-colors ${
+              isDragging
+                ? 'border-blue-500 bg-blue-50'
+                : 'border-opsgrid-border bg-opsgrid-bg'
+            }`}
+          >
+            <input
+              ref={fileInputRef}
+              type="file"
+              onChange={handleFileSelect}
+              className="hidden"
+              id={`file-upload-${sessionId}`}
+              accept=".csv,.xlsx,.xls,.pdf,.docx,.doc,.png,.jpg,.jpeg,.txt,.md"
+              multiple
               disabled={isUploading}
+            />
+            <Upload className="w-6 h-6 mx-auto mb-2 text-opsgrid-text-secondary" />
+            <p className="text-sm font-medium text-opsgrid-text">
+              Drop Excel sheets here
+            </p>
+            <p className="text-xs text-opsgrid-text-secondary mt-1">
+              Supports .xlsx, .xls, .csv plus notes and OCR text files.
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-3 w-full bg-white text-gray-900 border-gray-300 hover:bg-gray-100"
+              disabled={isUploading}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              {isUploading ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Uploading...
+                </>
+              ) : (
+                <>
+                  <Upload className="w-4 h-4 mr-2" />
+                  Browse Files
+                </>
+              )}
+            </Button>
+          </div>
+
+          {uploadStatus && (
+            <p className="text-xs text-opsgrid-text-secondary">
+              {uploadStatus}
+            </p>
+          )}
+
+          {uploadError && (
+            <p className="text-xs text-red-600">
+              {uploadError}
+            </p>
+          )}
+
+          {isUploading && (
+            <Button
+              disabled
               className="w-full"
               size="sm"
             >
-              {isUploading ? 'Uploading...' : 'Add to Session'}
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              Processing data sources
             </Button>
           )}
         </div>
@@ -170,11 +269,17 @@ export const DataSourcesPanel: React.FC<DataSourcesPanelProps> = ({
                         {source.file_name || 'Unnamed Data Source'}
                       </p>
                       <div className="flex items-center gap-2 mt-1">
-                        <Badge variant="info" className="text-xs">
+                        <Badge
+                          variant="info"
+                          className="text-xs bg-white text-gray-900 border border-gray-300"
+                        >
                           {source.source_type}
                         </Badge>
                         {source.data_type && (
-                          <Badge variant="neutral" className="text-xs">
+                          <Badge
+                            variant="neutral"
+                            className="text-xs bg-white text-gray-900 border border-gray-300"
+                          >
                             {source.data_type}
                           </Badge>
                         )}
@@ -185,7 +290,7 @@ export const DataSourcesPanel: React.FC<DataSourcesPanelProps> = ({
                     variant="outline"
                     size="sm"
                     onClick={() => handleRemove(source.id)}
-                    className="px-2 ml-2 flex-shrink-0"
+                    className="px-2 ml-2 flex-shrink-0 bg-white text-gray-900 border-gray-300 hover:bg-gray-100"
                   >
                     <Trash2 className="w-3 h-3" />
                   </Button>
@@ -200,4 +305,7 @@ export const DataSourcesPanel: React.FC<DataSourcesPanelProps> = ({
       </div>
     </div>
   );
-};
+  }
+);
+
+DataSourcesPanel.displayName = 'DataSourcesPanel';
