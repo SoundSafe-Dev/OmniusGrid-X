@@ -26,6 +26,10 @@ cryptography==41.0.7
 torch==2.1.0
 numpy==1.24.3
 
+# Spreadsheet / Workbook Intake
+pandas==2.0.3
+openpyxl==3.1.2
+
 # Cloud Gateway
 aiomqtt==1.2.1
 aiohttp==3.9.1

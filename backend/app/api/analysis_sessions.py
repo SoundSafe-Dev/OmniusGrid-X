@@ -818,7 +818,7 @@ async def session_chat(
         scenario = CorrelationScenario(
             scenario_id=f"session-{session_id}-{int(datetime.utcnow().timestamp())}",
             active_domains=domain_types,
-            operational_metrics=operational_metrics,
+            ingested_metrics=operational_metrics,
             domain_links=[]
         )
         

@@ -596,6 +596,8 @@ The Intake Inbox provides a centralized location for uploading operational data 
 
 **Features:**
 - **Multi-Format Upload**: Supports spreadsheets (CSV, Excel), reports (PDF, Word), images (PNG, JPG), and documents (Text, Markdown)
+- **Multi-Tab Workbook Support**: Parses **every tab** of an Excel workbook (not just the first sheet) and maps each tab to one of the 47 operational domains
+- **Cross-Tab Correlation**: Builds cross-tab-linked correlation scenarios so the AI can discover correlations *between* tabs (e.g., a maintenance vibration spike correlated with a quality defect cluster on the same shift)
 - **Automatic Type Detection**: File type auto-detection based on extension
 - **Data Processing**: Extracts and processes data from uploaded files for AI analysis
 - **AI Analysis**: Correlation AI analyzes uploaded data and provides insights
@@ -608,8 +610,8 @@ The Intake Inbox provides a centralized location for uploading operational data 
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/v1/nlp/correlation/intake/upload` | Upload data file to Intake Inbox |
-| POST | `/api/v1/nlp/correlation/intake/analyze` | Analyze uploaded data with correlation AI |
+| POST | `/api/v1/nlp/correlation/intake/upload` | Upload data file to Intake Inbox (parses all workbook tabs) |
+| POST | `/api/v1/nlp/correlation/intake/analyze` | Analyze uploaded data with correlation AI (supports `mode=window\|tab\|row`) |
 | GET | `/api/v1/nlp/correlation/intake/list` | List intake items with pagination and filtering |
 | GET | `/api/v1/nlp/correlation/intake/{id}` | Get specific intake item details |
 
@@ -640,12 +642,39 @@ The IntakeInbox page (`/intake`) provides:
 **Analysis Workflow:**
 
 1. User uploads file with title and description
-2. System auto-detects file type and processes data
+2. System auto-detects file type and **parses every tab** of the workbook
 3. Status set to "pending" initially
 4. User triggers AI analysis
-5. Correlation AI analyzes data and provides insights
-6. Status updated to "analyzed" with results
-7. Results include risk score, domains, analysis, and recommended actions
+5. Each tab is mapped to an operational domain; cross-tab scenarios are built and analyzed by the correlation AI
+6. Status updated to "analyzed" with combined results
+7. Results include peak risk score, all domains, per-tab mapping, cross-domain link counts, and recommended actions
+
+### Cross-Tab Workbook Correlation
+
+The Intake Inbox understands **multi-tab workbooks/spreadsheets** end-to-end: it parses
+every sheet, maps each tab to one of the 47 `DomainType` operational domains, and builds
+`CorrelationScenario` objects that link tabs together so the AI can surface correlations
+*across* domains within the same workbook. See the dedicated guide:
+[`docs/CROSS_TAB_WORKBOOK_CORRELATION.md`](docs/CROSS_TAB_WORKBOOK_CORRELATION.md).
+
+**How it works:**
+1. **Multi-sheet parsing** — `pd.read_excel(..., sheet_name=None)` reads all tabs (CSV = single tab). Per-tab metadata (columns, dtypes, sample rows, summary) is stored on the intake item.
+2. **Tab → domain mapping** (`backend/app/services/spreadsheet_domain_mapper.py`) — each tab is mapped by name (e.g. `Maintenance_Assets` → `MAINTENANCE`), with a column-keyword fallback. Unmappable tabs are flagged context-only.
+3. **Scenario building** (`backend/app/services/spreadsheet_scenario_builder.py`) — rows are grouped into scenarios and pairwise `CrossDomainLink`s are created using a shared `interaction_key` (e.g. `asset_id`); anomaly severity from status columns sets `severity_impact`.
+4. **Analysis** — every scenario runs through the correlation AI engine; results are aggregated (peak risk, union of domains/tasks/compliance) and persisted on the intake item.
+
+**Scenario modes** (`mode` query param on `/intake/analyze`):
+
+| Mode | Behavior | Use case |
+|------|----------|----------|
+| `window` (default) | One scenario per shared `date`(+`shift`) window across all tabs; full coverage | Cross-tab/cross-domain correlation discovery |
+| `tab` | One scenario for the whole workbook; `active_domains` = all tabs | Fast, coarse overview |
+| `row` | One scenario per row (capped) | Fine-grained, single-domain triage |
+
+**Stress-test dataset:** A generator under `dataset_synthesis/` produces 100 companies × 10
+fiscal years (1,000 multi-tab workbooks) with shared keys and clustered, co-timed anomalies,
+plus OmniusGrid-native compatibility outputs (`CorrelationScenario` JSONL, long-format
+telemetry, per-tab CSV). See `dataset_synthesis/README.md`.
 
 ### NLP Analysis Sessions
 

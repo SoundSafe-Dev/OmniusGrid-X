@@ -74,3 +74,9 @@ backend/dataset/test_*.jsonl
 *.tmp
 *.bak
 *.swp
+
+# Stress-test dataset (large generated output, not source)
+Stress Test Workbooks/
+dataset_synthesis/output/
+dataset_synthesis/output_smoke/
+dataset_synthesis/**/__pycache__/

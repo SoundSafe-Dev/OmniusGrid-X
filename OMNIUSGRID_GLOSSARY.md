@@ -19,6 +19,7 @@
 - [Kanban Task Management](#kanban-task-management)
 - [Actionable Registries & Compliance](#actionable-registries--compliance)
 - [Correlation AI Engine](#correlation-ai-engine)
+- [Cross-Tab Workbook Correlation & Intake](#cross-tab-workbook-correlation--intake)
 - [Frontend Architecture](#frontend-architecture)
 - [Security & Authentication](#security--authentication)
 - [Compliance Frameworks](#compliance-frameworks)
@@ -344,6 +345,27 @@
 
 ---
 
+## Cross-Tab Workbook Correlation & Intake
+
+| Term | Definition | Backend/Frontend |
+|------|------------|------------------|
+| **Intake Inbox** | Upload area where operational files (spreadsheets, reports, images, documents) are stored and analyzed by the correlation AI | Both |
+| **Multi-Tab Workbook Parsing** | Reading every sheet of an Excel workbook (`pd.read_excel(sheet_name=None)`), not just the first; CSV is treated as a single tab | Backend |
+| **Tab → Domain Mapping** | Deterministic mapping of each workbook tab to one of the 47 `DomainType` values, by tab name with a column-keyword fallback (`spreadsheet_domain_mapper.py`) | Backend |
+| **Context-Only Tab** | A tab that cannot be mapped to a domain; retained as metadata but not emitted as operational metrics | Backend |
+| **Cross-Tab Correlation** | Discovery of correlations *between* tabs/domains within one workbook via shared keys and co-timed anomalies | Both |
+| **Spreadsheet Scenario Builder** | Service converting parsed tabs into `CorrelationScenario` objects (`spreadsheet_scenario_builder.py`) | Backend |
+| **Scenario Mode** | Strategy for turning tabs into scenarios: `window` (per date/shift, default), `tab` (one per workbook), `row` (one per row) | Backend |
+| **Window Scenario** | A scenario grouping rows from all tabs that share the same `date`(+`shift`) key, enabling cross-domain links | Backend |
+| **Interaction Key** | The unifying token (e.g. `asset_id`) used by `CrossDomainLink` to relate metrics from different domains | Backend |
+| **Severity Mapping** | Mapping of status values to `severity_impact` (normal 0.0–0.3, warning 0.3–0.7, critical 0.7–1.0) | Backend |
+| **Full Coverage** | Guarantee that all date/shift windows are emitted as scenarios (no sampling) in `window` mode | Backend |
+| **Stress-Test Dataset** | Synthetic 100-company × 10-fiscal-year corpus (1,000 multi-tab workbooks) with clustered, co-timed anomalies, generated under `dataset_synthesis/` | Backend |
+| **Industry Specialty Tab** | An industry-specific workbook tab (e.g. biogas methane output, t-shirt screen count, tractor engine specs) included per company type | Backend |
+| **Compatibility Outputs** | OmniusGrid-native exports derived from workbooks: per-tab CSV, long-format telemetry, and `CorrelationScenario` JSONL | Backend |
+
+---
+
 ## Frontend Architecture
 
 | Term | Definition | Backend/Frontend |
@@ -392,7 +414,7 @@
 | **Zero-Trust** | Security model assuming no implicit trust, requiring continuous verification | Backend |
 | **Purdue Model** | Network segmentation isolating manufacturing from enterprise zones | Backend |
 | **API Key** | Secret token for programmatic API access (e.g., GeoTab integration) | Backend |
-| **API Key Hash** | SHA256 hash of API key stored in database for security | Backend |
++(d1031146, 6d8893b3, b7d2e2c6)| **API Key Hash** | SHA256 hash of API key stored in database for security | Backend |
 | **API Key Scope** | Permission scope assigned to API key (read, write, admin) | Backend |
 | **API Key Expiration** | Date when API key becomes invalid | Backend |
 | **Rate Limiting** | API request rate control (100 req/min per user, 1000 req/min global) | Backend |

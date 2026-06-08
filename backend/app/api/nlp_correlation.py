@@ -5,6 +5,7 @@ API endpoints for natural language interaction with the correlation AI engine,
 and Intake Inbox for data upload and analysis.
 """
 
+import json
 from typing import List, Dict, Any, Optional
 from uuid import UUID
 from datetime import datetime
@@ -119,7 +120,7 @@ async def nlp_query(
     scenario = CorrelationScenario(
         scenario_id=f"nlp-{current_user.id}-{int(datetime.utcnow().timestamp())}",
         active_domains=domain_types,
-        operational_metrics=operational_metrics,
+        ingested_metrics=operational_metrics,
         domain_links=[]
     )
     
@@ -284,57 +285,178 @@ async def analyze_intake(
     intake_id: UUID,
     query: Optional[str] = None,
     auto_integrate: bool = True,
+    mode: str = "window",
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
     Analyze uploaded data in Intake Inbox with correlation AI.
-    
-    This endpoint:
-    1. Retrieves the uploaded data
-    2. Processes the data with correlation AI
-    3. Returns actionable insights
-    4. Optionally integrates with registries and Kanban
+
+    For spreadsheets/workbooks this:
+    1. Retrieves the uploaded item and decodes the stored file
+    2. Parses ALL tabs into DataFrames
+    3. Builds cross-tab-linked CorrelationScenarios (mode: window|tab|row)
+    4. Runs the correlation AI engine over every scenario (full coverage)
+    5. Aggregates per-domain findings and cross-tab correlations
+    6. Persists the combined analysis on the intake item
     """
     logger.info(
         "intake_analysis",
         user_id=str(current_user.id),
-        intake_id=str(intake_id)
+        intake_id=str(intake_id),
+        mode=mode,
     )
-    
-    # In production, retrieve from database
-    # For now, we'll simulate the analysis
-    
-    # Create NLP query from the data
-    if query:
-        nlp_request = NLPQueryRequest(
-            query=query,
-            auto_integrate=auto_integrate
+
+    # Retrieve the intake item
+    result = await db.execute(
+        select(IntakeItemModel).where(
+            IntakeItemModel.id == intake_id,
+            IntakeItemModel.user_id == current_user.id,
         )
+    )
+    item = result.scalar_one_or_none()
+    if not item:
+        raise HTTPException(status_code=404, detail="Intake item not found")
+
+    # Spreadsheet/workbook path: build scenarios from the actual tabs
+    if item.data_type == "spreadsheet" and item.file_content:
+        try:
+            analysis_result = await _analyze_spreadsheet_item(
+                item, query, auto_integrate, mode, db, current_user
+            )
+        except Exception as e:
+            logger.error("intake_spreadsheet_analysis_failed", error=str(e), intake_id=str(intake_id))
+            item.status = "error"
+            item.analysis_result = {"error": str(e)}
+            await db.commit()
+            raise HTTPException(status_code=500, detail=f"Analysis failed: {e}")
     else:
-        # Generate a default query from the data type
-        default_query = f"Analyze the uploaded {intake_id} data for operational anomalies and correlations"
-        nlp_request = NLPQueryRequest(
-            query=default_query,
-            auto_integrate=auto_integrate
+        # Non-spreadsheet: fall back to NLP query over a default/explicit prompt
+        default_query = query or (
+            f"Analyze the uploaded {item.data_type} '{item.title}' for operational "
+            f"anomalies and correlations"
         )
-    
-    # Run analysis
-    response = await nlp_query(nlp_request, None, db, current_user)
-    
-    analysis_result = {
-        "intake_id": str(intake_id),
-        "analysis": response.analysis,
-        "risk_score": response.risk_score,
-        "domains_analyzed": response.domains_analyzed,
-        "recommended_actions": response.recommended_actions,
-        "kanban_tasks": response.kanban_tasks,
-        "compliance_implications": response.compliance_implications,
-        "integration_result": response.integration_result,
-        "analyzed_at": datetime.utcnow().isoformat()
-    }
-    
+        nlp_request = NLPQueryRequest(query=default_query, auto_integrate=auto_integrate)
+        response = await nlp_query(nlp_request, None, db, current_user)
+        analysis_result = {
+            "intake_id": str(intake_id),
+            "analysis": response.analysis,
+            "risk_score": response.risk_score,
+            "domains_analyzed": response.domains_analyzed,
+            "recommended_actions": response.recommended_actions,
+            "kanban_tasks": response.kanban_tasks,
+            "compliance_implications": response.compliance_implications,
+            "integration_result": response.integration_result,
+        }
+
+    # Persist results on the intake item
+    item.analysis_result = analysis_result
+    item.status = "analyzed"
+    item.analyzed_at = datetime.utcnow()
+    await db.commit()
+
+    analysis_result["analyzed_at"] = item.analyzed_at.isoformat()
     return analysis_result
+
+
+async def _analyze_spreadsheet_item(
+    item: "IntakeItemModel",
+    query: Optional[str],
+    auto_integrate: bool,
+    mode: str,
+    db: AsyncSession,
+    current_user: User,
+) -> Dict[str, Any]:
+    """Parse all tabs of a stored workbook and run correlation analysis per scenario."""
+    import base64
+    import io
+    import pandas as pd
+    from app.services.spreadsheet_scenario_builder import build_scenarios
+    from app.services.spreadsheet_domain_mapper import map_workbook_domains
+
+    # Decode the stored file
+    content = base64.b64decode(item.file_content)
+    filename = item.file_name or "upload.xlsx"
+
+    if filename.endswith(".csv"):
+        tabs = {"Sheet1": pd.read_csv(io.BytesIO(content))}
+    elif filename.endswith((".xlsx", ".xls")):
+        tabs = pd.read_excel(io.BytesIO(content), sheet_name=None)
+    else:
+        tabs = {"Sheet1": pd.read_csv(io.StringIO(content.decode("utf-8")))}
+
+    # Domain mapping summary for transparency
+    tab_columns = {name: [str(c) for c in df.columns] for name, df in tabs.items()}
+    mapping = map_workbook_domains(tab_columns)
+
+    # Build and analyze scenarios (full coverage)
+    source_id = f"intake-{item.id}"
+    domains_seen: List[str] = []
+    risk_scores: List[float] = []
+    kanban_tasks: List[Dict[str, Any]] = []
+    commands: List[Dict[str, Any]] = []
+    compliance: List[str] = []
+    cross_tab_links = 0
+    scenario_count = 0
+    per_scenario: List[Dict[str, Any]] = []
+
+    for scenario in build_scenarios(tabs, mode=mode, source_id=source_id):
+        scenario_count += 1
+        if len(scenario.active_domains) >= 2:
+            cross_tab_links += len(scenario.domain_links)
+        analysis = await correlation_ai_engine.analyze_scenario(
+            scenario,
+            db,
+            organization_id=current_user.organization_id,
+            user_id=current_user.id,
+            # Avoid creating hundreds of registry items; integrate only the summary later
+            auto_integrate=False,
+        )
+        for d in scenario.active_domains:
+            if d.value not in domains_seen:
+                domains_seen.append(d.value)
+        risk_scores.append(analysis.get("risk_score", 0.0))
+        for t in (analysis.get("target_kanban_tasks") or []):
+            if t not in kanban_tasks:
+                kanban_tasks.append(t)
+        for c in (analysis.get("remediation_commands") or []):
+            if c not in commands:
+                commands.append(c)
+        for ci in (analysis.get("compliance_implications") or []):
+            if ci not in compliance:
+                compliance.append(ci)
+        # Keep a bounded sample of per-scenario detail
+        if len(per_scenario) < 100:
+            per_scenario.append({
+                "scenario_id": scenario.scenario_id,
+                "domains": [d.value for d in scenario.active_domains],
+                "risk_score": analysis.get("risk_score"),
+                "root_cause": analysis.get("predicted_root_cause"),
+            })
+
+    overall_risk = round(max(risk_scores), 1) if risk_scores else 0.0
+    summary_text = (
+        f"Analyzed {scenario_count} cross-tab scenarios across "
+        f"{len(domains_seen)} domains ({', '.join(domains_seen) or 'none'}). "
+        f"{cross_tab_links} cross-domain links detected. "
+        f"Peak risk score {overall_risk}/100."
+    )
+
+    return {
+        "intake_id": str(item.id),
+        "analysis": summary_text,
+        "mode": mode,
+        "tab_count": len(tabs),
+        "tab_domain_mapping": mapping.to_dict(),
+        "scenarios_analyzed": scenario_count,
+        "cross_domain_links": cross_tab_links,
+        "domains_analyzed": domains_seen,
+        "risk_score": overall_risk,
+        "recommended_actions": commands[:20],
+        "kanban_tasks": kanban_tasks[:20],
+        "compliance_implications": compliance or None,
+        "scenario_samples": per_scenario,
+    }
 
 
 @router.get("/intake/list")
@@ -458,40 +580,39 @@ def _extract_domains_from_query(query: str) -> List[str]:
 
 
 def _extract_metrics_from_query(query: str, context: Dict[str, Any]) -> List:
-    """Extract operational metrics from query and context"""
+    """Extract operational metrics from query and context.
+
+    Returns OperationalMetric objects matching the domain_interaction schema
+    (endpoint + payload_snapshot + timestamp).
+    """
     from app.models.domain_interaction import OperationalMetric
     from datetime import datetime
-    
+
     metrics = []
-    
-    # Extract numeric values from query
+    timestamp = datetime.utcnow().isoformat()
+
+    # Extract numeric values from query into a single metric payload
     import re
     numbers = re.findall(r'\d+\.?\d*', query)
-    
+
+    payload: Dict[str, Any] = {"source": "nlp_query"}
     if numbers:
         for i, num in enumerate(numbers):
-            metric = OperationalMetric(
-                metric_name=f"query_metric_{i}",
-                value=float(num),
-                unit=None,
-                timestamp=datetime.utcnow(),
-                meta_data={"source": "nlp_query", "context": context}
-            )
-            metrics.append(metric)
-    
-    # Add context metrics if available
+            payload[f"query_metric_{i}"] = float(num)
+
+    # Add scalar context values
     if context:
         for key, value in context.items():
             if isinstance(value, (int, float)):
-                metric = OperationalMetric(
-                    metric_name=f"context_{key}",
-                    value=float(value),
-                    unit=None,
-                    timestamp=datetime.utcnow(),
-                    meta_data={"source": "nlp_query_context"}
-                )
-                metrics.append(metric)
-    
+                payload[f"context_{key}"] = float(value)
+
+    if len(payload) > 1:  # more than just "source"
+        metrics.append(OperationalMetric(
+            endpoint="/nlp/query",
+            payload_snapshot=payload,
+            timestamp=timestamp,
+        ))
+
     return metrics
 
 
@@ -503,21 +624,47 @@ async def _process_uploaded_file(content: bytes, data_type: str, filename: str) 
             # For CSV/Excel files
             import pandas as pd
             import io
-            
+
+            # Read ALL tabs/sheets. CSV is a single implicit sheet.
             if filename.endswith('.csv'):
-                df = pd.read_csv(io.BytesIO(content))
+                sheets = {"Sheet1": pd.read_csv(io.BytesIO(content))}
             elif filename.endswith(('.xlsx', '.xls')):
-                df = pd.read_excel(io.BytesIO(content))
+                # sheet_name=None returns an ordered dict of {sheet_name: DataFrame}
+                sheets = pd.read_excel(io.BytesIO(content), sheet_name=None)
             else:
-                df = pd.read_csv(io.StringIO(content.decode('utf-8')))
-            
+                sheets = {"Sheet1": pd.read_csv(io.StringIO(content.decode('utf-8')))}
+
+            tabs = []
+            total_rows = 0
+            for sheet_name, df in sheets.items():
+                total_rows += len(df)
+                try:
+                    summary = df.describe(include="all").to_dict() if not df.empty else {}
+                    # Ensure JSON-serializable (describe can contain numpy/NaN)
+                    summary = json.loads(pd.DataFrame(summary).to_json())
+                except Exception:
+                    summary = {}
+                tabs.append({
+                    "name": str(sheet_name),
+                    "rows": len(df),
+                    "columns": len(df.columns),
+                    "column_names": [str(c) for c in df.columns.tolist()],
+                    "dtypes": {str(c): str(t) for c, t in df.dtypes.items()},
+                    "sample_data": json.loads(df.head(5).to_json(orient="records")),
+                    "summary": summary,
+                })
+
             return {
                 "type": "spreadsheet",
-                "rows": len(df),
-                "columns": len(df.columns),
-                "column_names": df.columns.tolist(),
-                "sample_data": df.head(5).to_dict(orient='records'),
-                "summary": df.describe().to_dict() if not df.empty else {}
+                "tab_count": len(tabs),
+                "rows": total_rows,
+                "tab_names": [t["name"] for t in tabs],
+                "tabs": tabs,
+                # Backward-compatible top-level fields (first tab)
+                "columns": tabs[0]["columns"] if tabs else 0,
+                "column_names": tabs[0]["column_names"] if tabs else [],
+                "sample_data": tabs[0]["sample_data"] if tabs else [],
+                "summary": tabs[0]["summary"] if tabs else {},
             }
         
         elif data_type == "image":

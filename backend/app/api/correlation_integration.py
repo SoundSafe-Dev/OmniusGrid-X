@@ -86,15 +86,16 @@ async def analyze_and_integrate(
     # Convert domains to DomainType enum
     domain_types = [DomainType(d) for d in request.domains] if request.domains else []
     
-    # Create operational metrics from input
+    # Create operational metrics from input (schema: endpoint + payload_snapshot)
     operational_metrics = []
     for key, value in request.metrics.items():
+        payload = value if isinstance(value, dict) else {"value": value}
+        payload = {**payload, "metric_name": key}
+        ts = value.get("timestamp") if isinstance(value, dict) else None
         metric = OperationalMetric(
-            metric_name=key,
-            value=value.get("value", 0) if isinstance(value, dict) else value,
-            unit=value.get("unit") if isinstance(value, dict) else None,
-            timestamp=value.get("timestamp") if isinstance(value, dict) else None,
-            meta_data=value
+            endpoint=f"/correlation/metrics/{key}",
+            payload_snapshot=payload,
+            timestamp=str(ts) if ts is not None else None,
         )
         operational_metrics.append(metric)
     
@@ -102,7 +103,7 @@ async def analyze_and_integrate(
     scenario = CorrelationScenario(
         scenario_id=f"scenario-{current_user.id}-{int(datetime.utcnow().timestamp())}",
         active_domains=domain_types,
-        operational_metrics=operational_metrics,
+        ingested_metrics=operational_metrics,
         domain_links=[]  # Will be populated by AI
     )
     
@@ -292,18 +293,21 @@ async def test_integration(
     
     operational_metrics = [
         OperationalMetric(
-            metric_name="appointment_adherence",
-            value=24.03,
-            unit="%",
-            timestamp=datetime.utcnow(),
-            meta_data=sample_metrics
+            endpoint="/api/v1/logistics/appointment-adherence",
+            payload_snapshot={
+                "metric_name": "appointment_adherence",
+                "value": 24.03,
+                "unit": "%",
+                **(sample_metrics if isinstance(sample_metrics, dict) else {}),
+            },
+            timestamp=datetime.utcnow().isoformat(),
         )
     ]
     
     scenario = CorrelationScenario(
         scenario_id=f"test-{current_user.id}-{int(datetime.utcnow().timestamp())}",
         active_domains=domain_types,
-        operational_metrics=operational_metrics,
+        ingested_metrics=operational_metrics,
         domain_links=[]
     )
     
