@@ -5,9 +5,12 @@ import { ArrowLeft, Activity, Clock, Box } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { assetsApi, telemetryApi } from '../api'
 import { Tooltip, TooltipTrigger, TooltipContent } from '../components/ui'
+import { ExportButton } from '../components/common'
+import { useAuth } from '../hooks/useAuth'
 
 const AssetDetail: FC = () => {
   const { id } = useParams<{ id: string }>()
+  const { isAdmin } = useAuth()
   
   const { data: asset, isLoading } = useQuery(['asset', id], () =>
     assetsApi.get(id!)
@@ -113,6 +116,17 @@ const AssetDetail: FC = () => {
           </Tooltip>
         </div>
       </div>
+
+      {isAdmin && (
+        <div className="flex justify-end">
+          <ExportButton
+            endpoint={`/api/v1/exports/telemetry/${id}`}
+            format="csv"
+            label="Export telemetry CSV"
+            filename={`telemetry_${asset.name}.csv`}
+          />
+        </div>
+      )}
 
       {/* Telemetry */}
       {telemetry && (

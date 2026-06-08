@@ -320,8 +320,9 @@ async def seeded_orgs(admin_sync_url) -> dict:
             )
             cur.execute(
                 "INSERT INTO users "
-                "(id, email, hashed_password, organization_id, is_active) VALUES "
-                "(%s, %s, %s, %s, %s), (%s, %s, %s, %s, %s);",
+                "(id, email, hashed_password, organization_id, role, is_active) VALUES "
+                "(%s, %s, %s, %s, 'admin', %s), "
+                "(%s, %s, %s, %s, 'admin', %s);",
                 (
                     str(user_a_id), f"a-{user_a_id.hex[:8]}@test.local",
                     pw_hash, str(org_a_id), True,
