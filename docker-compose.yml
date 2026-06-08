@@ -69,10 +69,20 @@ services:
       JWT_SECRET_KEY: dev_secret_key_change_in_production
       JWT_ALGORITHM: HS256
       JWT_ACCESS_TOKEN_EXPIRE_MINUTES: 30
+      EXPORT_STORAGE_PATH: /var/lib/omniusgrid/exports
+      EXPORT_PUBLIC_BASE_URL: http://localhost:8002
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-reports@omniusgrid.local}
+      SMTP_USE_TLS: ${SMTP_USE_TLS:-false}
+      SMTP_START_TLS: ${SMTP_START_TLS:-true}
     ports:
       - "8002:8000"
     volumes:
       - ./backend:/app
+      - export-data:/var/lib/omniusgrid/exports
     depends_on:
       timescaledb:
         condition: service_healthy
@@ -102,6 +112,39 @@ services:
     networks:
       - omniusgrid-network
     command: python -m app.workers.ingestion
+
+  # Durable scheduled export generation and company SMTP delivery
+  export-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: omniusgrid-export-worker
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://omniusgrid:omniusgrid_dev_password@timescaledb:5432/omniusgrid
+      REDPANDA_URL: redpanda:29092
+      REDPANDA_EXPORT_TOPIC: opsgrid.exports
+      JWT_SECRET_KEY: dev_secret_key_change_in_production
+      EXPORT_STORAGE_PATH: /var/lib/omniusgrid/exports
+      EXPORT_PUBLIC_BASE_URL: http://localhost:8002
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-reports@omniusgrid.local}
+      SMTP_USE_TLS: ${SMTP_USE_TLS:-false}
+      SMTP_START_TLS: ${SMTP_START_TLS:-true}
+    volumes:
+      - ./backend:/app
+      - export-data:/var/lib/omniusgrid/exports
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+    networks:
+      - omniusgrid-network
+    command: python -m app.workers.export_delivery
 
   # Frontend - React Dashboard
   frontend:
@@ -246,6 +289,7 @@ volumes:
   redpanda-data:
   timescaledb-data:
   redis-data:
+  export-data:
   edge-agent-data:
   prometheus-data:
   alertmanager-data:

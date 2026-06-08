@@ -5,11 +5,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from app.api import assets, telemetry, alarms, operations, auth, dashboard, health, engines
-from app.api import yard, transportation, logistics_correlation, websocket, commands, oee, kanban, registries, geotab, correlation_integration, nlp_correlation, analysis_sessions, user_context, audit, api_keys, gdpr, compliance, data_residency, feature_flags, sso, bulk_operations
+from app.api import yard, transportation, logistics_correlation, websocket, commands, oee, kanban, registries, geotab, correlation_integration, nlp_correlation, analysis_sessions, user_context, audit, api_keys, gdpr, compliance, data_residency, feature_flags, sso, bulk_operations, exports
 from app.core.config import settings
 from app.db.database import init_db
 from app.services.websocket_manager import websocket_manager
 from app.services.command_executor import command_executor
+from app.services.export_delivery import export_scheduler
+from app.services.export_processor import export_processor
 from app.services.oee_calculator import oee_calculator
 from app.middleware.audit import AuditLoggingMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
@@ -28,8 +30,11 @@ async def lifespan(app: FastAPI):
     await websocket_manager.connect()
     await command_executor.start()
     await oee_calculator.start()
+    await export_scheduler.start()
     yield
     # Shutdown
+    await export_scheduler.stop()
+    await export_processor.close()
     await oee_calculator.stop()
     await command_executor.stop()
     await websocket_manager.disconnect()
@@ -179,6 +184,9 @@ app.include_router(data_residency.router, prefix="/api/v1/data-residency", tags=
 app.include_router(feature_flags.router, prefix="/api/v1/feature-flags", tags=["Feature Flags"])
 app.include_router(sso.router, prefix="/api/v1/sso", tags=["SSO"])
 app.include_router(bulk_operations.router, prefix="/api/v1/bulk", tags=["Bulk Operations"])
+app.include_router(exports.router, prefix="/api/v1/exports", tags=["Exports"])
+# Signature-authorized export downloads (no bearer; used by delivery email links).
+app.include_router(exports.public_router, prefix="/api/v1/exports", tags=["Exports"])
 
 
 @app.get("/")

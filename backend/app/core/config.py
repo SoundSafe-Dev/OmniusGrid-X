@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     REDPANDA_URL: str = "redpanda:29092"
     REDPANDA_TOPICS_PREFIX: str = "opsgrid"
     REDPANDA_COMMAND_TOPIC: str = "opsgrid.commands"
+    REDPANDA_EXPORT_TOPIC: str = "opsgrid.exports"
     
     # Security
     JWT_SECRET_KEY: str = "dev_secret_key_change_in_production"
@@ -60,6 +61,21 @@ class Settings(BaseSettings):
     
     # Redis
     REDIS_URL: str = "redis://redis:6379/0"
+
+    # Scheduled exports / company SMTP (Task 5)
+    EXPORT_SCHEDULER_ENABLED: bool = True
+    EXPORT_SCHEDULER_INTERVAL_SECONDS: int = 30
+    EXPORT_STORAGE_PATH: str = "/var/lib/omniusgrid/exports"
+    EXPORT_PUBLIC_BASE_URL: str = "http://localhost:8002"
+    EXPORT_LINK_EXPIRE_MINUTES: int = 1440
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USERNAME: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM_EMAIL: str = "reports@omniusgrid.local"
+    SMTP_FROM_NAME: str = "OmniusGrid Reports"
+    SMTP_USE_TLS: bool = False
+    SMTP_START_TLS: bool = True
 
     # Keycloak / SSO (Task 6 — disabled by default)
     KEYCLOAK_ENABLED: bool = False

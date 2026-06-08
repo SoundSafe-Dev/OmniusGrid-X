@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 from typing import Optional, List
-from sqlalchemy import Column, String, DateTime, Boolean, Numeric, JSON, ForeignKey, Text, BigInteger, Integer, ARRAY, Date, UUID
+from sqlalchemy import Column, String, DateTime, Boolean, Numeric, JSON, ForeignKey, Text, BigInteger, Integer, ARRAY, Date, UUID, UniqueConstraint
 from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
@@ -963,6 +963,74 @@ class AuditLog(Base):
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
 
+class ExportTemplate(Base):
+    """Reusable, tenant-owned export configuration."""
+    __tablename__ = "export_templates"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "name", name="uq_export_templates_org_name"),
+    )
+
+    id = UUIDColumn()
+    organization_id = UUIDForeignKey("organizations.id")
+    name = Column(String(255), nullable=False)
+    description = Column(Text)
+    export_type = Column(String(50), nullable=False)
+    export_format = Column(String(10), nullable=False)
+    columns = Column(JSON, default=list, nullable=False)
+    filters = Column(JSON, default=dict, nullable=False)
+    created_by = UUIDForeignKey("users.id", nullable=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class ScheduledExport(Base):
+    """Persisted schedule definition for durable report delivery."""
+    __tablename__ = "scheduled_exports"
+
+    id = UUIDColumn()
+    organization_id = UUIDForeignKey("organizations.id")
+    template_id = UUIDForeignKey("export_templates.id")
+    name = Column(String(255), nullable=False)
+    frequency = Column(String(20), nullable=False)
+    timezone = Column(String(100), nullable=False, default="UTC")
+    next_run_at = Column(DateTime(timezone=True), nullable=False)
+    recipients = Column(JSON, default=list, nullable=False)
+    is_active = Column(Boolean, nullable=False, default=False)
+    last_run_at = Column(DateTime(timezone=True))
+    last_status = Column(String(50), default="never_run")
+    created_by = UUIDForeignKey("users.id", nullable=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class ExportDeliveryJob(Base):
+    """Transactional outbox record consumed by the Redpanda export worker."""
+    __tablename__ = "export_delivery_jobs"
+    __table_args__ = (
+        UniqueConstraint(
+            "schedule_id", "scheduled_for",
+            name="uq_export_delivery_jobs_schedule_run",
+        ),
+    )
+
+    id = UUIDColumn()
+    organization_id = UUIDForeignKey("organizations.id")
+    schedule_id = UUIDForeignKey("scheduled_exports.id")
+    template_id = UUIDForeignKey("export_templates.id")
+    requested_by = UUIDForeignKey("users.id", nullable=True)
+    scheduled_for = Column(DateTime(timezone=True), nullable=False)
+    status = Column(String(30), nullable=False, default="queued")
+    attempts = Column(Integer, nullable=False, default=0)
+    file_path = Column(Text)
+    filename = Column(String(255))
+    error = Column(Text)
+    published_at = Column(DateTime(timezone=True))
+    started_at = Column(DateTime(timezone=True))
+    completed_at = Column(DateTime(timezone=True))
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
 class APIKey(Base):
     """API keys for external integrations"""
     __tablename__ = "api_keys"
@@ -1121,4 +1189,3 @@ class DataResidencyTag(Base):
     tagged_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     tagged_by = UUIDForeignKey("users.id", nullable=True)
     meta_data = Column(JSON, default={})
-

@@ -38,8 +38,15 @@ faker==20.1.0
 # Profiling (Task 2 — per-request memory tracking; optional, code degrades gracefully if absent)
 psutil==5.9.8
 
+# Data export (Task 5 — Excel + PDF report generation; CSV uses the stdlib)
+openpyxl==3.1.2
+reportlab==4.0.9
+aiosmtplib==3.0.1
+
 # Testing (Task 5 — tenant isolation integration tests)
 pytest==7.4.4
 pytest-asyncio==0.23.3
 testcontainers[postgres]==3.7.1
 sqlparse==0.4.4
+# Used by the focused unit tests (feature flags) to run without a live Redis.
+fakeredis==2.36.1
