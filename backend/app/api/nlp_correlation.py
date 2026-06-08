@@ -1035,7 +1035,14 @@ async def upload_to_intake(
         "file_name": intake_item.file_name,
         "status": intake_item.status,
         "created_at": intake_item.created_at.isoformat(),
-        "analyzed_at": intake_item.analyzed_at.isoformat() if intake_item.analyzed_at else None
+        "analyzed_at": intake_item.analyzed_at.isoformat() if intake_item.analyzed_at else None,
+        # Processing-time estimate so the UI can prompt the user before analysis.
+        "estimated_seconds": processed_data.get("estimated_seconds"),
+        "requires_confirmation": processed_data.get("requires_confirmation", False),
+        "tab_count": processed_data.get("tab_count"),
+        "page_count": processed_data.get("page_count"),
+        "section_count": processed_data.get("section_count"),
+        "truncated": processed_data.get("truncated", False),
     }
 
 
@@ -1077,36 +1084,47 @@ async def analyze_intake(
     if not item:
         raise HTTPException(status_code=404, detail="Intake item not found")
 
-    # Spreadsheet/workbook path: build scenarios from the actual tabs
-    if item.data_type == "spreadsheet" and item.file_content:
-        try:
+    # Route by data type: each path builds cross-linked scenarios and runs the
+    # correlation AI engine over every scenario (full coverage).
+    try:
+        if item.data_type == "spreadsheet" and item.file_content:
             analysis_result = await _analyze_spreadsheet_item(
                 item, query, auto_integrate, mode, db, current_user
             )
-        except Exception as e:
-            logger.error("intake_spreadsheet_analysis_failed", error=str(e), intake_id=str(intake_id))
-            item.status = "error"
-            item.analysis_result = {"error": str(e)}
-            await db.commit()
-            raise HTTPException(status_code=500, detail=f"Analysis failed: {e}")
-    else:
-        # Non-spreadsheet: fall back to NLP query over a default/explicit prompt
-        default_query = query or (
-            f"Analyze the uploaded {item.data_type} '{item.title}' for operational "
-            f"anomalies and correlations"
-        )
-        nlp_request = NLPQueryRequest(query=default_query, auto_integrate=auto_integrate)
-        response = await nlp_query(nlp_request, None, db, current_user)
-        analysis_result = {
-            "intake_id": str(intake_id),
-            "analysis": response.analysis,
-            "risk_score": response.risk_score,
-            "domains_analyzed": response.domains_analyzed,
-            "recommended_actions": response.recommended_actions,
-            "kanban_tasks": response.kanban_tasks,
-            "compliance_implications": response.compliance_implications,
-            "integration_result": response.integration_result,
-        }
+        elif item.data_type in ("report", "document") and item.file_content:
+            analysis_result = await _analyze_document_item(
+                item, query, auto_integrate, mode, db, current_user
+            )
+        elif item.data_type == "image" and item.file_content:
+            analysis_result = await _analyze_image_item(
+                item, query, auto_integrate, mode, db, current_user
+            )
+        else:
+            # Last-resort: NLP query over a default/explicit prompt.
+            default_query = query or (
+                f"Analyze the uploaded {item.data_type} '{item.title}' for operational "
+                f"anomalies and correlations"
+            )
+            nlp_request = NLPQueryRequest(query=default_query, auto_integrate=auto_integrate)
+            response = await nlp_query(nlp_request, None, db, current_user)
+            analysis_result = {
+                "intake_id": str(intake_id),
+                "analysis": response.analysis,
+                "risk_score": response.risk_score,
+                "domains_analyzed": response.domains_analyzed,
+                "recommended_actions": response.recommended_actions,
+                "kanban_tasks": response.kanban_tasks,
+                "compliance_implications": response.compliance_implications,
+                "integration_result": response.integration_result,
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("intake_analysis_failed", error=str(e), intake_id=str(intake_id))
+        item.status = "error"
+        item.analysis_result = {"error": str(e)}
+        await db.commit()
+        raise HTTPException(status_code=500, detail=f"Analysis failed: {e}")
 
     # Persist results on the intake item
     item.analysis_result = analysis_result
@@ -1215,6 +1233,340 @@ async def _analyze_spreadsheet_item(
         "kanban_tasks": kanban_tasks[:20],
         "compliance_implications": compliance or None,
         "scenario_samples": per_scenario,
+    }
+
+
+async def _run_scenarios(
+    scenarios,
+    db: AsyncSession,
+    current_user: User,
+    sample_cap: int = 100,
+) -> Dict[str, Any]:
+    """Run the correlation AI engine over an iterable of scenarios and aggregate.
+
+    Shared by spreadsheet/document/image/cross-file analyzers.
+    """
+    domains_seen: List[str] = []
+    risk_scores: List[float] = []
+    kanban_tasks: List[Dict[str, Any]] = []
+    commands: List[Dict[str, Any]] = []
+    compliance: List[str] = []
+    cross_links = 0
+    scenario_count = 0
+    per_scenario: List[Dict[str, Any]] = []
+
+    for scenario in scenarios:
+        scenario_count += 1
+        if len(scenario.active_domains) >= 2:
+            cross_links += len(scenario.domain_links)
+        analysis = await correlation_ai_engine.analyze_scenario(
+            scenario,
+            db,
+            organization_id=current_user.organization_id,
+            user_id=current_user.id,
+            auto_integrate=False,
+        )
+        for d in scenario.active_domains:
+            if d.value not in domains_seen:
+                domains_seen.append(d.value)
+        risk_scores.append(analysis.get("risk_score", 0.0))
+        for t in (analysis.get("target_kanban_tasks") or []):
+            if t not in kanban_tasks:
+                kanban_tasks.append(t)
+        for c in (analysis.get("remediation_commands") or []):
+            if c not in commands:
+                commands.append(c)
+        for ci in (analysis.get("compliance_implications") or []):
+            if ci not in compliance:
+                compliance.append(ci)
+        if len(per_scenario) < sample_cap:
+            per_scenario.append({
+                "scenario_id": scenario.scenario_id,
+                "domains": [d.value for d in scenario.active_domains],
+                "risk_score": analysis.get("risk_score"),
+                "root_cause": analysis.get("predicted_root_cause"),
+            })
+
+    return {
+        "scenario_count": scenario_count,
+        "cross_links": cross_links,
+        "domains_seen": domains_seen,
+        "risk_score": round(max(risk_scores), 1) if risk_scores else 0.0,
+        "kanban_tasks": kanban_tasks,
+        "commands": commands,
+        "compliance": compliance,
+        "per_scenario": per_scenario,
+    }
+
+
+async def _analyze_document_item(
+    item: "IntakeItemModel",
+    query: Optional[str],
+    auto_integrate: bool,
+    mode: str,
+    db: AsyncSession,
+    current_user: User,
+) -> Dict[str, Any]:
+    """Parse a stored PDF/DOCX/text document and run cross-section correlation."""
+    import base64
+    from app.services.document_domain_mapper import map_document_domains
+    from app.services import document_scenario_builder
+
+    content = base64.b64decode(item.file_content)
+    filename = (item.file_name or "document").lower()
+
+    if filename.endswith(".pdf"):
+        from app.services.pdf_parser import parse_pdf_structure
+        structure = parse_pdf_structure(content, item.file_name)
+    elif filename.endswith((".docx", ".doc")):
+        from app.services.docx_parser import parse_docx_structure
+        structure = parse_docx_structure(content, item.file_name)
+    else:
+        # Plain text: wrap as a single section.
+        text = content.decode("utf-8", errors="replace")
+        structure = {
+            "type": item.data_type,
+            "sections": [{"section_id": 0, "heading": item.title, "level": 0,
+                          "paragraphs": text.split("\n"), "tables": []}],
+            "shared_keys": (item.processed_data or {}).get("shared_keys", []),
+        }
+
+    mapping = map_document_domains(structure)
+    # Section/page mode is the document default; reuse provided mode if valid.
+    doc_mode = mode if mode in ("section", "document", "table") else "section"
+    source_id = f"intake-{item.id}"
+    scenarios = document_scenario_builder.build_scenarios(
+        structure, mapping=mapping, mode=doc_mode, source_id=source_id,
+    )
+    agg = await _run_scenarios(scenarios, db, current_user)
+
+    unit = "pages" if structure.get("pages") is not None else "sections"
+    count = structure.get("page_count", structure.get("section_count", 0))
+    summary_text = (
+        f"Analyzed {agg['scenario_count']} cross-{unit[:-1]} scenarios across "
+        f"{len(agg['domains_seen'])} domains "
+        f"({', '.join(agg['domains_seen']) or 'none'}). "
+        f"{agg['cross_links']} cross-domain links detected across {count} {unit}. "
+        f"Peak risk score {agg['risk_score']}/100."
+    )
+    return {
+        "intake_id": str(item.id),
+        "analysis": summary_text,
+        "mode": doc_mode,
+        "document_type": structure.get("subtype"),
+        f"{unit}_count": count,
+        "truncated": structure.get("truncated", False),
+        "section_domain_mapping": mapping.to_dict(),
+        "scenarios_analyzed": agg["scenario_count"],
+        "cross_domain_links": agg["cross_links"],
+        "domains_analyzed": agg["domains_seen"],
+        "shared_keys": structure.get("shared_keys", []),
+        "risk_score": agg["risk_score"],
+        "recommended_actions": agg["commands"][:20],
+        "kanban_tasks": agg["kanban_tasks"][:20],
+        "compliance_implications": agg["compliance"] or None,
+        "scenario_samples": agg["per_scenario"],
+    }
+
+
+async def _analyze_image_item(
+    item: "IntakeItemModel",
+    query: Optional[str],
+    auto_integrate: bool,
+    mode: str,
+    db: AsyncSession,
+    current_user: User,
+) -> Dict[str, Any]:
+    """Extract text from a stored image and run correlation on it."""
+    import base64
+    from app.services.image_text_extractor import extract_text_from_image
+    from app.services.image_domain_mapper import map_image_domains
+    from app.services import image_scenario_builder
+
+    content = base64.b64decode(item.file_content)
+    # Prefer cached extraction from upload; re-extract if absent.
+    processed = item.processed_data or {}
+    if processed.get("extracted_text"):
+        extraction = dict(processed)
+    else:
+        extraction = extract_text_from_image(content, item.file_name or "image.png")
+    extraction.setdefault("image_id", str(item.id))
+    extractions = [extraction]
+
+    mapping = map_image_domains(extractions)
+    img_mode = mode if mode in ("image", "batch") else "image"
+    source_id = f"intake-{item.id}"
+    scenarios = image_scenario_builder.build_scenarios(
+        extractions, mapping=mapping, mode=img_mode, source_id=source_id,
+    )
+    agg = await _run_scenarios(scenarios, db, current_user)
+
+    note = extraction.get("note")
+    summary_text = (
+        f"Analyzed image '{item.title}' via {extraction.get('extraction_method', 'none')}. "
+        f"{agg['scenario_count']} scenario(s), domains "
+        f"({', '.join(agg['domains_seen']) or 'none'}). "
+        f"Peak risk score {agg['risk_score']}/100."
+    )
+    if note:
+        summary_text += f" Note: {note}"
+
+    return {
+        "intake_id": str(item.id),
+        "analysis": summary_text,
+        "mode": img_mode,
+        "extraction_method": extraction.get("extraction_method"),
+        "extracted_text_chars": len(extraction.get("extracted_text", "")),
+        "image_domain_mapping": mapping.to_dict(),
+        "scenarios_analyzed": agg["scenario_count"],
+        "cross_domain_links": agg["cross_links"],
+        "domains_analyzed": agg["domains_seen"],
+        "shared_keys": extraction.get("shared_keys", []),
+        "risk_score": agg["risk_score"],
+        "recommended_actions": agg["commands"][:20],
+        "kanban_tasks": agg["kanban_tasks"][:20],
+        "compliance_implications": agg["compliance"] or None,
+        "scenario_samples": agg["per_scenario"],
+    }
+
+
+def build_source_descriptor(
+    source_id: str,
+    data_type: str,
+    file_name: Optional[str],
+    processed_data: Optional[Dict[str, Any]],
+    title: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Derive a {source_id, data_type, file_name, domains, keys, summary} descriptor
+    from any source's processed_data, for cross-file correlation. Reused by both
+    Intake items and session data sources."""
+    from app.services.shared_key_detector import (
+        extract_keys_from_filename, extract_keys_from_records,
+    )
+    processed = processed_data or {}
+    domains: List[str] = []
+    keys: List[str] = list(processed.get("shared_keys") or [])
+    keys.extend(extract_keys_from_filename(file_name))
+
+    if data_type == "spreadsheet":
+        from app.services.spreadsheet_domain_mapper import map_workbook_domains
+        tabs = processed.get("tabs") or []
+        tab_columns = {t.get("name", f"tab{i}"): t.get("column_names", [])
+                       for i, t in enumerate(tabs)}
+        if tab_columns:
+            mapping = map_workbook_domains(tab_columns)
+            domains = [d.value for d in mapping.active_domains]
+        for t in tabs:
+            keys.extend(extract_keys_from_records(t.get("sample_data") or []))
+    elif data_type in ("report", "document"):
+        from app.services.document_domain_mapper import (
+            map_document_domains, map_section_to_domain,
+        )
+        mapping = map_document_domains(processed)
+        domains = [d.value for d in mapping.active_domains]
+        if not domains and processed.get("content"):
+            d = map_section_to_domain({"text": processed.get("content")})
+            if d:
+                domains = [d.value]
+    elif data_type == "image":
+        from app.services.image_domain_mapper import map_image_to_domain
+        d = map_image_to_domain(processed.get("extracted_text", ""), processed.get("metadata"))
+        if d:
+            domains = [d.value]
+
+    return {
+        "source_id": str(source_id),
+        "data_type": data_type,
+        "file_name": file_name,
+        "domains": domains,
+        "keys": list(dict.fromkeys([k for k in keys if k])),
+        "summary": {"title": title or file_name, "data_type": data_type},
+    }
+
+
+def _source_descriptor_from_item(item: "IntakeItemModel") -> Dict[str, Any]:
+    """Cross-file source descriptor for a stored Intake item."""
+    return build_source_descriptor(
+        str(item.id), item.data_type, item.file_name, item.processed_data, item.title,
+    )
+
+
+class CrossCorrelationRequest(BaseModel):
+    """Request to correlate multiple intake items across files."""
+    intake_ids: List[UUID] = Field(..., description="Intake item IDs to correlate")
+    shared_keys: Optional[List[str]] = Field(
+        None, description="Manual shared keys (merged with auto-detected keys)")
+    auto_integrate: bool = Field(default=True)
+
+
+@router.post("/intake/cross-correlate")
+async def cross_correlate_intake(
+    request: CrossCorrelationRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Correlate MULTIPLE intake items (PDF, DOCX, image, spreadsheet) across files.
+
+    1. Loads each intake item the user owns
+    2. Derives per-source domains + shared keys (filename, metadata, content)
+    3. Auto-detects correlation groups (optionally forced by manual shared_keys)
+    4. Builds cross-file CorrelationScenarios linking sources by shared keys
+    5. Runs the correlation AI engine over every group and aggregates findings
+    """
+    from app.services.cross_file_scenario_builder import build_cross_file_scenarios
+
+    logger.info("intake_cross_correlate", user_id=str(current_user.id),
+                count=len(request.intake_ids))
+
+    result = await db.execute(
+        select(IntakeItemModel).where(
+            IntakeItemModel.id.in_(request.intake_ids),
+            IntakeItemModel.user_id == current_user.id,
+        )
+    )
+    items = result.scalars().all()
+    if len(items) < 2:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide at least 2 owned intake items to cross-correlate",
+        )
+
+    descriptors = [_source_descriptor_from_item(it) for it in items]
+    scenarios = build_cross_file_scenarios(
+        descriptors, manual_keys=request.shared_keys, source_id="cross-file",
+    )
+    agg = await _run_scenarios(scenarios, db, current_user)
+
+    summary_text = (
+        f"Cross-correlated {len(items)} files into {agg['scenario_count']} group(s) "
+        f"across {len(agg['domains_seen'])} domains "
+        f"({', '.join(agg['domains_seen']) or 'none'}). "
+        f"{agg['cross_links']} cross-domain links detected. "
+        f"Peak risk score {agg['risk_score']}/100."
+    )
+    if agg["scenario_count"] == 0:
+        summary_text = (
+            f"No shared keys linked the {len(items)} files. Provide manual "
+            f"shared_keys to force correlation, or verify the files reference "
+            f"common identifiers (asset_id, order number, date, etc.)."
+        )
+
+    return {
+        "intake_ids": [str(it.id) for it in items],
+        "analysis": summary_text,
+        "files": [{"source_id": d["source_id"], "file_name": d["file_name"],
+                   "data_type": d["data_type"], "domains": d["domains"],
+                   "keys": d["keys"]} for d in descriptors],
+        "manual_shared_keys": request.shared_keys or [],
+        "correlation_groups": agg["scenario_count"],
+        "cross_domain_links": agg["cross_links"],
+        "domains_analyzed": agg["domains_seen"],
+        "risk_score": agg["risk_score"],
+        "recommended_actions": agg["commands"][:20],
+        "kanban_tasks": agg["kanban_tasks"][:20],
+        "compliance_implications": agg["compliance"] or None,
+        "scenario_samples": agg["per_scenario"],
     }
 
 
@@ -1442,23 +1794,38 @@ async def _process_uploaded_file(content: bytes, data_type: str, filename: str) 
             }
         
         elif data_type == "image":
-            # For image files - extract text if possible (OCR)
-            # This would require integration with OCR service
-            return {
-                "type": "image",
-                "size": len(content),
-                "format": filename.split('.')[-1],
-                "note": "Image processing requires vision model integration"
-            }
-        
+            # Vision-model text extraction (Gemma/Gemini) with graceful fallback.
+            from app.services.image_text_extractor import extract_text_from_image
+            extraction = extract_text_from_image(content, filename or "image.png")
+            extraction["size"] = len(content)
+            return extraction
+
         elif data_type in ["report", "document"]:
-            # For text documents
-            text_content = content.decode('utf-8')
+            lower = (filename or "").lower()
+            if lower.endswith(".pdf"):
+                from app.services.pdf_parser import parse_pdf_structure
+                structure = parse_pdf_structure(content, filename)
+                structure["size"] = len(content)
+                return structure
+            if lower.endswith((".docx", ".doc")):
+                from app.services.docx_parser import parse_docx_structure
+                structure = parse_docx_structure(content, filename)
+                structure["size"] = len(content)
+                return structure
+            # Plain-text document: keep simple content + shared keys.
+            from app.services.shared_key_detector import (
+                extract_keys_from_text, extract_keys_from_filename,
+            )
+            text_content = content.decode("utf-8", errors="replace")
+            keys = extract_keys_from_filename(filename) + extract_keys_from_text(text_content)
             return {
                 "type": data_type,
+                "subtype": "text",
                 "size": len(content),
                 "content": text_content,
-                "word_count": len(text_content.split())
+                "word_count": len(text_content.split()),
+                "shared_keys": list(dict.fromkeys([k for k in keys if k])),
+                "estimated_seconds": round(max(len(text_content) / 50000, 0.2), 1),
             }
         
         else:

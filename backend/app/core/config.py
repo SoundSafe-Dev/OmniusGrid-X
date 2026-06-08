@@ -60,6 +60,12 @@ class Settings(BaseSettings):
     CORRELATION_ADAPTER_PATH: str = "./checkpoints/best_lora_v2"
     CORRELATION_MAX_NEW_TOKENS: int = 512
     CORRELATION_TEMPERATURE: float = 0.2
+
+    # Vision / image text extraction (Gemma multimodal or Gemini fallback)
+    VISION_MODEL_ENABLED: bool = False
+    VISION_MODEL_PROVIDER: str = "gemini"  # "gemini" | "gemma"
+    VISION_MODEL_NAME: str = "gemini-1.5-flash"
+    VISION_MAX_IMAGE_BYTES: int = 5 * 1024 * 1024  # prompt user above this
     
     # Edge
     EDGE_NODE_ID: str = "edge-001"

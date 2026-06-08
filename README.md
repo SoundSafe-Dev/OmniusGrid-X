@@ -598,6 +598,13 @@ The Intake Inbox provides a centralized location for uploading operational data 
 - **Multi-Format Upload**: Supports spreadsheets (CSV, Excel), reports (PDF, Word), images (PNG, JPG), and documents (Text, Markdown)
 - **Multi-Tab Workbook Support**: Parses **every tab** of an Excel workbook (not just the first sheet) and maps each tab to one of the 47 operational domains
 - **Cross-Tab Correlation**: Builds cross-tab-linked correlation scenarios so the AI can discover correlations *between* tabs (e.g., a maintenance vibration spike correlated with a quality defect cluster on the same shift)
+- **Document Structure Extraction**: Multi-page PDF and DOCX parsing with header hierarchy, table extraction, and text block analysis
+- **Image Text Extraction**: Vision model integration (Google Gemini) for extracting text from images with metadata
+- **Cross-File Correlation**: Link multiple intake items by shared keys (asset IDs, order numbers, dates) for cross-file analysis
+- **Shared Key Detection**: Auto-detects shared keys from filenames, metadata, and content with normalization
+- **Domain Mapping**: Maps document sections and image content to operational domains (PROD, LOG, MNT, QUA, SAF, etc.)
+- **Scenario Builders**: Multiple modes (section, document, table, image, batch) for scenario generation
+- **Processing Time Estimates**: Provides estimated processing time based on document type and size
 - **Automatic Type Detection**: File type auto-detection based on extension
 - **Data Processing**: Extracts and processes data from uploaded files for AI analysis
 - **AI Analysis**: Correlation AI analyzes uploaded data and provides insights
@@ -610,8 +617,9 @@ The Intake Inbox provides a centralized location for uploading operational data 
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/v1/nlp/correlation/intake/upload` | Upload data file to Intake Inbox (parses all workbook tabs) |
-| POST | `/api/v1/nlp/correlation/intake/analyze` | Analyze uploaded data with correlation AI (supports `mode=window\|tab\|row`) |
+| POST | `/api/v1/nlp/correlation/intake/upload` | Upload data file to Intake Inbox (parses all workbook tabs, PDFs, DOCX, images) |
+| POST | `/api/v1/nlp/correlation/intake/analyze` | Analyze uploaded data with correlation AI (supports `mode=section\|document\|table\|image\|batch`) |
+| POST | `/api/v1/nlp/correlation/intake/cross-correlate` | Correlate multiple intake items by shared keys |
 | GET | `/api/v1/nlp/correlation/intake/list` | List intake items with pagination and filtering |
 | GET | `/api/v1/nlp/correlation/intake/{id}` | Get specific intake item details |
 
@@ -642,12 +650,18 @@ The IntakeInbox page (`/intake`) provides:
 **Analysis Workflow:**
 
 1. User uploads file with title and description
-2. System auto-detects file type and **parses every tab** of the workbook
-3. Status set to "pending" initially
-4. User triggers AI analysis
-5. Each tab is mapped to an operational domain; cross-tab scenarios are built and analyzed by the correlation AI
-6. Status updated to "analyzed" with combined results
-7. Results include peak risk score, all domains, per-tab mapping, cross-domain link counts, and recommended actions
+2. System auto-detects file type and processes accordingly:
+   - **Spreadsheets**: Parses every tab of the workbook
+   - **PDFs**: Extracts pages, headers, tables, and text blocks
+   - **DOCX**: Extracts heading hierarchy, sections, and tables
+   - **Images**: Extracts text using vision model with metadata
+3. Shared keys auto-detected from filename, metadata, and content
+4. Document sections/image content mapped to operational domains
+5. Status set to "pending" initially
+6. User triggers AI analysis with mode selection (section/document/table/image/batch)
+7. Scenarios built and analyzed by correlation AI
+8. Status updated to "analyzed" with combined results
+9. Results include peak risk score, all domains, structure counts, cross-domain link counts, and recommended actions
 
 ### Cross-Tab Workbook Correlation
 
@@ -667,14 +681,87 @@ every sheet, maps each tab to one of the 47 `DomainType` operational domains, an
 
 | Mode | Behavior | Use case |
 |------|----------|----------|
-| `window` (default) | One scenario per shared `date`(+`shift`) window across all tabs; full coverage | Cross-tab/cross-domain correlation discovery |
-| `tab` | One scenario for the whole workbook; `active_domains` = all tabs | Fast, coarse overview |
-| `row` | One scenario per row (capped) | Fine-grained, single-domain triage |
+| `section` (documents) | One scenario per document section | Fine-grained document analysis |
+| `document` (documents) | One scenario for entire document | Document-level overview |
+| `table` (documents/spreadsheets) | One scenario per table | Table-specific analysis |
+| `image` (images) | One scenario per image | Per-image analysis |
+| `batch` (images) | One scenario for all images | Batch image analysis |
+| `window` (spreadsheets) | One scenario per shared `date`(+`shift`) window across all tabs | Cross-tab/cross-domain correlation discovery |
+| `tab` (spreadsheets) | One scenario for the whole workbook; `active_domains` = all tabs | Fast, coarse overview |
+| `row` (spreadsheets) | One scenario per row (capped) | Fine-grained, single-domain triage |
 
 **Stress-test dataset:** A generator under `dataset_synthesis/` produces 100 companies × 10
 fiscal years (1,000 multi-tab workbooks) with shared keys and clustered, co-timed anomalies,
 plus OmniusGrid-native compatibility outputs (`CorrelationScenario` JSONL, long-format
 telemetry, per-tab CSV). See `dataset_synthesis/README.md`.
+
+### Intake Cross-Correlation Enhancement
+
+The Intake Cross-Correlation enhancement extends the intake system to support comprehensive cross-correlation across various document types, including multi-page PDFs, DOCX documents, images, and multi-tab spreadsheets. This feature enables linking data across files by shared keys and running correlation AI analysis across domains.
+
+**New Services:**
+
+- **PDF Parser** (`backend/app/services/pdf_parser.py`): Extracts structure (pages, headers, tables, text blocks, metadata) from PDF files using `pdfplumber` and `PyPDF2`
+- **DOCX Parser** (`backend/app/services/docx_parser.py`): Extracts heading hierarchy, sections, tables, and metadata from DOCX files using `python-docx`
+- **Image Text Extractor** (`backend/app/services/image_text_extractor.py`): Extracts text from images using Google Gemini multimodal vision model
+- **Shared Key Detector** (`backend/app/services/shared_key_detector.py`): Extracts and normalizes shared keys from text, filenames, metadata, and structured records
+- **Document Domain Mapper** (`backend/app/services/document_domain_mapper.py`): Maps document sections to operational domains based on header, table content, and body text keyword matching
+- **Image Domain Mapper** (`backend/app/services/image_domain_mapper.py`): Maps image text and metadata to domains with image-specific keywords
+- **Document Scenario Builder** (`backend/app/services/document_scenario_builder.py`): Converts parsed document structures into CorrelationScenario objects (section, document, table modes)
+- **Image Scenario Builder** (`backend/app/services/image_scenario_builder.py`): Converts image extractions into scenarios (image, batch modes)
+- **Cross-File Scenario Builder** (`backend/app/services/cross_file_scenario_builder.py`): Builds scenarios linking multiple intake items/data sources by shared keys
+
+**New API Endpoints:**
+
+- `POST /api/v1/nlp/correlation/intake/cross-correlate`: Correlate arbitrary intake items by shared keys
+- `POST /api/v1/nlp/sessions/{id}/correlate`: Correlate all session data sources by shared keys
+
+**Database Schema Changes:**
+
+Migration `012_intake_cross_correlation.sql` adds:
+- `shared_keys` JSON column to `intake_items` and `session_data_sources`
+- `structure_metadata` JSON column for document structure info
+- `processing_time_seconds` INTEGER for actual processing time
+- GIN indexes on `shared_keys` for fast lookups
+
+**Configuration:**
+
+New vision model configuration in `backend/app/core/config.py`:
+- `VISION_MODEL_ENABLED`: Enable/disable image text extraction
+- `VISION_MODEL_PROVIDER`: Vision model provider (gemini)
+- `VISION_MODEL_NAME`: Model name (gemini-1.5-pro)
+- `VISION_MAX_IMAGE_BYTES`: Max image size (10MB default)
+
+**Dependencies:**
+
+Added to `backend/requirements.txt`:
+- `pdfplumber`: PDF structure extraction
+- `PyPDF2`: PDF metadata extraction
+- `python-docx`: DOCX parsing
+- `Pillow`: Image processing
+- `google-generativeai`: Gemini vision model
+
+**Testing:**
+
+Unit tests created in `backend/tests/`:
+- `test_shared_key_detector.py`
+- `test_document_domain_mapper.py`
+- `test_image_domain_mapper.py`
+- `test_document_scenario_builder.py`
+- `test_image_scenario_builder.py`
+- `test_cross_file_scenario_builder.py`
+
+**Documentation:**
+
+Comprehensive documentation in `docs/INTAKE_CROSS_CORRELATION.md` covering:
+- Architecture overview
+- API usage examples
+- Shared key detection
+- Domain mapping
+- Scenario building modes
+- Configuration
+- Database migration
+- Testing guidelines
 
 ### NLP Analysis Sessions
 
@@ -701,9 +788,10 @@ The NLP Analysis Sessions feature provides a comprehensive session-based interfa
 | DELETE | `/api/v1/nlp/sessions/{id}` | Delete session |
 | POST | `/api/v1/nlp/sessions/{id}/resume` | Resume a session |
 | POST | `/api/v1/nlp/sessions/{id}/data/intake` | Add data from Intake Inbox |
-| POST | `/api/v1/nlp/sessions/{id}/data/upload` | Upload new data to session |
+| POST | `/api/v1/nlp/sessions/{id}/data/upload` | Upload new data to session (supports PDF, DOCX, images) |
 | GET | `/api/v1/nlp/sessions/{id}/data` | List session data sources |
 | DELETE | `/api/v1/nlp/sessions/{id}/data/{source_id}` | Remove data source |
+| POST | `/api/v1/nlp/sessions/{id}/correlate` | Correlate all session data sources by shared keys |
 | POST | `/api/v1/nlp/sessions/{id}/chat` | Send message in session context |
 | GET | `/api/v1/nlp/sessions/{id}/messages` | Get session messages |
 | POST | `/api/v1/nlp/sessions/{id}/generate-title` | Generate session title from context |
@@ -748,10 +836,21 @@ Three methods to add data to sessions:
 **Session Context:**
 
 The correlation AI uses the following context when analyzing queries:
-- **Data Sources**: All data sources added to the session (file names, types, processed data)
+- **Data Sources**: All data sources added to the session (file names, types, processed data, shared keys, domains)
 - **Conversation History**: Previous messages in the session (last 10 messages)
 - **User Context**: User role, department, priorities (from context snapshot)
 - **User Goals**: Active goals and targets (from goals snapshot)
+
+**Session Cross-Correlation:**
+
+Sessions support cross-file correlation across all data sources:
+- **Auto-Detection**: Automatically detects shared keys across all session data sources
+- **Manual Override**: Users can specify manual shared keys to force correlation
+- **Correlation Groups**: Groups data sources by shared keys for cross-file analysis
+- **Domain Aggregation**: Aggregates domains across all correlated sources
+- **Risk Scoring**: Calculates peak risk score across correlation groups
+- **AI Analysis**: Runs correlation AI on each correlation group
+- **Results**: Returns correlation groups, cross-domain links, domains analyzed, and recommended actions
 
 **Auto-Title Generation:**
 
@@ -1728,6 +1827,7 @@ The ERP integration system correlates ERP data with operational telemetry to pro
 ## Documentation
 
 - [OmniusGrid Glossary](OMNIUSGRID_GLOSSARY.md) - Backend & Frontend combined terminology reference (400+ terms)
+- [Intake Cross-Correlation](docs/INTAKE_CROSS_CORRELATION.md) - PDF/DOCX/image parsing, shared key detection, cross-file correlation
 - [Correlation AI Engine](docs/CORRELATION_AI_ENGINE.md) - Cross-domain AI analysis, synthetic data generation, and Gemma 4 fine-tuning
 - [Hybrid Architecture](docs/HYBRID_ARCHITECTURE.md) - Human-in-the-Loop + Lights Out modes
 - [Gold Standard Architecture](docs/GOLD_STANDARD_ARCHITECTURE.md) - Edge AI + Cloud Training

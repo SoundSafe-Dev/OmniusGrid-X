@@ -16,8 +16,9 @@ import structlog
 from app.db.database import get_db
 from app.api.auth import get_current_active_user
 from app.db.models import User, AnalysisSession, SessionDataSource, SessionMessage, IntakeItem
-from app.api.nlp_correlation import _process_uploaded_file
+from app.api.nlp_correlation import _process_uploaded_file, build_source_descriptor, _run_scenarios
 from app.services.correlation_ai_engine import correlation_ai_engine
+from app.services.cross_file_scenario_builder import build_cross_file_scenarios
 
 logger = structlog.get_logger()
 
@@ -819,6 +820,87 @@ async def list_session_data(
     ]
 
 
+class SessionCorrelationRequest(BaseModel):
+    """Request to correlate all data sources in a session."""
+    shared_keys: Optional[List[str]] = Field(
+        None, description="Manual shared keys (merged with auto-detected keys)")
+    auto_integrate: bool = Field(default=True)
+
+
+@router.post("/{session_id}/correlate")
+async def correlate_session(
+    session_id: UUID,
+    request: SessionCorrelationRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Correlate ALL data sources in an analysis session across files.
+
+    1. Loads all SessionDataSource entries for the session
+    2. Derives per-source domains + shared keys from processed_data
+    3. Auto-detects correlation groups (optionally forced by manual shared_keys)
+    4. Builds cross-file CorrelationScenarios linking sources by shared keys
+    5. Runs the correlation AI engine over every group and aggregates findings
+    """
+    logger.info("session_correlate", user_id=str(current_user.id), session_id=str(session_id))
+
+    session_id_str = _session_id_str(session_id)
+    session = await _get_analysis_session(db, session_id, current_user)
+
+    ds_query = select(SessionDataSource).where(SessionDataSource.session_id == session_id_str)
+    ds_result = await db.execute(ds_query)
+    data_sources = ds_result.scalars().all()
+
+    if len(data_sources) < 2:
+        raise HTTPException(
+            status_code=400,
+            detail="Add at least 2 data sources to the session before correlating",
+        )
+
+    descriptors = [
+        build_source_descriptor(
+            str(ds.id), ds.data_type, ds.file_name, ds.processed_data, ds.file_name,
+        )
+        for ds in data_sources
+    ]
+    scenarios = build_cross_file_scenarios(
+        descriptors, manual_keys=request.shared_keys, source_id=f"session-{session_id}",
+    )
+    agg = await _run_scenarios(scenarios, db, current_user)
+
+    summary_text = (
+        f"Correlated {len(data_sources)} session data sources into {agg['scenario_count']} group(s) "
+        f"across {len(agg['domains_seen'])} domains "
+        f"({', '.join(agg['domains_seen']) or 'none'}). "
+        f"{agg['cross_links']} cross-domain links detected. "
+        f"Peak risk score {agg['risk_score']}/100."
+    )
+    if agg["scenario_count"] == 0:
+        summary_text = (
+            f"No shared keys linked the {len(data_sources)} session data sources. "
+            f"Provide manual shared_keys to force correlation, or verify the sources "
+            f"reference common identifiers (asset_id, order number, date, etc.)."
+        )
+
+    return {
+        "session_id": str(session_id),
+        "analysis": summary_text,
+        "data_sources": [{"source_id": d["source_id"], "file_name": d["file_name"],
+                          "data_type": d["data_type"], "domains": d["domains"],
+                          "keys": d["keys"]} for d in descriptors],
+        "manual_shared_keys": request.shared_keys or [],
+        "correlation_groups": agg["scenario_count"],
+        "cross_domain_links": agg["cross_links"],
+        "domains_analyzed": agg["domains_seen"],
+        "risk_score": agg["risk_score"],
+        "recommended_actions": agg["commands"][:20],
+        "kanban_tasks": agg["kanban_tasks"][:20],
+        "compliance_implications": agg["compliance"] or None,
+        "scenario_samples": agg["per_scenario"],
+    }
+
+
 @router.delete("/{session_id}/data/{source_id}")
 async def remove_data_source(
     session_id: UUID,
@@ -830,11 +912,11 @@ async def remove_data_source(
     Remove a data source from session.
     """
     logger.info("remove_data_source", user_id=str(current_user.id), session_id=str(session_id), source_id=str(source_id))
-    
+
     # Convert UUID to string to ensure proper comparison with String column
     session_id_str = str(session_id)
     source_id_str = str(source_id)
-    
+
     # Verify session ownership
     session_query = select(AnalysisSession).where(
         and_(

@@ -20,6 +20,7 @@
 - [Actionable Registries & Compliance](#actionable-registries--compliance)
 - [Correlation AI Engine](#correlation-ai-engine)
 - [Cross-Tab Workbook Correlation & Intake](#cross-tab-workbook-correlation--intake)
+- [Intake Cross-Correlation Enhancement](#intake-cross-correlation-enhancement)
 - [Frontend Architecture](#frontend-architecture)
 - [Security & Authentication](#security--authentication)
 - [Compliance Frameworks](#compliance-frameworks)
@@ -363,6 +364,46 @@
 | **Stress-Test Dataset** | Synthetic 100-company × 10-fiscal-year corpus (1,000 multi-tab workbooks) with clustered, co-timed anomalies, generated under `dataset_synthesis/` | Backend |
 | **Industry Specialty Tab** | An industry-specific workbook tab (e.g. biogas methane output, t-shirt screen count, tractor engine specs) included per company type | Backend |
 | **Compatibility Outputs** | OmniusGrid-native exports derived from workbooks: per-tab CSV, long-format telemetry, and `CorrelationScenario` JSONL | Backend |
+
+---
+
+## Intake Cross-Correlation Enhancement
+
+| Term | Definition | Backend/Frontend |
+|------|------------|------------------|
+| **PDF Parser** | Service extracting structure (pages, headers, tables, text blocks, metadata) from PDF files using `pdfplumber` and `PyPDF2` | Backend |
+| **DOCX Parser** | Service extracting heading hierarchy, sections, tables, and metadata from DOCX files using `python-docx` | Backend |
+| **Image Text Extractor** | Service extracting text from images using Google Gemini multimodal vision model | Backend |
+| **Shared Key** | Normalized identifier (asset_id, order_number, date) extracted from filename, metadata, or content for cross-file correlation | Backend |
+| **Shared Key Detector** | Service extracting and normalizing shared keys from text, filenames, metadata, and structured records | Backend |
+| **Key Normalization** | Process converting keys to uppercase, replacing underscores/hyphens, trimming whitespace for consistent matching | Backend |
+| **Document Domain Mapper** | Service mapping document sections to operational domains based on header, table content, and body text keyword matching | Backend |
+| **Image Domain Mapper** | Service mapping image text and metadata to domains with image-specific keywords | Backend |
+| **Document Scenario Builder** | Service converting parsed document structures into CorrelationScenario objects (section, document, table modes) | Backend |
+| **Image Scenario Builder** | Service converting image extractions into scenarios (image, batch modes) | Backend |
+| **Cross-File Scenario Builder** | Service building scenarios linking multiple intake items/data sources by shared keys | Backend |
+| **Cross-File Correlation** | Process of linking multiple intake items by shared keys for cross-file analysis | Both |
+| **Section Mode** | Scenario building mode creating one scenario per document section | Backend |
+| **Document Mode** | Scenario building mode creating one scenario for entire document | Backend |
+| **Table Mode** | Scenario building mode creating one scenario per table | Backend |
+| **Image Mode** | Scenario building mode creating one scenario per image | Backend |
+| **Batch Mode** | Scenario building mode creating one scenario for all images | Backend |
+| **Structure Metadata** | JSON field storing document structure info (page_count, section_count, tables, headers) | Backend |
+| **Processing Time Estimate** | Estimated time in seconds to process a document based on type and size | Backend |
+| **Scenario Cap** | Maximum number of scenarios generated for large documents to prevent excessive processing | Backend |
+| **Vision Model** | AI model for image text extraction (Google Gemini) | Backend |
+| **Vision Model Enabled** | Configuration flag to enable/disable image text extraction | Backend |
+| **Vision Model Provider** | Provider of vision model (gemini) | Backend |
+| **Vision Model Name** | Specific model name (gemini-1.5-pro) | Backend |
+| **Max Image Bytes** | Maximum image size in bytes for vision model processing (10MB default) | Backend |
+| **Correlation Group** | Group of data sources linked by shared keys for cross-file analysis | Backend |
+| **Manual Shared Keys** | User-specified keys to force correlation when auto-detection fails | Backend |
+| **Auto-Detection** | Automatic detection of shared keys across multiple data sources | Backend |
+| **Domain Aggregation** | Process of aggregating domains across all correlated sources | Backend |
+| **Cross-File Link** | Connection between different files/data sources via shared keys | Backend |
+| **Session Correlation** | Correlation of all data sources within an analysis session by shared keys | Backend |
+| **Intake Cross-Correlation Endpoint** | API endpoint for correlating arbitrary intake items by shared keys | Backend |
+| **Session Correlation Endpoint** | API endpoint for correlating all session data sources by shared keys | Backend |
 
 ---
 
