@@ -43,7 +43,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
       setIsLoadingUsers(true);
       try {
         const token = localStorage.getItem('token') || 'dev-token';
-        const response = await fetch('http://localhost:8002/api/v1/auth/users', {
+        const response = await fetch('http://localhost:8000/api/v1/auth/users', {
           headers: {
             'Authorization': `Bearer ${token}`,
           },

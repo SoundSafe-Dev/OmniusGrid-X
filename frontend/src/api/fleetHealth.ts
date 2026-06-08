@@ -153,7 +153,7 @@ export const fleetHealthApi = {
       }, 20000);
       return () => clearInterval(interval);
     }
-    const wsUrl = `${import.meta.env.VITE_WS_URL || 'ws://localhost:8002'}/ws/fleet-health`;
+    const wsUrl = `${import.meta.env.VITE_WS_URL || 'ws://localhost:8000'}/ws/fleet-health`;
     const ws = new WebSocket(wsUrl);
     ws.onmessage = (event) => {
       try {

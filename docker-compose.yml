@@ -70,7 +70,7 @@ services:
       JWT_ALGORITHM: HS256
       JWT_ACCESS_TOKEN_EXPIRE_MINUTES: 30
     ports:
-      - "8002:8000"
+      - "8000:8000"
     volumes:
       - ./backend:/app
     depends_on:

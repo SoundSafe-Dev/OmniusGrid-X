@@ -132,7 +132,7 @@ export const geofencingApi = {
       }, 15000);
       return () => clearInterval(interval);
     }
-    const wsUrl = `${import.meta.env.VITE_WS_URL || 'ws://localhost:8002'}/ws/geofencing`;
+    const wsUrl = `${import.meta.env.VITE_WS_URL || 'ws://localhost:8000'}/ws/geofencing`;
     const ws = new WebSocket(wsUrl);
     ws.onmessage = (event) => {
       try {

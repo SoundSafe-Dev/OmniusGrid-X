@@ -1,7 +1,7 @@
 import { api } from './client';
 import { WebSocketMessage } from '../types';
 
-const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8002/ws';
+const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000/ws';
 
 export class WebSocketManager {
   private ws: WebSocket | null = null;

@@ -1,0 +1,86 @@
+Table 1
+date,shift,facility,production_line,asset_id,asset_name,planned_units,actual_units,downtime_minutes,defect_count,temperature_f,vibration_mm_s,operator_count,maintenance_status,delay_reason,priority,estimated_cost_impact_usd
+2026-05-01,Day,Dallas DC,Line A,MX-101,Mixer 101,1200,1188,5,2,71,1.26,5,OK,None,low,409
+2026-05-01,Day,Dallas DC,Line B,PK-204,Packaging Cell 204,1120,1102,5,8,75,1.96,5,Needs inspection,Material shortage,medium,541
+2026-05-01,Day,Dallas DC,Line C,CV-017,Conveyor 17,1040,1028,5,2,79,2.66,5,OK,Changeover overrun,low,409
+2026-05-01,Night,Dallas DC,Line A,MX-101,Mixer 101,1200,1168,15,2,71,1.39,4,OK,None,low,1139
+2026-05-01,Night,Dallas DC,Line B,PK-204,Packaging Cell 204,1120,1082,15,8,75,2.09,4,Needs inspection,Material shortage,medium,1271
+2026-05-01,Night,Dallas DC,Line C,CV-017,Conveyor 17,1040,1008,15,2,79,2.79,4,OK,Changeover overrun,low,1139
+2026-05-02,Day,Dallas DC,Line A,MX-101,Mixer 101,1200,1183,7,3,72,1.29,5,Needs inspection,Material shortage,medium,577
+2026-05-02,Day,Dallas DC,Line B,PK-204,Packaging Cell 204,1120,1094,8,10,76,2,5,OK,Changeover overrun,low,804
+2026-05-02,Day,Dallas DC,Line C,CV-017,Conveyor 17,1040,1017,9,5,80,2.71,5,Needs inspection,Sensor fault,medium,767
+2026-05-02,Night,Dallas DC,Line A,MX-101,Mixer 101,1200,1163,17,3,72,1.41,4,Needs inspection,Material shortage,medium,1307
+2026-05-02,Night,Dallas DC,Line B,PK-204,Packaging Cell 204,1120,1074,18,10,76,2.12,4,OK,Changeover overrun,low,1534
+2026-05-02,Night,Dallas DC,Line C,CV-017,Conveyor 17,1040,997,19,5,80,2.84,4,Needs inspection,Sensor fault,medium,1497
+2026-05-03,Day,Dallas DC,Line A,MX-101,Mixer 101,1200,1178,9,4,73,1.31,5,OK,Changeover overrun,low,745
+2026-05-03,Day,Dallas DC,Line B,PK-204,Packaging Cell 204,1120,1086,11,12,77,2.04,5,Needs inspection,Sensor fault,medium,1067
+2026-05-03,Day,Dallas DC,Line C,CV-017,Conveyor 17,1040,1006,13,8,81,2.76,5,OK,Maintenance wait,low,1125
+2026-05-03,Night,Dallas DC,Line A,MX-101,Mixer 101,1200,1158,19,4,73,1.44,4,OK,Changeover overrun,low,1475
+2026-05-03,Night,Dallas DC,Line B,PK-204,Packaging Cell 204,1120,1066,21,12,77,2.16,4,Needs inspection,Sensor fault,medium,1797
+2026-05-03,Night,Dallas DC,Line C,CV-017,Conveyor 17,1040,986,23,8,81,2.89,4,OK,Maintenance wait,low,1855
+2026-05-04,Day,Dallas DC,Line A,MX-101,Mixer 101,1200,1173,11,5,74,1.34,5,Needs inspection,Sensor fault,medium,913
+2026-05-04,Day,Dallas DC,Line B,PK-204,Packaging Cell 204,1120,1078,14,14,78,2.07,5,OK,Maintenance wait,low,1330
+2026-05-04,Day,Dallas DC,Line C,CV-017,Conveyor 17,1040,995,17,11,82,2.81,5,Needs inspection,Quality hold,medium,1483
+2026-05-04,Night,Dallas DC,Line A,MX-101,Mixer 101,1200,1153,21,5,74,1.46,4,Needs inspection,Sensor fault,medium,1643
+2026-05-04,Night,Dallas DC,Line B,PK-204,Packaging Cell 204,1120,1058,24,14,78,2.2,4,OK,Maintenance wait,low,2060
+2026-05-04,Night,Dallas DC,Line C,CV-017,Conveyor 17,1040,975,27,11,82,2.94,4,Needs inspection,Quality hold,medium,2213
+2026-05-05,Day,Dallas DC,Line A,MX-101,Mixer 101,1200,1168,13,6,75,1.36,5,OK,Maintenance wait,low,1081
+2026-05-05,Day,Dallas DC,Line B,PK-204,Packaging Cell 204,1120,1070,17,16,79,2.11,5,Needs inspection,Quality hold,medium,1593
+2026-05-05,Day,Dallas DC,Line C,CV-017,Conveyor 17,1040,984,21,14,83,2.86,5,OK,None,low,1841
+2026-05-05,Night,Dallas DC,Line A,MX-101,Mixer 101,1200,1148,23,6,75,1.49,4,OK,Maintenance wait,low,1811
+2026-05-05,Night,Dallas DC,Line B,PK-204,Packaging Cell 204,1120,1050,27,16,79,2.24,4,Needs inspection,Quality hold,medium,2323
+2026-05-05,Night,Dallas DC,Line C,CV-017,Conveyor 17,1040,964,31,14,83,2.99,4,OK,None,low,2571
+2026-05-06,Day,Dallas DC,Line A,MX-101,Mixer 101,1200,1163,15,7,71,1.39,5,Needs inspection,Quality hold,medium,1249
+2026-05-06,Day,Dallas DC,Line B,PK-204,Packaging Cell 204,1120,952,75,18,75,2.84,5,OK,None,low,5871
+2026-05-06,Day,Dallas DC,Line C,CV-017,Conveyor 17,1040,973,25,17,79,2.91,5,Needs inspection,Material shortage,medium,2199
+2026-05-06,Night,Dallas DC,Line A,MX-101,Mixer 101,1200,1143,25,7,71,1.51,4,Needs inspection,Quality hold,medium,1979
+2026-05-06,Night,Dallas DC,Line B,PK-204,Packaging Cell 204,1120,846,85,18,78,2.96,4,Needs inspection,Maintenance wait,high,6945
+2026-05-06,Night,Dallas DC,Line C,CV-017,Conveyor 17,1040,953,35,17,79,3.04,4,Needs inspection,Material shortage,medium,2929
+2026-05-07,Day,Dallas DC,Line A,MX-101,Mixer 101,1200,1158,17,8,72,1.41,5,OK,None,low,1417
+2026-05-07,Day,Dallas DC,Line B,PK-204,Packaging Cell 204,1120,944,78,20,76,2.88,5,Needs inspection,Material shortage,medium,6134
+2026-05-07,Day,Dallas DC,Line C,CV-017,Conveyor 17,1040,962,29,20,80,2.96,5,OK,Changeover overrun,low,2557
+2026-05-07,Night,Dallas DC,Line A,MX-101,Mixer 101,1200,1138,27,8,72,1.54,4,OK,None,low,2147
+2026-05-07,Night,Dallas DC,Line B,PK-204,Packaging Cell 204,1120,840,88,20,79,3,4,Needs inspection,Maintenance wait,high,7200
+2026-05-07,Night,Dallas DC,Line C,CV-017,Conveyor 17,1040,942,39,20,80,3.09,4,OK,Changeover overrun,low,3287
+2026-05-08,Day,Dallas DC,Line A,MX-101,Mixer 101,1200,1153,19,9,73,1.44,5,Needs inspection,Material shortage,medium,1585
+2026-05-08,Day,Dallas DC,Line B,PK-204,Packaging Cell 204,1120,1046,26,22,77,2.23,5,OK,Changeover overrun,low,2382
+2026-05-08,Day,Dallas DC,Line C,CV-017,Conveyor 17,1040,951,33,23,81,3.01,5,Needs inspection,Sensor fault,medium,2915
+2026-05-08,Night,Dallas DC,Line A,MX-101,Mixer 101,1200,1133,29,9,73,1.56,4,Needs inspection,Material shortage,medium,2315
+2026-05-08,Night,Dallas DC,Line B,PK-204,Packaging Cell 204,1120,1026,36,22,77,2.35,4,OK,Changeover overrun,low,3112
+2026-05-08,Night,Dallas DC,Line C,CV-017,Conveyor 17,1040,931,43,23,81,3.14,4,Needs inspection,Sensor fault,medium,3645
+2026-05-09,Day,Dallas DC,Line A,MX-101,Mixer 101,1200,1148,21,10,74,1.46,5,OK,Changeover overrun,low,1753
+2026-05-09,Day,Dallas DC,Line B,PK-204,Packaging Cell 204,1120,1038,29,24,78,2.26,5,Needs inspection,Sensor fault,medium,2645
+2026-05-09,Day,Dallas DC,Line C,CV-017,Conveyor 17,1040,848,37,26,82,3.06,5,Needs inspection,Quality hold,high,3641
+2026-05-09,Night,Dallas DC,Line A,MX-101,Mixer 101,1200,1128,31,10,74,1.59,4,OK,Changeover overrun,low,2483
+2026-05-09,Night,Dallas DC,Line B,PK-204,Packaging Cell 204,1120,1018,39,24,78,2.39,4,Needs inspection,Sensor fault,medium,3375
+2026-05-09,Night,Dallas DC,Line C,CV-017,Conveyor 17,1040,848,47,26,82,3.19,4,Needs inspection,Quality hold,high,4291
+2026-05-10,Day,Dallas DC,Line A,MX-101,Mixer 101,1200,1143,23,11,75,1.49,5,Needs inspection,Sensor fault,medium,1921
+2026-05-10,Day,Dallas DC,Line B,PK-204,Packaging Cell 204,1120,928,32,26,79,2.3,5,Needs inspection,Quality hold,high,3316
+2026-05-10,Day,Dallas DC,Line C,CV-017,Conveyor 17,1040,842,41,29,83,3.11,5,Needs inspection,Quality hold,high,3979
+2026-05-10,Night,Dallas DC,Line A,MX-101,Mixer 101,1200,1123,33,11,75,1.61,4,Needs inspection,Sensor fault,medium,2651
+2026-05-10,Night,Dallas DC,Line B,PK-204,Packaging Cell 204,1120,928,42,26,79,2.42,4,Needs inspection,Quality hold,high,3966
+2026-05-10,Night,Dallas DC,Line C,CV-017,Conveyor 17,1040,842,51,29,83,3.24,4,Needs inspection,Quality hold,high,4629
+2026-05-11,Day,Dallas DC,Line A,MX-101,Mixer 101,1200,1138,25,12,71,1.51,5,OK,Maintenance wait,low,2089
+2026-05-11,Day,Dallas DC,Line B,PK-204,Packaging Cell 204,1120,924,35,28,75,2.34,5,Needs inspection,Quality hold,high,3563
+2026-05-11,Day,Dallas DC,Line C,CV-017,Conveyor 17,1040,836,45,32,79,3.16,5,Needs inspection,Quality hold,high,4317
+2026-05-11,Night,Dallas DC,Line A,MX-101,Mixer 101,1200,1118,35,12,71,1.64,4,OK,Maintenance wait,low,2819
+2026-05-11,Night,Dallas DC,Line B,PK-204,Packaging Cell 204,1120,924,45,28,75,2.46,4,Needs inspection,Quality hold,high,4213
+2026-05-11,Night,Dallas DC,Line C,CV-017,Conveyor 17,1040,836,55,32,79,3.29,4,Needs inspection,Quality hold,high,4967
+2026-05-12,Day,Dallas DC,Line A,MX-101,Mixer 101,1200,1133,27,13,72,1.54,5,Needs inspection,Quality hold,medium,2257
+2026-05-12,Day,Dallas DC,Line B,PK-204,Packaging Cell 204,1120,810,93,30,79,3.06,5,Needs inspection,Maintenance wait,high,7825
+2026-05-12,Day,Dallas DC,Line C,CV-017,Conveyor 17,1040,830,49,35,80,3.21,5,Needs inspection,Quality hold,high,4655
+2026-05-12,Night,Dallas DC,Line A,MX-101,Mixer 101,1200,1113,37,13,72,1.66,4,Needs inspection,Quality hold,medium,2987
+2026-05-12,Night,Dallas DC,Line B,PK-204,Packaging Cell 204,1120,810,103,30,79,3.19,4,Needs inspection,Maintenance wait,high,8475
+2026-05-12,Night,Dallas DC,Line C,CV-017,Conveyor 17,1040,830,59,35,80,3.34,4,Needs inspection,Quality hold,high,5305
+2026-05-13,Day,Dallas DC,Line A,MX-101,Mixer 101,1200,1128,29,14,73,1.56,5,OK,None,low,2425
+2026-05-13,Day,Dallas DC,Line B,PK-204,Packaging Cell 204,1120,916,41,32,77,2.41,5,Needs inspection,Quality hold,high,4057
+2026-05-13,Day,Dallas DC,Line C,CV-017,Conveyor 17,1040,934,53,0,81,3.26,5,OK,Changeover overrun,low,3869
+2026-05-13,Night,Dallas DC,Line A,MX-101,Mixer 101,1200,1108,39,14,73,1.69,4,OK,None,low,3155
+2026-05-13,Night,Dallas DC,Line B,PK-204,Packaging Cell 204,1120,916,51,32,77,2.54,4,Needs inspection,Quality hold,high,4707
+2026-05-13,Night,Dallas DC,Line C,CV-017,Conveyor 17,1040,914,63,0,81,3.39,4,OK,Changeover overrun,low,4599
+2026-05-14,Day,Dallas DC,Line A,MX-101,Mixer 101,1200,1123,31,15,74,1.59,5,Needs inspection,Material shortage,medium,2593
+2026-05-14,Day,Dallas DC,Line B,PK-204,Packaging Cell 204,1120,912,44,34,78,2.45,5,Needs inspection,Quality hold,high,4304
+2026-05-14,Day,Dallas DC,Line C,CV-017,Conveyor 17,1040,923,57,3,82,3.31,5,Needs inspection,Sensor fault,medium,4227
+2026-05-14,Night,Dallas DC,Line A,MX-101,Mixer 101,1200,1103,41,15,74,1.71,4,Needs inspection,Material shortage,medium,3323
+2026-05-14,Night,Dallas DC,Line B,PK-204,Packaging Cell 204,1120,912,54,34,78,2.58,4,Needs inspection,Quality hold,high,4954
+2026-05-14,Night,Dallas DC,Line C,CV-017,Conveyor 17,1040,903,67,3,82,3.44,4,Needs inspection,Sensor fault,medium,4957

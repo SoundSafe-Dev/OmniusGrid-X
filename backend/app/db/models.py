@@ -969,7 +969,7 @@ class APIKey(Base):
     key_prefix = Column(String(8), nullable=False)
     name = Column(String(255), nullable=False)
     organization_id = UUIDForeignKey("organizations.id", nullable=True)
-    scopes = Column(ARRAY(String), nullable=False, default=lambda: ["read"])
+    scopes = Column(JSON, nullable=False, default=lambda: ["read"])
     is_active = Column(Boolean, nullable=False, default=True)
     expires_at = Column(DateTime(timezone=True), nullable=True)
     last_used_at = Column(DateTime(timezone=True), nullable=True)
@@ -1042,11 +1042,11 @@ class DataProcessingRecord(Base):
     id = UUIDColumn()
     organization_id = UUIDForeignKey("organizations.id", nullable=True)
     processing_activity = Column(String(255), nullable=False)
-    data_categories = Column(ARRAY(String), nullable=False)
-    purposes = Column(ARRAY(String), nullable=False)
-    recipients = Column(ARRAY(String), nullable=True)
+    data_categories = Column(JSON, nullable=False)
+    purposes = Column(JSON, nullable=False)
+    recipients = Column(JSON, nullable=True)
     retention_period = Column(String(100), nullable=True)
-    security_measures = Column(ARRAY(String), nullable=True)
+    security_measures = Column(JSON, nullable=True)
     legal_basis = Column(String(100), nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -1080,8 +1080,8 @@ class VendorRiskAssessment(Base):
     assessment_date = Column(Date, nullable=True)
     next_review_date = Column(Date, nullable=True)
     assessor_id = UUIDForeignKey("users.id", nullable=True)
-    findings = Column(ARRAY(String), nullable=True)
-    controls = Column(ARRAY(String), nullable=True)
+    findings = Column(JSON, nullable=True)
+    controls = Column(JSON, nullable=True)
     status = Column(String(50), default="pending")
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -1105,6 +1105,13 @@ class IntegrationConfiguration(Base):
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
     created_by = UUIDForeignKey("users.id", nullable=True)
     meta_data = Column(JSON, default={})
+    
+    # ERP-specific fields
+    erp_type = Column(String(50), nullable=True)
+    erp_version = Column(String(50), nullable=True)
+    sync_schedule = Column(String(100), nullable=True)
+    sync_frequency_minutes = Column(Integer, default=60)
+    last_successful_sync = Column(DateTime(timezone=True), nullable=True)
 
 
 class DataResidencyTag(Base):
@@ -1118,4 +1125,95 @@ class DataResidencyTag(Base):
     tagged_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     tagged_by = UUIDForeignKey("users.id", nullable=True)
     meta_data = Column(JSON, default={})
+
+
+# ==================== ERP Integration Models ====================
+
+class ERPIntegrationEvent(Base):
+    """ERP integration events for tracking webhook and sync events"""
+    __tablename__ = "erp_integration_events"
+
+    id = UUIDColumn()
+    organization_id = UUIDForeignKey("organizations.id", nullable=False)
+    integration_id = UUIDForeignKey("integration_configurations.id", nullable=False)
+    event_type = Column(String(100), nullable=False)
+    event_id = Column(String(255), nullable=False)
+    source_system = Column(String(50), nullable=False)
+    entity_type = Column(String(100), nullable=False)
+    entity_id = Column(String(255), nullable=True)
+    event_data = Column(JSON, nullable=False)
+    processed_at = Column(DateTime(timezone=True), nullable=True)
+    processing_status = Column(String(50), default="pending")
+    error_message = Column(Text, nullable=True)
+    retry_count = Column(Integer, default=0)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class ERPDataMapping(Base):
+    """Field mappings for ERP data transformation"""
+    __tablename__ = "erp_data_mappings"
+
+    id = UUIDColumn()
+    organization_id = UUIDForeignKey("organizations.id", nullable=False)
+    integration_id = UUIDForeignKey("integration_configurations.id", nullable=False)
+    source_entity = Column(String(100), nullable=False)
+    source_field = Column(String(100), nullable=False)
+    target_entity = Column(String(100), nullable=False)
+    target_field = Column(String(100), nullable=False)
+    transformation_rule = Column(Text, nullable=True)
+    data_type = Column(String(50), nullable=True)
+    is_required = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ERPSyncStatus(Base):
+    """Sync status tracking for ERP integrations"""
+    __tablename__ = "erp_sync_status"
+
+    id = UUIDColumn()
+    organization_id = UUIDForeignKey("organizations.id", nullable=False)
+    integration_id = UUIDForeignKey("integration_configurations.id", nullable=False)
+    entity_type = Column(String(100), nullable=False)
+    last_sync_at = Column(DateTime(timezone=True), nullable=True)
+    last_sync_status = Column(String(50), nullable=True)
+    records_synced = Column(Integer, default=0)
+    records_failed = Column(Integer, default=0)
+    sync_duration_seconds = Column(Numeric, nullable=True)
+    next_sync_at = Column(DateTime(timezone=True), nullable=True)
+    delta_token = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ERPEntity(Base):
+    """Normalized ERP entity data"""
+    __tablename__ = "erp_entities"
+
+    id = UUIDColumn()
+    organization_id = UUIDForeignKey("organizations.id", nullable=False)
+    integration_id = UUIDForeignKey("integration_configurations.id", nullable=False)
+    entity_type = Column(String(100), nullable=False)
+    entity_id = Column(String(255), nullable=False)
+    entity_data = Column(JSON, nullable=False)
+    source_system = Column(String(50), nullable=False)
+    is_active = Column(Boolean, default=True)
+    valid_from = Column(DateTime(timezone=True), default=datetime.utcnow)
+    valid_to = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ERPCorrelation(Base):
+    """Correlations between ERP events and sensor data"""
+    __tablename__ = "erp_correlations"
+
+    id = UUIDColumn()
+    organization_id = UUIDForeignKey("organizations.id", nullable=False)
+    correlation_type = Column(String(100), nullable=False)
+    erp_event_id = UUIDForeignKey("erp_integration_events.id", nullable=True)
+    sensor_event_id = Column(String(36), nullable=True)
+    correlation_score = Column(Numeric, nullable=True)
+    correlation_metadata = Column(JSON, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 

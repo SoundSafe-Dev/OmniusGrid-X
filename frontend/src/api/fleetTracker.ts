@@ -233,7 +233,7 @@ export const fleetTrackerApi = {
     }
 
     // Real WebSocket implementation
-    const wsUrl = `${import.meta.env.VITE_WS_URL || 'ws://localhost:8002'}/ws/fleet-tracking`;
+    const wsUrl = `${import.meta.env.VITE_WS_URL || 'ws://localhost:8000'}/ws/fleet-tracking`;
     const ws = new WebSocket(wsUrl);
 
     ws.onmessage = (event) => {
