@@ -91,7 +91,7 @@ class Telemetry(Base):
     value = Column(Numeric, nullable=False)
     unit = Column(String(50))
     packml_state = Column(String(50))
-    meta_data = Column(JSON, default={})
+    meta_data = Column("metadata", JSON, default={})
     sequence_num = Column(BigInteger)
 
 
