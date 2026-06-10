@@ -4,7 +4,6 @@ import asyncio
 import calendar
 import json
 from datetime import datetime, timedelta, timezone
-from email.message import EmailMessage
 from typing import Any, Optional
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -97,33 +96,20 @@ async def send_export_email(
     schedule_name: str,
     download_url: str,
 ) -> None:
-    import aiosmtplib
+    from app.services.email_service import send_email
 
-    if not settings.SMTP_HOST:
-        raise RuntimeError("SMTP_HOST is not configured")
-
-    message = EmailMessage()
-    message["From"] = (
-        f"{settings.SMTP_FROM_NAME} <{settings.SMTP_FROM_EMAIL}>"
-        if settings.SMTP_FROM_NAME
-        else settings.SMTP_FROM_EMAIL
-    )
-    message["To"] = ", ".join(recipients)
-    message["Subject"] = f"OmniusGrid scheduled report: {schedule_name}"
-    message.set_content(
+    subject = f"OmniusGrid scheduled report: {schedule_name}"
+    text_body = (
         "Your scheduled report is ready.\n\n"
         f"Download: {download_url}\n\n"
         "This link is time-limited and grants access to this one report — "
         "please do not forward it."
     )
-    await aiosmtplib.send(
-        message,
-        hostname=settings.SMTP_HOST,
-        port=settings.SMTP_PORT,
-        username=settings.SMTP_USERNAME or None,
-        password=settings.SMTP_PASSWORD or None,
-        use_tls=settings.SMTP_USE_TLS,
-        start_tls=settings.SMTP_START_TLS,
+    await send_email(
+        recipients,
+        subject,
+        text_body,
+        max_attempts=1,
     )
 
 
