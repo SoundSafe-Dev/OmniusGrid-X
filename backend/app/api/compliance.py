@@ -3,15 +3,21 @@
 from datetime import datetime, date
 from typing import Optional, List
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, status, Request
-from sqlalchemy import select, and_
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import status as http_status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.db.database import get_db
-from app.db.models import User, VendorRiskAssessment, SecurityAsset
+
+from app.db.models import (
+    User,
+    VendorRiskAssessment,
+    SecurityAsset,
+)
 from app.api.auth import get_current_active_user
 from app.middleware.rbac import require_admin
 from app.middleware.rate_limit import rate_limit
+from app.core.tenant import get_tenant_db, get_tenant_org_id
 import structlog
 
 logger = structlog.get_logger()
@@ -21,19 +27,26 @@ router = APIRouter()
 
 # SOC 2 Compliance Endpoints
 
-@router.get("/vendor-assessments", summary="List vendor risk assessments", description="List all vendor risk assessments for SOC 2 compliance.")
+@router.get(
+    "/vendor-assessments",
+    summary="List vendor risk assessments",
+    description="List vendor risk assessments for the authenticated organization (SOC 2).",
+)
 @rate_limit("100/minute")
 async def list_vendor_assessments(
     request: Request,
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
+    org_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     """List vendor risk assessments"""
     result = await db.execute(
-        select(VendorRiskAssessment).order_by(VendorRiskAssessment.assessment_date.desc())
+        select(VendorRiskAssessment)
+        .where(VendorRiskAssessment.organization_id == org_id)
+        .order_by(VendorRiskAssessment.assessment_date.desc())
     )
     assessments = result.scalars().all()
-    
+
     assessment_list = [
         {
             "id": str(assessment.id),
@@ -48,7 +61,7 @@ async def list_vendor_assessments(
         }
         for assessment in assessments
     ]
-    
+
     return {"items": assessment_list, "total": len(assessment_list)}
 
 
@@ -65,7 +78,8 @@ async def create_vendor_assessment(
     findings: Optional[List[str]] = None,
     controls: Optional[List[str]] = None,
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
+    org_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     """Create vendor risk assessment"""
     assessment = VendorRiskAssessment(
@@ -75,21 +89,23 @@ async def create_vendor_assessment(
         assessment_date=assessment_date or date.today(),
         next_review_date=next_review_date,
         assessor_id=current_user.id,
+        organization_id=org_id,
         findings=findings,
         controls=controls,
         status="pending"
     )
-    
+
     db.add(assessment)
     await db.commit()
     await db.refresh(assessment)
-    
+
     logger.info(
         "vendor_assessment_created",
         assessment_id=str(assessment.id),
-        vendor_name=vendor_name
+        vendor_name=vendor_name,
+        organization_id=str(org_id),
     )
-    
+
     return {
         "id": str(assessment.id),
         "vendor_name": vendor_name,
@@ -109,20 +125,24 @@ async def update_vendor_assessment(
     controls: Optional[List[str]] = None,
     status: Optional[str] = None,
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
+    org_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     """Update vendor risk assessment"""
     result = await db.execute(
-        select(VendorRiskAssessment).where(VendorRiskAssessment.id == assessment_id)
+        select(VendorRiskAssessment).where(
+            VendorRiskAssessment.id == assessment_id,
+            VendorRiskAssessment.organization_id == org_id,
+        )
     )
     assessment = result.scalar_one_or_none()
-    
+
     if not assessment:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+            status_code=http_status.HTTP_404_NOT_FOUND,
             detail="Vendor assessment not found"
         )
-    
+
     if risk_level:
         assessment.risk_level = risk_level
     if next_review_date:
@@ -133,37 +153,43 @@ async def update_vendor_assessment(
         assessment.controls = controls
     if status:
         assessment.status = status
-    
+
     assessment.updated_at = datetime.utcnow()
     await db.commit()
-    
+
     logger.info(
         "vendor_assessment_updated",
-        assessment_id=assessment_id
+        assessment_id=assessment_id,
+        organization_id=str(org_id),
     )
-    
+
     return {"message": "Vendor risk assessment updated successfully"}
 
 
 # ISO 27001 Compliance Endpoints
 
-@router.get("/security-assets", summary="List security assets", description="List all security assets for ISO 27001 compliance.")
+@router.get(
+    "/security-assets",
+    summary="List security assets",
+    description="List security assets for the authenticated organization (ISO 27001).",
+)
 @rate_limit("100/minute")
 async def list_security_assets(
     request: Request,
     asset_type: Optional[str] = None,
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
+    org_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     """List security assets"""
-    query = select(SecurityAsset)
-    
+    query = select(SecurityAsset).where(SecurityAsset.organization_id == org_id)
+
     if asset_type:
         query = query.where(SecurityAsset.asset_type == asset_type)
-    
+
     result = await db.execute(query.order_by(SecurityAsset.created_at.desc()))
     assets = result.scalars().all()
-    
+
     asset_list = [
         {
             "id": str(asset.id),
@@ -177,7 +203,7 @@ async def list_security_assets(
         }
         for asset in assets
     ]
-    
+
     return {"items": asset_list, "total": len(asset_list)}
 
 
@@ -192,7 +218,8 @@ async def create_security_asset(
     classification: Optional[str] = None,
     location: Optional[str] = None,
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
+    org_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     """Create security asset"""
     asset = SecurityAsset(
@@ -200,21 +227,23 @@ async def create_security_asset(
         asset_name=asset_name,
         asset_id=asset_id,
         owner_id=current_user.id,
+        organization_id=org_id,
         classification=classification,
         location=location,
         status="active"
     )
-    
+
     db.add(asset)
     await db.commit()
     await db.refresh(asset)
-    
+
     logger.info(
         "security_asset_created",
         asset_id=str(asset.id),
-        asset_name=asset_name
+        asset_name=asset_name,
+        organization_id=str(org_id),
     )
-    
+
     return {
         "id": str(asset.id),
         "asset_name": asset_name,
@@ -232,35 +261,40 @@ async def update_security_asset(
     location: Optional[str] = None,
     status: Optional[str] = None,
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
+    org_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     """Update security asset"""
     result = await db.execute(
-        select(SecurityAsset).where(SecurityAsset.id == asset_id)
+        select(SecurityAsset).where(
+            SecurityAsset.id == asset_id,
+            SecurityAsset.organization_id == org_id,
+        )
     )
     asset = result.scalar_one_or_none()
-    
+
     if not asset:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+            status_code=http_status.HTTP_404_NOT_FOUND,
             detail="Security asset not found"
         )
-    
+
     if classification:
         asset.classification = classification
     if location:
         asset.location = location
     if status:
         asset.status = status
-    
+
     asset.updated_at = datetime.utcnow()
     await db.commit()
-    
+
     logger.info(
         "security_asset_updated",
-        asset_id=asset_id
+        asset_id=asset_id,
+        organization_id=str(org_id),
     )
-    
+
     return {"message": "Security asset updated successfully"}
 
 
@@ -271,28 +305,33 @@ async def delete_security_asset(
     request: Request,
     asset_id: str,
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
+    org_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     """Delete security asset"""
     result = await db.execute(
-        select(SecurityAsset).where(SecurityAsset.id == asset_id)
+        select(SecurityAsset).where(
+            SecurityAsset.id == asset_id,
+            SecurityAsset.organization_id == org_id,
+        )
     )
     asset = result.scalar_one_or_none()
-    
+
     if not asset:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+            status_code=http_status.HTTP_404_NOT_FOUND,
             detail="Security asset not found"
         )
-    
+
     await db.delete(asset)
     await db.commit()
-    
+
     logger.info(
         "security_asset_deleted",
-        asset_id=asset_id
+        asset_id=asset_id,
+        organization_id=str(org_id),
     )
-    
+
     return {"message": "Security asset deleted successfully"}
 
 
@@ -301,23 +340,28 @@ async def delete_security_asset(
 async def get_compliance_summary(
     request: Request,
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
+    org_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     """Get compliance summary"""
-    # Count security assets
-    assets_result = await db.execute(select(SecurityAsset))
+    assets_result = await db.execute(
+        select(SecurityAsset).where(SecurityAsset.organization_id == org_id)
+    )
     total_assets = len(assets_result.scalars().all())
-    
-    # Count vendor assessments
-    vendors_result = await db.execute(select(VendorRiskAssessment))
+
+    vendors_result = await db.execute(
+        select(VendorRiskAssessment).where(VendorRiskAssessment.organization_id == org_id)
+    )
     total_vendors = len(vendors_result.scalars().all())
-    
-    # Count high-risk vendors
+
     high_risk_result = await db.execute(
-        select(VendorRiskAssessment).where(VendorRiskAssessment.risk_level == "high")
+        select(VendorRiskAssessment).where(
+            VendorRiskAssessment.organization_id == org_id,
+            VendorRiskAssessment.risk_level == "high",
+        )
     )
     high_risk_vendors = len(high_risk_result.scalars().all())
-    
+
     return {
         "iso_27001": {
             "total_assets": total_assets,
