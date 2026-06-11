@@ -17,7 +17,7 @@ from app.db.models import (
 from app.api.auth import get_current_active_user
 from app.middleware.rbac import require_admin
 from app.middleware.rate_limit import rate_limit
-from app.core.tenant import get_tenant_db, get_tenant_org_id
+from app.middleware.tenant_isolation import get_tenant_db, get_tenant_org_id
 import structlog
 
 logger = structlog.get_logger()

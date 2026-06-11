@@ -619,6 +619,58 @@ async def get_assets(
     pass
 ```
 
+### Tenant Isolation
+
+Never trust a client-provided ``organization_id`` (query string, path, or request
+body) for tenant ownership. Derive organization scope from the authenticated user.
+
+Import the canonical dependencies from the middleware facade:
+
+```python
+from uuid import UUID
+
+from fastapi import Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.middleware.tenant_isolation import (
+    get_tenant_db,
+    get_tenant_org_id,
+)
+```
+
+Standard tenant-scoped endpoint signature:
+
+```python
+org_id: UUID = Depends(get_tenant_org_id)
+db: AsyncSession = Depends(get_tenant_db)
+```
+
+Keep explicit application-layer predicates in addition to PostgreSQL RLS:
+
+```python
+result = await db.execute(
+    select(Asset).where(
+        Asset.id == asset_id,
+        Asset.organization_id == org_id,
+    )
+)
+```
+
+Rules:
+
+1. Use ``get_tenant_db`` for tenant-scoped tables.
+2. Use ordinary ``get_db`` only for genuine global or system-level operations.
+3. Assign ``organization_id`` server-side during creation; ignore or reject
+   client-supplied organization ownership.
+4. Return ``403`` when an authenticated user has no ``organization_id``.
+5. Return ``404`` for nonexistent and cross-tenant resources to avoid disclosing
+   their existence.
+6. Child data without a direct organization column must be authorized through its
+   tenant-owned parent (for example, telemetry through ``Asset``).
+7. Background workers cannot use request dependencies; they must establish tenant
+   context explicitly.
+8. RLS is defense in depth; it does not replace explicit organization predicates.
+
 ## Testing Standards
 
 ### Test Organization
