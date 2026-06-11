@@ -5,7 +5,9 @@ environment. Keys per authenticated user when a bearer token is present,
 otherwise per remote IP.
 """
 
+import re
 from typing import Callable
+from uuid import UUID
 
 import structlog
 from fastapi import Request
@@ -17,6 +19,13 @@ from slowapi.util import get_remote_address
 from app.core.config import settings
 
 logger = structlog.get_logger()
+
+_COMPLIANCE_DOWNLOAD_PATH = re.compile(
+    r"^/api/v1/compliance/reports/([0-9a-fA-F-]{36})/signed-download$"
+)
+_EXPORT_DOWNLOAD_PATH = re.compile(
+    r"^/api/v1/exports/deliveries/([0-9a-fA-F-]{36})/download$"
+)
 
 
 def get_user_id_from_request(request: Request) -> str:
@@ -66,6 +75,7 @@ async def rate_limit_exceeded_handler(
         client_ip=get_remote_address(request),
         limit=str(exc.detail),
     )
+    await _audit_public_download_rate_limit(request)
     response = JSONResponse(
         status_code=429,
         content={
@@ -76,6 +86,39 @@ async def rate_limit_exceeded_handler(
     response.headers["Retry-After"] = "60"
     response.headers["X-RateLimit-Limit"] = str(exc.detail)
     return response
+
+
+async def _audit_public_download_rate_limit(request: Request) -> None:
+    """Audit signed-download 429 responses without reading the credential."""
+    compliance_match = _COMPLIANCE_DOWNLOAD_PATH.match(request.url.path)
+    export_match = _EXPORT_DOWNLOAD_PATH.match(request.url.path)
+    try:
+        if compliance_match:
+            from app.services.report_download_audit import (
+                audit_compliance_report_download,
+            )
+
+            await audit_compliance_report_download(
+                request=request,
+                succeeded=False,
+                job_id=UUID(compliance_match.group(1)),
+                organization_id=None,
+                reason="rate_limited",
+            )
+        elif export_match:
+            from app.services.report_download_audit import (
+                audit_export_delivery_download,
+            )
+
+            await audit_export_delivery_download(
+                request=request,
+                succeeded=False,
+                job_id=UUID(export_match.group(1)),
+                organization_id=None,
+                reason="rate_limited",
+            )
+    except ValueError:
+        return
 
 
 def rate_limit(limit: str = "100/minute") -> Callable:

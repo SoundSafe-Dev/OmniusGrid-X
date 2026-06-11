@@ -74,6 +74,30 @@ def test_download_signature_is_bound_to_job_and_organization():
     assert not verify_download_signature(signature, job_id, uuid4())
 
 
+def test_legacy_export_signature_remains_valid(monkeypatch):
+    from datetime import timedelta
+
+    from jose import jwt
+
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "SIGNED_URL_SECRET_KEY", "signed-secret")
+    monkeypatch.setattr(settings, "JWT_SECRET_KEY", "jwt-secret")
+    job_id = uuid4()
+    org_id = uuid4()
+    legacy = jwt.encode(
+        {
+            "organization_id": str(org_id),
+            "job_id": str(job_id),
+            "purpose": "export_download",
+            "exp": datetime.now(timezone.utc) + timedelta(hours=1),
+        },
+        settings.JWT_SECRET_KEY,
+        algorithm=settings.JWT_ALGORITHM,
+    )
+    assert verify_download_signature(legacy, job_id, org_id)
+
+
 async def test_exports_reject_non_admin_users():
     with pytest.raises(HTTPException) as exc:
         await require_export_admin(SimpleNamespace(role="operator"))

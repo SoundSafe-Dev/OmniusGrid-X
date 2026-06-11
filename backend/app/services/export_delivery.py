@@ -10,10 +10,16 @@ from zoneinfo import ZoneInfo
 
 import structlog
 from aiokafka import AIOKafkaProducer
-from jose import JWTError, jwt
 from sqlalchemy import select, text
 
 from app.core.config import settings
+from app.utils.signed_urls import (
+    PURPOSE_EXPORT,
+    SignedTokenError,
+    create_signed_download_token,
+    decode_signed_download_token,
+    verify_signed_download_token,
+)
 from app.db.database import AsyncSessionLocal
 from app.db.models import (
     ExportDeliveryJob,
@@ -45,50 +51,40 @@ def next_run_at(current: datetime, frequency: str, timezone_name: str) -> dateti
 
 
 def create_download_signature(job_id: Any, organization_id: Any) -> str:
-    expires = datetime.now(timezone.utc) + timedelta(
-        minutes=settings.EXPORT_LINK_EXPIRE_MINUTES
-    )
-    return jwt.encode(
-        {
-            "organization_id": str(organization_id),
-            "job_id": str(job_id),
-            "purpose": "export_download",
-            "exp": expires,
-        },
-        settings.JWT_SECRET_KEY,
-        algorithm=settings.JWT_ALGORITHM,
+    """Mint a version-1 export download capability token."""
+    return create_signed_download_token(
+        PURPOSE_EXPORT,
+        UUID(str(job_id)),
+        UUID(str(organization_id)),
     )
 
 
 def decode_download_signature(token: str) -> Optional[dict]:
-    """Return the verified payload of a download signature, or None.
-
-    Verifies the server signature and expiry (via ``jwt.decode``) and that the
-    token was minted for export downloads. The caller is responsible for checking
-    the ``job_id``/``organization_id`` claims against the resource being served.
-    """
+    """Return the verified payload of a download signature, or None."""
     try:
-        payload = jwt.decode(
-            token,
-            settings.JWT_SECRET_KEY,
-            algorithms=[settings.JWT_ALGORITHM],
-        )
-    except JWTError:
+        verified = decode_signed_download_token(token, PURPOSE_EXPORT)
+    except SignedTokenError:
         return None
-    if payload.get("purpose") != "export_download":
-        return None
-    return payload
+    return {
+        "organization_id": str(verified.organization_id),
+        "job_id": str(verified.job_id),
+        "purpose": verified.purpose,
+        "exp": verified.expires_at,
+    }
 
 
 def verify_download_signature(
     token: str, job_id: Any, organization_id: Any
 ) -> bool:
-    payload = decode_download_signature(token)
-    return bool(
-        payload
-        and payload.get("job_id") == str(job_id)
-        and payload.get("organization_id") == str(organization_id)
-    )
+    try:
+        verified = verify_signed_download_token(
+            token,
+            PURPOSE_EXPORT,
+            UUID(str(job_id)),
+        )
+    except SignedTokenError:
+        return False
+    return str(verified.organization_id) == str(organization_id)
 
 
 async def send_export_email(

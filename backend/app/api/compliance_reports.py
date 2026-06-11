@@ -7,10 +7,10 @@ from typing import Literal
 from uuid import UUID
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_active_user
@@ -18,16 +18,35 @@ from app.db.models import ComplianceReportJob, User
 from app.middleware.rbac import require_admin
 from app.middleware.rate_limit import rate_limit
 from app.middleware.tenant_isolation import get_tenant_db, get_tenant_org_id
+from app.db.database import AsyncSessionLocal
 from app.services.compliance_report_service import (
     SUPPORTED_FORMATS,
     SUPPORTED_FRAMEWORKS,
     absolute_report_path,
     report_file_matches_metadata,
 )
+from app.services.report_download_audit import audit_compliance_report_download
+from app.utils.signed_urls import (
+    PURPOSE_COMPLIANCE_REPORT,
+    SignedTokenError,
+    verify_signed_download_token,
+)
 
 logger = structlog.get_logger()
 
 router = APIRouter()
+public_router = APIRouter()
+
+INVALID_LINK_DETAIL = "Invalid or expired download link"
+
+
+def _secure_file_response(path, media_type: str, filename: str) -> FileResponse:
+    response = FileResponse(path, media_type=media_type, filename=filename)
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
 
 
 class ComplianceReportEnqueueRequest(BaseModel):
@@ -193,8 +212,173 @@ async def download_compliance_report(
             status_code=status.HTTP_410_GONE,
             detail="Report file no longer available or failed integrity validation",
         )
-    return FileResponse(
+    return _secure_file_response(
         absolute,
-        media_type=job.media_type or "application/octet-stream",
-        filename=job.filename or absolute.name,
+        job.media_type or "application/octet-stream",
+        job.filename or absolute.name,
+    )
+
+
+@public_router.get(
+    "/reports/{job_id}/signed-download",
+    summary="Download a compliance report via a time-limited signed link",
+)
+@rate_limit("10/minute")
+async def download_compliance_report_signed(
+    job_id: UUID,
+    request: Request,
+    token: str | None = Query(None),
+):
+    if not token:
+        await audit_compliance_report_download(
+            request=request,
+            succeeded=False,
+            job_id=job_id,
+            organization_id=None,
+            reason="missing_token",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=INVALID_LINK_DETAIL,
+        )
+
+    verified = None
+    rejection_reason = "invalid_signature_or_expired"
+    try:
+        verified = verify_signed_download_token(
+            token,
+            PURPOSE_COMPLIANCE_REPORT,
+            job_id,
+        )
+    except SignedTokenError as exc:
+        rejection_reason = exc.reason
+        await audit_compliance_report_download(
+            request=request,
+            succeeded=False,
+            job_id=job_id,
+            organization_id=None,
+            reason=rejection_reason,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=INVALID_LINK_DETAIL,
+        )
+
+    org_id = verified.organization_id
+    async with AsyncSessionLocal() as session:
+        async with session.begin():
+            await session.execute(
+                text("SELECT set_config('app.current_org_id', :org, true)"),
+                {"org": str(org_id)},
+            )
+            job = (
+                await session.execute(
+                    select(ComplianceReportJob).where(
+                        ComplianceReportJob.id == job_id,
+                        ComplianceReportJob.organization_id == org_id,
+                    )
+                )
+            ).scalar_one_or_none()
+
+    if job is None:
+        await audit_compliance_report_download(
+            request=request,
+            succeeded=False,
+            job_id=job_id,
+            organization_id=org_id,
+            reason="job_not_found",
+            token_version=verified.token_version,
+            purpose=verified.purpose,
+            token_id=verified.token_id,
+        )
+        raise HTTPException(status_code=404, detail="Compliance report job not found")
+
+    if job.report_status != "completed":
+        await audit_compliance_report_download(
+            request=request,
+            succeeded=False,
+            job_id=job_id,
+            organization_id=org_id,
+            reason="report_not_complete",
+            token_version=verified.token_version,
+            purpose=verified.purpose,
+            token_id=verified.token_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Report is {job.report_status}, not ready",
+        )
+
+    if not job.file_path:
+        await audit_compliance_report_download(
+            request=request,
+            succeeded=False,
+            job_id=job_id,
+            organization_id=org_id,
+            reason="file_missing",
+            token_version=verified.token_version,
+            purpose=verified.purpose,
+            token_id=verified.token_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="Report file no longer available",
+        )
+
+    try:
+        absolute = absolute_report_path(
+            job.file_path,
+            organization_id=org_id,
+            job_id=job.id,
+        )
+    except Exception:
+        await audit_compliance_report_download(
+            request=request,
+            succeeded=False,
+            job_id=job_id,
+            organization_id=org_id,
+            reason="unsafe_path",
+            token_version=verified.token_version,
+            purpose=verified.purpose,
+            token_id=verified.token_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="Report file no longer available",
+        )
+
+    if not report_file_matches_metadata(
+        absolute,
+        expected_sha256=job.file_sha256,
+        expected_size=job.file_size,
+    ):
+        await audit_compliance_report_download(
+            request=request,
+            succeeded=False,
+            job_id=job_id,
+            organization_id=org_id,
+            reason="integrity_mismatch",
+            token_version=verified.token_version,
+            purpose=verified.purpose,
+            token_id=verified.token_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="Report file no longer available",
+        )
+
+    await audit_compliance_report_download(
+        request=request,
+        succeeded=True,
+        job_id=job_id,
+        organization_id=org_id,
+        reason="ok",
+        token_version=verified.token_version,
+        purpose=verified.purpose,
+        token_id=verified.token_id,
+    )
+    return _secure_file_response(
+        absolute,
+        job.media_type or "application/octet-stream",
+        job.filename or absolute.name,
     )
