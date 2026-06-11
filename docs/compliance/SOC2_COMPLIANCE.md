@@ -285,8 +285,9 @@ PUT /api/v1/compliance/vendor-assessments/{id}
 # Compliance summary
 GET /api/v1/compliance/compliance-summary
 
-# Compliance report
-GET /api/v1/compliance/report/generate?framework=soc2
+# Enqueue compliance report
+POST /api/v1/compliance/reports
+{"framework": "soc2", "format": "pdf"}
 ```
 
 ## Audit Trail

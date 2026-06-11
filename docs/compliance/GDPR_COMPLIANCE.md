@@ -108,7 +108,7 @@ OmniusGrid is designed to comply with the General Data Protection Regulation (GD
 
 ## Compliance Monitoring
 
-- **Automated Reports**: Generated via `/api/v1/compliance/report/generate`
+- **Automated Reports**: Enqueued with `POST /api/v1/compliance/reports`
 - **Regular Audits**: Quarterly internal audits
 - **Training**: Annual GDPR training for all staff
 - **Documentation**: All policies and procedures documented

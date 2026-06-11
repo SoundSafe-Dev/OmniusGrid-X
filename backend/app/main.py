@@ -5,11 +5,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from app.api import assets, telemetry, alarms, operations, auth, dashboard, health, engines
-from app.api import yard, transportation, logistics_correlation, websocket, commands, oee, kanban, registries, geotab, correlation_integration, nlp_correlation, analysis_sessions, user_context, audit, api_keys, gdpr, compliance, data_residency, feature_flags, sso, bulk_operations, exports
+from app.api import yard, transportation, logistics_correlation, websocket, commands, oee, kanban, registries, geotab, correlation_integration, nlp_correlation, analysis_sessions, user_context, audit, api_keys, gdpr, compliance, compliance_reports, data_residency, feature_flags, sso, bulk_operations, exports
 from app.core.config import settings
 from app.db.database import init_db
 from app.services.websocket_manager import websocket_manager
 from app.services.command_executor import command_executor
+from app.services.compliance_report_queue import compliance_report_dispatcher
 from app.services.export_delivery import export_scheduler
 from app.services.export_processor import export_processor
 from app.services.oee_calculator import oee_calculator
@@ -31,8 +32,10 @@ async def lifespan(app: FastAPI):
     await command_executor.start()
     await oee_calculator.start()
     await export_scheduler.start()
+    await compliance_report_dispatcher.start()
     yield
     # Shutdown
+    await compliance_report_dispatcher.stop()
     await export_scheduler.stop()
     await export_processor.close()
     await oee_calculator.stop()
@@ -180,6 +183,11 @@ app.include_router(audit.router, prefix="/api/v1/audit", tags=["Audit Logs"])
 app.include_router(api_keys.router, prefix="/api/v1/api-keys", tags=["API Keys"])
 app.include_router(gdpr.router, prefix="/api/v1/gdpr", tags=["GDPR Compliance"])
 app.include_router(compliance.router, prefix="/api/v1/compliance", tags=["Compliance"])
+app.include_router(
+    compliance_reports.router,
+    prefix="/api/v1/compliance",
+    tags=["Compliance Reports"],
+)
 app.include_router(data_residency.router, prefix="/api/v1/data-residency", tags=["Data Residency"])
 app.include_router(feature_flags.router, prefix="/api/v1/feature-flags", tags=["Feature Flags"])
 app.include_router(sso.router, prefix="/api/v1/sso", tags=["SSO"])

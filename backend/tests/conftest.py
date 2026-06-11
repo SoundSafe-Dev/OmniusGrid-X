@@ -67,6 +67,7 @@ def _setup_schema(sync_url: str) -> None:
     migration_files = [
         "011_tenant_isolation_rls.sql",
         "014_compliance_tenant_isolation.sql",
+        "015_compliance_report_jobs.sql",
         "016_finalize_compliance_tenant_ownership.sql",
     ]
 

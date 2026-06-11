@@ -3,7 +3,8 @@
 import uuid
 from datetime import datetime
 from typing import Optional, List
-from sqlalchemy import Column, String, DateTime, Boolean, Numeric, JSON, ForeignKey, Text, BigInteger, Integer, ARRAY, Date, UUID, UniqueConstraint
+from sqlalchemy import Column, String, DateTime, Boolean, Numeric, JSON, ForeignKey, Text, BigInteger, Integer, ARRAY, Date, UUID, UniqueConstraint, CheckConstraint, func
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
@@ -1158,6 +1159,79 @@ class VendorRiskAssessment(Base):
     status = Column(String(50), default="pending")
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ComplianceReportJob(Base):
+    """Durable outbox for async compliance report generation and delivery."""
+    __tablename__ = "compliance_report_jobs"
+    __table_args__ = (
+        CheckConstraint(
+            "framework IN ('all', 'gdpr', 'soc2', 'iso27001')",
+            name="ck_compliance_report_jobs_framework",
+        ),
+        CheckConstraint(
+            "format IN ('json', 'pdf')",
+            name="ck_compliance_report_jobs_format",
+        ),
+        CheckConstraint(
+            "report_status IN "
+            "('queued', 'publishing', 'published', 'running', 'completed', 'failed')",
+            name="ck_compliance_report_jobs_report_status",
+        ),
+        CheckConstraint(
+            "delivery_status IN ('pending', 'sending', 'sent', 'failed', 'skipped')",
+            name="ck_compliance_report_jobs_delivery_status",
+        ),
+    )
+
+    id = UUIDColumn()
+    organization_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    requested_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    framework = Column(String(20), nullable=False)
+    format = Column(String(10), nullable=False)
+    recipients = Column(
+        JSON().with_variant(JSONB, "postgresql"),
+        default=list,
+        server_default="[]",
+        nullable=False,
+    )
+    report_status = Column(
+        String(20), nullable=False, default="queued", server_default="queued"
+    )
+    delivery_status = Column(
+        String(20), nullable=False, default="pending", server_default="pending"
+    )
+    publication_attempts = Column(Integer, nullable=False, default=0, server_default="0")
+    generation_attempts = Column(Integer, nullable=False, default=0, server_default="0")
+    email_attempts = Column(Integer, nullable=False, default=0, server_default="0")
+    error_report = Column(Text)
+    error_delivery = Column(Text)
+    file_path = Column(Text)
+    filename = Column(String(255))
+    media_type = Column(String(100))
+    file_size = Column(BigInteger)
+    file_sha256 = Column(String(64))
+    created_at = Column(
+        DateTime(timezone=True), default=datetime.utcnow, server_default=func.now()
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        server_default=func.now(),
+    )
+    published_at = Column(DateTime(timezone=True))
+    started_at = Column(DateTime(timezone=True))
+    completed_at = Column(DateTime(timezone=True))
+    email_sent_at = Column(DateTime(timezone=True))
 
 
 class IntegrationConfiguration(Base):
