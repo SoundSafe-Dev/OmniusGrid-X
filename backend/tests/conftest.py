@@ -233,10 +233,9 @@ async def app(tenant_async_url):
     from sqlalchemy import text
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-    from app.core import tenant as tenant_module
-    from app.core.tenant import get_tenant_org_id
     from app.db import database as db_module
     from app.main import app as fastapi_app
+    from app.middleware.tenant_isolation import get_tenant_db, get_tenant_org_id
 
     test_engine = create_async_engine(tenant_async_url, future=True)
     test_session_maker = async_sessionmaker(
@@ -283,7 +282,7 @@ async def app(tenant_async_url):
     # Each override keeps its own ``Depends`` chain so ``get_tenant_org_id``
     # is still resolved against the live JWT and User dependencies.
     fastapi_app.dependency_overrides[db_module.get_db] = _override_get_db
-    fastapi_app.dependency_overrides[tenant_module.get_tenant_db] = _override_get_tenant_db
+    fastapi_app.dependency_overrides[get_tenant_db] = _override_get_tenant_db
 
     yield fastapi_app
 

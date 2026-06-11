@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.tenant import get_tenant_org_id, get_tenant_db
+from app.middleware.tenant_isolation import get_tenant_org_id, get_tenant_db
 from app.db.models import Telemetry, Asset, PackMLState
 from app.middleware.rate_limit import rate_limit
 

@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.tenant import get_tenant_org_id, get_tenant_db
+from app.middleware.tenant_isolation import get_tenant_org_id, get_tenant_db
 from app.db.database import get_db
 from app.db.models import Asset, AssetType, Workcell, Organization
 from app.middleware.rate_limit import rate_limit
