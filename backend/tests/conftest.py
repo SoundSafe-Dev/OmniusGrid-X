@@ -46,11 +46,11 @@ os.environ.setdefault(
 # ---------------------------------------------------------------------------
 
 def _setup_schema(sync_url: str) -> None:
-    """Create the test schema and apply our RLS migration.
+    """Create the test schema and apply tenant RLS migrations.
 
     Schema is built from ``app.db.models.Base.metadata`` — the same
-    source ``init_db`` uses in dev/prod. Then ``011_tenant_isolation_rls.sql``
-    is applied on top. No other migration files are read.
+    source ``init_db`` uses in dev/prod. Tenant migrations are then
+    applied in order.
     """
     import psycopg2
     import sqlparse
@@ -64,27 +64,34 @@ def _setup_schema(sync_url: str) -> None:
     finally:
         sync_engine.dispose()
 
-    rls_migration = MIGRATIONS_DIR / "011_tenant_isolation_rls.sql"
-    sql = rls_migration.read_text()
-    statements = []
-    for raw in sqlparse.split(sql):
-        if not sqlparse.format(raw, strip_comments=True).strip():
-            continue
-        statements.append(raw.strip())
+    migration_files = [
+        "011_tenant_isolation_rls.sql",
+        "014_compliance_tenant_isolation.sql",
+        "016_finalize_compliance_tenant_ownership.sql",
+    ]
 
     conn = psycopg2.connect(sync_url)
     conn.autocommit = True
     try:
         with conn.cursor() as cur:
-            for stmt in statements:
-                try:
-                    cur.execute(stmt)
-                except Exception as exc:  # noqa: BLE001
-                    raise RuntimeError(
-                        f"011_tenant_isolation_rls.sql failed on statement:\n"
-                        f"{stmt[:200]}{'...' if len(stmt) > 200 else ''}\n"
-                        f"Error: {exc}"
-                    ) from exc
+            for migration_name in migration_files:
+                migration_path = MIGRATIONS_DIR / migration_name
+                sql = migration_path.read_text()
+                statements = []
+                for raw in sqlparse.split(sql):
+                    if not sqlparse.format(raw, strip_comments=True).strip():
+                        continue
+                    statements.append(raw.strip())
+
+                for stmt in statements:
+                    try:
+                        cur.execute(stmt)
+                    except Exception as exc:  # noqa: BLE001
+                        raise RuntimeError(
+                            f"{migration_name} failed on statement:\n"
+                            f"{stmt[:200]}{'...' if len(stmt) > 200 else ''}\n"
+                            f"Error: {exc}"
+                        ) from exc
     finally:
         conn.close()
 

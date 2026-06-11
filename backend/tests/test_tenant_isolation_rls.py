@@ -18,6 +18,8 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+import pytest
+
 
 def _tenant_conn(tenant_async_url: str):
     """Open a synchronous psycopg2 connection as ``tenant_user``."""
@@ -180,21 +182,207 @@ class TestRLSEnforcement:
         )
 
 
+def _admin_seed_compliance_rows(
+    admin_sync_url: str, org_a_id, org_b_id, user_a_id, user_b_id
+) -> tuple[str, str]:
+    """Seed valid security assets and vendor assessments for two organizations."""
+    import psycopg2
+
+    asset_a_id = str(uuid4())
+    asset_b_id = str(uuid4())
+    vendor_a_id = str(uuid4())
+    vendor_b_id = str(uuid4())
+
+    conn = psycopg2.connect(admin_sync_url)
+    conn.autocommit = True
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO security_assets "
+                "(id, asset_type, asset_name, owner_id, organization_id) "
+                "VALUES (%s, %s, %s, %s, %s), (%s, %s, %s, %s, %s);",
+                (
+                    asset_a_id, "software", "rls-sec-a", str(user_a_id), str(org_a_id),
+                    asset_b_id, "software", "rls-sec-b", str(user_b_id), str(org_b_id),
+                ),
+            )
+            cur.execute(
+                "INSERT INTO vendor_risk_assessments "
+                "(id, vendor_name, assessor_id, organization_id) "
+                "VALUES (%s, %s, %s, %s), (%s, %s, %s, %s);",
+                (
+                    vendor_a_id, "rls-vendor-a", str(user_a_id), str(org_a_id),
+                    vendor_b_id, "rls-vendor-b", str(user_b_id), str(org_b_id),
+                ),
+            )
+    finally:
+        conn.close()
+    return asset_a_id, asset_b_id
+
+
+class TestComplianceRLSEnforcement:
+    """Direct SQL RLS coverage for compliance tables."""
+
+    @pytest.mark.parametrize("table", ["security_assets", "vendor_risk_assessments"])
+    def test_select_without_set_local_returns_zero_rows(
+        self, tenant_async_url, admin_sync_url, seeded_orgs, table
+    ):
+        _admin_seed_compliance_rows(
+            admin_sync_url,
+            seeded_orgs["org_a_id"],
+            seeded_orgs["org_b_id"],
+            seeded_orgs["user_a_id"],
+            seeded_orgs["user_b_id"],
+        )
+
+        conn = _tenant_conn(tenant_async_url)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT count(*) FROM {table};")
+                count = cur.fetchone()[0]
+        finally:
+            conn.close()
+
+        assert count == 0, (
+            f"Expected 0 rows from {table} without org context, got {count}."
+        )
+
+    def test_security_assets_org_a_context_returns_only_org_a_rows(
+        self, tenant_async_url, admin_sync_url, seeded_orgs
+    ):
+        asset_a_id, asset_b_id = _admin_seed_compliance_rows(
+            admin_sync_url,
+            seeded_orgs["org_a_id"],
+            seeded_orgs["org_b_id"],
+            seeded_orgs["user_a_id"],
+            seeded_orgs["user_b_id"],
+        )
+
+        conn = _tenant_conn(tenant_async_url)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT set_config('app.current_org_id', %s, false);",
+                    (str(seeded_orgs["org_a_id"]),),
+                )
+                cur.execute("SELECT id::text FROM security_assets ORDER BY asset_name;")
+                ids = [row[0] for row in cur.fetchall()]
+        finally:
+            conn.close()
+
+        assert asset_a_id in ids
+        assert asset_b_id not in ids
+
+    def test_vendor_assessments_org_a_context_returns_only_org_a_rows(
+        self, tenant_async_url, admin_sync_url, seeded_orgs
+    ):
+        _admin_seed_compliance_rows(
+            admin_sync_url,
+            seeded_orgs["org_a_id"],
+            seeded_orgs["org_b_id"],
+            seeded_orgs["user_a_id"],
+            seeded_orgs["user_b_id"],
+        )
+
+        conn = _tenant_conn(tenant_async_url)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT set_config('app.current_org_id', %s, false);",
+                    (str(seeded_orgs["org_a_id"]),),
+                )
+                cur.execute(
+                    "SELECT id::text, vendor_name FROM vendor_risk_assessments "
+                    "ORDER BY vendor_name;"
+                )
+                rows = cur.fetchall()
+        finally:
+            conn.close()
+
+        names = {row[1] for row in rows}
+        assert "rls-vendor-a" in names
+        assert "rls-vendor-b" not in names
+
+    def test_cross_tenant_insert_security_asset_rejected(
+        self, tenant_async_url, seeded_orgs
+    ):
+        import psycopg2
+
+        conn = _tenant_conn(tenant_async_url)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT set_config('app.current_org_id', %s, false);",
+                    (str(seeded_orgs["org_a_id"]),),
+                )
+                try:
+                    cur.execute(
+                        "INSERT INTO security_assets "
+                        "(id, asset_type, asset_name, organization_id) "
+                        "VALUES (%s, %s, %s, %s);",
+                        (
+                            str(uuid4()),
+                            "software",
+                            "should-fail",
+                            str(seeded_orgs["org_b_id"]),
+                        ),
+                    )
+                    raised = False
+                except psycopg2.errors.InsufficientPrivilege:
+                    raised = True
+        finally:
+            conn.close()
+
+        assert raised, "Cross-tenant INSERT into security_assets should fail."
+
+    def test_cross_tenant_insert_vendor_assessment_rejected(
+        self, tenant_async_url, seeded_orgs
+    ):
+        import psycopg2
+
+        conn = _tenant_conn(tenant_async_url)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT set_config('app.current_org_id', %s, false);",
+                    (str(seeded_orgs["org_a_id"]),),
+                )
+                try:
+                    cur.execute(
+                        "INSERT INTO vendor_risk_assessments "
+                        "(id, vendor_name, organization_id) "
+                        "VALUES (%s, %s, %s);",
+                        (
+                            str(uuid4()),
+                            "should-fail",
+                            str(seeded_orgs["org_b_id"]),
+                        ),
+                    )
+                    raised = False
+                except psycopg2.errors.InsufficientPrivilege:
+                    raised = True
+        finally:
+            conn.close()
+
+        assert raised, "Cross-tenant INSERT into vendor_risk_assessments should fail."
+
+
 class TestRLSCoverage:
     """Sanity check that the migration enabled RLS on every expected table."""
 
     def test_strict_rls_tables_have_rls_enabled(self, admin_sync_url):
-        """All 23 strict tables + 6 permissive tables should have RLS on."""
+        """All 25 strict tables + 6 permissive tables should have RLS on."""
         import psycopg2
 
         expected = {
-            # Strict (23)
+            # Strict (25)
             "assets", "workcells", "commands", "yard_trailers", "dock_doors",
             "yard_moves", "driver_wait_times", "yard_checkpoints", "carriers",
             "drivers", "shipments", "routes", "load_plans", "freight_charges",
             "dock_appointments", "truck_asset_correlations", "load_quality_logs",
             "task_boards", "task_rules", "actionable_registries",
             "data_correlations", "analysis_sessions", "intake_items",
+            "security_assets", "vendor_risk_assessments",
             # Permissive (6)
             "geotab_trips", "geotab_diagnostics", "geotab_exceptions",
             "audit_logs", "data_processing_records", "integration_configurations",
