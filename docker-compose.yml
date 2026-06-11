@@ -146,6 +146,40 @@ services:
       - omniusgrid-network
     command: python -m app.workers.export_delivery
 
+  # Async compliance report generation and email delivery
+  compliance-reports-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: omniusgrid-compliance-reports-worker
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://omniusgrid:omniusgrid_dev_password@timescaledb:5432/omniusgrid
+      REDPANDA_URL: redpanda:29092
+      REDPANDA_COMPLIANCE_REPORTS_TOPIC: opsgrid.compliance-reports
+      JWT_SECRET_KEY: dev_secret_key_change_in_production
+      EXPORT_STORAGE_PATH: /var/lib/omniusgrid/exports
+      EXPORT_PUBLIC_BASE_URL: http://localhost:8002
+      COMPLIANCE_REPORT_EMAIL_ENABLED: ${COMPLIANCE_REPORT_EMAIL_ENABLED:-false}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-reports@omniusgrid.local}
+      SMTP_USE_TLS: ${SMTP_USE_TLS:-false}
+      SMTP_START_TLS: ${SMTP_START_TLS:-true}
+    volumes:
+      - ./backend:/app
+      - export-data:/var/lib/omniusgrid/exports
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+    networks:
+      - omniusgrid-network
+    command: python -m app.workers.compliance_reports
+
   # Frontend - React Dashboard
   frontend:
     build:

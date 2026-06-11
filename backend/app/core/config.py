@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     REDPANDA_TOPICS_PREFIX: str = "opsgrid"
     REDPANDA_COMMAND_TOPIC: str = "opsgrid.commands"
     REDPANDA_EXPORT_TOPIC: str = "opsgrid.exports"
+    REDPANDA_COMPLIANCE_REPORTS_TOPIC: str = "opsgrid.compliance-reports"
     
     # Security
     JWT_SECRET_KEY: str = "dev_secret_key_change_in_production"
@@ -68,6 +69,15 @@ class Settings(BaseSettings):
     EXPORT_STORAGE_PATH: str = "/var/lib/omniusgrid/exports"
     EXPORT_PUBLIC_BASE_URL: str = "http://localhost:8002"
     EXPORT_LINK_EXPIRE_MINUTES: int = 1440
+    COMPLIANCE_REPORT_DISPATCH_ENABLED: bool = True
+    COMPLIANCE_REPORT_DISPATCH_INTERVAL_SECONDS: int = 30
+    COMPLIANCE_REPORT_STALE_PUBLISHING_SECONDS: int = 300
+    COMPLIANCE_REPORT_STALE_RUNNING_SECONDS: int = 900
+    COMPLIANCE_REPORT_STALE_SENDING_SECONDS: int = 300
+    COMPLIANCE_REPORT_GENERATION_MAX_ATTEMPTS: int = 3
+    COMPLIANCE_REPORT_EMAIL_MAX_ATTEMPTS: int = 3
+    # Keep disabled until Task 8 provides public signed download links.
+    COMPLIANCE_REPORT_EMAIL_ENABLED: bool = False
     SMTP_HOST: str = ""
     SMTP_PORT: int = 587
     SMTP_USERNAME: str = ""

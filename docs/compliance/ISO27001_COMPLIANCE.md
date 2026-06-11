@@ -415,8 +415,9 @@ DELETE /api/v1/compliance/security-assets/{id}
 # Compliance summary
 GET /api/v1/compliance/compliance-summary
 
-# Compliance report
-GET /api/v1/compliance/report/generate?framework=iso27001
+# Enqueue compliance report
+POST /api/v1/compliance/reports
+{"framework": "iso27001", "format": "pdf"}
 ```
 
 ## Training and Awareness
