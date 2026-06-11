@@ -25,13 +25,14 @@ SMTP.
 """
 
 import os
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import structlog
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select, text
@@ -51,9 +52,12 @@ from app.db.models import (
     ScheduledExport,
     User,
 )
-from app.services.export_delivery import (
-    decode_download_signature,
-    verify_download_signature,
+from app.middleware.rate_limit import rate_limit
+from app.services.report_download_audit import audit_export_delivery_download
+from app.utils.signed_urls import (
+    PURPOSE_EXPORT,
+    SignedTokenError,
+    verify_signed_download_token,
 )
 from app.services.export_processor import (
     EXPORT_DEFINITIONS,
@@ -89,6 +93,27 @@ router = APIRouter(dependencies=[Depends(require_export_admin)])
 # these endpoints carry no bearer/admin dependency and work directly from an email
 # client. Kept on a separate router so the admin dependency above can't apply.
 public_router = APIRouter()
+
+INVALID_LINK_DETAIL = "Invalid or expired download link"
+
+
+def _secure_file_response(path, media_type: str, filename: str) -> FileResponse:
+    response = FileResponse(path, media_type=media_type, filename=filename)
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+def _resolve_export_delivery_path(file_path: str, job_id: UUID) -> Path:
+    root = Path(settings.EXPORT_STORAGE_PATH).resolve()
+    absolute = Path(file_path).resolve()
+    if not absolute.is_relative_to(root):
+        raise ValueError("export path escapes storage root")
+    if absolute.stem != str(job_id):
+        raise ValueError("export path does not match job id")
+    return absolute
 
 XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 SCHEDULE_FREQUENCIES = {"daily", "weekly", "monthly"}
@@ -925,32 +950,43 @@ async def list_export_deliveries(
     "/deliveries/{job_id}/download",
     summary="Download a scheduled report via a time-limited signed link",
 )
+@rate_limit("10/minute")
 async def download_scheduled_export(
     job_id: UUID,
-    signature: str = Query(...),
+    request: Request,
+    signature: str | None = Query(None),
 ):
-    """Capability-style download: the time-limited signature *is* the credential.
+    """Capability-style download: the time-limited signature *is* the credential."""
+    if not signature:
+        await audit_export_delivery_download(
+            request=request,
+            succeeded=False,
+            job_id=job_id,
+            organization_id=None,
+            reason="missing_signature",
+        )
+        raise HTTPException(status_code=403, detail=INVALID_LINK_DETAIL)
 
-    No bearer token is required, so the link in the delivery email works on a
-    direct click. The signature is signed with the server key, bound to this job
-    id and organization, and expires after ``EXPORT_LINK_EXPIRE_MINUTES``;
-    recipients were already validated as active admins in the organization when
-    the schedule was created, and the link only ever exposes that one report.
-    """
-    payload = decode_download_signature(signature)
-    if not payload or payload.get("job_id") != str(job_id):
-        raise HTTPException(status_code=403, detail="Invalid or expired download link")
-    org_id = payload.get("organization_id")
-    if not org_id:
-        raise HTTPException(status_code=403, detail="Invalid or expired download link")
+    verified = None
+    rejection_reason = "invalid_signature_or_expired"
+    try:
+        verified = verify_signed_download_token(signature, PURPOSE_EXPORT, job_id)
+    except SignedTokenError as exc:
+        rejection_reason = exc.reason
+        await audit_export_delivery_download(
+            request=request,
+            succeeded=False,
+            job_id=job_id,
+            organization_id=None,
+            reason=rejection_reason,
+        )
+        raise HTTPException(status_code=403, detail=INVALID_LINK_DETAIL)
 
-    # No authenticated tenant context on this route, so scope the lookup by the
-    # signature's organization via the RLS GUC, then reset it so it can't leak
-    # onto the pooled connection (export_delivery_jobs FORCEs row-level security).
+    org_id = verified.organization_id
     async with AsyncSessionLocal() as session:
-        try:
+        async with session.begin():
             await session.execute(
-                text("SELECT set_config('app.current_org_id', :org, false)"),
+                text("SELECT set_config('app.current_org_id', :org, true)"),
                 {"org": str(org_id)},
             )
             job = (
@@ -961,26 +997,87 @@ async def download_scheduled_export(
                     )
                 )
             ).scalar_one_or_none()
-        finally:
-            await session.execute(
-                text("SELECT set_config('app.current_org_id', '', false)")
-            )
-            await session.commit()
 
     if job is None:
+        await audit_export_delivery_download(
+            request=request,
+            succeeded=False,
+            job_id=job_id,
+            organization_id=org_id,
+            reason="job_not_found",
+            token_version=verified.token_version,
+            purpose=verified.purpose,
+            token_id=verified.token_id,
+        )
         raise HTTPException(status_code=404, detail="Scheduled export not found")
     if job.status != "completed":
+        await audit_export_delivery_download(
+            request=request,
+            succeeded=False,
+            job_id=job_id,
+            organization_id=org_id,
+            reason="export_not_complete",
+            token_version=verified.token_version,
+            purpose=verified.purpose,
+            token_id=verified.token_id,
+        )
         raise HTTPException(status_code=409, detail=f"Export is {job.status}, not ready")
-    if not job.file_path or not os.path.exists(job.file_path):
+    if not job.file_path:
+        await audit_export_delivery_download(
+            request=request,
+            succeeded=False,
+            job_id=job_id,
+            organization_id=org_id,
+            reason="file_missing",
+            token_version=verified.token_version,
+            purpose=verified.purpose,
+            token_id=verified.token_id,
+        )
+        raise HTTPException(status_code=410, detail="Export file no longer available")
+    try:
+        absolute = _resolve_export_delivery_path(job.file_path, job_id)
+    except ValueError:
+        await audit_export_delivery_download(
+            request=request,
+            succeeded=False,
+            job_id=job_id,
+            organization_id=org_id,
+            reason="unsafe_path",
+            token_version=verified.token_version,
+            purpose=verified.purpose,
+            token_id=verified.token_id,
+        )
+        raise HTTPException(status_code=410, detail="Export file no longer available")
+    if not absolute.is_file():
+        await audit_export_delivery_download(
+            request=request,
+            succeeded=False,
+            job_id=job_id,
+            organization_id=org_id,
+            reason="file_missing",
+            token_version=verified.token_version,
+            purpose=verified.purpose,
+            token_id=verified.token_id,
+        )
         raise HTTPException(status_code=410, detail="Export file no longer available")
     media_types = {
         "csv": "text/csv",
         "xlsx": XLSX_MEDIA_TYPE,
         "pdf": "application/pdf",
     }
-    extension = (job.filename or "").rsplit(".", 1)[-1]
-    return FileResponse(
-        job.file_path,
-        media_type=media_types.get(extension, "application/octet-stream"),
-        filename=job.filename or "report",
+    extension = (job.filename or absolute.name).rsplit(".", 1)[-1]
+    await audit_export_delivery_download(
+        request=request,
+        succeeded=True,
+        job_id=job_id,
+        organization_id=org_id,
+        reason="ok",
+        token_version=verified.token_version,
+        purpose=verified.purpose,
+        token_id=verified.token_id,
+    )
+    return _secure_file_response(
+        absolute,
+        media_types.get(extension, "application/octet-stream"),
+        job.filename or "report",
     )

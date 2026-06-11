@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from app.api import assets, telemetry, alarms, operations, auth, dashboard, health, engines
 from app.api import yard, transportation, logistics_correlation, websocket, commands, oee, kanban, registries, geotab, correlation_integration, nlp_correlation, analysis_sessions, user_context, audit, api_keys, gdpr, compliance, compliance_reports, data_residency, feature_flags, sso, bulk_operations, exports
 from app.core.config import settings
+from app.core.logging_filters import install_sensitive_query_access_log_filter
 from app.db.database import init_db
 from app.services.websocket_manager import websocket_manager
 from app.services.command_executor import command_executor
@@ -22,6 +23,7 @@ from app.middleware.profiling import setup_profiling
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
+install_sensitive_query_access_log_filter()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -129,10 +131,13 @@ app = FastAPI(
     ]
 )
 
-# Rate limiting (gated on settings.RATE_LIMIT_ENABLED)
+# Register the limiter and handler unconditionally so explicitly enabled endpoint
+# limits work in tests and dynamically configured deployments.
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
+
+# Application-wide middleware remains gated on settings.RATE_LIMIT_ENABLED.
 if settings.RATE_LIMIT_ENABLED:
-    app.state.limiter = limiter
-    app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
     app.add_middleware(SlowAPIMiddleware)
 
 # CORS middleware
@@ -183,8 +188,9 @@ app.include_router(audit.router, prefix="/api/v1/audit", tags=["Audit Logs"])
 app.include_router(api_keys.router, prefix="/api/v1/api-keys", tags=["API Keys"])
 app.include_router(gdpr.router, prefix="/api/v1/gdpr", tags=["GDPR Compliance"])
 app.include_router(compliance.router, prefix="/api/v1/compliance", tags=["Compliance"])
+app.include_router(compliance_reports.router, prefix="/api/v1/compliance", tags=["Compliance Reports"])
 app.include_router(
-    compliance_reports.router,
+    compliance_reports.public_router,
     prefix="/api/v1/compliance",
     tags=["Compliance Reports"],
 )

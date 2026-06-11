@@ -69,6 +69,13 @@ services:
       JWT_SECRET_KEY: dev_secret_key_change_in_production
       JWT_ALGORITHM: HS256
       JWT_ACCESS_TOKEN_EXPIRE_MINUTES: 30
+      SIGNED_URL_SECRET_KEY: ${SIGNED_URL_SECRET_KEY:-dev_signed_link_secret_change_in_production}
+      SIGNED_URL_ALGORITHM: HS256
+      SIGNED_URL_ISSUER: omniusgrid-signed-links
+      SIGNED_URL_AUDIENCE: omniusgrid-report-download
+      SIGNED_URL_ACCEPT_LEGACY_EXPORT_TOKENS: ${SIGNED_URL_ACCEPT_LEGACY_EXPORT_TOKENS:-true}
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+      REDIS_URL: redis://redis:6379/0
       EXPORT_STORAGE_PATH: /var/lib/omniusgrid/exports
       EXPORT_PUBLIC_BASE_URL: http://localhost:8002
       SMTP_HOST: ${SMTP_HOST:-}
@@ -87,6 +94,8 @@ services:
       timescaledb:
         condition: service_healthy
       redpanda:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     networks:
       - omniusgrid-network
@@ -125,6 +134,11 @@ services:
       REDPANDA_URL: redpanda:29092
       REDPANDA_EXPORT_TOPIC: opsgrid.exports
       JWT_SECRET_KEY: dev_secret_key_change_in_production
+      SIGNED_URL_SECRET_KEY: ${SIGNED_URL_SECRET_KEY:-dev_signed_link_secret_change_in_production}
+      SIGNED_URL_ALGORITHM: HS256
+      SIGNED_URL_ISSUER: omniusgrid-signed-links
+      SIGNED_URL_AUDIENCE: omniusgrid-report-download
+      SIGNED_URL_ACCEPT_LEGACY_EXPORT_TOKENS: ${SIGNED_URL_ACCEPT_LEGACY_EXPORT_TOKENS:-true}
       EXPORT_STORAGE_PATH: /var/lib/omniusgrid/exports
       EXPORT_PUBLIC_BASE_URL: http://localhost:8002
       SMTP_HOST: ${SMTP_HOST:-}
@@ -158,6 +172,11 @@ services:
       REDPANDA_URL: redpanda:29092
       REDPANDA_COMPLIANCE_REPORTS_TOPIC: opsgrid.compliance-reports
       JWT_SECRET_KEY: dev_secret_key_change_in_production
+      SIGNED_URL_SECRET_KEY: ${SIGNED_URL_SECRET_KEY:-dev_signed_link_secret_change_in_production}
+      SIGNED_URL_ALGORITHM: HS256
+      SIGNED_URL_ISSUER: omniusgrid-signed-links
+      SIGNED_URL_AUDIENCE: omniusgrid-report-download
+      SIGNED_URL_ACCEPT_LEGACY_EXPORT_TOKENS: ${SIGNED_URL_ACCEPT_LEGACY_EXPORT_TOKENS:-true}
       EXPORT_STORAGE_PATH: /var/lib/omniusgrid/exports
       EXPORT_PUBLIC_BASE_URL: http://localhost:8002
       COMPLIANCE_REPORT_EMAIL_ENABLED: ${COMPLIANCE_REPORT_EMAIL_ENABLED:-false}
@@ -294,6 +313,11 @@ services:
       - "6379:6379"
     volumes:
       - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
     networks:
       - omniusgrid-network
 

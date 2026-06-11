@@ -69,6 +69,11 @@ class Settings(BaseSettings):
     EXPORT_STORAGE_PATH: str = "/var/lib/omniusgrid/exports"
     EXPORT_PUBLIC_BASE_URL: str = "http://localhost:8002"
     EXPORT_LINK_EXPIRE_MINUTES: int = 1440
+    SIGNED_URL_SECRET_KEY: str = ""
+    SIGNED_URL_ALGORITHM: str = "HS256"
+    SIGNED_URL_ISSUER: str = "omniusgrid-signed-links"
+    SIGNED_URL_AUDIENCE: str = "omniusgrid-report-download"
+    SIGNED_URL_ACCEPT_LEGACY_EXPORT_TOKENS: bool = True
     COMPLIANCE_REPORT_DISPATCH_ENABLED: bool = True
     COMPLIANCE_REPORT_DISPATCH_INTERVAL_SECONDS: int = 30
     COMPLIANCE_REPORT_STALE_PUBLISHING_SECONDS: int = 300
@@ -76,7 +81,7 @@ class Settings(BaseSettings):
     COMPLIANCE_REPORT_STALE_SENDING_SECONDS: int = 300
     COMPLIANCE_REPORT_GENERATION_MAX_ATTEMPTS: int = 3
     COMPLIANCE_REPORT_EMAIL_MAX_ATTEMPTS: int = 3
-    # Keep disabled until Task 8 provides public signed download links.
+    # Task 8 enables this after signed public download links are available.
     COMPLIANCE_REPORT_EMAIL_ENABLED: bool = False
     SMTP_HOST: str = ""
     SMTP_PORT: int = 587

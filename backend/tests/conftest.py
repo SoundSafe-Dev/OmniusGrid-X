@@ -4,7 +4,7 @@ Strategy
 --------
 1. Spin up an ephemeral TimescaleDB container (Docker, via testcontainers).
 2. Build the schema from ``app.db.models`` (matching what ``init_db``
-   does in dev/prod) and apply our RLS migration ``011_*.sql`` on top.
+   does in dev/prod), install the real audit trigger, and apply the RLS migrations.
 3. Create a non-superuser role ``tenant_user`` and grant it the
    privileges the app would have in production. Critical because
    superusers bypass RLS even with FORCE.
@@ -46,11 +46,11 @@ os.environ.setdefault(
 # ---------------------------------------------------------------------------
 
 def _setup_schema(sync_url: str) -> None:
-    """Create the test schema and apply tenant RLS migrations.
+    """Create the test schema and apply RLS migrations.
 
     Schema is built from ``app.db.models.Base.metadata`` — the same
-    source ``init_db`` uses in dev/prod. Tenant migrations are then
-    applied in order.
+    source ``init_db`` uses in dev/prod. The audit and RLS migrations
+    are applied on top in order.
     """
     import psycopg2
     import sqlparse
@@ -65,7 +65,9 @@ def _setup_schema(sync_url: str) -> None:
         sync_engine.dispose()
 
     migration_files = [
+        "009_audit_logs.sql",
         "011_tenant_isolation_rls.sql",
+        "012_export_templates.sql",
         "014_compliance_tenant_isolation.sql",
         "015_compliance_report_jobs.sql",
         "016_finalize_compliance_tenant_ownership.sql",
@@ -75,6 +77,25 @@ def _setup_schema(sync_url: str) -> None:
     conn.autocommit = True
     try:
         with conn.cursor() as cur:
+            cur.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto;")
+            cur.execute(
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_roles WHERE rolname = 'omniusgrid_app'
+                    ) THEN
+                        CREATE ROLE omniusgrid_app NOLOGIN;
+                    END IF;
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_roles WHERE rolname = 'omniusgrid_readonly'
+                    ) THEN
+                        CREATE ROLE omniusgrid_readonly NOLOGIN;
+                    END IF;
+                END
+                $$;
+                """
+            )
             for migration_name in migration_files:
                 migration_path = MIGRATIONS_DIR / migration_name
                 sql = migration_path.read_text()
@@ -237,11 +258,19 @@ async def app(tenant_async_url):
     from app.db import database as db_module
     from app.main import app as fastapi_app
     from app.middleware.tenant_isolation import get_tenant_db, get_tenant_org_id
+    import app.api.compliance_reports as compliance_reports_api
+    import app.api.exports as exports_api
+    import app.services.report_download_audit as report_download_audit
 
     test_engine = create_async_engine(tenant_async_url, future=True)
     test_session_maker = async_sessionmaker(
         test_engine, expire_on_commit=False, autoflush=False
     )
+    original_async_session_local = db_module.AsyncSessionLocal
+    db_module.AsyncSessionLocal = test_session_maker
+    compliance_reports_api.AsyncSessionLocal = test_session_maker
+    exports_api.AsyncSessionLocal = test_session_maker
+    report_download_audit.AsyncSessionLocal = test_session_maker
 
     async def _override_get_db() -> AsyncIterator:
         async with test_session_maker() as session:
@@ -288,6 +317,10 @@ async def app(tenant_async_url):
     yield fastapi_app
 
     fastapi_app.dependency_overrides.clear()
+    db_module.AsyncSessionLocal = original_async_session_local
+    compliance_reports_api.AsyncSessionLocal = original_async_session_local
+    exports_api.AsyncSessionLocal = original_async_session_local
+    report_download_audit.AsyncSessionLocal = original_async_session_local
     await test_engine.dispose()
 
 

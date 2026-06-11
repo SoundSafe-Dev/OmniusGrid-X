@@ -25,6 +25,7 @@ from app.services.email_service import (
     EmailConfigurationError,
     send_compliance_report_email,
 )
+from app.utils.signed_urls import build_compliance_signed_download_url
 
 logger = structlog.get_logger()
 
@@ -35,18 +36,12 @@ class RetryableComplianceReportError(RuntimeError):
     """A persisted job failure that should be retried before committing the offset."""
 
 
-def build_authenticated_download_url(
+def build_signed_compliance_download_url(
     job_id: UUID,
     organization_id: UUID,
     expires_at: datetime,
 ) -> tuple[str, datetime]:
-    """Return the authenticated API URL until Task 8 adds public signed links."""
-    del organization_id
-    base_url = settings.EXPORT_PUBLIC_BASE_URL.rstrip("/")
-    return (
-        f"{base_url}/api/v1/compliance/reports/{job_id}/download",
-        expires_at,
-    )
+    return build_compliance_signed_download_url(job_id, organization_id, expires_at)
 
 
 async def _set_org(session, org_id: UUID) -> None:
@@ -313,7 +308,7 @@ async def _record_email_failure(
 
 async def _deliver_email(
     job: ComplianceReportJob,
-    download_url_factory: DownloadUrlFactory = build_authenticated_download_url,
+    download_url_factory: DownloadUrlFactory = build_signed_compliance_download_url,
 ) -> None:
     if job.email_sent_at is not None:
         return
@@ -376,7 +371,7 @@ async def process_job(
     job_id: UUID,
     org_id: UUID,
     *,
-    download_url_factory: DownloadUrlFactory = build_authenticated_download_url,
+    download_url_factory: DownloadUrlFactory = build_signed_compliance_download_url,
 ) -> None:
     """Generate at most one report file and attempt email delivery once per pass."""
     await recover_stale_jobs()
