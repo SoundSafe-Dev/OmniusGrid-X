@@ -43,7 +43,7 @@ CREATE TABLE asset_types (
 CREATE TABLE assets (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-    workcell_id UUID REFERENCES workcells(id) ON DELETE SET NULL,
+    workcell_id UUID NOT NULL REFERENCES workcells(id) ON DELETE RESTRICT,
     asset_type_id UUID NOT NULL REFERENCES asset_types(id),
     name VARCHAR(255) NOT NULL,
     serial_number VARCHAR(255),
