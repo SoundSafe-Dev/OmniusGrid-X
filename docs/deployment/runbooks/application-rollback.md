@@ -88,7 +88,8 @@ curl -fsS http://localhost:8002/health/ready | jq .
 ### Step 4 — Roll back the frontend (if affected)
 ```bash
 docker compose up -d --build frontend
-curl -fsS http://localhost:3000 >/dev/null && echo "frontend OK"
+# Host port is 9999 (compose maps 9999 -> container 3000).
+curl -fsS http://localhost:9999 >/dev/null && echo "frontend OK"
 ```
 
 ---

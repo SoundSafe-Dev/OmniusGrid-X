@@ -42,7 +42,8 @@ follow-up action.
 
 - [ ] Backend readiness: `curl -fsS http://localhost:8002/health/ready` returns 200
 - [ ] All dependencies report `ok` or `skipped` in `/health/detailed`
-- [ ] WebSocket accepts connections (`wscat -c ws://localhost:8002/ws`)
+- [ ] WebSocket accepts authenticated connections; the organization is derived from the token:
+  `wscat -c "ws://localhost:8002/ws?token=$ACCESS_TOKEN"`
 - [ ] All relevant alerts cleared in Alertmanager
 - [ ] (k8s) All pods `Running` and `Ready`: `kubectl get pods -n omniusgrid`
 
