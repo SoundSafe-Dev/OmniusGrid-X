@@ -20,6 +20,7 @@ from typing import Any, Optional
 
 import redis.asyncio as redis
 import structlog
+from redis.exceptions import WatchError
 from sqlalchemy import text
 
 from app.core.config import settings
@@ -29,6 +30,9 @@ logger = structlog.get_logger()
 
 FLAG_KEY_PREFIX = "feature_flag:"
 FLAG_INDEX_KEY = "feature_flags:index"
+
+# Bounded retries for the optimistic (WATCH/MULTI) update transaction.
+MAX_TX_RETRIES = 5
 
 
 def _utc_now_iso() -> str:
@@ -88,9 +92,7 @@ class FeatureFlagService:
         key = self._validate_key(key)
         rollout_percentage = self._validate_percentage(rollout_percentage)
         client = self._redis()
-
-        if await client.exists(f"{FLAG_KEY_PREFIX}{key}"):
-            raise FeatureFlagError(f"Feature flag '{key}' already exists")
+        flag_key = f"{FLAG_KEY_PREFIX}{key}"
 
         now = _utc_now_iso()
         flag = {
@@ -102,8 +104,21 @@ class FeatureFlagService:
             "updated_at": now,
             "updated_by": actor_id,
         }
-        await client.set(f"{FLAG_KEY_PREFIX}{key}", json.dumps(flag))
-        await client.sadd(FLAG_INDEX_KEY, key)
+
+        # Claim the key and add it to the index in one transaction: a crash can't
+        # leave a flag document without its index entry, and two concurrent
+        # creates can't both win (the loser's EXEC aborts via WatchError).
+        async with client.pipeline() as pipe:
+            try:
+                await pipe.watch(flag_key)
+                if await pipe.get(flag_key) is not None:
+                    raise FeatureFlagError(f"Feature flag '{key}' already exists")
+                pipe.multi()
+                pipe.set(flag_key, json.dumps(flag))
+                pipe.sadd(FLAG_INDEX_KEY, key)
+                await pipe.execute()
+            except WatchError:
+                raise FeatureFlagError(f"Feature flag '{key}' already exists")
 
         await self._audit("feature_flag_created", key, None, flag, actor_id, organization_id)
         return flag
@@ -118,24 +133,43 @@ class FeatureFlagService:
         organization_id: Optional[str] = None,
     ) -> dict[str, Any]:
         client = self._redis()
-        existing = await self.get_flag(key)
-        if existing is None:
-            raise FeatureFlagNotFound(f"Feature flag '{key}' not found")
-
-        updated = dict(existing)
-        if description is not None:
-            updated["description"] = description
-        if enabled is not None:
-            updated["enabled"] = bool(enabled)
+        flag_key = f"{FLAG_KEY_PREFIX}{key}"
+        # Validate before the loop so a bad percentage fails fast, not per retry.
         if rollout_percentage is not None:
-            updated["rollout_percentage"] = self._validate_percentage(rollout_percentage)
-        updated["updated_at"] = _utc_now_iso()
-        updated["updated_by"] = actor_id
+            rollout_percentage = self._validate_percentage(rollout_percentage)
 
-        await client.set(f"{FLAG_KEY_PREFIX}{key}", json.dumps(updated))
+        # Optimistic read-modify-write: WATCH the key, merge the partial update,
+        # and EXEC. A concurrent writer invalidates the WATCH and we retry, so a
+        # simultaneous update can't be silently lost.
+        for _ in range(MAX_TX_RETRIES):
+            async with client.pipeline() as pipe:
+                try:
+                    await pipe.watch(flag_key)
+                    raw = await pipe.get(flag_key)
+                    if raw is None:
+                        raise FeatureFlagNotFound(f"Feature flag '{key}' not found")
+                    existing = json.loads(raw)
+                    updated = dict(existing)
+                    if description is not None:
+                        updated["description"] = description
+                    if enabled is not None:
+                        updated["enabled"] = bool(enabled)
+                    if rollout_percentage is not None:
+                        updated["rollout_percentage"] = rollout_percentage
+                    updated["updated_at"] = _utc_now_iso()
+                    updated["updated_by"] = actor_id
+                    pipe.multi()
+                    pipe.set(flag_key, json.dumps(updated))
+                    await pipe.execute()
+                except WatchError:
+                    continue  # contended; re-read and retry
+            await self._audit("feature_flag_updated", key, existing, updated, actor_id, organization_id)
+            return updated
 
-        await self._audit("feature_flag_updated", key, existing, updated, actor_id, organization_id)
-        return updated
+        raise FeatureFlagError(
+            f"Feature flag '{key}' could not be updated after {MAX_TX_RETRIES} "
+            "contended attempts"
+        )
 
     async def delete_flag(
         self,
@@ -148,8 +182,12 @@ class FeatureFlagService:
         if existing is None:
             raise FeatureFlagNotFound(f"Feature flag '{key}' not found")
 
-        await client.delete(f"{FLAG_KEY_PREFIX}{key}")
-        await client.srem(FLAG_INDEX_KEY, key)
+        # Drop the document and its index entry atomically so the index can never
+        # be left pointing at a deleted flag.
+        async with client.pipeline(transaction=True) as pipe:
+            pipe.delete(f"{FLAG_KEY_PREFIX}{key}")
+            pipe.srem(FLAG_INDEX_KEY, key)
+            await pipe.execute()
 
         await self._audit("feature_flag_deleted", key, existing, None, actor_id, organization_id)
 
