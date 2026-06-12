@@ -71,6 +71,7 @@ def _setup_schema(sync_url: str) -> None:
         "014_compliance_tenant_isolation.sql",
         "015_compliance_report_jobs.sql",
         "016_finalize_compliance_tenant_ownership.sql",
+        "017_scheduled_compliance_reports.sql",
     ]
 
     conn = psycopg2.connect(sync_url)

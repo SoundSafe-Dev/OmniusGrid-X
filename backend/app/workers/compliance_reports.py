@@ -13,7 +13,7 @@ from sqlalchemy import select, text
 
 from app.core.config import settings
 from app.db.database import AsyncSessionLocal
-from app.db.models import ComplianceReportJob, Organization
+from app.db.models import ComplianceReportJob, Organization, ScheduledComplianceReport
 from app.services.compliance_report_queue import MESSAGE_SCHEMA_VERSION
 from app.services.compliance_report_service import (
     absolute_report_path,
@@ -49,6 +49,71 @@ async def _set_org(session, org_id: UUID) -> None:
         text("SELECT set_config('app.current_org_id', :org, true)"),
         {"org": str(org_id)},
     )
+
+
+async def _best_effort_touch_schedule_run(job: ComplianceReportJob) -> None:
+    """Record scheduled execution start using the planned ``scheduled_for`` time."""
+    if not job.schedule_id or job.scheduled_for is None:
+        return
+    try:
+        async with AsyncSessionLocal() as session:
+            await _set_org(session, job.organization_id)
+            schedule = (
+                await session.execute(
+                    select(ScheduledComplianceReport).where(
+                        ScheduledComplianceReport.id == job.schedule_id
+                    )
+                )
+            ).scalar_one_or_none()
+            if schedule is None:
+                return
+            schedule.last_run_at = job.scheduled_for
+            schedule.updated_at = datetime.now(timezone.utc)
+            await session.commit()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "compliance_report_schedule_run_touch_failed",
+            schedule_id=str(job.schedule_id),
+            job_id=str(job.id),
+            error=str(exc),
+        )
+
+
+async def _best_effort_finalize_schedule_status(job: ComplianceReportJob) -> None:
+    if not job.schedule_id:
+        return
+    if job.report_status == "failed":
+        terminal = "failed"
+    elif job.delivery_status == "skipped":
+        terminal = "skipped"
+    elif job.delivery_status == "failed":
+        terminal = "delivery_failed"
+    elif job.report_status == "completed" and job.delivery_status == "sent":
+        terminal = "completed"
+    else:
+        return
+    try:
+        async with AsyncSessionLocal() as session:
+            await _set_org(session, job.organization_id)
+            schedule = (
+                await session.execute(
+                    select(ScheduledComplianceReport).where(
+                        ScheduledComplianceReport.id == job.schedule_id
+                    )
+                )
+            ).scalar_one_or_none()
+            if schedule is None:
+                return
+            schedule.last_status = terminal
+            schedule.updated_at = datetime.now(timezone.utc)
+            await session.commit()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "compliance_report_schedule_finalize_failed",
+            schedule_id=str(job.schedule_id),
+            job_id=str(job.id),
+            error=str(exc),
+        )
 
 
 async def recover_stale_jobs() -> None:
@@ -146,6 +211,8 @@ async def _claim_for_generation(job_id: UUID, org_id: UUID) -> ComplianceReportJ
         job.updated_at = datetime.now(timezone.utc)
         job.error_report = None
         await session.commit()
+        if job.schedule_id:
+            await _best_effort_touch_schedule_run(job)
         return job
 
 
@@ -379,6 +446,7 @@ async def process_job(
     if existing is None:
         return
     if existing.report_status == "failed":
+        await _best_effort_finalize_schedule_status(existing)
         return
 
     if existing.report_status == "completed" and _stored_file_is_valid(existing):
@@ -421,9 +489,15 @@ async def process_job(
                 )
                 if retryable:
                     raise RetryableComplianceReportError(str(exc)) from exc
+                failed = await _load_job(job_id, org_id)
+                if failed is not None:
+                    await _best_effort_finalize_schedule_status(failed)
                 return
 
     await _deliver_email(job, download_url_factory=download_url_factory)
+    refreshed = await _load_job(job_id, org_id)
+    if refreshed is not None:
+        await _best_effort_finalize_schedule_status(refreshed)
 
 
 def _validate_message(payload: dict) -> tuple[UUID, UUID]:

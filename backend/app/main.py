@@ -13,6 +13,7 @@ from app.services.websocket_manager import websocket_manager
 from app.services.command_executor import command_executor
 from app.services.compliance_report_queue import compliance_report_dispatcher
 from app.services.export_delivery import export_scheduler
+from app.services.report_scheduler import report_scheduler
 from app.services.export_processor import export_processor
 from app.services.oee_calculator import oee_calculator
 from app.middleware.audit import AuditLoggingMiddleware
@@ -35,8 +36,10 @@ async def lifespan(app: FastAPI):
     await oee_calculator.start()
     await export_scheduler.start()
     await compliance_report_dispatcher.start()
+    await report_scheduler.start()
     yield
     # Shutdown
+    await report_scheduler.stop()
     await compliance_report_dispatcher.stop()
     await export_scheduler.stop()
     await export_processor.close()

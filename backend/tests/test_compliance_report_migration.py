@@ -294,4 +294,85 @@ def test_orm_contract_matches_migration():
     assert ondelete == {
         "organization_id": "CASCADE",
         "requested_by": "SET NULL",
+        "schedule_id": "SET NULL",
     }
+
+
+MIGRATION_017_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "database"
+    / "migrations"
+    / "017_scheduled_compliance_reports.sql"
+)
+
+
+def test_migration_017_fresh_schema(admin_sync_url):
+    import psycopg2
+
+    schema = f"migration_017_{uuid4().hex}"
+    conn = psycopg2.connect(admin_sync_url)
+    conn.autocommit = True
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f'CREATE SCHEMA "{schema}";')
+            cur.execute(f'SET search_path TO "{schema}";')
+            cur.execute(
+                """
+                CREATE TABLE organizations (id UUID PRIMARY KEY);
+                CREATE TABLE users (id UUID PRIMARY KEY);
+                """
+            )
+            cur.execute(MIGRATION_PATH.read_text())
+            cur.execute(MIGRATION_017_PATH.read_text())
+            cur.execute(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = %s
+                  AND table_name = 'scheduled_compliance_reports';
+                """,
+                (schema,),
+            )
+            columns = {row[0] for row in cur.fetchall()}
+            assert "next_run_at" in columns
+            assert "frequency" in columns
+            cur.execute(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = %s
+                  AND table_name = 'compliance_report_jobs'
+                  AND column_name IN ('schedule_id', 'scheduled_for');
+                """,
+                (schema,),
+            )
+            assert {row[0] for row in cur.fetchall()} == {"schedule_id", "scheduled_for"}
+            cur.execute(MIGRATION_017_PATH.read_text())
+            cur.execute(
+                """
+                SELECT con.conname, con.confdeltype, target.relname
+                FROM pg_constraint AS con
+                JOIN pg_class AS source ON source.oid = con.conrelid
+                JOIN pg_namespace AS ns ON ns.oid = source.relnamespace
+                JOIN pg_class AS target ON target.oid = con.confrelid
+                JOIN unnest(con.conkey) AS key(attnum) ON TRUE
+                JOIN pg_attribute AS attr
+                  ON attr.attrelid = source.oid
+                 AND attr.attnum = key.attnum
+                WHERE ns.nspname = %s
+                  AND source.relname = 'compliance_report_jobs'
+                  AND con.contype = 'f'
+                  AND attr.attname = 'schedule_id';
+                """,
+                (schema,),
+            )
+            schedule_foreign_keys = cur.fetchall()
+            assert schedule_foreign_keys == [
+                (
+                    "fk_compliance_report_jobs_schedule",
+                    "n",
+                    "scheduled_compliance_reports",
+                )
+            ]
+    finally:
+        conn.close()

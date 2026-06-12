@@ -42,6 +42,7 @@ psutil==5.9.8
 openpyxl==3.1.2
 reportlab==4.0.9
 aiosmtplib==3.0.1
+APScheduler==3.10.4
 
 # Testing (Task 5 — tenant isolation integration tests)
 pytest==7.4.4
