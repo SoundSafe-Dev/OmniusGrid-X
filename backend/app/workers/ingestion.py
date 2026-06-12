@@ -5,8 +5,10 @@ import json
 import os
 from datetime import datetime
 from typing import Dict, Any, Optional
+from uuid import UUID
 import structlog
 from aiokafka import AIOKafkaConsumer
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import sys
@@ -125,6 +127,8 @@ class IngestionWorker:
     
     async def _process_telemetry(self, session: AsyncSession, asset_id: str, data: Dict, organization_id: str):
         """Process telemetry data with intelligent shedding"""
+        asset_uuid = UUID(asset_id)
+
         # Parse timestamp
         timestamp_str = data.get('timestamp_edge') or data.get('timestamp')
         if timestamp_str:
@@ -153,24 +157,24 @@ class IngestionWorker:
                     
                     telemetry = Telemetry(
                         time=timestamp,
-                        asset_id=asset_id,
+                        asset_id=asset_uuid,
                         metric_name=metric_name,
                         value=float(value) if isinstance(value, (int, float)) else 0,
                         unit=self._infer_unit(metric_name),
                         packml_state=packml_state,
-                        metadata=payload,
+                        meta_data=payload,
                         sequence_num=data.get('sequence_num', 0)
                     )
                     session.add(telemetry)
         
         # Update asset last_seen
         await session.execute(
-            f"""
-            UPDATE assets 
-            SET last_seen = '{timestamp.isoformat()}', 
-                current_packml_state = '{packml_state or 'Idle'}'
-            WHERE id = '{asset_id}'
-            """
+            update(Asset)
+            .where(Asset.id == asset_uuid)
+            .values(
+                last_seen=timestamp,
+                current_packml_state=packml_state or 'Idle',
+            )
         )
         
         logger.debug(
