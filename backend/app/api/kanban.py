@@ -25,6 +25,7 @@ from app.models.schemas import (
     TaskEscalationResponse, TaskChecklistItem
 )
 from app.api.auth import get_current_active_user
+from app.middleware.tenant_isolation import get_tenant_db
 from app.services.websocket_manager import websocket_manager
 
 router = APIRouter()
@@ -101,6 +102,24 @@ async def get_column_by_type(session: AsyncSession, board_id: str, column_type: 
         )
     )
     return result.scalar_one_or_none()
+
+
+async def get_organization_task(
+    session: AsyncSession, task_id: str, organization_id: str
+) -> Task:
+    """Load a task only through a board owned by the authenticated tenant."""
+    result = await session.execute(
+        select(Task)
+        .join(TaskBoard, Task.board_id == TaskBoard.id)
+        .where(
+            Task.id == task_id,
+            TaskBoard.organization_id == organization_id,
+        )
+    )
+    task = result.scalar_one_or_none()
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return task
 
 
 async def log_task_comment(
@@ -249,11 +268,15 @@ async def list_tasks(
     approval_status: Optional[str] = None,
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """List tasks with filtering"""
-    query = select(Task).where(Task.board_id.isnot(None))
+    query = (
+        select(Task)
+        .join(TaskBoard, Task.board_id == TaskBoard.id)
+        .where(TaskBoard.organization_id == current_user.organization_id)
+    )
     
     if board_id:
         query = query.where(Task.board_id == board_id)
@@ -284,13 +307,16 @@ async def list_tasks(
 async def create_task(
     task_data: TaskCreate,
     background_tasks: BackgroundTasks,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """Create a new task"""
     # Validate board exists
     result = await session.execute(
-        select(TaskBoard).where(TaskBoard.id == task_data.board_id)
+        select(TaskBoard).where(
+            TaskBoard.id == task_data.board_id,
+            TaskBoard.organization_id == current_user.organization_id,
+        )
     )
     board = result.scalar_one_or_none()
     if not board:
@@ -373,19 +399,13 @@ async def create_task(
 @router.get("/tasks/{task_id}", response_model=TaskResponse)
 async def get_task(
     task_id: str,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """Get task details"""
-    result = await session.execute(
-        select(Task).where(Task.id == task_id)
+    return await get_organization_task(
+        session, task_id, current_user.organization_id
     )
-    task = result.scalar_one_or_none()
-    
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
-    
-    return task
 
 
 @router.put("/tasks/{task_id}", response_model=TaskResponse)
@@ -393,17 +413,13 @@ async def update_task(
     task_id: str,
     task_update: TaskUpdate,
     background_tasks: BackgroundTasks,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """Update a task"""
-    result = await session.execute(
-        select(Task).where(Task.id == task_id)
+    task = await get_organization_task(
+        session, task_id, current_user.organization_id
     )
-    task = result.scalar_one_or_none()
-    
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
     
     # Track changes for activity log
     changes = []
@@ -441,9 +457,14 @@ async def update_task(
         old_col = old_col_result.scalar_one()
         
         new_col_result = await session.execute(
-            select(TaskColumn).where(TaskColumn.id == task_update.column_id)
+            select(TaskColumn).where(
+                TaskColumn.id == task_update.column_id,
+                TaskColumn.board_id == task.board_id,
+            )
         )
-        new_col = new_col_result.scalar_one()
+        new_col = new_col_result.scalar_one_or_none()
+        if new_col is None:
+            raise HTTPException(status_code=404, detail="Column not found")
         
         changes.append(f"Moved from '{old_col.name}' to '{new_col.name}'")
         task.column_id = task_update.column_id
@@ -495,17 +516,13 @@ async def update_task(
 @router.delete("/tasks/{task_id}")
 async def delete_task(
     task_id: str,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """Delete/archive a task"""
-    result = await session.execute(
-        select(Task).where(Task.id == task_id)
+    task = await get_organization_task(
+        session, task_id, current_user.organization_id
     )
-    task = result.scalar_one_or_none()
-    
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
     
     # Soft delete - move to done column with deleted status
     done_column = await get_column_by_type(session, task.board_id, "done")
@@ -531,29 +548,25 @@ async def move_task(
     task_id: str,
     move_request: TaskMoveRequest,
     background_tasks: BackgroundTasks,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """Move task to different column"""
-    result = await session.execute(
-        select(Task).where(Task.id == task_id)
+    task = await get_organization_task(
+        session, task_id, current_user.organization_id
     )
-    task = result.scalar_one_or_none()
-    
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
     
     # Validate target column
     result = await session.execute(
-        select(TaskColumn).where(TaskColumn.id == move_request.target_column_id)
+        select(TaskColumn).where(
+            TaskColumn.id == move_request.target_column_id,
+            TaskColumn.board_id == task.board_id,
+        )
     )
     target_column = result.scalar_one_or_none()
     
     if not target_column:
         raise HTTPException(status_code=404, detail="Target column not found")
-    
-    if target_column.board_id != task.board_id:
-        raise HTTPException(status_code=400, detail="Cannot move task to different board")
     
     # Get current column for logging
     result = await session.execute(
@@ -619,17 +632,13 @@ async def approve_task(
     task_id: str,
     approval: TaskApprovalRequest,
     background_tasks: BackgroundTasks,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """Approve or reject a task from Backlog"""
-    result = await session.execute(
-        select(Task).where(Task.id == task_id)
+    task = await get_organization_task(
+        session, task_id, current_user.organization_id
     )
-    task = result.scalar_one_or_none()
-    
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
     
     # Get current column
     result = await session.execute(
@@ -713,17 +722,13 @@ async def approve_task(
 async def start_task(
     task_id: str,
     background_tasks: BackgroundTasks,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """Start work on a task (Triage -> In Progress)"""
-    result = await session.execute(
-        select(Task).where(Task.id == task_id)
+    task = await get_organization_task(
+        session, task_id, current_user.organization_id
     )
-    task = result.scalar_one_or_none()
-    
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
     
     # Move to In Progress
     in_progress_column = await get_column_by_type(session, task.board_id, "in_progress")
@@ -779,17 +784,13 @@ async def start_task(
 async def complete_task(
     task_id: str,
     background_tasks: BackgroundTasks,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """Complete a task (In Progress/Review -> Done)"""
-    result = await session.execute(
-        select(Task).where(Task.id == task_id)
+    task = await get_organization_task(
+        session, task_id, current_user.organization_id
     )
-    task = result.scalar_one_or_none()
-    
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
     
     # Move to Done
     done_column = await get_column_by_type(session, task.board_id, "done")
@@ -868,7 +869,12 @@ async def execute_completion_actions(task_id: str, actions: Dict[str, Any], orga
     async with AsyncSessionLocal() as session:
         # Get task for related entities
         result = await session.execute(
-            select(Task).where(Task.id == task_id)
+            select(Task)
+            .join(TaskBoard, Task.board_id == TaskBoard.id)
+            .where(
+                Task.id == task_id,
+                TaskBoard.organization_id == organization_id,
+            )
         )
         task = result.scalar_one_or_none()
         
@@ -934,10 +940,11 @@ async def execute_completion_actions(task_id: str, actions: Dict[str, Any], orga
 async def get_task_comments(
     task_id: str,
     limit: int = Query(50, ge=1, le=200),
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """Get activity feed for a task"""
+    await get_organization_task(session, task_id, current_user.organization_id)
     result = await session.execute(
         select(TaskComment)
         .where(TaskComment.task_id == task_id)
@@ -952,18 +959,12 @@ async def add_task_comment(
     task_id: str,
     comment: TaskCommentBase,
     background_tasks: BackgroundTasks,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """Add comment to task"""
     # Validate task exists
-    result = await session.execute(
-        select(Task).where(Task.id == task_id)
-    )
-    task = result.scalar_one_or_none()
-    
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+    await get_organization_task(session, task_id, current_user.organization_id)
     
     new_comment = TaskComment(
         task_id=task_id,
@@ -992,10 +993,11 @@ async def add_task_comment(
 async def start_task_timer(
     task_id: str,
     timer_data: TaskTimerStart,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """Start time tracking for a task"""
+    await get_organization_task(session, task_id, current_user.organization_id)
     # Check for existing running timer
     result = await session.execute(
         select(TaskTimer).where(
@@ -1037,10 +1039,13 @@ async def start_task_timer(
 async def stop_task_timer(
     task_id: str,
     timer_data: TaskTimerStop,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """Stop time tracking for a task"""
+    task = await get_organization_task(
+        session, task_id, current_user.organization_id
+    )
     result = await session.execute(
         select(TaskTimer).where(
             and_(
@@ -1064,10 +1069,6 @@ async def stop_task_timer(
         timer.description = timer.description + " - " + timer_data.description if timer.description else timer_data.description
     
     # Update task time logged
-    result = await session.execute(
-        select(Task).where(Task.id == task_id)
-    )
-    task = result.scalar_one()
     task.time_logged_minutes += int(duration)
     
     await session.commit()
@@ -1088,10 +1089,11 @@ async def stop_task_timer(
 @router.get("/tasks/{task_id}/time-logs", response_model=List[TaskTimerResponse])
 async def get_task_time_logs(
     task_id: str,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """Get all time logs for a task"""
+    await get_organization_task(session, task_id, current_user.organization_id)
     result = await session.execute(
         select(TaskTimer)
         .where(TaskTimer.task_id == task_id)
