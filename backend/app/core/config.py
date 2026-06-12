@@ -83,6 +83,8 @@ class Settings(BaseSettings):
     COMPLIANCE_REPORT_EMAIL_MAX_ATTEMPTS: int = 3
     # Task 8 enables this after signed public download links are available.
     COMPLIANCE_REPORT_EMAIL_ENABLED: bool = False
+    COMPLIANCE_REPORT_SCHEDULER_ENABLED: bool = True
+    COMPLIANCE_REPORT_SCHEDULER_INTERVAL_SECONDS: int = 30
     SMTP_HOST: str = ""
     SMTP_PORT: int = 587
     SMTP_USERNAME: str = ""

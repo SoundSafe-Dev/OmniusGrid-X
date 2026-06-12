@@ -1161,6 +1161,63 @@ class VendorRiskAssessment(Base):
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class ScheduledComplianceReport(Base):
+    """Persisted schedule for automated compliance report generation."""
+    __tablename__ = "scheduled_compliance_reports"
+    __table_args__ = (
+        CheckConstraint(
+            "framework IN ('all', 'gdpr', 'soc2', 'iso27001')",
+            name="ck_scheduled_compliance_reports_framework",
+        ),
+        CheckConstraint(
+            "format IN ('json', 'pdf')",
+            name="ck_scheduled_compliance_reports_format",
+        ),
+        CheckConstraint(
+            "frequency IN ('daily', 'weekly', 'monthly', 'quarterly', 'annually')",
+            name="ck_scheduled_compliance_reports_frequency",
+        ),
+    )
+
+    id = UUIDColumn()
+    organization_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    name = Column(String(255), nullable=False)
+    framework = Column(String(20), nullable=False)
+    format = Column(String(10), nullable=False)
+    frequency = Column(String(20), nullable=False)
+    timezone = Column(String(100), nullable=False, default="UTC", server_default="UTC")
+    next_run_at = Column(DateTime(timezone=True), nullable=False)
+    recipients = Column(
+        JSON().with_variant(JSONB, "postgresql"),
+        default=list,
+        server_default="[]",
+        nullable=False,
+    )
+    is_active = Column(Boolean, nullable=False, default=False, server_default="false")
+    last_run_at = Column(DateTime(timezone=True))
+    last_status = Column(
+        String(50), nullable=False, default="never_run", server_default="never_run"
+    )
+    created_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at = Column(
+        DateTime(timezone=True), default=datetime.utcnow, server_default=func.now()
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        server_default=func.now(),
+    )
+
+
 class ComplianceReportJob(Base):
     """Durable outbox for async compliance report generation and delivery."""
     __tablename__ = "compliance_report_jobs"
@@ -1182,6 +1239,11 @@ class ComplianceReportJob(Base):
             "delivery_status IN ('pending', 'sending', 'sent', 'failed', 'skipped')",
             name="ck_compliance_report_jobs_delivery_status",
         ),
+        UniqueConstraint(
+            "schedule_id",
+            "scheduled_for",
+            name="uq_compliance_report_jobs_schedule_run",
+        ),
     )
 
     id = UUIDColumn()
@@ -1195,6 +1257,12 @@ class ComplianceReportJob(Base):
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
+    schedule_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("scheduled_compliance_reports.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    scheduled_for = Column(DateTime(timezone=True), nullable=True)
     framework = Column(String(20), nullable=False)
     format = Column(String(10), nullable=False)
     recipients = Column(
