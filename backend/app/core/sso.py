@@ -165,9 +165,29 @@ async def verify_keycloak_token(token: str) -> SSOClaims:
     return claims
 
 
+def _role_candidates(roles: list[str], groups: list[str]) -> set[str]:
+    """Normalize roles and (possibly path-style) groups into comparable tokens.
+
+    Keycloak emits group memberships as full paths (e.g. ``/admins`` or
+    ``/ops/admins``), not bare names, so each path segment is considered. A
+    trailing-``s`` plural is also folded to its singular so the conventional
+    ``/admins`` / ``/operators`` / ``/viewers`` groups map onto the app roles.
+    """
+    candidates: set[str] = {r.strip().lower() for r in roles if r and r.strip()}
+    for group in groups:
+        for segment in (group or "").split("/"):
+            token = segment.strip().lower()
+            if not token:
+                continue
+            candidates.add(token)
+            if token.endswith("s"):
+                candidates.add(token[:-1])
+    return candidates
+
+
 def map_sso_role(roles: list[str], groups: list[str]) -> str:
     """Map Keycloak realm/client roles or groups to a local app role."""
-    candidates = {r.lower() for r in roles} | {g.lower() for g in groups}
+    candidates = _role_candidates(roles, groups)
     if "admin" in candidates:
         return "admin"
     if "viewer" in candidates:
