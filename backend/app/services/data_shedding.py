@@ -1,7 +1,7 @@
 """Data shedding and prioritization for ingestion workers"""
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Set, Optional
 from dataclasses import dataclass
 import structlog
@@ -80,7 +80,8 @@ class DataSheddingManager:
             return False
         
         # Check if data is too old
-        age = (datetime.utcnow() - timestamp).total_seconds()
+        now = datetime.now(timezone.utc) if timestamp.tzinfo else datetime.utcnow()
+        age = (now - timestamp).total_seconds()
         if age > config.max_age_seconds:
             logger.debug("shedding_stale_data", metric=metric_name, age_seconds=age)
             self._dropped_count += 1
