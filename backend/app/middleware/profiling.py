@@ -203,60 +203,70 @@ class ProfilingMiddleware(BaseHTTPMiddleware):
         rss_before = _rss_bytes()
         start = time.perf_counter()
 
+        response: Optional[Response] = None
+        # Default for the case where call_next raises before producing a response:
+        # the exception still propagates, but the request is recorded (status 500)
+        # instead of being dropped from the metrics entirely.
+        status_code = 500
+
         try:
-            response: Response = await call_next(request)
+            response = await call_next(request)
+            status_code = response.status_code
+            return response
         finally:
             duration_ms = (time.perf_counter() - start) * 1000.0
             stats = _query_stats.get() or {"count": 0, "total_ms": 0.0}
             _query_stats.reset(token)
 
-        rss_after = _rss_bytes()
-        if rss_after is not None:
-            PROCESS_MEMORY_RSS.set(rss_after)
-        rss_delta = (
-            rss_after - rss_before
-            if (rss_after is not None and rss_before is not None)
-            else None
-        )
+            rss_after = _rss_bytes()
+            if rss_after is not None:
+                PROCESS_MEMORY_RSS.set(rss_after)
+            rss_delta = (
+                rss_after - rss_before
+                if (rss_after is not None and rss_before is not None)
+                else None
+            )
 
-        method = request.method
-        endpoint = _endpoint_label(request)
-        status = str(response.status_code)
+            method = request.method
+            endpoint = _endpoint_label(request)
+            status = str(status_code)
 
-        HTTP_REQUEST_DURATION.labels(method, endpoint, status).observe(duration_ms / 1000.0)
-        HTTP_REQUESTS_TOTAL.labels(method, endpoint, status).inc()
-        HTTP_REQUEST_DB_QUERIES.labels(method, endpoint).observe(stats["count"])
+            HTTP_REQUEST_DURATION.labels(method, endpoint, status).observe(duration_ms / 1000.0)
+            HTTP_REQUESTS_TOTAL.labels(method, endpoint, status).inc()
+            HTTP_REQUEST_DB_QUERIES.labels(method, endpoint).observe(stats["count"])
 
-        response.headers["X-Process-Time-Ms"] = f"{duration_ms:.2f}"
-        response.headers["X-DB-Query-Count"] = str(stats["count"])
-        response.headers["X-DB-Query-Time-Ms"] = f"{stats['total_ms']:.2f}"
+            # Response headers can only be attached when a response was produced.
+            if response is not None:
+                response.headers["X-Process-Time-Ms"] = f"{duration_ms:.2f}"
+                response.headers["X-DB-Query-Count"] = str(stats["count"])
+                response.headers["X-DB-Query-Time-Ms"] = f"{stats['total_ms']:.2f}"
 
-        log_fields = {
-            "method": method,
-            "endpoint": endpoint,
-            "status": response.status_code,
-            "duration_ms": round(duration_ms, 2),
-            "db_query_count": stats["count"],
-            "db_query_time_ms": round(stats["total_ms"], 2),
-            "rss_delta_bytes_approx": rss_delta,
-        }
+            log_fields = {
+                "method": method,
+                "endpoint": endpoint,
+                "status": status_code,
+                "duration_ms": round(duration_ms, 2),
+                "db_query_count": stats["count"],
+                "db_query_time_ms": round(stats["total_ms"], 2),
+                "rss_delta_bytes_approx": rss_delta,
+            }
 
-        if duration_ms >= SLOW_REQUEST_MS:
-            HTTP_SLOW_REQUESTS_TOTAL.labels(method, endpoint).inc()
-            logger.warning("slow_request", threshold_ms=SLOW_REQUEST_MS, **log_fields)
-        else:
-            logger.info("request_profile", **log_fields)
-
-        return response
+            if duration_ms >= SLOW_REQUEST_MS:
+                HTTP_SLOW_REQUESTS_TOTAL.labels(method, endpoint).inc()
+                logger.warning("slow_request", threshold_ms=SLOW_REQUEST_MS, **log_fields)
+            else:
+                logger.info("request_profile", **log_fields)
 
 
 def setup_profiling(app) -> None:
-    """Register DB query listeners and add the profiling middleware.
+    """Add the profiling middleware and, when enabled, the DB query listeners.
 
-    Call once during app setup. Safe to call when PROFILING_ENABLED is False:
-    the middleware short-circuits and listeners stay cheap.
+    Call once during app setup. When PROFILING_ENABLED is False the DB query
+    listeners are NOT attached, so disabled profiling adds no per-query cost; the
+    middleware is still added but short-circuits on every request.
     """
-    _register_query_listeners()
+    if PROFILING_ENABLED:
+        _register_query_listeners()
     app.add_middleware(ProfilingMiddleware)
     logger.info(
         "profiling_setup",
