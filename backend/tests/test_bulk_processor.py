@@ -4,6 +4,9 @@ Pure-function level (no DB/Redis): CSV structural validation, the boolean
 coercion that now rejects unrecognised tokens (#15), and UUID validation.
 """
 
+from unittest.mock import AsyncMock
+from uuid import uuid4
+
 import pytest
 
 from app.services.bulk_processor import (
@@ -77,3 +80,65 @@ def test_as_uuid_valid_and_invalid():
     assert str(BulkProcessor._as_uuid(good, "id")) == good
     with pytest.raises(_RowError):
         BulkProcessor._as_uuid("not-a-uuid", "id")
+
+
+@pytest.mark.asyncio
+async def test_registry_bulk_preflight_is_tenant_scoped(
+    client_a,
+    client_b,
+    admin_sync_url,
+    seeded_orgs,
+    monkeypatch,
+):
+    import psycopg2
+
+    registry_id = uuid4()
+    conn = psycopg2.connect(admin_sync_url)
+    conn.autocommit = True
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO actionable_registries (
+                    id, organization_id, registry_name, registry_type,
+                    assigned_owner_id, created_by
+                ) VALUES (%s, %s, 'Tenant registry', 'operational', %s, %s)
+                """,
+                (
+                    str(registry_id),
+                    str(seeded_orgs["org_a_id"]),
+                    str(seeded_orgs["user_a_id"]),
+                    str(seeded_orgs["user_a_id"]),
+                ),
+            )
+    finally:
+        conn.close()
+
+    from app.services.bulk_processor import bulk_processor
+
+    monkeypatch.setattr(
+        bulk_processor,
+        "create_job",
+        AsyncMock(
+            return_value={
+                "job_id": str(uuid4()),
+                "type": "registry_items",
+                "status": "queued",
+                "total": 1,
+            }
+        ),
+    )
+    monkeypatch.setattr(bulk_processor, "run_registry_items", AsyncMock())
+    payload = {"items": [{"item_code": "R-1", "item_name": "Inspect"}]}
+
+    own = await client_a.post(
+        f"/api/v1/bulk/registries/{registry_id}/items",
+        json=payload,
+    )
+    foreign = await client_b.post(
+        f"/api/v1/bulk/registries/{registry_id}/items",
+        json=payload,
+    )
+
+    assert own.status_code == 202
+    assert foreign.status_code == 404

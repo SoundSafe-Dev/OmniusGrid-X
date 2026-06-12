@@ -31,10 +31,12 @@ from fastapi import (
     status,
 )
 from pydantic import BaseModel, Field
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_active_user
-from app.core.tenant import get_tenant_org_id
-from app.db.models import User
+from app.db.models import ActionableRegistry, User
+from app.middleware.tenant_isolation import get_tenant_db, get_tenant_org_id
 from app.services.bulk_processor import (
     BulkOperationError,
     bulk_processor,
@@ -242,11 +244,28 @@ async def bulk_create_registry_items(
     payload: RegistryItemsBulkRequest,
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     if len(payload.items) > MAX_ITEMS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Too many items ({len(payload.items)}); max {MAX_ITEMS}",
+        )
+    # Fail fast with 404 if the registry doesn't exist in the caller's org rather
+    # than returning 202 and only surfacing the error via job polling. The
+    # background executor re-checks too, in case it is deleted in between.
+    registry = (
+        await db.execute(
+            select(ActionableRegistry).where(
+                ActionableRegistry.id == registry_id,
+                ActionableRegistry.organization_id == current_user.organization_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if registry is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Registry not found in your organization",
         )
     items = [item.model_dump(exclude_none=True) for item in payload.items]
     job = await _create_job_or_503(

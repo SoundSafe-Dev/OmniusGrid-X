@@ -18,7 +18,7 @@ Design notes
 * Per-domain tenancy matches each domain's single-record endpoint: assets are
   org-scoped through RLS + an explicit ``organization_id`` filter; alarms (which
   have no ``organization_id`` column) are scoped via a join to ``assets``; Kanban
-  tasks follow the existing kanban endpoints (looked up by id).
+  tasks are scoped through their board's organization.
 * Jobs are in-process and do NOT survive a backend restart — this matches the
   codebase (no Celery/arq). A durable multi-worker queue would be a separate
   infrastructure decision.
@@ -69,10 +69,28 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+_TRUE_TOKENS = {"1", "true", "yes", "y", "t"}
+_FALSE_TOKENS = {"0", "false", "no", "n", "f"}
+
+
 def _coerce_bool(value: Any, default: bool = True) -> bool:
+    """Parse a CSV boolean cell, rejecting values we don't recognise.
+
+    An empty/missing cell falls back to ``default``; anything else must be an
+    explicit true/false token. Unrecognised values raise :class:`_RowError` so
+    the row fails loudly instead of silently coercing a typo to ``False``.
+    """
     if value is None or value == "":
         return default
-    return str(value).strip().lower() in {"1", "true", "yes", "y", "t"}
+    token = str(value).strip().lower()
+    if token in _TRUE_TOKENS:
+        return True
+    if token in _FALSE_TOKENS:
+        return False
+    raise _RowError(
+        f"invalid boolean '{value}'; expected one of "
+        f"{', '.join(sorted(_TRUE_TOKENS | _FALSE_TOKENS))}"
+    )
 
 
 class BulkOperationError(Exception):
@@ -454,9 +472,13 @@ class BulkProcessor:
                 task.status = "in_progress"
                 task.actual_start = task.actual_start or now
             elif column.column_type == "done":
+                # Mirror the single-task completion metadata set by kanban.py's
+                # move_task/complete_task so a bulk-completed task is indistinguishable.
                 task.status = "completed"
                 task.progress_percent = 100
                 task.actual_end = now
+                task.completed_at = now
+                task.completed_by = actor_id
             task.updated_at = now
 
         elif operation == "assign":
