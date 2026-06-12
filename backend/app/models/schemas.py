@@ -847,36 +847,36 @@ class TaskUpdate(BaseModel):
 
 
 class TaskResponse(TaskBase):
-    id: str
-    board_id: str
-    column_id: str
+    id: UUID
+    board_id: UUID
+    column_id: UUID
     position: int
-    assigned_to: Optional[str]
-    assigned_by: Optional[str]
+    assigned_to: Optional[UUID]
+    assigned_by: Optional[UUID]
     assigned_at: Optional[datetime]
     actual_start: Optional[datetime]
     actual_end: Optional[datetime]
-    asset_id: Optional[str]
-    operation_id: Optional[str]
+    asset_id: Optional[UUID]
+    operation_id: Optional[UUID]
     alarm_id: Optional[str]
     command_id: Optional[str]
     work_order_id: Optional[str]
-    parent_task_id: Optional[str]
-    rule_id: Optional[str]
+    parent_task_id: Optional[UUID]
+    rule_id: Optional[UUID]
     progress_percent: int
     time_logged_minutes: int
     custom_fields: Dict[str, Any]
     approval_status: str
-    approved_by: Optional[str]
+    approved_by: Optional[UUID]
     approved_at: Optional[datetime]
     rejection_reason: Optional[str]
     completion_actions: Dict[str, Any]
     completion_result: Dict[str, Any]
-    created_by: Optional[str]
+    created_by: Optional[UUID]
     created_at: datetime
     updated_at: datetime
     completed_at: Optional[datetime]
-    completed_by: Optional[str]
+    completed_by: Optional[UUID]
 
     class Config:
         from_attributes = True
