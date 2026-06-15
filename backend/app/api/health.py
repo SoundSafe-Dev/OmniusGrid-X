@@ -4,6 +4,7 @@ import asyncio
 import time
 from datetime import datetime, timezone
 from typing import Any
+from uuid import UUID
 
 from aiokafka import AIOKafkaConsumer
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -18,8 +19,10 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.db.database import get_db
-from app.db.models import Alarm, Asset
+from app.api.auth import get_current_active_user
+from app.db.database import engine, get_db
+from app.db.models import Alarm, Asset, User
+from app.middleware.rbac import require_admin
 
 router = APIRouter()
 
@@ -309,9 +312,23 @@ async def metrics():
     return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
+async def _vacuum_telemetry() -> None:
+    async with engine.connect() as connection:
+        autocommit_connection = await connection.execution_options(
+            isolation_level="AUTOCOMMIT"
+        )
+        await autocommit_connection.execute(
+            text("VACUUM (VERBOSE, ANALYZE) telemetry")
+        )
+
+
 # Manual override endpoints for on-site engineers
 @router.post("/admin/collectors/{collector_id}/restart")
-async def restart_collector(collector_id: str):
+@require_admin()
+async def restart_collector(
+    collector_id: str,
+    current_user: User = Depends(get_current_active_user),
+):
     """Manual override: Restart a collector plugin"""
     return {
         "message": f"Restart signal sent to collector {collector_id}",
@@ -321,33 +338,42 @@ async def restart_collector(collector_id: str):
 
 
 @router.post("/admin/assets/{asset_id}/maintenance")
-async def set_maintenance_mode(asset_id: str, enabled: bool = True):
+@require_admin()
+async def set_maintenance_mode(
+    asset_id: UUID,
+    enabled: bool = True,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
     """Manual override: Set asset to maintenance mode (blocks game-theoretic commands)"""
-    async with get_db() as db:
-        await db.execute(
-            text(f"""
-                UPDATE assets
-                SET maintenance_mode = {enabled},
-                    updated_at = NOW()
-                WHERE id = '{asset_id}'
-            """)
-        )
-        await db.commit()
+    await db.execute(
+        text(
+            """
+            UPDATE assets
+            SET maintenance_mode = :enabled,
+                updated_at = NOW()
+            WHERE id = :asset_id
+            """
+        ),
+        {"enabled": enabled, "asset_id": str(asset_id)},
+    )
+    await db.commit()
 
     mode = "enabled" if enabled else "disabled"
     return {
-        "asset_id": asset_id,
+        "asset_id": str(asset_id),
         "maintenance_mode": mode,
         "message": f"Maintenance mode {mode}. Game-theoretic engine commands are {'blocked' if enabled else 'allowed'}.",
     }
 
 
 @router.post("/admin/database/vacuum")
-async def trigger_database_vacuum():
+@require_admin()
+async def trigger_database_vacuum(
+    current_user: User = Depends(get_current_active_user),
+):
     """Manual override: Trigger database vacuum (maintenance)"""
-    async with get_db() as db:
-        await db.execute(text("VACUUM (VERBOSE, ANALYZE) telemetry"))
-        await db.commit()
+    await _vacuum_telemetry()
 
     return {
         "message": "Database vacuum initiated",
@@ -357,7 +383,11 @@ async def trigger_database_vacuum():
 
 
 @router.get("/admin/system/status")
-async def get_system_status(db: AsyncSession = Depends(get_db)):
+@require_admin()
+async def get_system_status(
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
     """Get comprehensive system status for engineers (live queries, not placeholders)."""
     health = await _run_health_checks(db)
 

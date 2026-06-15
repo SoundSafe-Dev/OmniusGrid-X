@@ -218,7 +218,7 @@ async def register(
         hashed_password=get_password_hash(user_data.password),
         full_name=user_data.full_name,
         organization_id=user_data.organization_id,
-        role=user_data.role
+        role="operator"
     )
     db.add(user)
     await db.commit()

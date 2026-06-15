@@ -4,6 +4,9 @@
 
 OmniusGrid is designed to comply with SOC 2 Type II requirements for security, availability, processing integrity, confidentiality, and privacy.
 
+The compliance API role and tenant permission matrix is documented in
+[Compliance Access Control](ACCESS_CONTROL.md).
+
 ## Trust Service Criteria (TSC)
 
 ### Security (CC)
