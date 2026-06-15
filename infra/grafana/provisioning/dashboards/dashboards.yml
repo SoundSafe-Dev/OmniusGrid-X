@@ -1,0 +1,18 @@
+# Grafana Provisioning - Dashboards
+# Loads dashboard JSON from the mounted provisioning tree (see docker-compose.yml,
+# which already mounts ./infra/grafana/provisioning into the container).
+
+apiVersion: 1
+
+providers:
+  - name: 'OpsGrid'
+    orgId: 1
+    folder: 'OpsGrid'
+    type: file
+    disableDeletion: false
+    editable: true
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/json
+      foldersFromFilesStructure: false

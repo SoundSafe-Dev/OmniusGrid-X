@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from app.api import assets, telemetry, alarms, operations, auth, dashboard, health, engines
-from app.api import yard, transportation, logistics_correlation, websocket, commands, oee, kanban, registries, geotab, correlation_integration, nlp_correlation, analysis_sessions, user_context, audit, api_keys, gdpr, compliance, compliance_reports, data_residency, feature_flags, sso, bulk_operations, exports
+from app.api import yard, transportation, logistics_correlation, websocket, commands, oee, kanban, registries, geotab, correlation_integration, nlp_correlation, analysis_sessions, user_context, audit, api_keys, gdpr, compliance, compliance_reports, data_residency, feature_flags, sso, bulk_operations, exports, error_tracking
 from app.core.config import settings
 from app.core.logging_filters import install_sensitive_query_access_log_filter
 from app.db.database import init_db
@@ -21,6 +21,8 @@ from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.middleware.csrf import CSRFMiddleware
 from app.middleware.rate_limit import limiter, rate_limit_exceeded_handler
 from app.middleware.profiling import setup_profiling
+from app.middleware.error_tracking import setup_error_tracking
+from app.services.error_tracker import error_tracker
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
@@ -37,8 +39,10 @@ async def lifespan(app: FastAPI):
     await export_scheduler.start()
     await compliance_report_dispatcher.start()
     await report_scheduler.start()
+    await error_tracker.start()
     yield
     # Shutdown
+    await error_tracker.stop()
     await report_scheduler.stop()
     await compliance_report_dispatcher.stop()
     await export_scheduler.stop()
@@ -162,6 +166,11 @@ app.add_middleware(
 # Audit logging middleware (disabled for debugging)
 # app.add_middleware(AuditLoggingMiddleware)
 
+# Error tracking (gated off via ERROR_TRACKING_ENABLED, default False). Registered
+# before profiling so it sits *inside* the profiling middleware — both observe an
+# unhandled exception, and this layer re-raises it unchanged.
+setup_error_tracking(app)
+
 # Performance profiling (Task 2 — gated off via PROFILING_ENABLED, default False)
 setup_profiling(app)
 
@@ -204,6 +213,7 @@ app.include_router(bulk_operations.router, prefix="/api/v1/bulk", tags=["Bulk Op
 app.include_router(exports.router, prefix="/api/v1/exports", tags=["Exports"])
 # Signature-authorized export downloads (no bearer; used by delivery email links).
 app.include_router(exports.public_router, prefix="/api/v1/exports", tags=["Exports"])
+app.include_router(error_tracking.router, prefix="/api/v1/admin/errors", tags=["Error Triage"])
 
 
 @app.get("/")

@@ -1,0 +1,63 @@
+# promtool unit tests for the opsgrid_api alert group.
+# Run from infra/prometheus/:  promtool test rules tests/error_alerts_test.yml
+rule_files:
+  - ../alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ---------------------------------------------------------------------------
+  # 50% of traffic is 5xx -> APIHighErrorRate must fire after its 5m window.
+  # ---------------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'opsgrid_http_requests_total{method="GET",endpoint="/api/v1/x",status="500"}'
+        values: '0+50x20'
+      - series: 'opsgrid_http_requests_total{method="GET",endpoint="/api/v1/x",status="200"}'
+        values: '0+50x20'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: APIHighErrorRate
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              team: backend
+            exp_annotations:
+              summary: "API 5xx error rate above 5%"
+              description: "More than 5% of API requests are returning 5xx over the last 5 minutes. Check Error Triage (/admin/errors) for the dominant exception."
+              runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/error-triage.md"
+
+  # ---------------------------------------------------------------------------
+  # All-2xx traffic -> no 5xx alert should fire.
+  # ---------------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'opsgrid_http_requests_total{method="GET",endpoint="/api/v1/x",status="200"}'
+        values: '0+100x20'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: APIHighErrorRate
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: APIErrorRateElevated
+        exp_alerts: []
+
+  # ---------------------------------------------------------------------------
+  # Sustained unhandled-exception rate > 1/s -> APIUnhandledExceptionSpike fires.
+  # 120 per minute = 2/s over the 5m rate window.
+  # ---------------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'opsgrid_unhandled_exceptions_total{exception_type="ValueError",method="GET",endpoint="/api/v1/x"}'
+        values: '0+120x20'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: APIUnhandledExceptionSpike
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              team: backend
+            exp_annotations:
+              summary: "Unhandled exception spike"
+              description: "More than 1 unhandled exception per second over 5 minutes. Open Error Triage to identify the fingerprint."
+              runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/error-triage.md"

@@ -1333,3 +1333,50 @@ class DataResidencyTag(Base):
     tagged_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     tagged_by = UUIDForeignKey("users.id", nullable=True)
     meta_data = Column(JSON, default={})
+
+
+class ErrorEvent(Base):
+    """Aggregated unhandled-exception fingerprint (Error Triage).
+
+    One row per unique (exception type + route template + crash location). Only
+    metadata and scrubbed samples are stored — never request bodies, headers, or
+    user identity. Mirrors database/migrations/018_error_events.sql.
+    """
+    __tablename__ = "error_events"
+
+    fingerprint = Column(String(16), primary_key=True)
+    exception_type = Column(String(255), nullable=False)
+    route = Column(String(512), nullable=False)
+    method = Column(String(10), nullable=False)
+    status_code = Column(Integer, nullable=False, default=500, server_default="500")
+    message_sample = Column(String(500))
+    traceback_sample = Column(Text)
+    total_count = Column(BigInteger, nullable=False, default=0, server_default="0")
+    regression_count = Column(Integer, nullable=False, default=0, server_default="0")
+    status = Column(String(20), nullable=False, default="open", server_default="open")
+    status_changed_by = UUIDForeignKey("users.id", nullable=True)
+    status_changed_at = Column(DateTime(timezone=True))
+    first_seen = Column(DateTime(timezone=True), nullable=False)
+    last_seen = Column(DateTime(timezone=True), nullable=False)
+    organization_id = Column(UUID(as_uuid=True), nullable=True)
+
+    buckets = relationship(
+        "ErrorEventBucket",
+        back_populates="error_event",
+        cascade="all, delete-orphan",
+    )
+
+
+class ErrorEventBucket(Base):
+    """Hourly occurrence rollup for an error fingerprint (Error Triage trends)."""
+    __tablename__ = "error_event_buckets"
+
+    fingerprint = Column(
+        String(16),
+        ForeignKey("error_events.fingerprint", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    bucket_hour = Column(DateTime(timezone=True), primary_key=True)
+    count = Column(BigInteger, nullable=False, default=0, server_default="0")
+
+    error_event = relationship("ErrorEvent", back_populates="buckets")
