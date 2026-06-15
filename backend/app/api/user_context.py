@@ -10,7 +10,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 import structlog
 
 from app.db.database import get_db
@@ -38,7 +38,8 @@ class UserContextResponse(BaseModel):
 
 class UpdateUserContextRequest(BaseModel):
     """Request for updating user context"""
-    role: Optional[str] = Field(None, description="User role")
+    model_config = ConfigDict(extra="forbid")
+
     department: Optional[str] = Field(None, description="User department")
     priorities: Optional[List[str]] = Field(None, description="User priorities")
 
@@ -97,7 +98,7 @@ async def update_user_context(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Update user context (role, department, priorities).
+    Update user context (department and priorities).
     """
     logger.info("update_user_context", user_id=str(current_user.id))
     
@@ -110,8 +111,6 @@ async def update_user_context(
         raise HTTPException(status_code=404, detail="User not found")
     
     # Update fields
-    if request.role is not None:
-        user.role = request.role
     if request.department is not None:
         user.department = request.department
     if request.priorities is not None:

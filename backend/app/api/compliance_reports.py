@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import get_current_active_user
 from app.core.config import settings
 from app.db.models import ComplianceReportJob, ScheduledComplianceReport, User
-from app.middleware.rbac import require_admin
+from app.middleware.rbac import require_admin, require_roles
 from app.middleware.rate_limit import rate_limit
 from app.middleware.tenant_isolation import get_tenant_db, get_tenant_org_id
 from app.db.database import AsyncSessionLocal
@@ -598,7 +598,7 @@ async def delete_compliance_report_schedule(
     summary="Get compliance report job status",
 )
 @rate_limit("100/minute")
-@require_admin()
+@require_roles("admin", "viewer")
 async def get_compliance_report_job(
     job_id: UUID,
     request: Request,
@@ -615,7 +615,7 @@ async def get_compliance_report_job(
     summary="Download a completed compliance report",
 )
 @rate_limit("100/minute")
-@require_admin()
+@require_roles("admin", "viewer")
 async def download_compliance_report(
     job_id: UUID,
     request: Request,

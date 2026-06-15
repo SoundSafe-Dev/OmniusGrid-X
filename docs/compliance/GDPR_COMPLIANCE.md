@@ -8,6 +8,7 @@ OmniusGrid is designed to comply with the General Data Protection Regulation (GD
 
 ### 1. Right to be Forgotten (Article 17)
 - **Endpoint**: `DELETE /api/v1/gdpr/data-delete`
+- **Admin-assisted endpoint**: `DELETE /api/v1/gdpr/admin/users/{user_id}/data-delete`
 - **Implementation**: Soft delete of user accounts, removal of personal data, deletion of consent records
 - **Process**: 
   1. User requests deletion with confirmation
@@ -18,6 +19,7 @@ OmniusGrid is designed to comply with the General Data Protection Regulation (GD
 
 ### 2. Data Portability (Article 20)
 - **Endpoint**: `GET /api/v1/gdpr/data-export`
+- **Admin-assisted endpoint**: `GET /api/v1/gdpr/admin/users/{user_id}/data-export`
 - **Implementation**: Export of all user data in machine-readable JSON format
 - **Data Included**:
   - User profile information
@@ -74,6 +76,7 @@ OmniusGrid is designed to comply with the General Data Protection Regulation (GD
 
 ### Access Control
 - Role-Based Access Control (RBAC)
+- Tenant-scoped administrator assistance for user export and erasure
 - API key authentication for external integrations
 - Rate limiting to prevent abuse
 - Session management with expiration
@@ -121,6 +124,9 @@ OmniusGrid is designed to comply with the General Data Protection Regulation (GD
 
 ## API Reference
 
+See [Compliance Access Control](ACCESS_CONTROL.md) for the role and tenant
+permission matrix.
+
 ### Consent Management
 ```bash
 # Record consent
@@ -142,12 +148,18 @@ PUT /api/v1/gdpr/consent/{consent_id}/withdraw
 ```bash
 # Export user data
 GET /api/v1/gdpr/data-export
+
+# Admin-assisted export for a user in the same organization
+GET /api/v1/gdpr/admin/users/{user_id}/data-export
 ```
 
 ### Data Deletion
 ```bash
 # Delete user data
 DELETE /api/v1/gdpr/data-delete?confirmation=DELETE
+
+# Admin-assisted deletion for a user in the same organization
+DELETE /api/v1/gdpr/admin/users/{user_id}/data-delete?confirmation=DELETE
 ```
 
 ### Processing Records
