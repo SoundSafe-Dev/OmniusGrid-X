@@ -13,6 +13,7 @@ from app.db.database import get_db
 from app.db.models import User, APIKey
 from app.api.auth import get_current_active_user
 from app.middleware.rate_limit import rate_limit
+from app.middleware.rbac import require_admin
 import structlog
 
 logger = structlog.get_logger()
@@ -69,6 +70,7 @@ async def verify_api_key(
 
 @router.post("/generate", summary="Generate API key", description="Generate a new API key for external integrations. Returns the full key (only shown once).")
 @rate_limit("10/hour")
+@require_admin()
 async def generate_api_key_endpoint(
     request: Request,
     name: str,
@@ -86,6 +88,11 @@ async def generate_api_key_endpoint(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid scope: {scope}. Valid scopes: {valid_scopes}"
             )
+    if "admin" in scopes and current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin scope requires admin role"
+        )
     
     # Generate API key
     api_key = generate_api_key()
@@ -206,4 +213,3 @@ async def revoke_api_key(
     )
     
     return {"message": "API key revoked successfully"}
-
