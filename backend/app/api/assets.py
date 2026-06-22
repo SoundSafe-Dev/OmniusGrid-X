@@ -14,7 +14,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.middleware.tenant_isolation import get_tenant_org_id, get_tenant_db
 from app.db.database import get_db
-from app.db.models import Asset, AssetType, Workcell, Organization
+from app.db.models import Asset, AssetType, Workcell, Organization, User
+from app.api.auth import get_current_active_user
+from app.middleware.rbac import require_admin
 from app.middleware.rate_limit import rate_limit
 from app.models.schemas import (
     AssetCreate, AssetResponse, AssetUpdate,
@@ -76,9 +78,11 @@ async def get_asset(
 
 @router.post("/", response_model=AssetResponse, summary="Create a new asset", description="Register a new manufacturing asset in the authenticated user's organization. The organization is derived from the JWT — any client-supplied organization_id in the request body is ignored.")
 @rate_limit("30/minute")
+@require_admin()
 async def create_asset(
     request: Request,
     asset_data: AssetCreate,
+    current_user: User = Depends(get_current_active_user),
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),
 ):
@@ -104,10 +108,12 @@ async def create_asset(
 
 @router.put("/{asset_id}", response_model=AssetResponse, summary="Update asset", description="Modify an existing asset's configuration. Only provided fields will be updated (partial update). Returns 404 if the asset belongs to a different organization.")
 @rate_limit("30/minute")
+@require_admin()
 async def update_asset(
     request: Request,
     asset_id: UUID,
     asset_data: AssetUpdate,
+    current_user: User = Depends(get_current_active_user),
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),
 ):
@@ -135,9 +141,11 @@ async def update_asset(
 
 @router.delete("/{asset_id}", summary="Deactivate asset", description="Soft delete an asset by setting its active status to false. Returns 404 if the asset belongs to a different organization.")
 @rate_limit("30/minute")
+@require_admin()
 async def delete_asset(
     request: Request,
     asset_id: UUID,
+    current_user: User = Depends(get_current_active_user),
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),
 ):
