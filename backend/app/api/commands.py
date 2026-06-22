@@ -1,7 +1,7 @@
 """API routes for command execution"""
 
 from typing import Optional, Dict, Any, List
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,34 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.database import get_db, AsyncSessionLocal
 from app.db.models import Command, Asset, User
 from app.api.auth import get_current_active_user
+from app.middleware.rbac import require_admin, require_operator_or_admin
 from app.services.command_executor import command_executor, CommandStatus
 from app.services.websocket_manager import websocket_manager
 
 router = APIRouter()
-
-
-def check_command_permission(user: User, action_id: str) -> bool:
-    """
-    Check if user has permission to execute a command.
-    
-    Permission levels:
-    - admin: Full command access including emergency stop
-    - operator: Standard command access (no emergency stop)
-    - viewer: No command access (read-only)
-    """
-    if user.role == "viewer":
-        return False
-    
-    if user.role == "admin":
-        return True
-    
-    if user.role == "operator":
-        # Operators cannot execute emergency stop
-        if action_id == "emergency_stop":
-            return False
-        return True
-    
-    return False
 
 
 class CommandSubmitRequest(BaseModel):
@@ -67,9 +44,10 @@ class CommandSubmitResponse(BaseModel):
 
 
 @router.post("/submit", response_model=CommandSubmitResponse, summary="Submit command to asset", description="Submit a new command for execution on an industrial asset. Commands are queued and executed asynchronously with automatic retries.\n\n**Common actions:**\n- `set_speed`: Adjust print/processing speed (params: speed_percent)\n- `pause_job`: Pause current operation\n- `resume_job`: Resume paused operation\n- `emergency_stop`: Immediate stop (safety critical, admin only)\n- `set_temperature`: Adjust nozzle/bed temp (params: target_temp, component)")
+@require_operator_or_admin()
 async def submit_command(
     request: CommandSubmitRequest,
-    current_user = Depends(get_current_active_user)
+    current_user: User = Depends(get_current_active_user)
 ):
     """
     Submit a new command for execution on an asset.
@@ -81,11 +59,10 @@ async def submit_command(
     - `emergency_stop`: Immediate stop (safety critical)
     - `set_temperature`: Adjust nozzle/bed temp (params: target_temp, component)
     """
-    # Check user permissions
-    if not check_command_permission(current_user, request.action_id):
+    if request.action_id == "emergency_stop" and current_user.role != "admin":
         raise HTTPException(
-            status_code=403, 
-            detail=f"User role '{current_user.role}' does not have permission to execute action '{request.action_id}'"
+            status_code=403,
+            detail="Emergency stop requires admin role"
         )
     
     # Verify asset exists and user has access
@@ -135,9 +112,10 @@ async def get_command_status(
 
 
 @router.post("/cancel/{command_id}")
+@require_operator_or_admin()
 async def cancel_command(
     command_id: str,
-    current_user = Depends(get_current_active_user)
+    current_user: User = Depends(get_current_active_user)
 ):
     """Cancel a pending or executing command"""
     success = await command_executor.cancel_command(
@@ -210,22 +188,16 @@ async def get_queue_status(
 
 
 @router.post("/asset/{asset_id}/emergency-stop")
+@require_admin()
 async def emergency_stop(
     asset_id: str,
-    current_user = Depends(get_current_active_user)
+    current_user: User = Depends(get_current_active_user)
 ):
     """
     Emergency stop - immediately halt asset operation.
     High priority command that bypasses normal queue.
     Requires admin role.
     """
-    # Check user permissions (emergency stop requires admin)
-    if not check_command_permission(current_user, "emergency_stop"):
-        raise HTTPException(
-            status_code=403,
-            detail="Emergency stop requires admin role"
-        )
-    
     async with AsyncSessionLocal() as session:
         result = await session.execute(
             select(Asset).where(Asset.id == asset_id)
