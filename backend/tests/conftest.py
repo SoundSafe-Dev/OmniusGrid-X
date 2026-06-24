@@ -261,6 +261,7 @@ async def app(tenant_async_url):
     from app.main import app as fastapi_app
     from app.middleware.tenant_isolation import get_tenant_db, get_tenant_org_id
     import app.api.compliance_reports as compliance_reports_api
+    import app.api.erp_integrations as erp_integrations_api
     import app.api.exports as exports_api
     import app.services.report_download_audit as report_download_audit
 
@@ -271,6 +272,7 @@ async def app(tenant_async_url):
     original_async_session_local = db_module.AsyncSessionLocal
     db_module.AsyncSessionLocal = test_session_maker
     compliance_reports_api.AsyncSessionLocal = test_session_maker
+    erp_integrations_api.AsyncSessionLocal = test_session_maker
     exports_api.AsyncSessionLocal = test_session_maker
     report_download_audit.AsyncSessionLocal = test_session_maker
 
@@ -321,6 +323,7 @@ async def app(tenant_async_url):
     fastapi_app.dependency_overrides.clear()
     db_module.AsyncSessionLocal = original_async_session_local
     compliance_reports_api.AsyncSessionLocal = original_async_session_local
+    erp_integrations_api.AsyncSessionLocal = original_async_session_local
     exports_api.AsyncSessionLocal = original_async_session_local
     report_download_audit.AsyncSessionLocal = original_async_session_local
     await test_engine.dispose()

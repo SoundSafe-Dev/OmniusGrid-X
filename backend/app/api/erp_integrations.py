@@ -591,7 +591,7 @@ async def _run_sync_background(
         integration_uuid = UUID(integration_id)
         try:
             await db.execute(
-                text("SELECT set_config('app.current_org_id', :org_id, false)"),
+                text("SELECT set_config('app.current_org_id', :org_id, true)"),
                 {"org_id": str(org_uuid)},
             )
             integration = await _get_erp_integration(db, integration_uuid, org_uuid)
@@ -606,6 +606,10 @@ async def _run_sync_background(
 
             connector = create_erp_connector(integration)
             records = await connector.fetch_data(entity_type, filters=filters, limit=limit)
+            await db.execute(
+                text("SELECT set_config('app.current_org_id', :org_id, true)"),
+                {"org_id": str(org_uuid)},
+            )
 
             for index, record in enumerate(records):
                 entity_id = str(
@@ -653,8 +657,9 @@ async def _run_sync_background(
             await db.commit()
         except Exception as exc:
             duration = (datetime.utcnow() - started).total_seconds()
+            await db.rollback()
             await db.execute(
-                text("SELECT set_config('app.current_org_id', :org_id, false)"),
+                text("SELECT set_config('app.current_org_id', :org_id, true)"),
                 {"org_id": org_id},
             )
             await _upsert_sync_status(
@@ -678,5 +683,5 @@ async def _run_sync_background(
             )
             await handler._send_alert(1)
         finally:
-            await db.execute(text("SELECT set_config('app.current_org_id', '', false)"))
-            await db.commit()
+            if db.in_transaction():
+                await db.rollback()

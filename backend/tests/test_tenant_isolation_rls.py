@@ -377,6 +377,7 @@ def _admin_seed_erp_rows(admin_sync_url: str, org_a_id, org_b_id, user_a_id, use
     event_b_id = str(uuid4())
     sync_a_id = str(uuid4())
     sync_b_id = str(uuid4())
+    event_suffix = uuid4().hex
 
     conn = psycopg2.connect(admin_sync_url)
     conn.autocommit = True
@@ -401,17 +402,19 @@ def _admin_seed_erp_rows(admin_sync_url: str, org_a_id, org_b_id, user_a_id, use
                 "INSERT INTO erp_integration_events "
                 "(id, organization_id, integration_id, event_type, event_id, "
                 "source_system, entity_type, event_data) "
-                "VALUES (%s, %s, %s, 'updated', 'event-a', 'generic', "
+                "VALUES (%s, %s, %s, 'updated', %s, 'generic', "
                 "'purchase_orders', '{}'::jsonb), "
-                "(%s, %s, %s, 'updated', 'event-b', 'generic', "
+                "(%s, %s, %s, 'updated', %s, 'generic', "
                 "'purchase_orders', '{}'::jsonb);",
                 (
                     event_a_id,
                     str(org_a_id),
                     integration_a_id,
+                    f"event-a-{event_suffix}",
                     event_b_id,
                     str(org_b_id),
                     integration_b_id,
+                    f"event-b-{event_suffix}",
                 ),
             )
             cur.execute(

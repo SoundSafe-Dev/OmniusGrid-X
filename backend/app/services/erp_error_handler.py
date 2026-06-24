@@ -138,9 +138,41 @@ class ERPErrorHandler:
         if not settings.ERP_ALERTS_ENABLED:
             return
 
-        await self._send_email_alert(payload)
-        await self._send_webhook_alert(settings.ERP_ALERT_SLACK_WEBHOOK_URL, payload)
-        await self._send_webhook_alert(settings.ERP_ALERT_PAGERDUTY_WEBHOOK_URL, payload)
+        email_recipients = [
+            item.strip()
+            for item in settings.ERP_ALERT_EMAIL_RECIPIENTS.split(",")
+            if item.strip()
+        ]
+        if email_recipients:
+            await self._dispatch_alert_channel(
+                "email",
+                self._send_email_alert,
+                payload,
+            )
+
+        webhook_channels = (
+            ("slack", settings.ERP_ALERT_SLACK_WEBHOOK_URL),
+            ("pagerduty", settings.ERP_ALERT_PAGERDUTY_WEBHOOK_URL),
+        )
+        for channel, webhook_url in webhook_channels:
+            if webhook_url:
+                await self._dispatch_alert_channel(
+                    channel,
+                    self._send_webhook_alert,
+                    webhook_url,
+                    payload,
+                )
+
+    async def _dispatch_alert_channel(self, channel: str, dispatch, *args) -> None:
+        try:
+            await dispatch(*args)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "erp_alert_dispatch_failed",
+                channel=channel,
+                integration_id=self.integration_id,
+                error=str(exc),
+            )
 
     async def _send_email_alert(self, payload: dict[str, Any]) -> None:
         recipients = [
