@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from app.api import assets, telemetry, alarms, operations, auth, dashboard, health, engines
-from app.api import yard, transportation, logistics_correlation, websocket, commands, oee, kanban, registries, geotab, correlation_integration, nlp_correlation, analysis_sessions, user_context, audit, api_keys, gdpr, compliance, compliance_reports, data_residency, feature_flags, sso, bulk_operations, exports, error_tracking
+from app.api import yard, transportation, logistics_correlation, websocket, commands, oee, kanban, registries, geotab, correlation_integration, nlp_correlation, analysis_sessions, user_context, audit, api_keys, gdpr, compliance, compliance_reports, data_residency, feature_flags, sso, bulk_operations, exports, error_tracking, erp_integrations
 from app.core.config import settings
 from app.core.logging_filters import install_sensitive_query_access_log_filter
 from app.db.database import init_db
@@ -214,6 +214,7 @@ app.include_router(exports.router, prefix="/api/v1/exports", tags=["Exports"])
 # Signature-authorized export downloads (no bearer; used by delivery email links).
 app.include_router(exports.public_router, prefix="/api/v1/exports", tags=["Exports"])
 app.include_router(error_tracking.router, prefix="/api/v1/admin/errors", tags=["Error Triage"])
+app.include_router(erp_integrations.router, prefix="/api/v1/erp/integrations", tags=["ERP Integrations"])
 
 
 @app.get("/")

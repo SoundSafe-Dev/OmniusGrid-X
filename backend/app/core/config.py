@@ -94,6 +94,15 @@ class Settings(BaseSettings):
     SMTP_USE_TLS: bool = False
     SMTP_START_TLS: bool = True
 
+    # ERP integrations (revived from WIP 527e14a5, disabled by default)
+    ERP_SYNC_MAX_RETRIES: int = 3
+    ERP_SYNC_DEFAULT_LIMIT: int = 100
+    ERP_ALERTS_ENABLED: bool = False
+    ERP_ALERT_FAILURE_THRESHOLD: int = 5
+    ERP_ALERT_EMAIL_RECIPIENTS: str = ""
+    ERP_ALERT_SLACK_WEBHOOK_URL: str = ""
+    ERP_ALERT_PAGERDUTY_WEBHOOK_URL: str = ""
+
     # Keycloak / SSO (Task 6 — disabled by default)
     KEYCLOAK_ENABLED: bool = False
     KEYCLOAK_URL: str = ""

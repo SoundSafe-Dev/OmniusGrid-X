@@ -1320,6 +1320,138 @@ class IntegrationConfiguration(Base):
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
     created_by = UUIDForeignKey("users.id", nullable=True)
     meta_data = Column(JSON, default={})
+    erp_type = Column(String(50), nullable=True)
+    erp_version = Column(String(50), nullable=True)
+    sync_schedule = Column(String(100), nullable=True)
+    sync_frequency_minutes = Column(Integer, default=60)
+    last_successful_sync = Column(DateTime(timezone=True), nullable=True)
+
+
+class ERPIntegrationEvent(Base):
+    """ERP integration events for webhook and sync processing."""
+    __tablename__ = "erp_integration_events"
+
+    id = UUIDColumn()
+    organization_id = UUIDForeignKey("organizations.id", nullable=False)
+    integration_id = UUIDForeignKey("integration_configurations.id", nullable=False)
+    event_type = Column(String(100), nullable=False)
+    event_id = Column(String(255), nullable=False)
+    source_system = Column(String(50), nullable=False)
+    entity_type = Column(String(100), nullable=False)
+    entity_id = Column(String(255), nullable=True)
+    event_data = Column(JSONB, nullable=False)
+    processed_at = Column(DateTime(timezone=True), nullable=True)
+    processing_status = Column(String(50), nullable=False, default="pending", server_default="pending")
+    error_message = Column(Text, nullable=True)
+    retry_count = Column(Integer, nullable=False, default=0, server_default="0")
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("source_system", "event_id", name="uq_erp_events"),
+        CheckConstraint(
+            "processing_status IN ('pending', 'processing', 'completed', 'failed', 'retrying')",
+            name="ck_erp_events_status",
+        ),
+    )
+
+
+class ERPDataMapping(Base):
+    """Field mappings from ERP source data to OmniusGrid target entities."""
+    __tablename__ = "erp_data_mappings"
+
+    id = UUIDColumn()
+    organization_id = UUIDForeignKey("organizations.id", nullable=False)
+    integration_id = UUIDForeignKey("integration_configurations.id", nullable=False)
+    source_entity = Column(String(100), nullable=False)
+    source_field = Column(String(100), nullable=False)
+    target_entity = Column(String(100), nullable=False)
+    target_field = Column(String(100), nullable=False)
+    transformation_rule = Column(Text, nullable=True)
+    data_type = Column(String(50), nullable=True)
+    is_required = Column(Boolean, nullable=False, default=True, server_default="true")
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint(
+            "integration_id",
+            "source_entity",
+            "source_field",
+            name="uq_erp_mappings",
+        ),
+    )
+
+
+class ERPSyncStatus(Base):
+    """Per-entity sync status for an ERP integration."""
+    __tablename__ = "erp_sync_status"
+
+    id = UUIDColumn()
+    organization_id = UUIDForeignKey("organizations.id", nullable=False)
+    integration_id = UUIDForeignKey("integration_configurations.id", nullable=False)
+    entity_type = Column(String(100), nullable=False)
+    last_sync_at = Column(DateTime(timezone=True), nullable=True)
+    last_sync_status = Column(String(50), nullable=True)
+    records_synced = Column(Integer, nullable=False, default=0, server_default="0")
+    records_failed = Column(Integer, nullable=False, default=0, server_default="0")
+    sync_duration_seconds = Column(Numeric, nullable=True)
+    next_sync_at = Column(DateTime(timezone=True), nullable=True)
+    delta_token = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("integration_id", "entity_type", name="uq_erp_sync"),
+        CheckConstraint(
+            "last_sync_status IS NULL OR last_sync_status IN ('queued', 'running', 'success', 'failed', 'partial')",
+            name="ck_erp_sync_status",
+        ),
+    )
+
+
+class ERPEntity(Base):
+    """Normalized ERP entity snapshot."""
+    __tablename__ = "erp_entities"
+
+    id = UUIDColumn()
+    organization_id = UUIDForeignKey("organizations.id", nullable=False)
+    integration_id = UUIDForeignKey("integration_configurations.id", nullable=False)
+    entity_type = Column(String(100), nullable=False)
+    entity_id = Column(String(255), nullable=False)
+    entity_data = Column(JSONB, nullable=False)
+    source_system = Column(String(50), nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True, server_default="true")
+    valid_from = Column(DateTime(timezone=True), default=datetime.utcnow, server_default=func.now())
+    valid_to = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint(
+            "integration_id",
+            "entity_type",
+            "entity_id",
+            name="uq_erp_entities",
+        ),
+    )
+
+
+class ERPCorrelation(Base):
+    """Correlation between ERP data and operational/sensor events."""
+    __tablename__ = "erp_correlations"
+
+    id = UUIDColumn()
+    organization_id = UUIDForeignKey("organizations.id", nullable=False)
+    correlation_type = Column(String(100), nullable=False)
+    erp_event_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("erp_integration_events.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    sensor_event_id = Column(UUID(as_uuid=True), nullable=True)
+    correlation_score = Column(Numeric, nullable=True)
+    correlation_metadata = Column(JSONB, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, server_default=func.now())
 
 
 class DataResidencyTag(Base):
