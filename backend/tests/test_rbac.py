@@ -6,6 +6,7 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 
+from app.api.commands import CommandSubmitRequest, emergency_stop, submit_command
 from app.middleware.rbac import require_admin, require_roles
 
 
@@ -73,3 +74,27 @@ async def test_require_roles_rejects_unlisted_role():
 def test_require_roles_requires_at_least_one_role():
     with pytest.raises(ValueError, match="At least one allowed role"):
         require_roles()
+
+
+@pytest.mark.asyncio
+async def test_command_submit_route_rejects_viewer_role():
+    request = CommandSubmitRequest(
+        asset_id=str(uuid4()),
+        action_id="set_speed",
+        parameters={"speed_percent": 80},
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await submit_command(request=request, current_user=_user("viewer"))
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == "Operator or admin role required"
+
+
+@pytest.mark.asyncio
+async def test_command_emergency_stop_route_requires_admin_role():
+    with pytest.raises(HTTPException) as exc_info:
+        await emergency_stop(asset_id=str(uuid4()), current_user=_user("operator"))
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == "Admin role required"
