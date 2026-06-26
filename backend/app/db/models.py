@@ -972,14 +972,32 @@ class ExportTemplate(Base):
     )
 
     id = UUIDColumn()
-    organization_id = UUIDForeignKey("organizations.id")
+    organization_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
     name = Column(String(255), nullable=False)
     description = Column(Text)
     export_type = Column(String(50), nullable=False)
     export_format = Column(String(10), nullable=False)
-    columns = Column(JSON, default=list, nullable=False)
-    filters = Column(JSON, default=dict, nullable=False)
-    created_by = UUIDForeignKey("users.id", nullable=True)
+    columns = Column(
+        JSON().with_variant(JSONB, "postgresql"),
+        default=list,
+        server_default="[]",
+        nullable=False,
+    )
+    filters = Column(
+        JSON().with_variant(JSONB, "postgresql"),
+        default=dict,
+        server_default="{}",
+        nullable=False,
+    )
+    created_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
@@ -987,19 +1005,42 @@ class ExportTemplate(Base):
 class ScheduledExport(Base):
     """Persisted schedule definition for durable report delivery."""
     __tablename__ = "scheduled_exports"
+    __table_args__ = (
+        CheckConstraint(
+            "frequency IN ('daily', 'weekly', 'monthly')",
+            name="ck_scheduled_exports_frequency",
+        ),
+    )
 
     id = UUIDColumn()
-    organization_id = UUIDForeignKey("organizations.id")
-    template_id = UUIDForeignKey("export_templates.id")
+    organization_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    template_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("export_templates.id", ondelete="CASCADE"),
+        nullable=False,
+    )
     name = Column(String(255), nullable=False)
     frequency = Column(String(20), nullable=False)
     timezone = Column(String(100), nullable=False, default="UTC")
     next_run_at = Column(DateTime(timezone=True), nullable=False)
-    recipients = Column(JSON, default=list, nullable=False)
+    recipients = Column(
+        JSON().with_variant(JSONB, "postgresql"),
+        default=list,
+        server_default="[]",
+        nullable=False,
+    )
     is_active = Column(Boolean, nullable=False, default=False)
     last_run_at = Column(DateTime(timezone=True))
     last_status = Column(String(50), default="never_run")
-    created_by = UUIDForeignKey("users.id", nullable=True)
+    created_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
@@ -1015,10 +1056,26 @@ class ExportDeliveryJob(Base):
     )
 
     id = UUIDColumn()
-    organization_id = UUIDForeignKey("organizations.id")
-    schedule_id = UUIDForeignKey("scheduled_exports.id")
-    template_id = UUIDForeignKey("export_templates.id")
-    requested_by = UUIDForeignKey("users.id", nullable=True)
+    organization_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    schedule_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("scheduled_exports.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    template_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("export_templates.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    requested_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     scheduled_for = Column(DateTime(timezone=True), nullable=False)
     status = Column(String(30), nullable=False, default="queued")
     attempts = Column(Integer, nullable=False, default=0)
@@ -1343,6 +1400,12 @@ class ErrorEvent(Base):
     user identity. Mirrors database/migrations/018_error_events.sql.
     """
     __tablename__ = "error_events"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('open', 'acknowledged', 'resolved')",
+            name="ck_error_events_status",
+        ),
+    )
 
     fingerprint = Column(String(16), primary_key=True)
     exception_type = Column(String(255), nullable=False)
@@ -1354,7 +1417,11 @@ class ErrorEvent(Base):
     total_count = Column(BigInteger, nullable=False, default=0, server_default="0")
     regression_count = Column(Integer, nullable=False, default=0, server_default="0")
     status = Column(String(20), nullable=False, default="open", server_default="open")
-    status_changed_by = UUIDForeignKey("users.id", nullable=True)
+    status_changed_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     status_changed_at = Column(DateTime(timezone=True))
     first_seen = Column(DateTime(timezone=True), nullable=False)
     last_seen = Column(DateTime(timezone=True), nullable=False)
