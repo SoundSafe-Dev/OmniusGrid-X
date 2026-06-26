@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     REDPANDA_URL: str = "redpanda:29092"
     REDPANDA_TOPICS_PREFIX: str = "opsgrid"
     REDPANDA_COMMAND_TOPIC: str = "opsgrid.commands"
+    REDPANDA_COMMAND_ACK_TOPIC: str = "opsgrid.commands.acks"
     REDPANDA_EXPORT_TOPIC: str = "opsgrid.exports"
     REDPANDA_COMPLIANCE_REPORTS_TOPIC: str = "opsgrid.compliance-reports"
     
