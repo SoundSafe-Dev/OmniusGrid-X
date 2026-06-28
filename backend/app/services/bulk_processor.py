@@ -97,6 +97,10 @@ class BulkOperationError(Exception):
     """Raised for a bulk request that fails validation before any work starts."""
 
 
+class BulkJobCancellationError(Exception):
+    """Raised when a job exists but is no longer cancellable."""
+
+
 class _RowError(Exception):
     """Internal: one row/item failed; it is recorded and the batch continues."""
 
@@ -184,11 +188,46 @@ class BulkProcessor:
         raw = await self._redis().get(f"{JOB_KEY_PREFIX}{job_id}")
         return json.loads(raw) if raw else None
 
+    async def cancel_job(
+        self,
+        job_id: str,
+        organization_id: Any,
+        actor_id: Any,
+    ) -> Optional[dict]:
+        """Mark a pending/running job as cancelled.
+
+        BackgroundTasks cannot be force-killed safely, so executors cooperate by
+        checking this persisted state between items and exiting before more work.
+        """
+        job = await self.get_job(job_id)
+        if job is None:
+            return None
+        job_org = job.get("organization_id")
+        if job_org and job_org != str(organization_id):
+            return None
+        if job.get("status") in {"completed", "failed"}:
+            raise BulkJobCancellationError(
+                f"Job is {job.get('status')} and cannot be cancelled"
+            )
+        if job.get("status") != "cancelled":
+            job["status"] = "cancelled"
+            job["cancelled_by"] = str(actor_id) if actor_id else None
+            job["cancelled_at"] = _utc_now_iso()
+            await self._save(job)
+        return job
+
     async def _save(self, job: dict) -> None:
         job["updated_at"] = _utc_now_iso()
         await self._redis().set(
             f"{JOB_KEY_PREFIX}{job['job_id']}", json.dumps(job), ex=JOB_TTL_SECONDS
         )
+
+    async def _cancel_requested(self, job: dict) -> bool:
+        latest = await self.get_job(job["job_id"])
+        if latest and latest.get("status") == "cancelled":
+            job.update(latest)
+            return True
+        return False
 
     def _record(
         self,
@@ -244,11 +283,16 @@ class BulkProcessor:
         job = await self.get_job(job_id)
         if job is None:
             return
+        if job.get("status") == "cancelled":
+            await self._audit("bulk_asset_import", job, organization_id, actor_id)
+            return
         job["status"] = "running"
         await self._save(job)
         try:
             async with self._tenant_session(organization_id) as session:
                 for idx, row in enumerate(rows):
+                    if await self._cancel_requested(job):
+                        break
                     row_number = idx + 1  # 1-based data row (header excluded)
                     ref = row.get("id") or row.get("name") or f"row {row_number}"
                     try:
@@ -263,7 +307,8 @@ class BulkProcessor:
                         logger.warning("bulk_asset_row_failed", ref=str(ref), error=str(exc))
                         self._record(job, False, ref, f"unexpected error: {exc}", position=row_number)
                     await self._save(job)
-            job["status"] = "completed"
+            if job.get("status") != "cancelled":
+                job["status"] = "completed"
         except Exception as exc:
             logger.error("bulk_asset_import_failed", job_id=job_id, error=str(exc))
             job["status"] = "failed"
@@ -398,11 +443,16 @@ class BulkProcessor:
         job = await self.get_job(job_id)
         if job is None:
             return
+        if job.get("status") == "cancelled":
+            await self._audit(f"bulk_kanban_{operation}", job, organization_id, actor_id)
+            return
         job["status"] = "running"
         await self._save(job)
         try:
             async with AsyncSessionLocal() as session:
                 for idx, task_id in enumerate(task_ids):
+                    if await self._cancel_requested(job):
+                        break
                     try:
                         await self._kanban_one(
                             session, operation, str(task_id), params, actor_id, organization_id
@@ -417,7 +467,8 @@ class BulkProcessor:
                         logger.warning("bulk_kanban_row_failed", task_id=str(task_id), error=str(exc))
                         self._record(job, False, str(task_id), f"unexpected error: {exc}", position=idx)
                     await self._save(job)
-            job["status"] = "completed"
+            if job.get("status") != "cancelled":
+                job["status"] = "completed"
         except Exception as exc:
             logger.error("bulk_kanban_failed", job_id=job_id, error=str(exc))
             job["status"] = "failed"
@@ -531,6 +582,9 @@ class BulkProcessor:
         job = await self.get_job(job_id)
         if job is None:
             return
+        if job.get("status") == "cancelled":
+            await self._audit("bulk_alarm_acknowledge", job, organization_id, actor_id)
+            return
         job["status"] = "running"
         await self._save(job)
         try:
@@ -538,6 +592,8 @@ class BulkProcessor:
             # which is RLS-protected, so a tenant-bound session is required.
             async with self._tenant_session(organization_id) as session:
                 for idx, alarm_id in enumerate(alarm_ids):
+                    if await self._cancel_requested(job):
+                        break
                     try:
                         await self._ack_one(session, str(alarm_id), comment, actor_id, organization_id)
                         await session.commit()
@@ -550,7 +606,8 @@ class BulkProcessor:
                         logger.warning("bulk_alarm_row_failed", alarm_id=str(alarm_id), error=str(exc))
                         self._record(job, False, str(alarm_id), f"unexpected error: {exc}", position=idx)
                     await self._save(job)
-            job["status"] = "completed"
+            if job.get("status") != "cancelled":
+                job["status"] = "completed"
         except Exception as exc:
             logger.error("bulk_alarm_ack_failed", job_id=job_id, error=str(exc))
             job["status"] = "failed"
@@ -587,6 +644,9 @@ class BulkProcessor:
         job = await self.get_job(job_id)
         if job is None:
             return
+        if job.get("status") == "cancelled":
+            await self._audit("bulk_registry_items", job, organization_id, actor_id)
+            return
         job["status"] = "running"
         await self._save(job)
         try:
@@ -612,6 +672,8 @@ class BulkProcessor:
                     return
 
                 for idx, item in enumerate(items):
+                    if await self._cancel_requested(job):
+                        break
                     ref = item.get("item_code") or f"item {idx + 1}"
                     try:
                         session.add(ActionableRegistryItem(registry_id=registry_id, **item))
@@ -622,7 +684,8 @@ class BulkProcessor:
                         logger.warning("bulk_registry_item_failed", ref=str(ref), error=str(exc))
                         self._record(job, False, ref, f"could not create item: {exc}", position=idx)
                     await self._save(job)
-            job["status"] = "completed"
+            if job.get("status") != "cancelled":
+                job["status"] = "completed"
         except Exception as exc:
             logger.error("bulk_registry_items_failed", job_id=job_id, error=str(exc))
             job["status"] = "failed"

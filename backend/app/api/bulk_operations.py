@@ -38,6 +38,7 @@ from app.api.auth import get_current_active_user
 from app.db.models import ActionableRegistry, User
 from app.middleware.tenant_isolation import get_tenant_db, get_tenant_org_id
 from app.services.bulk_processor import (
+    BulkJobCancellationError,
     BulkOperationError,
     bulk_processor,
     parse_asset_csv,
@@ -304,5 +305,32 @@ async def get_bulk_job(
     job_org = job.get("organization_id")
     user_org = str(current_user.organization_id) if current_user.organization_id else None
     if job_org and job_org != user_org:
+        raise HTTPException(status_code=404, detail="Job not found or expired")
+    return job
+
+
+@router.post("/jobs/{job_id}/cancel", summary="Cancel a pending or running bulk job")
+async def cancel_bulk_job(
+    job_id: str,
+    current_user: User = Depends(get_current_active_user),
+):
+    try:
+        job = await bulk_processor.cancel_job(
+            job_id,
+            current_user.organization_id,
+            current_user.id,
+        )
+    except BulkJobCancellationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        )
+    except Exception as exc:
+        logger.error("bulk_job_store_unavailable", error=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Bulk job store unavailable",
+        )
+    if job is None:
         raise HTTPException(status_code=404, detail="Job not found or expired")
     return job
