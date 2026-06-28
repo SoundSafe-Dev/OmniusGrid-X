@@ -41,10 +41,19 @@ def clean_error_tables(admin_sync_url):
     yield
 
 
-async def _record_and_flush(route: str, msg: str = "boom") -> None:
+async def _record_and_flush(
+    route: str,
+    msg: str = "boom",
+    organization_id: str | None = None,
+) -> None:
     """Drive the production record+flush path against the rebound test DB."""
     tracker = ErrorTracker()
-    await tracker.record(_exc(msg), method="GET", route=route)
+    await tracker.record(
+        _exc(msg),
+        method="GET",
+        route=route,
+        organization_id=organization_id,
+    )
     await tracker._flush_once()
 
 
@@ -112,6 +121,33 @@ async def test_non_admin_forbidden(app, admin_sync_url, seeded_orgs, role):
 async def test_admin_allowed(app, client_a, clean_error_tables):
     assert (await client_a.get(BASE)).status_code == 200
     assert (await client_a.get(f"{BASE}/summary")).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_admin_triage_view_is_platform_level_not_tenant_filtered(
+    app,
+    client_a,
+    client_b,
+    seeded_orgs,
+    clean_error_tables,
+):
+    await _record_and_flush(
+        "/api/v1/org-b-only",
+        organization_id=str(seeded_orgs["org_b_id"]),
+    )
+
+    listing_a = (
+        await client_a.get(BASE, params={"q": "org-b-only", "range": "all"})
+    ).json()
+    listing_b = (
+        await client_b.get(BASE, params={"q": "org-b-only", "range": "all"})
+    ).json()
+    fp = listing_a["items"][0]["fingerprint"]
+    detail_a = (await client_a.get(f"{BASE}/{fp}")).json()
+
+    assert listing_a["total"] == 1
+    assert listing_b["total"] == 1
+    assert detail_a["organization_id"] == str(seeded_orgs["org_b_id"])
 
 
 # --- list / summary / detail -------------------------------------------------
