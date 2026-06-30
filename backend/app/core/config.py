@@ -73,6 +73,17 @@ class Settings(BaseSettings):
     
     # Redis
     REDIS_URL: str = "redis://redis:6379/0"
+
+    # Document Object Store (SeaweedFS S3 gateway)
+    # Endpoint is the SeaweedFS S3 gateway. The same client config works against
+    # MinIO or real AWS S3 by swapping these values - no code change required.
+    S3_ENDPOINT_URL: str = "http://seaweedfs:8333"
+    S3_ACCESS_KEY: str = "omniusgrid"
+    S3_SECRET_KEY: str = "omniusgrid_dev_secret"
+    S3_REGION: str = "us-east-1"  # dummy; SeaweedFS ignores it but boto3 requires one
+    S3_RAW_BUCKET: str = "raw-documents"
+    S3_TEXT_BUCKET: str = "extracted-text"
+    S3_PRESIGN_EXPIRE_SECONDS: int = 3600
     
     # Application
     DEBUG: bool = True
