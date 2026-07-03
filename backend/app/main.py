@@ -5,13 +5,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from app.api import assets, telemetry, alarms, operations, auth, dashboard, health, engines
-from app.api import yard, transportation, logistics_correlation, websocket, commands, oee, kanban, registries, geotab, correlation_integration, nlp_correlation, analysis_sessions, user_context, audit, api_keys, gdpr, compliance, compliance_reports, data_residency, feature_flags, sso, bulk_operations, exports, error_tracking
+from app.api import yard, transportation, logistics_correlation, websocket, commands, oee, kanban, registries, geotab, correlation_integration, nlp_correlation, analysis_sessions, user_context, audit, api_keys, gdpr, compliance, compliance_reports, data_residency, feature_flags, sso, bulk_operations, exports, error_tracking, agent_releases, agent_rollouts
 from app.core.config import settings
 from app.core.logging_filters import install_sensitive_query_access_log_filter
 from app.db.database import init_db
 from app.services.websocket_manager import websocket_manager
 from app.services.command_executor import command_executor
 from app.services.compliance_report_queue import compliance_report_dispatcher
+from app.services.rollout_orchestrator import rollout_orchestrator
 from app.services.export_delivery import export_scheduler
 from app.services.report_scheduler import report_scheduler
 from app.services.export_processor import export_processor
@@ -38,12 +39,14 @@ async def lifespan(app: FastAPI):
     await oee_calculator.start()
     await export_scheduler.start()
     await compliance_report_dispatcher.start()
+    await rollout_orchestrator.start()
     await report_scheduler.start()
     await error_tracker.start()
     yield
     # Shutdown
     await error_tracker.stop()
     await report_scheduler.stop()
+    await rollout_orchestrator.stop()
     await compliance_report_dispatcher.stop()
     await export_scheduler.stop()
     await export_processor.close()
@@ -214,6 +217,9 @@ app.include_router(exports.router, prefix="/api/v1/exports", tags=["Exports"])
 # Signature-authorized export downloads (no bearer; used by delivery email links).
 app.include_router(exports.public_router, prefix="/api/v1/exports", tags=["Exports"])
 app.include_router(error_tracking.router, prefix="/api/v1/admin/errors", tags=["Error Triage"])
+app.include_router(agent_releases.router, prefix="/api/v1/fleet", tags=["Fleet"])
+app.include_router(agent_releases.public_router, prefix="/api/v1/fleet", tags=["Fleet"])
+app.include_router(agent_rollouts.router, prefix="/api/v1/fleet", tags=["Fleet"])
 
 
 @app.get("/")
