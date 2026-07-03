@@ -1,5 +1,12 @@
 # Dashboard Configuration Update - Required for All PRs
 
+> ⚠️ **SUPERSEDED — historical directive, retained for reference.**
+> The port change described in Section 1 (8000 → **8002**) was later reverted.
+> The current, authoritative backend port is **8000**, matching
+> `docker-compose.yml` (`8000:8000`, `uvicorn --port 8000`) and every frontend
+> client (`frontend/src/api/client.ts`, `websocket.ts`). **Use `8000`** for all
+> API/WebSocket URLs and health checks; disregard the `8002` references below.
+
 **Date**: May 28, 2026  
 **Priority**: CRITICAL - Required for all branches and PRs
 

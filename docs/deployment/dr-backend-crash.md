@@ -13,7 +13,7 @@ This runbook covers the recovery procedures for backend API service crashes in t
 
 **Manual Detection:**
 - Check pod status: `kubectl get pods -n omniusgrid -l app=backend`
-- Check health endpoint: `curl http://localhost:8002/health`
+- Check health endpoint: `curl http://localhost:8000/health`
 - Check backend logs: `kubectl logs backend-<pod> -n omniusgrid`
 - Check error rate in logs
 
@@ -120,15 +120,15 @@ This runbook covers the recovery procedures for backend API service crashes in t
 ### Step 5: Verify Service Health
 1. Check health endpoint:
    ```bash
-   curl http://localhost:8002/health
+   curl http://localhost:8000/health
    ```
 2. Check API docs:
    ```bash
-   curl http://localhost:8002/docs
+   curl http://localhost:8000/docs
    ```
 3. Check WebSocket endpoint:
    ```bash
-   wscat -c ws://localhost:8002/ws
+   wscat -c ws://localhost:8000/ws
    ```
 
 ## Automated Recovery Procedures
@@ -143,7 +143,7 @@ Kubernetes automatically restarts pods when:
 livenessProbe:
   httpGet:
     path: /health
-    port: 8002
+    port: 8000
   initialDelaySeconds: 30
   periodSeconds: 10
   timeoutSeconds: 5
@@ -152,7 +152,7 @@ livenessProbe:
 readinessProbe:
   httpGet:
     path: /health
-    port: 8002
+    port: 8000
   initialDelaySeconds: 10
   periodSeconds: 5
   timeoutSeconds: 3
@@ -199,7 +199,7 @@ fi
 
 echo "Verifying service health..."
 kubectl get pods -n $NAMESPACE -l app=backend
-curl -f http://localhost:8002/health || echo "Health check failed"
+curl -f http://localhost:8000/health || echo "Health check failed"
 ```
 
 ### Log Analysis Script
@@ -233,12 +233,12 @@ kubectl logs $POD -n $NAMESPACE | grep -i "redpanda\|kafka" || echo "No Redpanda
 
 2. **Health Endpoint:**
    ```bash
-   curl http://localhost:8002/health
+   curl http://localhost:8000/health
    ```
 
 3. **API Docs:**
    ```bash
-   curl http://localhost:8002/docs
+   curl http://localhost:8000/docs
    ```
 
 4. **Database Connectivity:**
@@ -249,25 +249,25 @@ kubectl logs $POD -n $NAMESPACE | grep -i "redpanda\|kafka" || echo "No Redpanda
 ### Smoke Tests
 1. Test authentication:
    ```bash
-   curl -X POST http://localhost:8002/api/v1/auth/login \
+   curl -X POST http://localhost:8000/api/v1/auth/login \
      -H "Content-Type: application/x-www-form-urlencoded" \
      -d "username=admin@omniusgrid.com&password=dev"
    ```
 
 2. Test assets endpoint:
    ```bash
-   curl http://localhost:8002/api/v1/assets/ \
+   curl http://localhost:8000/api/v1/assets/ \
      -H "Authorization: Bearer dev-token"
    ```
 
 3. Test WebSocket:
    ```bash
-   wscat -c ws://localhost:8002/ws -H "Authorization: Bearer dev-token"
+   wscat -c ws://localhost:8000/ws -H "Authorization: Bearer dev-token"
    ```
 
 4. Test Kanban endpoint:
    ```bash
-   curl http://localhost:8002/api/v1/kanban/board \
+   curl http://localhost:8000/api/v1/kanban/board \
      -H "Authorization: Bearer dev-token"
    ```
 

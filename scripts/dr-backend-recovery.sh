@@ -71,7 +71,7 @@ fi
 
 echo ""
 echo "Step 8: Verifying service health..."
-HEALTH_CHECK=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8002/health || echo "000")
+HEALTH_CHECK=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/health || echo "000")
 
 if [ "$HEALTH_CHECK" = "200" ]; then
     echo "Health check: PASSED"

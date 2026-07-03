@@ -18,7 +18,7 @@ attempt=0
 
 while [ $attempt -lt $max_attempts ]; do
     # Check if backend is responding
-    if curl -s http://localhost:8002/health > /dev/null 2>&1; then
+    if curl -s http://localhost:8000/health > /dev/null 2>&1; then
         echo "✅ Backend is healthy!"
         break
     fi
@@ -36,7 +36,7 @@ if [ $attempt -eq $max_attempts ]; then
 fi
 
 echo "✅ All backend services are running"
-echo "🌐 Backend API: http://localhost:8002"
+echo "🌐 Backend API: http://localhost:8000"
 echo ""
 echo "📝 You can now start the frontend with:"
 echo "   cd frontend && npm run dev"

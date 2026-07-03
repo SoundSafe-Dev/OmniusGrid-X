@@ -81,7 +81,7 @@ This runbook covers the recovery procedures for TimescaleDB primary node failure
 2. Update backend connection string if needed
 3. Verify backend can connect:
    ```bash
-   curl http://localhost:8002/health
+   curl http://localhost:8000/health
    ```
 
 ### Step 4: Restore Failed Node
@@ -193,7 +193,7 @@ psql -U omniusgrid -d omniusgrid -c "SELECT version();"
 
 3. **Backend Health:**
    ```bash
-   curl http://localhost:8002/health
+   curl http://localhost:8000/health
    ```
 
 4. **Replication Lag:**
@@ -204,7 +204,7 @@ psql -U omniusgrid -d omniusgrid -c "SELECT version();"
 ### Smoke Tests
 1. Create test asset:
    ```bash
-   curl -X POST http://localhost:8002/api/v1/assets/ \
+   curl -X POST http://localhost:8000/api/v1/assets/ \
      -H "Authorization: Bearer dev-token" \
      -H "Content-Type: application/json" \
      -d '{"name":"test-asset","asset_type_id":"uuid","organization_id":"uuid"}'
@@ -212,13 +212,13 @@ psql -U omniusgrid -d omniusgrid -c "SELECT version();"
 
 2. Query telemetry:
    ```bash
-   curl http://localhost:8002/api/v1/telemetry/{asset_id}/latest \
+   curl http://localhost:8000/api/v1/telemetry/{asset_id}/latest \
      -H "Authorization: Bearer dev-token"
    ```
 
 3. Check Kanban board:
    ```bash
-   curl http://localhost:8002/api/v1/kanban/board \
+   curl http://localhost:8000/api/v1/kanban/board \
      -H "Authorization: Bearer dev-token"
    ```
 

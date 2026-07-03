@@ -13,15 +13,15 @@ PDF_OUTPUT="$DOCS_DIR/api-documentation.pdf"
 echo "Exporting OmniusGrid API Documentation..."
 
 # Check if backend is running
-if ! curl -s http://localhost:8002/health > /dev/null 2>&1; then
+if ! curl -s http://localhost:8000/health > /dev/null 2>&1; then
     echo "Error: Backend API is not running. Please start the backend first."
-    echo "Run: cd backend && python -m uvicorn app.main:app --host 0.0.0.0 --port 8002"
+    echo "Run: cd backend && python -m uvicorn app.main:app --host 0.0.0.0 --port 8000"
     exit 1
 fi
 
 # Download OpenAPI JSON schema
-echo "Downloading OpenAPI schema from http://localhost:8002/openapi.json..."
-curl -s http://localhost:8002/openapi.json -o "$OPENAPI_JSON"
+echo "Downloading OpenAPI schema from http://localhost:8000/openapi.json..."
+curl -s http://localhost:8000/openapi.json -o "$OPENAPI_JSON"
 
 if [ ! -f "$OPENAPI_JSON" ]; then
     echo "Error: Failed to download OpenAPI schema"

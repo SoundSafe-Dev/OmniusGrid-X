@@ -300,7 +300,7 @@ kubectl logs edge-agent-0 -n omniusgrid --tail=50
 ### Smoke Tests
 1. Test API connectivity:
    ```bash
-   curl http://localhost:8002/health
+   curl http://localhost:8000/health
    ```
 
 2. Test database connectivity:
@@ -315,7 +315,7 @@ kubectl logs edge-agent-0 -n omniusgrid --tail=50
 
 4. Test WebSocket connectivity:
    ```bash
-   wscat -c ws://localhost:8002/ws -H "Authorization: Bearer dev-token"
+   wscat -c ws://localhost:8000/ws -H "Authorization: Bearer dev-token"
    ```
 
 ## Post-Incident Actions

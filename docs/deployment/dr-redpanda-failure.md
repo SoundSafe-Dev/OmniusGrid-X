@@ -247,12 +247,12 @@ rpk group list --brokers localhost:9092
 
 3. Verify backend connectivity:
    ```bash
-   curl http://localhost:8002/health
+   curl http://localhost:8000/health
    ```
 
 4. Test WebSocket connection:
    ```bash
-   wscat -c ws://localhost:8002/ws -H "Authorization: Bearer dev-token"
+   wscat -c ws://localhost:8000/ws -H "Authorization: Bearer dev-token"
    ```
 
 ## Post-Incident Actions

@@ -23,7 +23,7 @@ OmniusGrid is a resilient manufacturing operations platform designed for Industr
 
 | Domain | Features |
 |--------|----------|
-| **Data Collection** | 10 industrial protocol collectors (MQTT, OPC-UA, Modbus TCP/RTU, EtherNet/IP, PROFINET, BACnet, CAN bus, HTTP/REST, Screen Scraping/OCR, File Watching) |
+| **Data Collection** | 6 production protocol collectors (MQTT, OPC-UA, Modbus TCP/RTU, HTTP/REST, Screen Scraping/OCR, File Watching) + 4 scaffolded stubs (EtherNet/IP, PROFINET, BACnet, CAN bus) |
 | **Real-time Pipeline** | WebSocket broadcasting, subscription management, live telemetry/state/alarms |
 | **Command Executor** | Queued commands with retries, timeouts, cancellation, emergency stop, Redpanda integration |
 | **OEE Automation** | Automated OEE calculation from PackML states and telemetry part counting |
@@ -74,17 +74,17 @@ flowchart TB
             FEAT["Feature Extraction"]
         end
 
-        subgraph AGENTS["Edge Agents - 10 Protocol Collectors"]
+        subgraph AGENTS["Edge Agents - 10 Protocol Collectors (6 active)"]
             MQTT["MQTT (Bambu Labs)"]
             SCRAPER["Screen Scraper (OCR)"]
             FILE["File Watcher"]
             OPC["OPC-UA (PLCs)"]
             MODBUS["Modbus TCP/RTU"]
-            EIP["EtherNet/IP"]
-            PROFI["PROFINET"]
-            BACNET["BACnet"]
-            CANBUS["CAN bus"]
             HTTP["HTTP/REST"]
+            EIP["EtherNet/IP (stub)"]
+            PROFI["PROFINET (stub)"]
+            BACNET["BACnet (stub)"]
+            CANBUS["CAN bus (stub)"]
         end
 
         subgraph OPS["Operations Management"]
@@ -1326,12 +1326,15 @@ The correlation AI model seamlessly integrates with OmniusGrid's Kanban task man
 - **File System**: ORCA Slicer G-code output monitoring
 - **OPC-UA**: Industrial PLC communication
 - **Modbus TCP/RTU**: VFD and legacy sensor integration
-- **EtherNet/IP**: Allen-Bradley / Rockwell PLC integration
-- **PROFINET**: Siemens PLC and industrial device communication
-- **BACnet**: Building automation and HVAC systems
-- **CAN bus**: Vehicle and machine controller networks
-- **HTTP/REST**: Polling of REST-based device and gateway endpoints
+- **HTTP/REST**: Configurable polling of REST-based device and gateway endpoints (via httpx)
 - **Store-and-Forward**: 24-hour local SQLite buffering for offline resilience
+
+**Scaffolded collectors** (interface + config wiring in place; protocol I/O is a placeholder pending the noted driver library):
+
+- **EtherNet/IP**: Allen-Bradley / Rockwell PLCs — requires `pylogix`
+- **PROFINET**: Siemens PLCs — requires `python-snap7`
+- **BACnet**: Building automation / HVAC — requires `bacpypes`
+- **CAN bus**: Vehicle and machine controller networks — requires `python-can`
 
 ### AI/ML Pipeline
 
