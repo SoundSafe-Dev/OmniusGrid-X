@@ -23,7 +23,7 @@ OmniusGrid is a resilient manufacturing operations platform designed for Industr
 
 | Domain | Features |
 |--------|----------|
-| **Data Collection** | 7 industrial protocols (MQTT, OPC-UA, Modbus, Screen Scraping/OCR, File Watching) |
+| **Data Collection** | 10 industrial protocol collectors (MQTT, OPC-UA, Modbus TCP/RTU, EtherNet/IP, PROFINET, BACnet, CAN bus, HTTP/REST, Screen Scraping/OCR, File Watching) |
 | **Real-time Pipeline** | WebSocket broadcasting, subscription management, live telemetry/state/alarms |
 | **Command Executor** | Queued commands with retries, timeouts, cancellation, emergency stop, Redpanda integration |
 | **OEE Automation** | Automated OEE calculation from PackML states and telemetry part counting |
@@ -74,12 +74,17 @@ flowchart TB
             FEAT["Feature Extraction"]
         end
 
-        subgraph AGENTS["Edge Agents - 7 Data Sources"]
+        subgraph AGENTS["Edge Agents - 10 Protocol Collectors"]
             MQTT["MQTT (Bambu Labs)"]
             SCRAPER["Screen Scraper (OCR)"]
             FILE["File Watcher"]
             OPC["OPC-UA (PLCs)"]
             MODBUS["Modbus TCP/RTU"]
+            EIP["EtherNet/IP"]
+            PROFI["PROFINET"]
+            BACNET["BACnet"]
+            CANBUS["CAN bus"]
+            HTTP["HTTP/REST"]
         end
 
         subgraph OPS["Operations Management"]
@@ -116,7 +121,7 @@ flowchart TB
 ```bash
 # Clone repository
 git clone https://github.com/SoundSafe-ai/Omnius-Grid.git
-cd OmniusGrid
+cd Omnius-Grid
 
 # Start backend services (recommended)
 ./start.sh
@@ -151,8 +156,8 @@ docker-compose exec timescaledb psql -U omniusgrid -d omniusgrid \
 | Service | URL | Credentials |
 |---------|-----|-------------|
 | Dashboard | http://localhost:9999 | Login with `dev` / any password (dev mode) |
-| API | http://localhost:8002 | Bearer token (auto-generated in dev mode) |
-| API Docs | http://localhost:8002/docs | - |
+| API | http://localhost:8000 | Bearer token (auto-generated in dev mode) |
+| API Docs | http://localhost:8000/docs | - |
 | Grafana | http://localhost:3001 | `admin` / `omniusgrid_admin` |
 | Prometheus | http://localhost:9090 | - |
 | Alertmanager | http://localhost:9093 | - |
@@ -184,9 +189,9 @@ npm run dev -- --port 9999
 ```
 
 **Important Configuration Notes:**
-- Frontend runs on port 9999, backend on port 8002
-- All API clients configured to use `http://localhost:8002`
-- WebSocket connections use `ws://localhost:8002/ws`
+- Frontend runs on port 9999, backend on port 8000
+- All API clients configured to use `http://localhost:8000` (see `frontend/src/api/client.ts`)
+- WebSocket connections use `ws://localhost:8000/ws`
 - CORS is configured to allow all origins for development
 - Database models use String(36) for UUID columns to ensure PostgreSQL compatibility
 
@@ -1321,7 +1326,12 @@ The correlation AI model seamlessly integrates with OmniusGrid's Kanban task man
 - **File System**: ORCA Slicer G-code output monitoring
 - **OPC-UA**: Industrial PLC communication
 - **Modbus TCP/RTU**: VFD and legacy sensor integration
-- **Store-and-Forward**: 24-hour local buffering for offline resilience
+- **EtherNet/IP**: Allen-Bradley / Rockwell PLC integration
+- **PROFINET**: Siemens PLC and industrial device communication
+- **BACnet**: Building automation and HVAC systems
+- **CAN bus**: Vehicle and machine controller networks
+- **HTTP/REST**: Polling of REST-based device and gateway endpoints
+- **Store-and-Forward**: 24-hour local SQLite buffering for offline resilience
 
 ### AI/ML Pipeline
 
