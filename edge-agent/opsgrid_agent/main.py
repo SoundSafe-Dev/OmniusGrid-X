@@ -4,11 +4,15 @@ import asyncio
 import json
 import os
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, Any, List
 import structlog
 
 from opsgrid_agent.buffer.store_forward import StoreForwardBuffer
+from opsgrid_agent.commands import CommandConsumer
+from opsgrid_agent.config_bundle import collectors_from_bundle
 from opsgrid_agent.collectors.coordinator import UnifiedCollectorCoordinator, CollectorConfig
+from opsgrid_agent.ota import OTAUpdateExecutor
 from opsgrid_agent import metrics
 
 structlog.configure(
@@ -52,6 +56,22 @@ class EdgeAgent:
             retention_hours=self.config.get('buffer_retention_hours', 24)
         )
         self.kafka_producer = None
+        self.command_consumer = None
+        self.ota_executor = OTAUpdateExecutor(
+            buffer=self.buffer,
+            signing_public_key=self.config.get('ota_signing_public_key', ''),
+            active_bundle_path=self.config.get(
+                'ota_config_bundle_path',
+                '/var/lib/opsgrid-agent/config_bundle.active',
+            ),
+            staging_dir=self.config.get(
+                'ota_staging_dir',
+                '/var/lib/opsgrid-agent/ota-staging',
+            ),
+            drain_timeout_seconds=self.config.get('ota_drain_timeout_seconds', 60),
+            restart_callback=self._restart_runtime_after_update,
+            bundle_validator=self._validate_config_bundle,
+        )
         self._running = False
         self._tasks: List[asyncio.Task] = []
         
@@ -63,14 +83,82 @@ class EdgeAgent:
     
     def _load_config(self) -> Dict[str, Any]:
         """Load configuration from environment"""
-        return {
+        config = {
             'organization_id': os.getenv('ORGANIZATION_ID', 'dev-org'),
             'agent_id': os.getenv('AGENT_ID', 'agent-001'),
             'redpanda_url': os.getenv('REDPANDA_URL', 'localhost:9092'),
+            'command_topic': os.getenv('REDPANDA_COMMAND_TOPIC', 'opsgrid.commands'),
+            'command_ack_topic': os.getenv('REDPANDA_COMMAND_ACK_TOPIC', 'opsgrid.commands.acks'),
+            'ota_signing_public_key': os.getenv('OTA_SIGNING_PUBLIC_KEY', ''),
+            'ota_config_bundle_path': os.getenv(
+                'OTA_CONFIG_BUNDLE_PATH',
+                '/var/lib/opsgrid-agent/config_bundle.active',
+            ),
+            'ota_staging_dir': os.getenv(
+                'OTA_STAGING_DIR',
+                '/var/lib/opsgrid-agent/ota-staging',
+            ),
+            'ota_drain_timeout_seconds': int(os.getenv('OTA_DRAIN_TIMEOUT_SECONDS', '60')),
             'buffer_path': os.getenv('BUFFER_PATH', '/var/lib/opsgrid-agent/buffer.db'),
             'buffer_retention_hours': int(os.getenv('BUFFER_RETENTION_HOURS', '24')),
             'collectors': json.loads(os.getenv('COLLECTORS', '[]')),
         }
+        self._load_active_config_bundle(config)
+        return config
+
+    def _validate_config_bundle(self, bundle: bytes) -> None:
+        collectors_from_bundle(bundle)
+
+    def _load_active_config_bundle(self, config: Dict[str, Any]) -> None:
+        bundle_path = Path(config['ota_config_bundle_path'])
+        if not bundle_path.exists():
+            return
+
+        collectors = collectors_from_bundle(bundle_path.read_bytes())
+        config['collectors'] = collectors
+        logger.info(
+            "config_bundle_loaded",
+            path=str(bundle_path),
+            collectors=len(collectors),
+        )
+
+    def register_command_handler(self, action_id: str, handler):
+        """Register a remote command handler."""
+        if self.command_consumer is None:
+            self._init_command_consumer()
+        self.command_consumer.register_handler(action_id, handler)
+
+    def _asset_ids(self) -> List[str]:
+        return [
+            str(collector.get('asset_id'))
+            for collector in self.config.get('collectors', [])
+            if collector.get('asset_id')
+        ]
+
+    def _init_command_consumer(self):
+        """Initialize command transport without starting network I/O."""
+        if self.command_consumer is None:
+            self.command_consumer = CommandConsumer(
+                agent_id=self.config['agent_id'],
+                organization_id=self.config['organization_id'],
+                asset_ids=self._asset_ids(),
+                redpanda_url=self.config['redpanda_url'],
+                command_topic=self.config['command_topic'],
+                ack_topic=self.config['command_ack_topic'],
+            )
+            self.ota_executor.register(self.command_consumer)
+
+    async def _restart_runtime_after_update(self):
+        """Restart collectors after an OTA config-bundle swap."""
+        await self.coordinator.stop_all()
+        self.config = self._load_config()
+        self.coordinator.configs.clear()
+        self.coordinator.collectors.clear()
+        self.coordinator.collector_tasks.clear()
+        if self.command_consumer:
+            self.command_consumer.asset_ids = set(self._asset_ids())
+        await self._initialize_collectors()
+        await self.coordinator.start_all()
     
     async def _init_kafka_producer(self):
         """Initialize Kafka/Redpanda producer"""
@@ -331,6 +419,12 @@ class EdgeAgent:
         
         # Start all collectors via coordinator
         await self.coordinator.start_all()
+
+        self._init_command_consumer()
+        try:
+            await self.command_consumer.start()
+        except Exception as e:
+            logger.error("command_consumer_failed", error=str(e))
         
         logger.info("edge_agent_started")
     
@@ -350,6 +444,9 @@ class EdgeAgent:
         
         # Stop all collectors via coordinator
         await self.coordinator.stop_all()
+
+        if self.command_consumer:
+            await self.command_consumer.stop()
         
         # Stop Kafka producer
         await self._stop_kafka_producer()
