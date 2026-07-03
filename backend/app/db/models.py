@@ -1364,6 +1364,173 @@ class ComplianceReportJob(Base):
     email_sent_at = Column(DateTime(timezone=True))
 
 
+class AgentRelease(Base):
+    """Signed edge-agent release metadata and config-bundle pointer."""
+    __tablename__ = "agent_releases"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('draft', 'published', 'yanked')",
+            name="ck_agent_releases_status",
+        ),
+        UniqueConstraint(
+            "organization_id", "version", "channel",
+            name="uq_agent_releases_org_version_channel",
+        ),
+    )
+
+    id = UUIDColumn()
+    organization_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    version = Column(String(100), nullable=False)
+    channel = Column(String(50), nullable=False, default="stable", server_default="stable")
+    image_tag = Column(String(255), nullable=False)
+    bundle_storage_key = Column(Text, nullable=False)
+    checksum_sha256 = Column(String(64), nullable=False)
+    signature_ed25519 = Column(Text, nullable=False)
+    signing_key_id = Column(String(255), nullable=False)
+    release_notes = Column(Text)
+    status = Column(String(30), nullable=False, default="draft", server_default="draft")
+    created_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        server_default=func.now(),
+    )
+
+    rollouts = relationship("AgentRollout", back_populates="release")
+
+
+class AgentRollout(Base):
+    """Tenant-scoped OTA rollout definition."""
+    __tablename__ = "agent_rollouts"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'paused', 'running', 'completed', 'cancelled', 'rolled_back', 'failed')",
+            name="ck_agent_rollouts_status",
+        ),
+    )
+
+    id = UUIDColumn()
+    organization_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    release_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("agent_releases.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    name = Column(String(255), nullable=False)
+    target_selector = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False, default=dict)
+    strategy = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False, default=dict)
+    status = Column(String(30), nullable=False, default="pending", server_default="pending")
+    created_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        server_default=func.now(),
+    )
+
+    release = relationship("AgentRelease", back_populates="rollouts")
+    targets = relationship(
+        "AgentRolloutTarget",
+        back_populates="rollout",
+        cascade="all, delete-orphan",
+    )
+    events = relationship(
+        "AgentRolloutEvent",
+        back_populates="rollout",
+        cascade="all, delete-orphan",
+    )
+
+
+class AgentRolloutTarget(Base):
+    """Per-asset OTA rollout state."""
+    __tablename__ = "agent_rollout_targets"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'updating', 'success', 'failed', 'rolled_back', 'cancelled', 'skipped')",
+            name="ck_agent_rollout_targets_status",
+        ),
+        UniqueConstraint(
+            "rollout_id", "asset_id",
+            name="uq_agent_rollout_targets_rollout_asset",
+        ),
+    )
+
+    id = UUIDColumn()
+    rollout_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("agent_rollouts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    organization_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    asset_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("assets.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    wave_index = Column(Integer, nullable=False, default=0, server_default="0")
+    status = Column(String(30), nullable=False, default="pending", server_default="pending")
+    current_version = Column(String(100))
+    attempts = Column(Integer, nullable=False, default=0, server_default="0")
+    command_id = Column(String(255))
+    rollback_command_id = Column(String(255))
+    failure_reason = Column(Text)
+    dispatched_at = Column(DateTime(timezone=True))
+    completed_at = Column(DateTime(timezone=True))
+    last_event_at = Column(DateTime(timezone=True))
+
+    rollout = relationship("AgentRollout", back_populates="targets")
+
+
+class AgentRolloutEvent(Base):
+    """Append-only rollout event stream."""
+    __tablename__ = "agent_rollout_events"
+
+    id = UUIDColumn()
+    rollout_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("agent_rollouts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    organization_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    event_type = Column(String(100), nullable=False)
+    asset_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("assets.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    detail = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False, default=dict)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, server_default=func.now())
+
+    rollout = relationship("AgentRollout", back_populates="events")
+
+
 class IntegrationConfiguration(Base):
     """External integration configurations"""
     __tablename__ = "integration_configurations"

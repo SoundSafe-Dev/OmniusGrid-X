@@ -88,6 +88,8 @@ services:
       COMPLIANCE_REPORT_EMAIL_ENABLED: ${COMPLIANCE_REPORT_EMAIL_ENABLED:-false}
       COMPLIANCE_REPORT_SCHEDULER_ENABLED: ${COMPLIANCE_REPORT_SCHEDULER_ENABLED:-true}
       COMPLIANCE_REPORT_SCHEDULER_INTERVAL_SECONDS: ${COMPLIANCE_REPORT_SCHEDULER_INTERVAL_SECONDS:-30}
+      OTA_ROLLOUT_DISPATCH_ENABLED: ${OTA_ROLLOUT_DISPATCH_ENABLED:-true}
+      OTA_ROLLOUT_DISPATCH_INTERVAL_SECONDS: ${OTA_ROLLOUT_DISPATCH_INTERVAL_SECONDS:-30}
     ports:
       - "8002:8000"
     volumes:
@@ -201,6 +203,33 @@ services:
     networks:
       - omniusgrid-network
     command: python -m app.workers.compliance_reports
+
+  # OTA staged rollout orchestration and health-gated rollback
+  ota-rollout-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: omniusgrid-ota-rollout-worker
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://omniusgrid:omniusgrid_dev_password@timescaledb:5432/omniusgrid
+      REDPANDA_URL: redpanda:29092
+      JWT_SECRET_KEY: dev_secret_key_change_in_production
+      SIGNED_URL_SECRET_KEY: ${SIGNED_URL_SECRET_KEY:-dev_signed_link_secret_change_in_production}
+      EXPORT_PUBLIC_BASE_URL: http://localhost:8002
+      OTA_ROLLOUT_DISPATCH_ENABLED: ${OTA_ROLLOUT_DISPATCH_ENABLED:-true}
+      OTA_ROLLOUT_DISPATCH_INTERVAL_SECONDS: ${OTA_ROLLOUT_DISPATCH_INTERVAL_SECONDS:-30}
+    volumes:
+      - ./backend:/app
+      - export-data:/var/lib/omniusgrid/exports
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+    networks:
+      - omniusgrid-network
+    command: python -m app.workers.ota_rollouts
 
   # Frontend - React Dashboard
   frontend:

@@ -21,6 +21,7 @@ import {
   MessageSquare,
   Inbox,
   Bug,
+  UploadCloud,
 } from 'lucide-react';
 import { useUIStore, useAuthStore } from '../../stores';
 import { cn } from '../../utils';
@@ -98,6 +99,7 @@ const navItems: NavItem[] = [
       { path: '/admin/collectors', label: 'Collectors', icon: Box, description: 'Data collector configuration' },
       { path: '/admin/health', label: 'System Health', icon: LayoutDashboard, description: 'Infrastructure status monitoring' },
       { path: '/admin/errors', label: 'Error Triage', icon: Bug, description: 'Production error monitoring' },
+      { path: '/admin/fleet', label: 'Fleet OTA', icon: UploadCloud, description: 'Edge-agent releases and staged rollouts' },
       { path: '/admin/settings', label: 'Settings', icon: Settings, description: 'System configuration' },
     ],
   },

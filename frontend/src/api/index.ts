@@ -13,3 +13,4 @@ export { fleetHealthApi } from './fleetHealth';
 export { maintenanceApi } from './maintenance';
 export { kpiApi } from './kpi';
 export { errorTriageApi } from './errorTriage';
+export { fleetApi } from './fleet';

@@ -22,7 +22,7 @@ import { TelemetryCharts, AssetHealth, PredictiveMaintenance } from './pages/ana
 import { FleetOverview, OrganizationTree } from './pages/fleet'
 
 // Admin pages
-import { Users, Collectors, SystemHealth, Settings, ErrorTriage, ErrorTriageDetail } from './pages/admin'
+import { Users, Collectors, SystemHealth, Settings, ErrorTriage, ErrorTriageDetail, Fleet, FleetRolloutDetail } from './pages/admin'
 
 // Logistics pages
 import { YardManagement, TransportationManagement } from './pages/logistics'
@@ -87,6 +87,8 @@ const App: FC = () => {
             <Route path="/admin/settings" element={<Settings />} />
             <Route path="/admin/errors" element={<ErrorTriage />} />
             <Route path="/admin/errors/:fingerprint" element={<ErrorTriageDetail />} />
+            <Route path="/admin/fleet" element={<Fleet />} />
+            <Route path="/admin/fleet/rollouts/:rolloutId" element={<FleetRolloutDetail />} />
           </Route>
         </Route>
 
