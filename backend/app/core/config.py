@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     REDPANDA_COMMAND_TOPIC: str = "opsgrid.commands"
     REDPANDA_EXPORT_TOPIC: str = "opsgrid.exports"
     REDPANDA_COMPLIANCE_REPORTS_TOPIC: str = "opsgrid.compliance-reports"
+    AGENT_STATUS_TOPIC: str = "opsgrid.agent-status"
     
     # Security
     JWT_SECRET_KEY: str = "dev_secret_key_change_in_production"
