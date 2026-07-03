@@ -1,1 +1,3 @@
-# Leave empty - marks directory as Python package
+"""OpsGrid edge agent package metadata."""
+
+__version__ = "0.1.0"
