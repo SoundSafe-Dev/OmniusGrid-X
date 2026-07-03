@@ -72,6 +72,8 @@ def _setup_schema(sync_url: str) -> None:
         "015_compliance_report_jobs.sql",
         "016_finalize_compliance_tenant_ownership.sql",
         "017_scheduled_compliance_reports.sql",
+        "021_agent_ota.sql",
+        "022_agent_rollout_orchestration.sql",
     ]
 
     conn = psycopg2.connect(sync_url)
@@ -259,6 +261,8 @@ async def app(tenant_async_url):
     from app.db import database as db_module
     from app.main import app as fastapi_app
     from app.middleware.tenant_isolation import get_tenant_db, get_tenant_org_id
+    import app.api.agent_releases as agent_releases_api
+    import app.services.rollout_orchestrator as rollout_orchestrator_service
     import app.api.compliance_reports as compliance_reports_api
     import app.api.exports as exports_api
     import app.services.report_download_audit as report_download_audit
@@ -269,6 +273,8 @@ async def app(tenant_async_url):
     )
     original_async_session_local = db_module.AsyncSessionLocal
     db_module.AsyncSessionLocal = test_session_maker
+    agent_releases_api.AsyncSessionLocal = test_session_maker
+    rollout_orchestrator_service.AsyncSessionLocal = test_session_maker
     compliance_reports_api.AsyncSessionLocal = test_session_maker
     exports_api.AsyncSessionLocal = test_session_maker
     report_download_audit.AsyncSessionLocal = test_session_maker
@@ -319,6 +325,8 @@ async def app(tenant_async_url):
 
     fastapi_app.dependency_overrides.clear()
     db_module.AsyncSessionLocal = original_async_session_local
+    agent_releases_api.AsyncSessionLocal = original_async_session_local
+    rollout_orchestrator_service.AsyncSessionLocal = original_async_session_local
     compliance_reports_api.AsyncSessionLocal = original_async_session_local
     exports_api.AsyncSessionLocal = original_async_session_local
     report_download_audit.AsyncSessionLocal = original_async_session_local
