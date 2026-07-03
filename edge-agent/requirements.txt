@@ -14,3 +14,11 @@ pymodbus==3.6.0
 httpx==0.25.2
 python-dotenv==1.0.0
 prometheus-client==0.19.0
+
+# Optional industrial-protocol driver libraries.
+# Each backs one collector; install only those needed for the deployed hardware.
+# The collectors import these lazily and degrade gracefully if absent.
+pylogix==1.0.5          # EtherNet/IP (Rockwell / Allen-Bradley)
+python-snap7==1.3       # PROFINET / S7 (Siemens)
+BAC0==2023.6.9          # BACnet (building automation) — wraps bacpypes
+python-can==4.3.1       # CAN bus (vehicle / machine controllers)

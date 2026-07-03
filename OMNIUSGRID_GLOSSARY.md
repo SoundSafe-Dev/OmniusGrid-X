@@ -77,7 +77,7 @@
 | **Feature Vector** | Normalized set of telemetry features used as input to AI inference models | Backend |
 | **Feature Extraction** | Process of transforming raw telemetry into feature vectors for ML models | Backend |
 | **Data Thinning** | Reducing data volume by transmitting feature vectors instead of raw telemetry to cloud | Backend |
-| **Collector** | Edge agent component implementing a specific industrial protocol. Production collectors: MQTT, OPC-UA, Modbus, HTTP/REST, Screen Scraping, File Watching. Scaffolded stubs (pending driver libraries): EtherNet/IP, PROFINET, BACnet, CAN bus | Backend |
+| **Collector** | Edge agent component implementing a specific industrial protocol: MQTT, OPC-UA, Modbus, HTTP/REST, EtherNet/IP, PROFINET, BACnet, CAN bus, Screen Scraping, File Watching | Backend |
 | **Ingestion Worker** | Backend service processing incoming telemetry from collectors | Backend |
 | **Edge Agent** | Lightweight SDK deployed at edge for data collection and local buffering | Backend |
 
@@ -611,37 +611,40 @@
 | **httpx** | Async HTTP client library used by the collector |
 | **Poll Interval** | Configurable seconds between endpoint reads (default 60s) |
 
-### EtherNet/IP *(scaffolded stub — pending `pylogix`)*
+### EtherNet/IP
 | Term | Definition |
 |------|------------|
 | **EtherNet/IP** | Industrial protocol for Rockwell/Allen-Bradley PLCs (default port 44818) |
 | **Slot** | CPU slot index in the PLC chassis |
-| **pylogix** | Driver library required to complete the implementation |
+| **Tag** | Named PLC variable read by the collector |
+| **pylogix** | Driver library backing the collector |
 
-### PROFINET *(scaffolded stub — pending `python-snap7`)*
+### PROFINET
 | Term | Definition |
 |------|------------|
 | **PROFINET** | Industrial Ethernet protocol for Siemens PLCs |
 | **Rack / Slot** | Address of the S7 CPU within the PLC chassis |
 | **DB Block** | Siemens data block read for telemetry |
-| **python-snap7** | Driver library required to complete the implementation |
+| **Field** | Typed value (real/int/dint/word/bool/byte) decoded at an offset within a DB block |
+| **python-snap7** | Driver library backing the collector |
 
-### BACnet *(scaffolded stub — pending `bacpypes`)*
+### BACnet
 | Term | Definition |
 |------|------------|
 | **BACnet** | Building Automation and Control network protocol (default port 47808) |
 | **Device ID** | Unique identifier of a BACnet device |
 | **Object** | Addressable point (e.g., analog input) read from a BACnet device |
-| **bacpypes** | Driver library required to complete the implementation |
+| **presentValue** | Default property read from each object |
+| **BAC0 / bacpypes** | Driver library backing the collector |
 
-### CAN Bus *(scaffolded stub — pending `python-can`)*
+### CAN Bus
 | Term | Definition |
 |------|------------|
 | **CAN Bus** | Controller Area Network for vehicle/machine controllers |
 | **Channel** | CAN interface (e.g., `can0` via SocketCAN) |
 | **Bitrate** | Bus speed in bits/sec (default 500000) |
 | **CAN ID** | Arbitration identifier used to filter frames |
-| **python-can** | Driver library required to complete the implementation |
+| **python-can** | Driver library backing the collector |
 
 ---
 

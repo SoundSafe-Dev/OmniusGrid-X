@@ -23,13 +23,23 @@ class BaseCollector(ABC):
     
     @abstractmethod
     async def start(self) -> None:
-        """Start the collector."""
-        pass
-    
+        """
+        Start the collector.
+
+        Subclasses must override and call ``await super().start()`` first so the
+        running flag is set before their poll loop begins.
+        """
+        self._running = True
+
     @abstractmethod
     async def stop(self) -> None:
-        """Stop the collector."""
-        pass
+        """
+        Stop the collector.
+
+        Subclasses must override and call ``await super().stop()`` first so the
+        running flag is cleared, allowing their poll loop to exit cleanly.
+        """
+        self._running = False
     
     def add_data_handler(self, handler: Callable[[Dict[str, Any]], None]) -> None:
         """

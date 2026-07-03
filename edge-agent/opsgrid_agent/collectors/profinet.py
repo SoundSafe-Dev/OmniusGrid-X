@@ -1,6 +1,29 @@
-"""Profinet Collector for Edge Agent"""
+"""PROFINET / S7 Collector for Edge Agent.
 
-from typing import Dict, Any, Optional
+Reads data blocks from Siemens S7 PLCs using the ``python-snap7`` driver.
+``python-snap7`` is synchronous, so all network I/O is offloaded to a worker
+thread via ``asyncio.to_thread`` to keep the event loop responsive.
+
+Config:
+    ip_address (str):      PLC IP address (required)
+    rack (int):            CPU rack number (default 0)
+    slot (int):            CPU slot number (default 1)
+    poll_interval (float): Seconds between reads (default 5)
+    db_blocks (list):      Data blocks to read. Each entry:
+        {
+          "number": <db number>,
+          "start": <byte offset to start reading>,
+          "size": <bytes to read>,
+          "fields": [                 # optional; typed extraction
+            {"name": "temp", "offset": 0, "type": "real"},
+            {"name": "count", "offset": 4, "type": "dint"},
+            {"name": "running", "offset": 8, "type": "bool", "bit": 0}
+          ]
+        }
+      If "fields" is omitted, the first 4 bytes are emitted as a big-endian int.
+"""
+
+from typing import Dict, Any, Optional, List
 from datetime import datetime
 import asyncio
 import structlog
@@ -9,141 +32,221 @@ from .base import BaseCollector
 
 logger = structlog.get_logger()
 
+try:
+    import snap7
+    from snap7 import util as snap7_util
+    _SNAP7_AVAILABLE = True
+    _SNAP7_IMPORT_ERROR: Optional[str] = None
+except ImportError as exc:  # pragma: no cover - exercised only without the driver
+    snap7 = None  # type: ignore
+    snap7_util = None  # type: ignore
+    _SNAP7_AVAILABLE = False
+    _SNAP7_IMPORT_ERROR = str(exc)
+
 
 class ProfinetCollector(BaseCollector):
-    """
-    Collector for Profinet (Siemens) protocol.
-    
-    Note: This is a placeholder implementation.
-    Actual implementation requires python-snap7 library for real Profinet communication.
-    """
-    
+    """Collector for PROFINET / S7 (Siemens) PLCs."""
+
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
         self.ip_address = config.get("ip_address")
         self.rack = config.get("rack", 0)
         self.slot = config.get("slot", 1)
         self.poll_interval = config.get("poll_interval", 5)  # seconds
-        self.db_blocks = config.get("db_blocks", [])  # List of DB blocks to read
+        self.db_blocks: List[Dict[str, Any]] = config.get("db_blocks", [])
         self._poll_task: Optional[asyncio.Task] = None
-        self._client: Optional[Any] = None  # snap7.client placeholder
-    
+        self._client: Optional[Any] = None
+        self._connected = False
+
+    # ------------------------------------------------------------------ #
+    # Lifecycle
+    # ------------------------------------------------------------------ #
     async def start(self) -> None:
-        """Start the Profinet collector."""
+        """Start the PROFINET collector."""
         await super().start()
-        
-        # Initialize client (placeholder)
-        # In real implementation: import snap7
-        # self._client = snap7.client.Client()
-        # self._client.connect(self.ip_address, self.rack, self.slot)
-        
-        # Start polling task
+
+        if not _SNAP7_AVAILABLE:
+            self._running = False
+            logger.error(
+                "profinet_driver_missing",
+                asset_id=self.asset_id,
+                error=_SNAP7_IMPORT_ERROR,
+                hint="pip install python-snap7",
+            )
+            return
+
+        if not self.ip_address:
+            self._running = False
+            logger.error("profinet_no_ip_address", asset_id=self.asset_id)
+            return
+
         self._poll_task = asyncio.create_task(self._poll_loop())
-        
+
         logger.info(
             "profinet_collector_started",
             asset_id=self.asset_id,
             ip_address=self.ip_address,
             rack=self.rack,
             slot=self.slot,
-            db_blocks_count=len(self.db_blocks)
+            db_blocks_count=len(self.db_blocks),
         )
-    
+
     async def stop(self) -> None:
-        """Stop the Profinet collector."""
+        """Stop the PROFINET collector."""
         await super().stop()
-        
+
         if self._poll_task:
             self._poll_task.cancel()
             try:
                 await self._poll_task
             except asyncio.CancelledError:
                 pass
-        
-        # Close client (placeholder)
-        # if self._client:
-        #     self._client.disconnect()
-        
+
+        await self._disconnect()
         logger.info("profinet_collector_stopped", asset_id=self.asset_id)
-    
+
+    # ------------------------------------------------------------------ #
+    # Connection management
+    # ------------------------------------------------------------------ #
+    def _open_client(self) -> Any:
+        """Create and connect an snap7 client (runs in a worker thread)."""
+        client = snap7.client.Client()
+        client.connect(self.ip_address, self.rack, self.slot)
+        return client
+
+    async def _connect(self) -> None:
+        if self._connected and self._client is not None:
+            return
+        self._client = await asyncio.to_thread(self._open_client)
+        self._connected = True
+        logger.info(
+            "profinet_connected",
+            asset_id=self.asset_id,
+            ip_address=self.ip_address,
+        )
+
+    async def _disconnect(self) -> None:
+        if self._client is not None:
+            try:
+                await asyncio.to_thread(self._client.disconnect)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.error(
+                    "profinet_disconnect_error",
+                    asset_id=self.asset_id,
+                    error=str(exc),
+                )
+        self._client = None
+        self._connected = False
+
+    # ------------------------------------------------------------------ #
+    # Polling
+    # ------------------------------------------------------------------ #
     async def _poll_loop(self) -> None:
         """Poll DB blocks at configured intervals."""
         while self._running:
             try:
                 await self._collect()
-            except Exception as e:
+            except Exception as exc:
                 logger.error(
                     "profinet_poll_error",
                     asset_id=self.asset_id,
                     ip_address=self.ip_address,
-                    error=str(e)
+                    error=str(exc),
                 )
-            
+                await self._disconnect()
+
             await asyncio.sleep(self.poll_interval)
-    
+
+    def _read_db(self, number: int, start: int, size: int) -> bytearray:
+        """Read a DB block (runs in a worker thread)."""
+        return self._client.db_read(number, start, size)
+
     async def _collect(self) -> None:
         """Collect data from DB blocks."""
         if not self.db_blocks:
             return
-        
-        try:
-            # Placeholder for actual DB block reading
-            # In real implementation:
-            # db_values = {}
-            # for db_block in self.db_blocks:
-            #     data = self._client.db_read(db_block["number"], db_block["start"], db_block["size"])
-            #     db_values[f"db{db_block['number']}"] = data
-            
-            # Simulated data for now
-            db_values = {f"db{db['number']}": bytearray(256) for db in self.db_blocks}
-            
-            # Normalize and emit data
-            normalized = self._normalize_data(db_values)
-            await self.emit(normalized)
-            
-            logger.debug(
-                "profinet_data_collected",
-                asset_id=self.asset_id,
-                db_blocks_count=len(db_values)
-            )
-            
-        except Exception as e:
-            logger.error(
-                "profinet_collection_error",
-                asset_id=self.asset_id,
-                ip_address=self.ip_address,
-                error=str(e)
-            )
-    
-    def _normalize_data(self, db_values: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Normalize DB block data to standard format.
-        
-        Args:
-            db_values: Dictionary of DB block names and values
-            
-        Returns:
-            Normalized telemetry data
-        """
-        timestamp = datetime.now()
-        
-        normalized = {
-            "timestamp_edge": timestamp.isoformat(),
+
+        await self._connect()
+
+        payload: Dict[str, Any] = {}
+        for block in self.db_blocks:
+            number = block.get("number")
+            start = block.get("start", 0)
+            size = block.get("size", 4)
+            if number is None:
+                continue
+
+            data = await asyncio.to_thread(self._read_db, number, start, size)
+            payload.update(self._extract_block(number, block, data))
+
+        if not payload:
+            return
+
+        await self.emit(self._normalize_data(payload))
+        logger.debug(
+            "profinet_data_collected",
+            asset_id=self.asset_id,
+            db_blocks_count=len(self.db_blocks),
+            fields=len(payload),
+        )
+
+    def _extract_block(
+        self, number: int, block: Dict[str, Any], data: bytearray
+    ) -> Dict[str, Any]:
+        """Extract typed fields from a DB block payload."""
+        fields = block.get("fields")
+        if not fields:
+            # Backwards-compatible default: first 4 bytes as a big-endian int.
+            value = int.from_bytes(data[:4], byteorder="big") if len(data) >= 4 else 0
+            return {f"db{number}_value": value}
+
+        extracted: Dict[str, Any] = {}
+        for field in fields:
+            name = field.get("name")
+            offset = field.get("offset", 0)
+            ftype = str(field.get("type", "int")).lower()
+            if not name:
+                continue
+            try:
+                extracted[f"db{number}_{name}"] = self._decode_field(
+                    data, offset, ftype, field.get("bit", 0)
+                )
+            except Exception as exc:
+                logger.warning(
+                    "profinet_field_decode_error",
+                    asset_id=self.asset_id,
+                    db=number,
+                    field=name,
+                    type=ftype,
+                    error=str(exc),
+                )
+        return extracted
+
+    @staticmethod
+    def _decode_field(data: bytearray, offset: int, ftype: str, bit: int) -> Any:
+        """Decode a single S7 value using snap7 utilities."""
+        if ftype == "real":
+            return snap7_util.get_real(data, offset)
+        if ftype == "int":
+            return snap7_util.get_int(data, offset)
+        if ftype == "dint":
+            return snap7_util.get_dint(data, offset)
+        if ftype == "word":
+            return snap7_util.get_word(data, offset)
+        if ftype == "dword":
+            return snap7_util.get_dword(data, offset)
+        if ftype == "bool":
+            return snap7_util.get_bool(data, offset, bit)
+        if ftype == "byte":
+            return data[offset]
+        raise ValueError(f"unsupported S7 field type: {ftype}")
+
+    def _normalize_data(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize DB block data to the standard telemetry envelope."""
+        return {
+            "timestamp_edge": datetime.now().isoformat(),
             "asset_id": self.asset_id,
             "topic": "telemetry",
-            "payload": {}
+            "collector_type": "profinet",
+            "payload": dict(payload),
         }
-        
-        for db_name, value in db_values.items():
-            # Convert bytearray to integer for simplicity
-            if isinstance(value, bytearray):
-                # Take first 4 bytes as integer
-                if len(value) >= 4:
-                    int_value = int.from_bytes(value[:4], byteorder='big')
-                    normalized["payload"][f"{db_name}_value"] = int_value
-                else:
-                    normalized["payload"][f"{db_name}_value"] = 0
-            else:
-                normalized["payload"][f"{db_name}_value"] = value
-        
-        return normalized

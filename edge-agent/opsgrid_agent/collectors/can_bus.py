@@ -1,7 +1,22 @@
-"""CAN Bus Collector for Edge Agent"""
+"""CAN Bus Collector for Edge Agent.
 
-from typing import Dict, Any, Optional
-from datetime import datetime
+Receives frames from a CAN bus (vehicle / machine controllers) using the
+``python-can`` driver. ``python-can``'s ``recv`` is blocking, so it is offloaded
+to a worker thread via ``asyncio.to_thread`` to keep the event loop responsive.
+
+Config:
+    interface (str):   python-can interface / bustype, e.g. "socketcan",
+                       "pcan", "vector" (default "socketcan")
+    channel (str):     Bus channel, e.g. "can0" (default "can0")
+    bitrate (int):     Bus bitrate in bits/sec (default 500000)
+    can_ids (list):    Arbitration IDs to accept (ints). Empty = accept all.
+    poll_interval (float): Seconds to sleep between receive batches (default 0.1)
+    batch_size (int):  Max frames drained per batch (default 10)
+    recv_timeout (float): Per-frame blocking receive timeout in seconds (default 0.5)
+"""
+
+from typing import Dict, Any, Optional, List
+from datetime import datetime, timezone
 import asyncio
 import structlog
 
@@ -9,153 +24,186 @@ from .base import BaseCollector
 
 logger = structlog.get_logger()
 
+try:
+    import can
+    _CAN_AVAILABLE = True
+    _CAN_IMPORT_ERROR: Optional[str] = None
+except ImportError as exc:  # pragma: no cover - exercised only without the driver
+    can = None  # type: ignore
+    _CAN_AVAILABLE = False
+    _CAN_IMPORT_ERROR = str(exc)
+
 
 class CANBusCollector(BaseCollector):
-    """
-    Collector for CAN Bus (vehicle telematics) protocol.
-    
-    Note: This is a placeholder implementation.
-    Actual implementation requires python-can library for real CAN bus communication.
-    """
-    
+    """Collector for CAN Bus (vehicle / machine controllers)."""
+
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
-        self.interface = config.get("interface", "socketcan")
+        # "bustype" is accepted as an alias for backwards compatibility.
+        self.interface = config.get("interface") or config.get("bustype", "socketcan")
         self.channel = config.get("channel", "can0")
-        self.bustype = config.get("bustype", "socketcan")
         self.bitrate = config.get("bitrate", 500000)
-        self.can_ids = config.get("can_ids", [])  # List of CAN IDs to filter
+        self.can_ids: List[int] = config.get("can_ids", [])
+        self.poll_interval = config.get("poll_interval", 0.1)  # seconds
+        self.batch_size = config.get("batch_size", 10)
+        self.recv_timeout = config.get("recv_timeout", 0.5)
         self._poll_task: Optional[asyncio.Task] = None
-        self._bus: Optional[Any] = None  # python-can placeholder
-    
+        self._bus: Optional[Any] = None
+        self._connected = False
+
+    # ------------------------------------------------------------------ #
+    # Lifecycle
+    # ------------------------------------------------------------------ #
     async def start(self) -> None:
         """Start the CAN Bus collector."""
         await super().start()
-        
-        # Initialize bus (placeholder)
-        # In real implementation: import can
-        # self._bus = can.Bus(
-        #     interface=self.interface,
-        #     channel=self.channel,
-        #     bustype=self.bustype,
-        #     bitrate=self.bitrate
-        # )
-        
-        # Start polling task
+
+        if not _CAN_AVAILABLE:
+            self._running = False
+            logger.error(
+                "can_bus_driver_missing",
+                asset_id=self.asset_id,
+                error=_CAN_IMPORT_ERROR,
+                hint="pip install python-can",
+            )
+            return
+
         self._poll_task = asyncio.create_task(self._poll_loop())
-        
+
         logger.info(
             "can_bus_collector_started",
             asset_id=self.asset_id,
             interface=self.interface,
             channel=self.channel,
             bitrate=self.bitrate,
-            can_ids_count=len(self.can_ids)
+            can_ids_count=len(self.can_ids),
         )
-    
+
     async def stop(self) -> None:
         """Stop the CAN Bus collector."""
         await super().stop()
-        
+
         if self._poll_task:
             self._poll_task.cancel()
             try:
                 await self._poll_task
             except asyncio.CancelledError:
                 pass
-        
-        # Close bus (placeholder)
-        # if self._bus:
-        #     self._bus.shutdown()
-        
+
+        await self._disconnect()
         logger.info("can_bus_collector_stopped", asset_id=self.asset_id)
-    
+
+    # ------------------------------------------------------------------ #
+    # Connection management
+    # ------------------------------------------------------------------ #
+    def _open_bus(self) -> Any:
+        """Create the CAN bus interface (runs in a worker thread)."""
+        kwargs: Dict[str, Any] = {
+            "interface": self.interface,
+            "channel": self.channel,
+        }
+        if self.bitrate:
+            kwargs["bitrate"] = self.bitrate
+        if self.can_ids:
+            kwargs["can_filters"] = [
+                {"can_id": can_id, "can_mask": 0x7FF, "extended": False}
+                for can_id in self.can_ids
+            ]
+        return can.Bus(**kwargs)
+
+    async def _connect(self) -> None:
+        if self._connected and self._bus is not None:
+            return
+        self._bus = await asyncio.to_thread(self._open_bus)
+        self._connected = True
+        logger.info(
+            "can_bus_connected",
+            asset_id=self.asset_id,
+            channel=self.channel,
+        )
+
+    async def _disconnect(self) -> None:
+        if self._bus is not None:
+            try:
+                await asyncio.to_thread(self._bus.shutdown)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.error(
+                    "can_bus_disconnect_error",
+                    asset_id=self.asset_id,
+                    error=str(exc),
+                )
+        self._bus = None
+        self._connected = False
+
+    # ------------------------------------------------------------------ #
+    # Polling
+    # ------------------------------------------------------------------ #
     async def _poll_loop(self) -> None:
-        """Poll CAN messages at configured intervals."""
+        """Receive CAN frames in batches."""
         while self._running:
             try:
                 await self._collect()
-            except Exception as e:
+            except Exception as exc:
                 logger.error(
                     "can_bus_poll_error",
                     asset_id=self.asset_id,
                     channel=self.channel,
-                    error=str(e)
+                    error=str(exc),
                 )
-            
-            await asyncio.sleep(0.1)  # High frequency for CAN bus
-    
+                await self._disconnect()
+
+            await asyncio.sleep(self.poll_interval)
+
+    def _drain(self) -> List[Any]:
+        """Drain up to batch_size frames from the bus (runs in a worker thread)."""
+        messages: List[Any] = []
+        for _ in range(self.batch_size):
+            msg = self._bus.recv(timeout=self.recv_timeout)
+            if msg is None:
+                break
+            messages.append(msg)
+        return messages
+
     async def _collect(self) -> None:
-        """Collect data from CAN bus."""
-        try:
-            # Placeholder for actual CAN message reading
-            # In real implementation:
-            # messages = []
-            # for msg in self._bus:
-            #     if not self.can_ids or msg.arbitration_id in self.can_ids:
-            #         messages.append(msg)
-            #         if len(messages) >= 10:  # Batch size
-            #             break
-            
-            # Simulated data for now
-            messages = []
-            for can_id in self.can_ids[:5] if self.can_ids else [0x123]:
-                messages.append({
-                    "arbitration_id": can_id,
-                    "data": bytearray([0, 0, 0, 0, 0, 0, 0, 0]),
-                    "timestamp": datetime.now()
-                })
-            
-            # Normalize and emit data
-            for msg in messages:
-                normalized = self._normalize_data(msg)
-                await self.emit(normalized)
-            
+        """Collect frames from the CAN bus and emit each."""
+        await self._connect()
+
+        messages = await asyncio.to_thread(self._drain)
+        for msg in messages:
+            await self.emit(self._normalize_data(msg))
+
+        if messages:
             logger.debug(
                 "can_bus_data_collected",
                 asset_id=self.asset_id,
-                messages_count=len(messages)
+                messages_count=len(messages),
             )
-            
-        except Exception as e:
-            logger.error(
-                "can_bus_collection_error",
-                asset_id=self.asset_id,
-                channel=self.channel,
-                error=str(e)
-            )
-    
-    def _normalize_data(self, message: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Normalize CAN message data to standard format.
-        
-        Args:
-            message: CAN message dictionary
-            
-        Returns:
-            Normalized telemetry data
-        """
-        timestamp = message.get("timestamp", datetime.now())
-        arbitration_id = message.get("arbitration_id", 0)
-        data = message.get("data", bytearray())
-        
-        normalized = {
-            "timestamp_edge": timestamp.isoformat(),
+
+    def _normalize_data(self, message: Any) -> Dict[str, Any]:
+        """Normalize a python-can Message to the standard telemetry envelope."""
+        arbitration_id = getattr(message, "arbitration_id", 0)
+        data = bytes(getattr(message, "data", b"") or b"")
+        # python-can timestamps are epoch seconds (float); fall back to now.
+        ts = getattr(message, "timestamp", None)
+        if ts:
+            timestamp = datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+        else:
+            timestamp = datetime.now(tz=timezone.utc).isoformat()
+
+        payload: Dict[str, Any] = {
+            "can_id": f"0x{arbitration_id:03X}",
+            "dlc": len(data),
+            "is_extended_id": bool(getattr(message, "is_extended_id", False)),
+        }
+        for i, byte in enumerate(data[:8]):
+            payload[f"byte_{i}"] = byte
+        if len(data) >= 4:
+            payload["value"] = int.from_bytes(data[:4], byteorder="little")
+
+        return {
+            "timestamp_edge": timestamp,
             "asset_id": self.asset_id,
             "topic": "telemetry",
-            "payload": {
-                "can_id": f"0x{arbitration_id:03X}",
-                "dlc": len(data)
-            }
+            "collector_type": "can_bus",
+            "payload": payload,
         }
-        
-        # Add data bytes as individual fields
-        for i, byte in enumerate(data[:8]):  # CAN FD supports up to 64, standard CAN 8
-            normalized["payload"][f"byte_{i}"] = byte
-        
-        # Convert first 4 bytes to integer for common use case
-        if len(data) >= 4:
-            int_value = int.from_bytes(data[:4], byteorder='little')
-            normalized["payload"]["value"] = int_value
-        
-        return normalized

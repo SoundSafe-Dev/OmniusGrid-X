@@ -23,7 +23,7 @@ OmniusGrid is a resilient manufacturing operations platform designed for Industr
 
 | Domain | Features |
 |--------|----------|
-| **Data Collection** | 6 production protocol collectors (MQTT, OPC-UA, Modbus TCP/RTU, HTTP/REST, Screen Scraping/OCR, File Watching) + 4 scaffolded stubs (EtherNet/IP, PROFINET, BACnet, CAN bus) |
+| **Data Collection** | 10 industrial protocol collectors (MQTT, OPC-UA, Modbus TCP/RTU, EtherNet/IP, PROFINET, BACnet, CAN bus, HTTP/REST, Screen Scraping/OCR, File Watching) |
 | **Real-time Pipeline** | WebSocket broadcasting, subscription management, live telemetry/state/alarms |
 | **Command Executor** | Queued commands with retries, timeouts, cancellation, emergency stop, Redpanda integration |
 | **OEE Automation** | Automated OEE calculation from PackML states and telemetry part counting |
@@ -74,17 +74,17 @@ flowchart TB
             FEAT["Feature Extraction"]
         end
 
-        subgraph AGENTS["Edge Agents - 10 Protocol Collectors (6 active)"]
+        subgraph AGENTS["Edge Agents - 10 Protocol Collectors"]
             MQTT["MQTT (Bambu Labs)"]
             SCRAPER["Screen Scraper (OCR)"]
             FILE["File Watcher"]
             OPC["OPC-UA (PLCs)"]
             MODBUS["Modbus TCP/RTU"]
             HTTP["HTTP/REST"]
-            EIP["EtherNet/IP (stub)"]
-            PROFI["PROFINET (stub)"]
-            BACNET["BACnet (stub)"]
-            CANBUS["CAN bus (stub)"]
+            EIP["EtherNet/IP"]
+            PROFI["PROFINET"]
+            BACNET["BACnet"]
+            CANBUS["CAN bus"]
         end
 
         subgraph OPS["Operations Management"]
@@ -1327,14 +1327,15 @@ The correlation AI model seamlessly integrates with OmniusGrid's Kanban task man
 - **OPC-UA**: Industrial PLC communication
 - **Modbus TCP/RTU**: VFD and legacy sensor integration
 - **HTTP/REST**: Configurable polling of REST-based device and gateway endpoints (via httpx)
+- **EtherNet/IP**: Allen-Bradley / Rockwell PLC tag reads (via `pylogix`)
+- **PROFINET**: Siemens S7 data-block reads with typed field decoding (via `python-snap7`)
+- **BACnet**: Building automation / HVAC object reads (via `BAC0`/`bacpypes`)
+- **CAN bus**: Vehicle and machine controller frame capture with ID filtering (via `python-can`)
 - **Store-and-Forward**: 24-hour local SQLite buffering for offline resilience
 
-**Scaffolded collectors** (interface + config wiring in place; protocol I/O is a placeholder pending the noted driver library):
-
-- **EtherNet/IP**: Allen-Bradley / Rockwell PLCs — requires `pylogix`
-- **PROFINET**: Siemens PLCs — requires `python-snap7`
-- **BACnet**: Building automation / HVAC — requires `bacpypes`
-- **CAN bus**: Vehicle and machine controller networks — requires `python-can`
+> The four industrial-fieldbus collectors (EtherNet/IP, PROFINET, BACnet, CAN bus) run their
+> blocking driver I/O in worker threads and import their driver libraries lazily — a missing
+> driver logs a clear error and disables only that collector rather than crashing the agent.
 
 ### AI/ML Pipeline
 
