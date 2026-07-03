@@ -1336,6 +1336,12 @@ The correlation AI model seamlessly integrates with OmniusGrid's Kanban task man
 > The four industrial-fieldbus collectors (EtherNet/IP, PROFINET, BACnet, CAN bus) run their
 > blocking driver I/O in worker threads and import their driver libraries lazily — a missing
 > driver logs a clear error and disables only that collector rather than crashing the agent.
+>
+> All collectors are registered in the `UnifiedCollectorCoordinator` and selected per asset by
+> `collector_type` (`ethernet_ip`, `profinet`, `bacnet`, `can_bus`, `http_rest`, plus the
+> established `mqtt`/`opcua`/`modbus`/screen/file types). The newer `BaseCollector`-style
+> collectors are bridged to the coordinator's message-callback contract by a thin adapter
+> (`edge-agent/opsgrid_agent/collectors/adapter.py`), so their implementations stay driver-focused.
 
 ### AI/ML Pipeline
 

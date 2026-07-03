@@ -16,13 +16,24 @@ from omniusgrid_agent.collectors.opcua_collector import OPCUACollector
 from omniusgrid_agent.collectors.modbus_collector import ModbusCollector
 from omniusgrid_agent.buffer.store_forward import StoreForwardBuffer
 
+# BaseCollector-style collectors, bridged to the coordinator contract via an
+# adapter. Relative imports keep these independent of the package name so they
+# are unaffected by the omniusgrid_agent -> opsgrid_agent rename.
+from .adapter import coordinator_adapter
+from .ethernet_ip import EthernetIPCollector
+from .profinet import ProfinetCollector
+from .bacnet import BACnetCollector
+from .can_bus import CANBusCollector
+from .http_rest import HTTPRestCollector
+
 logger = structlog.get_logger()
 
 
 @dataclass
 class CollectorConfig:
     """Configuration for a single collector instance"""
-    collector_type: str  # mqtt, screen_scraper, file_watcher, opcua, modbus
+    collector_type: str  # mqtt, screen_scraper, file_watcher, opcua, modbus,
+                         # ethernet_ip, profinet, bacnet, can_bus, http_rest
     asset_id: str
     config: Dict[str, Any]
     enabled: bool = True
@@ -47,6 +58,12 @@ class UnifiedCollectorCoordinator:
         'orca_file': OrcaSlicerCollector,
         'opcua': OPCUACollector,
         'modbus': ModbusCollector,
+        # BaseCollector-style collectors wrapped for the coordinator contract.
+        'ethernet_ip': coordinator_adapter(EthernetIPCollector),
+        'profinet': coordinator_adapter(ProfinetCollector),
+        'bacnet': coordinator_adapter(BACnetCollector),
+        'can_bus': coordinator_adapter(CANBusCollector),
+        'http_rest': coordinator_adapter(HTTPRestCollector),
     }
     
     def __init__(

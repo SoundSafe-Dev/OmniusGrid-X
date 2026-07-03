@@ -267,6 +267,65 @@ class CANBusTest(unittest.TestCase):
         self.assertEqual(payload["value"], 1)  # little-endian 0x00000001
 
 
+class AdapterTest(unittest.TestCase):
+    """The coordinator adapter bridges BaseCollector emit()/background-start to
+    the coordinator's on_message_callback + blocking-start contract."""
+
+    def _load_adapter(self):
+        for name in list(sys.modules):
+            if name.startswith("opsgrid_agent.collectors.adapter"):
+                del sys.modules[name]
+        return __import__("opsgrid_agent.collectors.adapter", fromlist=["*"])
+
+    def test_emit_is_forwarded_to_async_callback(self):
+        # A frame with a decodable payload flows collector.emit -> adapter -> cb.
+        _, FakeMessage = install_fake_can([])
+        install_fake_can([FakeMessage(0x0A1, bytes([5, 0, 0, 0]), timestamp=1.0)])
+        can_mod = fresh_import("can_bus")
+        adapter_mod = self._load_adapter()
+
+        Adapter = adapter_mod.coordinator_adapter(can_mod.CANBusCollector)
+        received = []
+
+        async def on_message(msg):
+            received.append(msg)
+
+        adapter = Adapter(on_message_callback=on_message, asset_id="veh-9",
+                          channel="vcan0", batch_size=3)
+
+        async def scenario():
+            # start() blocks until stop(); run it as a task and stop shortly after.
+            start_task = asyncio.ensure_future(adapter.start())
+            await asyncio.sleep(0.05)          # let one poll batch run + forward
+            await adapter.stop()
+            await asyncio.wait_for(start_task, timeout=1)  # start() must unblock
+
+        run(scenario())
+
+        self.assertTrue(received, "adapter did not forward any emitted message")
+        self.assertEqual(received[0]["asset_id"], "veh-9")
+        self.assertEqual(received[0]["payload"]["can_id"], "0x0A1")
+
+    def test_start_blocks_until_stop_even_without_driver(self):
+        # Missing driver: inner start() returns early, but the adapter must still
+        # park on start() (not return) so the coordinator won't hot-restart it.
+        sys.modules.pop("pylogix", None)
+        eip_mod = fresh_import("ethernet_ip")
+        eip_mod._PYLOGIX_AVAILABLE = False
+        adapter_mod = self._load_adapter()
+        Adapter = adapter_mod.coordinator_adapter(eip_mod.EthernetIPCollector)
+        adapter = Adapter(on_message_callback=None, asset_id="x", ip_address="1.1.1.1")
+
+        async def scenario():
+            start_task = asyncio.ensure_future(adapter.start())
+            await asyncio.sleep(0.05)
+            self.assertFalse(start_task.done(), "start() returned before stop()")
+            await adapter.stop()
+            await asyncio.wait_for(start_task, timeout=1)
+
+        run(scenario())
+
+
 class LifecycleTest(unittest.TestCase):
     def test_base_start_stop_toggles_running(self):
         install_fake_can([])

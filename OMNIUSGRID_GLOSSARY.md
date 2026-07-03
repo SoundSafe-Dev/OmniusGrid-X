@@ -78,6 +78,8 @@
 | **Feature Extraction** | Process of transforming raw telemetry into feature vectors for ML models | Backend |
 | **Data Thinning** | Reducing data volume by transmitting feature vectors instead of raw telemetry to cloud | Backend |
 | **Collector** | Edge agent component implementing a specific industrial protocol: MQTT, OPC-UA, Modbus, HTTP/REST, EtherNet/IP, PROFINET, BACnet, CAN bus, Screen Scraping, File Watching | Backend |
+| **Collector Coordinator** | `UnifiedCollectorCoordinator` — starts/stops all collectors, routes their readings to the store-and-forward buffer and Kafka, and supervises restarts. Selects a collector class per asset by `collector_type` | Backend |
+| **Collector Adapter** | Thin wrapper (`collectors/adapter.py`) that bridges `BaseCollector`-style collectors (config-dict init, `emit()` delivery, background-task `start()`) to the coordinator's `on_message_callback` + blocking-`start()` contract | Backend |
 | **Ingestion Worker** | Backend service processing incoming telemetry from collectors | Backend |
 | **Edge Agent** | Lightweight SDK deployed at edge for data collection and local buffering | Backend |
 
