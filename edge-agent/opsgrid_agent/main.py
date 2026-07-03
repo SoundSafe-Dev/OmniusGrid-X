@@ -3,13 +3,21 @@
 import asyncio
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Dict, Any, List
 import structlog
 
 from opsgrid_agent.buffer.store_forward import StoreForwardBuffer
 from opsgrid_agent.collectors.coordinator import UnifiedCollectorCoordinator, CollectorConfig
 from opsgrid_agent import metrics
+from opsgrid_agent.versioning import (
+    asset_ids_from_collectors,
+    build_heartbeat_payload,
+    build_manifest,
+    compute_config_hash,
+    persist_agent_state,
+)
 
 structlog.configure(
     processors=[
@@ -54,6 +62,13 @@ class EdgeAgent:
         self.kafka_producer = None
         self._running = False
         self._tasks: List[asyncio.Task] = []
+        self.config_hash = compute_config_hash(self.config.get('collectors', []))
+        self.manifest = build_manifest(
+            list(UnifiedCollectorCoordinator.SUPPORTED_COLLECTORS)
+        )
+        self.state_path = self.config.get('state_path') or str(
+            Path(self.config['buffer_path']).with_name('agent_state.json')
+        )
         
         # Initialize collector coordinator
         self.coordinator = UnifiedCollectorCoordinator(
@@ -67,7 +82,10 @@ class EdgeAgent:
             'organization_id': os.getenv('ORGANIZATION_ID', 'dev-org'),
             'agent_id': os.getenv('AGENT_ID', 'agent-001'),
             'redpanda_url': os.getenv('REDPANDA_URL', 'localhost:9092'),
+            'agent_status_topic': os.getenv('AGENT_STATUS_TOPIC', 'opsgrid.agent-status'),
+            'heartbeat_interval_seconds': int(os.getenv('HEARTBEAT_INTERVAL_SECONDS', '60')),
             'buffer_path': os.getenv('BUFFER_PATH', '/var/lib/opsgrid-agent/buffer.db'),
+            'state_path': os.getenv('AGENT_STATE_PATH'),
             'buffer_retention_hours': int(os.getenv('BUFFER_RETENTION_HOURS', '24')),
             'collectors': json.loads(os.getenv('COLLECTORS', '[]')),
         }
@@ -237,6 +255,48 @@ class EdgeAgent:
             except Exception as e:
                 logger.error("cleanup_worker_error", error=str(e))
                 await asyncio.sleep(3600)
+
+    async def _heartbeat_payload(self) -> Dict[str, Any]:
+        stats = await self.buffer.get_stats()
+        status = self.coordinator.get_status()
+        return build_heartbeat_payload(
+            agent_id=self.config['agent_id'],
+            organization_id=self.config['organization_id'],
+            asset_ids=asset_ids_from_collectors(self.config.get('collectors', [])),
+            manifest=self.manifest,
+            config_hash=self.config_hash,
+            collector_status=status,
+            buffer_depth=stats['total_messages'],
+        )
+
+    async def _publish_heartbeat(self):
+        """Publish a best-effort fleet status heartbeat."""
+        if not self.kafka_producer:
+            logger.debug("heartbeat_skipped_no_kafka")
+            return
+
+        payload = await self._heartbeat_payload()
+        await self.kafka_producer.send(
+            self.config['agent_status_topic'],
+            value=payload,
+            key=self.config['agent_id'],
+        )
+        logger.debug(
+            "agent_heartbeat_published",
+            topic=self.config['agent_status_topic'],
+            agent_id=self.config['agent_id'],
+            asset_count=len(payload['asset_ids']),
+        )
+
+    async def _heartbeat_worker(self):
+        """Background worker for fleet version/config visibility."""
+        while self._running:
+            try:
+                await self._publish_heartbeat()
+                await asyncio.sleep(self.config['heartbeat_interval_seconds'])
+            except Exception as e:
+                logger.warning("agent_heartbeat_failed", error=str(e))
+                await asyncio.sleep(self.config['heartbeat_interval_seconds'])
     
     async def _stats_reporter(self):
         """Periodic stats reporting"""
@@ -275,7 +335,7 @@ class EdgeAgent:
         for collector_conf in collectors_config:
             try:
                 asset_id = collector_conf.get('asset_id')
-                collector_type = collector_conf.get('type')
+                collector_type = collector_conf.get('type') or collector_conf.get('collector_type')
                 
                 if not asset_id or not collector_type:
                     logger.error("invalid_collector_config", config=collector_conf)
@@ -315,6 +375,22 @@ class EdgeAgent:
         
         self._running = True
 
+        try:
+            persist_agent_state(
+                self.state_path,
+                {
+                    "agent_id": self.config['agent_id'],
+                    "agent_version": self.manifest["agent_version"],
+                    "build_id": self.manifest.get("build_id"),
+                    "git_sha": self.manifest.get("git_sha"),
+                    "config_hash": self.config_hash,
+                    "asset_ids": asset_ids_from_collectors(self.config.get('collectors', [])),
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+        except Exception as e:
+            logger.warning("agent_state_persist_failed", error=str(e), path=self.state_path)
+
         if os.getenv('METRICS_ENABLED', 'true').lower() != 'false':
             metrics.start_metrics_server(int(os.getenv('METRICS_PORT', '9100')))
         
@@ -331,6 +407,8 @@ class EdgeAgent:
         
         # Start all collectors via coordinator
         await self.coordinator.start_all()
+
+        self._tasks.append(asyncio.create_task(self._heartbeat_worker()))
         
         logger.info("edge_agent_started")
     

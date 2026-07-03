@@ -62,6 +62,11 @@ class Asset(Base):
     connection_config = Column(JSON, default={})
     is_active = Column(Boolean, default=True)
     last_seen = Column(DateTime(timezone=True))
+    agent_id = Column(String(255))
+    agent_version = Column(String(100))
+    agent_config_hash = Column(String(64))
+    agent_build_id = Column(String(255))
+    agent_last_heartbeat = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     
