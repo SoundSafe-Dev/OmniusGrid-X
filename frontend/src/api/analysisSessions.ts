@@ -49,6 +49,18 @@ export interface DataSource {
   added_at: string;
 }
 
+export interface SuggestedQuestionItem {
+  question: string;
+  category: string;
+}
+
+export interface SuggestedQuestionsResponse {
+  questions: string[];
+  items: SuggestedQuestionItem[];
+  context_summary: string;
+  intelligence?: Record<string, any>;
+}
+
 export interface SessionChatRequest {
   message: string;
   auto_integrate?: boolean;
@@ -176,6 +188,30 @@ export async function uploadDataToSession(
   return response.data;
 }
 
+export interface SessionCorrelateResponse {
+  session_id: string;
+  analysis: string;
+  multi_spreadsheet_analysis?: Record<string, any>;
+  correlation_groups?: number;
+  shared_assets?: Record<string, string[]>;
+  risk_score?: number;
+}
+
+/**
+ * Correlate all data sources in a session (cross-file / multi-spreadsheet).
+ */
+export async function correlateSession(
+  sessionId: string,
+  sharedKeys?: string[]
+): Promise<SessionCorrelateResponse> {
+  const response = await api.post<SessionCorrelateResponse>(
+    `/api/v1/nlp/sessions/${sessionId}/correlate`,
+    { shared_keys: sharedKeys ?? null, auto_integrate: true },
+    { timeout: 180000 }
+  );
+  return response.data;
+}
+
 /**
  * List data sources in a session
  */
@@ -189,6 +225,20 @@ export async function listSessionData(sessionId: string): Promise<DataSource[]> 
  */
 export async function removeDataSource(sessionId: string, sourceId: string): Promise<{ message: string }> {
   const response = await api.delete<{ message: string }>(`/api/v1/nlp/sessions/${sessionId}/data/${sourceId}`);
+  return response.data;
+}
+
+/**
+ * Personalized suggested questions for the session (Otter-style).
+ */
+export async function getSuggestedQuestions(
+  sessionId: string,
+  limit: number = 3
+): Promise<SuggestedQuestionsResponse> {
+  const response = await api.get<SuggestedQuestionsResponse>(
+    `/api/v1/nlp/sessions/${sessionId}/suggested-questions`,
+    { params: { limit } }
+  );
   return response.data;
 }
 
@@ -314,7 +364,9 @@ export const analysisSessionsApi = {
   addIntakeData,
   uploadDataToSession,
   listSessionData,
+  getSuggestedQuestions,
   removeDataSource,
+  correlateSession,
   sessionChat,
   getSessionMessages,
   generateSessionTitle,

@@ -19,6 +19,8 @@ from app.db.models import User, AnalysisSession, SessionDataSource, SessionMessa
 from app.api.nlp_correlation import _process_uploaded_file, build_source_descriptor, _run_scenarios
 from app.services.correlation_ai_engine import correlation_ai_engine
 from app.services.cross_file_scenario_builder import build_cross_file_scenarios
+from app.services.multi_spreadsheet_correlator import correlate_spreadsheet_sources
+from app.services.session_suggested_questions import generate_suggested_questions
 
 logger = structlog.get_logger()
 
@@ -89,6 +91,35 @@ async def _get_analysis_session(
         raise HTTPException(status_code=404, detail="Session not found")
 
     return session
+
+
+def _session_source_payloads(data_sources: List[SessionDataSource]) -> List[Dict[str, Any]]:
+    return [
+        {
+            "id": str(ds.id),
+            "source_id": str(ds.id),
+            "source_type": ds.source_type,
+            "file_name": ds.file_name,
+            "data_type": ds.data_type,
+            "processed_data": ds.processed_data,
+        }
+        for ds in data_sources
+    ]
+
+
+def _session_multi_spreadsheet_analysis(data_sources: List[SessionDataSource]) -> Optional[Dict[str, Any]]:
+    spreadsheet_payloads = [
+        {
+            "source_id": str(ds.id),
+            "file_name": ds.file_name,
+            "processed_data": ds.processed_data or {},
+        }
+        for ds in data_sources
+        if (ds.processed_data or {}).get("type") == "spreadsheet"
+    ]
+    if len(spreadsheet_payloads) >= 2:
+        return correlate_spreadsheet_sources(spreadsheet_payloads)
+    return None
 
 
 def _is_lightweight_chat(message: str) -> bool:
@@ -277,6 +308,18 @@ class SessionMessageResponse(BaseModel):
     domains: Optional[List[str]]
     actions: Optional[List[Dict[str, Any]]]
     timestamp: datetime
+
+
+class SuggestedQuestionItem(BaseModel):
+    question: str
+    category: str
+
+
+class SuggestedQuestionsResponse(BaseModel):
+    questions: List[str]
+    items: List[SuggestedQuestionItem] = Field(default_factory=list)
+    context_summary: str = ""
+    intelligence: Optional[Dict[str, Any]] = None
 
 
 # ==================== Session Management Endpoints ====================
@@ -820,6 +863,41 @@ async def list_session_data(
     ]
 
 
+@router.get("/{session_id}/suggested-questions", response_model=SuggestedQuestionsResponse)
+async def get_session_suggested_questions(
+    session_id: UUID,
+    limit: int = Query(default=3, ge=1, le=6),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Otter-style suggested questions personalized to the session's uploaded data.
+    """
+    logger.info("get_session_suggested_questions", user_id=str(current_user.id), session_id=str(session_id))
+
+    session_id_str = _session_id_str(session_id)
+    await _get_analysis_session(db, session_id, current_user)
+
+    query = select(SessionDataSource).where(SessionDataSource.session_id == session_id_str)
+    query = query.order_by(SessionDataSource.added_at.asc())
+    result = await db.execute(query)
+    data_sources = result.scalars().all()
+
+    payloads = _session_source_payloads(data_sources)
+    multi = _session_multi_spreadsheet_analysis(data_sources)
+    generated = generate_suggested_questions(payloads, multi, limit=limit)
+
+    return SuggestedQuestionsResponse(
+        questions=generated.get("questions") or [],
+        items=[
+            SuggestedQuestionItem(question=item["question"], category=item["category"])
+            for item in generated.get("items") or []
+        ],
+        context_summary=generated.get("context_summary") or "",
+        intelligence=generated.get("intelligence"),
+    )
+
+
 class SessionCorrelationRequest(BaseModel):
     """Request to correlate all data sources in a session."""
     shared_keys: Optional[List[str]] = Field(
@@ -869,6 +947,21 @@ async def correlate_session(
     )
     agg = await _run_scenarios(scenarios, db, current_user)
 
+    spreadsheet_payloads = [
+        {
+            "source_id": str(ds.id),
+            "file_name": ds.file_name,
+            "processed_data": ds.processed_data,
+        }
+        for ds in data_sources
+        if (ds.processed_data or {}).get("type") == "spreadsheet"
+    ]
+    multi_analysis = (
+        correlate_spreadsheet_sources(spreadsheet_payloads)
+        if len(spreadsheet_payloads) >= 2
+        else None
+    )
+
     summary_text = (
         f"Correlated {len(data_sources)} session data sources into {agg['scenario_count']} group(s) "
         f"across {len(agg['domains_seen'])} domains "
@@ -883,9 +976,13 @@ async def correlate_session(
             f"reference common identifiers (asset_id, order number, date, etc.)."
         )
 
+    if multi_analysis and multi_analysis.get("cross_file_findings"):
+        summary_text = multi_analysis["narrative_summary"] + "\n\n" + summary_text
+
     return {
         "session_id": str(session_id),
         "analysis": summary_text,
+        "multi_spreadsheet_analysis": multi_analysis,
         "data_sources": [{"source_id": d["source_id"], "file_name": d["file_name"],
                           "data_type": d["data_type"], "domains": d["domains"],
                           "keys": d["keys"]} for d in descriptors],
@@ -1010,6 +1107,18 @@ async def session_chat(
         "user_context": session.context_snapshot,
         "user_goals": session.goals_snapshot
     }
+
+    spreadsheet_payloads = [
+        {
+            "source_id": str(ds.id),
+            "file_name": ds.file_name,
+            "processed_data": ds.processed_data,
+        }
+        for ds in data_sources
+        if (ds.processed_data or {}).get("type") == "spreadsheet"
+    ]
+    if len(spreadsheet_payloads) >= 2:
+        context["multi_spreadsheet_analysis"] = correlate_spreadsheet_sources(spreadsheet_payloads)
     
     # Let the model handle the conversation naturally. It can still use uploaded
     # data context, but it does not force every response into risk/task format.
