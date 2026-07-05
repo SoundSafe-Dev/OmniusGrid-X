@@ -106,3 +106,93 @@ collectors:
           type: "input"
           data_type: "float32"
           count: 2
+
+  # 8. Allen-Bradley / Rockwell PLC via EtherNet/IP (requires pylogix)
+  - asset_id: "ab-plc-001"
+    collector_type: "ethernet_ip"
+    enabled: true
+    config:
+      ip_address: "192.168.1.210"
+      port: 44818
+      slot: 0
+      poll_interval: 5
+      tags:
+        - "Program:MainProgram.LineSpeed"
+        - name: "state"          # payload key
+          tag: "Program:MainProgram.MachineState"
+      # Optional: normalize a raw state field to PackML (see adapter).
+      packml:
+        asset_type: "industrial_plc"
+        state_key: "state"
+        mappings:
+          "1": "Execute"
+          "0": "Stopped"
+
+  # 9. Siemens S7 PLC via PROFINET (requires python-snap7)
+  - asset_id: "siemens-plc-001"
+    collector_type: "profinet"
+    enabled: true
+    config:
+      ip_address: "192.168.1.211"
+      rack: 0
+      slot: 1
+      poll_interval: 5
+      db_blocks:
+        - number: 1
+          start: 0
+          size: 12
+          fields:
+            - name: "temperature"
+              offset: 0
+              type: "real"
+            - name: "part_count"
+              offset: 4
+              type: "dint"
+            - name: "running"
+              offset: 8
+              type: "bool"
+              bit: 0
+
+  # 10. Building automation / HVAC via BACnet (requires BAC0)
+  - asset_id: "ahu-001"
+    collector_type: "bacnet"
+    enabled: true
+    config:
+      device_id: 1001
+      ip_address: "192.168.1.212"
+      port: 47808
+      poll_interval: 60
+      objects:
+        - name: "zone_temp"
+          object_type: "analogInput"
+          object_instance: 1
+        - name: "fan_status"
+          object_type: "binaryInput"
+          object_instance: 2
+          property_id: "presentValue"
+
+  # 11. Vehicle / machine controller via CAN bus (requires python-can)
+  - asset_id: "agv-001"
+    collector_type: "can_bus"
+    enabled: true
+    config:
+      interface: "socketcan"
+      channel: "can0"
+      bitrate: 500000
+      can_ids: [0x0A1, 0x0B2]
+      poll_interval: 0.1
+      batch_size: 10
+
+  # 12. REST-based device / gateway via HTTP polling
+  - asset_id: "gateway-001"
+    collector_type: "http_rest"
+    enabled: true
+    config:
+      url: "http://192.168.1.220/api/telemetry"
+      method: "GET"
+      poll_interval: 30
+      headers:
+        Accept: "application/json"
+      # auth:
+      #   username: "operator"
+      #   password: "password123"

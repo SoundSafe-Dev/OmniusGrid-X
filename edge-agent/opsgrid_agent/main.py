@@ -69,8 +69,43 @@ class EdgeAgent:
             'redpanda_url': os.getenv('REDPANDA_URL', 'localhost:9092'),
             'buffer_path': os.getenv('BUFFER_PATH', '/var/lib/opsgrid-agent/buffer.db'),
             'buffer_retention_hours': int(os.getenv('BUFFER_RETENTION_HOURS', '24')),
-            'collectors': json.loads(os.getenv('COLLECTORS', '[]')),
+            'collectors': self._load_collectors(),
         }
+
+    def _load_collectors(self) -> List[Dict[str, Any]]:
+        """Load and validate collector definitions.
+
+        Source precedence: ``COLLECTORS_FILE`` (YAML path) if set, otherwise the
+        ``COLLECTORS`` env var (JSON). Each entry is envelope-validated; invalid
+        entries are logged and skipped rather than crashing the agent.
+        """
+        collectors_file = os.getenv('COLLECTORS_FILE')
+        try:
+            if collectors_file:
+                import yaml  # lazy: only needed when COLLECTORS_FILE is set
+                with open(collectors_file) as f:
+                    doc = yaml.safe_load(f) or {}
+                raw = doc.get('collectors', []) if isinstance(doc, dict) else (doc or [])
+            else:
+                raw = json.loads(os.getenv('COLLECTORS', '[]'))
+        except (OSError, ValueError) as e:
+            logger.error(
+                "collectors_config_load_failed",
+                source=collectors_file or 'env',
+                error=str(e),
+            )
+            return []
+
+        from opsgrid_agent.config_schema import CollectorEntry
+        normalized: List[Dict[str, Any]] = []
+        for entry in raw:
+            try:
+                normalized.append(
+                    CollectorEntry.model_validate(entry).model_dump(by_alias=True)
+                )
+            except Exception as e:
+                logger.error("invalid_collector_config", entry=entry, error=str(e))
+        return normalized
     
     async def _init_kafka_producer(self):
         """Initialize Kafka/Redpanda producer"""

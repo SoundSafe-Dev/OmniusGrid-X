@@ -14,6 +14,7 @@ pymodbus==3.6.0
 httpx==0.25.2
 python-dotenv==1.0.0
 prometheus-client==0.19.0
+pyyaml==6.0.1          # optional COLLECTORS_FILE (YAML) config loading
 
 # Optional industrial-protocol driver libraries.
 # Each backs one collector; install only those needed for the deployed hardware.
