@@ -39,6 +39,65 @@ OmniusGrid is a resilient manufacturing operations platform designed for Industr
 
 ---
 
+## Active Development & Team Progress
+
+> **Snapshot: July 5, 2026.** Both remotes (`origin` = SoundSafe-ai, `backup` = SoundSafe-Dev)
+> are in sync. This maps in-flight work to owners so contributors can coordinate and avoid
+> overlap. Branch tips move — treat this as a directory, not a record of exact commits.
+
+### Recently landed on `main`
+
+- **Edge protocol collectors** — EtherNet/IP, PROFINET, BACnet, and CAN bus fully implemented
+  (driver-backed, lazy imports, worker-thread I/O) and registered in `UnifiedCollectorCoordinator`
+  via an adapter; HTTP/REST collector activated (BaseCollector lifecycle fix). _(Hamad)_
+- **Backend port standardized on 8000** across compose/scripts/docs; README + glossary refreshed
+  to match the codebase. _(Hamad)_
+- **Intake cross-correlation** — PDF/DOCX/image parsing, shared-key detection, multi-tab workbook
+  correlation. _(Hamad)_
+
+### Active branches
+
+| Branch | Owner | Status | Scope |
+|--------|-------|--------|-------|
+| `feature/gemma-correlation-ai` | Harsh | active | Correlation AI + intake: multi-XLSX cross-file YoY trends, safer spreadsheet profiling, data-driven "suggested questions". Bumps `torch≥2.4` / `transformers 5.x`. |
+| `HARSH-CONTRIBUTION` | Harsh | active (divergent) | Supervisor **mobile app**, Kanban fixes, demo/live API opt-in, backend schema fixes. Branched from an older base (large diff). |
+| `feature/RAG-Compliance-Doc-Pipeline` | Hudson (htreinen) | active | RAG compliance doc pipeline: SeaweedFS document-store client + S3 config. |
+| `hridyansh/tenant-isolation-middleware` | Hridyansh | ready to merge | JWT-derived org scoping on assets/telemetry (IDOR fix); new `core/tenant.py`. |
+| `hridyansh/edge-agent-retry-logic` | Hridyansh | ready to merge | Exponential backoff + circuit breaker for Modbus/MQTT/OPC-UA collectors (`resilience.py`). |
+| `hridyansh/edge-command-dispatch` | Hridyansh | active | Edge command-dispatch acknowledgements, atop RBAC / error-triage hardening. |
+| `hridyansh/integration-erp` | Hridyansh | active | ERP integration foundation + sync/alerting test hardening. |
+| `hridyansh/integration` | Hridyansh | umbrella | Combines Hridyansh's feature branches + backend hardening; integration/testing only. |
+| `hridyansh/package-renaming-fix` | Hridyansh | needs split | `omniusgrid_agent` → `opsgrid_agent` rename (currently bundled with unrelated deletions — extract a rename-only PR). |
+
+_Hridyansh's four multi-commit branches share a common backend-hardening base (RBAC, error triage,
+WebSocket protocol, Keycloak, feature-flag/bulk-op validation). The `htreinen` branch is stale —
+fully contained in `main`; Hudson's active work is on `feature/RAG-Compliance-Doc-Pipeline`._
+
+### Subsystem ownership — check here before starting work
+
+| Area | Active owner(s) | Notes |
+|------|-----------------|-------|
+| Correlation AI / NLP / intake / spreadsheet parsing | **Harsh** | Coordinate before touching `correlation_ai_engine.py`, `nlp_correlation.py`, intake services. |
+| Mobile app / Kanban / demo API | **Harsh** | `HARSH-CONTRIBUTION`. |
+| RAG / compliance doc store (SeaweedFS/S3) | **Hudson** | `feature/RAG-Compliance-Doc-Pipeline`. |
+| Tenant isolation / RBAC / security hardening | **Hridyansh** | `tenant-isolation-middleware` + hardening across integration branches. |
+| ERP integration | **Hridyansh** | `integration-erp`. |
+| Edge agent resilience / command dispatch | **Hridyansh** | Backoff/circuit-breaker on existing collectors + command acks. |
+| Package rename (`opsgrid_agent`) | **Hridyansh** | Scoped rename PR pending. |
+| Edge protocol collectors / coordinator / ports / build / docs | **Hamad** | Landed on `main`. |
+
+> ⚠️ **Known overlap — edge collector files.** `edge-agent/opsgrid_agent/collectors/{modbus,mqtt,opcua}*.py`
+> are touched by Hridyansh's `edge-agent-retry-logic` (adds backoff), his `package-renaming-fix`
+> (renames imports), **and** the new collector work already on `main` (lifecycle + adapter). Expect
+> merge conflicts there — sequence these merges deliberately and rebase before starting new collector work.
+
+### Hamad's working branch
+
+- **`hamad/fixed-sprints`** — cut from `main` at this snapshot and pushed to both remotes. Use it for
+  sprint-scoped work that steers clear of the claimed areas above.
+
+---
+
 ## Architecture
 
 ```mermaid
