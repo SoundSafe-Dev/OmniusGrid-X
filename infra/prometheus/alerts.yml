@@ -121,3 +121,74 @@ groups:
         annotations:
           summary: "OCR accuracy below threshold"
           description: "Screen scraper accuracy dropped below 80% on {{ $labels.asset_id }}"
+
+  # Rules on metrics the edge agent actually emits on its /metrics endpoint
+  # (edge_collector_* / edge_buffer_*), distinct from the backend-side
+  # opsgrid_edge_buffer_messages gauge referenced above.
+  - name: opsgrid_edge_collectors
+    rules:
+      # HIGH: a collector's task is down
+      - alert: EdgeCollectorDown
+        expr: edge_collector_connection_state == 0
+        for: 5m
+        labels:
+          severity: high
+          team: edge
+        annotations:
+          summary: "Edge collector down"
+          description: "Collector for asset {{ $labels.asset_id }} ({{ $labels.collector_type }}) has been down for 5m"
+
+      # MEDIUM: store-and-forward buffer growing (upstream/Kafka issue)
+      - alert: EdgeBufferGrowing
+        expr: edge_buffer_messages > 5000
+        for: 3m
+        labels:
+          severity: medium
+          team: edge
+        annotations:
+          summary: "Edge store-and-forward buffer growing"
+          description: "Edge buffer holds {{ $value }} pending messages (upstream likely unavailable)"
+
+      # MEDIUM: backfill lag high (oldest buffered message getting old)
+      - alert: EdgeBackfillLagHigh
+        expr: edge_buffer_backfill_lag_seconds > 3600
+        for: 10m
+        labels:
+          severity: medium
+          team: edge
+        annotations:
+          summary: "Edge backfill lag high"
+          description: "Oldest pending edge message is over 1h old ({{ $value }}s)"
+
+      # HIGH: messages being dead-lettered (delivery failing permanently)
+      - alert: EdgeDeadLettering
+        expr: increase(edge_buffer_dead_lettered_total[15m]) > 0
+        for: 0m
+        labels:
+          severity: high
+          team: edge
+        annotations:
+          summary: "Edge messages dead-lettered"
+          description: "{{ $value }} edge messages exhausted retries and were dead-lettered in the last 15m"
+
+      # MEDIUM: buffer dropping oldest messages to stay under the size cap
+      - alert: EdgeBufferDropping
+        expr: increase(edge_buffer_dropped_total[15m]) > 0
+        for: 0m
+        labels:
+          severity: medium
+          team: edge
+        annotations:
+          summary: "Edge buffer dropping messages (size cap)"
+          description: "{{ $value }} oldest edge messages pruned to stay under the buffer size cap"
+
+      # MEDIUM: sustained collector error rate
+      - alert: EdgeCollectorErrors
+        expr: sum by (asset_id, collector_type) (rate(edge_collector_errors_total[5m])) > 0.1
+        for: 10m
+        labels:
+          severity: medium
+          team: edge
+        annotations:
+          summary: "Edge collector error rate elevated"
+          description: "Collector {{ $labels.asset_id }} ({{ $labels.collector_type }}) erroring at {{ $value }}/s"
