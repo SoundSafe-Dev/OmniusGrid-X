@@ -256,25 +256,46 @@ source venv/bin/activate
 # Install dependencies
 pip install -r requirements.txt
 
-# Run edge agent
-python -m opsgrid_agent.main
+# Run edge agent. Collectors come from the COLLECTORS env var (JSON) by
+# default, or from a YAML file when COLLECTORS_FILE is set:
+COLLECTORS_FILE=config/local_collectors.yml python -m opsgrid_agent.main
+
+# Optional: expose Prometheus metrics on :9108/metrics
+METRICS_PORT=9108 COLLECTORS_FILE=config/local_collectors.yml python -m opsgrid_agent.main
 ```
 
 ### Edge Agent Configuration
 
 ```bash
-# Create configuration file
+# Start from the example (covers all supported collector types) and edit it
 cp config/poc_collectors.yml config/local_collectors.yml
+```
 
-# Edit configuration with your collectors
-# Example:
-# collectors:
-#   - type: mqtt
-#     asset_id: printer-001
-#     config:
-#       host: localhost
-#       port: 1883
-#       topic: bambu/printer/001
+Each entry is envelope-validated at startup (`opsgrid_agent/config_schema.py`);
+invalid entries are logged and skipped. Both `collector_type` (YAML style) and
+`type` (env-JSON style) are accepted. Supported types: `bambu_mqtt`, `mqtt`,
+`qidi_screen`, `sovol_screen`, `orca_file`, `opcua`, `modbus`, `ethernet_ip`,
+`profinet`, `bacnet`, `can_bus`, `http_rest`.
+
+```yaml
+collectors:
+  - asset_id: printer-001
+    collector_type: mqtt
+    config:
+      host: localhost
+      port: 1883
+      topic: bambu/printer/001
+
+  # Optional: normalize a raw state field to PackML (OEE/state analytics).
+  - asset_id: ab-plc-001
+    collector_type: ethernet_ip
+    config:
+      ip_address: 192.168.1.210
+      tags: ["Program:MainProgram.MachineState"]
+      packml:
+        asset_type: industrial_plc
+        state_key: state
+        mappings: { "1": "Execute", "0": "Stopped" }
 ```
 
 ### Edge Agent Testing
@@ -282,11 +303,12 @@ cp config/poc_collectors.yml config/local_collectors.yml
 ```bash
 cd edge-agent
 
-# Run tests
-pytest
+# Install the test toolchain (protocol drivers are faked in tests, so the
+# pylogix/python-snap7/BAC0/python-can libs are not required).
+pip install -r requirements-dev.txt
 
-# Run with coverage
-pytest --cov=opsgrid_agent --cov-report=html
+# Run tests (pytest.ini sets testpaths + pythonpath)
+pytest
 ```
 
 ## Database Development
@@ -479,37 +501,50 @@ export const getNewFeature = async () => {
 
 ### Adding a New Collector
 
-1. **Create collector** in `edge-agent/opsgrid_agent/collectors/`
+There are two collector patterns. Prefer the **BaseCollector** pattern for new
+protocol collectors — it keeps the collector focused on driver I/O and is bridged
+to the coordinator by the adapter (which also provides optional PackML mapping).
+
+1. **Create collector** in `edge-agent/opsgrid_agent/collectors/` as a
+   `BaseCollector` subclass (see `ethernet_ip.py`/`http_rest.py` as templates):
 ```python
 # edge-agent/opsgrid_agent/collectors/new_collector.py
-from abc import ABC, abstractmethod
+from .base import BaseCollector
 
-class NewCollector(ABC):
+class NewCollector(BaseCollector):
     def __init__(self, config: dict):
-        self.config = config
-    
+        super().__init__(config)
+        # read config.get(...) for your params; import drivers lazily
+
     async def start(self):
-        pass
-    
+        await super().start()   # sets running; spawn your poll task
+        ...
+
     async def stop(self):
-        pass
+        await super().stop()    # clears running; cancel your poll task
+        ...
+    # emit() readings as {timestamp_edge, asset_id, topic, collector_type, payload}
 ```
 
-2. **Register collector** in `edge-agent/opsgrid_agent/collectors/coordinator.py`
+2. **Register** it in `edge-agent/opsgrid_agent/collectors/coordinator.py`
+   using the adapter, and add the type to `SUPPORTED_COLLECTOR_TYPES` in
+   `config_schema.py`:
 ```python
 from .new_collector import NewCollector
-
-# Add to COLLECTOR_REGISTRY
-COLLECTOR_REGISTRY['new_collector'] = NewCollector
+# inside SUPPORTED_COLLECTORS:
+'new_collector': coordinator_adapter(NewCollector),
 ```
+(Mature collectors — mqtt/opcua/modbus/screen/file — instead take
+`on_message_callback` and a blocking `start()`; register those classes directly.)
 
-3. **Add configuration** in `edge-agent/config/poc_collectors.yml`
+3. **Add example configuration** in `edge-agent/config/poc_collectors.yml`
 ```yaml
 collectors:
-  - type: new_collector
-    asset_id: asset-001
+  - asset_id: asset-001
+    collector_type: new_collector
     config:
       # collector-specific config
+      # packml: { asset_type: ..., state_key: state }   # optional
 ```
 
 ## Troubleshooting
