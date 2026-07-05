@@ -158,16 +158,27 @@ class EdgeAgent:
                         for msg in messages:
                             try:
                                 topic = f"telemetry.{self.config['organization_id']}.{msg.asset_id}"
-                                
+
+                                payload = json.loads(msg.payload)
+                                value = {
+                                    'timestamp_edge': msg.timestamp_edge,
+                                    'asset_id': msg.asset_id,
+                                    'payload': payload,
+                                    'sequence_num': msg.sequence_num,
+                                    'backfilled': True
+                                }
+                                # Preserve PackML state through backfill: the
+                                # backend ingestion reads packml_state at the top
+                                # level, and collectors persist it inside payload.
+                                # Without this, backfilled telemetry loses its
+                                # state and breaks backend/historical OEE.
+                                packml_state = payload.get('packml_state') if isinstance(payload, dict) else None
+                                if packml_state is not None:
+                                    value['packml_state'] = packml_state
+
                                 await self.kafka_producer.send(
                                     topic,
-                                    value={
-                                        'timestamp_edge': msg.timestamp_edge,
-                                        'asset_id': msg.asset_id,
-                                        'payload': json.loads(msg.payload),
-                                        'sequence_num': msg.sequence_num,
-                                        'backfilled': True
-                                    },
+                                    value=value,
                                     key=msg.asset_id
                                 )
                                 sent_ids.append(msg.id)
