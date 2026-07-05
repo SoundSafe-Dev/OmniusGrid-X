@@ -91,3 +91,19 @@ def record_dead_lettered(count: int) -> None:
 def record_dropped(count: int) -> None:
     if count > 0:
         buffer_dropped_total.inc(count)
+
+
+# --- Local OEE (from PackML states) ------------------------------------------
+
+oee_availability = Gauge("edge_oee_availability", "Local OEE availability ratio", ["asset_id"])
+oee_performance = Gauge("edge_oee_performance", "Local OEE performance ratio", ["asset_id"])
+oee_quality = Gauge("edge_oee_quality", "Local OEE quality ratio", ["asset_id"])
+oee_ratio = Gauge("edge_oee", "Local OEE (availability x performance x quality)", ["asset_id"])
+
+
+def set_oee(asset_id: str, result: dict) -> None:
+    """Publish a LocalOEECalculator result dict (percentages 0-100)."""
+    oee_availability.labels(asset_id=asset_id).set(result.get("availability", 0.0))
+    oee_performance.labels(asset_id=asset_id).set(result.get("performance", 0.0))
+    oee_quality.labels(asset_id=asset_id).set(result.get("quality", 0.0))
+    oee_ratio.labels(asset_id=asset_id).set(result.get("oee", 0.0))

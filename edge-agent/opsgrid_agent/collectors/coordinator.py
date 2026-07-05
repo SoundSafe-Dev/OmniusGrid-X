@@ -27,6 +27,7 @@ from .bacnet import BACnetCollector
 from .can_bus import CANBusCollector
 from .http_rest import HTTPRestCollector
 from .. import metrics
+from ..analytics import oee_tracker
 
 logger = structlog.get_logger()
 
@@ -228,6 +229,9 @@ class UnifiedCollectorCoordinator:
                 asset_id, collector_type,
                 age_seconds=max(0.0, (now - timestamp_edge).total_seconds()),
             )
+
+            # Local OEE from PackML states (no-op unless the message carries one).
+            oee_tracker.record(message)
 
             # Also try to forward immediately if connected
             if self.kafka_producer:
