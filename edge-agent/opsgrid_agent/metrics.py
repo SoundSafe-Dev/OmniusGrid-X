@@ -53,3 +53,41 @@ def set_connection_state(asset_id: str, collector_type: str, up: bool) -> None:
     connection_state.labels(asset_id=asset_id, collector_type=collector_type).set(
         1 if up else 0
     )
+
+
+# --- Store-and-forward buffer -------------------------------------------------
+
+buffer_messages = Gauge(
+    "edge_buffer_messages",
+    "Messages currently pending in the store-and-forward buffer",
+)
+
+buffer_backfill_lag_seconds = Gauge(
+    "edge_buffer_backfill_lag_seconds",
+    "Age of the oldest pending buffered message (now - timestamp_edge)",
+)
+
+buffer_dead_lettered_total = Counter(
+    "edge_buffer_dead_lettered_total",
+    "Messages moved to the dead-letter table after exhausting retries",
+)
+
+buffer_dropped_total = Counter(
+    "edge_buffer_dropped_total",
+    "Oldest messages pruned to keep the buffer under its size limit",
+)
+
+
+def set_buffer_stats(pending: int, backfill_lag_seconds: float) -> None:
+    buffer_messages.set(pending)
+    buffer_backfill_lag_seconds.set(backfill_lag_seconds)
+
+
+def record_dead_lettered(count: int) -> None:
+    if count > 0:
+        buffer_dead_lettered_total.inc(count)
+
+
+def record_dropped(count: int) -> None:
+    if count > 0:
+        buffer_dropped_total.inc(count)

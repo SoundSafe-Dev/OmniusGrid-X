@@ -75,10 +75,27 @@ class StoreForwardBuffer:
             """)
             
             conn.execute("""
-                CREATE INDEX IF NOT EXISTS idx_messages_asset 
+                CREATE INDEX IF NOT EXISTS idx_messages_asset
                 ON messages(asset_id, timestamp_edge)
             """)
-            
+
+            # Dead-letter table for messages that exhausted their retries, so
+            # they leave the active table (freeing it) but stay observable /
+            # retainable instead of being stranded forever.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS dead_letters (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp_edge TEXT NOT NULL,
+                    asset_id TEXT NOT NULL,
+                    topic TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    sequence_num INTEGER NOT NULL,
+                    retry_count INTEGER DEFAULT 0,
+                    created_at TEXT,
+                    died_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
             conn.commit()
         
         logger.info(
@@ -244,6 +261,86 @@ class StoreForwardBuffer:
                 logger.error("cleanup_failed", error=str(e))
                 return 0
     
+    async def move_exhausted_to_dead_letter(self, max_retry: int = 5) -> int:
+        """Move retry-exhausted messages to the dead-letter table.
+
+        Messages with ``retry_count >= max_retry`` are excluded from
+        ``get_pending_messages`` and would otherwise accumulate forever. Moving
+        them frees the active table and keeps them observable/retainable.
+        Returns the number moved.
+        """
+        async with self._lock:
+            try:
+                with sqlite3.connect(self.buffer_path) as conn:
+                    cursor = conn.execute(
+                        """
+                        INSERT INTO dead_letters
+                            (timestamp_edge, asset_id, topic, payload,
+                             sequence_num, retry_count, created_at)
+                        SELECT timestamp_edge, asset_id, topic, payload,
+                               sequence_num, retry_count, created_at
+                        FROM messages WHERE retry_count >= ?
+                        """,
+                        (max_retry,),
+                    )
+                    moved = cursor.rowcount
+                    conn.execute(
+                        "DELETE FROM messages WHERE retry_count >= ?", (max_retry,)
+                    )
+                    conn.commit()
+
+                if moved > 0:
+                    logger.warning(
+                        "messages_dead_lettered", count=moved, max_retry=max_retry
+                    )
+                return moved
+            except sqlite3.Error as e:
+                logger.error("dead_letter_move_failed", error=str(e))
+                return 0
+
+    async def enforce_size_limit(self, max_size_mb: Optional[int] = None) -> int:
+        """Prune the oldest messages until the DB is under the size limit.
+
+        The buffer is a bounded ring: when the on-disk size exceeds the cap we
+        drop the oldest messages (by ``created_at``) so newest data survives.
+        Returns the number pruned. Followed by a VACUUM to reclaim the space.
+        """
+        limit_mb = max_size_mb if max_size_mb is not None else self.max_size_mb
+        if not limit_mb:
+            return 0
+
+        total_pruned = 0
+        async with self._lock:
+            try:
+                while (self.buffer_path.stat().st_size / (1024 * 1024)) > limit_mb:
+                    with sqlite3.connect(self.buffer_path) as conn:
+                        cursor = conn.execute(
+                            """
+                            DELETE FROM messages WHERE id IN (
+                                SELECT id FROM messages
+                                ORDER BY created_at ASC, id ASC LIMIT 500
+                            )
+                            """
+                        )
+                        pruned = cursor.rowcount
+                        conn.commit()
+                    if pruned == 0:
+                        break  # nothing left to prune
+                    total_pruned += pruned
+                    # VACUUM to actually reclaim disk so the next size check is real
+                    # (DELETE alone does not shrink the SQLite file).
+                    with sqlite3.connect(self.buffer_path) as conn:
+                        conn.execute("VACUUM")
+                        conn.commit()
+            except sqlite3.Error as e:
+                logger.error("enforce_size_limit_failed", error=str(e))
+
+        if total_pruned:
+            logger.warning(
+                "buffer_size_limit_pruned", pruned=total_pruned, limit_mb=limit_mb
+            )
+        return total_pruned
+
     async def get_stats(self) -> Dict[str, Any]:
         """Get buffer statistics"""
         async with self._lock:
@@ -260,18 +357,35 @@ class StoreForwardBuffer:
                     "SELECT MIN(timestamp_edge), MAX(timestamp_edge) FROM messages"
                 )
                 oldest, newest = cursor.fetchone()
-                
+
+                cursor = conn.execute("SELECT COUNT(*) FROM dead_letters")
+                dead_lettered = cursor.fetchone()[0]
+
                 # Get file size
                 size_bytes = self.buffer_path.stat().st_size if self.buffer_path.exists() else 0
-                
+
                 return {
                     "total_messages": total,
                     "failed_messages": failed,
+                    "dead_lettered": dead_lettered,
                     "oldest_message": oldest,
                     "newest_message": newest,
+                    "backfill_lag_seconds": self._age_seconds(oldest),
                     "size_mb": round(size_bytes / (1024 * 1024), 2),
                     "retention_hours": self.retention_hours
                 }
+
+    @staticmethod
+    def _age_seconds(timestamp_edge: Optional[str]) -> float:
+        """Seconds between the given edge timestamp and now (0.0 if unknown)."""
+        if not timestamp_edge:
+            return 0.0
+        try:
+            ts = datetime.fromisoformat(timestamp_edge)
+            now = datetime.now(ts.tzinfo) if ts.tzinfo else datetime.utcnow()
+            return max(0.0, (now - ts).total_seconds())
+        except (ValueError, TypeError):
+            return 0.0
     
     async def vacuum(self):
         """Compact database file"""

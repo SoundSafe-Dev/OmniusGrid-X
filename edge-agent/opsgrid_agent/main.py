@@ -3,7 +3,6 @@
 import asyncio
 import json
 import os
-from datetime import datetime
 from typing import Dict, Any, List
 import structlog
 
@@ -11,6 +10,7 @@ from opsgrid_agent.buffer.store_forward import StoreForwardBuffer
 from opsgrid_agent.collectors.mqtt import BambuCollector, MQTTCollector
 from opsgrid_agent.collectors.coordinator import UnifiedCollectorCoordinator, CollectorConfig
 from opsgrid_agent.packml import PackMLStateMapper
+from opsgrid_agent import metrics
 
 structlog.configure(
     processors=[
@@ -136,58 +136,6 @@ class EdgeAgent:
             await self.kafka_producer.stop()
             logger.info("kafka_producer_stopped")
     
-    async def _handle_message(self, message: Dict[str, Any]):
-        """Handle message from collector"""
-        try:
-            # Add sequence number for ordering
-            message['sequence_num'] = int(datetime.utcnow().timestamp() * 1000)
-            
-            # Try to publish to Kafka
-            if self.kafka_producer:
-                topic = f"telemetry.{self.config['organization_id']}.{message['asset_id']}"
-                
-                try:
-                    await self.kafka_producer.send(
-                        topic,
-                        value=message,
-                        key=message['asset_id']
-                    )
-                    logger.debug(
-                        "message_published",
-                        topic=topic,
-                        asset_id=message['asset_id']
-                    )
-                except Exception as e:
-                    # Publish failed, buffer locally
-                    logger.warning(
-                        "publish_failed_buffering",
-                        topic=topic,
-                        error=str(e)
-                    )
-                    await self._buffer_message(message)
-            else:
-                # No Kafka connection, buffer locally
-                await self._buffer_message(message)
-        
-        except Exception as e:
-            logger.error("message_handler_error", error=str(e))
-    
-    async def _buffer_message(self, message: Dict[str, Any]):
-        """Buffer message locally"""
-        success = await self.buffer.store(
-            timestamp_edge=datetime.fromisoformat(message['timestamp_edge']),
-            asset_id=message['asset_id'],
-            topic=message.get('topic', 'unknown'),
-            payload=message['payload'],
-            sequence_num=message.get('sequence_num', 0)
-        )
-        
-        if success:
-            logger.debug(
-                "message_buffered",
-                asset_id=message['asset_id']
-            )
-    
     async def _backfill_worker(self):
         """Background task to backfill buffered messages"""
         logger.info("backfill_worker_started")
@@ -251,22 +199,22 @@ class EdgeAgent:
         """Background task for periodic cleanup"""
         while self._running:
             try:
-                # Clean old messages
+                # Clean old messages past the retention window.
                 deleted = await self.buffer.cleanup_old_messages()
                 if deleted > 0:
-                    logger.info(
-                        "cleanup_completed",
-                        deleted_messages=deleted
-                    )
-                
-                # Vacuum database weekly
-                stats = await self.buffer.get_stats()
-                if stats['size_mb'] > 500:
-                    await self.buffer.vacuum()
-                
+                    logger.info("cleanup_completed", deleted_messages=deleted)
+
+                # Dead-letter retry-exhausted messages so they stop accumulating.
+                dead = await self.buffer.move_exhausted_to_dead_letter(max_retry=5)
+                metrics.record_dead_lettered(dead)
+
+                # Enforce the on-disk size cap (drops oldest; also vacuums).
+                dropped = await self.buffer.enforce_size_limit()
+                metrics.record_dropped(dropped)
+
                 # Wait 1 hour before next cleanup
                 await asyncio.sleep(3600)
-            
+
             except Exception as e:
                 logger.error("cleanup_worker_error", error=str(e))
                 await asyncio.sleep(3600)
@@ -276,15 +224,21 @@ class EdgeAgent:
         while self._running:
             try:
                 stats = await self.buffer.get_stats()
+                metrics.set_buffer_stats(
+                    pending=stats['total_messages'],
+                    backfill_lag_seconds=stats.get('backfill_lag_seconds', 0.0),
+                )
                 logger.info(
                     "buffer_stats",
                     total_messages=stats['total_messages'],
                     failed_messages=stats['failed_messages'],
+                    dead_lettered=stats.get('dead_lettered', 0),
                     size_mb=stats['size_mb'],
+                    backfill_lag_seconds=stats.get('backfill_lag_seconds', 0.0),
                     oldest_message=stats['oldest_message'],
                     newest_message=stats['newest_message']
                 )
-                
+
                 await asyncio.sleep(300)  # Report every 5 minutes
             
             except Exception as e:
