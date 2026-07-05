@@ -81,6 +81,12 @@ jobs:
           files: ./backend/coverage.xml
           fail_ci_if_error: false
 
+      - name: Run edge-agent tests
+        working-directory: ./edge-agent
+        run: |
+          pip install -r requirements-dev.txt
+          python -m pytest -q
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
