@@ -231,6 +231,9 @@ services:
       ORGANIZATION_ID: dev-org
       AGENT_ID: simulator-001
       BUFFER_RETENTION_HOURS: 24
+      METRICS_PORT: 9108
+    ports:
+      - "9108:9108"   # Prometheus /metrics
     volumes:
       - edge-agent-data:/var/lib/omniusgrid-agent
       - ./edge-agent:/app
@@ -238,7 +241,10 @@ services:
       redpanda:
         condition: service_healthy
     networks:
-      - omniusgrid-network
+      omniusgrid-network:
+        # Alias so the prometheus 'edge-agent' scrape target resolves to this service.
+        aliases:
+          - edge-agent
     profiles:
       - simulator
 

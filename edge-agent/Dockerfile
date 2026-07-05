@@ -21,5 +21,8 @@ COPY . .
 # Create buffer directory
 RUN mkdir -p /var/lib/opsgrid-agent
 
+# Prometheus metrics endpoint (served when METRICS_PORT is set)
+EXPOSE 9108
+
 # Default command (overridden in docker-compose)
 CMD ["python", "-m", "opsgrid_agent.main"]

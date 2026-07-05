@@ -8,6 +8,8 @@ resources:
   - backend-deployment.yaml
   - backend-service.yaml
   - frontend-deployment.yaml
+  - edge-agent-deployment.yaml
+  - edge-agent-service.yaml
   - timescaledb-statefulset.yaml
   - redpanda-statefulset.yaml
   - ingress.yaml
