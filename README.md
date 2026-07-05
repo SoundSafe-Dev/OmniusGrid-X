@@ -54,6 +54,9 @@ OmniusGrid is a resilient manufacturing operations platform designed for Industr
   to match the codebase. _(Hamad)_
 - **Intake cross-correlation** — PDF/DOCX/image parsing, shared-key detection, multi-tab workbook
   correlation. _(Hamad)_
+- **Store-and-forward buffer fix** — the coordinator persisted collector readings via a
+  non-existent buffer method, silently dropping data whenever Kafka was down; fixed and
+  regression-tested. _(Hamad)_
 
 ### Active branches
 
@@ -84,17 +87,33 @@ fully contained in `main`; Hudson's active work is on `feature/RAG-Compliance-Do
 | ERP integration | **Hridyansh** | `integration-erp`. |
 | Edge agent resilience / command dispatch | **Hridyansh** | Backoff/circuit-breaker on existing collectors + command acks. |
 | Package rename (`opsgrid_agent`) | **Hridyansh** | Scoped rename PR pending. |
-| Edge protocol collectors / coordinator / ports / build / docs | **Hamad** | Landed on `main`. |
+| Edge platform — collectors / coordinator / store-and-forward / observability / local analytics / deployment / CI / docs | **Hamad** | On `main` + the `hamad/fixed-sprints` program (below). |
 
 > ⚠️ **Known overlap — edge collector files.** `edge-agent/opsgrid_agent/collectors/{modbus,mqtt,opcua}*.py`
 > are touched by Hridyansh's `edge-agent-retry-logic` (adds backoff), his `package-renaming-fix`
 > (renames imports), **and** the new collector work already on `main` (lifecycle + adapter). Expect
 > merge conflicts there — sequence these merges deliberately and rebase before starting new collector work.
 
-### Hamad's working branch
+### Hamad's working branch — `hamad/fixed-sprints`
 
-- **`hamad/fixed-sprints`** — cut from `main` at this snapshot and pushed to both remotes. Use it for
-  sprint-scoped work that steers clear of the claimed areas above.
+A large **additive** edge-platform hardening program (~13 commits, ~54 edge tests), ready to open as
+a PR. Everything is rename-independent (relative imports; new files or body-local edits) to avoid
+conflicts with Hridyansh's collector/rename branches. Highlights:
+
+- **Collectors production-complete** — config schema + validation + YAML loader (`COLLECTORS_FILE`);
+  optional PackML state mapping for the new collectors.
+- **Store-and-forward integrity** — enforced size cap (bounded ring) and dead-letter for
+  retry-exhausted messages; backfill now preserves `packml_state` (was dropped → broke backend OEE).
+- **Local analytics activated** — OEE, anomaly detection (z-score), and config-driven alerting, fed
+  from the collector message stream (previously dead modules).
+- **Edge observability** — Prometheus metrics (collectors, buffer, OEE, anomalies, alerts) on
+  `/metrics`, a `/healthz` endpoint, a scrape job, edge alert rules, and Grafana dashboards (edge +
+  backend/system).
+- **Deployment & CI** — docker-compose + Kubernetes manifests for the edge agent; edge-agent tests
+  wired into CI; backend OEE-calculator tests.
+
+_Deferred (flagged): enabling backend OEE at startup; full end-to-end runtime awaits Hridyansh's
+`opsgrid_agent` rename — this code is rename-independent._
 
 ---
 
