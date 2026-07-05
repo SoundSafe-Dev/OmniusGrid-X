@@ -5,6 +5,7 @@ Manages all data source collectors in a single coordinated system
 
 import asyncio
 import json
+from datetime import datetime
 from typing import Dict, List, Any, Optional, Callable
 from dataclasses import dataclass
 import structlog
@@ -196,8 +197,28 @@ class UnifiedCollectorCoordinator:
                 '_coordinator_received_at': asyncio.get_event_loop().time(),
             }
             
-            # Store in buffer for store-and-forward
-            await self.buffer.store_message(enriched_message)
+            # Store in buffer for store-and-forward. StoreForwardBuffer.store()
+            # keeps edge-time and takes the payload separately — same mapping as
+            # EdgeAgent._buffer_message(). (Fixes a call to a non-existent
+            # store_message() that dropped every collector reading.)
+            ts_raw = message.get('timestamp_edge')
+            try:
+                if isinstance(ts_raw, datetime):
+                    timestamp_edge = ts_raw
+                elif ts_raw:
+                    timestamp_edge = datetime.fromisoformat(ts_raw)
+                else:
+                    timestamp_edge = datetime.utcnow()
+            except ValueError:
+                timestamp_edge = datetime.utcnow()
+
+            await self.buffer.store(
+                timestamp_edge=timestamp_edge,
+                asset_id=asset_id,
+                topic=message.get('topic', 'telemetry'),
+                payload=message.get('payload', {}),
+                sequence_num=message.get('sequence_num', 0),
+            )
             
             # Also try to forward immediately if connected
             if self.kafka_producer:
