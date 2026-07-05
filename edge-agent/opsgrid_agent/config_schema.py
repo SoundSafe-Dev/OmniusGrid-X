@@ -32,6 +32,9 @@ SUPPORTED_COLLECTOR_TYPES = (
     "bacnet",
     "can_bus",
     "http_rest",
+    "snmp",
+    "sparkplug_b",
+    "dnp3",
 )
 
 

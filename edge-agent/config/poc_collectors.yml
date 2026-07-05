@@ -206,3 +206,48 @@ collectors:
           severity: "critical"  # info | warning | error | critical
           message_template: "temperature {value} exceeded {threshold}"
           cooldown_seconds: 300
+
+  # 13. Network device / UPS / gateway via SNMP (requires pysnmp)
+  - asset_id: "switch-001"
+    collector_type: "snmp"
+    enabled: true
+    config:
+      host: "192.168.1.230"
+      port: 161
+      community: "public"
+      version: "2c"
+      poll_interval: 60
+      oids:
+        - name: "if_in_octets"
+          oid: "1.3.6.1.2.1.2.2.1.10.1"
+        - name: "if_out_octets"
+          oid: "1.3.6.1.2.1.2.2.1.16.1"
+
+  # 14. Industrial line via MQTT Sparkplug B (requires paho-mqtt + tahu)
+  - asset_id: "line-spb-001"
+    collector_type: "sparkplug_b"
+    enabled: true
+    config:
+      host: "192.168.1.240"
+      port: 1883
+      topic: "spBv1.0/#"
+      # username: "operator"
+      # password: "password123"
+
+  # 15. Substation / utility outstation via DNP3 (requires dnp3-python)
+  - asset_id: "outstation-001"
+    collector_type: "dnp3"
+    enabled: true
+    config:
+      host: "192.168.1.250"
+      port: 20000
+      master_addr: 1
+      outstation_addr: 1024
+      poll_interval: 10
+      points:
+        - name: "bus_voltage"
+          group: "analog"
+          index: 0
+        - name: "breaker_status"
+          group: "binary"
+          index: 1

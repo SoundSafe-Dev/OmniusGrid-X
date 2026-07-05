@@ -26,6 +26,9 @@ from .profinet import ProfinetCollector
 from .bacnet import BACnetCollector
 from .can_bus import CANBusCollector
 from .http_rest import HTTPRestCollector
+from .snmp import SNMPCollector
+from .sparkplug_b import SparkplugBCollector
+from .dnp3 import DNP3Collector
 from .. import metrics
 from ..analytics import pipeline as analytics_pipeline
 
@@ -67,6 +70,9 @@ class UnifiedCollectorCoordinator:
         'bacnet': coordinator_adapter(BACnetCollector),
         'can_bus': coordinator_adapter(CANBusCollector),
         'http_rest': coordinator_adapter(HTTPRestCollector),
+        'snmp': coordinator_adapter(SNMPCollector),
+        'sparkplug_b': coordinator_adapter(SparkplugBCollector),
+        'dnp3': coordinator_adapter(DNP3Collector),
     }
     
     def __init__(
