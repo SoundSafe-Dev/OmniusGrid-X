@@ -27,7 +27,7 @@ from .bacnet import BACnetCollector
 from .can_bus import CANBusCollector
 from .http_rest import HTTPRestCollector
 from .. import metrics
-from ..analytics import oee_tracker
+from ..analytics import pipeline as analytics_pipeline
 
 logger = structlog.get_logger()
 
@@ -230,8 +230,8 @@ class UnifiedCollectorCoordinator:
                 age_seconds=max(0.0, (now - timestamp_edge).total_seconds()),
             )
 
-            # Local OEE from PackML states (no-op unless the message carries one).
-            oee_tracker.record(message)
+            # Local analytics (OEE from PackML states, anomaly detection, alerting).
+            analytics_pipeline.record(message)
 
             # Also try to forward immediately if connected
             if self.kafka_producer:

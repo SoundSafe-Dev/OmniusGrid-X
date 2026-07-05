@@ -196,3 +196,13 @@ collectors:
       # auth:
       #   username: "operator"
       #   password: "password123"
+      # Optional local alert rules evaluated against numeric payload fields.
+      # Each triggers edge_alert_triggered_total and logs when its condition holds.
+      alerts:
+        - rule_id: "temp_high"
+          metric_name: "temperature"
+          condition: ">"        # one of > < >= <= == !=
+          threshold: 85
+          severity: "critical"  # info | warning | error | critical
+          message_template: "temperature {value} exceeded {threshold}"
+          cooldown_seconds: 300

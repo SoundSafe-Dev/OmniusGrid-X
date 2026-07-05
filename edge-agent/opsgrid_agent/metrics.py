@@ -107,3 +107,38 @@ def set_oee(asset_id: str, result: dict) -> None:
     oee_performance.labels(asset_id=asset_id).set(result.get("performance", 0.0))
     oee_quality.labels(asset_id=asset_id).set(result.get("quality", 0.0))
     oee_ratio.labels(asset_id=asset_id).set(result.get("oee", 0.0))
+
+
+# --- Local analytics: anomalies + alerts -------------------------------------
+
+anomaly_z_score = Gauge(
+    "edge_anomaly_z_score",
+    "Z-score of the most recent anomaly per metric",
+    ["asset_id", "metric"],
+)
+anomaly_total = Counter(
+    "edge_anomaly_total",
+    "Anomalies detected by the edge anomaly detector",
+    ["asset_id", "metric", "severity"],
+)
+alert_triggered_total = Counter(
+    "edge_alert_triggered_total",
+    "Local alert rules fired",
+    ["asset_id", "rule_id", "severity"],
+)
+
+
+def record_anomaly(asset_id: str, anomaly: dict) -> None:
+    metric = str(anomaly.get("metric_name", ""))
+    anomaly_z_score.labels(asset_id=asset_id, metric=metric).set(anomaly.get("z_score", 0.0))
+    anomaly_total.labels(
+        asset_id=asset_id, metric=metric, severity=str(anomaly.get("severity", ""))
+    ).inc()
+
+
+def record_alert(asset_id: str, alert: dict) -> None:
+    alert_triggered_total.labels(
+        asset_id=asset_id,
+        rule_id=str(alert.get("rule_id", "")),
+        severity=str(alert.get("severity", "")),
+    ).inc()

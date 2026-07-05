@@ -274,13 +274,18 @@ class EdgeAgent:
                     continue
                 
                 # Create collector config
+                collector_config = collector_conf.get('config', {})
                 config = CollectorConfig(
                     collector_type=collector_type,
                     asset_id=asset_id,
-                    config=collector_conf.get('config', {}),
+                    config=collector_config,
                     enabled=collector_conf.get('enabled', True)
                 )
-                
+
+                # Register any local alert rules declared for this asset.
+                from opsgrid_agent.analytics import alerting_tracker
+                alerting_tracker.configure(asset_id, collector_config.get('alerts'))
+
                 # Register with coordinator
                 self.coordinator.register_collector(config)
                 
