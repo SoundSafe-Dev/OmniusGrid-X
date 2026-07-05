@@ -341,7 +341,13 @@ class EdgeAgent:
         )
         
         self._running = True
-        
+
+        # Expose Prometheus metrics if configured (opt-in via METRICS_PORT).
+        metrics_port = os.getenv('METRICS_PORT')
+        if metrics_port:
+            from opsgrid_agent.metrics_server import start_metrics_server
+            start_metrics_server(int(metrics_port))
+
         # Initialize Kafka producer
         await self._init_kafka_producer()
         

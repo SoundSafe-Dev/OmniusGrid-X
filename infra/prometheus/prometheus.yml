@@ -26,6 +26,12 @@ scrape_configs:
       - targets: ['backend:8000']
     metrics_path: '/metrics'
 
+  # Edge agent collector metrics (opt-in: set METRICS_PORT on the agent)
+  - job_name: 'edge-agent'
+    static_configs:
+      - targets: ['edge-agent:9108']
+    metrics_path: '/metrics'
+
   # Redpanda metrics
   - job_name: 'redpanda'
     static_configs:

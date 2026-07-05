@@ -26,6 +26,7 @@ from .profinet import ProfinetCollector
 from .bacnet import BACnetCollector
 from .can_bus import CANBusCollector
 from .http_rest import HTTPRestCollector
+from .. import metrics
 
 logger = structlog.get_logger()
 
@@ -219,7 +220,15 @@ class UnifiedCollectorCoordinator:
                 payload=message.get('payload', {}),
                 sequence_num=message.get('sequence_num', 0),
             )
-            
+
+            # Observability: count the reading and its end-to-edge age.
+            now = (datetime.now(timestamp_edge.tzinfo)
+                   if timestamp_edge.tzinfo else datetime.utcnow())
+            metrics.record_message(
+                asset_id, collector_type,
+                age_seconds=max(0.0, (now - timestamp_edge).total_seconds()),
+            )
+
             # Also try to forward immediately if connected
             if self.kafka_producer:
                 try:
@@ -239,6 +248,10 @@ class UnifiedCollectorCoordinator:
             )
             
         except Exception as e:
+            metrics.record_error(
+                message.get('asset_id', 'unknown'),
+                message.get('collector_type', 'unknown'),
+            )
             logger.error(
                 "collector_message_handler_error",
                 error=str(e),
@@ -288,7 +301,15 @@ class UnifiedCollectorCoordinator:
                     active=active_count,
                     total=len(self.configs)
                 )
-                
+
+                # Publish per-collector liveness (1=active task, 0=down).
+                for aid, cfg in self.configs.items():
+                    task = self.collector_tasks.get(aid)
+                    metrics.set_connection_state(
+                        aid, cfg.collector_type,
+                        up=task is not None and not task.done(),
+                    )
+
             except Exception as e:
                 logger.error("health_monitor_error", error=str(e))
     

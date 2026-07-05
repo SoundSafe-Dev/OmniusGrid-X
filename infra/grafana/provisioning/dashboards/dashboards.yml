@@ -1,0 +1,15 @@
+# Grafana Provisioning - Dashboard providers
+apiVersion: 1
+
+providers:
+  - name: 'OpsGrid Dashboards'
+    orgId: 1
+    folder: 'OpsGrid'
+    type: file
+    disableDeletion: false
+    editable: true
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards
+      foldersFromFilesStructure: false
