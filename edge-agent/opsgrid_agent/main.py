@@ -302,6 +302,23 @@ class EdgeAgent:
                     error=str(e)
                 )
     
+    def _health_snapshot(self) -> Dict[str, Any]:
+        """Synchronous health for /healthz (called from the HTTP server thread).
+
+        Uses only sync, thread-safe reads (coordinator.get_status() + the running
+        flag) — no awaiting the async buffer from off the event loop.
+        """
+        try:
+            status = self.coordinator.get_status()
+        except Exception:  # pragma: no cover - defensive
+            status = {}
+        return {
+            "status": "ok" if self._running else "stopping",
+            "running": self._running,
+            "collectors_total": status.get("total_collectors", 0),
+            "collectors_active": status.get("active_collectors", 0),
+        }
+
     async def start(self):
         """Start the edge agent"""
         logger.info(
@@ -312,11 +329,11 @@ class EdgeAgent:
         
         self._running = True
 
-        # Expose Prometheus metrics if configured (opt-in via METRICS_PORT).
+        # Expose Prometheus /metrics + /healthz if configured (opt-in via METRICS_PORT).
         metrics_port = os.getenv('METRICS_PORT')
         if metrics_port:
             from opsgrid_agent.metrics_server import start_metrics_server
-            start_metrics_server(int(metrics_port))
+            start_metrics_server(int(metrics_port), health_provider=self._health_snapshot)
 
         # Initialize Kafka producer
         await self._init_kafka_producer()
