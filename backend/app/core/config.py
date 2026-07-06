@@ -84,6 +84,27 @@ class Settings(BaseSettings):
     S3_RAW_BUCKET: str = "raw-documents"
     S3_TEXT_BUCKET: str = "extracted-text"
     S3_PRESIGN_EXPIRE_SECONDS: int = 3600
+
+    # RAG embeddings + reranker (BGE via the rag-inference service)
+    # The ENDPOINT varies per deployment topology (own node / on-prem / RunPod);
+    # the MODEL is fixed - it is a data contract with the vector store. Changing
+    # EMBEDDING_MODEL means re-indexing everything. Do not make it per-deployment.
+    RAG_INFERENCE_URL: str = "http://rag-inference:8000"
+    RAG_INFERENCE_API_KEY: str = ""  # bearer token; empty = trusted local network
+    RAG_INFERENCE_TIMEOUT: float = 60.0
+    EMBEDDING_MODEL: str = "BAAI/bge-m3"  # pinned; must match indexed vectors
+    EMBEDDING_DIM: int = 1024  # BGE-M3 dense size (Qdrant collection dimension)
+    RERANKER_MODEL: str = "BAAI/bge-reranker-v2-m3"
+
+    # LLM inference (generation) - the swappable seam.
+    # OpenAI-compatible endpoint: vLLM / Ollama / TGI / hosted / a CUSTOM-BUILT
+    # Gemma all work by changing these values only - no application code change.
+    LLM_BASE_URL: str = "http://gemma:8000/v1"
+    LLM_MODEL: str = "gemma-12b"  # whatever the LLM server registers (e.g. a custom fine-tune)
+    LLM_API_KEY: str = ""  # bearer; empty for local/trusted network
+    LLM_TIMEOUT: float = 120.0
+    LLM_MAX_TOKENS: int = 1024
+    LLM_TEMPERATURE: float = 0.2
     
     # Application
     DEBUG: bool = True
