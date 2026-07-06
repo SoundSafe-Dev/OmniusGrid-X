@@ -105,6 +105,13 @@ class Settings(BaseSettings):
     LLM_TIMEOUT: float = 120.0
     LLM_MAX_TOKENS: int = 1024
     LLM_TEMPERATURE: float = 0.2
+
+    # Vector store (Qdrant) - self-hosted or Qdrant Cloud by endpoint alone.
+    # The dense dimension must equal EMBEDDING_DIM (data contract with BGE-M3).
+    QDRANT_URL: str = "http://qdrant:6333"
+    QDRANT_API_KEY: str = ""  # required for Qdrant Cloud; empty for self-hosted
+    QDRANT_COLLECTION: str = "documents"
+    QDRANT_PREFETCH_LIMIT: int = 50  # candidates per mode retrieved before fusion
     
     # Application
     DEBUG: bool = True

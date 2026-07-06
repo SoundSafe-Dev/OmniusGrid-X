@@ -44,6 +44,9 @@ aiohttp==3.9.1
 # Document Object Store (SeaweedFS / S3, async)
 aioboto3
 
+# Vector Store (Qdrant) - hybrid dense+sparse, async client
+qdrant-client>=1.10,<2
+
 # AI/ML for Correlation Engine
 google-generativeai==0.3.0
 faker==20.1.0
