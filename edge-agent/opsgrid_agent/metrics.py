@@ -142,3 +142,25 @@ def record_alert(asset_id: str, alert: dict) -> None:
         rule_id=str(alert.get("rule_id", "")),
         severity=str(alert.get("severity", "")),
     ).inc()
+
+
+# --- Data-quality pipeline ----------------------------------------------------
+
+quality_readings_total = Counter(
+    "edge_quality_readings_total",
+    "Readings processed by the data-quality pipeline, by decided action",
+    ["asset_id", "action"],
+)
+
+quality_flag_total = Counter(
+    "edge_quality_flag_total",
+    "Quality flags raised on readings (a reading may raise several)",
+    ["asset_id", "flag"],
+)
+
+
+def record_quality(asset_id: str, action: str, flags: list) -> None:
+    """Publish the outcome of one quality-pipeline decision."""
+    quality_readings_total.labels(asset_id=asset_id, action=action).inc()
+    for flag in flags:
+        quality_flag_total.labels(asset_id=asset_id, flag=str(flag)).inc()

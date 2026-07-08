@@ -31,6 +31,8 @@ from .sparkplug_b import SparkplugBCollector
 from .dnp3 import DNP3Collector
 from .. import metrics
 from ..analytics import pipeline as analytics_pipeline
+# Relative import: rename-agnostic, like the adapter/metrics seam.
+from ..quality import QualityAction, QualityConfig, QualityPipeline
 
 logger = structlog.get_logger()
 
@@ -91,7 +93,11 @@ class UnifiedCollectorCoordinator:
         
         # Configuration
         self.configs: Dict[str, CollectorConfig] = {}
-        
+
+        # Per-asset data-quality pipelines, built from each collector's optional
+        # `config.quality` block. Absent block -> no pipeline -> passthrough.
+        self._quality: Dict[str, QualityPipeline] = {}
+
         # Status tracking
         self._running = False
         self._health_check_task: Optional[asyncio.Task] = None
@@ -99,6 +105,22 @@ class UnifiedCollectorCoordinator:
     def register_collector(self, config: CollectorConfig):
         """Register a collector configuration"""
         self.configs[config.asset_id] = config
+
+        # Build a data-quality pipeline if this collector opted in. A malformed
+        # block is logged and skipped rather than failing collector startup.
+        raw_quality = (config.config or {}).get("quality")
+        if raw_quality:
+            try:
+                self._quality[config.asset_id] = QualityPipeline(
+                    QualityConfig.model_validate(raw_quality)
+                )
+            except Exception as e:  # pydantic ValidationError or bad shape
+                logger.error(
+                    "quality_config_invalid",
+                    asset_id=config.asset_id,
+                    error=str(e),
+                )
+
         logger.info(
             "collector_registered",
             asset_id=config.asset_id,
@@ -198,7 +220,27 @@ class UnifiedCollectorCoordinator:
         try:
             asset_id = message.get('asset_id', 'unknown')
             collector_type = message.get('collector_type', 'unknown')
-            
+
+            # Data-quality processing: validate -> scale -> normalize units ->
+            # deadband. Passthrough when no pipeline is registered for this asset.
+            #   DROP       -> suppressed by deadband/rate-limit; discard silently
+            #   QUARANTINE -> invalid; buffer under the 'quarantine' topic (kept
+            #                 out of local analytics) so the cloud can dead-letter it
+            #   FORWARD    -> use the cleaned/normalized reading
+            quality_action = None
+            pipe = self._quality.get(asset_id)
+            if pipe is not None:
+                result = pipe.process(message)
+                metrics.record_quality(asset_id, result.action.value, result.flags)
+                if result.action == QualityAction.DROP:
+                    return
+                message = result.reading
+                quality_action = result.action
+
+            topic = message.get('topic', 'telemetry')
+            if quality_action == QualityAction.QUARANTINE:
+                topic = 'quarantine'
+
             # Add metadata
             enriched_message = {
                 **message,
@@ -223,7 +265,7 @@ class UnifiedCollectorCoordinator:
             await self.buffer.store(
                 timestamp_edge=timestamp_edge,
                 asset_id=asset_id,
-                topic=message.get('topic', 'telemetry'),
+                topic=topic,
                 payload=message.get('payload', {}),
                 sequence_num=message.get('sequence_num', 0),
             )
@@ -237,7 +279,10 @@ class UnifiedCollectorCoordinator:
             )
 
             # Local analytics (OEE from PackML states, anomaly detection, alerting).
-            analytics_pipeline.record(message)
+            # Quarantined (invalid) readings are excluded so bad data does not
+            # skew OEE/anomaly baselines.
+            if quality_action != QualityAction.QUARANTINE:
+                analytics_pipeline.record(message)
 
             # Also try to forward immediately if connected
             if self.kafka_producer:
