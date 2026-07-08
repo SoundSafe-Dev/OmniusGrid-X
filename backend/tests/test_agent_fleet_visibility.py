@@ -12,7 +12,7 @@ MIGRATION_PATH = (
     Path(__file__).resolve().parents[2]
     / "database"
     / "migrations"
-    / "020_agent_versioning.sql"
+    / "022_agent_versioning.sql"
 )
 
 
