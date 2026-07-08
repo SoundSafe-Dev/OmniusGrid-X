@@ -1,5 +1,5 @@
 -- =============================================================================
--- Migration 022: Edge-agent OTA rollout orchestration state
+-- Migration 024: Edge-agent OTA rollout orchestration state
 -- =============================================================================
 
 BEGIN;

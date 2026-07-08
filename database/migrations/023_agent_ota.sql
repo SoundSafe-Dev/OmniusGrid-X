@@ -1,5 +1,5 @@
 -- =============================================================================
--- Migration 021: Edge-agent OTA releases and rollout control-plane
+-- Migration 023: Edge-agent OTA releases and rollout control-plane
 -- =============================================================================
 
 BEGIN;

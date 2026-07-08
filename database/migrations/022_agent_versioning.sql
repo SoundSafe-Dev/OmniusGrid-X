@@ -1,4 +1,4 @@
--- Migration 020: Edge-agent version and heartbeat visibility.
+-- Migration 022: Edge-agent version and heartbeat visibility.
 
 ALTER TABLE assets
     ADD COLUMN IF NOT EXISTS agent_id VARCHAR(255),
