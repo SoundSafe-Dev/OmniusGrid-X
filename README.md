@@ -801,7 +801,7 @@ The Intake Cross-Correlation enhancement extends the intake system to support co
 
 **Database Schema Changes:**
 
-Migration `012_intake_cross_correlation.sql` adds:
+Migration `021_intake_cross_correlation.sql` adds:
 - `shared_keys` JSON column to `intake_items` and `session_data_sources`
 - `structure_metadata` JSON column for document structure info
 - `processing_time_seconds` INTEGER for actual processing time
@@ -1714,7 +1714,7 @@ sequenceDiagram
 - Sync status tracking
 - Connection testing and manual sync triggers
 
-**Database Schema** (`database/migrations/011_erp_integration_tables.sql`)
+**Database Schema** (`database/migrations/020_erp_integration_tables.sql`)
 - `erp_integration_events` - Event tracking with deduplication
 - `erp_data_mappings` - Field mapping configuration
 - `erp_sync_status` - Sync status tracking
