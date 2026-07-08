@@ -192,3 +192,38 @@ groups:
         annotations:
           summary: "Edge collector error rate elevated"
           description: "Collector {{ $labels.asset_id }} ({{ $labels.collector_type }}) erroring at {{ $value }}/s"
+
+  - name: opsgrid_edge_fleet
+    rules:
+      # HIGH: an agent has stopped heartbeating (backend marks it down)
+      - alert: EdgeAgentOffline
+        expr: edge_agent_up == 0
+        for: 5m
+        labels:
+          severity: high
+          team: edge
+        annotations:
+          summary: "Edge agent offline"
+          description: "Agent {{ $labels.agent_id }} has not sent a healthy heartbeat for 5m"
+
+      # MEDIUM: store-and-forward buffer backing up (uplink struggling)
+      - alert: EdgeAgentBufferHigh
+        expr: edge_agent_buffer_pending > 5000
+        for: 10m
+        labels:
+          severity: medium
+          team: edge
+        annotations:
+          summary: "Edge agent buffer backing up"
+          description: "Agent {{ $labels.agent_id }} has {{ $value }} messages pending — uplink may be degraded"
+
+      # HIGH: agent certificate close to expiry (rotation not keeping up)
+      - alert: EdgeAgentCertExpiringSoon
+        expr: edge_agent_cert_expiry_seconds < 172800
+        for: 15m
+        labels:
+          severity: high
+          team: edge
+        annotations:
+          summary: "Edge agent certificate expiring"
+          description: "Agent {{ $labels.agent_id }} cert expires in < 2 days; rotation may be failing"
