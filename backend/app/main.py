@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from app.api import assets, telemetry, alarms, operations, auth, dashboard, health, engines
 from app.api import yard, transportation, logistics_correlation, websocket, commands, oee, kanban, registries, geotab, correlation_integration, nlp_correlation, analysis_sessions, user_context, audit, api_keys, gdpr, compliance, data_residency, erp_integrations
 from app.api import health_index, simulation, notifications
-from app.api import edge_enroll
+from app.api import edge_enroll, edge_ingest
 from app.core.config import settings
 from app.db.database import init_db
 from app.services.websocket_manager import websocket_manager
@@ -160,6 +160,7 @@ app.include_router(health_index.router, prefix="/api/v1/health-index", tags=["As
 app.include_router(simulation.router, prefix="/api/v1/simulation", tags=["Simulation / Digital Twin"])
 app.include_router(notifications.router, prefix="/api/v1/notifications", tags=["Notifications"])
 app.include_router(edge_enroll.router, tags=["Edge"])
+app.include_router(edge_ingest.router, tags=["Edge"])
 app.include_router(kanban.router, prefix="/api/v1/kanban", tags=["Kanban"])
 app.include_router(registries.router, tags=["Registries"])
 app.include_router(websocket.router, tags=["WebSocket"])
