@@ -41,6 +41,12 @@ class Settings(BaseSettings):
     MTLS_SERVER_KEY_PATH: str = "/certs/server.key"
     MTLS_CLIENT_CERT_PATH: str = "/certs/edge-client.crt"
     MTLS_CLIENT_KEY_PATH: str = "/certs/edge-client.key"
+
+    # Edge-agent enrollment / internal CA (edge transport security).
+    EDGE_CA_CERT_PATH: str = "/certs/edge-ca.crt"
+    EDGE_CA_KEY_PATH: str = "/certs/edge-ca.key"
+    EDGE_BOOTSTRAP_TOKEN: str = ""   # one-time token agents present to enroll
+    EDGE_CERT_TTL_DAYS: int = 30     # validity of issued agent certificates
     
     # Cloud Gateway
     CLOUD_MQTT_HOST: str = "cloud.opsgrid.io"
