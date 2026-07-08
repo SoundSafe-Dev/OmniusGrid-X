@@ -401,6 +401,19 @@ class UnifiedCollectorCoordinator:
         
         logger.info("all_collectors_stopped")
     
+    async def stop_collector(self, asset_id: str):
+        """Stop and deregister a single collector (used by config hot-reload)."""
+        logger.info("stopping_collector", asset_id=asset_id)
+        collector = self.collectors.pop(asset_id, None)
+        if collector is not None:
+            try:
+                await collector.stop()
+            except Exception as e:  # best-effort; we are tearing it down anyway
+                logger.error("collector_stop_error", asset_id=asset_id, error=str(e))
+        task = self.collector_tasks.pop(asset_id, None)
+        if task is not None and not task.done():
+            task.cancel()
+
     async def restart_collector(self, asset_id: str):
         """Restart a specific collector"""
         logger.info("restarting_collector", asset_id=asset_id)
