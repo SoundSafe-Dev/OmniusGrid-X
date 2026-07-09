@@ -36,6 +36,7 @@ SUPPORTED_COLLECTOR_TYPES = (
     "sparkplug_b",
     "dnp3",
     "audio",
+    "video",
 )
 
 
