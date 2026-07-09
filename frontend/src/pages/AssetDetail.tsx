@@ -5,6 +5,8 @@ import { ArrowLeft, Activity, Clock, Box } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { assetsApi, telemetryApi } from '../api'
 import { Tooltip, TooltipTrigger, TooltipContent } from '../components/ui'
+import { TelemetryHistoryChart } from '../components/charts'
+import { TrendingUp } from 'lucide-react'
 
 const AssetDetail: FC = () => {
   const { id } = useParams<{ id: string }>()
@@ -166,6 +168,18 @@ const AssetDetail: FC = () => {
               </Tooltip>
             }
           </div>
+        </div>
+      )}
+
+      {/* Telemetry History (task B8): stored history + aggregation, complements
+          the latest-values grid above. */}
+      {id && (
+        <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-6">
+          <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+            <TrendingUp size={20} />
+            Telemetry History
+          </h2>
+          <TelemetryHistoryChart assetId={id} />
         </div>
       )}
 

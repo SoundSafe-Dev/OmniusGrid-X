@@ -2,7 +2,8 @@ import { api } from './client';
 import { mockApi } from './mockApi';
 import { TelemetryPoint, LatestTelemetry, AvailableMetrics, TelemetryFilters } from '../types';
 
-const USE_MOCK = true; // Set to false to use real backend
+// Env toggle: mock by default so demos work offline, real when VITE_USE_MOCK=false.
+const USE_MOCK = import.meta.env.VITE_USE_MOCK !== 'false';
 
 export const telemetryApi = {
   getLatest: async (assetId: string, metricName?: string): Promise<LatestTelemetry | Record<string, LatestTelemetry>> => {
@@ -45,6 +46,30 @@ export const telemetryApi = {
   },
 
   getHistory: async (assetId: string, filters?: TelemetryFilters): Promise<TelemetryPoint[]> => {
+    if (USE_MOCK) {
+      // Synthesize a demo series over the last ~2h from the latest values.
+      const latest = await mockApi.getLatestTelemetry(assetId);
+      const metrics = filters?.metricName
+        ? [filters.metricName]
+        : Object.keys(latest);
+      const points = 60;
+      const now = Date.now();
+      const out: TelemetryPoint[] = [];
+      metrics.forEach((m) => {
+        const base = latest[m]?.value ?? 50;
+        const unit = latest[m]?.unit;
+        for (let i = points - 1; i >= 0; i--) {
+          const wobble = base * 0.08 * Math.sin(i / 5) + (base * 0.03 * (i % 3 - 1));
+          out.push({
+            timestamp: new Date(now - i * 120_000).toISOString(),
+            metricName: m,
+            value: Math.round((base + wobble) * 100) / 100,
+            unit,
+          });
+        }
+      });
+      return out;
+    }
     const params: Record<string, any> = {};
     if (filters?.metricName) params.metric_name = filters.metricName;
     if (filters?.startTime) params.start_time = filters.startTime;
@@ -56,6 +81,10 @@ export const telemetryApi = {
   },
 
   getAvailableMetrics: async (assetId: string): Promise<AvailableMetrics> => {
+    if (USE_MOCK) {
+      const latest = await mockApi.getLatestTelemetry(assetId);
+      return { assetId, metrics: Object.keys(latest) };
+    }
     const response = await api.get<AvailableMetrics>(`/api/v1/telemetry/${assetId}/metrics`);
     return response.data;
   },
