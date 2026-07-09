@@ -4,10 +4,14 @@ The DB-bound providers/endpoint are exercised via make up; here we test the pure
 shaping (ProviderResult -> engine-compatible processed_data) and the registry.
 """
 
+from datetime import datetime, timezone
+from types import SimpleNamespace
+
 from app.services.platform_correlation import (
     ProviderResult,
     available_source_types,
     get_provider,
+    telemetry_rows_to_records,
 )
 
 
@@ -41,3 +45,29 @@ def test_registry_lists_three_domains():
 def test_get_provider_resolves_and_rejects():
     assert get_provider("asset_telemetry") is not None
     assert get_provider("nope") is None
+
+
+def test_telemetry_records_carry_sensor_class_context():
+    # (task B16) audio/video/machinery modality becomes a correlation dimension.
+    row = SimpleNamespace(
+        asset_id="asset-6", metric_name="audio_rms", value=0.3, unit=None,
+        packml_state="Execute", time=datetime(2026, 7, 9, tzinfo=timezone.utc),
+    )
+    asset = SimpleNamespace(name="Acoustic Monitor", sensor_class="audio", asset_type=None)
+    records = telemetry_rows_to_records([row], asset)
+    assert records[0]["asset_name"] == "Acoustic Monitor"
+    assert records[0]["sensor_class"] == "audio"
+    assert records[0]["metric_name"] == "audio_rms"
+
+
+def test_sensor_class_falls_back_to_asset_type():
+    row = SimpleNamespace(
+        asset_id="a", metric_name="vibration_rms", value=2.0, unit="mm/s",
+        packml_state=None, time=None,
+    )
+    asset = SimpleNamespace(
+        name="Vib", sensor_class=None,
+        asset_type=SimpleNamespace(sensor_class="machinery"),
+    )
+    records = telemetry_rows_to_records([row], asset)
+    assert records[0]["sensor_class"] == "machinery"

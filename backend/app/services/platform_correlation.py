@@ -53,26 +53,47 @@ def _columns(records: List[Dict[str, Any]]) -> List[str]:
     return cols
 
 
-async def asset_telemetry_provider(db: AsyncSession, organization_id: str, params: Dict[str, Any]) -> ProviderResult:
-    """Recent telemetry rows for one asset (audio/video/machinery sensors included)."""
-    asset_id = params.get("asset_id")
-    if not asset_id:
-        raise ValueError("asset_telemetry requires params.asset_id")
-    limit = int(params.get("limit", 500))
-    rows = (await db.execute(
-        select(Telemetry).where(Telemetry.asset_id == str(asset_id))
-        .order_by(Telemetry.time.desc()).limit(limit)
-    )).scalars().all()
-    records = [{
+def telemetry_rows_to_records(rows: List[Any], asset: Optional[Any] = None) -> List[Dict[str, Any]]:
+    """Shape Telemetry ORM rows (+ optional Asset context) into correlatable records.
+
+    Including asset name + sensor_class means audio/video/machinery modality is a
+    first-class correlation dimension (e.g. "does high audio_band_high coincide
+    with late shipments from dock 3?").
+    """
+    asset_name = getattr(asset, "name", None)
+    sensor_class = getattr(asset, "sensor_class", None)
+    if asset is not None and not sensor_class:
+        atype = getattr(asset, "asset_type", None)
+        sensor_class = getattr(atype, "sensor_class", None)
+    return [{
         "asset_id": r.asset_id,
+        "asset_name": asset_name,
+        "sensor_class": sensor_class,
         "metric_name": r.metric_name,
         "value": float(r.value) if r.value is not None else None,
         "unit": r.unit,
         "packml_state": r.packml_state,
         "time": r.time.isoformat() if r.time else None,
     } for r in rows]
-    name = params.get("name") or f"telemetry-{asset_id}"
-    return ProviderResult(name, records, _columns(records), ["asset_id", "metric_name", "time"])
+
+
+async def asset_telemetry_provider(db: AsyncSession, organization_id: str, params: Dict[str, Any]) -> ProviderResult:
+    """Recent telemetry rows for one asset (audio/video/machinery sensors included)."""
+    asset_id = params.get("asset_id")
+    if not asset_id:
+        raise ValueError("asset_telemetry requires params.asset_id")
+    limit = int(params.get("limit", 500))
+    asset = (await db.execute(
+        select(Asset).where(Asset.id == str(asset_id))
+    )).scalar_one_or_none()
+    rows = (await db.execute(
+        select(Telemetry).where(Telemetry.asset_id == str(asset_id))
+        .order_by(Telemetry.time.desc()).limit(limit)
+    )).scalars().all()
+    records = telemetry_rows_to_records(rows, asset)
+    name = params.get("name") or f"telemetry-{getattr(asset, 'name', None) or asset_id}"
+    return ProviderResult(name, records, _columns(records),
+                          ["asset_id", "asset_name", "metric_name", "time"])
 
 
 async def yard_provider(db: AsyncSession, organization_id: str, params: Dict[str, Any]) -> ProviderResult:

@@ -167,3 +167,48 @@ async def get_asset_status(
         "last_seen": asset.last_seen.isoformat() if asset.last_seen else None,
         "connection_config": asset.connection_config
     }
+
+
+@router.get(
+    "/{asset_id}/sensor-feeds",
+    summary="Get sensor feed summary",
+    description="Discovery surface for downstream consumers (correlation, predictive "
+                "maintenance, simulation/growth planning): the asset's sensor class, "
+                "media config, and the metric names it actually emits.",
+)
+async def get_sensor_feeds(
+    asset_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """Summarize what this asset's sensors feed into the platform (task B16)."""
+    from app.db.models import Telemetry
+
+    result = await db.execute(select(Asset).where(Asset.id == asset_id))
+    asset = result.scalar_one_or_none()
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+
+    sensor_class = asset.sensor_class
+    if not sensor_class and asset.asset_type_id:
+        atype = (await db.execute(
+            select(AssetType).where(AssetType.id == asset.asset_type_id)
+        )).scalar_one_or_none()
+        sensor_class = getattr(atype, "sensor_class", None)
+
+    metrics = (await db.execute(
+        select(Telemetry.metric_name).where(Telemetry.asset_id == str(asset_id)).distinct()
+    )).scalars().all()
+
+    return {
+        "asset_id": str(asset.id),
+        "name": asset.name,
+        "sensor_class": sensor_class or "generic",
+        "media_config": asset.media_config or {},
+        "metrics": sorted(metrics),
+        # How to consume these feeds elsewhere in the platform.
+        "consumers": {
+            "correlation": "POST /api/v1/nlp/sessions/{session_id}/platform-data "
+                           "{source_type: 'asset_telemetry', params: {asset_id}}",
+            "history": f"GET /api/v1/telemetry/{asset_id}/history?aggregation=5min",
+        },
+    }
