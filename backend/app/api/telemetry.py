@@ -4,13 +4,46 @@ from typing import List, Optional
 from uuid import UUID
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, func
+from sqlalchemy import select, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db
 from app.db.models import Telemetry, Asset, PackMLState
 
 router = APIRouter()
+
+# Aggregation window sizes for the history endpoint (task B9).
+AGGREGATION_SECONDS = {"1min": 60, "5min": 300, "1hour": 3600}
+
+
+def bucket_records(records: list, seconds: int, aggregation: str) -> list:
+    """Pure time-bucket rollup (avg/min/max/count) for non-Postgres dialects.
+
+    ``records``: dicts with time (datetime), metric_name, value, unit. Buckets are
+    aligned to the epoch (floor(ts/seconds)*seconds), newest bucket first —
+    mirroring the TimescaleDB time_bucket path so both dialects return one shape.
+    """
+    buckets: dict = {}
+    for r in records:
+        epoch = int(r["time"].timestamp())
+        start = epoch - (epoch % seconds)
+        key = (start, r["metric_name"])
+        b = buckets.setdefault(key, {"values": [], "unit": r.get("unit")})
+        b["values"].append(r["value"])
+    out = []
+    for (start, metric_name), b in sorted(buckets.items(), reverse=True):
+        vals = b["values"]
+        out.append({
+            "timestamp": datetime.utcfromtimestamp(start).isoformat(),
+            "metric_name": metric_name,
+            "value": sum(vals) / len(vals),
+            "min": min(vals),
+            "max": max(vals),
+            "count": len(vals),
+            "unit": b["unit"],
+            "aggregation": aggregation,
+        })
+    return out
 
 
 @router.get("/{asset_id}/latest", summary="Get latest telemetry", description="Retrieve the most recent telemetry data point for a specific asset, optionally filtered by metric name.")
@@ -77,35 +110,87 @@ async def get_telemetry_history(
         raise HTTPException(status_code=404, detail="Asset not found")
     
     if aggregation:
-        # Use continuous aggregate table for aggregated data
-        # This would query telemetry_1min view
-        pass
-    else:
-        # Raw data query
+        seconds = AGGREGATION_SECONDS[aggregation]
+        if db.bind.dialect.name == "postgresql":
+            # TimescaleDB time_bucket rollup: avg/min/max/count per bucket.
+            bucket = func.time_bucket(text(f"INTERVAL '{seconds} seconds'"), Telemetry.time)
+            query = (
+                select(
+                    bucket.label("bucket"),
+                    Telemetry.metric_name,
+                    func.avg(Telemetry.value).label("avg"),
+                    func.min(Telemetry.value).label("min"),
+                    func.max(Telemetry.value).label("max"),
+                    func.count().label("count"),
+                    func.max(Telemetry.unit).label("unit"),
+                )
+                .where(
+                    Telemetry.asset_id == asset_id,
+                    Telemetry.time >= start_time,
+                    Telemetry.time <= end_time,
+                )
+                .group_by("bucket", Telemetry.metric_name)
+                .order_by(text("bucket DESC"))
+                .offset(skip)
+                .limit(limit)
+            )
+            if metric_name:
+                query = query.where(Telemetry.metric_name == metric_name)
+            rows = (await db.execute(query)).all()
+            return [
+                {
+                    "timestamp": r.bucket.isoformat(),
+                    "metric_name": r.metric_name,
+                    "value": float(r.avg),
+                    "min": float(r.min),
+                    "max": float(r.max),
+                    "count": int(r.count),
+                    "unit": r.unit,
+                    "aggregation": aggregation,
+                }
+                for r in rows
+            ]
+        # Non-Postgres dialects (tests/dev SQLite): bucket in Python.
         query = select(Telemetry).where(
             Telemetry.asset_id == asset_id,
             Telemetry.time >= start_time,
-            Telemetry.time <= end_time
+            Telemetry.time <= end_time,
         )
-        
         if metric_name:
             query = query.where(Telemetry.metric_name == metric_name)
-        
-        query = query.order_by(Telemetry.time.desc()).offset(skip).limit(limit)
-        result = await db.execute(query)
-        telemetry_data = result.scalars().all()
-        
-        return [
-            {
-                "timestamp": t.time.isoformat(),
-                "metric_name": t.metric_name,
-                "value": float(t.value),
-                "unit": t.unit,
-                "packml_state": t.packml_state,
-                "metadata": t.metadata
-            }
-            for t in telemetry_data
+        raw = (await db.execute(query.order_by(Telemetry.time.desc()).limit(10000))).scalars().all()
+        records = [
+            {"time": t.time, "metric_name": t.metric_name,
+             "value": float(t.value), "unit": t.unit}
+            for t in raw
         ]
+        return bucket_records(records, seconds, aggregation)[skip:skip + limit]
+
+    # Raw data query
+    query = select(Telemetry).where(
+        Telemetry.asset_id == asset_id,
+        Telemetry.time >= start_time,
+        Telemetry.time <= end_time
+    )
+
+    if metric_name:
+        query = query.where(Telemetry.metric_name == metric_name)
+
+    query = query.order_by(Telemetry.time.desc()).offset(skip).limit(limit)
+    result = await db.execute(query)
+    telemetry_data = result.scalars().all()
+
+    return [
+        {
+            "timestamp": t.time.isoformat(),
+            "metric_name": t.metric_name,
+            "value": float(t.value),
+            "unit": t.unit,
+            "packml_state": t.packml_state,
+            "metadata": t.metadata
+        }
+        for t in telemetry_data
+    ]
 
 
 @router.get("/{asset_id}/metrics", summary="List available metrics", description="Retrieve a list of all metric names that have been recorded for a specific asset.")
