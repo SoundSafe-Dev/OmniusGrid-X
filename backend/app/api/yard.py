@@ -355,3 +355,78 @@ async def record_checkpoint(
         db=db
     )
     return checkpoint
+
+
+# ==================== Detention Alerts (task C17) ====================
+
+def build_detention_alert(
+    trailer_number: str,
+    trailer_id: str,
+    check_in_at: datetime,
+    now: Optional[datetime] = None,
+    hourly_rate: float = DetentionCalculator.DEFAULT_DETENTION_RATE,
+    free_minutes: int = DetentionCalculator.FREE_TIME_MINUTES,
+    warn_within_minutes: int = 30,
+) -> Optional[dict]:
+    """Pure alert builder: live detention exposure for an in-yard trailer.
+
+    Returns an alert dict once the trailer is inside the warning window before
+    free time expires ("at_risk") or already accruing charges ("detention");
+    None while comfortably inside free time.
+    """
+    now = now or datetime.utcnow()
+    elapsed_minutes = (now - check_in_at).total_seconds() / 60
+    remaining_free = free_minutes - elapsed_minutes
+
+    if remaining_free > warn_within_minutes:
+        return None
+
+    over_minutes = max(0.0, elapsed_minutes - free_minutes)
+    charge = round((over_minutes / 60) * hourly_rate, 2)
+    return {
+        "trailer_id": trailer_id,
+        "trailer_number": trailer_number,
+        "status": "detention" if over_minutes > 0 else "at_risk",
+        "elapsed_minutes": round(elapsed_minutes, 1),
+        "detention_minutes": round(over_minutes, 1),
+        "current_charge": charge,
+        "hourly_rate": hourly_rate,
+        "free_minutes": free_minutes,
+        "check_in_at": check_in_at.isoformat(),
+    }
+
+
+@router.get("/detention-alerts", response_model=List[dict])
+async def get_detention_alerts(
+    organization_id: Optional[UUID] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """Live detention exposure for trailers still in the yard.
+
+    Computes from check-in time + the DetentionCalculator defaults, so the
+    frontend's detention banner reflects real dwell instead of a hardcoded mock.
+    """
+    from sqlalchemy import select
+
+    query = select(YardTrailer).where(
+        YardTrailer.check_in_at.isnot(None),
+        YardTrailer.check_out_at.is_(None),
+    )
+    if organization_id:
+        query = query.where(YardTrailer.organization_id == organization_id)
+
+    trailers = (await db.execute(query)).scalars().all()
+    now = datetime.utcnow()
+    alerts = []
+    for t in trailers:
+        alert = build_detention_alert(
+            trailer_number=t.trailer_number,
+            trailer_id=str(t.id),
+            check_in_at=t.check_in_at,
+            now=now,
+        )
+        if alert:
+            alerts.append(alert)
+    # Worst exposure first.
+    alerts.sort(key=lambda a: a["current_charge"], reverse=True)
+    return alerts
