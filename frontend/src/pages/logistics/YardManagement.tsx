@@ -25,6 +25,7 @@ import {
   TrailerFilters
 } from '../../types';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
+import { YardMapPanel } from '../../components/yard/YardMapPanel';
 
 const YARD_QUERY_KEY = 'yard';
 
@@ -34,7 +35,7 @@ export const YardManagement: FC = () => {
   const [filters, setFilters] = useState<TrailerFilters>({});
   const [searchTerm, setSearchTerm] = useState('');
   const [showCheckIn, setShowCheckIn] = useState(false);
-  const [activeTab, setActiveTab] = useState<'trailers' | 'doors' | 'appointments' | 'detention'>('trailers');
+  const [activeTab, setActiveTab] = useState<'trailers' | 'map' | 'doors' | 'appointments' | 'detention'>('trailers');
 
   const { data: trailersData, isLoading: trailersLoading, refetch: refetchTrailers } = useQuery(
     [YARD_QUERY_KEY, 'trailers', filters],
@@ -294,6 +295,7 @@ export const YardManagement: FC = () => {
         <div className="flex gap-1">
           {[
             { id: 'trailers', label: 'Trailers', icon: Truck, tooltip: 'View all trailers' },
+            { id: 'map', label: 'Yard Map', icon: MapPin, tooltip: 'Dock and zone occupancy map' },
             { id: 'doors', label: 'Dock Doors', icon: Warehouse, tooltip: 'View dock door status' },
             { id: 'appointments', label: 'Appointments', icon: Calendar, tooltip: 'View scheduled appointments' },
             { id: 'detention', label: 'Detention', icon: DollarSign, tooltip: 'View detention alerts and costs' },
@@ -417,6 +419,12 @@ export const YardManagement: FC = () => {
               </table>
             </div>
           )}
+        </div>
+      )}
+
+      {activeTab === 'map' && (
+        <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-6">
+          <YardMapPanel doors={doors} trailers={allTrailers} onTrailerClick={setSelectedTrailer} />
         </div>
       )}
 
