@@ -40,3 +40,40 @@ jobs:
         env:
           DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/omniusgrid_test
         run: pytest tests/test_api_contract.py -q
+
+  # --- task 1: frontend unit tests (Vitest) --------------------------------
+  frontend-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install
+        working-directory: ./frontend
+        run: npm ci
+      - name: Vitest
+        working-directory: ./frontend
+        run: npm run test
+
+  # --- task 2: frontend E2E smoke (Playwright) -----------------------------
+  frontend-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install
+        working-directory: ./frontend
+        run: npm ci
+      - name: Install Playwright browser
+        working-directory: ./frontend
+        run: npx playwright install --with-deps chromium
+      - name: Playwright smoke
+        working-directory: ./frontend
+        run: npm run e2e
