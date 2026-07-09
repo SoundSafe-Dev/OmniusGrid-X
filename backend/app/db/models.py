@@ -1619,3 +1619,93 @@ class ErrorEventBucket(Base):
     count = Column(BigInteger, nullable=False, default=0, server_default="0")
 
     error_event = relationship("ErrorEvent", back_populates="buckets")
+
+
+class ModelRegistryEntry(Base):
+    """Tenant-scoped cloud-trained model artifact metadata (MLOps registry).
+
+    Serves the ``{version, download_url, sha256_hash}`` contract that the edge
+    MLOps client (``services/mlops_pipeline.py``) already polls. ``name`` keys
+    the model family (``anomaly``, ``oee_forecast``, ``tactical-engine``);
+    ``feature_contract`` pins the ordered input feature names + normalization so
+    a served ``.pt`` matches what the edge feeds at inference.
+    """
+    __tablename__ = "model_registry"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('draft', 'published', 'yanked')",
+            name="ck_model_registry_status",
+        ),
+        UniqueConstraint(
+            "organization_id", "name", "version",
+            name="uq_model_registry_org_name_version",
+        ),
+    )
+
+    id = UUIDColumn()
+    organization_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    name = Column(String(100), nullable=False)
+    version = Column(String(100), nullable=False)
+    framework = Column(String(50), nullable=False, default="torchscript", server_default="torchscript")
+    artifact_storage_key = Column(Text, nullable=False)
+    checksum_sha256 = Column(String(64), nullable=False)
+    feature_contract = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False, default=dict)
+    metrics = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False, default=dict)
+    training_run_id = Column(UUID(as_uuid=True), nullable=True)
+    release_notes = Column(Text)
+    status = Column(String(30), nullable=False, default="draft", server_default="draft")
+    created_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        server_default=func.now(),
+    )
+
+
+class ModelTrainingRun(Base):
+    """Provenance + metrics for a cloud training run that produces a registry model."""
+    __tablename__ = "model_training_runs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'running', 'succeeded', 'failed', 'cancelled')",
+            name="ck_model_training_runs_status",
+        ),
+    )
+
+    id = UUIDColumn()
+    organization_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    model_name = Column(String(100), nullable=False)
+    status = Column(String(30), nullable=False, default="pending", server_default="pending")
+    params = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False, default=dict)
+    metrics = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False, default=dict)
+    dataset_window_start = Column(DateTime(timezone=True))
+    dataset_window_end = Column(DateTime(timezone=True))
+    sample_count = Column(Integer)
+    produced_model_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("model_registry.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    error = Column(Text)
+    created_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, server_default=func.now())
+    started_at = Column(DateTime(timezone=True))
+    completed_at = Column(DateTime(timezone=True))
