@@ -6,6 +6,7 @@ import { Link } from 'react-router-dom'
 import { assetsApi, telemetryApi } from '../api'
 import { Tooltip, TooltipTrigger, TooltipContent } from '../components/ui'
 import { TelemetryHistoryChart } from '../components/charts'
+import { SensorPanels } from '../components/assets/SensorPanels'
 import { TrendingUp } from 'lucide-react'
 
 const AssetDetail: FC = () => {
@@ -175,6 +176,13 @@ const AssetDetail: FC = () => {
           </div>
         </div>
       )}
+
+      {/* Type-aware sensor pane (sensor taxonomy): machinery gauges / audio /
+          camera feed depending on the asset's sensor class. */}
+      <SensorPanels
+        asset={asset}
+        telemetry={telemetry && !('metricName' in (telemetry as any)) ? (telemetry as any) : null}
+      />
 
       {/* Telemetry History (task B8): stored history + aggregation, complements
           the latest-values grid above. */}
