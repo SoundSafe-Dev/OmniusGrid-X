@@ -17,7 +17,8 @@ import {
   GeoTabException
 } from '../types';
 
-const USE_MOCK = true;
+// Env toggle: mock by default so demos work offline, real when VITE_USE_MOCK=false.
+const USE_MOCK = import.meta.env.VITE_USE_MOCK !== 'false';
 
 const MOCK_DELAY = 500;
 
@@ -623,6 +624,24 @@ export const transportationApi = {
       return shipment;
     }
     const response = await api.post<Shipment>(`/api/v1/transportation/shipments/${id}/dispatch`, { driver_id: driverId, vehicle_id: vehicleId });
+    return response.data;
+  },
+
+  // Lifecycle status transitions (delivered, exception, ...) — task D22.
+  updateShipmentStatus: async (id: string, status: Shipment['status'], note?: string): Promise<Shipment> => {
+    if (USE_MOCK) {
+      await delay(MOCK_DELAY);
+      const shipment = mockShipments.find(s => s.id === id);
+      if (!shipment) throw new Error('Shipment not found');
+      shipment.status = status;
+      if (status === 'delivered') shipment.actualDelivery = new Date().toISOString();
+      shipment.updatedAt = new Date().toISOString();
+      return shipment;
+    }
+    const response = await api.post<Shipment>(
+      `/api/v1/transportation/shipments/${id}/status`,
+      { status, note }
+    );
     return response.data;
   },
 

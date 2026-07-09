@@ -786,9 +786,15 @@ export const TransportationManagement: FC = () => {
 
       {/* Shipment Detail Modal */}
       {selectedShipment && (
-        <ShipmentDetailModal 
-          shipment={selectedShipment} 
-          onClose={() => setSelectedShipment(null)} 
+        <ShipmentDetailModal
+          shipment={selectedShipment}
+          drivers={drivers}
+          vehicles={vehicles}
+          onClose={() => setSelectedShipment(null)}
+          onChanged={() => {
+            setSelectedShipment(null);
+            refetchShipments();
+          }}
         />
       )}
 
@@ -821,8 +827,31 @@ const StatCard: FC<{ label: string; value: string | number; icon: any; color?: s
   </div>
 );
 
-const ShipmentDetailModal: FC<{ shipment: Shipment; onClose: () => void }> = ({ shipment, onClose }) => {
+const ShipmentDetailModal: FC<{
+  shipment: Shipment;
+  drivers: Driver[];
+  vehicles: Vehicle[];
+  onClose: () => void;
+  onChanged: () => void;
+}> = ({ shipment, drivers, vehicles, onClose, onChanged }) => {
   const [costs, setCosts] = useState<any>(null);
+  const [dispatchDriverId, setDispatchDriverId] = useState('');
+  const [dispatchVehicleId, setDispatchVehicleId] = useState('');
+  const [busy, setBusy] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const runAction = async (name: string, fn: () => Promise<unknown>) => {
+    setBusy(name);
+    setActionError(null);
+    try {
+      await fn();
+      onChanged();
+    } catch (e: any) {
+      setActionError(e?.response?.data?.detail || `${name} failed`);
+    } finally {
+      setBusy(null);
+    }
+  };
 
   useEffect(() => {
     transportationApi.getShipmentCosts(shipment.id).then(setCosts);
@@ -960,6 +989,76 @@ const ShipmentDetailModal: FC<{ shipment: Shipment; onClose: () => void }> = ({ 
               </div>
             </div>
           )}
+
+          {/* Lifecycle actions (task D22): dispatch / delivered / cancel. */}
+          <div className="border-t border-opsgrid-border pt-4 space-y-3">
+            {actionError && <p className="text-sm text-status-alarm">{actionError}</p>}
+            {shipment.status === 'planned' && (
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  aria-label="Dispatch driver"
+                  className="px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
+                  value={dispatchDriverId}
+                  onChange={(e) => setDispatchDriverId(e.target.value)}
+                >
+                  <option value="">Select driver…</option>
+                  {drivers.map((d) => (
+                    <option key={d.id} value={d.id}>{d.firstName} {d.lastName}</option>
+                  ))}
+                </select>
+                <select
+                  aria-label="Dispatch vehicle"
+                  className="px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
+                  value={dispatchVehicleId}
+                  onChange={(e) => setDispatchVehicleId(e.target.value)}
+                >
+                  <option value="">Select vehicle…</option>
+                  {vehicles.map((v) => (
+                    <option key={v.id} value={v.id}>{v.vehicleNumber}</option>
+                  ))}
+                </select>
+                <button
+                  disabled={!dispatchDriverId || !dispatchVehicleId || busy !== null}
+                  onClick={() =>
+                    runAction('Dispatch', () =>
+                      transportationApi.dispatchShipment(shipment.id, dispatchDriverId, dispatchVehicleId)
+                    )
+                  }
+                  className="px-4 py-2 bg-opsgrid-primary text-opsgrid-bg rounded-lg text-sm disabled:opacity-50"
+                >
+                  {busy === 'Dispatch' ? 'Dispatching…' : 'Dispatch Shipment'}
+                </button>
+              </div>
+            )}
+            <div className="flex flex-wrap items-center gap-2">
+              {['dispatched', 'picked_up', 'in_transit'].includes(shipment.status) && (
+                <button
+                  disabled={busy !== null}
+                  onClick={() =>
+                    runAction('Mark delivered', () =>
+                      transportationApi.updateShipmentStatus(shipment.id, 'delivered')
+                    )
+                  }
+                  className="px-4 py-2 border border-status-running text-status-running rounded-lg text-sm hover:bg-status-running/10 disabled:opacity-50"
+                >
+                  {busy === 'Mark delivered' ? 'Updating…' : 'Mark Delivered'}
+                </button>
+              )}
+              {['planned', 'dispatched'].includes(shipment.status) && (
+                <button
+                  disabled={busy !== null}
+                  onClick={() =>
+                    runAction('Cancel shipment', () =>
+                      transportationApi.updateShipmentStatus(shipment.id, 'cancelled')
+                    )
+                  }
+                  className="px-4 py-2 border border-status-alarm text-status-alarm rounded-lg text-sm hover:bg-status-alarm/10 disabled:opacity-50"
+                >
+                  {busy === 'Cancel shipment' ? 'Cancelling…' : 'Cancel Shipment'}
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       </div>
     </div>
