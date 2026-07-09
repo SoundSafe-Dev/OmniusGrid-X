@@ -157,3 +157,19 @@ def test_out_of_scope_path_not_deduped():
     client.post("/api/v1/other/do", headers=h)
     client.post("/api/v1/other/do", headers=h)
     assert state["calls"] == 2  # /other is not a protected prefix
+
+
+# --- task 11: OpenAPI operationId polish -------------------------------------
+
+def test_clean_operation_ids():
+    from app.core.openapi import custom_generate_unique_id
+
+    app = FastAPI(generate_unique_id_function=custom_generate_unique_id)
+
+    @app.get("/api/v1/edge/fleet", tags=["Edge"])
+    def list_fleet():
+        return []
+
+    schema = app.openapi()
+    op_id = schema["paths"]["/api/v1/edge/fleet"]["get"]["operationId"]
+    assert op_id == "edge_list_fleet"  # <tag>_<route_name>, no path noise

@@ -1,0 +1,7 @@
+# Backend dev/test-only dependencies (not installed in the runtime image).
+-r requirements.txt
+
+pytest==8.3.3
+pytest-asyncio==0.24.0
+schemathesis==3.36.0    # property-based API contract testing (task 12)
+pip-audit==2.7.3        # dependency vulnerability audit (task 20)

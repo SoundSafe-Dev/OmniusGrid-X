@@ -14,6 +14,7 @@ from app.services.websocket_manager import websocket_manager
 from app.services.command_executor import command_executor
 from app.services.oee_calculator import oee_calculator
 from app.core.errors import register_exception_handlers
+from app.core.openapi import custom_generate_unique_id
 from app.middleware.request_context import RequestContextMiddleware
 from app.middleware.idempotency import IdempotencyMiddleware
 from app.middleware.audit import AuditLoggingMiddleware
@@ -80,6 +81,8 @@ app = FastAPI(
     """,
     version="0.1.0",
     lifespan=lifespan,
+    # Clean, stable operationIds -> readable generated SDK method names (task 11).
+    generate_unique_id_function=custom_generate_unique_id,
     contact={
         "name": "SoundSafe",
         "email": "support@soundsafe.ai",
@@ -119,6 +122,10 @@ app = FastAPI(
         {
             "name": "Registries",
             "description": "Compliance and operational registries"
+        },
+        {
+            "name": "Edge",
+            "description": "Edge agent enrollment, authenticated telemetry ingest, and fleet health"
         },
     ]
 )

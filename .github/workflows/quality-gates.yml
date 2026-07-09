@@ -1,0 +1,42 @@
+# Additive quality gates (kept separate from ci-cd.yml to avoid convergence
+# conflicts). Adds: API contract tests (task 12), frontend tests (tasks 1-2),
+# and supply-chain scanning (task 20). Jobs are appended here as those tasks land.
+name: Quality Gates
+
+on:
+  push:
+    branches: [main, develop, 'hamad/**']
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  # --- task 12: property-based API contract tests ---------------------------
+  api-contract:
+    runs-on: ubuntu-latest
+    # Advisory initially: surfaces schema/response drift without blocking merges.
+    continue-on-error: true
+    services:
+      postgres:
+        image: timescale/timescaledb:latest-pg15
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: omniusgrid_test
+        options: >-
+          --health-cmd pg_isready --health-interval 10s
+          --health-timeout 5s --health-retries 5
+        ports: ['5432:5432']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install dev deps
+        working-directory: ./backend
+        run: pip install -r requirements-dev.txt
+      - name: Run schemathesis contract tests
+        working-directory: ./backend
+        env:
+          DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/omniusgrid_test
+        run: pytest tests/test_api_contract.py -q
