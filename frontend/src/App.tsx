@@ -34,6 +34,7 @@ const Users = named(() => import('./pages/admin'), 'Users')
 const Collectors = named(() => import('./pages/admin'), 'Collectors')
 const SystemHealth = named(() => import('./pages/admin'), 'SystemHealth')
 const Settings = named(() => import('./pages/admin'), 'Settings')
+const ERPIntegrations = named(() => import('./pages/admin'), 'ERPIntegrations')
 
 const YardManagement = named(() => import('./pages/logistics'), 'YardManagement')
 const TransportationManagement = named(() => import('./pages/logistics'), 'TransportationManagement')
@@ -100,6 +101,7 @@ const App: FC = () => {
 
                 {/* Admin */}
                 <Route path="/admin/users" element={<Users />} />
+                <Route path="/admin/erp" element={<ERPIntegrations />} />
                 <Route path="/admin/collectors" element={<Collectors />} />
                 <Route path="/admin/health" element={<SystemHealth />} />
                 <Route path="/admin/settings" element={<Settings />} />

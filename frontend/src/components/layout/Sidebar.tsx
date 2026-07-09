@@ -20,6 +20,7 @@ import {
   Kanban as KanbanIcon,
   MessageSquare,
   Inbox,
+  Database,
 } from 'lucide-react';
 import { useUIStore, useAuthStore } from '../../stores';
 import { cn } from '../../utils';
@@ -94,6 +95,7 @@ const navItems: NavItem[] = [
     adminOnly: true,
     children: [
       { path: '/admin/users', label: 'Users', icon: Users, description: 'User and role management' },
+      { path: '/admin/erp', label: 'ERP Integrations', icon: Database, description: 'Configure and monitor ERP connections' },
       { path: '/admin/collectors', label: 'Collectors', icon: Box, description: 'Data collector configuration' },
       { path: '/admin/health', label: 'System Health', icon: LayoutDashboard, description: 'Infrastructure status monitoring' },
       { path: '/admin/settings', label: 'Settings', icon: Settings, description: 'System configuration' },
