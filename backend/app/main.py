@@ -9,6 +9,7 @@ from app.api import yard, transportation, logistics_correlation, websocket, comm
 from app.api import health_index, simulation, notifications
 from app.api import edge_enroll, edge_ingest, edge_fleet
 from app.api import erp_webhooks
+from app.api import platform_correlation
 from app.core.config import settings
 from app.db.database import init_db
 from app.services.websocket_manager import websocket_manager
@@ -221,6 +222,7 @@ app.include_router(compliance.router, prefix="/api/v1/compliance", tags=["Compli
 app.include_router(data_residency.router, prefix="/api/v1/data-residency", tags=["Data Residency"])
 app.include_router(erp_integrations.router, tags=["ERP Integrations"])
 app.include_router(erp_webhooks.router, tags=["ERP Integrations"])
+app.include_router(platform_correlation.router, tags=["NLP Correlation"])
 
 
 @app.get("/")

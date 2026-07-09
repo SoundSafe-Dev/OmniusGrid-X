@@ -3,6 +3,7 @@ import { analysisSessionsApi, DataSource } from '../../api/analysisSessions';
 import { Upload, FileText, Trash2, Loader2 } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
+import { PlatformDataSourcePicker } from './PlatformDataSourcePicker';
 
 interface DataSourcesPanelProps {
   sessionId: string;
@@ -244,6 +245,13 @@ export const DataSourcesPanel = React.forwardRef<DataSourcesPanelHandle, DataSou
           )}
         </div>
       </div>
+
+      {/* Attach live platform data (sensor/asset telemetry, yard, transportation)
+          as correlation sources — flows through the existing correlate engine. */}
+      <PlatformDataSourcePicker
+        sessionId={sessionId}
+        onAttached={() => { loadDataSources(); onDataSourceAdded?.(); }}
+      />
 
       <div className="flex-1 overflow-y-auto p-2">
         {isLoading ? (
