@@ -13,6 +13,9 @@ from app.db.database import init_db
 from app.services.websocket_manager import websocket_manager
 from app.services.command_executor import command_executor
 from app.services.oee_calculator import oee_calculator
+from app.core.errors import register_exception_handlers
+from app.middleware.request_context import RequestContextMiddleware
+from app.middleware.idempotency import IdempotencyMiddleware
 from app.middleware.audit import AuditLoggingMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.middleware.csrf import CSRFMiddleware
@@ -120,6 +123,9 @@ app = FastAPI(
     ]
 )
 
+# Consistent error envelope for all 4xx/5xx (keeps `detail` for back-compat).
+register_exception_handlers(app)
+
 # Apply rate limiter to the app (disabled for debugging)
 # app.state.limiter = limiter
 
@@ -130,6 +136,22 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+)
+
+# Request-ID / correlation + structured access logging (outermost so every
+# request — including error responses — gets an id and one access log line).
+app.add_middleware(RequestContextMiddleware)
+
+# Idempotency-Key replay for mutations on the unowned platform domains only.
+app.add_middleware(
+    IdempotencyMiddleware,
+    protected_prefixes=(
+        "/api/v1/operations",
+        "/api/v1/dashboard",
+        "/api/v1/yard",
+        "/api/v1/transportation",
+        "/api/v1/geotab",
+    ),
 )
 
 # CSRF middleware (optional, can be disabled for API-only usage)

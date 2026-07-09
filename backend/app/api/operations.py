@@ -4,9 +4,10 @@ from typing import List, Optional
 from uuid import UUID
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.pagination import PageParams, PaginatedResponse, paginate
 from app.db.database import get_db
 from app.db.models import Operation, Asset, PackMLState
 from app.models.schemas import OperationCreate, OperationResponse
@@ -14,36 +15,48 @@ from app.models.schemas import OperationCreate, OperationResponse
 router = APIRouter()
 
 
-@router.get("/", response_model=List[OperationResponse])
+@router.get("/", response_model=PaginatedResponse[OperationResponse])
 async def list_operations(
     asset_id: Optional[UUID] = None,
     status: Optional[str] = None,
     job_id: Optional[str] = None,
     start_time: Optional[datetime] = None,
     end_time: Optional[datetime] = None,
-    skip: int = Query(0, ge=0),
-    limit: int = Query(100, ge=1, le=1000),
+    page: PageParams = Depends(),
     db: AsyncSession = Depends(get_db)
 ):
-    """List operations with filtering"""
-    query = select(Operation)
-    
+    """List operations with filtering (paginated).
+
+    Returns a PaginatedResponse envelope (items + meta). operations has no
+    frontend client, so this is the reference rollout of app.core.pagination;
+    consumer-facing unowned routers (yard, transportation) follow the same
+    one-line pattern once the generated SDK replaces their hand-written clients.
+    """
+    filters = []
     if asset_id:
-        query = query.where(Operation.asset_id == asset_id)
+        filters.append(Operation.asset_id == asset_id)
     if status:
-        query = query.where(Operation.status == status)
+        filters.append(Operation.status == status)
     if job_id:
-        query = query.where(Operation.job_id == job_id)
+        filters.append(Operation.job_id == job_id)
     if start_time:
-        query = query.where(Operation.started_at >= start_time)
+        filters.append(Operation.started_at >= start_time)
     if end_time:
-        query = query.where(Operation.started_at <= end_time)
-    
-    query = query.order_by(Operation.started_at.desc()).offset(skip).limit(limit)
-    result = await db.execute(query)
-    operations = result.scalars().all()
-    
-    return operations
+        filters.append(Operation.started_at <= end_time)
+
+    where = and_(*filters) if filters else None
+
+    total_q = select(func.count()).select_from(Operation)
+    list_q = select(Operation)
+    if where is not None:
+        total_q = total_q.where(where)
+        list_q = list_q.where(where)
+
+    total = (await db.execute(total_q)).scalar_one()
+    list_q = list_q.order_by(Operation.started_at.desc()).offset(page.skip).limit(page.limit)
+    operations = (await db.execute(list_q)).scalars().all()
+
+    return paginate(operations, total, page)
 
 
 @router.get("/active")
