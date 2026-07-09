@@ -15,6 +15,30 @@
 
 ---
 
+## Quickstart
+
+```bash
+# 1. Create local env files from the templates
+make env            # copies .env.example -> .env for root/backend/frontend/edge-agent
+
+# 2. Start the stack (Redpanda, TimescaleDB, backend, frontend, observability)
+make up             # docker-compose up -d;  add tracing with `make tracing`
+
+# 3. Run the test suites
+make test           # backend + edge (pytest) + frontend (vitest)
+make e2e            # frontend Playwright smoke
+
+# Other handy targets
+make sdk            # regenerate the typed TS API client from the OpenAPI schema
+make help           # list all targets
+```
+
+Backend: http://localhost:8000 (`/docs` for the API). Frontend: http://localhost:9999.
+Jaeger (with `make tracing`): http://localhost:16686. Copy and edit the `.env`
+files for real credentials — never commit them.
+
+---
+
 ## Overview
 
 OmniusGrid is a resilient manufacturing operations platform designed for Industry 4.0. It unifies data collection from diverse industrial equipment, provides real-time edge AI inference, and maintains secure cloud connectivity for model training and fleet-wide optimization.

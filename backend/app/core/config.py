@@ -86,9 +86,10 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://redis:6379/0"
     
     # Application
+    ENVIRONMENT: str = "development"   # development | staging | production
     DEBUG: bool = True
     LOG_LEVEL: str = "INFO"
-    
+
     class Config:
         env_file = ".env"
 
@@ -99,3 +100,25 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
+
+# Insecure defaults that must not ship to production (task 17).
+_INSECURE_JWT = "dev_secret_key_change_in_production"
+
+
+def validate_settings(s: "Settings" = None) -> list[str]:
+    """Return a list of production-safety problems (empty when OK).
+
+    Advisory in non-prod; the startup hook escalates to a hard failure when
+    ENVIRONMENT=production so a misconfigured deploy fails fast instead of
+    running with dev secrets.
+    """
+    s = s or settings
+    problems: list[str] = []
+    if s.ENVIRONMENT.lower() == "production":
+        if not s.JWT_SECRET_KEY or s.JWT_SECRET_KEY == _INSECURE_JWT:
+            problems.append("JWT_SECRET_KEY is unset or the insecure dev default")
+        if s.DEBUG:
+            problems.append("DEBUG must be false in production")
+        if not s.EDGE_BOOTSTRAP_TOKEN:
+            problems.append("EDGE_BOOTSTRAP_TOKEN is empty; edge enrollment is disabled")
+    return problems

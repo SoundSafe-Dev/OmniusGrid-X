@@ -1,0 +1,31 @@
+"""Tests for production config validation (task 17)."""
+
+from app.core.config import Settings, validate_settings
+
+
+def test_dev_config_has_no_problems():
+    s = Settings(ENVIRONMENT="development")
+    assert validate_settings(s) == []
+
+
+def test_production_flags_insecure_defaults():
+    s = Settings(
+        ENVIRONMENT="production",
+        JWT_SECRET_KEY="dev_secret_key_change_in_production",
+        DEBUG=True,
+        EDGE_BOOTSTRAP_TOKEN="",
+    )
+    problems = validate_settings(s)
+    assert any("JWT_SECRET_KEY" in p for p in problems)
+    assert any("DEBUG" in p for p in problems)
+    assert any("EDGE_BOOTSTRAP_TOKEN" in p for p in problems)
+
+
+def test_production_with_secure_config_passes():
+    s = Settings(
+        ENVIRONMENT="production",
+        JWT_SECRET_KEY="a-very-long-random-production-secret",
+        DEBUG=False,
+        EDGE_BOOTSTRAP_TOKEN="rotate-me",
+    )
+    assert validate_settings(s) == []

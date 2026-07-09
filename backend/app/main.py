@@ -133,6 +133,15 @@ app = FastAPI(
 # Consistent error envelope for all 4xx/5xx (keeps `detail` for back-compat).
 register_exception_handlers(app)
 
+# Fail fast on insecure production configuration (task 17).
+from app.core.config import validate_settings as _validate_settings  # noqa: E402
+_config_problems = _validate_settings()
+if _config_problems:
+    if settings.ENVIRONMENT.lower() == "production":
+        raise RuntimeError("insecure production config: " + "; ".join(_config_problems))
+    import structlog as _structlog  # noqa: E402
+    _structlog.get_logger().warning("config_warnings", problems=_config_problems)
+
 # Distributed tracing (no-op unless OTEL_ENABLED).
 from app.core.tracing import setup_tracing  # noqa: E402
 from app.db.database import engine as _db_engine  # noqa: E402
