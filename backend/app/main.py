@@ -133,6 +133,11 @@ app = FastAPI(
 # Consistent error envelope for all 4xx/5xx (keeps `detail` for back-compat).
 register_exception_handlers(app)
 
+# Distributed tracing (no-op unless OTEL_ENABLED).
+from app.core.tracing import setup_tracing  # noqa: E402
+from app.db.database import engine as _db_engine  # noqa: E402
+setup_tracing(app, engine=_db_engine)
+
 # Apply rate limiter to the app (disabled for debugging)
 # app.state.limiter = limiter
 

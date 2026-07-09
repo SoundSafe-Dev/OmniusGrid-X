@@ -22,6 +22,13 @@ prometheus-client==0.19.0
 slowapi==0.1.9
 cryptography==41.0.7
 
+# Distributed tracing (OpenTelemetry) — only imported when OTEL_ENABLED (task 13).
+opentelemetry-sdk==1.27.0
+opentelemetry-exporter-otlp-proto-grpc==1.27.0
+opentelemetry-instrumentation-fastapi==0.48b0
+opentelemetry-instrumentation-httpx==0.48b0
+opentelemetry-instrumentation-sqlalchemy==0.48b0
+
 # ML Inference
 torch==2.1.0
 numpy==1.24.3

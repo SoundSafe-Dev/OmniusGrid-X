@@ -15,6 +15,8 @@ from typing import Callable, Dict, Optional, Tuple
 
 import structlog
 
+from .tracing import new_traceparent, trace_id_of
+
 logger = structlog.get_logger()
 
 PostFn = Callable[[str, Dict, Dict], Tuple[int, Dict]]
@@ -58,8 +60,11 @@ class HeartbeatReporter:
         clock-skew estimator (if one was provided).
         """
         url = f"{self.server_url}/api/v1/edge/heartbeat"
+        # Originate W3C trace context so the backend continues one distributed
+        # trace and reuses the trace-id as the request correlation id (task 15).
+        traceparent = new_traceparent()
         try:
-            status, resp = self._post(url, self.build_payload(), {})
+            status, resp = self._post(url, self.build_payload(), {"traceparent": traceparent})
         except Exception as e:
             logger.warning("heartbeat_failed", error=str(e))
             return False

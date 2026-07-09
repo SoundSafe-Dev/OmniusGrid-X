@@ -47,6 +47,11 @@ class Settings(BaseSettings):
     EDGE_CA_KEY_PATH: str = "/certs/edge-ca.key"
     EDGE_BOOTSTRAP_TOKEN: str = ""   # one-time token agents present to enroll
     EDGE_CERT_TTL_DAYS: int = 30     # validity of issued agent certificates
+
+    # Distributed tracing (OpenTelemetry). Off by default; a no-op when disabled.
+    OTEL_ENABLED: bool = False
+    OTEL_SERVICE_NAME: str = "omniusgrid-backend"
+    OTEL_EXPORTER_OTLP_ENDPOINT: str = "http://otel-collector:4317"
     
     # Cloud Gateway
     CLOUD_MQTT_HOST: str = "cloud.opsgrid.io"

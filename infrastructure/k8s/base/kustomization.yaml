@@ -13,6 +13,7 @@ resources:
   - timescaledb-statefulset.yaml
   - redpanda-statefulset.yaml
   - ingress.yaml
+  - otel-collector.yaml
 
 configMapGenerator:
   - name: timescaledb-init-scripts
