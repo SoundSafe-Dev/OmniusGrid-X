@@ -1,0 +1,61 @@
+# SLO recording rules + multi-window burn-rate alerts (task 16).
+# SLIs derive from http_requests_total / http_request_duration_seconds emitted by
+# the backend request-context middleware. Target: 99.9% availability (0.1% budget).
+groups:
+  - name: opsgrid_slo_sli
+    interval: 30s
+    rules:
+      # Request rate (all backend HTTP).
+      - record: job:http_requests:rate5m
+        expr: sum(rate(http_requests_total[5m]))
+      # Error ratio over several windows (5xx / total) — the availability SLI.
+      - record: job:http_errors:ratio5m
+        expr: |
+          sum(rate(http_requests_total{status_class="5xx"}[5m]))
+          / clamp_min(sum(rate(http_requests_total[5m])), 1e-9)
+      - record: job:http_errors:ratio30m
+        expr: |
+          sum(rate(http_requests_total{status_class="5xx"}[30m]))
+          / clamp_min(sum(rate(http_requests_total[30m])), 1e-9)
+      - record: job:http_errors:ratio1h
+        expr: |
+          sum(rate(http_requests_total{status_class="5xx"}[1h]))
+          / clamp_min(sum(rate(http_requests_total[1h])), 1e-9)
+      - record: job:http_errors:ratio6h
+        expr: |
+          sum(rate(http_requests_total{status_class="5xx"}[6h]))
+          / clamp_min(sum(rate(http_requests_total[6h])), 1e-9)
+      # Availability SLI (1 - error ratio) and p99 latency SLI.
+      - record: job:slo_availability:ratio5m
+        expr: 1 - job:http_errors:ratio5m
+      - record: job:http_latency:p99_5m
+        expr: histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket[5m])))
+
+  - name: opsgrid_slo_burn_rate
+    rules:
+      # Fast burn: 14.4x budget over 1h AND 5m (page) — budget gone in ~2 days.
+      - alert: SLOErrorBudgetFastBurn
+        expr: |
+          job:http_errors:ratio1h > (14.4 * 0.001)
+          and job:http_errors:ratio5m > (14.4 * 0.001)
+        for: 2m
+        labels:
+          severity: high
+          team: platform
+          slo: availability
+        annotations:
+          summary: "Availability error budget burning fast"
+          description: "5xx ratio >14.4x the 99.9% budget over 1h+5m; budget exhausts in ~2 days."
+      # Slow burn: 6x budget over 6h AND 30m (ticket).
+      - alert: SLOErrorBudgetSlowBurn
+        expr: |
+          job:http_errors:ratio6h > (6 * 0.001)
+          and job:http_errors:ratio30m > (6 * 0.001)
+        for: 15m
+        labels:
+          severity: medium
+          team: platform
+          slo: availability
+        annotations:
+          summary: "Availability error budget burning slowly"
+          description: "5xx ratio >6x the 99.9% budget over 6h+30m; investigate before budget depletes."

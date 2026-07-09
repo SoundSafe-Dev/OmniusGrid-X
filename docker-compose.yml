@@ -146,6 +146,7 @@ services:
     volumes:
       - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
       - ./infra/prometheus/alerts.yml:/etc/prometheus/alerts.yml
+      - ./infra/prometheus/slo_rules.yml:/etc/prometheus/slo_rules.yml
       - prometheus-data:/prometheus
     ports:
       - "9090:9090"

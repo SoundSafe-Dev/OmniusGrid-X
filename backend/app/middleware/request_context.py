@@ -18,6 +18,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
+from app.core.http_metrics import record_http
+
 logger = structlog.get_logger()
 
 REQUEST_ID_HEADER = "X-Request-ID"
@@ -59,14 +61,15 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
             structlog.contextvars.unbind_contextvars("request_id")
             raise
 
-        elapsed_ms = (time.perf_counter() - start) * 1000
+        elapsed = time.perf_counter() - start
         response.headers[REQUEST_ID_HEADER] = request_id
+        record_http(request.method, response.status_code, elapsed)
         logger.info(
             "request_completed",
             method=request.method,
             path=request.url.path,
             status_code=response.status_code,
-            duration_ms=round(elapsed_ms, 2),
+            duration_ms=round(elapsed * 1000, 2),
         )
         structlog.contextvars.unbind_contextvars("request_id")
         return response
