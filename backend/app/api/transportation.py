@@ -22,7 +22,10 @@ from app.models.schemas import (
 )
 from app.services.transportation_management import transportation_management_service
 
-router = APIRouter(prefix="/transportation", tags=["transportation_management"])
+# No router-level prefix: main.py already includes this router at its /api/v1/...
+# path. (The old prefix double-prefixed every route — e.g. /api/v1/yard/yard/* —
+# never noticed because the frontend ran on mocks.)
+router = APIRouter(tags=["transportation_management"])
 
 
 # ==================== Carrier Endpoints ====================
@@ -485,3 +488,90 @@ async def get_shipment_charges(
         select(FreightCharge).where(FreightCharge.shipment_id == shipment_id)
     )
     return result.scalars().all()
+
+
+# ==================== Vehicles (task D20; backed by migration 025) ====================
+
+@router.get("/vehicles")
+async def get_vehicles(
+    carrier_id: Optional[UUID] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """List fleet vehicles (previously frontend-mock-only)."""
+    from sqlalchemy import select
+    from app.db.logistics_models import Vehicle
+
+    query = select(Vehicle).where(Vehicle.is_active == True)  # noqa: E712
+    if carrier_id:
+        query = query.where(Vehicle.carrier_id == str(carrier_id))
+    vehicles = (await db.execute(query)).scalars().all()
+    return [
+        {
+            "id": str(v.id),
+            "vehicleNumber": v.vehicle_number,
+            "vin": v.vin,
+            "make": v.make,
+            "model": v.model,
+            "year": v.year,
+            "status": v.status,
+            "fuelLevel": v.fuel_level_percent,
+            "odometer": v.odometer_miles,
+            "geotabDeviceId": v.geotab_device_id,
+            "currentDriverId": v.current_driver_id,
+            "lastLocation": v.last_location or {},
+        }
+        for v in vehicles
+    ]
+
+
+@router.post("/vehicles")
+async def create_vehicle(
+    payload: dict,
+    db: AsyncSession = Depends(get_db)
+):
+    """Register a fleet vehicle."""
+    from app.db.logistics_models import Vehicle
+
+    vehicle = Vehicle(
+        organization_id=payload.get("organization_id"),
+        carrier_id=payload.get("carrier_id"),
+        vehicle_number=payload.get("vehicle_number") or payload.get("vehicleNumber"),
+        vin=payload.get("vin"),
+        make=payload.get("make"),
+        model=payload.get("model"),
+        year=payload.get("year"),
+        status=payload.get("status", "idle"),
+        geotab_device_id=payload.get("geotab_device_id"),
+    )
+    if not vehicle.vehicle_number:
+        raise HTTPException(status_code=400, detail="vehicle_number is required")
+    db.add(vehicle)
+    await db.commit()
+    await db.refresh(vehicle)
+    return {"id": str(vehicle.id), "vehicleNumber": vehicle.vehicle_number}
+
+
+def compute_delivery_efficiency(shipments: list) -> dict:
+    """Pure aggregate for the delivery-efficiency panel (task D20).
+
+    on-time = delivered with actual_delivery <= scheduled_delivery.
+    """
+    delivered = [s for s in shipments if getattr(s, "status", None) == "delivered"]
+    on_time = [
+        s for s in delivered
+        if s.actual_delivery and s.scheduled_delivery and s.actual_delivery <= s.scheduled_delivery
+    ]
+    transit_hours = [
+        (s.actual_delivery - s.actual_pickup).total_seconds() / 3600
+        for s in delivered
+        if s.actual_delivery and s.actual_pickup
+    ]
+    today = datetime.utcnow().date()
+    return {
+        "onTimeRate": round(len(on_time) / len(delivered), 4) if delivered else 1.0,
+        "avgTransitHours": round(sum(transit_hours) / len(transit_hours), 1) if transit_hours else 0.0,
+        "deliveredToday": sum(
+            1 for s in delivered if s.actual_delivery and s.actual_delivery.date() == today
+        ),
+        "totalDelivered": len(delivered),
+    }

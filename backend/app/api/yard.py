@@ -27,7 +27,10 @@ from app.services.yard_management import (
     yard_management_service, dock_scheduler, DetentionCalculator
 )
 
-router = APIRouter(prefix="/yard", tags=["yard_management"])
+# No router-level prefix: main.py already includes this router at its /api/v1/...
+# path. (The old prefix double-prefixed every route — e.g. /api/v1/yard/yard/* —
+# never noticed because the frontend ran on mocks.)
+router = APIRouter(tags=["yard_management"])
 
 
 # ==================== Yard Trailer Endpoints ====================

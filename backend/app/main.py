@@ -10,6 +10,7 @@ from app.api import health_index, simulation, notifications
 from app.api import edge_enroll, edge_ingest, edge_fleet
 from app.api import erp_webhooks
 from app.api import platform_correlation
+from app.api import fleet_logistics
 from app.core.config import settings
 from app.db.database import init_db
 from app.services.websocket_manager import websocket_manager
@@ -223,6 +224,10 @@ app.include_router(data_residency.router, prefix="/api/v1/data-residency", tags=
 app.include_router(erp_integrations.router, tags=["ERP Integrations"])
 app.include_router(erp_webhooks.router, tags=["ERP Integrations"])
 app.include_router(platform_correlation.router, tags=["NLP Correlation"])
+# Fleet logistics (D20-D21): geofencing, maintenance, and logistics aggregates.
+app.include_router(fleet_logistics.geofencing_router, prefix="/api/v1/geofencing", tags=["Geofencing"])
+app.include_router(fleet_logistics.maintenance_router, prefix="/api/v1/maintenance", tags=["Fleet Maintenance"])
+app.include_router(fleet_logistics.logistics_router, prefix="/api/v1/logistics", tags=["Transportation Management"])
 
 
 @app.get("/")
