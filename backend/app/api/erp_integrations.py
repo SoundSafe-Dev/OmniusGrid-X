@@ -15,8 +15,13 @@ import structlog
 
 from app.db.database import get_db
 from app.api.auth import get_current_active_user
-from app.db.models import User, IntegrationConfiguration, ERPDataMapping, ERPSyncStatus
+from app.db.models import User, IntegrationConfiguration, ERPDataMapping, ERPSyncStatus, ERPEntity
 from app.services.erp_connector_base import ERPType, AuthType, ERPConfig
+from app.services.erp_connector_factory import (
+    ERPConnectorFactory,
+    ERPConnectorUnavailable,
+    UnsupportedERPType,
+)
 
 logger = structlog.get_logger()
 
@@ -416,14 +421,39 @@ async def test_connection(
     
     if not integration:
         raise HTTPException(status_code=404, detail="Integration not found")
-    
-    # TODO: Implement actual connection test using connector
-    # For now, return mock response
+
+    # Build the concrete connector and run its real health check.
+    tested_at = datetime.utcnow()
+    try:
+        connector = ERPConnectorFactory.create(integration)
+    except UnsupportedERPType as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except ERPConnectorUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+    try:
+        health = await connector.health_check()
+        status, message = interpret_health(health)
+        details = health
+    except Exception as exc:  # real connection failure — report, don't 500
+        status, message, details = "error", str(exc), {}
+    finally:
+        try:
+            await connector.close()
+        except Exception:
+            pass
+
+    # Persist the outcome on the integration row.
+    integration.health_status = status
+    integration.last_health_check = tested_at
+    await db.commit()
+
     return {
-        "status": "success",
-        "message": "Connection test successful",
+        "status": status,
+        "message": message,
+        "details": details,
         "integration_id": str(integration_id),
-        "tested_at": datetime.utcnow().isoformat()
+        "tested_at": tested_at.isoformat(),
     }
 
 
@@ -450,16 +480,145 @@ async def trigger_sync(
     
     if not integration:
         raise HTTPException(status_code=404, detail="Integration not found")
-    
-    # TODO: Implement actual sync trigger
-    # For now, return mock response
+
+    # Resolve which entity types to sync: explicit param, else the distinct
+    # source entities from the field mappings.
+    if entity_type:
+        entity_types = [entity_type]
+    else:
+        maps = await db.execute(
+            select(ERPDataMapping.source_entity).where(
+                ERPDataMapping.integration_id == integration_id
+            ).distinct()
+        )
+        entity_types = [row[0] for row in maps.all() if row[0]]
+
+    if not entity_types:
+        raise HTTPException(
+            status_code=400,
+            detail="No entity_type given and no field mappings to infer entities from",
+        )
+
+    # Run off the request path so long syncs don't block the response.
+    background_tasks.add_task(
+        run_erp_sync, str(integration_id), str(current_user.organization_id), entity_types
+    )
     return {
         "status": "triggered",
-        "message": "Sync triggered successfully",
+        "message": f"Sync triggered for {len(entity_types)} entity type(s)",
         "integration_id": str(integration_id),
-        "entity_type": entity_type,
-        "triggered_at": datetime.utcnow().isoformat()
+        "entity_types": entity_types,
+        "triggered_at": datetime.utcnow().isoformat(),
     }
+
+
+def interpret_health(health: Dict[str, Any]) -> tuple:
+    """Reduce a connector health_check() dict to (status, message).
+
+    Connectors vary: some return {"healthy": bool}, some {"status": "healthy"}.
+    Treat healthy/ok/connected as success; anything else as an error.
+    """
+    healthy = health.get("healthy")
+    if healthy is None:
+        healthy = str(health.get("status", "")).lower() in ("healthy", "ok", "connected", "up")
+    status = "success" if healthy else "error"
+    default = "Connection test successful" if status == "success" else "Connection test failed"
+    return status, health.get("message", default)
+
+
+def extract_entity_id(record: Dict[str, Any], index: int) -> str:
+    """Best-effort stable id for a fetched ERP record."""
+    for key in ("id", "Id", "ID", "entity_id", "number", "Number", "key", "Key"):
+        if record.get(key) not in (None, ""):
+            return str(record[key])
+    return f"row-{index}"
+
+
+async def run_erp_sync(integration_id: str, organization_id: str, entity_types: List[str]) -> Dict[str, Any]:
+    """Fetch each entity type via the connector, upsert erp_entities, and record
+    per-entity sync status. Runs in its own DB session (background task)."""
+    from app.db.database import AsyncSessionLocal
+    from sqlalchemy import select as _select
+
+    summary: Dict[str, Any] = {}
+    async with AsyncSessionLocal() as db:
+        integration = (
+            await db.execute(
+                _select(IntegrationConfiguration).where(IntegrationConfiguration.id == integration_id)
+            )
+        ).scalar_one_or_none()
+        if integration is None:
+            return {"error": "integration not found"}
+
+        try:
+            connector = ERPConnectorFactory.create(integration)
+        except (UnsupportedERPType, ERPConnectorUnavailable) as exc:
+            logger.error("erp_sync_connector_error", integration_id=integration_id, error=str(exc))
+            return {"error": str(exc)}
+
+        source_system = str(integration.erp_type or "erp")
+        any_success = False
+        for etype in entity_types:
+            started = datetime.utcnow()
+            synced = failed = 0
+            status = "success"
+            try:
+                records = await connector.fetch_data(etype) or []
+                for i, record in enumerate(records):
+                    eid = extract_entity_id(record, i)
+                    existing = (
+                        await db.execute(
+                            _select(ERPEntity).where(
+                                ERPEntity.integration_id == integration_id,
+                                ERPEntity.entity_type == etype,
+                                ERPEntity.entity_id == eid,
+                            )
+                        )
+                    ).scalar_one_or_none()
+                    if existing is None:
+                        db.add(ERPEntity(
+                            organization_id=organization_id, integration_id=integration_id,
+                            entity_type=etype, entity_id=eid, entity_data=record,
+                            source_system=source_system,
+                        ))
+                    else:
+                        existing.entity_data = record
+                        existing.updated_at = datetime.utcnow()
+                    synced += 1
+                any_success = True
+            except Exception as exc:
+                status, failed = "failed", 1
+                logger.error("erp_sync_entity_failed", entity_type=etype, error=str(exc))
+
+            duration = (datetime.utcnow() - started).total_seconds()
+            sync_row = (
+                await db.execute(
+                    _select(ERPSyncStatus).where(
+                        ERPSyncStatus.integration_id == integration_id,
+                        ERPSyncStatus.entity_type == etype,
+                    )
+                )
+            ).scalar_one_or_none()
+            if sync_row is None:
+                sync_row = ERPSyncStatus(
+                    organization_id=organization_id, integration_id=integration_id, entity_type=etype
+                )
+                db.add(sync_row)
+            sync_row.last_sync_at = started
+            sync_row.last_sync_status = status
+            sync_row.records_synced = synced
+            sync_row.records_failed = failed
+            sync_row.sync_duration_seconds = int(duration)
+            summary[etype] = {"status": status, "records_synced": synced, "records_failed": failed}
+
+        if any_success:
+            integration.last_successful_sync = datetime.utcnow()
+        await db.commit()
+        try:
+            await connector.close()
+        except Exception:
+            pass
+    return summary
 
 
 @router.get("/{integration_id}/sync-status", response_model=List[SyncStatusResponse])
