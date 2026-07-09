@@ -13,6 +13,9 @@ class AssetBase(BaseModel):
     vendor: Optional[str] = None
     model: Optional[str] = None
     connection_config: Dict[str, Any] = {}
+    # Sensor taxonomy (migration 024): machinery | audio | video | environmental | generic.
+    sensor_class: Optional[str] = None
+    media_config: Dict[str, Any] = {}
     is_active: bool = True
 
 
@@ -28,6 +31,8 @@ class AssetUpdate(BaseModel):
     vendor: Optional[str] = None
     model: Optional[str] = None
     connection_config: Optional[Dict[str, Any]] = None
+    sensor_class: Optional[str] = None
+    media_config: Optional[Dict[str, Any]] = None
     is_active: Optional[bool] = None
     current_packml_state: Optional[str] = None
 
@@ -50,6 +55,7 @@ class AssetResponse(AssetBase):
 class AssetTypeCreate(BaseModel):
     name: str
     category: str
+    sensor_class: Optional[str] = "generic"
     packml_config: Dict[str, Any] = {}
     telemetry_schema: Dict[str, Any] = {}
     action_space: Dict[str, Any] = {}

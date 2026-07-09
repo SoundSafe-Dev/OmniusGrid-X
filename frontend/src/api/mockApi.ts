@@ -93,6 +93,63 @@ const mockAssets: Asset[] = [
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   },
+  // Demo sensor assets (sensor taxonomy, migration 024): audio / video / machinery.
+  {
+    id: 'asset-6',
+    name: 'Acoustic Monitor — Compressor Room',
+    assetTypeId: 'audio_sensor',
+    organizationId: 'org-1',
+    workcellId: 'workcell-3',
+    vendor: 'SoundSafe',
+    model: 'AM-100',
+    serialNumber: 'SSAM100-01',
+    currentPackmlState: 'Execute',
+    connectionConfig: { protocol: 'edge-audio', endpoint: 'edge-agent:audio0' },
+    sensorClass: 'audio',
+    mediaConfig: { sample_rate: 16000, channels: 1 },
+    isInMaintenance: false,
+    isActive: true,
+    lastSeen: new Date().toISOString(),
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+  {
+    id: 'asset-7',
+    name: 'Dock Camera — Door 3',
+    assetTypeId: 'video_camera',
+    organizationId: 'org-1',
+    workcellId: 'workcell-2',
+    vendor: 'Axis',
+    model: 'M2025',
+    serialNumber: 'AXM2025-03',
+    currentPackmlState: 'Execute',
+    connectionConfig: { protocol: 'mjpeg', endpoint: '192.168.1.203' },
+    sensorClass: 'video',
+    mediaConfig: { stream_url: 'http://192.168.1.203/mjpeg', snapshot_interval: 30 },
+    isInMaintenance: false,
+    isActive: true,
+    lastSeen: new Date().toISOString(),
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+  {
+    id: 'asset-8',
+    name: 'Vibration Sensor — CNC Spindle',
+    assetTypeId: 'vibration_sensor',
+    organizationId: 'org-1',
+    workcellId: 'workcell-3',
+    vendor: 'IFM',
+    model: 'VVB001',
+    serialNumber: 'IFMVVB-08',
+    currentPackmlState: 'Execute',
+    connectionConfig: { protocol: 'io-link', endpoint: '192.168.1.150' },
+    sensorClass: 'machinery',
+    isInMaintenance: false,
+    isActive: true,
+    lastSeen: new Date().toISOString(),
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
 ];
 
 const mockAlarms: Alarm[] = [
@@ -246,6 +303,35 @@ const mockAssetTypes: AssetType[] = [
     telemetrySchema: { spindle_rpm: 'number', feed_rate: 'number' },
     actionSpace: ['start', 'stop', 'pause', 'home'],
     createdAt: new Date().toISOString(),
+  },
+  // Sensor taxonomy demo types (migration 024). These match the AssetType
+  // interface (unlike the older entries above, which predate it).
+  {
+    id: 'audio_sensor',
+    name: 'Acoustic Sensor',
+    category: 'acoustic_monitoring',
+    description: 'Audio feature telemetry (RMS, peak frequency, band energies)',
+    capabilities: ['audio_rms', 'audio_peak_hz', 'fft_bands'],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+  {
+    id: 'video_camera',
+    name: 'Video Camera',
+    category: 'visual_monitoring',
+    description: 'Frame metrics (brightness, motion score) + live feed',
+    capabilities: ['mjpeg_stream', 'motion_score', 'snapshots'],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+  {
+    id: 'vibration_sensor',
+    name: 'Vibration Sensor',
+    category: 'condition_monitoring',
+    description: 'Machinery condition metrics (vibration RMS, temperature, load)',
+    capabilities: ['vibration_rms', 'temperature', 'load_percent'],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
   },
 ];
 
@@ -402,6 +488,29 @@ export const mockApi = {
           'position_z': { metricName: 'position_z', value: -25.8, unit: 'mm', timestamp },
         };
       
+      case 'audio_sensor':
+        return {
+          'audio_rms': { metricName: 'audio_rms', value: 0.18 + Math.random() * 0.1, unit: '', timestamp },
+          'audio_peak_hz': { metricName: 'audio_peak_hz', value: 820 + Math.random() * 240, unit: 'Hz', timestamp },
+          'audio_band_low': { metricName: 'audio_band_low', value: 0.32 + Math.random() * 0.1, unit: '', timestamp },
+          'audio_band_mid': { metricName: 'audio_band_mid', value: 0.45 + Math.random() * 0.15, unit: '', timestamp },
+          'audio_band_high': { metricName: 'audio_band_high', value: 0.12 + Math.random() * 0.08, unit: '', timestamp },
+        };
+
+      case 'video_camera':
+        return {
+          'frame_brightness': { metricName: 'frame_brightness', value: 118 + Math.random() * 30, unit: '', timestamp },
+          'motion_score': { metricName: 'motion_score', value: Math.random() * 0.6, unit: '', timestamp },
+          'frames_analyzed': { metricName: 'frames_analyzed', value: 14200 + Math.floor(Math.random() * 100), unit: '', timestamp },
+        };
+
+      case 'vibration_sensor':
+        return {
+          'vibration_rms': { metricName: 'vibration_rms', value: 1.8 + Math.random() * 0.9, unit: 'mm/s', timestamp },
+          'temperature': { metricName: 'temperature', value: 52 + Math.random() * 8, unit: '°C', timestamp },
+          'load_percent': { metricName: 'load_percent', value: 68 + Math.random() * 20, unit: '%', timestamp },
+        };
+
       default:
         return {
           'status': { metricName: 'status', value: 1, unit: '', timestamp },

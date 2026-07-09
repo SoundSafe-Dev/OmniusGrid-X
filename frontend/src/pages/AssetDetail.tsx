@@ -94,9 +94,14 @@ const AssetDetail: FC = () => {
                 <TooltipTrigger asChild>
                   <p className="text-opsgrid-text-secondary">
                     {asset.vendor} {asset.model} • {asset.serialNumber}
+                    {asset.sensorClass && (
+                      <span className="ml-2 inline-block px-2 py-0.5 text-xs rounded bg-opsgrid-bg border border-opsgrid-border text-opsgrid-accent uppercase">
+                        {asset.sensorClass}
+                      </span>
+                    )}
                   </p>
                 </TooltipTrigger>
-                <TooltipContent>Asset vendor, model, and serial number</TooltipContent>
+                <TooltipContent>Asset vendor, model, serial number, and sensor class</TooltipContent>
               </Tooltip>
             </div>
           </div>

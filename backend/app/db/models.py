@@ -46,10 +46,14 @@ class Organization(Base):
 
 class AssetType(Base):
     __tablename__ = "asset_types"
-    
+
     id = UUIDColumn()
     name = Column(String(100), nullable=False)
     category = Column(String(100), nullable=False)
+    # Sensor taxonomy (migration 024): machinery | audio | video | environmental | generic.
+    # Drives type-aware rendering (gauges vs waveform vs camera feed) and lets
+    # downstream analytics filter by sensor modality.
+    sensor_class = Column(String(50), default="generic")
     packml_config = Column(JSON, default={})
     telemetry_schema = Column(JSON, default={})
     action_space = Column(JSON, default={})
@@ -71,11 +75,15 @@ class Asset(Base):
     model = Column(String(100))
     current_packml_state = Column(String(50), default="Idle")
     connection_config = Column(JSON, default={})
+    # Sensor taxonomy (migration 024): per-asset override of the type's class,
+    # plus media config for audio/video assets (e.g. {"stream_url": ..., "sample_rate": ...}).
+    sensor_class = Column(String(50), nullable=True)
+    media_config = Column(JSON, default={})
     is_active = Column(Boolean, default=True)
     last_seen = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    
+
     organization = relationship("Organization", back_populates="assets")
     asset_type = relationship("AssetType", back_populates="assets")
 
