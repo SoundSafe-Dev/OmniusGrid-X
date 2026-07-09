@@ -2,6 +2,7 @@ import { FC } from 'react'
 import { Activity } from 'lucide-react'
 import { Asset } from '../../types'
 import { MachineryMetricPanel } from './MachineryMetricPanel'
+import { AudioSensorPanel } from './AudioSensorPanel'
 
 // Type-aware sensor pane switch (task B10/B11): AssetDetail mounts this once and
 // the pane rendered depends on the asset's sensor_class (migration 024).
@@ -26,7 +27,10 @@ export const SensorPanels: FC<Props> = ({ asset, telemetry }) => {
       title = 'Condition Monitoring'
       pane = <MachineryMetricPanel telemetry={telemetry ?? {}} />
       break
-    // case 'audio': AudioSensorPanel (task B13)
+    case 'audio':
+      title = 'Acoustic Monitoring'
+      pane = <AudioSensorPanel telemetry={telemetry ?? {}} />
+      break
     // case 'video': CameraFeedPanel (task B15)
     default:
       return null
