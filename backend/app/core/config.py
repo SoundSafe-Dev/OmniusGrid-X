@@ -125,6 +125,13 @@ class Settings(BaseSettings):
     RAG_MIN_CHUNK_CHARS: int = 40  # merge a trailing chunk shorter than this
     RAG_EMBED_BATCH: int = 32  # chunks embedded per rag-inference request
 
+    # Retrieval (query path). Hybrid search returns RAG_RETRIEVE_LIMIT fused
+    # candidates; the reranker cuts them to RAG_RERANK_TOP_N passages, capped at
+    # RAG_MAX_CONTEXT_CHARS of concatenated text fed to the LLM.
+    RAG_RETRIEVE_LIMIT: int = 20  # fused candidates handed to the reranker
+    RAG_RERANK_TOP_N: int = 5  # passages kept after rerank, sent to the LLM
+    RAG_MAX_CONTEXT_CHARS: int = 12000  # cap on concatenated context
+
     # Application
     DEBUG: bool = True
     LOG_LEVEL: str = "INFO"

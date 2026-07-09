@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from app.api import assets, telemetry, alarms, operations, auth, dashboard, health, engines
-from app.api import yard, transportation, logistics_correlation, websocket, commands, oee, kanban, registries, geotab, correlation_integration, nlp_correlation, analysis_sessions, user_context, audit, api_keys, gdpr, compliance, data_residency, erp_integrations
+from app.api import yard, transportation, logistics_correlation, websocket, commands, oee, kanban, registries, geotab, correlation_integration, nlp_correlation, analysis_sessions, user_context, audit, api_keys, gdpr, compliance, data_residency, erp_integrations, rag
 from app.core.config import settings
 from app.db.database import init_db
 from app.services.websocket_manager import websocket_manager
@@ -22,6 +22,16 @@ async def lifespan(app: FastAPI):
     """Application lifespan events"""
     # Startup
     await init_db()
+    # Best-effort: create the RAG vector collection if the store is reachable.
+    # Never blocks startup - storage/retrieval-only deployments run without it.
+    try:
+        from app.services.vector_store import get_vector_store
+        vector_store = get_vector_store()
+        if vector_store.available:
+            await vector_store.ensure_collection()
+    except Exception as exc:  # noqa: BLE001 - startup must not crash on RAG
+        import structlog
+        structlog.get_logger().warning("rag.collection_bootstrap_failed", error=str(exc))
     # await websocket_manager.connect()
     # await command_executor.start()
     # await oee_calculator.start()
@@ -168,6 +178,7 @@ app.include_router(gdpr.router, prefix="/api/v1/gdpr", tags=["GDPR Compliance"])
 app.include_router(compliance.router, prefix="/api/v1/compliance", tags=["Compliance"])
 app.include_router(data_residency.router, prefix="/api/v1/data-residency", tags=["Data Residency"])
 app.include_router(erp_integrations.router, tags=["ERP Integrations"])
+app.include_router(rag.router, prefix="/api/v1/rag", tags=["RAG"])
 
 
 @app.get("/")
