@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 import asyncio
 import time
 import structlog
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 logger = structlog.get_logger()
@@ -63,6 +63,9 @@ class ERPConfig:
     timeout: int = 30
     retry_config: Optional[Dict[str, Any]] = None
     circuit_breaker: Optional[Dict[str, Any]] = None
+    # Connector-specific settings bag (company_id, account_id, realm, tenant_id,
+    # service_path, ...). Each concrete connector reads the keys it needs.
+    configuration: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
