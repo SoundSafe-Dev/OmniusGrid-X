@@ -74,6 +74,7 @@ def _setup_schema(sync_url: str) -> None:
         "017_scheduled_compliance_reports.sql",
         "023_agent_ota.sql",
         "024_agent_rollout_orchestration.sql",
+        "026_model_registry.sql",
     ]
 
     conn = psycopg2.connect(sync_url)
