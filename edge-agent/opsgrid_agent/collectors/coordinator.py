@@ -29,6 +29,7 @@ from .http_rest import HTTPRestCollector
 from .snmp import SNMPCollector
 from .sparkplug_b import SparkplugBCollector
 from .dnp3 import DNP3Collector
+from .audio import AudioFeatureCollector
 from .. import metrics
 from ..analytics import pipeline as analytics_pipeline
 # Relative import: rename-agnostic, like the adapter/metrics seam.
@@ -75,6 +76,7 @@ class UnifiedCollectorCoordinator:
         'snmp': coordinator_adapter(SNMPCollector),
         'sparkplug_b': coordinator_adapter(SparkplugBCollector),
         'dnp3': coordinator_adapter(DNP3Collector),
+        'audio': coordinator_adapter(AudioFeatureCollector),
     }
     
     def __init__(

@@ -27,3 +27,5 @@ python-can==4.3.1       # CAN bus (vehicle / machine controllers)
 pysnmp==4.4.12          # SNMP (network devices / gateways / UPS)
 tahu==1.0.9             # MQTT Sparkplug B protobuf schema (+ paho-mqtt above)
 dnp3-python==0.2.3b3    # DNP3 (utility / SCADA outstations)
+sounddevice==0.5.1      # audio capture for the audio collector ("device" source;
+                        # "simulate" demo mode needs only numpy, provided by opencv)

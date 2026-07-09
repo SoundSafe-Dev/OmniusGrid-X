@@ -35,6 +35,7 @@ SUPPORTED_COLLECTOR_TYPES = (
     "snmp",
     "sparkplug_b",
     "dnp3",
+    "audio",
 )
 
 
