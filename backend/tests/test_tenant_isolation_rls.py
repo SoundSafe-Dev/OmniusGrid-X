@@ -367,11 +367,226 @@ class TestComplianceRLSEnforcement:
         assert raised, "Cross-tenant INSERT into vendor_risk_assessments should fail."
 
 
+def _admin_seed_erp_rows(admin_sync_url: str, org_a_id, org_b_id, user_a_id, user_b_id):
+    """Seed ERP integration rows for two organizations."""
+    import psycopg2
+
+    integration_a_id = str(uuid4())
+    integration_b_id = str(uuid4())
+    event_a_id = str(uuid4())
+    event_b_id = str(uuid4())
+    sync_a_id = str(uuid4())
+    sync_b_id = str(uuid4())
+    event_suffix = uuid4().hex
+
+    conn = psycopg2.connect(admin_sync_url)
+    conn.autocommit = True
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO integration_configurations "
+                "(id, integration_type, integration_name, organization_id, "
+                "configuration, is_active, created_by, erp_type) "
+                "VALUES (%s, 'erp', 'erp-a', %s, '{}', true, %s, 'generic'), "
+                "(%s, 'erp', 'erp-b', %s, '{}', true, %s, 'generic');",
+                (
+                    integration_a_id,
+                    str(org_a_id),
+                    str(user_a_id),
+                    integration_b_id,
+                    str(org_b_id),
+                    str(user_b_id),
+                ),
+            )
+            cur.execute(
+                "INSERT INTO erp_integration_events "
+                "(id, organization_id, integration_id, event_type, event_id, "
+                "source_system, entity_type, event_data) "
+                "VALUES (%s, %s, %s, 'updated', %s, 'generic', "
+                "'purchase_orders', '{}'::jsonb), "
+                "(%s, %s, %s, 'updated', %s, 'generic', "
+                "'purchase_orders', '{}'::jsonb);",
+                (
+                    event_a_id,
+                    str(org_a_id),
+                    integration_a_id,
+                    f"event-a-{event_suffix}",
+                    event_b_id,
+                    str(org_b_id),
+                    integration_b_id,
+                    f"event-b-{event_suffix}",
+                ),
+            )
+            cur.execute(
+                "INSERT INTO erp_data_mappings "
+                "(id, organization_id, integration_id, source_entity, source_field, "
+                "target_entity, target_field) "
+                "VALUES (%s, %s, %s, 'purchase_orders', 'id', 'orders', 'id'), "
+                "(%s, %s, %s, 'purchase_orders', 'id', 'orders', 'id');",
+                (
+                    str(uuid4()),
+                    str(org_a_id),
+                    integration_a_id,
+                    str(uuid4()),
+                    str(org_b_id),
+                    integration_b_id,
+                ),
+            )
+            cur.execute(
+                "INSERT INTO erp_sync_status "
+                "(id, organization_id, integration_id, entity_type, last_sync_status) "
+                "VALUES (%s, %s, %s, 'purchase_orders', 'success'), "
+                "(%s, %s, %s, 'purchase_orders', 'success');",
+                (
+                    sync_a_id,
+                    str(org_a_id),
+                    integration_a_id,
+                    sync_b_id,
+                    str(org_b_id),
+                    integration_b_id,
+                ),
+            )
+            cur.execute(
+                "INSERT INTO erp_entities "
+                "(id, organization_id, integration_id, entity_type, entity_id, "
+                "entity_data, source_system) "
+                "VALUES (%s, %s, %s, 'purchase_orders', 'po-a', '{}'::jsonb, 'generic'), "
+                "(%s, %s, %s, 'purchase_orders', 'po-b', '{}'::jsonb, 'generic');",
+                (
+                    str(uuid4()),
+                    str(org_a_id),
+                    integration_a_id,
+                    str(uuid4()),
+                    str(org_b_id),
+                    integration_b_id,
+                ),
+            )
+            cur.execute(
+                "INSERT INTO erp_correlations "
+                "(id, organization_id, correlation_type, erp_event_id) "
+                "VALUES (%s, %s, 'erp_to_sensor', %s), "
+                "(%s, %s, 'erp_to_sensor', %s);",
+                (
+                    str(uuid4()),
+                    str(org_a_id),
+                    event_a_id,
+                    str(uuid4()),
+                    str(org_b_id),
+                    event_b_id,
+                ),
+            )
+    finally:
+        conn.close()
+
+    return integration_a_id, integration_b_id, sync_a_id, sync_b_id
+
+
+class TestERPRLSEnforcement:
+    """Direct SQL RLS coverage for revived ERP tables."""
+
+    @pytest.mark.parametrize(
+        "table",
+        [
+            "erp_integration_events",
+            "erp_data_mappings",
+            "erp_sync_status",
+            "erp_entities",
+            "erp_correlations",
+        ],
+    )
+    def test_select_without_org_context_returns_zero_rows(
+        self, tenant_async_url, admin_sync_url, seeded_orgs, table
+    ):
+        _admin_seed_erp_rows(
+            admin_sync_url,
+            seeded_orgs["org_a_id"],
+            seeded_orgs["org_b_id"],
+            seeded_orgs["user_a_id"],
+            seeded_orgs["user_b_id"],
+        )
+
+        conn = _tenant_conn(tenant_async_url)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT count(*) FROM {table};")
+                count = cur.fetchone()[0]
+        finally:
+            conn.close()
+
+        assert count == 0, f"Expected 0 rows from {table} without org context."
+
+    def test_erp_sync_status_org_a_context_returns_only_org_a_rows(
+        self, tenant_async_url, admin_sync_url, seeded_orgs
+    ):
+        _, _, sync_a_id, sync_b_id = _admin_seed_erp_rows(
+            admin_sync_url,
+            seeded_orgs["org_a_id"],
+            seeded_orgs["org_b_id"],
+            seeded_orgs["user_a_id"],
+            seeded_orgs["user_b_id"],
+        )
+
+        conn = _tenant_conn(tenant_async_url)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT set_config('app.current_org_id', %s, false);",
+                    (str(seeded_orgs["org_a_id"]),),
+                )
+                cur.execute("SELECT id::text FROM erp_sync_status;")
+                ids = {row[0] for row in cur.fetchall()}
+        finally:
+            conn.close()
+
+        assert sync_a_id in ids
+        assert sync_b_id not in ids
+
+    def test_cross_tenant_insert_erp_sync_status_rejected(
+        self, tenant_async_url, admin_sync_url, seeded_orgs
+    ):
+        import psycopg2
+
+        integration_a_id, _, _, _ = _admin_seed_erp_rows(
+            admin_sync_url,
+            seeded_orgs["org_a_id"],
+            seeded_orgs["org_b_id"],
+            seeded_orgs["user_a_id"],
+            seeded_orgs["user_b_id"],
+        )
+
+        conn = _tenant_conn(tenant_async_url)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT set_config('app.current_org_id', %s, false);",
+                    (str(seeded_orgs["org_a_id"]),),
+                )
+                try:
+                    cur.execute(
+                        "INSERT INTO erp_sync_status "
+                        "(id, organization_id, integration_id, entity_type) "
+                        "VALUES (%s, %s, %s, %s);",
+                        (
+                            str(uuid4()),
+                            str(seeded_orgs["org_b_id"]),
+                            integration_a_id,
+                            "should_fail",
+                        ),
+                    )
+                    raised = False
+                except psycopg2.errors.InsufficientPrivilege:
+                    raised = True
+        finally:
+            conn.close()
+
+        assert raised, "Cross-tenant INSERT into erp_sync_status should fail."
+
+
 class TestRLSCoverage:
     """Sanity check that the migration enabled RLS on every expected table."""
 
     def test_strict_rls_tables_have_rls_enabled(self, admin_sync_url):
-        """All 25 strict tables + 6 permissive tables should have RLS on."""
+        """All strict and permissive tenant tables should have RLS on."""
         import psycopg2
 
         expected = {
@@ -383,6 +598,8 @@ class TestRLSCoverage:
             "task_boards", "task_rules", "actionable_registries",
             "data_correlations", "analysis_sessions", "intake_items",
             "security_assets", "vendor_risk_assessments",
+            "erp_integration_events", "erp_data_mappings", "erp_sync_status",
+            "erp_entities", "erp_correlations",
             # Permissive (6)
             "geotab_trips", "geotab_diagnostics", "geotab_exceptions",
             "audit_logs", "data_processing_records", "integration_configurations",
