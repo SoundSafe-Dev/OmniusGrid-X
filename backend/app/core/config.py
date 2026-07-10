@@ -68,6 +68,8 @@ class Settings(BaseSettings):
     LOCAL_MODEL_DIR: str = "./models"
     MODEL_POLL_INTERVAL: int = 300  # 5 minutes
     TACTICAL_MODEL_PATH: str = "./models/tactical_v1.pt"
+    # Cloud-side registry artifact store (backend writes trained .pt here)
+    MODEL_STORAGE_PATH: str = "/var/lib/omniusgrid/models"
     
     # Edge
     EDGE_NODE_ID: str = "edge-001"
