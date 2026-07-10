@@ -91,7 +91,7 @@ const navItems: NavItem[] = [
     path: '/erp',
     label: 'ERP',
     icon: Database,
-    description: 'ERP business data, events, and AI correlation',
+    description: 'ERP integrations — data feeds Correlation AI',
   },
   {
     path: '/admin',
@@ -101,7 +101,6 @@ const navItems: NavItem[] = [
     adminOnly: true,
     children: [
       { path: '/admin/users', label: 'Users', icon: Users, description: 'User and role management' },
-      { path: '/admin/erp', label: 'ERP Integrations', icon: Database, description: 'Configure and monitor ERP connections' },
       { path: '/admin/collectors', label: 'Collectors', icon: Box, description: 'Data collector configuration' },
       { path: '/admin/health', label: 'System Health', icon: LayoutDashboard, description: 'Infrastructure status monitoring' },
       { path: '/admin/settings', label: 'Settings', icon: Settings, description: 'System configuration' },

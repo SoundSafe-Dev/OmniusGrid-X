@@ -34,12 +34,11 @@ const Users = named(() => import('./pages/admin'), 'Users')
 const Collectors = named(() => import('./pages/admin'), 'Collectors')
 const SystemHealth = named(() => import('./pages/admin'), 'SystemHealth')
 const Settings = named(() => import('./pages/admin'), 'Settings')
-const ERPIntegrations = named(() => import('./pages/admin'), 'ERPIntegrations')
 
 const YardManagement = named(() => import('./pages/logistics'), 'YardManagement')
 const TransportationManagement = named(() => import('./pages/logistics'), 'TransportationManagement')
 
-const ERPHub = named(() => import('./pages/erp'), 'ERPHub')
+const ERPIntegrations = named(() => import('./pages/erp'), 'ERPIntegrations')
 
 const CorrelationAIPane = named(() => import('./components/nlp/CorrelationAIPane'), 'CorrelationAIPane')
 const IntakeInbox = named(() => import('./pages/intake/IntakeInbox'), 'IntakeInbox')
@@ -97,8 +96,8 @@ const App: FC = () => {
                 <Route path="/logistics/yard" element={<YardManagement />} />
                 <Route path="/logistics/transportation" element={<TransportationManagement />} />
 
-                {/* ERP hub (business data + AI correlation wiring) */}
-                <Route path="/erp" element={<ERPHub />} />
+                {/* ERP integrations (its data feeds Correlation AI on interaction) */}
+                <Route path="/erp" element={<ERPIntegrations />} />
 
                 {/* NLP & Intake */}
                 <Route path="/nlp" element={<CorrelationAIPane />} />
@@ -106,7 +105,6 @@ const App: FC = () => {
 
                 {/* Admin */}
                 <Route path="/admin/users" element={<Users />} />
-                <Route path="/admin/erp" element={<ERPIntegrations />} />
                 <Route path="/admin/collectors" element={<Collectors />} />
                 <Route path="/admin/health" element={<SystemHealth />} />
                 <Route path="/admin/settings" element={<Settings />} />

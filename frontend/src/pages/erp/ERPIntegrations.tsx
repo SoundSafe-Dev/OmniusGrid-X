@@ -1,8 +1,10 @@
 import { FC, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from 'react-query'
-import { Plus, RefreshCw, Trash2, Zap, X, Database } from 'lucide-react'
+import { Brain, Plus, RefreshCw, Trash2, Zap, X, Database } from 'lucide-react'
 import { Card, Badge, Button, Input, Select } from '../../components'
 import { erpApi, ERPIntegration, ERPIntegrationCreate } from '../../api/erp'
+import { platformCorrelationApi } from '../../api/platformCorrelation'
+import { analysisSessionsApi } from '../../api/analysisSessions'
 
 const EMPTY_FORM: ERPIntegrationCreate = {
   integration_name: '',
@@ -38,6 +40,34 @@ export const ERPIntegrationsPage: FC = () => {
   const syncMut = useMutation(
     (id: string) => erpApi.triggerSync(id),
     { onSuccess: (res, id) => setTestResult((p) => ({ ...p, [id]: res.message })) }
+  )
+
+  // "Analyze": this integration's synced data becomes a Correlation AI source —
+  // creates an analysis session and attaches the ERP entities; the session then
+  // appears in the Correlation AI page where sensor/yard/transport sources can
+  // be added and correlated against it.
+  const analyzeMut = useMutation(
+    async (it: ERPIntegration) => {
+      const session = await analysisSessionsApi.createSession({
+        title: `ERP analysis — ${it.integration_name}`,
+      })
+      const attached = await platformCorrelationApi.attach(session.id, 'erp', {
+        integration_id: it.id,
+      })
+      return { session, attached }
+    },
+    {
+      onSuccess: ({ session, attached }, it) =>
+        setTestResult((p) => ({
+          ...p,
+          [it.id]: `Attached ${attached.row_count} synced records to session "${session.title}" — open Correlation AI to analyze against sensors, yard, and shipments.`,
+        })),
+      onError: (e: any, it) =>
+        setTestResult((p) => ({
+          ...p,
+          [it.id]: e?.response?.data?.detail || 'Failed to start analysis session',
+        })),
+    }
   )
 
   const submit = () => {
@@ -94,6 +124,9 @@ export const ERPIntegrationsPage: FC = () => {
                   </Button>
                   <Button size="sm" variant="outline" onClick={() => syncMut.mutate(it.id)} disabled={syncMut.isLoading}>
                     <RefreshCw className="w-3 h-3 mr-1" /> Sync
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => analyzeMut.mutate(it)} disabled={analyzeMut.isLoading}>
+                    <Brain className="w-3 h-3 mr-1" /> Analyze
                   </Button>
                   <Button size="sm" variant="outline" onClick={() => setSelectedId(selectedId === it.id ? null : it.id)}>
                     Status

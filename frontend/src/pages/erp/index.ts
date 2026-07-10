@@ -1,1 +1,1 @@
-export { ERPHubPage as ERPHub } from './ERPHub';
+export { ERPIntegrationsPage as ERPIntegrations } from './ERPIntegrations';
