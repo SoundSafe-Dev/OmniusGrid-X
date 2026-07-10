@@ -13,8 +13,7 @@ import {
   Workcell,
   Organization,
 } from '../types';
-
-const USE_MOCK = true; // Set to false to use real backend
+import { USE_MOCK } from './mockMode';
 
 interface AssetListParams {
   organizationId?: string;

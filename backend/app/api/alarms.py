@@ -9,9 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db
 from app.db.models import Alarm, Asset
+from app.api.auth import get_current_active_user
 from app.models.schemas import AlarmCreate, AlarmResponse, AlarmAcknowledge
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
 
 @router.get("/", response_model=List[AlarmResponse], summary="List alarms", description="Retrieve a paginated list of alarms with optional filtering by asset, severity, acknowledgment status, and time range. Defaults to last 24 hours if no time range specified.")
@@ -24,7 +25,7 @@ async def list_alarms(
     end_time: Optional[datetime] = None,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """List alarms with filtering"""
     query = select(Alarm)
@@ -57,7 +58,7 @@ async def list_alarms(
 async def get_active_alarms(
     organization_id: Optional[UUID] = None,
     severity: Optional[str] = None,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Get active (unacknowledged) alarms"""
     query = select(Alarm).where(
@@ -96,7 +97,7 @@ async def get_active_alarms(
 @router.get("/{alarm_id}", response_model=AlarmResponse, summary="Get alarm details", description="Retrieve detailed information about a specific alarm including its history, acknowledgment status, and related asset.")
 async def get_alarm(
     alarm_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Get a single alarm by ID"""
     result = await db.execute(
@@ -115,7 +116,7 @@ async def acknowledge_alarm(
     alarm_id: UUID,
     ack_data: AlarmAcknowledge,
     user_id: UUID = None,  # Would come from auth dependency
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Acknowledge an alarm"""
     result = await db.execute(
@@ -143,7 +144,7 @@ async def acknowledge_alarm(
 @router.post("/{alarm_id}/clear", summary="Clear alarm", description="Mark an alarm as resolved/cleared. This should only be done when the underlying issue has been fixed.")
 async def clear_alarm(
     alarm_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Mark an alarm as cleared"""
     result = await db.execute(
@@ -168,7 +169,7 @@ async def acknowledge_all_alarms(
     asset_id: Optional[UUID] = None,
     severity: Optional[str] = None,
     user_id: UUID = None,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Acknowledge all active alarms matching criteria"""
     query = select(Alarm).where(

@@ -8,8 +8,7 @@ import {
   MLOpsStatus,
   CloudGatewayStatus,
 } from '../types';
-
-const USE_MOCK = true;
+import { USE_MOCK } from './mockMode';
 
 export const enginesApi = {
   // Tactical Engine

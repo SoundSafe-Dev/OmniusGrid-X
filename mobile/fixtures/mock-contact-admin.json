@@ -1,0 +1,19 @@
+{
+  "_comment": "No first-party 'message admin' API exists in this repo. Store locally, enqueue when backend exists, or integrate email/SMS/push later.",
+  "example_outbound_message": {
+    "from_user_id": "<uuid from GET /api/v1/auth/me>",
+    "from_display_name": "Omnius K. Patel",
+    "channel": "in_app_mock",
+    "subject": "Need assistance — Dock 14",
+    "body": "Trailer OG-442 holding longer than 45 min. Need yard coordinator.",
+    "created_at": "2026-05-13T14:22:00Z",
+    "read": false
+  },
+  "example_admin_inbox_stub": [
+    {
+      "id": "mock-msg-001",
+      "preview": "Machine Line B — temp high, acknowledged on floor.",
+      "received_at": "2026-05-13T08:05:00Z"
+    }
+  ]
+}

@@ -9,15 +9,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db
 from app.db.models import Asset, Alarm, PackMLState, Organization, Telemetry
+from app.api.auth import get_current_active_user
 from app.models.schemas import DashboardOverview, OEEMetrics
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
 
 @router.get("/overview")
 async def get_dashboard_overview(
     organization_id: Optional[UUID] = None,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Get dashboard overview metrics"""
     # Base query
@@ -38,11 +39,11 @@ async def get_dashboard_overview(
     )
     active_assets = result.scalar()
     
-    # Assets by PackML state
-    result = await db.execute(
-        select(Asset.current_packml_state, func.count())
-        .group_by(Asset.current_packml_state)
-    )
+    # Assets by PackML state (scoped to org when filtering)
+    state_query = select(Asset.current_packml_state, func.count()).group_by(Asset.current_packml_state)
+    if organization_id:
+        state_query = state_query.where(Asset.organization_id == organization_id)
+    result = await db.execute(state_query)
     assets_by_state = {state: count for state, count in result.all()}
     
     # Active alarms
@@ -76,7 +77,7 @@ async def get_dashboard_overview(
 @router.get("/workcells/{workcell_id}/status")
 async def get_workcell_status(
     workcell_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Get status for all assets in a workcell"""
     result = await db.execute(
@@ -107,7 +108,7 @@ async def get_workcell_status(
 async def get_asset_oee(
     asset_id: UUID,
     hours: int = Query(24, ge=1, le=168),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Calculate OEE for an asset over a time period"""
     # Verify asset exists
@@ -170,7 +171,7 @@ async def get_asset_oee(
 async def get_fleet_oee(
     organization_id: Optional[UUID] = None,
     hours: int = Query(24, ge=1, le=168),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Get OEE metrics for entire fleet"""
     # Get all assets

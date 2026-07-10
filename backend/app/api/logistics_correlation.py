@@ -25,8 +25,13 @@ from app.services.logistics_correlation_engine import (
     DetentionRiskPredictor,
     LoadQualityCorrelator
 )
+from app.api.auth import get_current_active_user
 
-router = APIRouter(prefix="/logistics", tags=["logistics_correlation"])
+router = APIRouter(
+    prefix="/logistics",
+    tags=["logistics_correlation"],
+    dependencies=[Depends(get_current_active_user)],
+)
 
 
 # ==================== Dashboard Endpoints ====================
