@@ -12,3 +12,4 @@ export { geofencingApi } from './geofencing';
 export { fleetHealthApi } from './fleetHealth';
 export { maintenanceApi } from './maintenance';
 export { kpiApi } from './kpi';
+export { errorTriageApi } from './errorTriage';

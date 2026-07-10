@@ -11,7 +11,7 @@ groups:
         annotations:
           summary: "TimescaleDB is down"
           description: "TimescaleDB has been down for more than 1 minute. All data ingestion is halted."
-          runbook_url: "https://wiki/runbooks/timescaledb-down"
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/deployment/dr-timescaledb-failure.md"
 
       # CRITICAL: Message broker down
       - alert: RedpandaDown
@@ -23,6 +23,7 @@ groups:
         annotations:
           summary: "Redpanda message broker is down"
           description: "Redpanda has been down for more than 1 minute. Edge agents are buffering locally."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/deployment/dr-redpanda-failure.md"
 
       # CRITICAL: Disk space
       - alert: DiskSpaceCritical
@@ -45,6 +46,7 @@ groups:
         annotations:
           summary: "OpsGrid Backend API is down"
           description: "Backend API has been down for more than 2 minutes. Dashboard inaccessible."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/deployment/dr-backend-crash.md"
 
       # HIGH: Memory pressure
       - alert: HighMemoryUsage
@@ -227,3 +229,61 @@ groups:
         annotations:
           summary: "Edge agent certificate expiring"
           description: "Agent {{ $labels.agent_id }} cert expires in < 2 days; rotation may be failing"
+  - name: opsgrid_api
+    rules:
+      # CRITICAL: 5xx error ratio over 5% sustained — likely a broken deploy or
+      # downstream outage. Powered by the profiling middleware request counter.
+      - alert: APIHighErrorRate
+        expr: |
+          sum(rate(opsgrid_http_requests_total{status=~"5.."}[5m]))
+            / sum(rate(opsgrid_http_requests_total[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "API 5xx error rate above 5%"
+          description: "More than 5% of API requests are returning 5xx over the last 5 minutes. Check Error Triage (/admin/errors) for the dominant exception."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/error-triage.md"
+
+      # WARNING: elevated-but-not-critical error ratio over a longer window.
+      - alert: APIErrorRateElevated
+        expr: |
+          sum(rate(opsgrid_http_requests_total{status=~"5.."}[5m]))
+            / sum(rate(opsgrid_http_requests_total[5m])) > 0.01
+        for: 15m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "API 5xx error rate above 1%"
+          description: "API 5xx error rate has exceeded 1% for 15 minutes. Investigate via Error Triage before it escalates."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/error-triage.md"
+
+      # WARNING: a spike in unhandled exceptions specifically (tracker counter).
+      - alert: APIUnhandledExceptionSpike
+        expr: sum(rate(opsgrid_unhandled_exceptions_total[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Unhandled exception spike"
+          description: "More than 1 unhandled exception per second over 5 minutes. Open Error Triage to identify the fingerprint."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/error-triage.md"
+
+      # WARNING: p95 latency regression.
+      - alert: APILatencyP95High
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(opsgrid_http_request_duration_seconds_bucket[5m]))
+          ) > 2
+        for: 10m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "API p95 latency above 2s"
+          description: "95th-percentile API latency has exceeded 2 seconds for 10 minutes."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/error-triage.md"

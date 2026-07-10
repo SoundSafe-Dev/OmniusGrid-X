@@ -3,8 +3,11 @@ import { useQuery } from 'react-query'
 import { BarChart3, TrendingUp, Clock } from 'lucide-react'
 import { dashboardApi } from '../api'
 import { Tooltip, TooltipTrigger, TooltipContent } from '../components/ui'
+import { ExportButton } from '../components/common'
+import { useAuth } from '../hooks/useAuth'
 
 const OEE: FC = () => {
+  const { isAdmin } = useAuth()
   const { data: fleetOEE, isLoading } = useQuery('fleet-oee', () =>
     dashboardApi.getFleetOEE()
   )
@@ -30,14 +33,25 @@ const OEE: FC = () => {
           </TooltipTrigger>
           <TooltipContent>Measure of manufacturing productivity</TooltipContent>
         </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <div className="text-sm text-opsgrid-text-secondary">
-              {fleetOEE?.time_range || 'Last 24 hours'}
-            </div>
-          </TooltipTrigger>
-          <TooltipContent>Time range for OEE calculation</TooltipContent>
-        </Tooltip>
+        <div className="flex items-center gap-3">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="text-sm text-opsgrid-text-secondary">
+                {fleetOEE?.time_range || 'Last 24 hours'}
+              </div>
+            </TooltipTrigger>
+            <TooltipContent>Time range for OEE calculation</TooltipContent>
+          </Tooltip>
+          {isAdmin && (
+            <ExportButton
+              endpoint="/api/v1/exports/oee/summary"
+              params={{ time_window_hours: 24 }}
+              format="pdf"
+              label="Export PDF"
+              filename="oee_summary.pdf"
+            />
+          )}
+        </div>
       </div>
 
       {/* Fleet Summary */}

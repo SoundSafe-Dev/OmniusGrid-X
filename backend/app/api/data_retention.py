@@ -12,6 +12,10 @@ except ImportError:
     AsyncSession = None
     get_db = None
 
+from app.api.auth import get_current_active_user
+from app.db.models import User
+from app.middleware.rbac import require_admin
+
 router = APIRouter()
 
 
@@ -107,8 +111,10 @@ async def get_retention_config(
 
 
 @router.post("/config")
+@require_admin()
 async def create_retention_config(
     config: RetentionConfig,
+    current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Create retention configuration for a table."""
@@ -168,9 +174,11 @@ async def create_retention_config(
 
 
 @router.put("/policy/{table_name}")
+@require_admin()
 async def update_retention_policy(
     table_name: str,
     policy: RetentionPolicyUpdate,
+    current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Update retention policy for a table."""
@@ -196,7 +204,9 @@ async def update_retention_policy(
 
 
 @router.post("/archive")
+@require_admin()
 async def archive_to_cold_storage(
+    current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Trigger archival of data to cold storage."""
@@ -227,7 +237,9 @@ async def archive_to_cold_storage(
 
 
 @router.post("/purge")
+@require_admin()
 async def purge_old_data(
+    current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Trigger purging of old data."""

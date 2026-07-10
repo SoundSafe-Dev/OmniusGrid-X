@@ -7,7 +7,6 @@ from typing import Dict, Any, List
 import structlog
 
 from opsgrid_agent.buffer.store_forward import StoreForwardBuffer
-from opsgrid_agent.collectors.mqtt import BambuCollector, MQTTCollector
 from opsgrid_agent.collectors.coordinator import UnifiedCollectorCoordinator, CollectorConfig
 from opsgrid_agent.packml import PackMLStateMapper
 from opsgrid_agent import metrics
@@ -47,6 +46,7 @@ class EdgeAgent:
     
     def __init__(self):
         self.config = self._load_config()
+        metrics.configure(agent_id=self.config['agent_id'])
         self.buffer = StoreForwardBuffer(
             buffer_path=self.config.get('buffer_path', '/var/lib/opsgrid-agent/buffer.db'),
             retention_hours=self.config.get('buffer_retention_hours', 24)
@@ -182,6 +182,7 @@ class EdgeAgent:
                                     key=msg.asset_id
                                 )
                                 sent_ids.append(msg.id)
+                                metrics.record_kafka_success()
                             
                             except Exception as e:
                                 logger.error(
@@ -190,6 +191,7 @@ class EdgeAgent:
                                     error=str(e)
                                 )
                                 failed_ids.append(msg.id)
+                                metrics.record_kafka_error()
                         
                         # Mark sent messages as complete
                         if sent_ids:
@@ -238,6 +240,13 @@ class EdgeAgent:
                 metrics.set_buffer_stats(
                     pending=stats['total_messages'],
                     backfill_lag_seconds=stats.get('backfill_lag_seconds', 0.0),
+                )
+                # Converged: also publish integration's agent-level gauges.
+                status = self.coordinator.get_status()
+                metrics.refresh_buffer_stats(stats['total_messages'])
+                metrics.refresh_collector_stats(
+                    status['active_collectors'],
+                    status['total_collectors'],
                 )
                 logger.info(
                     "buffer_stats",

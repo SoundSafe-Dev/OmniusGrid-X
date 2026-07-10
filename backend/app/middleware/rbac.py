@@ -184,6 +184,39 @@ def require_admin():
     return decorator
 
 
+def require_roles(*allowed_roles: str):
+    """Decorator to require one of the explicitly allowed application roles."""
+    allowed = frozenset(allowed_roles)
+    if not allowed:
+        raise ValueError("At least one allowed role is required")
+
+    def decorator(func: Callable):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            user = kwargs.get('current_user')
+            if not user:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Authentication required"
+                )
+
+            if user.role not in allowed:
+                logger.warning(
+                    "role_access_denied",
+                    user_id=str(user.id),
+                    user_role=user.role,
+                    allowed_roles=sorted(allowed),
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"One of roles {sorted(allowed)} required"
+                )
+
+            return await func(*args, **kwargs)
+        return wrapper
+    return decorator
+
+
 def require_operator_or_admin():
     """Decorator to require operator or admin role"""
     def decorator(func: Callable):

@@ -1,4 +1,4 @@
-# Grafana Provisioning - Dashboard providers
+# Grafana Provisioning - Dashboard providers (converged: both provisioning trees)
 apiVersion: 1
 
 providers:
@@ -12,4 +12,14 @@ providers:
     allowUiUpdates: true
     options:
       path: /etc/grafana/provisioning/dashboards
-      foldersFromFilesStructure: false
+
+  - name: 'OpsGrid'
+    orgId: 1
+    folder: 'OpsGrid (API)'
+    type: file
+    disableDeletion: false
+    editable: true
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/json

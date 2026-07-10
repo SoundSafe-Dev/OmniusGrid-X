@@ -10,12 +10,12 @@ from typing import Dict, List, Any, Optional, Callable
 from dataclasses import dataclass
 import structlog
 
-from omniusgrid_agent.collectors.mqtt import BambuCollector, MQTTCollector
-from omniusgrid_agent.collectors.screen_scraper import QidiCollector, SovolCollector
-from omniusgrid_agent.collectors.file_watcher import OrcaSlicerCollector
-from omniusgrid_agent.collectors.opcua_collector import OPCUACollector
-from omniusgrid_agent.collectors.modbus_collector import ModbusCollector
-from omniusgrid_agent.buffer.store_forward import StoreForwardBuffer
+from opsgrid_agent.collectors.mqtt import BambuCollector, MQTTCollector
+from opsgrid_agent.collectors.screen_scraper import QidiCollector, SovolCollector
+from opsgrid_agent.collectors.file_watcher import OrcaSlicerCollector
+from opsgrid_agent.collectors.opcua_collector import OPCUACollector
+from opsgrid_agent.collectors.modbus_collector import ModbusCollector
+from opsgrid_agent.buffer.store_forward import StoreForwardBuffer
 
 # BaseCollector-style collectors, bridged to the coordinator contract via an
 # adapter. Relative imports keep these independent of the package name so they
@@ -292,7 +292,9 @@ class UnifiedCollectorCoordinator:
             if self.kafka_producer:
                 try:
                     await self._forward_to_kafka(enriched_message)
+                    metrics.record_kafka_success()
                 except Exception as e:
+                    metrics.record_kafka_error()
                     # Already in buffer, will retry later
                     logger.debug(
                         "immediate_forward_failed",
@@ -355,6 +357,7 @@ class UnifiedCollectorCoordinator:
                     1 for t in self.collector_tasks.values()
                     if not t.done()
                 )
+                metrics.refresh_collector_stats(active_count, len(self.configs))
                 logger.info(
                     "collector_health_check",
                     active=active_count,

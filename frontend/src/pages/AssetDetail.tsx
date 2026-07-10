@@ -8,9 +8,12 @@ import { Tooltip, TooltipTrigger, TooltipContent } from '../components/ui'
 import { TelemetryHistoryChart } from '../components/charts'
 import { SensorPanels } from '../components/assets/SensorPanels'
 import { TrendingUp } from 'lucide-react'
+import { ExportButton } from '../components/common'
+import { useAuth } from '../hooks/useAuth'
 
 const AssetDetail: FC = () => {
   const { id } = useParams<{ id: string }>()
+  const { isAdmin } = useAuth()
   
   const { data: asset, isLoading } = useQuery(['asset', id], () =>
     assetsApi.get(id!)
@@ -121,6 +124,17 @@ const AssetDetail: FC = () => {
           </Tooltip>
         </div>
       </div>
+
+      {isAdmin && (
+        <div className="flex justify-end">
+          <ExportButton
+            endpoint={`/api/v1/exports/telemetry/${id}`}
+            format="csv"
+            label="Export telemetry CSV"
+            filename={`telemetry_${asset.name}.csv`}
+          />
+        </div>
+      )}
 
       {/* Telemetry */}
       {telemetry && (

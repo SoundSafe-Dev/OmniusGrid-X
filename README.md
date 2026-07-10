@@ -372,7 +372,7 @@ A: No rename in flight - this is a bug. The correct convention is `opsgrid_agent
 
 **Q: Kanban endpoints derive organization_id from the authenticated user, but assets.py and telemetry.py take it as a query parameter or skip it entirely. Is there a tenant isolation middleware or Postgres RLS policy I'm missing?**
 
-A: No, you're not missing anything - there is a security gap. No tenant isolation middleware or Postgres RLS policies exist. Kanban correctly derives `organization_id` from the authenticated user, but assets.py and telemetry.py accept `organization_id` as an optional query parameter without enforcing tenant isolation. This means an authenticated user could potentially query another organization's data by passing their `organization_id`. This needs to be fixed by adding middleware to automatically inject the user's `organization_id` and removing client-provided parameters.
+A: Assets and telemetry derive organization ownership from the authenticated user, not from client input. The canonical dependencies are ``get_tenant_org_id`` and ``get_tenant_db`` (implemented in ``app/core/tenant.py`` and imported through ``app/middleware/tenant_isolation.py``). Tenant-scoped endpoints declare ``org_id: UUID = Depends(get_tenant_org_id)`` and ``db: AsyncSession = Depends(get_tenant_db)``; the session configures PostgreSQL RLS via ``app.current_org_id``. Application queries still include explicit ``organization_id`` predicates. Cross-tenant asset and telemetry requests return ``404``. Client-provided ``organization_id`` values do not control tenant scope.
 
 ---
 

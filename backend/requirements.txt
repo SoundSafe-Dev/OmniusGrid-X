@@ -21,6 +21,7 @@ structlog==23.2.0
 prometheus-client==0.19.0
 slowapi==0.1.9
 cryptography==41.0.7
+python-keycloak==3.9.1
 
 # Distributed tracing (OpenTelemetry) — only imported when OTEL_ENABLED (task 13).
 opentelemetry-sdk==1.27.0
@@ -58,3 +59,20 @@ safetensors
 
 
 greenlet==3.1.1
+
+
+# Profiling (Task 2 — per-request memory tracking; optional, code degrades gracefully if absent)
+psutil==5.9.8
+
+# Data export (Task 5 — Excel + PDF report generation; CSV uses the stdlib)
+reportlab==4.0.9
+aiosmtplib==3.0.1
+APScheduler==3.10.4
+
+# Testing (Task 5 — tenant isolation integration tests)
+pytest==7.4.4
+pytest-asyncio==0.23.3
+testcontainers[postgres]==4.14.2
+sqlparse==0.4.4
+# Used by the focused unit tests (feature flags) to run without a live Redis.
+fakeredis==2.36.1

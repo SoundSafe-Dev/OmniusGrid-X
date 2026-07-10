@@ -18,7 +18,6 @@ export const ContextManagementModal: React.FC<ContextManagementModalProps> = ({
   onContextUpdated,
   initialContext
 }) => {
-  const [role, setRole] = useState('');
   const [department, setDepartment] = useState('');
   const [priorities, setPriorities] = useState<string[]>([]);
   const [priorityInput, setPriorityInput] = useState('');
@@ -30,7 +29,6 @@ export const ContextManagementModal: React.FC<ContextManagementModalProps> = ({
 
   useEffect(() => {
     if (initialContext) {
-      setRole(initialContext.role || '');
       setDepartment(initialContext.department || '');
       setPriorities(initialContext.priorities || []);
       setGoals(initialContext.user_goals || []);
@@ -102,7 +100,6 @@ export const ContextManagementModal: React.FC<ContextManagementModalProps> = ({
     setIsSaving(true);
     try {
       await userContextApi.updateUserContext({
-        role,
         department,
         priorities
       });
@@ -133,16 +130,6 @@ export const ContextManagementModal: React.FC<ContextManagementModalProps> = ({
           <div className="space-y-4">
             <h3 className="text-sm font-semibold text-gray-900 dark:text-white">User Information</h3>
             
-            <div>
-              <label className="block text-xs text-gray-600 dark:text-gray-400 mb-1">Role</label>
-              <Input
-                value={role}
-                onChange={(e) => setRole(e.target.value)}
-                placeholder="e.g., Production Manager"
-                className="w-full"
-              />
-            </div>
-
             <div>
               <label className="block text-xs text-gray-600 dark:text-gray-400 mb-1">Department</label>
               <Input

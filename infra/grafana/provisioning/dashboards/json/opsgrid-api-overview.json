@@ -1,0 +1,148 @@
+{
+  "uid": "opsgrid-api-overview",
+  "title": "OpsGrid — API Overview",
+  "tags": ["opsgrid", "api", "error-triage"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": { "list": [] },
+  "annotations": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Request rate by status class",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "custom": { "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "targets": [
+        { "expr": "sum(rate(opsgrid_http_requests_total{status=~\"2..\"}[5m]))", "legendFormat": "2xx", "refId": "A" },
+        { "expr": "sum(rate(opsgrid_http_requests_total{status=~\"3..\"}[5m]))", "legendFormat": "3xx", "refId": "B" },
+        { "expr": "sum(rate(opsgrid_http_requests_total{status=~\"4..\"}[5m]))", "legendFormat": "4xx", "refId": "C" },
+        { "expr": "sum(rate(opsgrid_http_requests_total{status=~\"5..\"}[5m]))", "legendFormat": "5xx", "refId": "D" }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "5xx error ratio",
+      "type": "stat",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 0.01 },
+            { "color": "red", "value": 0.05 }
+          ] }
+        },
+        "overrides": []
+      },
+      "targets": [
+        { "expr": "sum(rate(opsgrid_http_requests_total{status=~\"5..\"}[5m])) / clamp_min(sum(rate(opsgrid_http_requests_total[5m])), 0.0001)", "legendFormat": "5xx ratio", "refId": "A" }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Unhandled exceptions / sec (last value)",
+      "type": "stat",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 0 },
+      "fieldConfig": {
+        "defaults": { "thresholds": { "mode": "absolute", "steps": [
+          { "color": "green", "value": null },
+          { "color": "red", "value": 1 }
+        ] } },
+        "overrides": []
+      },
+      "targets": [
+        { "expr": "sum(rate(opsgrid_unhandled_exceptions_total[5m]))", "legendFormat": "exceptions/s", "refId": "A" }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Latency p50 / p95 / p99",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum by (le) (rate(opsgrid_http_request_duration_seconds_bucket[5m])))", "legendFormat": "p50", "refId": "A" },
+        { "expr": "histogram_quantile(0.95, sum by (le) (rate(opsgrid_http_request_duration_seconds_bucket[5m])))", "legendFormat": "p95", "refId": "B" },
+        { "expr": "histogram_quantile(0.99, sum by (le) (rate(opsgrid_http_request_duration_seconds_bucket[5m])))", "legendFormat": "p99", "refId": "C" }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Top 10 endpoints by p95 latency",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        { "expr": "topk(10, histogram_quantile(0.95, sum by (le, endpoint) (rate(opsgrid_http_request_duration_seconds_bucket[5m]))))", "legendFormat": "{{endpoint}}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Unhandled exceptions by type",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "targets": [
+        { "expr": "sum by (exception_type) (rate(opsgrid_unhandled_exceptions_total[5m]))", "legendFormat": "{{exception_type}}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Slow requests by endpoint",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "targets": [
+        { "expr": "sum by (endpoint) (rate(opsgrid_http_slow_requests_total[5m]))", "legendFormat": "{{endpoint}}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "DB query p95 + slow-query rate",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "targets": [
+        { "expr": "histogram_quantile(0.95, sum by (le) (rate(opsgrid_db_query_duration_seconds_bucket[5m])))", "legendFormat": "db p95 (s)", "refId": "A" },
+        { "expr": "sum(rate(opsgrid_db_slow_queries_total[5m]))", "legendFormat": "slow queries/s", "refId": "B" }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Process RSS",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 24 },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "targets": [
+        { "expr": "opsgrid_process_memory_rss_bytes", "legendFormat": "RSS", "refId": "A" }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "Error tracker health",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 24 },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "targets": [
+        { "expr": "opsgrid_error_tracker_pending_fingerprints", "legendFormat": "pending", "refId": "A" },
+        { "expr": "sum(rate(opsgrid_error_tracker_dropped_total[5m]))", "legendFormat": "dropped/s", "refId": "B" },
+        { "expr": "sum(rate(opsgrid_error_tracker_flush_failures_total[5m]))", "legendFormat": "flush failures/s", "refId": "C" }
+      ]
+    }
+  ]
+}

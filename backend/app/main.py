@@ -5,16 +5,21 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from app.api import assets, telemetry, alarms, operations, auth, dashboard, health, engines
-from app.api import yard, transportation, logistics_correlation, websocket, commands, oee, kanban, registries, geotab, correlation_integration, nlp_correlation, analysis_sessions, user_context, audit, api_keys, gdpr, compliance, data_residency, erp_integrations
+from app.api import yard, transportation, logistics_correlation, websocket, commands, oee, kanban, registries, geotab, correlation_integration, nlp_correlation, analysis_sessions, user_context, audit, api_keys, gdpr, compliance, compliance_reports, data_residency, feature_flags, sso, bulk_operations, exports, error_tracking, erp_integrations
 from app.api import health_index, simulation, notifications
 from app.api import edge_enroll, edge_ingest, edge_fleet
 from app.api import erp_webhooks
 from app.api import platform_correlation
 from app.api import fleet_logistics
 from app.core.config import settings
+from app.core.logging_filters import install_sensitive_query_access_log_filter
 from app.db.database import init_db
 from app.services.websocket_manager import websocket_manager
 from app.services.command_executor import command_executor
+from app.services.compliance_report_queue import compliance_report_dispatcher
+from app.services.export_delivery import export_scheduler
+from app.services.report_scheduler import report_scheduler
+from app.services.export_processor import export_processor
 from app.services.oee_calculator import oee_calculator
 from app.core.errors import register_exception_handlers
 from app.core.openapi import custom_generate_unique_id
@@ -23,22 +28,39 @@ from app.middleware.idempotency import IdempotencyMiddleware
 from app.middleware.audit import AuditLoggingMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.middleware.csrf import CSRFMiddleware
-from app.middleware.rate_limit import limiter
+from app.middleware.rate_limit import limiter, rate_limit_exceeded_handler
+from app.middleware.profiling import setup_profiling
+from app.middleware.error_tracking import setup_error_tracking
+from app.services.error_tracker import error_tracker
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
+install_sensitive_query_access_log_filter()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan events"""
     # Startup
     await init_db()
-    # await websocket_manager.connect()
-    # await command_executor.start()
-    # await oee_calculator.start()
+    # Converged: integration branch enables the realtime/worker services that
+    # fixed-sprints had commented out (the audit's "wire the machinery" item).
+    await websocket_manager.connect()
+    await command_executor.start()
+    await oee_calculator.start()
+    await export_scheduler.start()
+    await compliance_report_dispatcher.start()
+    await report_scheduler.start()
+    await error_tracker.start()
     yield
     # Shutdown
-    # await oee_calculator.stop()
-    # await command_executor.stop()
-    # await websocket_manager.disconnect()
+    await error_tracker.stop()
+    await report_scheduler.stop()
+    await compliance_report_dispatcher.stop()
+    await export_scheduler.stop()
+    await export_processor.close()
+    await oee_calculator.stop()
+    await command_executor.stop()
+    await websocket_manager.disconnect()
 
 
 app = FastAPI(
@@ -150,8 +172,14 @@ from app.core.tracing import setup_tracing  # noqa: E402
 from app.db.database import engine as _db_engine  # noqa: E402
 setup_tracing(app, engine=_db_engine)
 
-# Apply rate limiter to the app (disabled for debugging)
-# app.state.limiter = limiter
+# Register the limiter and handler unconditionally so explicitly enabled endpoint
+# limits work in tests and dynamically configured deployments.
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
+
+# Application-wide middleware remains gated on settings.RATE_LIMIT_ENABLED.
+if settings.RATE_LIMIT_ENABLED:
+    app.add_middleware(SlowAPIMiddleware)
 
 # CORS middleware
 app.add_middleware(
@@ -188,6 +216,14 @@ app.add_middleware(
 # Audit logging middleware (disabled for debugging)
 # app.add_middleware(AuditLoggingMiddleware)
 
+# Error tracking (gated off via ERROR_TRACKING_ENABLED, default False). Registered
+# before profiling so it sits *inside* the profiling middleware — both observe an
+# unhandled exception, and this layer re-raises it unchanged.
+setup_error_tracking(app)
+
+# Performance profiling (Task 2 — gated off via PROFILING_ENABLED, default False)
+setup_profiling(app)
+
 # Include routers
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])
 app.include_router(assets.router, prefix="/api/v1/assets", tags=["Assets"])
@@ -220,6 +256,12 @@ app.include_router(audit.router, prefix="/api/v1/audit", tags=["Audit Logs"])
 app.include_router(api_keys.router, prefix="/api/v1/api-keys", tags=["API Keys"])
 app.include_router(gdpr.router, prefix="/api/v1/gdpr", tags=["GDPR Compliance"])
 app.include_router(compliance.router, prefix="/api/v1/compliance", tags=["Compliance"])
+app.include_router(compliance_reports.router, prefix="/api/v1/compliance", tags=["Compliance Reports"])
+app.include_router(
+    compliance_reports.public_router,
+    prefix="/api/v1/compliance",
+    tags=["Compliance Reports"],
+)
 app.include_router(data_residency.router, prefix="/api/v1/data-residency", tags=["Data Residency"])
 app.include_router(erp_integrations.router, tags=["ERP Integrations"])
 app.include_router(erp_webhooks.router, tags=["ERP Integrations"])
@@ -228,6 +270,13 @@ app.include_router(platform_correlation.router, tags=["NLP Correlation"])
 app.include_router(fleet_logistics.geofencing_router, prefix="/api/v1/geofencing", tags=["Geofencing"])
 app.include_router(fleet_logistics.maintenance_router, prefix="/api/v1/maintenance", tags=["Fleet Maintenance"])
 app.include_router(fleet_logistics.logistics_router, prefix="/api/v1/logistics", tags=["Transportation Management"])
+app.include_router(feature_flags.router, prefix="/api/v1/feature-flags", tags=["Feature Flags"])
+app.include_router(sso.router, prefix="/api/v1/sso", tags=["SSO"])
+app.include_router(bulk_operations.router, prefix="/api/v1/bulk", tags=["Bulk Operations"])
+app.include_router(exports.router, prefix="/api/v1/exports", tags=["Exports"])
+# Signature-authorized export downloads (no bearer; used by delivery email links).
+app.include_router(exports.public_router, prefix="/api/v1/exports", tags=["Exports"])
+app.include_router(error_tracking.router, prefix="/api/v1/admin/errors", tags=["Error Triage"])
 
 
 @app.get("/")

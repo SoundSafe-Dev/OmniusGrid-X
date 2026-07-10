@@ -4,6 +4,9 @@
 
 OmniusGrid is designed to comply with ISO/IEC 27001:2022 requirements for Information Security Management Systems (ISMS).
 
+The compliance API role and tenant permission matrix is documented in
+[Compliance Access Control](ACCESS_CONTROL.md).
+
 ## ISO 27001:2022 Annex A Controls
 
 ### A.5 Organizational (5 controls)
@@ -415,8 +418,9 @@ DELETE /api/v1/compliance/security-assets/{id}
 # Compliance summary
 GET /api/v1/compliance/compliance-summary
 
-# Compliance report
-GET /api/v1/compliance/report/generate?framework=iso27001
+# Enqueue compliance report
+POST /api/v1/compliance/reports
+{"framework": "iso27001", "format": "pdf"}
 ```
 
 ## Training and Awareness

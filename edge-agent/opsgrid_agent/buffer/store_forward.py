@@ -147,6 +147,35 @@ class StoreForwardBuffer:
                     error=str(e)
                 )
                 return False
+
+    async def store_message(self, message: Dict[str, Any]) -> bool:
+        """Adapter for coordinator message dicts -> store()."""
+        raw_ts = message.get("timestamp_edge") or message.get("timestamp")
+        if raw_ts is None:
+            timestamp_edge = datetime.utcnow()
+        elif isinstance(raw_ts, datetime):
+            timestamp_edge = raw_ts
+        else:
+            ts_str = str(raw_ts).replace("Z", "+00:00")
+            timestamp_edge = datetime.fromisoformat(ts_str)
+            if timestamp_edge.tzinfo:
+                timestamp_edge = timestamp_edge.replace(tzinfo=None)
+
+        asset_id = message.get("asset_id", "unknown")
+        payload = message.get("payload", {})
+        if not isinstance(payload, dict):
+            payload = {"value": payload}
+
+        topic = message.get("topic") or f"telemetry.{asset_id}"
+        sequence_num = message.get("sequence_num", 0)
+
+        return await self.store(
+            timestamp_edge=timestamp_edge,
+            asset_id=asset_id,
+            topic=topic,
+            payload=payload,
+            sequence_num=sequence_num,
+        )
     
     async def get_pending_messages(
         self,

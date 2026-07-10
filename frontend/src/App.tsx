@@ -30,6 +30,10 @@ const PredictiveMaintenance = named(() => import('./pages/analytics'), 'Predicti
 const FleetOverview = named(() => import('./pages/fleet'), 'FleetOverview')
 const OrganizationTree = named(() => import('./pages/fleet'), 'OrganizationTree')
 
+// Converged from integration: error-triage admin pages, kept lazy.
+const ErrorTriage = named(() => import('./pages/admin'), 'ErrorTriage')
+const ErrorTriageDetail = named(() => import('./pages/admin'), 'ErrorTriageDetail')
+
 const Users = named(() => import('./pages/admin'), 'Users')
 const Collectors = named(() => import('./pages/admin'), 'Collectors')
 const SystemHealth = named(() => import('./pages/admin'), 'SystemHealth')
@@ -108,6 +112,8 @@ const App: FC = () => {
                 <Route path="/admin/collectors" element={<Collectors />} />
                 <Route path="/admin/health" element={<SystemHealth />} />
                 <Route path="/admin/settings" element={<Settings />} />
+                <Route path="/admin/errors" element={<ErrorTriage />} />
+                <Route path="/admin/errors/:fingerprint" element={<ErrorTriageDetail />} />
               </Route>
             </Route>
 

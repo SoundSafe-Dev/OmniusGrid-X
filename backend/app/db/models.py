@@ -3,7 +3,8 @@
 import uuid
 from datetime import datetime
 from typing import Optional, List
-from sqlalchemy import Column, String, DateTime, Boolean, Numeric, JSON, ForeignKey, Text, BigInteger, Integer, ARRAY, Date, UUID
+from sqlalchemy import Column, String, DateTime, Boolean, Numeric, JSON, ForeignKey, Text, BigInteger, Integer, ARRAY, Date, UUID, UniqueConstraint, CheckConstraint, func
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.types import TypeDecorator
 
@@ -128,7 +129,7 @@ class Telemetry(Base):
     value = Column(Numeric, nullable=False)
     unit = Column(String(50))
     packml_state = Column(String(50))
-    meta_data = Column(JSON, default={})
+    meta_data = Column("metadata", JSON, default={})
     sequence_num = Column(BigInteger)
 
 
@@ -1000,6 +1001,131 @@ class AuditLog(Base):
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
 
+class ExportTemplate(Base):
+    """Reusable, tenant-owned export configuration."""
+    __tablename__ = "export_templates"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "name", name="uq_export_templates_org_name"),
+    )
+
+    id = UUIDColumn()
+    organization_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    name = Column(String(255), nullable=False)
+    description = Column(Text)
+    export_type = Column(String(50), nullable=False)
+    export_format = Column(String(10), nullable=False)
+    columns = Column(
+        JSON().with_variant(JSONB, "postgresql"),
+        default=list,
+        server_default="[]",
+        nullable=False,
+    )
+    filters = Column(
+        JSON().with_variant(JSONB, "postgresql"),
+        default=dict,
+        server_default="{}",
+        nullable=False,
+    )
+    created_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class ScheduledExport(Base):
+    """Persisted schedule definition for durable report delivery."""
+    __tablename__ = "scheduled_exports"
+    __table_args__ = (
+        CheckConstraint(
+            "frequency IN ('daily', 'weekly', 'monthly')",
+            name="ck_scheduled_exports_frequency",
+        ),
+    )
+
+    id = UUIDColumn()
+    organization_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    template_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("export_templates.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    name = Column(String(255), nullable=False)
+    frequency = Column(String(20), nullable=False)
+    timezone = Column(String(100), nullable=False, default="UTC")
+    next_run_at = Column(DateTime(timezone=True), nullable=False)
+    recipients = Column(
+        JSON().with_variant(JSONB, "postgresql"),
+        default=list,
+        server_default="[]",
+        nullable=False,
+    )
+    is_active = Column(Boolean, nullable=False, default=False)
+    last_run_at = Column(DateTime(timezone=True))
+    last_status = Column(String(50), default="never_run")
+    created_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class ExportDeliveryJob(Base):
+    """Transactional outbox record consumed by the Redpanda export worker."""
+    __tablename__ = "export_delivery_jobs"
+    __table_args__ = (
+        UniqueConstraint(
+            "schedule_id", "scheduled_for",
+            name="uq_export_delivery_jobs_schedule_run",
+        ),
+    )
+
+    id = UUIDColumn()
+    organization_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    schedule_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("scheduled_exports.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    template_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("export_templates.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    requested_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    scheduled_for = Column(DateTime(timezone=True), nullable=False)
+    status = Column(String(30), nullable=False, default="queued")
+    attempts = Column(Integer, nullable=False, default=0)
+    file_path = Column(Text)
+    filename = Column(String(255))
+    error = Column(Text)
+    published_at = Column(DateTime(timezone=True))
+    started_at = Column(DateTime(timezone=True))
+    completed_at = Column(DateTime(timezone=True))
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
 class APIKey(Base):
     """API keys for external integrations"""
     __tablename__ = "api_keys"
@@ -1101,6 +1227,7 @@ class SecurityAsset(Base):
     asset_name = Column(String(255), nullable=False)
     asset_id = Column(String(255), nullable=True)
     owner_id = UUIDForeignKey("users.id", nullable=True)
+    organization_id = UUIDForeignKey("organizations.id")
     classification = Column(String(50), nullable=True)
     location = Column(String(255), nullable=True)
     status = Column(String(50), default="active")
@@ -1120,11 +1247,153 @@ class VendorRiskAssessment(Base):
     assessment_date = Column(Date, nullable=True)
     next_review_date = Column(Date, nullable=True)
     assessor_id = UUIDForeignKey("users.id", nullable=True)
+    organization_id = UUIDForeignKey("organizations.id")
     findings = StringListColumn(nullable=True)
     controls = StringListColumn(nullable=True)
     status = Column(String(50), default="pending")
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ScheduledComplianceReport(Base):
+    """Persisted schedule for automated compliance report generation."""
+    __tablename__ = "scheduled_compliance_reports"
+    __table_args__ = (
+        CheckConstraint(
+            "framework IN ('all', 'gdpr', 'soc2', 'iso27001')",
+            name="ck_scheduled_compliance_reports_framework",
+        ),
+        CheckConstraint(
+            "format IN ('json', 'pdf')",
+            name="ck_scheduled_compliance_reports_format",
+        ),
+        CheckConstraint(
+            "frequency IN ('daily', 'weekly', 'monthly', 'quarterly', 'annually')",
+            name="ck_scheduled_compliance_reports_frequency",
+        ),
+    )
+
+    id = UUIDColumn()
+    organization_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    name = Column(String(255), nullable=False)
+    framework = Column(String(20), nullable=False)
+    format = Column(String(10), nullable=False)
+    frequency = Column(String(20), nullable=False)
+    timezone = Column(String(100), nullable=False, default="UTC", server_default="UTC")
+    next_run_at = Column(DateTime(timezone=True), nullable=False)
+    recipients = Column(
+        JSON().with_variant(JSONB, "postgresql"),
+        default=list,
+        server_default="[]",
+        nullable=False,
+    )
+    is_active = Column(Boolean, nullable=False, default=False, server_default="false")
+    last_run_at = Column(DateTime(timezone=True))
+    last_status = Column(
+        String(50), nullable=False, default="never_run", server_default="never_run"
+    )
+    created_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at = Column(
+        DateTime(timezone=True), default=datetime.utcnow, server_default=func.now()
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        server_default=func.now(),
+    )
+
+
+class ComplianceReportJob(Base):
+    """Durable outbox for async compliance report generation and delivery."""
+    __tablename__ = "compliance_report_jobs"
+    __table_args__ = (
+        CheckConstraint(
+            "framework IN ('all', 'gdpr', 'soc2', 'iso27001')",
+            name="ck_compliance_report_jobs_framework",
+        ),
+        CheckConstraint(
+            "format IN ('json', 'pdf')",
+            name="ck_compliance_report_jobs_format",
+        ),
+        CheckConstraint(
+            "report_status IN "
+            "('queued', 'publishing', 'published', 'running', 'completed', 'failed')",
+            name="ck_compliance_report_jobs_report_status",
+        ),
+        CheckConstraint(
+            "delivery_status IN ('pending', 'sending', 'sent', 'failed', 'skipped')",
+            name="ck_compliance_report_jobs_delivery_status",
+        ),
+        UniqueConstraint(
+            "schedule_id",
+            "scheduled_for",
+            name="uq_compliance_report_jobs_schedule_run",
+        ),
+    )
+
+    id = UUIDColumn()
+    organization_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    requested_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    schedule_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("scheduled_compliance_reports.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    scheduled_for = Column(DateTime(timezone=True), nullable=True)
+    framework = Column(String(20), nullable=False)
+    format = Column(String(10), nullable=False)
+    recipients = Column(
+        JSON().with_variant(JSONB, "postgresql"),
+        default=list,
+        server_default="[]",
+        nullable=False,
+    )
+    report_status = Column(
+        String(20), nullable=False, default="queued", server_default="queued"
+    )
+    delivery_status = Column(
+        String(20), nullable=False, default="pending", server_default="pending"
+    )
+    publication_attempts = Column(Integer, nullable=False, default=0, server_default="0")
+    generation_attempts = Column(Integer, nullable=False, default=0, server_default="0")
+    email_attempts = Column(Integer, nullable=False, default=0, server_default="0")
+    error_report = Column(Text)
+    error_delivery = Column(Text)
+    file_path = Column(Text)
+    filename = Column(String(255))
+    media_type = Column(String(100))
+    file_size = Column(BigInteger)
+    file_sha256 = Column(String(64))
+    created_at = Column(
+        DateTime(timezone=True), default=datetime.utcnow, server_default=func.now()
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        server_default=func.now(),
+    )
+    published_at = Column(DateTime(timezone=True))
+    started_at = Column(DateTime(timezone=True))
+    completed_at = Column(DateTime(timezone=True))
+    email_sent_at = Column(DateTime(timezone=True))
 
 
 class IntegrationConfiguration(Base):
@@ -1257,3 +1526,60 @@ class ERPCorrelation(Base):
     correlation_metadata = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
+
+
+class ErrorEvent(Base):
+    """Aggregated unhandled-exception fingerprint (Error Triage).
+
+    One row per unique (exception type + route template + crash location). Only
+    metadata and scrubbed samples are stored — never request bodies, headers, or
+    user identity. Mirrors database/migrations/018_error_events.sql.
+    """
+    __tablename__ = "error_events"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('open', 'acknowledged', 'resolved')",
+            name="ck_error_events_status",
+        ),
+    )
+
+    fingerprint = Column(String(16), primary_key=True)
+    exception_type = Column(String(255), nullable=False)
+    route = Column(String(512), nullable=False)
+    method = Column(String(10), nullable=False)
+    status_code = Column(Integer, nullable=False, default=500, server_default="500")
+    message_sample = Column(String(500))
+    traceback_sample = Column(Text)
+    total_count = Column(BigInteger, nullable=False, default=0, server_default="0")
+    regression_count = Column(Integer, nullable=False, default=0, server_default="0")
+    status = Column(String(20), nullable=False, default="open", server_default="open")
+    status_changed_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    status_changed_at = Column(DateTime(timezone=True))
+    first_seen = Column(DateTime(timezone=True), nullable=False)
+    last_seen = Column(DateTime(timezone=True), nullable=False)
+    organization_id = Column(UUID(as_uuid=True), nullable=True)
+
+    buckets = relationship(
+        "ErrorEventBucket",
+        back_populates="error_event",
+        cascade="all, delete-orphan",
+    )
+
+
+class ErrorEventBucket(Base):
+    """Hourly occurrence rollup for an error fingerprint (Error Triage trends)."""
+    __tablename__ = "error_event_buckets"
+
+    fingerprint = Column(
+        String(16),
+        ForeignKey("error_events.fingerprint", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    bucket_hour = Column(DateTime(timezone=True), primary_key=True)
+    count = Column(BigInteger, nullable=False, default=0, server_default="0")
+
+    error_event = relationship("ErrorEvent", back_populates="buckets")

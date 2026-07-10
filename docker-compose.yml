@@ -69,14 +69,36 @@ services:
       JWT_SECRET_KEY: dev_secret_key_change_in_production
       JWT_ALGORITHM: HS256
       JWT_ACCESS_TOKEN_EXPIRE_MINUTES: 30
+      SIGNED_URL_SECRET_KEY: ${SIGNED_URL_SECRET_KEY:-dev_signed_link_secret_change_in_production}
+      SIGNED_URL_ALGORITHM: HS256
+      SIGNED_URL_ISSUER: omniusgrid-signed-links
+      SIGNED_URL_AUDIENCE: omniusgrid-report-download
+      SIGNED_URL_ACCEPT_LEGACY_EXPORT_TOKENS: ${SIGNED_URL_ACCEPT_LEGACY_EXPORT_TOKENS:-true}
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+      REDIS_URL: redis://redis:6379/0
+      EXPORT_STORAGE_PATH: /var/lib/omniusgrid/exports
+      EXPORT_PUBLIC_BASE_URL: http://localhost:8002
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-reports@omniusgrid.local}
+      SMTP_USE_TLS: ${SMTP_USE_TLS:-false}
+      SMTP_START_TLS: ${SMTP_START_TLS:-true}
+      COMPLIANCE_REPORT_EMAIL_ENABLED: ${COMPLIANCE_REPORT_EMAIL_ENABLED:-false}
+      COMPLIANCE_REPORT_SCHEDULER_ENABLED: ${COMPLIANCE_REPORT_SCHEDULER_ENABLED:-true}
+      COMPLIANCE_REPORT_SCHEDULER_INTERVAL_SECONDS: ${COMPLIANCE_REPORT_SCHEDULER_INTERVAL_SECONDS:-30}
     ports:
       - "8000:8000"
     volumes:
       - ./backend:/app
+      - export-data:/var/lib/omniusgrid/exports
     depends_on:
       timescaledb:
         condition: service_healthy
       redpanda:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     networks:
       - omniusgrid-network
@@ -102,6 +124,83 @@ services:
     networks:
       - omniusgrid-network
     command: python -m app.workers.ingestion
+
+  # Durable scheduled export generation and company SMTP delivery
+  export-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: omniusgrid-export-worker
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://omniusgrid:omniusgrid_dev_password@timescaledb:5432/omniusgrid
+      REDPANDA_URL: redpanda:29092
+      REDPANDA_EXPORT_TOPIC: opsgrid.exports
+      JWT_SECRET_KEY: dev_secret_key_change_in_production
+      SIGNED_URL_SECRET_KEY: ${SIGNED_URL_SECRET_KEY:-dev_signed_link_secret_change_in_production}
+      SIGNED_URL_ALGORITHM: HS256
+      SIGNED_URL_ISSUER: omniusgrid-signed-links
+      SIGNED_URL_AUDIENCE: omniusgrid-report-download
+      SIGNED_URL_ACCEPT_LEGACY_EXPORT_TOKENS: ${SIGNED_URL_ACCEPT_LEGACY_EXPORT_TOKENS:-true}
+      EXPORT_STORAGE_PATH: /var/lib/omniusgrid/exports
+      EXPORT_PUBLIC_BASE_URL: http://localhost:8002
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-reports@omniusgrid.local}
+      SMTP_USE_TLS: ${SMTP_USE_TLS:-false}
+      SMTP_START_TLS: ${SMTP_START_TLS:-true}
+    volumes:
+      - ./backend:/app
+      - export-data:/var/lib/omniusgrid/exports
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+    networks:
+      - omniusgrid-network
+    command: python -m app.workers.export_delivery
+
+  # Async compliance report generation and email delivery
+  compliance-reports-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: omniusgrid-compliance-reports-worker
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://omniusgrid:omniusgrid_dev_password@timescaledb:5432/omniusgrid
+      REDPANDA_URL: redpanda:29092
+      REDPANDA_COMPLIANCE_REPORTS_TOPIC: opsgrid.compliance-reports
+      JWT_SECRET_KEY: dev_secret_key_change_in_production
+      SIGNED_URL_SECRET_KEY: ${SIGNED_URL_SECRET_KEY:-dev_signed_link_secret_change_in_production}
+      SIGNED_URL_ALGORITHM: HS256
+      SIGNED_URL_ISSUER: omniusgrid-signed-links
+      SIGNED_URL_AUDIENCE: omniusgrid-report-download
+      SIGNED_URL_ACCEPT_LEGACY_EXPORT_TOKENS: ${SIGNED_URL_ACCEPT_LEGACY_EXPORT_TOKENS:-true}
+      EXPORT_STORAGE_PATH: /var/lib/omniusgrid/exports
+      EXPORT_PUBLIC_BASE_URL: http://localhost:8002
+      COMPLIANCE_REPORT_EMAIL_ENABLED: ${COMPLIANCE_REPORT_EMAIL_ENABLED:-false}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-reports@omniusgrid.local}
+      SMTP_USE_TLS: ${SMTP_USE_TLS:-false}
+      SMTP_START_TLS: ${SMTP_START_TLS:-true}
+    volumes:
+      - ./backend:/app
+      - export-data:/var/lib/omniusgrid/exports
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+    networks:
+      - omniusgrid-network
+    command: python -m app.workers.compliance_reports
 
   # Frontend - React Dashboard
   frontend:
@@ -218,6 +317,11 @@ services:
       - "6379:6379"
     volumes:
       - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
     networks:
       - omniusgrid-network
 
@@ -283,6 +387,7 @@ volumes:
   redpanda-data:
   timescaledb-data:
   redis-data:
+  export-data:
   edge-agent-data:
   prometheus-data:
   alertmanager-data:

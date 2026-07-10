@@ -29,6 +29,7 @@ from app.models.schemas import (
 )
 from app.api.auth import get_current_active_user
 from app.db.database import get_db
+from app.middleware.rbac import require_admin
 
 router = APIRouter(prefix="/api/v1/registries", tags=["registries"])
 
@@ -88,6 +89,7 @@ async def get_registry(
 
 
 @router.post("", response_model=ActionableRegistryResponse, status_code=201)
+@require_admin()
 async def create_registry(
     registry: ActionableRegistryCreate,
     current_user: User = Depends(get_current_active_user),
@@ -108,6 +110,7 @@ async def create_registry(
 
 
 @router.put("/{registry_id}", response_model=ActionableRegistryResponse)
+@require_admin()
 async def update_registry(
     registry_id: uuid.UUID,
     registry: ActionableRegistryUpdate,
@@ -139,6 +142,7 @@ async def update_registry(
 
 
 @router.delete("/{registry_id}", status_code=204)
+@require_admin()
 async def delete_registry(
     registry_id: uuid.UUID,
     current_user: User = Depends(get_current_active_user),
@@ -203,6 +207,7 @@ async def get_registry_items(
 
 
 @router.post("/{registry_id}/items", response_model=ActionableRegistryItemResponse, status_code=201)
+@require_admin()
 async def create_registry_item(
     registry_id: uuid.UUID,
     item: ActionableRegistryItemCreate,
@@ -237,6 +242,7 @@ async def create_registry_item(
 
 
 @router.put("/items/{item_id}", response_model=ActionableRegistryItemResponse)
+@require_admin()
 async def update_registry_item(
     item_id: uuid.UUID,
     item: ActionableRegistryItemUpdate,
@@ -268,6 +274,7 @@ async def update_registry_item(
 
 
 @router.delete("/items/{item_id}", status_code=204)
+@require_admin()
 async def delete_registry_item(
     item_id: uuid.UUID,
     current_user: User = Depends(get_current_active_user),
@@ -326,6 +333,7 @@ async def get_correlations(
 
 
 @router.post("/correlations", response_model=DataCorrelationResponse, status_code=201)
+@require_admin()
 async def create_correlation(
     correlation: DataCorrelationCreate,
     current_user: User = Depends(get_current_active_user),
@@ -346,6 +354,7 @@ async def create_correlation(
 
 
 @router.put("/correlations/{correlation_id}", response_model=DataCorrelationResponse)
+@require_admin()
 async def update_correlation(
     correlation_id: uuid.UUID,
     correlation_strength: Optional[int] = None,
@@ -382,6 +391,7 @@ async def update_correlation(
 
 
 @router.delete("/correlations/{correlation_id}", status_code=204)
+@require_admin()
 async def delete_correlation(
     correlation_id: uuid.UUID,
     current_user: User = Depends(get_current_active_user),
@@ -408,6 +418,7 @@ async def delete_correlation(
 # ============ Scoring and Analytics ============
 
 @router.get("/{registry_id}/score", response_model=dict)
+@require_admin()
 async def get_registry_score(
     registry_id: uuid.UUID,
     current_user: User = Depends(get_current_active_user),
@@ -481,6 +492,7 @@ async def get_registry_score(
 
 
 @router.post("/items/{item_id}/score", response_model=dict)
+@require_admin()
 async def calculate_item_risk_score(
     item_id: uuid.UUID,
     current_user: User = Depends(get_current_active_user),
