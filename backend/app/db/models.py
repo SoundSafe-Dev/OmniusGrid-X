@@ -5,10 +5,27 @@ from datetime import datetime
 from typing import Optional, List
 from sqlalchemy import Column, String, DateTime, Boolean, Numeric, JSON, ForeignKey, Text, BigInteger, Integer, ARRAY, Date, UUID
 from sqlalchemy.orm import declarative_base, relationship
+from sqlalchemy.types import TypeDecorator
 
 from app.core.config import settings
 
 Base = declarative_base()
+
+
+class UUIDString(TypeDecorator):
+    """VARCHAR(36) UUID that accepts uuid.UUID or str binds.
+
+    Endpoints pass FastAPI ``UUID`` path/body params straight into filters and
+    inserts. asyncpg silently coerces UUID->text, but SQLite (local dev / smoke
+    tests) raises "type 'UUID' is not supported" — so coerce at the type layer
+    for every dialect instead of str()-ing at each call site.
+    """
+
+    impl = String(36)
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        return str(value) if value is not None else None
 
 
 def StringListColumn(nullable: bool = False, default=None):
@@ -23,12 +40,12 @@ def StringListColumn(nullable: bool = False, default=None):
         kwargs["default"] = default
     return Column(ARRAY(String), **kwargs)
 
-# SQLite-compatible UUID column type
+# SQLite-compatible UUID column type (UUIDString coerces UUID-object binds).
 def UUIDColumn():
-    return Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    return Column(UUIDString(), primary_key=True, default=lambda: str(uuid.uuid4()))
 
 def UUIDForeignKey(foreign_key, nullable=False):
-    return Column(String(36), ForeignKey(foreign_key), nullable=nullable)
+    return Column(UUIDString(), ForeignKey(foreign_key), nullable=nullable)
 
 
 class Organization(Base):
@@ -67,7 +84,7 @@ class Asset(Base):
 
     id = UUIDColumn()
     organization_id = UUIDForeignKey("organizations.id")
-    workcell_id = UUIDForeignKey("workcells.id")
+    workcell_id = UUIDForeignKey("workcells.id", nullable=True)
     asset_type_id = UUIDForeignKey("asset_types.id")
     name = Column(String(255), nullable=False)
     serial_number = Column(String(255))
@@ -106,7 +123,7 @@ class Telemetry(Base):
     __tablename__ = "telemetry"
 
     time = Column(DateTime(timezone=True), primary_key=True)
-    asset_id = Column(String(36), ForeignKey("assets.id"), primary_key=True)
+    asset_id = Column(UUIDString(), ForeignKey("assets.id"), primary_key=True)
     metric_name = Column(String(100), primary_key=True)
     value = Column(Numeric, nullable=False)
     unit = Column(String(50))
@@ -172,7 +189,7 @@ class YardTrailer(Base):
     id = UUIDColumn()
     organization_id = UUIDForeignKey("organizations.id")
     trailer_number = Column(String(50), nullable=False)
-    carrier_id = UUIDForeignKey("carriers.id")
+    carrier_id = UUIDForeignKey("carriers.id", nullable=True)
     trailer_type = Column(String(50))  # dry_van, reefer, flatbed, etc.
     status = Column(String(50), default="checked_in")  # checked_in, docked, yard, checked_out
     yard_location = Column(String(100))  # grid position or zone
@@ -181,9 +198,9 @@ class YardTrailer(Base):
     weight_lbs = Column(Numeric)
     check_in_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     check_out_at = Column(DateTime(timezone=True))
-    dock_door_id = UUIDForeignKey("dock_doors.id")
-    driver_id = UUIDForeignKey("drivers.id")
-    shipment_id = UUIDForeignKey("shipments.id")
+    dock_door_id = UUIDForeignKey("dock_doors.id", nullable=True)
+    driver_id = UUIDForeignKey("drivers.id", nullable=True)
+    shipment_id = UUIDForeignKey("shipments.id", nullable=True)
     temperature_setpoint = Column(Numeric)  # for reefers
     temperature_actual = Column(Numeric)
     meta_data = Column(JSON, default={})
@@ -201,7 +218,7 @@ class DockDoor(Base):
     door_type = Column(String(50))  # inbound, outbound, cross_dock
     status = Column(String(50), default="available")  # available, occupied, maintenance
     equipment_capabilities = Column(JSON, default={})  # forklift, pallet_jack, etc.
-    current_trailer_id = UUIDForeignKey("yard_trailers.id")
+    current_trailer_id = UUIDForeignKey("yard_trailers.id", nullable=True)
     last_occupied_at = Column(DateTime(timezone=True))
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
@@ -214,11 +231,11 @@ class YardMove(Base):
     
     id = UUIDColumn()
     organization_id = UUIDForeignKey("organizations.id")
-    trailer_id = UUIDForeignKey("yard_trailers.id")
+    trailer_id = UUIDForeignKey("yard_trailers.id", nullable=True)
     from_location = Column(String(100), nullable=False)
     to_location = Column(String(100), nullable=False)
     move_type = Column(String(50))  # check_in, dock, yard_relocate, check_out
-    jockey_driver_id = UUIDForeignKey("drivers.id")
+    jockey_driver_id = UUIDForeignKey("drivers.id", nullable=True)
     started_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     completed_at = Column(DateTime(timezone=True))
     duration_seconds = Column(Numeric)
@@ -232,8 +249,8 @@ class DriverWaitTime(Base):
     
     id = UUIDColumn()
     organization_id = UUIDForeignKey("organizations.id")
-    driver_id = UUIDForeignKey("drivers.id")
-    trailer_id = UUIDForeignKey("yard_trailers.id")
+    driver_id = UUIDForeignKey("drivers.id", nullable=True)
+    trailer_id = UUIDForeignKey("yard_trailers.id", nullable=True)
     check_in_at = Column(DateTime(timezone=True), nullable=False)
     docked_at = Column(DateTime(timezone=True))
     unloaded_at = Column(DateTime(timezone=True))
@@ -257,7 +274,7 @@ class YardCheckPoint(Base):
     
     id = UUIDColumn()
     organization_id = UUIDForeignKey("organizations.id")
-    trailer_id = UUIDForeignKey("yard_trailers.id")
+    trailer_id = UUIDForeignKey("yard_trailers.id", nullable=True)
     checkpoint_type = Column(String(50), nullable=False)  # gate_in, guard_shack, weigh_station, gate_out
     checkpoint_name = Column(String(100))
     passed_at = Column(DateTime(timezone=True), default=datetime.utcnow)
@@ -298,7 +315,7 @@ class Driver(Base):
     
     id = UUIDColumn()
     organization_id = UUIDForeignKey("organizations.id")
-    carrier_id = UUIDForeignKey("carriers.id")
+    carrier_id = UUIDForeignKey("carriers.id", nullable=True)
     first_name = Column(String(100), nullable=False)
     last_name = Column(String(100), nullable=False)
     license_number = Column(String(100))
@@ -325,9 +342,9 @@ class Shipment(Base):
     
     id = UUIDColumn()
     organization_id = UUIDForeignKey("organizations.id")
-    carrier_id = UUIDForeignKey("carriers.id")
-    driver_id = UUIDForeignKey("drivers.id")
-    trailer_id = UUIDForeignKey("yard_trailers.id")
+    carrier_id = UUIDForeignKey("carriers.id", nullable=True)
+    driver_id = UUIDForeignKey("drivers.id", nullable=True)
+    trailer_id = UUIDForeignKey("yard_trailers.id", nullable=True)
     shipment_number = Column(String(100), nullable=False)
     pro_number = Column(String(100))  # Progressive Rotating Order
     bol_number = Column(String(100))  # Bill of Lading
@@ -346,7 +363,7 @@ class Shipment(Base):
     temperature_required = Column(Boolean, default=False)
     temperature_min = Column(Numeric)
     temperature_max = Column(Numeric)
-    route_id = UUIDForeignKey("routes.id")
+    route_id = UUIDForeignKey("routes.id", nullable=True)
     meta_data = Column(JSON, default={})
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
@@ -378,8 +395,8 @@ class LoadPlan(Base):
     
     id = UUIDColumn()
     organization_id = UUIDForeignKey("organizations.id")
-    shipment_id = UUIDForeignKey("shipments.id")
-    trailer_id = UUIDForeignKey("yard_trailers.id")
+    shipment_id = UUIDForeignKey("shipments.id", nullable=True)
+    trailer_id = UUIDForeignKey("yard_trailers.id", nullable=True)
     planned_by = Column(String(36))
     planned_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     load_sequence = Column(JSON, default=[])  # order of loading
@@ -400,8 +417,8 @@ class FreightCharge(Base):
     
     id = UUIDColumn()
     organization_id = UUIDForeignKey("organizations.id")
-    shipment_id = UUIDForeignKey("shipments.id")
-    carrier_id = UUIDForeignKey("carriers.id")
+    shipment_id = UUIDForeignKey("shipments.id", nullable=True)
+    carrier_id = UUIDForeignKey("carriers.id", nullable=True)
     charge_type = Column(String(50), nullable=False)  # linehaul, fuel, detention, demurrage, accessorial
     charge_description = Column(String(255))
     rate_basis = Column(String(50))  # per_mile, per_pound, flat, hourly
@@ -427,9 +444,9 @@ class DockAppointment(Base):
     
     id = UUIDColumn()
     organization_id = UUIDForeignKey("organizations.id")
-    dock_door_id = UUIDForeignKey("dock_doors.id")
-    trailer_id = UUIDForeignKey("yard_trailers.id")
-    shipment_id = UUIDForeignKey("shipments.id")
+    dock_door_id = UUIDForeignKey("dock_doors.id", nullable=True)
+    trailer_id = UUIDForeignKey("yard_trailers.id", nullable=True)
+    shipment_id = UUIDForeignKey("shipments.id", nullable=True)
     operation_id = UUIDForeignKey("operations.id")  # linked production job
     appointment_type = Column(String(50))  # pickup, delivery, transfer
     scheduled_start = Column(DateTime(timezone=True), nullable=False)
@@ -437,8 +454,8 @@ class DockAppointment(Base):
     actual_start = Column(DateTime(timezone=True))
     actual_end = Column(DateTime(timezone=True))
     status = Column(String(50), default="scheduled")  # scheduled, in_progress, completed, cancelled, no_show
-    carrier_id = UUIDForeignKey("carriers.id")
-    driver_id = UUIDForeignKey("drivers.id")
+    carrier_id = UUIDForeignKey("carriers.id", nullable=True)
+    driver_id = UUIDForeignKey("drivers.id", nullable=True)
     priority = Column(String(20), default="normal")
     compliance_required = Column(Boolean, default=False)  # FDA, etc.
     meta_data = Column(JSON, default={})
@@ -452,8 +469,8 @@ class TruckAssetCorrelation(Base):
     
     id = UUIDColumn()
     organization_id = UUIDForeignKey("organizations.id")
-    shipment_id = UUIDForeignKey("shipments.id")
-    trailer_id = UUIDForeignKey("yard_trailers.id")
+    shipment_id = UUIDForeignKey("shipments.id", nullable=True)
+    trailer_id = UUIDForeignKey("yard_trailers.id", nullable=True)
     asset_id = UUIDForeignKey("assets.id")
     operation_id = UUIDForeignKey("operations.id")
     truck_arrived_at = Column(DateTime(timezone=True))
@@ -475,8 +492,8 @@ class LoadQualityLog(Base):
     
     id = UUIDColumn()
     organization_id = UUIDForeignKey("organizations.id")
-    shipment_id = UUIDForeignKey("shipments.id")
-    trailer_id = UUIDForeignKey("yard_trailers.id")
+    shipment_id = UUIDForeignKey("shipments.id", nullable=True)
+    trailer_id = UUIDForeignKey("yard_trailers.id", nullable=True)
     asset_id = UUIDForeignKey("assets.id")  # source asset
     operation_id = UUIDForeignKey("operations.id")
     defect_type = Column(String(100))  # wrong_product, damaged, short, over, temp_excursion

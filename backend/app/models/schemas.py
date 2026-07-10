@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 from uuid import UUID
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 
 # Asset Schemas
@@ -76,7 +76,7 @@ class AlarmCreate(BaseModel):
     severity: str  # critical, high, medium, low, info
     message: str
     description: Optional[str] = None
-    metadata: Dict[str, Any] = {}
+    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class AlarmResponse(AlarmCreate):
@@ -103,7 +103,7 @@ class OperationCreate(BaseModel):
     operation_name: str
     job_id: Optional[str] = None
     planned_duration: Optional[int] = None  # seconds
-    metadata: Dict[str, Any] = {}
+    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class OperationResponse(OperationCreate):
@@ -126,7 +126,7 @@ class TelemetryPoint(BaseModel):
     value: float
     unit: Optional[str] = None
     packml_state: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = Field(default=None, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class TelemetryBatch(BaseModel):
@@ -183,7 +183,7 @@ class YardTrailerBase(BaseModel):
     weight_lbs: Optional[float] = None
     temperature_setpoint: Optional[float] = None
     temperature_actual: Optional[float] = None
-    metadata: Dict[str, Any] = {}
+    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class YardTrailerCreate(YardTrailerBase):
@@ -202,7 +202,7 @@ class YardTrailerUpdate(BaseModel):
     driver_id: Optional[UUID] = None
     temperature_actual: Optional[float] = None
     check_out_at: Optional[datetime] = None
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = Field(default=None, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class YardTrailerResponse(YardTrailerBase):
@@ -257,7 +257,7 @@ class YardMoveBase(BaseModel):
     to_location: str
     move_type: Optional[str] = None  # check_in, dock, yard_relocate, check_out
     duration_seconds: Optional[float] = None
-    metadata: Dict[str, Any] = {}
+    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class YardMoveCreate(YardMoveBase):
@@ -292,7 +292,7 @@ class DriverWaitTimeBase(BaseModel):
     detention_charge: Optional[float] = None
     demurrage_charge: Optional[float] = None
     is_billed: bool = False
-    metadata: Dict[str, Any] = {}
+    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class DriverWaitTimeCreate(DriverWaitTimeBase):
@@ -319,7 +319,7 @@ class YardCheckPointBase(BaseModel):
     weight_lbs: Optional[float] = None
     inspection_status: Optional[str] = None  # passed, failed, pending
     inspector_id: Optional[UUID] = None
-    metadata: Dict[str, Any] = {}
+    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class YardCheckPointCreate(YardCheckPointBase):
@@ -454,7 +454,7 @@ class ShipmentBase(BaseModel):
     temperature_required: bool = False
     temperature_min: Optional[float] = None
     temperature_max: Optional[float] = None
-    metadata: Dict[str, Any] = {}
+    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class ShipmentCreate(ShipmentBase):
@@ -472,7 +472,7 @@ class ShipmentUpdate(BaseModel):
     actual_pickup: Optional[datetime] = None
     actual_delivery: Optional[datetime] = None
     priority: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = Field(default=None, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class ShipmentResponse(ShipmentBase):
@@ -532,7 +532,7 @@ class LoadPlanBase(BaseModel):
     special_instructions: Optional[str] = None
     is_executed: bool = False
     executed_at: Optional[datetime] = None
-    metadata: Dict[str, Any] = {}
+    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class LoadPlanCreate(LoadPlanBase):
@@ -568,7 +568,7 @@ class FreightChargeBase(BaseModel):
     billed_at: Optional[datetime] = None
     invoice_number: Optional[str] = None
     approved_at: Optional[datetime] = None
-    metadata: Dict[str, Any] = {}
+    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class FreightChargeCreate(FreightChargeBase):
@@ -602,7 +602,7 @@ class DockAppointmentBase(BaseModel):
     status: str = "scheduled"  # scheduled, in_progress, completed, cancelled, no_show
     priority: str = "normal"
     compliance_required: bool = False
-    metadata: Dict[str, Any] = {}
+    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class DockAppointmentCreate(DockAppointmentBase):
@@ -620,7 +620,7 @@ class DockAppointmentUpdate(BaseModel):
     actual_start: Optional[datetime] = None
     actual_end: Optional[datetime] = None
     priority: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = Field(default=None, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class DockAppointmentResponse(DockAppointmentBase):
@@ -649,7 +649,7 @@ class TruckAssetCorrelationBase(BaseModel):
     detention_incurred: bool = False
     detention_charge: Optional[float] = None
     efficiency_score: Optional[float] = None
-    metadata: Dict[str, Any] = {}
+    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class TruckAssetCorrelationCreate(TruckAssetCorrelationBase):
@@ -682,7 +682,7 @@ class LoadQualityLogBase(BaseModel):
     claim_filed: bool = False
     claim_amount: Optional[float] = None
     resolved_at: Optional[datetime] = None
-    metadata: Dict[str, Any] = {}
+    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class LoadQualityLogCreate(LoadQualityLogBase):

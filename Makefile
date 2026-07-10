@@ -27,6 +27,9 @@ tracing: ## Start the stack with the tracing profile (OTel collector + Jaeger)
 
 test: test-backend test-edge test-frontend ## Run all test suites
 
+smoke: ## Deployment-free end-to-end smoke (in-process app + SQLite)
+	cd backend && python scripts/smoke_e2e.py
+
 test-backend: ## Backend pytest
 	cd backend && python -m pytest -q
 

@@ -32,43 +32,49 @@ class HOSComplianceMonitor:
         """Check driver's current HOS compliance status"""
         violations = []
         warnings = []
-        
+
+        # Numeric columns come back as Decimal; coerce once so the float
+        # arithmetic below never mixes Decimal and float (TypeError).
+        drive_hours = float(driver.hos_drive_hours_today or 0)
+        on_duty_hours = float(driver.hos_on_duty_hours_today or 0)
+        cycle_hours = float(driver.hos_cycle_hours or 0)
+
         # Check drive time
-        if driver.hos_drive_hours_today >= self.MAX_DRIVE_HOURS_DAY:
-            violations.append(f"Drive hours exceeded: {driver.hos_drive_hours_today}h > {self.MAX_DRIVE_HOURS_DAY}h")
-        elif driver.hos_drive_hours_today >= self.MAX_DRIVE_HOURS_DAY - 1:
-            warnings.append(f"Drive time nearing limit: {driver.hos_drive_hours_today}h")
-        
+        if drive_hours >= self.MAX_DRIVE_HOURS_DAY:
+            violations.append(f"Drive hours exceeded: {drive_hours}h > {self.MAX_DRIVE_HOURS_DAY}h")
+        elif drive_hours >= self.MAX_DRIVE_HOURS_DAY - 1:
+            warnings.append(f"Drive time nearing limit: {drive_hours}h")
+
         # Check on-duty time
-        if driver.hos_on_duty_hours_today >= self.MAX_ON_DUTY_HOURS_DAY:
-            violations.append(f"On-duty hours exceeded: {driver.hos_on_duty_hours_today}h > {self.MAX_ON_DUTY_HOURS_DAY}h")
-        elif driver.hos_on_duty_hours_today >= self.MAX_ON_DUTY_HOURS_DAY - 1:
-            warnings.append(f"On-duty time nearing limit: {driver.hos_on_duty_hours_today}h")
-        
+        if on_duty_hours >= self.MAX_ON_DUTY_HOURS_DAY:
+            violations.append(f"On-duty hours exceeded: {on_duty_hours}h > {self.MAX_ON_DUTY_HOURS_DAY}h")
+        elif on_duty_hours >= self.MAX_ON_DUTY_HOURS_DAY - 1:
+            warnings.append(f"On-duty time nearing limit: {on_duty_hours}h")
+
         # Check cycle hours
-        if driver.hos_cycle_hours >= self.MAX_CYCLE_HOURS:
-            violations.append(f"Cycle hours exceeded: {driver.hos_cycle_hours}h > {self.MAX_CYCLE_HOURS}h")
-        elif driver.hos_cycle_hours >= self.MAX_CYCLE_HOURS - 10:
-            warnings.append(f"Cycle time nearing limit: {driver.hos_cycle_hours}h")
-        
+        if cycle_hours >= self.MAX_CYCLE_HOURS:
+            violations.append(f"Cycle hours exceeded: {cycle_hours}h > {self.MAX_CYCLE_HOURS}h")
+        elif cycle_hours >= self.MAX_CYCLE_HOURS - 10:
+            warnings.append(f"Cycle time nearing limit: {cycle_hours}h")
+
         # Check medical cert
         if driver.medical_cert_expires and driver.medical_cert_expires < datetime.utcnow():
             violations.append("Medical certificate expired")
         elif driver.medical_cert_expires and driver.medical_cert_expires < datetime.utcnow() + timedelta(days=30):
             warnings.append("Medical certificate expiring soon")
-        
+
         return {
             'driver_id': str(driver.id),
             'is_compliant': len(violations) == 0,
             'violations': violations,
             'warnings': warnings,
             'hours_summary': {
-                'drive_hours_today': driver.hos_drive_hours_today,
-                'on_duty_hours_today': driver.hos_on_duty_hours_today,
-                'cycle_hours': driver.hos_cycle_hours,
-                'drive_hours_remaining': max(0, self.MAX_DRIVE_HOURS_DAY - driver.hos_drive_hours_today),
-                'on_duty_hours_remaining': max(0, self.MAX_ON_DUTY_HOURS_DAY - driver.hos_on_duty_hours_today),
-                'cycle_hours_remaining': max(0, self.MAX_CYCLE_HOURS - driver.hos_cycle_hours)
+                'drive_hours_today': drive_hours,
+                'on_duty_hours_today': on_duty_hours,
+                'cycle_hours': cycle_hours,
+                'drive_hours_remaining': max(0, self.MAX_DRIVE_HOURS_DAY - drive_hours),
+                'on_duty_hours_remaining': max(0, self.MAX_ON_DUTY_HOURS_DAY - on_duty_hours),
+                'cycle_hours_remaining': max(0, self.MAX_CYCLE_HOURS - cycle_hours)
             }
         }
     
