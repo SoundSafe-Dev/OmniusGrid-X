@@ -10,7 +10,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -46,11 +46,15 @@ class AgentReleaseCreate(BaseModel):
 
 
 class AgentReleaseResponse(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
     id: UUID
     organization_id: UUID
     version: str
     channel: str
-    image_tag: str
+    image_tag: str | None
+    artifact_type: str = "config"
+    model_name: str | None = None
     checksum_sha256: str
     signature_ed25519: str
     signing_key_id: str
@@ -84,6 +88,8 @@ def _release_response(
         version=release.version,
         channel=release.channel,
         image_tag=release.image_tag,
+        artifact_type=release.artifact_type,
+        model_name=release.model_name,
         checksum_sha256=release.checksum_sha256,
         signature_ed25519=release.signature_ed25519,
         signing_key_id=release.signing_key_id,

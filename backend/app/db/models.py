@@ -1372,6 +1372,10 @@ class AgentRelease(Base):
             "status IN ('draft', 'published', 'yanked')",
             name="ck_agent_releases_status",
         ),
+        CheckConstraint(
+            "artifact_type IN ('config', 'model')",
+            name="ck_agent_releases_artifact_type",
+        ),
         UniqueConstraint(
             "organization_id", "version", "channel",
             name="uq_agent_releases_org_version_channel",
@@ -1386,7 +1390,9 @@ class AgentRelease(Base):
     )
     version = Column(String(100), nullable=False)
     channel = Column(String(50), nullable=False, default="stable", server_default="stable")
-    image_tag = Column(String(255), nullable=False)
+    image_tag = Column(String(255), nullable=True)
+    artifact_type = Column(String(20), nullable=False, default="config", server_default="config")
+    model_name = Column(String(100), nullable=True)
     bundle_storage_key = Column(Text, nullable=False)
     checksum_sha256 = Column(String(64), nullable=False)
     signature_ed25519 = Column(Text, nullable=False)

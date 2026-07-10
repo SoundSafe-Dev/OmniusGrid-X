@@ -285,17 +285,21 @@ class RolloutOrchestrator:
         bundle_url, _ = issue_release_bundle_url(release.id, rollout.organization_id)
         if capture_current_version:
             target.current_version = await self._current_asset_version(session, target.asset_id)
+        action_id = "model_update" if release.artifact_type == "model" else "agent_update"
+        parameters = {
+            "release_id": str(release.id),
+            "bundle_url": bundle_url,
+            "checksum_sha256": release.checksum_sha256,
+            "signature_ed25519": release.signature_ed25519,
+            "target_version": release.version,
+        }
+        if release.artifact_type == "model":
+            parameters["model_name"] = release.model_name
         return await self.command_client.submit_command(
             asset_id=str(target.asset_id),
             command_type="system",
-            action_id="agent_update",
-            parameters={
-                "release_id": str(release.id),
-                "bundle_url": bundle_url,
-                "checksum_sha256": release.checksum_sha256,
-                "signature_ed25519": release.signature_ed25519,
-                "target_version": release.version,
-            },
+            action_id=action_id,
+            parameters=parameters,
             issued_by=str(rollout.created_by) if rollout.created_by else None,
             organization_id=str(rollout.organization_id),
             timeout_seconds=self._strategy_int(
