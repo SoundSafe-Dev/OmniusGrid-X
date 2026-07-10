@@ -150,6 +150,46 @@ class Settings(BaseSettings):
     # so users aren't silently merged into one tenant.
     KEYCLOAK_DEFAULT_ORGANIZATION_ID: str = "00000000-0000-0000-0000-000000000001"
 
+
+    # Document Object Store (SeaweedFS S3 gateway)
+    # Endpoint is the SeaweedFS S3 gateway. The same client config works against
+    # MinIO or real AWS S3 by swapping these values - no code change required.
+    S3_ENDPOINT_URL: str = "http://seaweedfs:8333"
+    S3_ACCESS_KEY: str = "omniusgrid"
+    S3_SECRET_KEY: str = "omniusgrid_dev_secret"
+    S3_REGION: str = "us-east-1"  # dummy; SeaweedFS ignores it but boto3 requires one
+    S3_RAW_BUCKET: str = "raw-documents"
+    S3_TEXT_BUCKET: str = "extracted-text"
+    S3_PRESIGN_EXPIRE_SECONDS: int = 3600
+
+    # RAG embeddings + reranker (BGE via the rag-inference service)
+    # The ENDPOINT varies per deployment topology (own node / on-prem / RunPod);
+    # the MODEL is fixed - it is a data contract with the vector store. Changing
+    # EMBEDDING_MODEL means re-indexing everything. Do not make it per-deployment.
+    RAG_INFERENCE_URL: str = "http://rag-inference:8000"
+    RAG_INFERENCE_API_KEY: str = ""  # bearer token; empty = trusted local network
+    RAG_INFERENCE_TIMEOUT: float = 60.0
+    EMBEDDING_MODEL: str = "BAAI/bge-m3"  # pinned; must match indexed vectors
+    EMBEDDING_DIM: int = 1024  # BGE-M3 dense size (Qdrant collection dimension)
+    RERANKER_MODEL: str = "BAAI/bge-reranker-v2-m3"
+
+    # LLM inference (generation) - the swappable seam.
+    # OpenAI-compatible endpoint: vLLM / Ollama / TGI / hosted / a CUSTOM-BUILT
+    # Gemma all work by changing these values only - no application code change.
+    LLM_BASE_URL: str = "http://gemma:8000/v1"
+    LLM_MODEL: str = "gemma-12b"  # whatever the LLM server registers (e.g. a custom fine-tune)
+    LLM_API_KEY: str = ""  # bearer; empty for local/trusted network
+    LLM_TIMEOUT: float = 120.0
+    LLM_MAX_TOKENS: int = 1024
+    LLM_TEMPERATURE: float = 0.2
+
+    # Vector store (Qdrant) - self-hosted or Qdrant Cloud by endpoint alone.
+    # The dense dimension must equal EMBEDDING_DIM (data contract with BGE-M3).
+    QDRANT_URL: str = "http://qdrant:6333"
+    QDRANT_API_KEY: str = ""  # required for Qdrant Cloud; empty for self-hosted
+    QDRANT_COLLECTION: str = "documents"
+    QDRANT_PREFETCH_LIMIT: int = 50  # candidates per mode retrieved before fusion
+    
     # Application
     ENVIRONMENT: str = "development"   # development | staging | production
     DEBUG: bool = True

@@ -1,0 +1,9 @@
+# rag-inference service: BGE-M3 embeddings + BGE-Reranker-v2-m3
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+structlog==23.2.0
+
+# BAAI reference implementation - returns dense + sparse in one pass, and the
+# reranker. Pulls in torch/transformers. The default torch wheel runs on CPU and
+# uses CUDA automatically when a GPU is present.
+FlagEmbedding>=1.2.10
