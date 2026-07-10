@@ -211,3 +211,87 @@ class EdgeIngestGateway:
             result.accepted.append(reading)
 
         return result
+
+
+# --- Redpanda handoff (audit FIX #2) -------------------------------------------
+# Accepted readings are published to `telemetry.{org}.{asset}` — the exact topic
+# pattern app/workers/ingestion.py consumes — completing the edge->cloud chain
+# that previously dropped readings after the guards.
+
+import asyncio as _asyncio
+import json as _json
+
+
+class RedpandaForwarder:
+    """Fire-and-forget publisher with a failure circuit.
+
+    The producer is created lazily on first use; if the broker is unreachable
+    (local dev, smoke tests) the forwarder trips open for ``retry_seconds`` and
+    counts drops instead of stalling requests. ``producer_factory`` is injectable
+    for tests.
+    """
+
+    def __init__(self, bootstrap_servers: Optional[str] = None,
+                 retry_seconds: float = 60.0, producer_factory=None):
+        self._bootstrap = bootstrap_servers
+        self._retry_seconds = retry_seconds
+        self._producer = None
+        self._producer_factory = producer_factory
+        self._unavailable_until = 0.0
+        self._lock = _asyncio.Lock()
+        self.forwarded = 0
+        self.dropped = 0
+
+    def _now(self) -> float:
+        return _asyncio.get_event_loop().time()
+
+    async def _get_producer(self):
+        if self._producer is not None:
+            return self._producer
+        if self._now() < self._unavailable_until:
+            return None
+        async with self._lock:
+            if self._producer is not None:
+                return self._producer
+            try:
+                if self._producer_factory is not None:
+                    producer = self._producer_factory()
+                else:
+                    from aiokafka import AIOKafkaProducer
+                    from app.core.config import settings
+                    producer = AIOKafkaProducer(
+                        bootstrap_servers=self._bootstrap or settings.REDPANDA_URL,
+                        request_timeout_ms=3000,
+                        value_serializer=lambda v: _json.dumps(v).encode(),
+                    )
+                await producer.start()
+                self._producer = producer
+                logger.info("edge_ingest_forwarder_connected")
+            except Exception as exc:
+                self._unavailable_until = self._now() + self._retry_seconds
+                logger.warning("edge_ingest_forwarder_unavailable", error=str(exc))
+                return None
+        return self._producer
+
+    async def forward(self, organization_id: str, readings: List[Dict[str, Any]]) -> int:
+        """Publish accepted readings; returns how many were sent."""
+        producer = await self._get_producer()
+        if producer is None:
+            self.dropped += len(readings)
+            return 0
+        sent = 0
+        for reading in readings:
+            topic = f"telemetry.{organization_id}.{reading.get('asset_id')}"
+            try:
+                await producer.send_and_wait(topic, reading)
+                sent += 1
+            except Exception as exc:
+                self.dropped += 1
+                # Trip the circuit; the edge agent's store-and-forward retains
+                # the data and will re-deliver, so dropping here is safe.
+                self._unavailable_until = self._now() + self._retry_seconds
+                self._producer = None
+                logger.warning("edge_ingest_forward_failed", error=str(exc))
+                break
+        self.forwarded += sent
+        return sent

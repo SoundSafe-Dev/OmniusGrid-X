@@ -101,3 +101,60 @@ def test_ingest_end_to_end_counts():
     assert res.summary["deduped"] == 1
     assert res.summary["quarantined"] == 1
     assert len(quarantined) == 1
+
+
+# --- Redpanda handoff (audit FIX #2) -------------------------------------------
+
+class _FakeProducer:
+    def __init__(self, fail=False):
+        self.fail = fail
+        self.sent = []
+        self.started = False
+
+    async def start(self):
+        if self.fail == "start":
+            raise ConnectionError("broker down")
+        self.started = True
+
+    async def send_and_wait(self, topic, value):
+        if self.fail == "send":
+            raise ConnectionError("broker died mid-send")
+        self.sent.append((topic, value))
+
+
+def test_forwarder_publishes_to_org_asset_topics():
+    import asyncio
+    from app.services.edge_ingest import RedpandaForwarder
+
+    producer = _FakeProducer()
+    fw = RedpandaForwarder(producer_factory=lambda: producer)
+    sent = asyncio.run(fw.forward("org-1", [
+        reading(asset="asset-a", seq=1), reading(asset="asset-b", seq=1),
+    ]))
+    assert sent == 2
+    topics = [t for t, _ in producer.sent]
+    assert topics == ["telemetry.org-1.asset-a", "telemetry.org-1.asset-b"]
+    assert fw.forwarded == 2 and fw.dropped == 0
+
+
+def test_forwarder_circuit_opens_when_broker_unreachable():
+    import asyncio
+    from app.services.edge_ingest import RedpandaForwarder
+
+    fw = RedpandaForwarder(producer_factory=lambda: _FakeProducer(fail="start"),
+                           retry_seconds=60)
+    sent = asyncio.run(fw.forward("org-1", [reading(seq=1), reading(seq=2)]))
+    assert sent == 0 and fw.dropped == 2
+    # Circuit open: second call drops immediately without re-connecting.
+    sent = asyncio.run(fw.forward("org-1", [reading(seq=3)]))
+    assert sent == 0 and fw.dropped == 3
+
+
+def test_forwarder_mid_send_failure_drops_and_trips():
+    import asyncio
+    from app.services.edge_ingest import RedpandaForwarder
+
+    fw = RedpandaForwarder(producer_factory=lambda: _FakeProducer(fail="send"))
+    sent = asyncio.run(fw.forward("org-1", [reading(seq=1), reading(seq=2)]))
+    assert sent == 0
+    assert fw.dropped >= 1  # tripped on first failure; batch abandoned to S&F retry
