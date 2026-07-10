@@ -39,6 +39,8 @@ const ERPIntegrations = named(() => import('./pages/admin'), 'ERPIntegrations')
 const YardManagement = named(() => import('./pages/logistics'), 'YardManagement')
 const TransportationManagement = named(() => import('./pages/logistics'), 'TransportationManagement')
 
+const ERPHub = named(() => import('./pages/erp'), 'ERPHub')
+
 const CorrelationAIPane = named(() => import('./components/nlp/CorrelationAIPane'), 'CorrelationAIPane')
 const IntakeInbox = named(() => import('./pages/intake/IntakeInbox'), 'IntakeInbox')
 
@@ -94,6 +96,9 @@ const App: FC = () => {
                 {/* Logistics - YMS & TMS */}
                 <Route path="/logistics/yard" element={<YardManagement />} />
                 <Route path="/logistics/transportation" element={<TransportationManagement />} />
+
+                {/* ERP hub (business data + AI correlation wiring) */}
+                <Route path="/erp" element={<ERPHub />} />
 
                 {/* NLP & Intake */}
                 <Route path="/nlp" element={<CorrelationAIPane />} />

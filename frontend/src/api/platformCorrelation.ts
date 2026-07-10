@@ -23,6 +23,7 @@ const MOCK_TYPES: PlatformSourceType[] = [
   { source_type: 'asset_telemetry', label: 'Asset / sensor telemetry' },
   { source_type: 'yard', label: 'Yard inventory' },
   { source_type: 'transportation', label: 'Shipments' },
+  { source_type: 'erp', label: 'ERP entities (orders, invoices, work orders)' },
 ]
 
 export const platformCorrelationApi = {

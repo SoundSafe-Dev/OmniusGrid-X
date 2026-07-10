@@ -849,3 +849,90 @@ async def delete_field_mapping(
     )
     
     return {"message": "Field mapping deleted successfully"}
+
+
+# ==================== ERP data surfaces (ERP hub page) ====================
+
+@router.get("/{integration_id}/entities")
+async def list_erp_entities(
+    integration_id: UUID,
+    entity_type: Optional[str] = None,
+    limit: int = 200,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Synced ERP business objects (erp_entities) for the hub's Entities tab."""
+    from sqlalchemy import select
+
+    query = select(ERPEntity).where(
+        ERPEntity.integration_id == integration_id,
+        ERPEntity.organization_id == current_user.organization_id,
+        ERPEntity.is_active == True,  # noqa: E712
+    )
+    if entity_type:
+        query = query.where(ERPEntity.entity_type == entity_type)
+    rows = (await db.execute(query.order_by(ERPEntity.updated_at.desc()).limit(min(limit, 1000)))).scalars().all()
+    return [{
+        "id": str(e.id),
+        "entity_type": e.entity_type,
+        "entity_id": e.entity_id,
+        "source_system": e.source_system,
+        "entity_data": e.entity_data,
+        "updated_at": e.updated_at.isoformat() if e.updated_at else None,
+    } for e in rows]
+
+
+@router.get("/{integration_id}/events")
+async def list_erp_events(
+    integration_id: UUID,
+    status: Optional[str] = None,
+    limit: int = 100,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Webhook/sync event feed (erp_integration_events) for the hub's Events tab."""
+    from sqlalchemy import select
+    from app.db.models import ERPIntegrationEvent
+
+    query = select(ERPIntegrationEvent).where(
+        ERPIntegrationEvent.integration_id == integration_id,
+        ERPIntegrationEvent.organization_id == current_user.organization_id,
+    )
+    if status:
+        query = query.where(ERPIntegrationEvent.processing_status == status)
+    rows = (await db.execute(query.order_by(ERPIntegrationEvent.created_at.desc()).limit(min(limit, 500)))).scalars().all()
+    return [{
+        "id": str(ev.id),
+        "event_type": ev.event_type,
+        "event_id": ev.event_id,
+        "source_system": ev.source_system,
+        "entity_type": ev.entity_type,
+        "entity_id": ev.entity_id,
+        "processing_status": ev.processing_status,
+        "created_at": ev.created_at.isoformat() if ev.created_at else None,
+    } for ev in rows]
+
+
+@router.get("/correlations/recent")
+async def list_erp_correlations(
+    limit: int = 100,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """ERP<->sensor correlations recorded in erp_correlations (AI tab)."""
+    from sqlalchemy import select
+    from app.db.models import ERPCorrelation
+
+    rows = (await db.execute(
+        select(ERPCorrelation)
+        .where(ERPCorrelation.organization_id == current_user.organization_id)
+        .order_by(ERPCorrelation.created_at.desc()).limit(min(limit, 500))
+    )).scalars().all()
+    return [{
+        "id": str(c.id),
+        "correlation_type": c.correlation_type,
+        "erp_event_id": str(c.erp_event_id) if c.erp_event_id else None,
+        "sensor_event_id": c.sensor_event_id,
+        "correlation_score": float(c.correlation_score) if c.correlation_score is not None else None,
+        "created_at": c.created_at.isoformat() if c.created_at else None,
+    } for c in rows]

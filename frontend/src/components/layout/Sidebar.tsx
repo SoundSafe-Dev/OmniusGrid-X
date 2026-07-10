@@ -88,6 +88,12 @@ const navItems: NavItem[] = [
     ],
   },
   {
+    path: '/erp',
+    label: 'ERP',
+    icon: Database,
+    description: 'ERP business data, events, and AI correlation',
+  },
+  {
     path: '/admin',
     label: 'Admin',
     icon: Settings,

@@ -62,6 +62,35 @@ export interface ConnectionTestResult {
   tested_at: string
 }
 
+export interface ERPEntity {
+  id: string
+  entity_type: string
+  entity_id: string
+  source_system: string
+  entity_data: Record<string, any>
+  updated_at?: string | null
+}
+
+export interface ERPEvent {
+  id: string
+  event_type: string
+  event_id: string
+  source_system: string
+  entity_type: string
+  entity_id?: string | null
+  processing_status: string
+  created_at?: string | null
+}
+
+export interface ERPCorrelationRecord {
+  id: string
+  correlation_type: string
+  erp_event_id?: string | null
+  sensor_event_id?: string | null
+  correlation_score?: number | null
+  created_at?: string | null
+}
+
 // ---- demo-ready mock data ----
 const mockIntegrations: ERPIntegration[] = [
   {
@@ -90,6 +119,33 @@ const mockMappings: Record<string, FieldMapping[]> = {
     { id: 'm1', source_entity: 'PurchaseOrder', source_field: 'PONumber', target_entity: 'operation', target_field: 'job_id', data_type: 'string', is_required: true },
   ],
 }
+const mockEntities: ERPEntity[] = [
+  { id: 'ent-1', entity_type: 'PurchaseOrder', entity_id: 'PO-10021', source_system: 'sap',
+    entity_data: { vendor: 'ACME Metals', amount: 12450.0, currency: 'USD', due_date: '2026-07-18', plant: 'CHI-01' },
+    updated_at: new Date(Date.now() - 3600_000).toISOString() },
+  { id: 'ent-2', entity_type: 'PurchaseOrder', entity_id: 'PO-10022', source_system: 'sap',
+    entity_data: { vendor: 'Baxter Polymers', amount: 3980.5, currency: 'USD', due_date: '2026-07-14', plant: 'CHI-01' },
+    updated_at: new Date(Date.now() - 7200_000).toISOString() },
+  { id: 'ent-3', entity_type: 'WorkOrder', entity_id: 'WO-77105', source_system: 'sap',
+    entity_data: { asset: 'CNC Mill #1', operation: 'spindle rebuild', status: 'released', planned_hours: 6 },
+    updated_at: new Date(Date.now() - 1800_000).toISOString() },
+  { id: 'ent-4', entity_type: 'Invoice', entity_id: 'INV-55810', source_system: 'netsuite',
+    entity_data: { customer: 'Northwind Logistics', amount: 22150.0, status: 'open', shipment: 'SHP-1001' },
+    updated_at: new Date(Date.now() - 900_000).toISOString() },
+]
+const mockEvents: ERPEvent[] = [
+  { id: 'ev-1', event_type: 'invoice.created', event_id: 'evt-9001', source_system: 'netsuite',
+    entity_type: 'Invoice', entity_id: 'INV-55810', processing_status: 'completed',
+    created_at: new Date(Date.now() - 600_000).toISOString() },
+  { id: 'ev-2', event_type: 'po.updated', event_id: 'evt-9002', source_system: 'sap',
+    entity_type: 'PurchaseOrder', entity_id: 'PO-10021', processing_status: 'pending',
+    created_at: new Date(Date.now() - 300_000).toISOString() },
+]
+const mockCorrelations: ERPCorrelationRecord[] = [
+  { id: 'c-1', correlation_type: 'work_order_vibration', erp_event_id: 'ev-2',
+    sensor_event_id: 'asset-8:vibration_rms', correlation_score: 0.82,
+    created_at: new Date(Date.now() - 1200_000).toISOString() },
+]
 
 export const erpApi = {
   async listIntegrations(): Promise<ERPIntegration[]> {
@@ -153,6 +209,22 @@ export const erpApi = {
   async deleteFieldMapping(id: string, mappingId: string): Promise<void> {
     if (USE_MOCK) { await delay(150); const arr = mockMappings[id] ?? []; const idx = arr.findIndex((m) => m.id === mappingId); if (idx >= 0) arr.splice(idx, 1); return }
     await api.delete(`/api/v1/erp/integrations/${id}/mappings/${mappingId}`)
+  },
+  async listEntities(id: string, entityType?: string): Promise<ERPEntity[]> {
+    if (USE_MOCK) {
+      await delay(200)
+      return entityType ? mockEntities.filter((e) => e.entity_type === entityType) : [...mockEntities]
+    }
+    const q = entityType ? `?entity_type=${encodeURIComponent(entityType)}` : ''
+    return (await api.get<ERPEntity[]>(`/api/v1/erp/integrations/${id}/entities${q}`)).data
+  },
+  async listEvents(id: string): Promise<ERPEvent[]> {
+    if (USE_MOCK) { await delay(200); return [...mockEvents] }
+    return (await api.get<ERPEvent[]>(`/api/v1/erp/integrations/${id}/events`)).data
+  },
+  async listCorrelations(): Promise<ERPCorrelationRecord[]> {
+    if (USE_MOCK) { await delay(200); return [...mockCorrelations] }
+    return (await api.get<ERPCorrelationRecord[]>('/api/v1/erp/integrations/correlations/recent')).data
   },
   supportedTypes(): string[] {
     return ['sap', 'oracle', 'dynamics', 'netsuite', 'odoo', 'infor', 'epicor']

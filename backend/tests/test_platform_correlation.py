@@ -39,11 +39,24 @@ def test_sample_data_is_capped():
 
 def test_registry_lists_three_domains():
     types = {s["source_type"] for s in available_source_types()}
-    assert types == {"asset_telemetry", "yard", "transportation"}
+    assert types == {"asset_telemetry", "yard", "transportation", "erp"}
+
+
+def test_flatten_erp_entity_keeps_scalars_only():
+    from app.services.platform_correlation import flatten_erp_entity
+
+    e = SimpleNamespace(
+        entity_type="PurchaseOrder", entity_id="PO-1", source_system="netsuite",
+        entity_data={"amount": 120.5, "vendor": "ACME", "lines": [{"x": 1}], "meta": {"y": 2}},
+    )
+    rec = flatten_erp_entity(e)
+    assert rec["entity_id"] == "PO-1" and rec["amount"] == 120.5 and rec["vendor"] == "ACME"
+    assert "lines" not in rec and "meta" not in rec  # nested structures dropped
 
 
 def test_get_provider_resolves_and_rejects():
     assert get_provider("asset_telemetry") is not None
+    assert get_provider("erp") is not None
     assert get_provider("nope") is None
 
 

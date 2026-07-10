@@ -20,7 +20,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Asset, Shipment, Telemetry, YardTrailer
+from app.db.models import Asset, ERPEntity, Shipment, Telemetry, YardTrailer
 
 
 @dataclass
@@ -131,6 +131,37 @@ async def transportation_provider(db: AsyncSession, organization_id: str, params
                           ["shipment_number", "carrier_id", "driver_id"])
 
 
+def flatten_erp_entity(entity: Any) -> Dict[str, Any]:
+    """One ERP entity -> flat correlatable record (top-level scalars only)."""
+    record: Dict[str, Any] = {
+        "entity_type": entity.entity_type,
+        "entity_id": entity.entity_id,
+        "source_system": entity.source_system,
+    }
+    for key, value in (entity.entity_data or {}).items():
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            record[key] = value
+    return record
+
+
+async def erp_provider(db: AsyncSession, organization_id: str, params: Dict[str, Any]) -> ProviderResult:
+    """Synced ERP business objects (POs, invoices, work orders, ...) as
+    correlation records — links business events to sensor/yard/transport data."""
+    query = select(ERPEntity).where(
+        ERPEntity.organization_id == organization_id,
+        ERPEntity.is_active == True,  # noqa: E712
+    )
+    if params.get("integration_id"):
+        query = query.where(ERPEntity.integration_id == str(params["integration_id"]))
+    if params.get("entity_type"):
+        query = query.where(ERPEntity.entity_type == params["entity_type"])
+    rows = (await db.execute(query.limit(int(params.get("limit", 500))))).scalars().all()
+    records = [flatten_erp_entity(e) for e in rows]
+    name = params.get("name") or f"erp-{params.get('entity_type', 'entities')}"
+    return ProviderResult(name, records, _columns(records),
+                          ["entity_id", "entity_type", "source_system"])
+
+
 ProviderFn = Callable[[AsyncSession, str, Dict[str, Any]], Awaitable[ProviderResult]]
 
 # source_type -> (provider, human label). New domains register here.
@@ -138,6 +169,7 @@ _PROVIDERS: Dict[str, tuple] = {
     "asset_telemetry": (asset_telemetry_provider, "Asset / sensor telemetry"),
     "yard": (yard_provider, "Yard inventory"),
     "transportation": (transportation_provider, "Shipments"),
+    "erp": (erp_provider, "ERP entities (orders, invoices, work orders)"),
 }
 
 

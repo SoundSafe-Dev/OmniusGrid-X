@@ -113,6 +113,22 @@ def main() -> int:
         check("ERP sync-status recorded (failed against fake host = plumbing works)",
               any(s["entity_type"] == "Invoice" for s in statuses), r.text[:200])
 
+        # ERP hub surfaces: seed a synced entity, then read entities via the API.
+        async def seed_erp_entity(session):
+            from app.db.models import ERPEntity
+            session.add(ERPEntity(
+                organization_id=DEV_ORG, integration_id=erp_id,
+                entity_type="PurchaseOrder", entity_id="PO-SMOKE-1",
+                entity_data={"vendor": "ACME", "amount": 99.5, "lines": [{"x": 1}]},
+                source_system="netsuite",
+            ))
+
+        seed_erp_entity_id = erp_id  # noqa: F841
+        seed_db(seed_erp_entity)
+        r = client.get(f"/api/v1/erp/integrations/{erp_id}/entities", headers=AUTH)
+        ents = r.json() if r.status_code == 200 else []
+        check("ERP hub entities list", any(e["entity_id"] == "PO-SMOKE-1" for e in ents), r.text[:200])
+
         event = {"event_type": "invoice.created", "event_id": "evt-1", "entity_type": "Invoice", "amount": 12}
         sig = hmac.new(b"smoke-hmac", json.dumps(event, sort_keys=True).encode(), hashlib.sha256).hexdigest()
         r = client.post("/api/v1/erp/webhooks/netsuite", json=event, headers={"X-Webhook-Signature": sig})
@@ -122,6 +138,10 @@ def main() -> int:
         check("ERP webhook dedupes replays", r.json().get("status") == "duplicate", r.text[:200])
         r = client.post("/api/v1/erp/webhooks/netsuite", json=event, headers={"X-Webhook-Signature": "bad"})
         check("ERP webhook rejects bad signature", r.status_code == 401, r.text[:200])
+
+        r = client.get(f"/api/v1/erp/integrations/{erp_id}/events", headers=AUTH)
+        evs = r.json() if r.status_code == 200 else []
+        check("ERP hub events feed shows the webhook", any(e["event_id"] == "evt-1" for e in evs), r.text[:200])
 
         # ------------------------------------------------ Sensor assets
         print("\n== Sensor assets ==")
@@ -307,8 +327,8 @@ def main() -> int:
         print("\n== AI correlation (platform data sources) ==")
         r = client.get("/api/v1/nlp/platform-sources", headers=AUTH)
         types = {s["source_type"] for s in r.json()} if r.status_code == 200 else set()
-        check("platform source types registered",
-              {"asset_telemetry", "yard", "transportation"} <= types, r.text[:200])
+        check("platform source types registered (incl. erp)",
+              {"asset_telemetry", "yard", "transportation", "erp"} <= types, r.text[:200])
 
         r = client.post("/api/v1/nlp/sessions", headers=AUTH, json={"title": "Smoke session"})
         if r.status_code == 404:
@@ -325,6 +345,11 @@ def main() -> int:
             r = client.post(f"/api/v1/nlp/sessions/{session_id}/platform-data", headers=AUTH,
                             json={"source_type": "transportation", "params": {}})
             check("attach shipments to session", r.status_code == 200
+                  and r.json().get("row_count", 0) >= 1, r.text[:300])
+
+            r = client.post(f"/api/v1/nlp/sessions/{session_id}/platform-data", headers=AUTH,
+                            json={"source_type": "erp", "params": {"entity_type": "PurchaseOrder"}})
+            check("attach ERP entities to session", r.status_code == 200
                   and r.json().get("row_count", 0) >= 1, r.text[:300])
 
             r = client.post(f"/api/v1/nlp/sessions/{session_id}/correlate", headers=AUTH, json={})
