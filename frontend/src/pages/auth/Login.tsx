@@ -5,7 +5,8 @@ import { useAuthStore } from '../../stores';
 import { Input, Button } from '../../components';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
 
-const DEV_MODE = true; // Set to false for production
+// Demo default on; production sets VITE_DEV_MODE=false (W3 real-mode cutover).
+const DEV_MODE = import.meta.env.VITE_DEV_MODE !== 'false'
 
 export const Login: FC = () => {
   const navigate = useNavigate();

@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db
 from app.db.models import User, Organization
+from pydantic import BaseModel
 from app.models.schemas import Token, UserLogin, UserCreate
 from app.core.config import settings
 from app.middleware.rate_limit import rate_limit
@@ -196,7 +197,12 @@ async def login(
         expires_delta=access_token_expires
     )
     
-    return {"access_token": access_token, "token_type": "bearer"}
+    refresh_token = create_access_token(
+        data={"sub": str(user.id), "type": "refresh"},
+        expires_delta=timedelta(days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS),
+    )
+    return {"access_token": access_token, "token_type": "bearer",
+            "refresh_token": refresh_token}
 
 
 @router.post("/register", summary="Register a new user", description="Create a new user account. **WARNING**: This endpoint is for development only and should be disabled in production.")
@@ -330,3 +336,30 @@ async def require_admin_user(
             detail="Administrator access required for this resource.",
         )
     return current_user
+
+
+class RefreshRequest(BaseModel):
+    refreshToken: str
+
+
+@router.post("/refresh", response_model=Token, summary="Refresh access token",
+             description="Exchange a valid refresh token for a new access token.")
+async def refresh_access_token(
+    body: RefreshRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Mint a new access token from a refresh token (W3 — real-mode auth)."""
+    try:
+        payload = jwt.decode(body.refreshToken, settings.JWT_SECRET_KEY,
+                             algorithms=[settings.JWT_ALGORITHM])
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid refresh token")
+    if payload.get("type") != "refresh" or not payload.get("sub"):
+        raise HTTPException(status_code=401, detail="Invalid refresh token")
+
+    user = (await db.execute(select(User).where(User.id == payload["sub"]))).scalar_one_or_none()
+    if user is None or not user.is_active:
+        raise HTTPException(status_code=401, detail="User inactive or not found")
+
+    access_token = create_access_token(data={"sub": str(user.id)})
+    return {"access_token": access_token, "token_type": "bearer"}

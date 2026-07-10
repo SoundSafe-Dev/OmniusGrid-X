@@ -35,14 +35,16 @@ export const useAuthStore = create<AuthState>()(
         set({ isLoading: true, error: null });
         try {
           const response = await authApi.login(credentials);
-          const { accessToken, user } = response;
+          const { accessToken, refreshToken, user } = response;
 
           localStorage.setItem('accessToken', accessToken);
+          if (refreshToken) localStorage.setItem('refreshToken', refreshToken);
           localStorage.setItem('user', JSON.stringify(user));
 
           set({
             user,
             accessToken,
+            refreshToken: refreshToken ?? null,
             isAuthenticated: true,
             isLoading: false,
           });
