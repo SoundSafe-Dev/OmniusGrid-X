@@ -351,7 +351,12 @@ class EdgeAgent:
         self._tasks.append(asyncio.create_task(self._backfill_worker()))
         self._tasks.append(asyncio.create_task(self._cleanup_worker()))
         self._tasks.append(asyncio.create_task(self._stats_reporter()))
-        
+
+        # Cloud enrollment + heartbeat (audit WIRE #10): opt-in via CLOUD_URL.
+        # Enrolls once (bootstrap token -> mTLS cert), keeps the cert rotated,
+        # and reports health every HEARTBEAT_INTERVAL seconds.
+        await self._start_cloud_link()
+
         # Initialize collectors from configuration
         await self._initialize_collectors()
         
@@ -360,6 +365,77 @@ class EdgeAgent:
         
         logger.info("edge_agent_started")
     
+    async def _start_cloud_link(self):
+        """Enroll with the cloud and start the heartbeat + cert-rotation loops.
+
+        No-op unless CLOUD_URL is set, so offline/air-gapped deployments and
+        tests are unaffected. Failures degrade gracefully: the agent keeps
+        collecting locally (store-and-forward) and retries on the next beat.
+        """
+        cloud_url = os.getenv('CLOUD_URL')
+        if not cloud_url:
+            return
+        try:
+            from opsgrid_agent.security.identity import AgentIdentity
+            from opsgrid_agent.security.enrollment import EnrollmentClient
+            from opsgrid_agent.security.rotation import CertificateRotationManager
+            from opsgrid_agent.heartbeat import HeartbeatReporter
+            from opsgrid_agent.timesync import ClockSkewEstimator
+            from opsgrid_agent.security.enrollment import _default_post
+
+            identity = AgentIdentity(
+                os.getenv('IDENTITY_DIR', '/var/lib/opsgrid-agent/identity')
+            ).load_or_create()
+
+            bootstrap = os.getenv('EDGE_BOOTSTRAP_TOKEN', '')
+            enrollment = EnrollmentClient(identity, cloud_url, bootstrap)
+            if not identity.has_certificate() and bootstrap:
+                try:
+                    await asyncio.to_thread(enrollment.enroll)
+                except Exception as exc:
+                    logger.warning("cloud_enrollment_failed", error=str(exc))
+
+            # Cert rotation loop (renews before expiry via re-enrollment).
+            self._rotation = CertificateRotationManager(identity, enrollment)
+            self._tasks.append(asyncio.create_task(self._rotation.start()))
+
+            # Heartbeat loop: health snapshot + cert expiry; the ack's server
+            # time feeds the clock-skew estimator.
+            self._skew = ClockSkewEstimator()
+
+            def _health():
+                snapshot = dict(self._health_snapshot() or {})
+                info = identity.certificate_info()
+                if info is not None:
+                    snapshot['cert_expires_in_seconds'] = int(info.seconds_until_expiry())
+                return snapshot
+
+            def _post(url, body, headers):
+                headers = {**headers, 'X-Client-Cert':
+                           identity.crt_path.read_text().replace('\n', '\\n')
+                           if identity.has_certificate() else ''}
+                return _default_post(url, body, headers)
+
+            reporter = HeartbeatReporter(
+                cloud_url, os.getenv('AGENT_VERSION', 'dev'),
+                _health, post_fn=_post, skew_estimator=self._skew,
+            )
+            interval = float(os.getenv('HEARTBEAT_INTERVAL', '30'))
+
+            async def _heartbeat_loop():
+                while self._running:
+                    try:
+                        await asyncio.to_thread(reporter.send_once)
+                    except Exception as exc:  # never kill the loop
+                        logger.warning("heartbeat_loop_error", error=str(exc))
+                    await asyncio.sleep(interval)
+
+            self._tasks.append(asyncio.create_task(_heartbeat_loop()))
+            logger.info("cloud_link_started", cloud_url=cloud_url,
+                        enrolled=identity.has_certificate(), interval=interval)
+        except Exception as exc:
+            logger.error("cloud_link_setup_failed", error=str(exc))
+
     async def stop(self):
         """Stop the edge agent"""
         logger.info("edge_agent_stopping")
