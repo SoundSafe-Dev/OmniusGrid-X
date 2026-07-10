@@ -263,6 +263,7 @@ async def app(tenant_async_url):
     from app.main import app as fastapi_app
     from app.middleware.tenant_isolation import get_tenant_db, get_tenant_org_id
     import app.api.agent_releases as agent_releases_api
+    import app.api.models as models_api
     import app.services.rollout_orchestrator as rollout_orchestrator_service
     import app.api.compliance_reports as compliance_reports_api
     import app.api.exports as exports_api
@@ -275,6 +276,7 @@ async def app(tenant_async_url):
     original_async_session_local = db_module.AsyncSessionLocal
     db_module.AsyncSessionLocal = test_session_maker
     agent_releases_api.AsyncSessionLocal = test_session_maker
+    models_api.AsyncSessionLocal = test_session_maker
     rollout_orchestrator_service.AsyncSessionLocal = test_session_maker
     compliance_reports_api.AsyncSessionLocal = test_session_maker
     exports_api.AsyncSessionLocal = test_session_maker
