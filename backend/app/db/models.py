@@ -447,7 +447,7 @@ class DockAppointment(Base):
     dock_door_id = UUIDForeignKey("dock_doors.id", nullable=True)
     trailer_id = UUIDForeignKey("yard_trailers.id", nullable=True)
     shipment_id = UUIDForeignKey("shipments.id", nullable=True)
-    operation_id = UUIDForeignKey("operations.id")  # linked production job
+    operation_id = UUIDForeignKey("operations.id", nullable=True)  # linked production job
     appointment_type = Column(String(50))  # pickup, delivery, transfer
     scheduled_start = Column(DateTime(timezone=True), nullable=False)
     scheduled_end = Column(DateTime(timezone=True), nullable=False)
@@ -472,7 +472,7 @@ class TruckAssetCorrelation(Base):
     shipment_id = UUIDForeignKey("shipments.id", nullable=True)
     trailer_id = UUIDForeignKey("yard_trailers.id", nullable=True)
     asset_id = UUIDForeignKey("assets.id")
-    operation_id = UUIDForeignKey("operations.id")
+    operation_id = UUIDForeignKey("operations.id", nullable=True)
     truck_arrived_at = Column(DateTime(timezone=True))
     asset_ready_at = Column(DateTime(timezone=True))
     asset_completion_forecast = Column(DateTime(timezone=True))
@@ -495,12 +495,12 @@ class LoadQualityLog(Base):
     shipment_id = UUIDForeignKey("shipments.id", nullable=True)
     trailer_id = UUIDForeignKey("yard_trailers.id", nullable=True)
     asset_id = UUIDForeignKey("assets.id")  # source asset
-    operation_id = UUIDForeignKey("operations.id")
+    operation_id = UUIDForeignKey("operations.id", nullable=True)
     defect_type = Column(String(100))  # wrong_product, damaged, short, over, temp_excursion
     severity = Column(String(20))  # minor, major, critical
     quantity_affected = Column(Numeric)
     root_cause_asset = UUIDForeignKey("assets.id")
-    root_cause_operation = UUIDForeignKey("operations.id")
+    root_cause_operation = UUIDForeignKey("operations.id", nullable=True)
     manufacturing_correlation_score = Column(Numeric)  # confidence of manufacturing root cause
     carrier_liable = Column(Boolean, default=False)
     claim_filed = Column(Boolean, default=False)

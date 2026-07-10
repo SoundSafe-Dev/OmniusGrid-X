@@ -30,6 +30,12 @@ test: test-backend test-edge test-frontend ## Run all test suites
 smoke: ## Deployment-free end-to-end smoke (in-process app + SQLite)
 	cd backend && python scripts/smoke_e2e.py
 
+seed-demo: ## Seed realistic correlated demo data (simulated ERP + sensors + yard)
+	cd backend && python scripts/seed_demo_data.py --verify
+
+demo: seed-demo ## Seed demo data, then serve the API against it (dev.db)
+	cd backend && DATABASE_URL="sqlite+aiosqlite:///$$(pwd)/dev.db" uvicorn app.main:app --port 8000
+
 test-backend: ## Backend pytest
 	cd backend && python -m pytest -q
 
