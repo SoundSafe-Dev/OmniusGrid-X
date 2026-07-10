@@ -74,6 +74,11 @@ class Settings(BaseSettings):
     CORRELATION_ADAPTER_PATH: str = "./checkpoints/best_lora_v2"
     CORRELATION_MAX_NEW_TOKENS: int = 512
     CORRELATION_TEMPERATURE: float = 0.2
+    # Gemma prompt budget — multi-file summary is always included; per-file depth scales down.
+    CORRELATION_CHAT_MAX_PROMPT_CHARS: int = 64000
+    CORRELATION_CHAT_MAX_DETAILED_SOURCES: int = 3
+    CORRELATION_CHAT_COMPACT_THRESHOLD: int = 4
+    CORRELATION_GROUNDED_PACKET_MAX_CHARS: int = 24000
 
     # Vision / image text extraction (Gemma multimodal or Gemini fallback)
     VISION_MODEL_ENABLED: bool = False
