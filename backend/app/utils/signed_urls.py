@@ -18,8 +18,14 @@ TOKEN_VERSION = 1
 PURPOSE_EXPORT = "export_download"
 PURPOSE_COMPLIANCE_REPORT = "compliance_report_download"
 PURPOSE_AGENT_RELEASE = "agent_release_download"
+PURPOSE_MODEL_ARTIFACT = "model_artifact_download"
 SUPPORTED_PURPOSES = frozenset(
-    {PURPOSE_EXPORT, PURPOSE_COMPLIANCE_REPORT, PURPOSE_AGENT_RELEASE}
+    {
+        PURPOSE_EXPORT,
+        PURPOSE_COMPLIANCE_REPORT,
+        PURPOSE_AGENT_RELEASE,
+        PURPOSE_MODEL_ARTIFACT,
+    }
 )
 SUPPORTED_SIGNED_URL_ALGORITHMS = frozenset({"HS256"})
 
@@ -258,4 +264,24 @@ def build_agent_release_signed_download_url(
     base = settings.EXPORT_PUBLIC_BASE_URL.rstrip("/")
     query = urlencode({"token": token})
     url = f"{base}/api/v1/fleet/releases/{release_id}/bundle?{query}"
+    return url, expires_at
+
+
+def build_model_artifact_signed_download_url(
+    model_id: UUID,
+    organization_id: UUID,
+    expires_at: datetime,
+) -> tuple[str, datetime]:
+    from urllib.parse import urlencode
+
+    expires_at = _as_utc(expires_at)
+    token = create_signed_download_token(
+        PURPOSE_MODEL_ARTIFACT,
+        model_id,
+        organization_id,
+        expires_at=expires_at,
+    )
+    base = settings.EXPORT_PUBLIC_BASE_URL.rstrip("/")
+    query = urlencode({"token": token})
+    url = f"{base}/api/v1/models/{model_id}/download?{query}"
     return url, expires_at
