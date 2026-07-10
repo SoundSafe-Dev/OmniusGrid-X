@@ -274,3 +274,59 @@ async def get_organization_users(
         "items": user_list,
         "total": len(user_list)
     }
+
+
+# ---- WebSocket authentication (ported from HARSH-CONTRIBUTION during the
+# converged-pre-main merge: its websocket.py imports this, but its auth.py was
+# resolved keep-ours; self-contained version against our dev-token flow). ----
+
+async def resolve_websocket_user(token: Optional[str]) -> Optional[User]:
+    """Authenticate WebSocket clients (JWT or dev-token). Returns None if invalid."""
+    from app.db.database import AsyncSessionLocal
+
+    if not token:
+        return None
+
+    async with AsyncSessionLocal() as db:
+        if token == "dev-token":
+            # Same fixed dev identity as get_current_active_user's bypass.
+            dev_user_id = "00000000-0000-0000-0000-000000000001"
+            result = await db.execute(select(User).where(User.id == dev_user_id))
+            user = result.scalar_one_or_none()
+            if user is None:
+                # First-ever call: reuse the REST bypass to create org+user.
+                user = await get_current_active_user(token="dev-token", header_token=None, db=db)
+            return user
+
+        try:
+            payload = jwt.decode(
+                token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM]
+            )
+            user_id = payload.get("sub")
+            if user_id is None:
+                return None
+            exp = payload.get("exp")
+            if exp and datetime.utcnow().timestamp() > exp:
+                return None
+        except JWTError:
+            return None
+
+        result = await db.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+        return user if user and user.is_active else None
+
+
+# Roles allowed into the admin console (ported with require_admin_user).
+ADMIN_CONSOLE_ROLES = frozenset({"admin"})
+
+
+async def require_admin_user(
+    current_user: User = Depends(get_current_active_user),
+) -> User:
+    """All current OmniusGrid console features require admin (includes dev-token user)."""
+    if current_user.role not in ADMIN_CONSOLE_ROLES:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Administrator access required for this resource.",
+        )
+    return current_user

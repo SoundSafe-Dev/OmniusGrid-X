@@ -109,19 +109,25 @@ async def get_tenant_db(
     (``database`` -> ``tenant`` -> ``api.auth`` -> ``database``).
     """
     async with AsyncSessionLocal() as session:
+        # set_config/RLS are Postgres features; on other dialects (SQLite dev,
+        # smoke tests) tenant scoping falls back to the endpoints' explicit
+        # organization_id filters, so skip the GUC round-trips entirely.
+        is_postgres = session.bind.dialect.name == "postgresql"
         try:
-            await session.execute(
-                text("SELECT set_config('app.current_org_id', :org_id, false)"),
-                {"org_id": str(org_id)},
-            )
+            if is_postgres:
+                await session.execute(
+                    text("SELECT set_config('app.current_org_id', :org_id, false)"),
+                    {"org_id": str(org_id)},
+                )
             yield session
             await session.commit()
         except Exception:
             await session.rollback()
             raise
         finally:
-            await session.execute(
-                text("SELECT set_config('app.current_org_id', '', false)")
-            )
-            await session.commit()
+            if is_postgres:
+                await session.execute(
+                    text("SELECT set_config('app.current_org_id', '', false)")
+                )
+                await session.commit()
             await session.close()
