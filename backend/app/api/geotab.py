@@ -3,6 +3,7 @@ GeoTab Integration API Endpoints
 Fleet telematics, HOS compliance, vehicle diagnostics
 """
 
+import hmac
 from datetime import datetime, timedelta
 from typing import List, Optional
 from uuid import UUID
@@ -22,7 +23,7 @@ router = APIRouter(prefix="/geotab", tags=["geotab"],
 async def verify_geotab_webhook(x_webhook_secret: Optional[str] = Header(None)):
     """Guard the external webhook with a shared secret (no user JWT available)."""
     expected = settings.GEOTAB_WEBHOOK_SECRET
-    if expected and x_webhook_secret != expected:
+    if expected and not hmac.compare_digest(x_webhook_secret or "", expected):
         raise HTTPException(status_code=401, detail="Invalid webhook secret")
 
 

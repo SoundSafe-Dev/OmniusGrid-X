@@ -232,6 +232,17 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
 
+    @property
+    def cors_origins(self) -> list[str]:
+        """Parsed CORS allowlist. Empty/whitespace collapses to wildcard."""
+        origins = [o.strip() for o in self.CORS_ALLOW_ORIGINS.split(",") if o.strip()]
+        return origins or ["*"]
+
+    @property
+    def cors_is_wildcard(self) -> bool:
+        """True when any parsed origin is '*' (wildcard is credential-incompatible)."""
+        return "*" in self.cors_origins
+
 
 @lru_cache()
 def get_settings() -> Settings:
@@ -264,8 +275,8 @@ def validate_settings(s: "Settings" = None) -> list[str]:
             problems.append("ALLOW_DEV_TOKEN must be false in production (admin auth bypass)")
         if s.ALLOW_OPEN_REGISTRATION:
             problems.append("ALLOW_OPEN_REGISTRATION must be false in production")
-        if "*" in [o.strip() for o in s.CORS_ALLOW_ORIGINS.split(",")]:
-            problems.append("CORS_ALLOW_ORIGINS must be an explicit allowlist in production, not '*'")
+        if s.cors_is_wildcard:
+            problems.append("CORS_ALLOW_ORIGINS must be an explicit allowlist in production, not '*' (empty also means '*')")
         if not s.GEOTAB_WEBHOOK_SECRET:
             problems.append("GEOTAB_WEBHOOK_SECRET is empty; the GeoTab webhook is unauthenticated")
     return problems

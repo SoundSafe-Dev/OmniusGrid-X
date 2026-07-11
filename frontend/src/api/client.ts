@@ -62,6 +62,7 @@ api.interceptors.response.use(
           // Refresh failed, logout user
           localStorage.removeItem('accessToken')
           localStorage.removeItem('refreshToken')
+          localStorage.removeItem('devToken')
           localStorage.removeItem('user')
           window.location.href = '/login'
           return Promise.reject(refreshError)
@@ -70,6 +71,7 @@ api.interceptors.response.use(
         // No refresh token, logout user
         localStorage.removeItem('accessToken')
         localStorage.removeItem('refreshToken')
+        localStorage.removeItem('devToken')
         localStorage.removeItem('user')
         window.location.href = '/login'
       }

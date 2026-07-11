@@ -82,7 +82,17 @@ async def get_current_user(
     return user
 
 
+def _set_audit_context(request: Optional[Request], user: User) -> None:
+    """Expose the authenticated identity to the audit middleware (reads request.state)."""
+    if request is not None:
+        request.state.user_id = str(user.id)
+        request.state.organization_id = (
+            str(user.organization_id) if user.organization_id else None
+        )
+
+
 async def get_current_active_user(
+    request: Request = None,
     token: str = Depends(oauth2_scheme),
     header_token: Optional[str] = Depends(get_token_from_header),
     db: AsyncSession = Depends(get_db)
@@ -133,6 +143,7 @@ async def get_current_active_user(
             await db.commit()
             await db.refresh(user)
 
+        _set_audit_context(request, user)
         return user
 
     # Normal authentication: local JWT first, then Keycloak SSO when enabled.
@@ -162,6 +173,7 @@ async def get_current_active_user(
 
     if not current_user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
+    _set_audit_context(request, current_user)
     return current_user
 
 

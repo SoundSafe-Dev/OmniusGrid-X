@@ -183,15 +183,14 @@ app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 if settings.RATE_LIMIT_ENABLED:
     app.add_middleware(SlowAPIMiddleware)
 
-# CORS middleware — explicit allowlist from config. Wildcard "*" is
-# incompatible with credentialed requests (browsers reject it), so when the
-# allowlist is "*" we disable credentials rather than ship an invalid combo.
-_cors_origins = [o.strip() for o in settings.CORS_ALLOW_ORIGINS.split(",") if o.strip()]
-_cors_wildcard = _cors_origins == ["*"]
+# CORS middleware — explicit allowlist from config (settings.cors_origins parses
+# it once; empty or any-'*' list is treated as wildcard). Wildcard is incompatible
+# with credentialed requests (browsers reject it), so credentials are disabled
+# whenever the allowlist is a wildcard rather than shipping the invalid combo.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_cors_origins or ["*"],
-    allow_credentials=not _cors_wildcard,
+    allow_origins=settings.cors_origins,
+    allow_credentials=not settings.cors_is_wildcard,
     allow_methods=["*"],
     allow_headers=["*"],
 )

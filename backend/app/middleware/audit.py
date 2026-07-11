@@ -17,31 +17,33 @@ from app.db.database import AsyncSessionLocal
 
 logger = structlog.get_logger()
 
-# Sensitive operations that require audit logging
+# Sensitive operations that require audit logging.
+# Keys use "{id}" for every path parameter because _normalize_path collapses all
+# UUIDs to "{id}" before lookup — the templates must match that normalized form.
 SENSITIVE_OPERATIONS = {
     # User operations
     "POST:/api/v1/auth/register": "user_created",
     "DELETE:/api/v1/auth/users/{id}": "user_deleted",
     "PUT:/api/v1/auth/users/{id}": "user_updated",
-    
+
     # Asset operations
     "POST:/api/v1/assets/": "asset_created",
-    "PUT:/api/v1/assets/{asset_id}": "asset_updated",
-    "DELETE:/api/v1/assets/{asset_id}": "asset_deleted",
-    
+    "PUT:/api/v1/assets/{id}": "asset_updated",
+    "DELETE:/api/v1/assets/{id}": "asset_deleted",
+
     # Command operations
     "POST:/api/v1/commands/submit": "command_executed",
-    "POST:/api/v1/commands/{command_id}/cancel": "command_cancelled",
-    
+    "POST:/api/v1/commands/{id}/cancel": "command_cancelled",
+
     # Registry operations
     "POST:/api/v1/registries/": "registry_item_created",
     "PUT:/api/v1/registries/{id}": "registry_item_updated",
     "DELETE:/api/v1/registries/{id}": "registry_item_deleted",
-    
+
     # Kanban operations
-    "POST:/api/v1/kanban/tasks/{task_id}/approve": "task_approved",
-    "POST:/api/v1/kanban/tasks/{task_id}/reject": "task_rejected",
-    "POST:/api/v1/kanban/tasks/{task_id}/assign": "task_assigned",
+    "POST:/api/v1/kanban/tasks/{id}/approve": "task_approved",
+    "POST:/api/v1/kanban/tasks/{id}/reject": "task_rejected",
+    "POST:/api/v1/kanban/tasks/{id}/assign": "task_assigned",
 }
 
 

@@ -20,10 +20,12 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         
         # Content Security Policy
         if settings.CSP_ENABLED:
+            # cdn.jsdelivr.net is allowed for scripts/styles so FastAPI's built-in
+            # Swagger UI / ReDoc (/docs, /redoc) render; they load assets from it.
             csp = (
                 "default-src 'self'; "
-                "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
-                "style-src 'self' 'unsafe-inline'; "
+                "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; "
+                "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
                 "img-src 'self' data: https:; "
                 "font-src 'self' data:; "
                 "connect-src 'self' ws://localhost:* wss://localhost:*; "

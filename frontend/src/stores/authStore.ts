@@ -67,6 +67,7 @@ export const useAuthStore = create<AuthState>()(
 
         localStorage.removeItem('accessToken');
         localStorage.removeItem('refreshToken');
+        localStorage.removeItem('devToken');
         localStorage.removeItem('user');
 
         set({
