@@ -173,6 +173,7 @@ async def list_asset_types(
     request: Request,
     category: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
 ):
     """List asset types (global catalog, not tenant-scoped)."""
     query = select(AssetType)
@@ -223,7 +224,8 @@ async def get_asset_status(
 )
 async def get_sensor_feeds(
     asset_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
 ):
     """Summarize what this asset's sensors feed into the platform (task B16)."""
     from app.db.models import Telemetry
