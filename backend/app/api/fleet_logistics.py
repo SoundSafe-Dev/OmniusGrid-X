@@ -12,7 +12,7 @@ logistics-correlation router — FastAPI merges routers on one prefix, so that
 file is untouched.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import structlog
@@ -155,14 +155,29 @@ async def acknowledge_alert(alert_id: str, db: AsyncSession = Depends(get_db)):
 
 # ==================== Maintenance ====================
 
+def _aware(d: Optional[datetime]) -> Optional[datetime]:
+    """Coerce a datetime to aware-UTC so naive (sqlite) and aware (asyncpg
+    timestamptz) values never get compared directly."""
+    if d is None:
+        return None
+    return d if d.tzinfo is not None else d.replace(tzinfo=timezone.utc)
+
+
+def _now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 def _schedule_out(s: Any, now: Optional[datetime] = None) -> Dict[str, Any]:
-    now = now or datetime.utcnow()
+    now = _aware(now) or _now_utc()
+    due = _aware(s.due_date)
+    # Field names match the frontend MaintenanceSchedule contract.
     return {
-        "id": str(s.id), "vehicleId": s.vehicle_id, "maintenanceType": s.maintenance_type,
+        "id": str(s.id), "vehicleId": s.vehicle_id, "vehicleNumber": s.vehicle_id,
+        "serviceType": s.maintenance_type,
         "description": s.description,
-        "dueDate": s.due_date.isoformat() if s.due_date else None,
-        "dueOdometer": s.due_odometer_miles,
-        "status": "overdue" if (s.status in ("scheduled", "overdue") and s.due_date and s.due_date < now) else s.status,
+        "scheduledDate": s.due_date.isoformat() if s.due_date else None,
+        "dueMileage": s.due_odometer_miles,
+        "status": "overdue" if (s.status in ("scheduled", "overdue") and due and due < now) else s.status,
         "estimatedCost": s.estimated_cost,
     }
 
@@ -227,13 +242,25 @@ async def update_schedule(schedule_id: str, payload: Dict[str, Any], db: AsyncSe
     s = (await db.execute(select(MaintenanceSchedule).where(MaintenanceSchedule.id == schedule_id))).scalar_one_or_none()
     if s is None:
         raise HTTPException(status_code=404, detail="schedule not found")
-    for key, attr in (("maintenanceType", "maintenance_type"), ("description", "description"),
-                      ("status", "status"), ("dueOdometer", "due_odometer_miles"),
-                      ("estimatedCost", "estimated_cost")):
-        if payload.get(key) is not None:
-            setattr(s, attr, payload[key])
-    if payload.get("dueDate"):
-        s.due_date = datetime.fromisoformat(payload["dueDate"])
+    # Accept the frontend MaintenanceSchedule field names (serviceType/dueMileage),
+    # with the legacy maintenanceType/dueOdometer as fallbacks.
+    def pick(*keys):
+        for k in keys:
+            if payload.get(k) is not None:
+                return payload[k]
+        return None
+    for value, attr in (
+        (pick("serviceType", "maintenanceType"), "maintenance_type"),
+        (pick("description"), "description"),
+        (pick("status"), "status"),
+        (pick("dueMileage", "dueOdometer"), "due_odometer_miles"),
+        (pick("estimatedCost"), "estimated_cost"),
+    ):
+        if value is not None:
+            setattr(s, attr, value)
+    scheduled = pick("scheduledDate", "dueDate")
+    if scheduled:
+        s.due_date = datetime.fromisoformat(scheduled.replace("Z", "+00:00"))
     if payload.get("status") == "completed" and s.completed_at is None:
         s.completed_at = datetime.utcnow()
     await db.commit()
@@ -255,13 +282,14 @@ async def list_vehicle_schedules(vehicle_id: str, db: AsyncSession = Depends(get
 async def create_schedule(payload: Dict[str, Any], db: AsyncSession = Depends(get_db)):
     if not payload.get("vehicleId") and not payload.get("vehicle_id"):
         raise HTTPException(status_code=400, detail="vehicleId is required")
+    scheduled = payload.get("scheduledDate") or payload.get("dueDate")
     schedule = MaintenanceSchedule(
         organization_id=payload.get("organization_id"),
         vehicle_id=payload.get("vehicleId") or payload.get("vehicle_id"),
-        maintenance_type=payload.get("maintenanceType") or payload.get("maintenance_type") or "inspection",
+        maintenance_type=payload.get("serviceType") or payload.get("maintenanceType") or payload.get("maintenance_type") or "inspection",
         description=payload.get("description"),
-        due_date=datetime.fromisoformat(payload["dueDate"]) if payload.get("dueDate") else None,
-        due_odometer_miles=payload.get("dueOdometer"),
+        due_date=datetime.fromisoformat(scheduled.replace("Z", "+00:00")) if scheduled else None,
+        due_odometer_miles=payload.get("dueMileage") or payload.get("dueOdometer"),
         estimated_cost=payload.get("estimatedCost"),
     )
     db.add(schedule)
@@ -345,7 +373,7 @@ async def add_service_history(payload: Dict[str, Any], db: AsyncSession = Depend
         vendor=payload.get("technician"),
         cost=payload.get("cost"),
         category=payload.get("serviceType"),
-        completed_at=datetime.fromisoformat(payload["serviceDate"]) if payload.get("serviceDate") else datetime.utcnow(),
+        completed_at=datetime.fromisoformat(payload["serviceDate"].replace("Z", "+00:00")) if payload.get("serviceDate") else datetime.utcnow(),
     )
     db.add(order)
     await db.commit()

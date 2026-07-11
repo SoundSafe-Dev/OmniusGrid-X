@@ -81,13 +81,15 @@ export const OrganizationTree: FC = () => {
   const { data: assetsPage } = useQuery('orgtree-assets', () => assetsApi.list({ limit: 500 }));
 
   const org = orgs?.[0];
-  const rootId = org?.id ?? 'org';
-  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set([rootId]));
+  // Constant root node id so the default-expanded set stays valid once the org
+  // query resolves (a useState initializer never re-runs on later renders).
+  const ROOT_ID = 'org-root';
+  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set([ROOT_ID]));
 
   // Real org -> workcell -> asset tree (the data model has no "site" tier).
   const assets = assetsPage?.items ?? [];
   const orgData = {
-    id: rootId,
+    id: ROOT_ID,
     name: org?.name ?? 'Organization',
     type: 'organization',
     children: (workcells ?? []).map((wc) => ({

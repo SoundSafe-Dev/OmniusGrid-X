@@ -6,10 +6,9 @@ the read paths those clients need, tenant-scoped to the caller's organization.
 Responses are snake_case; the client camel-cases them via transform.ts.
 """
 
-from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -46,11 +45,11 @@ def _org_out(o: Organization) -> dict:
 
 @workcells_router.get("/")
 async def list_workcells(
-    organization_id: Optional[UUID] = Query(None),
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),
 ):
-    # Always scope to the caller's org; the query param can only narrow, not widen.
+    # Always scoped to the caller's organization (any client-sent organization_id
+    # is ignored — a user can only see their own org's workcells).
     rows = (await db.execute(
         select(Workcell).where(Workcell.organization_id == org_id).order_by(Workcell.name.asc())
     )).scalars().all()

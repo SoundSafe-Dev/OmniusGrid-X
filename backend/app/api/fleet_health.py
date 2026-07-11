@@ -74,13 +74,18 @@ async def fleet_health(org_id: UUID = Depends(get_tenant_org_id), db: AsyncSessi
     diags = await _active_diagnostics(db, org_id)
     excs = await _exceptions(db, org_id)
     by_vehicle_dtc = defaultdict(list)
+    device_to_vehicle: dict = {}
     for d in diags:
         if d.vehicle_id:
             by_vehicle_dtc[d.vehicle_id].append(d)
+        if d.device_id and d.vehicle_id:
+            device_to_vehicle[d.device_id] = d.vehicle_id
+    # Exceptions carry device_id; map them to vehicle_id via diagnostics so the
+    # safety-score join uses the same identifier space (device_id != vehicle_id).
     exc_by_vehicle = defaultdict(int)
     for e in excs:
-        # exceptions carry device_id; treat it as the vehicle key when present
-        exc_by_vehicle[e.device_id] += 1
+        vehicle = device_to_vehicle.get(e.device_id, e.device_id)
+        exc_by_vehicle[vehicle] += 1
 
     out = []
     for vid, dtcs in by_vehicle_dtc.items():
@@ -268,7 +273,10 @@ async def active_routes(org_id: UUID = Depends(get_tenant_org_id), db: AsyncSess
 @router.get("/geofences")
 async def fleet_geofences(org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
     zones = (await db.execute(
-        select(GeofenceZone).where(GeofenceZone.is_active == True)  # noqa: E712
+        select(GeofenceZone).where(
+            GeofenceZone.organization_id == str(org_id),
+            GeofenceZone.is_active == True,  # noqa: E712
+        )
     )).scalars().all()
     sev_color = {"info": "green", "warning": "yellow", "critical": "red"}
     return [{

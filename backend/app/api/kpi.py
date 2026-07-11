@@ -257,7 +257,9 @@ async def get_dtc_count(
         by_system[_dtc_system(d.dtc_code)] += 1
         if d.severity == "critical":
             critical += 1
-    for d in sorted(rows, key=lambda x: x.last_seen_at or datetime.min.replace(tzinfo=timezone.utc), reverse=True)[:10]:
+    # Sort by epoch float so a NULL last_seen_at (or mixed naive/aware datetimes
+    # across dialects) never triggers an offset-naive vs aware comparison.
+    for d in sorted(rows, key=lambda x: x.last_seen_at.timestamp() if x.last_seen_at else 0.0, reverse=True)[:10]:
         recent.append({
             "code": d.dtc_code,
             "description": d.description,

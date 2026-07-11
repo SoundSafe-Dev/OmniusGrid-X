@@ -63,7 +63,12 @@ export const alarmsApi = {
   },
 
   acknowledgeAll: async (params?: { assetId?: string; severity?: string }): Promise<{ acknowledgedCount: number }> => {
-    const response = await api.post<{ acknowledged_count: number }>('/api/v1/alarms/acknowledge-all', params || {});
+    // The backend reads these as QUERY params, not a body — sending them in the
+    // body silently drops the filters and acknowledges every active alarm.
+    const query: Record<string, string> = {};
+    if (params?.assetId) query.asset_id = params.assetId;
+    if (params?.severity) query.severity = params.severity;
+    const response = await api.post<{ acknowledged_count: number }>('/api/v1/alarms/acknowledge-all', null, { params: query });
     return { acknowledgedCount: response.data.acknowledged_count };
   },
 };

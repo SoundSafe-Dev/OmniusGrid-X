@@ -139,17 +139,24 @@ export const TelemetryCharts: FC = () => {
   );
   const { data: fleetOEE } = useQuery('analytics-fleet-oee', () => dashboardApi.getFleetOEE());
 
-  // Pivot the flat TelemetryPoint[] into chart rows keyed by timestamp.
+  // Pivot the flat TelemetryPoint[] into chart rows keyed by the full timestamp
+  // (not time-of-day) so multi-day ranges don't collapse different days into the
+  // same HH:MM bucket. Label includes the date for ranges longer than a day.
   const points = history ?? [];
   const metricNames = Array.from(new Set(points.map((p) => p.metricName))).slice(0, METRIC_COLORS.length);
-  const byTime = new Map<string, Record<string, any>>();
+  const multiDay = (RANGE_HOURS[timeRange] ?? 24) > 24;
+  const byTime = new Map<number, Record<string, any>>();
   for (const p of points) {
-    const t = new Date(p.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const row = byTime.get(t) ?? { time: t };
+    const d = new Date(p.timestamp);
+    const key = Math.floor(d.getTime() / 60_000) * 60_000; // minute bucket
+    const label = multiDay
+      ? d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+      : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const row = byTime.get(key) ?? { time: label };
     row[p.metricName] = p.value;
-    byTime.set(t, row);
+    byTime.set(key, row);
   }
-  const metricSeries = Array.from(byTime.values());
+  const metricSeries = Array.from(byTime.entries()).sort((a, b) => a[0] - b[0]).map(([, row]) => row);
 
   // Current fleet OEE as a single real period (no historical OEE series yet).
   // FleetOEE exposes fleet-average availability and OEE (0-1 fractions).
