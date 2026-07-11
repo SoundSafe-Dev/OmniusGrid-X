@@ -61,7 +61,7 @@ export const geofencingApi = {
       if (!zone) throw new Error('Zone not found');
       return { ...zone, ...updates, updatedAt: new Date().toISOString() };
     }
-    const response = await api.patch<GeofenceZoneExtended>(`/api/v1/geofencing/zones/${id}`, updates);
+    const response = await api.put<GeofenceZoneExtended>(`/api/v1/geofencing/zones/${id}`, updates);
     return response.data;
   },
 
@@ -87,7 +87,7 @@ export const geofencingApi = {
       await delay(MOCK_DELAY);
       return getMockAlertsByVehicle(vehicleId);
     }
-    const response = await api.get<GeofenceAlertExtended[]>(`/api/v1/geofencing/alerts?vehicleId=${vehicleId}`);
+    const response = await api.get<GeofenceAlertExtended[]>(`/api/v1/geofencing/alerts?vehicle_id=${vehicleId}`);
     return response.data;
   },
 
@@ -114,7 +114,7 @@ export const geofencingApi = {
       await delay(MOCK_DELAY);
       return;
     }
-    await api.patch(`/api/v1/geofencing/alerts/${alertId}`, { acknowledged: true });
+    await api.post(`/api/v1/geofencing/alerts/${alertId}/acknowledge`, {});
   },
 
   subscribeToAlerts: (onAlert: (alert: GeofenceAlertExtended) => void): (() => void) => {

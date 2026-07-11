@@ -12,7 +12,7 @@ logistics-correlation router — FastAPI merges routers on one prefix, so that
 file is untouched.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 import structlog
@@ -56,6 +56,14 @@ async def list_zones(db: AsyncSession = Depends(get_db)):
         select(GeofenceZone).where(GeofenceZone.is_active == True)  # noqa: E712
     )).scalars().all()
     return [_zone_out(z) for z in zones]
+
+
+@geofencing_router.get("/zones/{zone_id}")
+async def get_zone(zone_id: str, db: AsyncSession = Depends(get_db)):
+    zone = (await db.execute(select(GeofenceZone).where(GeofenceZone.id == zone_id))).scalar_one_or_none()
+    if zone is None:
+        raise HTTPException(status_code=404, detail="zone not found")
+    return _zone_out(zone)
 
 
 @geofencing_router.post("/zones")
@@ -114,6 +122,7 @@ async def delete_zone(zone_id: str, db: AsyncSession = Depends(get_db)):
 async def list_alerts(
     acknowledged: Optional[bool] = Query(None),
     severity: Optional[str] = Query(None),
+    vehicle_id: Optional[str] = Query(None),
     limit: int = Query(100, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
 ):
@@ -122,6 +131,8 @@ async def list_alerts(
         query = query.where(GeofenceAlert.acknowledged == acknowledged)
     if severity:
         query = query.where(GeofenceAlert.severity == severity)
+    if vehicle_id:
+        query = query.where(GeofenceAlert.vehicle_id == vehicle_id)
     alerts = (await db.execute(query)).scalars().all()
     return [{
         "id": str(a.id), "zoneId": a.zone_id, "vehicleId": a.vehicle_id,
@@ -144,10 +155,42 @@ async def acknowledge_alert(alert_id: str, db: AsyncSession = Depends(get_db)):
 
 # ==================== Maintenance ====================
 
+def _schedule_out(s: Any, now: Optional[datetime] = None) -> Dict[str, Any]:
+    now = now or datetime.utcnow()
+    return {
+        "id": str(s.id), "vehicleId": s.vehicle_id, "maintenanceType": s.maintenance_type,
+        "description": s.description,
+        "dueDate": s.due_date.isoformat() if s.due_date else None,
+        "dueOdometer": s.due_odometer_miles,
+        "status": "overdue" if (s.status in ("scheduled", "overdue") and s.due_date and s.due_date < now) else s.status,
+        "estimatedCost": s.estimated_cost,
+    }
+
+
+def _order_out(o: Any) -> Dict[str, Any]:
+    return {
+        "id": str(o.id), "vehicleId": o.vehicle_id, "title": o.title,
+        "status": o.status, "priority": o.priority, "vendor": o.vendor,
+        "cost": o.cost, "category": o.category,
+        "openedAt": o.opened_at.isoformat() if o.opened_at else None,
+    }
+
+
+def _history_out(o: Any) -> Dict[str, Any]:
+    """A completed repair order projected onto the ServiceHistoryEntry shape."""
+    return {
+        "id": str(o.id), "vehicleId": o.vehicle_id, "vehicleNumber": o.vehicle_id,
+        "serviceType": o.category or "other", "description": o.title or o.description or "",
+        "serviceDate": (o.completed_at or o.opened_at).isoformat() if (o.completed_at or o.opened_at) else None,
+        "mileageAtService": 0, "cost": o.cost or 0, "technician": o.vendor, "notes": o.description,
+    }
+
+
 @maintenance_router.get("/schedules")
 async def list_schedules(
     status: Optional[str] = Query(None),
     vehicle_id: Optional[str] = Query(None),
+    upcoming: Optional[int] = Query(None, description="only schedules due within N days"),
     db: AsyncSession = Depends(get_db),
 ):
     query = select(MaintenanceSchedule)
@@ -159,17 +202,53 @@ async def list_schedules(
         )
     elif status:
         query = query.where(MaintenanceSchedule.status == status)
+    if upcoming is not None:
+        query = query.where(
+            MaintenanceSchedule.status.in_(("scheduled", "overdue")),
+            MaintenanceSchedule.due_date >= now,
+            MaintenanceSchedule.due_date <= now + timedelta(days=upcoming),
+        )
     if vehicle_id:
         query = query.where(MaintenanceSchedule.vehicle_id == vehicle_id)
     schedules = (await db.execute(query.order_by(MaintenanceSchedule.due_date.asc()))).scalars().all()
-    return [{
-        "id": str(s.id), "vehicleId": s.vehicle_id, "maintenanceType": s.maintenance_type,
-        "description": s.description,
-        "dueDate": s.due_date.isoformat() if s.due_date else None,
-        "dueOdometer": s.due_odometer_miles,
-        "status": "overdue" if (s.status in ("scheduled", "overdue") and s.due_date and s.due_date < now) else s.status,
-        "estimatedCost": s.estimated_cost,
-    } for s in schedules]
+    return [_schedule_out(s, now) for s in schedules]
+
+
+@maintenance_router.get("/schedules/{schedule_id}")
+async def get_schedule(schedule_id: str, db: AsyncSession = Depends(get_db)):
+    s = (await db.execute(select(MaintenanceSchedule).where(MaintenanceSchedule.id == schedule_id))).scalar_one_or_none()
+    if s is None:
+        raise HTTPException(status_code=404, detail="schedule not found")
+    return _schedule_out(s)
+
+
+@maintenance_router.patch("/schedules/{schedule_id}")
+async def update_schedule(schedule_id: str, payload: Dict[str, Any], db: AsyncSession = Depends(get_db)):
+    s = (await db.execute(select(MaintenanceSchedule).where(MaintenanceSchedule.id == schedule_id))).scalar_one_or_none()
+    if s is None:
+        raise HTTPException(status_code=404, detail="schedule not found")
+    for key, attr in (("maintenanceType", "maintenance_type"), ("description", "description"),
+                      ("status", "status"), ("dueOdometer", "due_odometer_miles"),
+                      ("estimatedCost", "estimated_cost")):
+        if payload.get(key) is not None:
+            setattr(s, attr, payload[key])
+    if payload.get("dueDate"):
+        s.due_date = datetime.fromisoformat(payload["dueDate"])
+    if payload.get("status") == "completed" and s.completed_at is None:
+        s.completed_at = datetime.utcnow()
+    await db.commit()
+    await db.refresh(s)
+    return _schedule_out(s)
+
+
+@maintenance_router.get("/vehicles/{vehicle_id}/schedules")
+async def list_vehicle_schedules(vehicle_id: str, db: AsyncSession = Depends(get_db)):
+    schedules = (await db.execute(
+        select(MaintenanceSchedule).where(MaintenanceSchedule.vehicle_id == vehicle_id)
+        .order_by(MaintenanceSchedule.due_date.asc())
+    )).scalars().all()
+    now = datetime.utcnow()
+    return [_schedule_out(s, now) for s in schedules]
 
 
 @maintenance_router.post("/schedules")
@@ -202,12 +281,76 @@ async def list_repair_orders(
     elif status:
         query = query.where(RepairOrder.status == status)
     orders = (await db.execute(query.order_by(RepairOrder.opened_at.desc()))).scalars().all()
-    return [{
-        "id": str(o.id), "vehicleId": o.vehicle_id, "title": o.title,
-        "status": o.status, "priority": o.priority, "vendor": o.vendor,
-        "cost": o.cost, "category": o.category,
-        "openedAt": o.opened_at.isoformat() if o.opened_at else None,
-    } for o in orders]
+    return [_order_out(o) for o in orders]
+
+
+@maintenance_router.get("/repair-orders/{order_id}")
+async def get_repair_order(order_id: str, db: AsyncSession = Depends(get_db)):
+    o = (await db.execute(select(RepairOrder).where(RepairOrder.id == order_id))).scalar_one_or_none()
+    if o is None:
+        raise HTTPException(status_code=404, detail="repair order not found")
+    return _order_out(o)
+
+
+@maintenance_router.patch("/repair-orders/{order_id}")
+async def update_repair_order(order_id: str, payload: Dict[str, Any], db: AsyncSession = Depends(get_db)):
+    o = (await db.execute(select(RepairOrder).where(RepairOrder.id == order_id))).scalar_one_or_none()
+    if o is None:
+        raise HTTPException(status_code=404, detail="repair order not found")
+    for key, attr in (("title", "title"), ("description", "description"), ("status", "status"),
+                      ("priority", "priority"), ("vendor", "vendor"), ("cost", "cost"),
+                      ("category", "category")):
+        if payload.get(key) is not None:
+            setattr(o, attr, payload[key])
+    if payload.get("status") == "completed" and o.completed_at is None:
+        o.completed_at = datetime.utcnow()
+    await db.commit()
+    await db.refresh(o)
+    return _order_out(o)
+
+
+@maintenance_router.get("/vehicles/{vehicle_id}/repair-orders")
+async def list_vehicle_repair_orders(vehicle_id: str, db: AsyncSession = Depends(get_db)):
+    orders = (await db.execute(
+        select(RepairOrder).where(RepairOrder.vehicle_id == vehicle_id)
+        .order_by(RepairOrder.opened_at.desc())
+    )).scalars().all()
+    return [_order_out(o) for o in orders]
+
+
+@maintenance_router.get("/vehicles/{vehicle_id}/history")
+async def vehicle_service_history(vehicle_id: str, db: AsyncSession = Depends(get_db)):
+    """Service history = completed repair orders for the vehicle, newest first."""
+    orders = (await db.execute(
+        select(RepairOrder).where(
+            RepairOrder.vehicle_id == vehicle_id,
+            RepairOrder.status == "completed",
+        ).order_by(RepairOrder.completed_at.desc())
+    )).scalars().all()
+    return [_history_out(o) for o in orders]
+
+
+@maintenance_router.post("/history")
+async def add_service_history(payload: Dict[str, Any], db: AsyncSession = Depends(get_db)):
+    """Record a completed service as a completed repair order."""
+    vehicle_id = payload.get("vehicleId") or payload.get("vehicle_id")
+    if not vehicle_id:
+        raise HTTPException(status_code=400, detail="vehicleId is required")
+    order = RepairOrder(
+        organization_id=payload.get("organization_id"),
+        vehicle_id=vehicle_id,
+        title=payload.get("description") or payload.get("serviceType") or "Service",
+        description=payload.get("notes"),
+        status="completed",
+        vendor=payload.get("technician"),
+        cost=payload.get("cost"),
+        category=payload.get("serviceType"),
+        completed_at=datetime.fromisoformat(payload["serviceDate"]) if payload.get("serviceDate") else datetime.utcnow(),
+    )
+    db.add(order)
+    await db.commit()
+    await db.refresh(order)
+    return _history_out(order)
 
 
 @maintenance_router.post("/repair-orders")
