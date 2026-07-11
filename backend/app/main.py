@@ -12,6 +12,7 @@ from app.api import erp_webhooks
 from app.api import platform_correlation
 from app.api import fleet_logistics
 from app.api import fleet_agents, agent_releases, agent_rollouts, models
+from app.api import kpi
 from app.core.config import settings
 from app.core.logging_filters import install_sensitive_query_access_log_filter
 from app.db.database import init_db
@@ -278,6 +279,7 @@ app.include_router(platform_correlation.router, tags=["NLP Correlation"])
 app.include_router(fleet_logistics.geofencing_router, prefix="/api/v1/geofencing", tags=["Geofencing"])
 app.include_router(fleet_logistics.maintenance_router, prefix="/api/v1/maintenance", tags=["Fleet Maintenance"])
 app.include_router(fleet_logistics.logistics_router, prefix="/api/v1/logistics", tags=["Transportation Management"])
+app.include_router(kpi.router, prefix="/api/v1/kpi", tags=["KPIs"])
 app.include_router(feature_flags.router, prefix="/api/v1/feature-flags", tags=["Feature Flags"])
 app.include_router(sso.router, prefix="/api/v1/sso", tags=["SSO"])
 app.include_router(bulk_operations.router, prefix="/api/v1/bulk", tags=["Bulk Operations"])
