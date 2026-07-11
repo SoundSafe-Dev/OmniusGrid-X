@@ -21,8 +21,7 @@ import {
   getMaintenanceStatistics,
 } from './mocks/maintenanceMocks';
 
-// Env toggle: mock by default so demos work offline, real when VITE_USE_MOCK=false.
-const USE_MOCK = import.meta.env.VITE_USE_MOCK !== 'false';
+import { USE_MOCK } from './mockMode';
 const MOCK_DELAY = 300;
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 

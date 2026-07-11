@@ -1,7 +1,7 @@
 import { api } from './client';
 import type { FleetVehiclePosition, ShipmentRoute, GeofenceZone, FleetUpdate } from '../types';
 
-const USE_MOCK = import.meta.env.VITE_USE_MOCK === 'true' || !import.meta.env.VITE_API_URL;
+import { USE_MOCK } from './mockMode';
 const MOCK_DELAY = 500;
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));

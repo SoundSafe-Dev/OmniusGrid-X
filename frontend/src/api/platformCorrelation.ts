@@ -2,7 +2,7 @@ import { api } from './client'
 
 // Attach live platform data (sensor/asset telemetry, yard, transportation) to an
 // analysis session as a correlation source. Env toggle keeps demos offline.
-const USE_MOCK = import.meta.env.VITE_USE_MOCK !== 'false'
+import { USE_MOCK } from './mockMode';
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 export interface PlatformSourceType {

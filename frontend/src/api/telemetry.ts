@@ -2,8 +2,7 @@ import { api } from './client';
 import { mockApi } from './mockApi';
 import { TelemetryPoint, LatestTelemetry, AvailableMetrics, TelemetryFilters } from '../types';
 
-// Env toggle: mock by default so demos work offline, real when VITE_USE_MOCK=false.
-const USE_MOCK = import.meta.env.VITE_USE_MOCK !== 'false';
+import { USE_MOCK } from './mockMode';
 
 export const telemetryApi = {
   getLatest: async (assetId: string, metricName?: string): Promise<LatestTelemetry | Record<string, LatestTelemetry>> => {

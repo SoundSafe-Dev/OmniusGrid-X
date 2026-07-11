@@ -1,9 +1,7 @@
 import { api } from './client'
 
 // ERP integration API client (Phase A, task 5).
-// Env toggle (matches fleetTracker.ts): mock by default so demos work offline,
-// real backend when VITE_USE_MOCK=false. Never touches Harsh's mockMode.ts.
-const USE_MOCK = import.meta.env.VITE_USE_MOCK !== 'false'
+import { USE_MOCK } from './mockMode';
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 export interface ERPIntegration {
