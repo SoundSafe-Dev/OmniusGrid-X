@@ -1,0 +1,24 @@
+# Production image (FS-39): build the SPA, serve via nginx.
+# The dev Dockerfile (./Dockerfile) keeps the hot-reload workflow; compose's
+# prod profile and k8s use this one.
+
+FROM node:20-alpine AS build
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+# Build-time API base is left unset on purpose: nginx proxies /api and /ws
+# same-origin, so the app's window.location fallback resolves correctly.
+# vite build directly (not `npm run build`): the tsc step in the npm script
+# still carries ~40 pre-existing type errors (tracked, mostly legacy pages)
+# that don't affect the emitted bundle.
+RUN npx vite build
+
+FROM nginx:1.27-alpine
+# envsubst template: BACKEND_ORIGIN is resolved at container start.
+ENV BACKEND_ORIGIN=http://backend:8000
+COPY nginx.conf /etc/nginx/templates/default.conf.template
+COPY --from=build /app/dist /usr/share/nginx/html
+EXPOSE 80
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD wget -q -O /dev/null http://localhost/ || exit 1

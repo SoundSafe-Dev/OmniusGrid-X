@@ -32,11 +32,17 @@ DEFAULT_DIR = Path(__file__).resolve().parents[2] / "database" / "migrations"
 
 
 def _pg_dsn() -> str:
-    """Return a psycopg2 DSN from the app settings' DATABASE_URL."""
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from app.core.config import settings
+    """Return a psycopg2 DSN from DATABASE_URL (env first, app settings second).
 
-    url = settings.DATABASE_URL
+    Preferring the env var keeps this script runnable in slim CI environments
+    without the app's full dependency tree.
+    """
+    import os
+    url = os.environ.get("DATABASE_URL", "")
+    if not url:
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from app.core.config import settings
+        url = settings.DATABASE_URL
     # Strip SQLAlchemy driver suffixes: postgresql+asyncpg:// -> postgresql://
     for prefix in ("postgresql+asyncpg://", "postgresql+psycopg2://", "postgresql+psycopg://"):
         if url.startswith(prefix):

@@ -129,6 +129,18 @@ groups:
   # opsgrid_edge_buffer_messages gauge referenced above.
   - name: opsgrid_edge_collectors
     rules:
+      # HIGH: agent unreachable — scrape target down is the fleet-side
+      # heartbeat-staleness signal (the agent stopped serving /metrics).
+      - alert: EdgeAgentUnreachable
+        expr: up{job=~"edge-agent.*|opsgrid-edge-agent"} == 0
+        for: 3m
+        labels:
+          severity: high
+          team: edge
+        annotations:
+          summary: "Edge agent unreachable"
+          description: "Agent target {{ $labels.instance }} has not answered scrapes for 3m (crashed, network-partitioned, or metrics disabled)"
+
       # HIGH: a collector's task is down
       - alert: EdgeCollectorDown
         expr: edge_collector_connection_state == 0

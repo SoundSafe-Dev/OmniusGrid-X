@@ -23,5 +23,10 @@ schema = schemathesis.from_asgi("/openapi.json", app)
 
 @schema.parametrize()
 def test_api_conforms_to_openapi(case):
+    # Authenticate as the dev admin: most routers now require a user (Sprint A
+    # auth gating), and unauthenticated calls would fail status-code conformance
+    # with 401s the per-operation schemas don't declare. ALLOW_DEV_TOKEN is the
+    # dev/CI default; production rejects this token.
+    case.headers = {**(case.headers or {}), "Authorization": "Bearer dev-token"}
     # Exercises the operation and validates the response against the schema.
     case.call_and_validate()

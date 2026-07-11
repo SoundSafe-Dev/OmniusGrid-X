@@ -1,0 +1,193 @@
+# Production compose topology (FS-44).
+#
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# Differences from the dev docker-compose.yml:
+#   - baked images (IMAGE_TAG), no source bind-mounts, no --reload
+#   - secrets are REQUIRED (`${VAR:?...}` aborts startup when unset) — no
+#     insecure dev defaults
+#   - one-shot `migrate` service applies pending SQL migrations via the real
+#     runner before the API starts (initdb is NOT used here; on a database
+#     originally built via initdb, run `migrate.py --baseline` once first)
+#   - frontend serves the built SPA via nginx (Dockerfile.prod)
+#   - restart policies + healthchecks on everything
+#
+# Edge TLS: to terminate agent mTLS at Redpanda, add a TLS listener under
+# `redpanda.command` (--kafka-addr TLS://0.0.0.0:9094 plus
+# redpanda.kafka_api_tls config mounting the edge CA) and point agents at it
+# with KAFKA_SECURITY_PROTOCOL=SSL / EDGE_REQUIRE_TLS=true. Cert provisioning
+# is site-specific, so the listener is documented rather than preconfigured.
+#
+# rag-inference (htreinen's service) can be added here once containerized —
+# see docs/RAG_CONTAINERIZATION.md.
+
+x-backend-env: &backend-env
+  DATABASE_URL: postgresql://omniusgrid:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@timescaledb:5432/omniusgrid
+  REDPANDA_URL: redpanda:29092
+  REDIS_URL: redis://redis:6379/0
+  ENVIRONMENT: production
+  DEBUG: "false"
+  JWT_SECRET_KEY: ${JWT_SECRET_KEY:?set JWT_SECRET_KEY}
+  SIGNED_URL_SECRET_KEY: ${SIGNED_URL_SECRET_KEY:?set SIGNED_URL_SECRET_KEY}
+  EDGE_BOOTSTRAP_TOKEN: ${EDGE_BOOTSTRAP_TOKEN:?set EDGE_BOOTSTRAP_TOKEN}
+  GEOTAB_WEBHOOK_SECRET: ${GEOTAB_WEBHOOK_SECRET:?set GEOTAB_WEBHOOK_SECRET}
+  ERP_ENCRYPTION_KEY: ${ERP_ENCRYPTION_KEY:?set ERP_ENCRYPTION_KEY}
+  CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:?set CORS_ALLOW_ORIGINS}
+  ALLOW_DEV_TOKEN: "false"
+  ALLOW_OPEN_REGISTRATION: "false"
+  GEOTAB_SIMULATED: ${GEOTAB_SIMULATED:-false}
+  EDGE_REQUIRE_PROOF_OF_POSSESSION: "true"
+  RATE_LIMIT_ENABLED: "true"
+  SCHEDULERS_IN_API: "false"
+  SMTP_HOST: ${SMTP_HOST:-}
+  SMTP_PORT: ${SMTP_PORT:-587}
+  SMTP_USERNAME: ${SMTP_USERNAME:-}
+  SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+  SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-}
+
+services:
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v23.3.5
+    restart: unless-stopped
+    command:
+      - redpanda
+      - start
+      - --smp
+      - '1'
+      - --reserve-memory
+      - 0M
+      - --overprovisioned
+      - --node-id
+      - '0'
+      - --kafka-addr
+      - PLAINTEXT://0.0.0.0:29092
+      - --advertise-kafka-addr
+      - PLAINTEXT://redpanda:29092
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD", "rpk", "cluster", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  timescaledb:
+    image: timescale/timescaledb:latest-pg15
+    restart: unless-stopped
+    command: postgres -c shared_preload_libraries=timescaledb,pg_stat_statements
+    environment:
+      POSTGRES_USER: omniusgrid
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: omniusgrid
+    volumes:
+      - timescaledb-data:/var/lib/postgresql/data
+      # NOTE: no initdb mount — migrations are applied by the `migrate` service.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U omniusgrid"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # One-shot migration runner: applies pending SQL migrations, then exits.
+  migrate:
+    image: ${REGISTRY:-ghcr.io/omniusgrid}/backend:${IMAGE_TAG:?set IMAGE_TAG}
+    environment:
+      DATABASE_URL: postgresql://omniusgrid:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@timescaledb:5432/omniusgrid
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    command: python scripts/migrate.py
+    restart: "no"
+
+  backend:
+    image: ${REGISTRY:-ghcr.io/omniusgrid}/backend:${IMAGE_TAG:?set IMAGE_TAG}
+    restart: unless-stopped
+    environment:
+      <<: *backend-env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redpanda:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - export-data:/var/lib/omniusgrid/exports
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://localhost:8000/health/live', timeout=4)\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  ingestion-worker:
+    image: ${REGISTRY:-ghcr.io/omniusgrid}/backend:${IMAGE_TAG:?set IMAGE_TAG}
+    restart: unless-stopped
+    environment:
+      <<: *backend-env
+    depends_on:
+      backend:
+        condition: service_healthy
+    command: python -m app.workers.ingestion
+
+  export-worker:
+    image: ${REGISTRY:-ghcr.io/omniusgrid}/backend:${IMAGE_TAG:?set IMAGE_TAG}
+    restart: unless-stopped
+    environment:
+      <<: *backend-env
+    volumes:
+      - export-data:/var/lib/omniusgrid/exports
+    depends_on:
+      backend:
+        condition: service_healthy
+    command: python -m app.workers.export_delivery
+
+  compliance-reports-worker:
+    image: ${REGISTRY:-ghcr.io/omniusgrid}/backend:${IMAGE_TAG:?set IMAGE_TAG}
+    restart: unless-stopped
+    environment:
+      <<: *backend-env
+    volumes:
+      - export-data:/var/lib/omniusgrid/exports
+    depends_on:
+      backend:
+        condition: service_healthy
+    command: python -m app.workers.compliance_reports
+
+  ota-rollout-worker:
+    image: ${REGISTRY:-ghcr.io/omniusgrid}/backend:${IMAGE_TAG:?set IMAGE_TAG}
+    restart: unless-stopped
+    environment:
+      <<: *backend-env
+    depends_on:
+      backend:
+        condition: service_healthy
+    command: python -m app.workers.ota_rollouts
+
+  frontend:
+    image: ${REGISTRY:-ghcr.io/omniusgrid}/frontend:${IMAGE_TAG:?set IMAGE_TAG}
+    # Built from frontend/Dockerfile.prod (vite build + nginx SPA serving,
+    # /api + /ws proxied to the backend).
+    restart: unless-stopped
+    environment:
+      BACKEND_ORIGIN: http://backend:8000
+    ports:
+      - "${FRONTEND_PORT:-80}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  redpanda-data:
+  timescaledb-data:
+  export-data:

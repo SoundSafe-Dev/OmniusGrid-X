@@ -38,19 +38,6 @@ configMapGenerator:
       - MTLS_ENABLED=true
       - CACHE_ENABLED=true
 
-secretGenerator:
-  - name: database-credentials
-    type: Opaque
-    options:
-      disableNameSuffixHash: true
-    literals:
-      - username=omniusgrid_prod
-      - database=omniusgrid_prod
-  - name: jwt-secret
-    type: Opaque
-    options:
-      disableNameSuffixHash: true
-    behavior: create
 
 patches:
   - target:

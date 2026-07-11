@@ -13,8 +13,7 @@ jobs:
   # --- task 12: property-based API contract tests ---------------------------
   api-contract:
     runs-on: ubuntu-latest
-    # Advisory initially: surfaces schema/response drift without blocking merges.
-    continue-on-error: true
+    # Blocking (FS-43): schema/response drift fails the pipeline.
     services:
       postgres:
         image: timescale/timescaledb:latest-pg15
@@ -93,22 +92,22 @@ jobs:
   # --- task 20: supply-chain scanning --------------------------------------
   supply-chain:
     runs-on: ubuntu-latest
-    continue-on-error: true   # advisory: surfaces vulns without blocking merges
+    # Blocking (FS-43): known-vulnerable pins fail the pipeline.
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
       - name: pip-audit (backend)
-        run: pip install pip-audit && pip-audit -r backend/requirements.txt || true
+        run: pip install pip-audit && pip-audit -r backend/requirements.txt
       - name: pip-audit (edge-agent)
-        run: pip-audit -r edge-agent/requirements.txt || true
+        run: pip-audit -r edge-agent/requirements.txt
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
       - name: npm audit (frontend)
         working-directory: ./frontend
-        run: npm audit --audit-level=high || true
+        run: npm audit --audit-level=high
       - name: Trivy filesystem scan (frontend + edge)
         uses: aquasecurity/trivy-action@0.24.0
         with:
