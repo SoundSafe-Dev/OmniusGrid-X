@@ -1,8 +1,10 @@
 """Data Retention Policies API Routes"""
 
 from typing import List, Optional
+from uuid import UUID, uuid4
+
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 try:
     from sqlalchemy import text
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,8 +17,233 @@ except ImportError:
 from app.api.auth import get_current_active_user
 from app.db.models import User
 from app.middleware.rbac import require_admin
+from app.middleware.tenant_isolation import get_tenant_db, get_tenant_org_id
 
 router = APIRouter()
+tenant_router = APIRouter()
+
+
+class HistorianRetentionSettings(BaseModel):
+    hot_retention_days: int = Field(30, ge=1, le=1825)
+    warm_retention_days: int = Field(365, ge=1, le=1825)
+    cold_retention_days: int = Field(1825, ge=1, le=3650)
+    ingestion_priority: int = Field(3, ge=1, le=5)
+    ingestion_sample_rate: float = Field(1.0, gt=0, le=1)
+    max_ingest_age_seconds: int = Field(30, ge=1, le=86400)
+    archival_enabled: bool = True
+
+    @model_validator(mode="after")
+    def validate_retention_order(self):
+        if not (
+            self.hot_retention_days
+            <= self.warm_retention_days
+            <= self.cold_retention_days
+        ):
+            raise ValueError(
+                "retention days must satisfy hot <= warm <= cold"
+            )
+        return self
+
+
+class HistorianRetentionCreate(HistorianRetentionSettings):
+    metric_name: str = Field(
+        "*",
+        min_length=1,
+        max_length=100,
+        pattern=r"^(\*|[A-Za-z0-9_.:-]+)$",
+    )
+
+
+def _historian_policy_payload(row):
+    values = row._mapping if hasattr(row, "_mapping") else row
+    return {
+        "id": str(values["id"]),
+        "organization_id": str(values["organization_id"]),
+        "metric_name": values["metric_name"],
+        "hot_retention_days": values["hot_retention_days"],
+        "warm_retention_days": values["warm_retention_days"],
+        "cold_retention_days": values["cold_retention_days"],
+        "ingestion_priority": values["ingestion_priority"],
+        "ingestion_sample_rate": float(values["ingestion_sample_rate"]),
+        "max_ingest_age_seconds": values["max_ingest_age_seconds"],
+        "archival_enabled": values["archival_enabled"],
+        "created_by": str(values["created_by"]) if values["created_by"] else None,
+        "created_at": values["created_at"].isoformat(),
+        "updated_at": values["updated_at"].isoformat(),
+    }
+
+
+_HISTORIAN_POLICY_COLUMNS = """
+    id, organization_id, metric_name,
+    hot_retention_days, warm_retention_days, cold_retention_days,
+    ingestion_priority, ingestion_sample_rate, max_ingest_age_seconds,
+    archival_enabled, created_by, created_at, updated_at
+"""
+
+
+@tenant_router.get("/policies")
+async def list_historian_retention_policies(
+    organization_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db),
+):
+    result = await db.execute(
+        text(
+            f"""
+            SELECT {_HISTORIAN_POLICY_COLUMNS}
+            FROM historian_retention_policies
+            WHERE organization_id = :organization_id
+            ORDER BY CASE WHEN metric_name = '*' THEN 0 ELSE 1 END, metric_name
+            """
+        ),
+        {"organization_id": str(organization_id)},
+    )
+    policies = [_historian_policy_payload(row) for row in result.fetchall()]
+    return {"policies": policies, "count": len(policies)}
+
+
+@tenant_router.get("/policies/{metric_name}")
+async def get_historian_retention_policy(
+    metric_name: str,
+    organization_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db),
+):
+    result = await db.execute(
+        text(
+            f"""
+            SELECT {_HISTORIAN_POLICY_COLUMNS}
+            FROM historian_retention_policies
+            WHERE organization_id = :organization_id
+              AND metric_name = :metric_name
+            """
+        ),
+        {"organization_id": str(organization_id), "metric_name": metric_name},
+    )
+    row = result.fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Retention policy not found")
+    return _historian_policy_payload(row)
+
+
+@tenant_router.post("/policies", status_code=status.HTTP_201_CREATED)
+@require_admin()
+async def create_historian_retention_policy(
+    policy: HistorianRetentionCreate,
+    current_user: User = Depends(get_current_active_user),
+    organization_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db),
+):
+    from sqlalchemy.exc import IntegrityError
+
+    try:
+        result = await db.execute(
+            text(
+                f"""
+                INSERT INTO historian_retention_policies (
+                    id, organization_id, metric_name,
+                    hot_retention_days, warm_retention_days, cold_retention_days,
+                    ingestion_priority, ingestion_sample_rate,
+                    max_ingest_age_seconds, archival_enabled, created_by
+                ) VALUES (
+                    :id, :organization_id, :metric_name,
+                    :hot_retention_days, :warm_retention_days, :cold_retention_days,
+                    :ingestion_priority, :ingestion_sample_rate,
+                    :max_ingest_age_seconds, :archival_enabled, :created_by
+                )
+                RETURNING {_HISTORIAN_POLICY_COLUMNS}
+                """
+            ),
+            {
+                "id": str(uuid4()),
+                "organization_id": str(organization_id),
+                "metric_name": policy.metric_name,
+                **policy.model_dump(exclude={"metric_name"}),
+                "created_by": str(current_user.id),
+            },
+        )
+    except IntegrityError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="A retention policy already exists for this metric",
+        ) from exc
+    return _historian_policy_payload(result.fetchone())
+
+
+@tenant_router.put("/policies/{metric_name}")
+@require_admin()
+async def update_historian_retention_policy(
+    metric_name: str,
+    policy: HistorianRetentionSettings,
+    current_user: User = Depends(get_current_active_user),
+    organization_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db),
+):
+    result = await db.execute(
+        text(
+            f"""
+            UPDATE historian_retention_policies
+            SET hot_retention_days = :hot_retention_days,
+                warm_retention_days = :warm_retention_days,
+                cold_retention_days = :cold_retention_days,
+                ingestion_priority = :ingestion_priority,
+                ingestion_sample_rate = :ingestion_sample_rate,
+                max_ingest_age_seconds = :max_ingest_age_seconds,
+                archival_enabled = :archival_enabled,
+                updated_at = NOW()
+            WHERE organization_id = :organization_id
+              AND metric_name = :metric_name
+            RETURNING {_HISTORIAN_POLICY_COLUMNS}
+            """
+        ),
+        {
+            "organization_id": str(organization_id),
+            "metric_name": metric_name,
+            **policy.model_dump(),
+        },
+    )
+    row = result.fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Retention policy not found")
+    return _historian_policy_payload(row)
+
+
+@tenant_router.delete("/policies/{metric_name}", status_code=status.HTTP_204_NO_CONTENT)
+@require_admin()
+async def delete_historian_retention_policy(
+    metric_name: str,
+    current_user: User = Depends(get_current_active_user),
+    organization_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db),
+):
+    result = await db.execute(
+        text(
+            """
+            DELETE FROM historian_retention_policies
+            WHERE organization_id = :organization_id
+              AND metric_name = :metric_name
+            RETURNING id
+            """
+        ),
+        {"organization_id": str(organization_id), "metric_name": metric_name},
+    )
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Retention policy not found")
+
+
+@tenant_router.post("/enforce")
+@require_admin()
+async def enforce_historian_retention(
+    current_user: User = Depends(get_current_active_user),
+    organization_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db),
+):
+    result = await db.execute(
+        text("SELECT enforce_tenant_historian_retention(:organization_id)"),
+        {"organization_id": str(organization_id)},
+    )
+    return {
+        "organization_id": str(organization_id),
+        "deleted_rows": int(result.scalar_one()),
+    }
 
 
 class RetentionConfig(BaseModel):
