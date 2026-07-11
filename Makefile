@@ -52,8 +52,17 @@ lint: ## Lint backend (ruff/black) and frontend (eslint)
 	cd backend && ruff check . || true
 	cd frontend && npm run lint || true
 
-migrate: ## Apply DB migrations (via docker-compose postgres init or alembic)
-	cd backend && alembic upgrade head
+migrate: ## Apply pending DB migrations (incremental runner; Postgres)
+	cd backend && python scripts/migrate.py
+
+migrate-status: ## Show applied/pending migrations
+	cd backend && python scripts/migrate.py --status
+
+migrate-baseline: ## Mark all current migrations as applied without running (initdb-built DB)
+	cd backend && python scripts/migrate.py --baseline
+
+migrate-lint: ## Fail on duplicate migration prefixes
+	cd backend && python scripts/check_migrations.py
 
 seed: ## Seed demo data
 	cd backend && python scripts/seed_demo_kanban.py

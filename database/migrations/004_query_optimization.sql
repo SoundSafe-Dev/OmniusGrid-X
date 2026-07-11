@@ -6,7 +6,7 @@ CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
 
 -- Configure pg_stat_statements
 -- Track all queries (not just normalized)
-ALTER SYSTEM SET pg_stat_statements.track = all;
+ALTER SYSTEM SET pg_stat_statements.track = 'all';
 
 -- Track utility commands (not just SELECT/INSERT/UPDATE/DELETE)
 ALTER SYSTEM SET pg_stat_statements.track_utility = on;
