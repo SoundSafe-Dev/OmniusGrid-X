@@ -9,7 +9,11 @@ try:
 except ImportError:
     model_monitoring_service = None
 
-router = APIRouter()
+from app.api.auth import get_current_active_user
+
+# Currently unmounted (MLOps model-drift surface). Auth-gated defensively so it
+# is safe if ever wired up. Owner: MLOps lane.
+router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
 
 class DriftDetectionRequest(BaseModel):
