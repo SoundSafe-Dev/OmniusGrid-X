@@ -13,6 +13,25 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.db.models import Driver, Carrier, GeoTabTrip, GeoTabDiagnostic, GeoTabException
+from app.core.config import settings
+
+
+class GeoTabLiveModeNotConfigured(RuntimeError):
+    """Raised when GEOTAB_SIMULATED is false but no live MyGeotab client exists.
+
+    Making this loud (instead of silently returning random data) is the point of
+    FS-25: simulated telematics must be an explicit opt-in, never a fallback that
+    ships fake fleet data to a production dashboard.
+    """
+
+
+def _require_simulated(feature: str) -> None:
+    if not settings.GEOTAB_SIMULATED:
+        raise GeoTabLiveModeNotConfigured(
+            f"GeoTab '{feature}' has no live MyGeotab client wired yet. "
+            f"Set GEOTAB_SIMULATED=true for demo data, or implement the live "
+            f"client (GEOTAB_DATABASE/USERNAME/PASSWORD)."
+        )
 
 logger = structlog.get_logger()
 
@@ -51,6 +70,7 @@ class GeoTabService:
         db: AsyncSession = None
     ) -> List[Dict[str, Any]]:
         """Get GeoTab exceptions for fleet"""
+        _require_simulated("exceptions")
         # Mock implementation - in production would call GeoTab API
         exceptions = []
         
@@ -85,6 +105,7 @@ class GeoTabService:
         db: AsyncSession = None
     ) -> Dict[str, Any]:
         """Get device diagnostics including DTC codes"""
+        _require_simulated("diagnostics")
         if device_id not in self.mock_devices:
             raise ValueError(f"Device {device_id} not found")
         
@@ -204,18 +225,47 @@ class GeoTabService:
                 logger.error("geotab_status_update_failed", error=str(e))
     
     async def _process_location_update_webhook(self, webhook_data: Dict[str, Any], db: AsyncSession):
-        """Process location update webhook for trip tracking"""
-        # Could be used to update active trip or start new trip
+        """Persist a live position so the fleet map reflects it.
+
+        Updates the device's most recent trip end-point (or opens a new one),
+        which is exactly what /api/v1/fleet/vehicles/locations reads back.
+        """
         device_id = webhook_data.get("device_id")
         location = webhook_data.get("location")
-        
-        logger.debug(
-            "geotab_location_update",
-            device_id=device_id,
-            location=location
-        )
-        # Trip tracking logic would go here
-        # For now, just log the update
+        if not device_id or not location:
+            logger.warning("geotab_location_update_incomplete", device_id=device_id)
+            return
+        try:
+            ts_raw = webhook_data.get("timestamp")
+            ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00")) if ts_raw else datetime.utcnow()
+
+            latest = (await db.execute(
+                select(GeoTabTrip)
+                .where(GeoTabTrip.device_id == device_id)
+                .order_by(GeoTabTrip.start_time.desc())
+                .limit(1)
+            )).scalar_one_or_none()
+
+            if latest is not None and latest.end_time is None:
+                # Extend the in-progress trip to the new position.
+                latest.end_location = location
+                latest.end_time = ts
+            else:
+                db.add(GeoTabTrip(
+                    device_id=device_id,
+                    vehicle_id=webhook_data.get("vehicle_id"),
+                    organization_id=webhook_data.get("organization_id"),
+                    start_time=ts,
+                    end_time=ts,
+                    start_location=location,
+                    end_location=location,
+                    status="active",
+                ))
+            await db.commit()
+            logger.info("geotab_location_persisted", device_id=device_id)
+        except SQLAlchemyError as e:
+            await db.rollback()
+            logger.error("geotab_location_store_failed", device_id=device_id, error=str(e))
     
     async def _process_diagnostic_webhook(self, webhook_data: Dict[str, Any], db: AsyncSession):
         """Process diagnostic trouble code webhook"""
@@ -254,6 +304,7 @@ class GeoTabService:
         db: AsyncSession = None
     ) -> Dict[str, Any]:
         """Get driver HOS status"""
+        _require_simulated("driver HOS")
         # Get driver from database
         result = await db.execute(
             select(Driver).where(Driver.id == driver_id)
@@ -476,6 +527,7 @@ class GeoTabService:
         db: AsyncSession = None
     ) -> Dict[str, Any]:
         """Get fleet-wide summary"""
+        _require_simulated("fleet summary")
         # Get total drivers
         result = await db.execute(
             select(Driver).where(Driver.organization_id == organization_id)

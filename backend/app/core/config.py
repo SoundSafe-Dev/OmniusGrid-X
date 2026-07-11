@@ -230,6 +230,14 @@ class Settings(BaseSettings):
     # (dev only — validate_settings flags an empty secret in production).
     GEOTAB_WEBHOOK_SECRET: str = ""
 
+    # GeoTab telematics: simulated (random demo data) vs a real MyGeotab client.
+    # Default true so demos work offline. When false the service uses the live
+    # client and raises loudly if credentials are missing — never a silent fake.
+    GEOTAB_SIMULATED: bool = True
+    GEOTAB_DATABASE: str = ""   # MyGeotab database name (live mode)
+    GEOTAB_USERNAME: str = ""
+    GEOTAB_PASSWORD: str = ""
+
     # Dev-only auth conveniences. Both MUST be false in production; the
     # startup hook (validate_settings) hard-fails if they are left on.
     ALLOW_DEV_TOKEN: bool = True   # accept "dev-token" as an admin bypass
