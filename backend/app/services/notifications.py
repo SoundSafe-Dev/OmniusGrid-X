@@ -97,9 +97,10 @@ class NotificationService:
     def _deliver_email(self, target: str, event: Dict[str, Any]) -> tuple:
         """Deliver via the real SMTP transport (app.services.email_service).
 
-        The transport is async; this adapter is sync (like webhook/slack), so we
-        drive it on a short-lived worker-thread event loop and block for the
-        result. When SMTP is unconfigured (dev/tests) we log-and-skip rather than
+        The transport is async; this adapter is sync (like webhook/slack) and is
+        always invoked OFF the event loop (dispatch() runs the whole adapter
+        chain in a worker thread), so asyncio.run here is safe and blocking is
+        fine. When SMTP is unconfigured (dev/tests) we log-and-skip rather than
         error, preserving the previous no-op behavior.
         """
         from app.services import email_service
@@ -114,22 +115,21 @@ class NotificationService:
         body = event.get("message") or event.get("title") or ""
 
         import asyncio
-        import concurrent.futures
-
-        def _run():
-            return asyncio.run(email_service.send_email([target], subject, body))
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-            ex.submit(_run).result(timeout=30)
+        asyncio.run(email_service.send_email([target], subject, body))
         return True, f"email delivered to {target}"
 
     # ------------------------------------------------------------------ #
     # DB-backed dispatch (exercised in CI's backend job)
     # ------------------------------------------------------------------ #
     async def dispatch(self, event: Dict[str, Any], organization_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        import asyncio
+
         org_id = organization_id or event.get("organization_id")
         rules = await self._load_rules(org_id)
-        results = self.dispatch_rules(event, rules)
+        # The channel adapters are sync and blocking (SMTP retries, httpx with
+        # 10s timeouts): run them in a worker thread so one slow delivery can't
+        # freeze the event loop for every other request in the process.
+        results = await asyncio.to_thread(self.dispatch_rules, event, rules)
         await self._record_deliveries(event, org_id, results)
         return results
 

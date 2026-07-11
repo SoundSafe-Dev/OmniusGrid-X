@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import get_current_active_user
+from app.api.auth import get_current_active_user, require_admin_user
 from app.middleware.tenant_isolation import get_tenant_org_id, get_tenant_db
 from app.db.models import Workcell, Organization
 
@@ -95,27 +95,43 @@ async def get_organization(
     return _org_out(o)
 
 
+# Only these keys are readable/writable through the settings endpoints — an
+# open blob merge would let any caller persist arbitrary junk into the org row.
+_SETTING_KEYS = {"timezone", "date_format", "notify_email", "notify_sms", "notify_webhook"}
+
+
+async def _org_or_404(org_id: UUID, db: AsyncSession) -> Organization:
+    o = (await db.execute(select(Organization).where(Organization.id == org_id))).scalar_one_or_none()
+    if o is None:
+        raise HTTPException(status_code=404, detail="organization not found")
+    return o
+
+
 @organizations_router.get("/settings/current")
 async def get_org_settings(
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),
 ):
-    """The caller's organization settings blob (admin Settings page)."""
-    o = (await db.execute(select(Organization).where(Organization.id == org_id))).scalar_one_or_none()
-    return (o.settings or {}) if o else {}
+    """The caller's organization settings (admin Settings page)."""
+    o = await _org_or_404(org_id, db)
+    stored = o.settings or {}
+    return {k: v for k, v in stored.items() if k in _SETTING_KEYS}
 
 
 @organizations_router.put("/settings/current")
 async def update_org_settings(
     settings_patch: Dict[str, Any],
+    current_user=Depends(require_admin_user),
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),
 ):
-    """Merge a patch into the org settings blob and persist it."""
-    o = (await db.execute(select(Organization).where(Organization.id == org_id))).scalar_one_or_none()
-    if o is None:
-        raise HTTPException(status_code=404, detail="organization not found")
+    """Merge an allowlisted patch into the org settings blob (admin only)."""
+    unknown = set(settings_patch) - _SETTING_KEYS
+    if unknown:
+        raise HTTPException(status_code=422,
+                            detail=f"unknown settings keys: {sorted(unknown)}")
+    o = await _org_or_404(org_id, db)
     merged = {**(o.settings or {}), **settings_patch}
     o.settings = merged
     await db.commit()
-    return merged
+    return {k: v for k, v in merged.items() if k in _SETTING_KEYS}

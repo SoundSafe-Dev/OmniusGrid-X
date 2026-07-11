@@ -25,6 +25,7 @@ def test_production_flags_insecure_defaults():
     assert any("CORS_ALLOW_ORIGINS" in p for p in problems)
     assert any("GEOTAB_WEBHOOK_SECRET" in p for p in problems)
     assert any("ERP_ENCRYPTION_KEY" in p for p in problems)
+    assert any("GEOTAB_SIMULATED" in p for p in problems)
 
 
 def test_production_with_secure_config_passes():
@@ -38,5 +39,6 @@ def test_production_with_secure_config_passes():
         CORS_ALLOW_ORIGINS="https://app.example.com",
         GEOTAB_WEBHOOK_SECRET="rotate-me-too",
         ERP_ENCRYPTION_KEY="a-stable-erp-master-key",
+        GEOTAB_SIMULATED=False,
     )
     assert validate_settings(s) == []

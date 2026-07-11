@@ -519,12 +519,15 @@ class TransportationManagementService:
     ) -> Route:
         """Create optimized route"""
         async with (db or AsyncSessionLocal()) as session:
-            # Optimize route
-            optimization = self.route_optimizer.optimize_route(
+            # optimize_route is sync and may do blocking HTTP (OSRM provider,
+            # 10s timeout) — run it off the event loop.
+            import asyncio
+            optimization = await asyncio.to_thread(
+                self.route_optimizer.optimize_route,
                 origin=origin,
                 destination=destination,
                 waypoints=waypoints,
-                optimization_criteria=optimization_criteria
+                optimization_criteria=optimization_criteria,
             )
             
             route = Route(

@@ -313,7 +313,7 @@ export const CollectorsPage: FC = () => {
   const { data: agents, isLoading } = useQuery('edge-fleet', async () => {
     const res = await api.get<EdgeAgent[]>('/api/v1/edge/fleet');
     return res.data;
-  });
+  }, { refetchInterval: 30_000 }); // liveness must refresh, not freeze at mount
 
   const livenessVariant = (l: string): 'success' | 'warning' | 'error' =>
     l === 'live' || l === 'online' ? 'success' : l === 'stale' ? 'warning' : 'error';
@@ -426,6 +426,14 @@ interface OrgSettings {
   notify_webhook?: boolean;
 }
 
+const SETTING_DEFAULTS: Required<OrgSettings> = {
+  timezone: 'America/Chicago',
+  date_format: 'MM/dd/yyyy',
+  notify_email: true,
+  notify_sms: true,
+  notify_webhook: true,
+};
+
 export const SettingsPage: FC = () => {
   const queryClient = useQueryClient();
   const { data: settings } = useQuery('org-settings', async () => {
@@ -434,9 +442,12 @@ export const SettingsPage: FC = () => {
   });
 
   const [draft, setDraft] = useState<OrgSettings>({});
-  const current = { ...settings, ...draft };
+  // Explicit defaults first, stored values over them, unsaved edits on top.
+  const current = { ...SETTING_DEFAULTS, ...settings, ...draft };
 
   const save = useMutation(
+    // Send only the edited keys: the server merges, and re-sending the full
+    // snapshot would clobber concurrent edits from another admin/tab.
     (patch: OrgSettings) => api.put('/api/v1/organizations/settings/current', patch),
     { onSuccess: () => { queryClient.invalidateQueries('org-settings'); setDraft({}); } },
   );
@@ -450,12 +461,12 @@ export const SettingsPage: FC = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <Input
             label="Timezone"
-            value={current.timezone ?? 'America/Chicago'}
+            value={current.timezone}
             onChange={(e) => set('timezone', e.target.value)}
           />
           <Select
             label="Date Format"
-            value={current.date_format ?? 'MM/dd/yyyy'}
+            value={current.date_format}
             onChange={(e) => set('date_format', e.target.value)}
             options={[
               { value: 'MM/dd/yyyy', label: 'MM/DD/YYYY' },
@@ -477,7 +488,7 @@ export const SettingsPage: FC = () => {
               <input
                 type="checkbox"
                 className="w-4 h-4 rounded border-opsgrid-border"
-                checked={current[key] !== false}
+                checked={Boolean(current[key])}
                 onChange={(e) => set(key, e.target.checked)}
               />
               <span className="text-sm">{label}</span>
@@ -487,7 +498,7 @@ export const SettingsPage: FC = () => {
       </Card>
 
       <div className="flex items-center gap-3">
-        <Button onClick={() => save.mutate(current)} disabled={!dirty || save.isLoading}>
+        <Button onClick={() => save.mutate(draft)} disabled={!dirty || save.isLoading}>
           {save.isLoading ? 'Saving…' : 'Save changes'}
         </Button>
         {save.isSuccess && !dirty && <span className="text-sm text-status-success">Saved</span>}

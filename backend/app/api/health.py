@@ -228,8 +228,14 @@ async def detailed_health(db: AsyncSession = Depends(get_db)):
 
 @router.get("/health/system")
 @router.get("/api/v1/health/system")
-async def system_metrics():
-    """Real host resource utilization (psutil) for the admin SystemHealth page."""
+async def system_metrics(current_user=Depends(get_current_active_user)):
+    """Real host resource utilization (psutil) for the admin SystemHealth page.
+
+    Auth-gated (host sizing is recon-useful; probes should use /health/live).
+    cpu_percent(interval=None) is non-blocking — it reports usage since the
+    previous call, which suits the page's 15s polling; interval>0 would sleep
+    ON the event loop.
+    """
     try:
         import psutil
     except Exception:
@@ -237,7 +243,7 @@ async def system_metrics():
                 "disk_percent": None}
     return {
         "available": True,
-        "cpu_percent": psutil.cpu_percent(interval=0.1),
+        "cpu_percent": psutil.cpu_percent(interval=None),
         "memory_percent": psutil.virtual_memory().percent,
         "disk_percent": psutil.disk_usage("/").percent,
     }

@@ -121,6 +121,42 @@ def main() -> int:
             print(f"baselined {len(files) - len(applied)} migration(s) as applied (not run)")
             return 0
 
+        # Safety: an initdb-built database (docker-entrypoint-initdb.d already ran
+        # the migrations, but schema_migrations is empty) must be BASELINED, not
+        # migrated — re-running from 001 would execute destructive statements
+        # (004_fix_kanban_tables DROPs task tables) against live data.
+        if not applied:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT EXISTS (SELECT 1 FROM information_schema.tables "
+                    "WHERE table_schema = 'public' AND table_name = 'organizations')"
+                )
+                schema_exists = cur.fetchone()[0]
+            if schema_exists:
+                print(
+                    "REFUSING to migrate: this database already has a schema "
+                    "(organizations table exists) but no schema_migrations records — "
+                    "it was likely built via initdb. Run `migrate.py --baseline` "
+                    "first to adopt it, then re-run.",
+                    file=sys.stderr,
+                )
+                return 1
+
+        # Fail loudly on checksum drift: an already-applied migration whose file
+        # content changed means fresh and existing databases would diverge.
+        drifted = [
+            f.name for f in files
+            if f.name in applied and applied[f.name] != _checksum(f)
+        ]
+        if drifted:
+            print(
+                "REFUSING to migrate: applied migration(s) were edited after being "
+                f"recorded (checksum drift): {', '.join(drifted)}. Add a NEW "
+                "migration instead of editing an applied one.",
+                file=sys.stderr,
+            )
+            return 1
+
         pending = [f for f in files if f.name not in applied]
         if not pending:
             print("database is up to date; nothing to apply")

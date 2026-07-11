@@ -169,6 +169,16 @@ app = FastAPI(
 # Consistent error envelope for all 4xx/5xx (keeps `detail` for back-compat).
 register_exception_handlers(app)
 
+# GeoTab live mode without a wired client is an operator-actionable condition,
+# not a server fault: return 503 with the message instead of a bare 500.
+from app.services.geotab_service import GeoTabLiveModeNotConfigured  # noqa: E402
+from fastapi.responses import JSONResponse  # noqa: E402
+
+
+@app.exception_handler(GeoTabLiveModeNotConfigured)
+async def _geotab_live_mode_handler(request, exc):
+    return JSONResponse(status_code=503, content={"detail": str(exc)})
+
 # Fail fast on insecure production configuration (task 17).
 from app.core.config import validate_settings as _validate_settings  # noqa: E402
 _config_problems = _validate_settings()

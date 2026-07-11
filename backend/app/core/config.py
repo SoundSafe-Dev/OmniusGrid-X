@@ -306,4 +306,6 @@ def validate_settings(s: "Settings" = None) -> list[str]:
             problems.append("GEOTAB_WEBHOOK_SECRET is empty; the GeoTab webhook is unauthenticated")
         if not s.ERP_ENCRYPTION_KEY:
             problems.append("ERP_ENCRYPTION_KEY is unset; ERP field encryption would use an unstable runtime key")
+        if s.GEOTAB_SIMULATED:
+            problems.append("GEOTAB_SIMULATED must be false in production (random demo telematics would be served as real data)")
     return problems

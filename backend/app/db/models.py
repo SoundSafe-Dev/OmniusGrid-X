@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 from typing import Optional, List
-from sqlalchemy import Column, String, DateTime, Boolean, Numeric, JSON, ForeignKey, Text, BigInteger, Integer, ARRAY, Date, UUID, UniqueConstraint, CheckConstraint, func
+from sqlalchemy import Column, String, DateTime, Boolean, Numeric, JSON, ForeignKey, Text, BigInteger, Integer, ARRAY, Date, UUID, UniqueConstraint, CheckConstraint, Index, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.types import TypeDecorator
@@ -899,6 +899,10 @@ class IntakeItem(Base):
 class GeoTabTrip(Base):
     """GeoTab trip data for fleet tracking"""
     __tablename__ = "geotab_trips"
+    # Latest-trip-per-device is the hot lookup (location webhook + fleet map).
+    __table_args__ = (
+        Index("ix_geotab_trips_device_start", "device_id", "start_time"),
+    )
 
     id = UUIDColumn()
     device_id = Column(String(100), nullable=False, index=True)

@@ -82,14 +82,12 @@ class ERPSecurityManager:
         Returns:
             bytes: Encryption key
         """
-        # 1) Explicit per-org key via env (highest precedence, back-compat).
-        explicit = os.getenv(f"ERP_ENCRYPTION_KEY_{self.organization_id}")
-        if explicit:
-            return explicit.encode()
-
-        # 2) Derive a STABLE per-org key from the master key. Deterministic, so
-        #    it survives restarts (a random runtime key would make previously-
-        #    encrypted credentials undecryptable — the bug this replaces).
+        # Derive a STABLE per-org key from the master key. Deterministic, so it
+        # survives restarts (a random runtime key would make previously-
+        # encrypted credentials undecryptable — the bug this replaces). The old
+        # per-org ERP_ENCRYPTION_KEY_<uuid> env override was removed: it was
+        # referenced nowhere, and before this change an unset override meant a
+        # random key, so no working deployment could have depended on it.
         master = settings.ERP_ENCRYPTION_KEY
         if not master:
             # Dev-only fallback: still deterministic (not random), so local data

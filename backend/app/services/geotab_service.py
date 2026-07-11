@@ -3,7 +3,7 @@ GeoTab Integration Service
 Handles fleet telematics, HOS compliance, and vehicle diagnostics
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional
 from uuid import UUID
 import structlog
@@ -232,29 +232,50 @@ class GeoTabService:
         """
         device_id = webhook_data.get("device_id")
         location = webhook_data.get("location")
+        org_id = webhook_data.get("organization_id")
         if not device_id or not location:
             logger.warning("geotab_location_update_incomplete", device_id=device_id)
             return
-        try:
-            ts_raw = webhook_data.get("timestamp")
-            ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00")) if ts_raw else datetime.utcnow()
 
-            latest = (await db.execute(
+        # Parse the timestamp defensively: webhooks are external input, and a
+        # malformed value must degrade to "now", not 500 the whole webhook.
+        ts_raw = webhook_data.get("timestamp")
+        try:
+            ts = (datetime.fromisoformat(str(ts_raw).replace("Z", "+00:00"))
+                  if ts_raw else datetime.utcnow())
+        except (ValueError, TypeError):
+            logger.warning("geotab_location_bad_timestamp", device_id=device_id, raw=ts_raw)
+            ts = datetime.utcnow()
+        # Store naive-UTC uniformly (matches the models' utcnow defaults) so
+        # rows never mix naive and aware values in one column.
+        if ts.tzinfo is not None:
+            ts = ts.astimezone(timezone.utc).replace(tzinfo=None)
+
+        try:
+            # Scope the lookup to the SAME org as the payload: a webhook caller
+            # must never mutate another tenant's trip via a device-id collision.
+            trip_stmt = (
                 select(GeoTabTrip)
-                .where(GeoTabTrip.device_id == device_id)
+                .where(GeoTabTrip.device_id == device_id,
+                       GeoTabTrip.status == "active")
                 .order_by(GeoTabTrip.start_time.desc())
                 .limit(1)
-            )).scalar_one_or_none()
+            )
+            if org_id:
+                trip_stmt = trip_stmt.where(GeoTabTrip.organization_id == org_id)
+            latest = (await db.execute(trip_stmt)).scalar_one_or_none()
 
-            if latest is not None and latest.end_time is None:
-                # Extend the in-progress trip to the new position.
+            if latest is not None:
+                # Extend the active trip to the new position (keyed on
+                # status='active', so successive pings extend one row instead of
+                # inserting a new trip per ping).
                 latest.end_location = location
                 latest.end_time = ts
             else:
                 db.add(GeoTabTrip(
                     device_id=device_id,
                     vehicle_id=webhook_data.get("vehicle_id"),
-                    organization_id=webhook_data.get("organization_id"),
+                    organization_id=org_id,
                     start_time=ts,
                     end_time=ts,
                     start_location=location,
@@ -375,11 +396,14 @@ class GeoTabService:
                     last = trip.end_time or trip.start_time
                     entry["last_communication"] = last.isoformat() if last else None
 
-        for device_id, info in self.mock_devices.items():
-            entry = devices.setdefault(device_id, _blank(device_id))
-            entry["is_active"] = entry["is_active"] and info["status"] == "active"
-            if entry["last_communication"] is None:
-                entry["last_communication"] = info["last_seen"].isoformat()
+        # The demo device registry is only merged in simulated mode; live mode
+        # serves DB-known devices exclusively (no phantom vehicles).
+        if settings.GEOTAB_SIMULATED:
+            for device_id, info in self.mock_devices.items():
+                entry = devices.setdefault(device_id, _blank(device_id))
+                entry["is_active"] = entry["is_active"] and info["status"] == "active"
+                if entry["last_communication"] is None:
+                    entry["last_communication"] = info["last_seen"].isoformat()
 
         return sorted(devices.values(), key=lambda d: d["id"])
 
@@ -395,7 +419,8 @@ class GeoTabService:
         exception fix); falls back to a simulated position in the same
         region the mock exception generator uses.
         """
-        known_ids = set(self.mock_devices)
+        # The mock registry only counts as "known devices" in simulated mode.
+        known_ids = set(self.mock_devices) if settings.GEOTAB_SIMULATED else set()
         location: Optional[Dict[str, Any]] = None
         timestamp: Optional[datetime] = None
 
@@ -429,6 +454,9 @@ class GeoTabService:
             raise ValueError(f"Device {device_id} not found")
 
         if location is None:
+            if not settings.GEOTAB_SIMULATED:
+                # Live mode: no real fix on record -> 404, never an invented one.
+                raise ValueError(f"No known location for device {device_id}")
             location = {
                 "latitude": round(random.uniform(40.0, 42.0), 6),
                 "longitude": round(random.uniform(-88.0, -86.0), 6),
