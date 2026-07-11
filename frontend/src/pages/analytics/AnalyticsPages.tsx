@@ -1,14 +1,14 @@
 import { FC, useState } from 'react';
+import { useQuery } from 'react-query';
 import { AlertTriangle, Wrench } from 'lucide-react';
 import { Card, Badge } from '../../components';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
+import { assetsApi, dashboardApi, telemetryApi, maintenanceApi } from '../../api';
 import {
   LineChart,
   Line,
   BarChart,
   Bar,
-  AreaChart,
-  Area,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -17,20 +17,34 @@ import {
   ResponsiveContainer
 } from 'recharts';
 
+const RUNNING_STATES = ['Execute', 'Idle'];
+const AT_RISK_STATES = ['Held', 'Holding', 'Suspended', 'Aborted', 'Aborting', 'Stopped', 'Stopping'];
+
 export const AssetHealth: FC = () => {
+  const { data: assetsPage } = useQuery('assethealth-assets', () => assetsApi.list({ limit: 500 }));
+  const assets = assetsPage?.items ?? [];
+
+  const buckets = [
+    { status: 'Executing', count: assets.filter((a) => a.currentPackmlState === 'Execute').length },
+    { status: 'Idle', count: assets.filter((a) => a.currentPackmlState === 'Idle').length },
+    { status: 'At Risk', count: assets.filter((a) => AT_RISK_STATES.includes(a.currentPackmlState)).length },
+    { status: 'Offline', count: assets.filter((a) => !RUNNING_STATES.includes(a.currentPackmlState) && !AT_RISK_STATES.includes(a.currentPackmlState)).length },
+  ];
+  const atRisk = assets.filter((a) => AT_RISK_STATES.includes(a.currentPackmlState));
+
   return (
     <div className="space-y-6">
-      <Card title="Fleet Health Overview" subtitle="Asset health distribution">
+      <Card title="Fleet Health Overview" subtitle="Asset state distribution">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {['Excellent', 'Good', 'Fair', 'Poor'].map((status, i) => (
+          {buckets.map(({ status, count }) => (
             <Tooltip key={status}>
               <TooltipTrigger asChild>
                 <div className="p-4 bg-opsgrid-bg rounded-lg text-center">
-                  <p className="text-3xl font-bold text-opsgrid-primary">{[12, 8, 3, 1][i]}</p>
+                  <p className="text-3xl font-bold text-opsgrid-primary">{count}</p>
                   <p className="text-sm text-opsgrid-text-secondary">{status}</p>
                 </div>
               </TooltipTrigger>
-              <TooltipContent>Assets with {status.toLowerCase()} health condition</TooltipContent>
+              <TooltipContent>Assets currently {status.toLowerCase()}</TooltipContent>
             </Tooltip>
           ))}
         </div>
@@ -38,21 +52,25 @@ export const AssetHealth: FC = () => {
 
       <Card title="At-Risk Assets" subtitle="Assets requiring attention">
         <div className="space-y-2">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <div className="flex items-center justify-between p-3 bg-opsgrid-bg rounded-lg">
-                <div className="flex items-center gap-3">
-                  <AlertTriangle className="text-status-warning" size={20} />
-                  <div>
-                    <p className="font-medium">Printer #3 (Bambu Labs X1)</p>
-                    <p className="text-sm text-opsgrid-text-secondary">Vibration anomaly detected</p>
+          {atRisk.length === 0 ? (
+            <p className="text-sm text-opsgrid-text-secondary">No assets currently at risk.</p>
+          ) : atRisk.map((a) => (
+            <Tooltip key={a.id}>
+              <TooltipTrigger asChild>
+                <div className="flex items-center justify-between p-3 bg-opsgrid-bg rounded-lg">
+                  <div className="flex items-center gap-3">
+                    <AlertTriangle className="text-status-warning" size={20} />
+                    <div>
+                      <p className="font-medium">{a.name}</p>
+                      <p className="text-sm text-opsgrid-text-secondary">State: {a.currentPackmlState}</p>
+                    </div>
                   </div>
+                  <Badge variant="warning" size="sm">{a.currentPackmlState}</Badge>
                 </div>
-                <Badge variant="warning" size="sm">Fair</Badge>
-              </div>
-            </TooltipTrigger>
-            <TooltipContent>At-risk asset requiring maintenance attention</TooltipContent>
-          </Tooltip>
+              </TooltipTrigger>
+              <TooltipContent>At-risk asset requiring attention</TooltipContent>
+            </Tooltip>
+          ))}
         </div>
       </Card>
     </div>
@@ -60,71 +78,98 @@ export const AssetHealth: FC = () => {
 };
 
 export const PredictiveMaintenance: FC = () => {
+  const { data: upcoming } = useQuery('predictive-upcoming', () => maintenanceApi.getUpcomingMaintenance(30));
+  const items = upcoming ?? [];
+
+  const dueLabel = (dateStr?: string) => {
+    if (!dateStr) return 'No date';
+    const days = Math.ceil((new Date(dateStr).getTime() - Date.now()) / 86_400_000);
+    if (days < 0) return `Overdue by ${-days}d`;
+    if (days === 0) return 'Due today';
+    return `Due in ${days} day${days === 1 ? '' : 's'}`;
+  };
+
   return (
     <div className="space-y-6">
-      <Card title="Upcoming Maintenance" subtitle="Scheduled maintenance tasks">
+      <Card title="Upcoming Maintenance" subtitle="Scheduled maintenance tasks (next 30 days)">
         <div className="space-y-2">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <div className="flex items-center justify-between p-3 bg-opsgrid-bg rounded-lg">
-                <div className="flex items-center gap-3">
-                  <Wrench className="text-opsgrid-primary" size={20} />
-                  <div>
-                    <p className="font-medium">Preventive Maintenance - Line A</p>
-                    <p className="text-sm text-opsgrid-text-secondary">Due in 3 days</p>
+          {items.length === 0 ? (
+            <p className="text-sm text-opsgrid-text-secondary">No maintenance scheduled in the next 30 days.</p>
+          ) : items.map((s) => (
+            <Tooltip key={s.id}>
+              <TooltipTrigger asChild>
+                <div className="flex items-center justify-between p-3 bg-opsgrid-bg rounded-lg">
+                  <div className="flex items-center gap-3">
+                    <Wrench className="text-opsgrid-primary" size={20} />
+                    <div>
+                      <p className="font-medium">{s.serviceType} — {s.vehicleNumber || s.vehicleId}</p>
+                      <p className="text-sm text-opsgrid-text-secondary">{dueLabel(s.scheduledDate)}</p>
+                    </div>
                   </div>
+                  <Badge variant={s.status === 'overdue' ? 'warning' : 'info'} size="sm">{s.status}</Badge>
                 </div>
-                <Badge variant="info" size="sm">Scheduled</Badge>
-              </div>
-            </TooltipTrigger>
-            <TooltipContent>Scheduled preventive maintenance task</TooltipContent>
-          </Tooltip>
+              </TooltipTrigger>
+              <TooltipContent>{s.description || 'Scheduled maintenance task'}</TooltipContent>
+            </Tooltip>
+          ))}
         </div>
       </Card>
     </div>
   );
 };
 
+const RANGE_HOURS: Record<string, number> = { '24h': 24, '7d': 168, '30d': 720 };
+const METRIC_COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#8B5CF6', '#EF4444'];
+
 export const TelemetryCharts: FC = () => {
   const [timeRange, setTimeRange] = useState('24h');
 
-  // Mock data for development - will be replaced with API calls
-  const mockTemperatureData = [
-    { time: '00:00', nozzle: 210, bed: 60 },
-    { time: '04:00', nozzle: 215, bed: 62 },
-    { time: '08:00', nozzle: 220, bed: 65 },
-    { time: '12:00', nozzle: 225, bed: 68 },
-    { time: '16:00', nozzle: 230, bed: 70 },
-    { time: '20:00', nozzle: 228, bed: 67 },
-    { time: '24:00', nozzle: 222, bed: 64 },
-  ];
+  // Real data: first asset's telemetry history, current fleet OEE, and the
+  // fleet's PackML-state distribution. (Nozzle/bed/vibration were 3D-printer
+  // demo metrics; the chart now plots whatever metrics the asset actually has.)
+  const { data: assetsPage } = useQuery('analytics-assets', () => assetsApi.list({ limit: 500 }));
+  const assets = assetsPage?.items ?? [];
+  const firstAsset = assets[0];
 
-  const mockVibrationData = [
-    { time: '00:00', vibration: 2.1 },
-    { time: '04:00', vibration: 2.3 },
-    { time: '08:00', vibration: 3.5 },
-    { time: '12:00', vibration: 4.2 },
-    { time: '16:00', vibration: 3.8 },
-    { time: '20:00', vibration: 2.9 },
-    { time: '24:00', vibration: 2.4 },
-  ];
+  const startTime = new Date(Date.now() - (RANGE_HOURS[timeRange] ?? 24) * 3600_000).toISOString();
+  const { data: history } = useQuery(
+    ['analytics-telemetry', firstAsset?.id, timeRange],
+    () => telemetryApi.getHistory(firstAsset!.id, { startTime }),
+    { enabled: !!firstAsset },
+  );
+  const { data: fleetOEE } = useQuery('analytics-fleet-oee', () => dashboardApi.getFleetOEE());
 
-  const mockOEEData = [
-    { time: 'Mon', availability: 85, performance: 90, quality: 95 },
-    { time: 'Tue', availability: 88, performance: 92, quality: 94 },
-    { time: 'Wed', availability: 82, performance: 88, quality: 93 },
-    { time: 'Thu', availability: 90, performance: 94, quality: 96 },
-    { time: 'Fri', availability: 87, performance: 91, quality: 95 },
-    { time: 'Sat', availability: 75, performance: 85, quality: 92 },
-    { time: 'Sun', availability: 70, performance: 80, quality: 90 },
-  ];
+  // Pivot the flat TelemetryPoint[] into chart rows keyed by timestamp.
+  const points = history ?? [];
+  const metricNames = Array.from(new Set(points.map((p) => p.metricName))).slice(0, METRIC_COLORS.length);
+  const byTime = new Map<string, Record<string, any>>();
+  for (const p of points) {
+    const t = new Date(p.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const row = byTime.get(t) ?? { time: t };
+    row[p.metricName] = p.value;
+    byTime.set(t, row);
+  }
+  const metricSeries = Array.from(byTime.values());
 
-  const mockHealthDistribution = [
-    { status: 'Excellent', count: 12 },
-    { status: 'Good', count: 8 },
-    { status: 'Fair', count: 3 },
-    { status: 'Poor', count: 1 },
-  ];
+  // Current fleet OEE as a single real period (no historical OEE series yet).
+  // FleetOEE exposes fleet-average availability and OEE (0-1 fractions).
+  const asPct = (v: number) => Math.round((v ?? 0) * (v > 1 ? 1 : 100));
+  const oeeData = fleetOEE ? [{
+    time: 'Current',
+    availability: asPct(fleetOEE.fleetAverageAvailability),
+    oee: asPct(fleetOEE.fleetAverageOee),
+  }] : [];
+
+  // Health distribution from real PackML states.
+  const healthBuckets = { Executing: 0, Idle: 0, Held: 0, 'Down/Other': 0 };
+  for (const a of assets) {
+    const s = a.currentPackmlState;
+    if (s === 'Execute') healthBuckets.Executing++;
+    else if (s === 'Idle') healthBuckets.Idle++;
+    else if (s === 'Held') healthBuckets.Held++;
+    else healthBuckets['Down/Other']++;
+  }
+  const healthDistribution = Object.entries(healthBuckets).map(([status, count]) => ({ status, count }));
 
   return (
     <div className="space-y-6">
@@ -142,111 +187,63 @@ export const TelemetryCharts: FC = () => {
         </div>
 
         <div className="space-y-8">
-          {/* Temperature Trend Chart */}
+          {/* Real metric trends for the first asset */}
           <div>
-            <h3 className="text-lg font-semibold mb-4 text-opsgrid-text-primary">Temperature Trends</h3>
-            <div className="h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={mockTemperatureData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                  <XAxis dataKey="time" stroke="#9CA3AF" />
-                  <YAxis stroke="#9CA3AF" />
-                  <RechartsTooltip 
-                    contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151' }}
-                    itemStyle={{ color: '#F3F4F6' }}
-                  />
-                  <Legend />
-                  <Line 
-                    type="monotone" 
-                    dataKey="nozzle" 
-                    stroke="#3B82F6" 
-                    strokeWidth={2}
-                    name="Nozzle Temp (°C)"
-                  />
-                  <Line 
-                    type="monotone" 
-                    dataKey="bed" 
-                    stroke="#10B981" 
-                    strokeWidth={2}
-                    name="Bed Temp (°C)"
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
+            <h3 className="text-lg font-semibold mb-4 text-opsgrid-text-primary">
+              Metric Trends{firstAsset ? ` — ${firstAsset.name}` : ''}
+            </h3>
+            {metricSeries.length === 0 ? (
+              <p className="text-sm text-opsgrid-text-secondary">
+                {firstAsset ? 'No telemetry in this range.' : 'No assets available.'}
+              </p>
+            ) : (
+              <div className="h-64">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={metricSeries}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                    <XAxis dataKey="time" stroke="#9CA3AF" />
+                    <YAxis stroke="#9CA3AF" />
+                    <RechartsTooltip
+                      contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151' }}
+                      itemStyle={{ color: '#F3F4F6' }}
+                    />
+                    <Legend />
+                    {metricNames.map((m, i) => (
+                      <Line key={m} type="monotone" dataKey={m} stroke={METRIC_COLORS[i % METRIC_COLORS.length]} strokeWidth={2} name={m} dot={false} />
+                    ))}
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            )}
           </div>
 
-          {/* Vibration Analysis Chart */}
+          {/* Current fleet OEE */}
           <div>
-            <h3 className="text-lg font-semibold mb-4 text-opsgrid-text-primary">Vibration Analysis</h3>
+            <h3 className="text-lg font-semibold mb-4 text-opsgrid-text-primary">Fleet OEE (current)</h3>
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={mockVibrationData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                  <XAxis dataKey="time" stroke="#9CA3AF" />
-                  <YAxis stroke="#9CA3AF" />
-                  <RechartsTooltip 
-                    contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151' }}
-                    itemStyle={{ color: '#F3F4F6' }}
-                  />
-                  <Area 
-                    type="monotone" 
-                    dataKey="vibration" 
-                    stroke="#F59E0B" 
-                    fill="#F59E0B"
-                    fillOpacity={0.3}
-                    name="Vibration (g)"
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-          {/* OEE Over Time Chart */}
-          <div>
-            <h3 className="text-lg font-semibold mb-4 text-opsgrid-text-primary">OEE Metrics Over Time</h3>
-            <div className="h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={mockOEEData}>
+                <BarChart data={oeeData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
                   <XAxis dataKey="time" stroke="#9CA3AF" />
                   <YAxis stroke="#9CA3AF" domain={[0, 100]} />
-                  <RechartsTooltip 
+                  <RechartsTooltip
                     contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151' }}
                     itemStyle={{ color: '#F3F4F6' }}
                   />
                   <Legend />
-                  <Line 
-                    type="monotone" 
-                    dataKey="availability" 
-                    stroke="#3B82F6" 
-                    strokeWidth={2}
-                    name="Availability (%)"
-                  />
-                  <Line 
-                    type="monotone" 
-                    dataKey="performance" 
-                    stroke="#10B981" 
-                    strokeWidth={2}
-                    name="Performance (%)"
-                  />
-                  <Line 
-                    type="monotone" 
-                    dataKey="quality" 
-                    stroke="#8B5CF6" 
-                    strokeWidth={2}
-                    name="Quality (%)"
-                  />
-                </LineChart>
+                  <Bar dataKey="availability" fill="#3B82F6" name="Availability (%)" />
+                  <Bar dataKey="oee" fill="#10B981" name="OEE (%)" />
+                </BarChart>
               </ResponsiveContainer>
             </div>
           </div>
 
-          {/* Asset Health Distribution Chart */}
+          {/* Asset Health Distribution (real PackML states) */}
           <div>
-            <h3 className="text-lg font-semibold mb-4 text-opsgrid-text-primary">Asset Health Distribution</h3>
+            <h3 className="text-lg font-semibold mb-4 text-opsgrid-text-primary">Asset State Distribution</h3>
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={mockHealthDistribution}>
+                <BarChart data={healthDistribution}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
                   <XAxis dataKey="status" stroke="#9CA3AF" />
                   <YAxis stroke="#9CA3AF" />
