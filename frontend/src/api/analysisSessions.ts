@@ -5,6 +5,8 @@
  */
 
 import { api } from './client';
+import { USE_MOCK } from './mockMode';
+import * as nlpMocks from './mocks/nlpMocks';
 
 // ==================== Types ====================
 
@@ -92,10 +94,23 @@ export interface SessionMessage {
 
 // ==================== API Functions ====================
 
+let mockSeq = 0;
+
 /**
  * Create a new analysis session
  */
 export async function createSession(request: CreateSessionRequest): Promise<AnalysisSession> {
+  if (USE_MOCK) {
+    mockSeq += 1;
+    return {
+      ...nlpMocks.mockAnalysisSessions[0],
+      id: `session-mock-new-${mockSeq}`,
+      title: request.title || 'New Analysis Session',
+      description: request.description || null,
+      data_sources_count: 0,
+      messages_count: 0,
+    };
+  }
   const response = await api.post<AnalysisSession>('/api/v1/nlp/sessions', request);
   return response.data;
 }
@@ -104,6 +119,9 @@ export async function createSession(request: CreateSessionRequest): Promise<Anal
  * List user's analysis sessions
  */
 export async function listSessions(limit: number = 50, offset: number = 0, status?: string): Promise<SessionListResponse> {
+  if (USE_MOCK) {
+    return nlpMocks.mockSessionListResponse(status);
+  }
   const params: any = {
     limit: limit.toString(),
     offset: offset.toString(),
@@ -122,6 +140,10 @@ export async function listSessions(limit: number = 50, offset: number = 0, statu
  * Get details of a specific analysis session
  */
 export async function getSession(sessionId: string): Promise<AnalysisSession> {
+  if (USE_MOCK) {
+    const match = nlpMocks.mockAnalysisSessions.find((s) => s.id === sessionId);
+    return match ?? { ...nlpMocks.mockAnalysisSessions[0], id: sessionId };
+  }
   const response = await api.get<AnalysisSession>(`/api/v1/nlp/sessions/${sessionId}`);
   return response.data;
 }
@@ -130,6 +152,9 @@ export async function getSession(sessionId: string): Promise<AnalysisSession> {
  * Update an analysis session
  */
 export async function updateSession(sessionId: string, request: UpdateSessionRequest): Promise<AnalysisSession> {
+  if (USE_MOCK) {
+    return { ...(await getSession(sessionId)), ...request };
+  }
   const response = await api.put<AnalysisSession>(`/api/v1/nlp/sessions/${sessionId}`, request);
   return response.data;
 }
@@ -138,6 +163,9 @@ export async function updateSession(sessionId: string, request: UpdateSessionReq
  * Delete an analysis session
  */
 export async function deleteSession(sessionId: string): Promise<{ message: string }> {
+  if (USE_MOCK) {
+    return { message: 'Session deleted (mock)' };
+  }
   const response = await api.delete<{ message: string }>(`/api/v1/nlp/sessions/${sessionId}`);
   return response.data;
 }
@@ -154,6 +182,9 @@ export async function cleanupOrphanedSessions(): Promise<{ message: string; dele
  * Resume an analysis session
  */
 export async function resumeSession(sessionId: string): Promise<AnalysisSession> {
+  if (USE_MOCK) {
+    return getSession(sessionId);
+  }
   const response = await api.post<AnalysisSession>(`/api/v1/nlp/sessions/${sessionId}/resume`);
   return response.data;
 }
@@ -216,6 +247,9 @@ export async function correlateSession(
  * List data sources in a session
  */
 export async function listSessionData(sessionId: string): Promise<DataSource[]> {
+  if (USE_MOCK) {
+    return nlpMocks.mockDataSources[sessionId] ?? [];
+  }
   const response = await api.get<DataSource[]>(`/api/v1/nlp/sessions/${sessionId}/data`);
   return response.data;
 }
@@ -235,6 +269,9 @@ export async function getSuggestedQuestions(
   sessionId: string,
   limit: number = 3
 ): Promise<SuggestedQuestionsResponse> {
+  if (USE_MOCK) {
+    return nlpMocks.mockSuggestedQuestions;
+  }
   const response = await api.get<SuggestedQuestionsResponse>(
     `/api/v1/nlp/sessions/${sessionId}/suggested-questions`,
     { params: { limit } }
@@ -246,6 +283,19 @@ export async function getSuggestedQuestions(
  * Send message in session context
  */
 export async function sessionChat(sessionId: string, request: SessionChatRequest): Promise<SessionChatResponse> {
+  if (USE_MOCK) {
+    const assistant = nlpMocks.mockSessionMessages[nlpMocks.MOCK_SESSION_ID][1];
+    return {
+      role: 'assistant',
+      content: assistant.content,
+      analysis: assistant.analysis,
+      risk_score: assistant.risk_score,
+      domains: assistant.domains,
+      actions: assistant.actions,
+      follow_up_questions: assistant.follow_up_questions,
+      timestamp: assistant.timestamp,
+    };
+  }
   const response = await api.post<SessionChatResponse>(
     `/api/v1/nlp/sessions/${sessionId}/chat`,
     request,
@@ -258,6 +308,9 @@ export async function sessionChat(sessionId: string, request: SessionChatRequest
  * Get messages in a session
  */
 export async function getSessionMessages(sessionId: string, limit: number = 100, offset: number = 0): Promise<SessionMessage[]> {
+  if (USE_MOCK) {
+    return nlpMocks.mockSessionMessages[sessionId] ?? [];
+  }
   const response = await api.get<SessionMessage[]>(`/api/v1/nlp/sessions/${sessionId}/messages`, {
     params: { limit, offset }
   });
@@ -268,6 +321,9 @@ export async function getSessionMessages(sessionId: string, limit: number = 100,
  * Generate session title from context and queries
  */
 export async function generateSessionTitle(sessionId: string): Promise<AnalysisSession> {
+  if (USE_MOCK) {
+    return getSession(sessionId);
+  }
   const response = await api.post<AnalysisSession>(`/api/v1/nlp/sessions/${sessionId}/generate-title`);
   return response.data;
 }
@@ -276,6 +332,11 @@ export async function generateSessionTitle(sessionId: string): Promise<AnalysisS
  * Get full chat history across all sessions
  */
 export async function getChatHistory(limit: number = 100, offset: number = 0, sessionId?: string): Promise<SessionMessage[]> {
+  if (USE_MOCK) {
+    return sessionId
+      ? nlpMocks.mockSessionMessages[sessionId] ?? []
+      : Object.values(nlpMocks.mockSessionMessages).flat();
+  }
   const params: any = {
     limit: limit.toString(),
     offset: offset.toString(),
@@ -298,6 +359,10 @@ export async function searchChatHistory(
   offset: number = 0,
   sessionId?: string
 ): Promise<SessionMessage[]> {
+  if (USE_MOCK) {
+    const all = await getChatHistory(limit, offset, sessionId);
+    return all.filter((m) => m.content.toLowerCase().includes(query.toLowerCase()));
+  }
   const params: any = {
     q: query,
     limit: limit.toString(),
@@ -316,6 +381,9 @@ export async function searchChatHistory(
  * Get session telemetry context
  */
 export async function getSessionTelemetryContext(sessionId: string, limit: number = 50): Promise<any> {
+  if (USE_MOCK) {
+    return nlpMocks.mockTelemetryContext;
+  }
   const response = await api.get<any>(`/api/v1/nlp/sessions/${sessionId}/context/telemetry`, {
     params: { limit }
   });
@@ -326,6 +394,9 @@ export async function getSessionTelemetryContext(sessionId: string, limit: numbe
  * Get session alarms context
  */
 export async function getSessionAlarmsContext(sessionId: string, limit: number = 50): Promise<any> {
+  if (USE_MOCK) {
+    return nlpMocks.mockAlarmsContext;
+  }
   const response = await api.get<any>(`/api/v1/nlp/sessions/${sessionId}/context/alarms`, {
     params: { limit }
   });
@@ -336,6 +407,9 @@ export async function getSessionAlarmsContext(sessionId: string, limit: number =
  * Get session Kanban context
  */
 export async function getSessionKanbanContext(sessionId: string, limit: number = 50): Promise<any> {
+  if (USE_MOCK) {
+    return nlpMocks.mockKanbanContext;
+  }
   const response = await api.get<any>(`/api/v1/nlp/sessions/${sessionId}/context/kanban`, {
     params: { limit }
   });
@@ -346,6 +420,9 @@ export async function getSessionKanbanContext(sessionId: string, limit: number =
  * Get session registries context
  */
 export async function getSessionRegistriesContext(sessionId: string, limit: number = 50): Promise<any> {
+  if (USE_MOCK) {
+    return nlpMocks.mockRegistriesContext;
+  }
   const response = await api.get<any>(`/api/v1/nlp/sessions/${sessionId}/context/registries`, {
     params: { limit }
   });

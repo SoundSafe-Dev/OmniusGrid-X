@@ -5,7 +5,8 @@ import {
   Workcell, Organization, PackMLState, AssetType
 } from '../types';
 
-const MOCK_DELAY = 500; // Simulate network delay
+// Simulated network delay; override with VITE_MOCK_DELAY=0 for deterministic renders
+const MOCK_DELAY = Number(import.meta.env.VITE_MOCK_DELAY ?? 500);
 
 const mockAssets: Asset[] = [
   {
@@ -337,43 +338,68 @@ const mockAssetTypes: AssetType[] = [
 
 const mockDashboardOverview: DashboardOverview = {
   totalAssets: 24,
-  onlineAssets: 18,
-  offlineAssets: 3,
-  maintenanceAssets: 3,
+  activeAssets: 18,
+  assetsByState: {
+    Execute: 9,
+    Idle: 6,
+    Starting: 1,
+    Held: 2,
+    Suspended: 2,
+    Stopped: 3,
+    Aborted: 1,
+  },
   activeAlarms: 3,
   criticalAlarms: 1,
-  oee: 0.78,
-  utilization: 0.82,
-  availability: 0.91,
-  performance: 0.85,
-  quality: 0.99,
 };
+
+// Pages adapted to the real API read raw snake_case fields (occurred_at,
+// asset_name, alarm_code); mirror the camelCase fixtures onto those keys.
+const withAssetSnakeAliases = (asset: Asset): Asset =>
+  ({
+    ...asset,
+    current_packml_state: asset.currentPackmlState,
+    is_active: asset.isActive,
+    is_in_maintenance: asset.isInMaintenance,
+    last_seen: asset.lastSeen,
+    serial_number: asset.serialNumber,
+  } as Asset);
+
+const withAlarmSnakeAliases = (alarm: Alarm): Alarm =>
+  ({
+    ...alarm,
+    asset_name: alarm.assetName,
+    alarm_code: alarm.alarmCode,
+    occurred_at: alarm.occurredAt,
+    is_active: alarm.isActive,
+    is_acknowledged: alarm.isAcknowledged,
+  } as Alarm);
 
 const mockActiveAlarms: ActiveAlarmsResponse = {
   count: 3,
-  critical: 1,
-  high: 1,
-  medium: 1,
-  low: 0,
+  bySeverity: {
+    critical: 1,
+    high: 1,
+    medium: 1,
+    low: 0,
+  },
   alarms: mockAlarms.filter(a => a.isActive),
 };
 
 const mockFleetOEE: FleetOEE = {
-  current: 0.78,
-  target: 0.85,
-  trend: 'up',
-  change: 0.03,
-  history: Array.from({ length: 24 }, (_, i) => ({
-    timestamp: new Date(Date.now() - (23 - i) * 3600000).toISOString(),
-    oee: 0.75 + Math.random() * 0.1,
-    availability: 0.88 + Math.random() * 0.08,
-    performance: 0.82 + Math.random() * 0.06,
-    quality: 0.98 + Math.random() * 0.02,
-  })),
-  byWorkcell: [
-    { workcellId: 'workcell-1', workcellName: '3D Printing Line A', oee: 0.82 },
-    { workcellId: 'workcell-2', workcellName: 'Assembly Line B', oee: 0.75 },
-    { workcellId: 'workcell-3', workcellName: 'Machining Center', oee: 0.77 },
+  timeRange: 'Last 24 hours',
+  assetCount: 8,
+  fleetAverageAvailability: 0.91,
+  fleetAveragePerformance: 0.85,
+  fleetAverageOee: 0.78,
+  assets: [
+    { assetId: 'asset-1', assetName: 'Printer #1 (Bambu Labs X1)', availability: 0.94, oee: 0.86 },
+    { assetId: 'asset-2', assetName: 'Printer #2 (Bambu Labs X1)', availability: 0.92, oee: 0.81 },
+    { assetId: 'asset-3', assetName: 'Printer #3 (QIDI X-Max 3)', availability: 0.89, oee: 0.77 },
+    { assetId: 'asset-4', assetName: 'Conveyor Belt A', availability: 0.97, oee: 0.90 },
+    { assetId: 'asset-5', assetName: 'CNC Mill #1', availability: 0.83, oee: 0.64 },
+    { assetId: 'asset-6', assetName: 'Acoustic Monitor — Compressor Room', availability: 0.99, oee: 0.88 },
+    { assetId: 'asset-7', assetName: 'Dock Camera — Door 3', availability: 0.98, oee: 0.87 },
+    { assetId: 'asset-8', assetName: 'Vibration Sensor — CNC Spindle', availability: 0.86, oee: 0.61 },
   ],
 };
 
@@ -393,13 +419,20 @@ const mockOEEMetrics: OEEMetrics = {
 // Helper to simulate async delay
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+// Deterministic helpers: demo values must be stable across mounts/renders
+const round1 = (n: number) => Math.round(n * 10) / 10;
+const deterministicNoise = (i: number) => {
+  const x = Math.sin(i * 12.9898 + 78.233) * 43758.5453;
+  return x - Math.floor(x);
+};
+
 // Mock API implementation
 export const mockApi = {
   // Assets
   getAssets: async (): Promise<{ items: Asset[]; total: number; skip: number; limit: number; hasMore: boolean }> => {
     await delay(MOCK_DELAY);
-    return { 
-      items: mockAssets, 
+    return {
+      items: mockAssets.map(withAssetSnakeAliases),
       total: mockAssets.length,
       skip: 0,
       limit: 100,
@@ -409,18 +442,19 @@ export const mockApi = {
   
   getAsset: async (id: string): Promise<Asset | undefined> => {
     await delay(MOCK_DELAY);
-    return mockAssets.find(a => a.id === id);
+    const asset = mockAssets.find(a => a.id === id);
+    return asset && withAssetSnakeAliases(asset);
   },
   
   // Alarms
   getAlarms: async (): Promise<{ items: Alarm[]; total: number }> => {
     await delay(MOCK_DELAY);
-    return { items: mockAlarms, total: mockAlarms.length };
+    return { items: mockAlarms.map(withAlarmSnakeAliases), total: mockAlarms.length };
   },
-  
+
   getActiveAlarms: async (): Promise<ActiveAlarmsResponse> => {
     await delay(MOCK_DELAY);
-    return mockActiveAlarms;
+    return { ...mockActiveAlarms, alarms: mockActiveAlarms.alarms.map(withAlarmSnakeAliases) };
   },
   
   acknowledgeAlarm: async (id: string): Promise<void> => {
@@ -459,30 +493,30 @@ export const mockApi = {
     switch (asset?.assetTypeId) {
       case 'printer':
         return {
-          'nozzle_temp': { metricName: 'nozzle_temp', value: 245.5 + Math.random() * 10, unit: '°C', timestamp },
-          'bed_temp': { metricName: 'bed_temp', value: 65.0 + Math.random() * 5, unit: '°C', timestamp },
-          'progress': { metricName: 'progress', value: 67.3 + Math.random() * 10, unit: '%', timestamp },
-          'print_speed': { metricName: 'print_speed', value: 150.0 + Math.random() * 20, unit: 'mm/s', timestamp },
+          'nozzle_temp': { metricName: 'nozzle_temp', value: round1(245.5 + 10 / 2), unit: '°C', timestamp },
+          'bed_temp': { metricName: 'bed_temp', value: round1(65.0 + 5 / 2), unit: '°C', timestamp },
+          'progress': { metricName: 'progress', value: round1(67.3 + 10 / 2), unit: '%', timestamp },
+          'print_speed': { metricName: 'print_speed', value: round1(150.0 + 20 / 2), unit: 'mm/s', timestamp },
           'layer_height': { metricName: 'layer_height', value: 0.2, unit: 'mm', timestamp },
           'filament_used': { metricName: 'filament_used', value: 1234.5, unit: 'g', timestamp },
         };
       
       case 'conveyor':
         return {
-          'speed': { metricName: 'speed', value: 2.5 + Math.random() * 0.5, unit: 'm/s', timestamp },
-          'load': { metricName: 'load', value: 85.2 + Math.random() * 10, unit: '%', timestamp },
-          'temperature': { metricName: 'temperature', value: 45.3 + Math.random() * 5, unit: '°C', timestamp },
-          'vibration': { metricName: 'vibration', value: 0.8 + Math.random() * 0.2, unit: 'g', timestamp },
-          'power_consumption': { metricName: 'power_consumption', value: 3.2 + Math.random() * 0.5, unit: 'kW', timestamp },
+          'speed': { metricName: 'speed', value: round1(2.5 + 0.5 / 2), unit: 'm/s', timestamp },
+          'load': { metricName: 'load', value: round1(85.2 + 10 / 2), unit: '%', timestamp },
+          'temperature': { metricName: 'temperature', value: round1(45.3 + 5 / 2), unit: '°C', timestamp },
+          'vibration': { metricName: 'vibration', value: round1(0.8 + 0.2 / 2), unit: 'g', timestamp },
+          'power_consumption': { metricName: 'power_consumption', value: round1(3.2 + 0.5 / 2), unit: 'kW', timestamp },
         };
       
       case 'cnc':
         return {
-          'spindle_rpm': { metricName: 'spindle_rpm', value: 12000 + Math.random() * 1000, unit: 'RPM', timestamp },
-          'feed_rate': { metricName: 'feed_rate', value: 500.0 + Math.random() * 50, unit: 'mm/min', timestamp },
-          'spindle_load': { metricName: 'spindle_load', value: 75.3 + Math.random() * 10, unit: '%', timestamp },
-          'tool_temperature': { metricName: 'tool_temperature', value: 35.2 + Math.random() * 3, unit: '°C', timestamp },
-          'cutting_force': { metricName: 'cutting_force', value: 1250.5 + Math.random() * 100, unit: 'N', timestamp },
+          'spindle_rpm': { metricName: 'spindle_rpm', value: round1(12000 + 1000 / 2), unit: 'RPM', timestamp },
+          'feed_rate': { metricName: 'feed_rate', value: round1(500.0 + 50 / 2), unit: 'mm/min', timestamp },
+          'spindle_load': { metricName: 'spindle_load', value: round1(75.3 + 10 / 2), unit: '%', timestamp },
+          'tool_temperature': { metricName: 'tool_temperature', value: round1(35.2 + 3 / 2), unit: '°C', timestamp },
+          'cutting_force': { metricName: 'cutting_force', value: round1(1250.5 + 100 / 2), unit: 'N', timestamp },
           'position_x': { metricName: 'position_x', value: 150.5, unit: 'mm', timestamp },
           'position_y': { metricName: 'position_y', value: 75.3, unit: 'mm', timestamp },
           'position_z': { metricName: 'position_z', value: -25.8, unit: 'mm', timestamp },
@@ -490,31 +524,31 @@ export const mockApi = {
       
       case 'audio_sensor':
         return {
-          'audio_rms': { metricName: 'audio_rms', value: 0.18 + Math.random() * 0.1, unit: '', timestamp },
-          'audio_peak_hz': { metricName: 'audio_peak_hz', value: 820 + Math.random() * 240, unit: 'Hz', timestamp },
-          'audio_band_low': { metricName: 'audio_band_low', value: 0.32 + Math.random() * 0.1, unit: '', timestamp },
-          'audio_band_mid': { metricName: 'audio_band_mid', value: 0.45 + Math.random() * 0.15, unit: '', timestamp },
-          'audio_band_high': { metricName: 'audio_band_high', value: 0.12 + Math.random() * 0.08, unit: '', timestamp },
+          'audio_rms': { metricName: 'audio_rms', value: round1(0.18 + 0.1 / 2), unit: '', timestamp },
+          'audio_peak_hz': { metricName: 'audio_peak_hz', value: round1(820 + 240 / 2), unit: 'Hz', timestamp },
+          'audio_band_low': { metricName: 'audio_band_low', value: round1(0.32 + 0.1 / 2), unit: '', timestamp },
+          'audio_band_mid': { metricName: 'audio_band_mid', value: round1(0.45 + 0.15 / 2), unit: '', timestamp },
+          'audio_band_high': { metricName: 'audio_band_high', value: round1(0.12 + 0.08 / 2), unit: '', timestamp },
         };
 
       case 'video_camera':
         return {
-          'frame_brightness': { metricName: 'frame_brightness', value: 118 + Math.random() * 30, unit: '', timestamp },
-          'motion_score': { metricName: 'motion_score', value: Math.random() * 0.6, unit: '', timestamp },
-          'frames_analyzed': { metricName: 'frames_analyzed', value: 14200 + Math.floor(Math.random() * 100), unit: '', timestamp },
+          'frame_brightness': { metricName: 'frame_brightness', value: round1(118 + 30 / 2), unit: '', timestamp },
+          'motion_score': { metricName: 'motion_score', value: 0.31, unit: '', timestamp },
+          'frames_analyzed': { metricName: 'frames_analyzed', value: 14200 + 42, unit: '', timestamp },
         };
 
       case 'vibration_sensor':
         return {
-          'vibration_rms': { metricName: 'vibration_rms', value: 1.8 + Math.random() * 0.9, unit: 'mm/s', timestamp },
-          'temperature': { metricName: 'temperature', value: 52 + Math.random() * 8, unit: '°C', timestamp },
-          'load_percent': { metricName: 'load_percent', value: 68 + Math.random() * 20, unit: '%', timestamp },
+          'vibration_rms': { metricName: 'vibration_rms', value: round1(1.8 + 0.9 / 2), unit: 'mm/s', timestamp },
+          'temperature': { metricName: 'temperature', value: round1(52 + 8 / 2), unit: '°C', timestamp },
+          'load_percent': { metricName: 'load_percent', value: round1(68 + 20 / 2), unit: '%', timestamp },
         };
 
       default:
         return {
           'status': { metricName: 'status', value: 1, unit: '', timestamp },
-          'temperature': { metricName: 'temperature', value: 25.0 + Math.random() * 5, unit: '°C', timestamp },
+          'temperature': { metricName: 'temperature', value: round1(25.0 + 5 / 2), unit: '°C', timestamp },
         };
     }
   },
@@ -528,7 +562,7 @@ export const mockApi = {
     const generateHistory = (baseValue: number, variance: number, unit: string) => {
       return Array.from({ length: 50 }, (_, i) => ({
         metricName,
-        value: baseValue + (Math.random() - 0.5) * variance,
+        value: round1(baseValue + (deterministicNoise(i) - 0.5) * variance),
         unit,
         timestamp: new Date(Date.now() - (49 - i) * 60000).toISOString(),
       }));

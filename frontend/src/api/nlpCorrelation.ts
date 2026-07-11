@@ -1,4 +1,6 @@
 import { api } from './client';
+import { USE_MOCK } from './mockMode';
+import { mockIntakeItems, mockIntakeList } from './mocks/nlpMocks';
 
 export interface NLPQueryRequest {
   query: string;
@@ -111,6 +113,9 @@ export const nlpCorrelationApi = {
   },
 
   async listIntakeItems(limit: number = 50, offset: number = 0, status?: string): Promise<{ items: IntakeItem[]; total: number }> {
+    if (USE_MOCK) {
+      return mockIntakeList(status);
+    }
     const response = await api.get(`/api/v1/nlp/correlation/intake/list`, {
       params: { limit, offset, status }
     });
@@ -118,6 +123,11 @@ export const nlpCorrelationApi = {
   },
 
   async getIntakeItem(intake_id: string): Promise<IntakeItem> {
+    if (USE_MOCK) {
+      const match = mockIntakeItems.find((i) => i.id === intake_id);
+      if (match) return match;
+      throw new Error(`Mock intake item not found: ${intake_id}`);
+    }
     const response = await api.get(`/api/v1/nlp/correlation/intake/${intake_id}`);
     return response.data;
   }

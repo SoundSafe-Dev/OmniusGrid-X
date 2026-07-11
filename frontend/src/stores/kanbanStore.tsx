@@ -4,6 +4,7 @@
 
 import React, { createContext, useContext, useState, useCallback, useEffect, ReactNode } from 'react';
 import { api } from '../api/client';
+import { USE_MOCK } from '../api/mockMode';
 
 // Types
 export interface TaskChecklistItem {
@@ -144,6 +145,18 @@ export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     setIsLoading(true);
     setError(null);
     try {
+      if (USE_MOCK) {
+        const mocks = await import('../api/mocks/kanbanMocks');
+        setBoard(mocks.mockKanbanBoard);
+        setColumns(mocks.mockKanbanColumns);
+        let mockTasks = mocks.mockKanbanTasks;
+        if (filters.asset_id) mockTasks = mockTasks.filter(t => t.asset_id === filters.asset_id);
+        if (filters.task_type) mockTasks = mockTasks.filter(t => t.task_type === filters.task_type);
+        if (filters.priority) mockTasks = mockTasks.filter(t => t.priority === filters.priority);
+        if (filters.status) mockTasks = mockTasks.filter(t => t.status === filters.status);
+        setTasks(mockTasks);
+        return;
+      }
       const params: any = {};
       if (filters.asset_id) params.asset_id = filters.asset_id;
       if (filters.task_type) params.task_type = filters.task_type;
@@ -165,6 +178,11 @@ export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   // Fetch metrics
   const refreshMetrics = useCallback(async () => {
     try {
+      if (USE_MOCK) {
+        const mocks = await import('../api/mocks/kanbanMocks');
+        setMetrics(mocks.mockKanbanMetrics);
+        return;
+      }
       const response = await api.get<KanbanMetrics>('/api/v1/kanban/metrics');
       setMetrics(response.data);
     } catch (err) {
@@ -176,6 +194,9 @@ export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   useEffect(() => {
     refreshBoard();
     refreshMetrics();
+
+    // Mock data never changes, so skip the polling loop entirely
+    if (USE_MOCK) return;
 
     // Set up polling for real-time updates
     const interval = setInterval(() => {

@@ -1,0 +1,5 @@
+# Remotion render output — MP4s are ~160MB and reproducible via `npm run video:*`;
+# renders are distributed out-of-band, never committed.
+out/
+
+.DS_Store

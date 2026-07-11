@@ -5,6 +5,7 @@
  */
 
 import { api } from './client';
+import { USE_MOCK } from './mockMode';
 
 // ==================== Types ====================
 
@@ -45,6 +46,10 @@ export interface UserGoalRequest {
  * Get current user's context and goals
  */
 export async function getUserContext(): Promise<UserContext> {
+  if (USE_MOCK) {
+    const { mockUserContext } = await import('./mocks/nlpMocks');
+    return mockUserContext;
+  }
   const response = await api.get<UserContext>('/api/v1/user/context');
   return response.data;
 }
