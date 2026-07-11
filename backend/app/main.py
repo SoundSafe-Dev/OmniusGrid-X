@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from app.api import assets, telemetry, alarms, operations, auth, dashboard, health, engines
-from app.api import yard, transportation, logistics_correlation, websocket, commands, oee, kanban, registries, geotab, correlation_integration, nlp_correlation, analysis_sessions, user_context, audit, api_keys, gdpr, compliance, compliance_reports, data_residency, feature_flags, sso, bulk_operations, exports, error_tracking, fleet_agents, agent_releases, agent_rollouts, models, model_releases
+from app.api import yard, transportation, logistics_correlation, websocket, commands, oee, kanban, registries, geotab, correlation_integration, nlp_correlation, analysis_sessions, user_context, audit, api_keys, gdpr, compliance, compliance_reports, data_residency, feature_flags, sso, bulk_operations, exports, error_tracking, fleet_agents, agent_releases, agent_rollouts, models, model_releases, historian, data_retention
 from app.core.config import settings
 from app.core.logging_filters import install_sensitive_query_access_log_filter
 from app.db.database import init_db
@@ -224,6 +224,12 @@ app.include_router(agent_rollouts.router, prefix="/api/v1/fleet", tags=["Fleet"]
 app.include_router(model_releases.router, prefix="/api/v1/fleet", tags=["Fleet"])
 app.include_router(models.router, prefix="/api/v1", tags=["Models"])
 app.include_router(models.public_router, prefix="/api/v1", tags=["Models"])
+app.include_router(historian.router, prefix="/api/v1/historian", tags=["Historian"])
+app.include_router(
+    data_retention.tenant_router,
+    prefix="/api/v1/data-retention",
+    tags=["Data Retention"],
+)
 
 
 @app.get("/")

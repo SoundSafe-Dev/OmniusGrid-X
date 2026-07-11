@@ -101,6 +101,70 @@ class Telemetry(Base):
     sequence_num = Column(BigInteger)
 
 
+class HistorianRetentionPolicy(Base):
+    """Tenant and metric-specific historian retention and ingestion settings."""
+
+    __tablename__ = "historian_retention_policies"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "metric_name",
+            name="uq_historian_retention_org_metric",
+        ),
+        CheckConstraint(
+            "length(btrim(metric_name)) > 0",
+            name="ck_historian_retention_metric",
+        ),
+        CheckConstraint(
+            "hot_retention_days BETWEEN 1 AND 1825 "
+            "AND warm_retention_days BETWEEN hot_retention_days AND 1825 "
+            "AND cold_retention_days BETWEEN warm_retention_days AND 3650",
+            name="ck_historian_retention_days",
+        ),
+        CheckConstraint(
+            "ingestion_priority BETWEEN 1 AND 5",
+            name="ck_historian_retention_priority",
+        ),
+        CheckConstraint(
+            "ingestion_sample_rate > 0 AND ingestion_sample_rate <= 1",
+            name="ck_historian_retention_sample_rate",
+        ),
+        CheckConstraint(
+            "max_ingest_age_seconds BETWEEN 1 AND 86400",
+            name="ck_historian_retention_max_age",
+        ),
+    )
+
+    id = UUIDColumn()
+    organization_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    metric_name = Column(String(100), nullable=False, default="*", server_default="*")
+    hot_retention_days = Column(Integer, nullable=False, default=30, server_default="30")
+    warm_retention_days = Column(Integer, nullable=False, default=365, server_default="365")
+    cold_retention_days = Column(Integer, nullable=False, default=1825, server_default="1825")
+    ingestion_priority = Column(Integer, nullable=False, default=3, server_default="3")
+    ingestion_sample_rate = Column(Numeric(5, 4), nullable=False, default=1.0, server_default="1.0")
+    max_ingest_age_seconds = Column(Integer, nullable=False, default=30, server_default="30")
+    archival_enabled = Column(Boolean, nullable=False, default=True, server_default="true")
+    created_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at = Column(
+        DateTime(timezone=True), default=datetime.utcnow, server_default=func.now()
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        server_default=func.now(),
+    )
+
+
 class Alarm(Base):
     __tablename__ = "alarms"
     

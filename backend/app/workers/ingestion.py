@@ -9,7 +9,7 @@ from typing import Dict, Any, Optional
 from uuid import UUID
 import structlog
 from aiokafka import AIOKafkaConsumer
-from sqlalchemy import update
+from sqlalchemy import text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import sys
@@ -126,9 +126,17 @@ class IngestionWorker:
         msg_type = topic_parts[0]
         organization_id = topic_parts[1]
         asset_id = topic_parts[2]
+
+        # Validate both identifiers before using the tenant value as an RLS GUC.
+        organization_id = str(UUID(organization_id))
+        asset_id = str(UUID(asset_id))
         
         async with AsyncSessionLocal() as session:
             try:
+                await session.execute(
+                    text("SELECT set_config('app.current_org_id', :org_id, true)"),
+                    {"org_id": organization_id},
+                )
                 if msg_type == 'telemetry':
                     await self._process_telemetry(session, asset_id, data, organization_id)
                 elif msg_type == 'state':
@@ -145,6 +153,7 @@ class IngestionWorker:
     async def _process_telemetry(self, session: AsyncSession, asset_id: str, data: Dict, organization_id: str):
         """Process telemetry data with intelligent shedding"""
         asset_uuid = UUID(asset_id)
+        await data_shedder.refresh_tenant_policies(session, organization_id)
 
         # Parse timestamp
         timestamp_str = data.get('timestamp_edge') or data.get('timestamp')
@@ -163,7 +172,11 @@ class IngestionWorker:
             for metric_name, value in telemetry_data.items():
                 if value is not None:
                     # Check data shedding - drop low priority data if system overloaded
-                    if data_shedder.should_shed(metric_name, timestamp):
+                    if data_shedder.should_shed(
+                        metric_name,
+                        timestamp,
+                        organization_id=organization_id,
+                    ):
                         logger.debug(
                             "data_shedded",
                             metric=metric_name,
