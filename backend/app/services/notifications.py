@@ -14,6 +14,8 @@ from typing import Any, Callable, Dict, List, Optional
 
 import structlog
 
+from app.core.config import settings
+
 logger = structlog.get_logger()
 
 SEVERITY_ORDER = {"info": 0, "warning": 1, "error": 2, "critical": 3}
@@ -93,10 +95,33 @@ class NotificationService:
         return True, "slack delivered"
 
     def _deliver_email(self, target: str, event: Dict[str, Any]) -> tuple:
-        # Stub adapter: log only (pluggable — swap for SMTP/provider later).
-        logger.info("notification_email_stub", to=target,
-                    subject=event.get("title"), severity=event.get("severity"))
-        return True, "email logged (stub)"
+        """Deliver via the real SMTP transport (app.services.email_service).
+
+        The transport is async; this adapter is sync (like webhook/slack), so we
+        drive it on a short-lived worker-thread event loop and block for the
+        result. When SMTP is unconfigured (dev/tests) we log-and-skip rather than
+        error, preserving the previous no-op behavior.
+        """
+        from app.services import email_service
+
+        if not settings.SMTP_HOST:
+            logger.info("notification_email_skipped_no_smtp",
+                        to=target, subject=event.get("title"))
+            return True, "email skipped (SMTP not configured)"
+
+        subject = f"[{str(event.get('severity', 'info')).upper()}] " \
+                  f"{event.get('title', 'Notification')}"
+        body = event.get("message") or event.get("title") or ""
+
+        import asyncio
+        import concurrent.futures
+
+        def _run():
+            return asyncio.run(email_service.send_email([target], subject, body))
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            ex.submit(_run).result(timeout=30)
+        return True, f"email delivered to {target}"
 
     # ------------------------------------------------------------------ #
     # DB-backed dispatch (exercised in CI's backend job)

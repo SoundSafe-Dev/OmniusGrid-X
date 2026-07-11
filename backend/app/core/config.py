@@ -153,6 +153,12 @@ class Settings(BaseSettings):
     ERP_ALERT_SLACK_WEBHOOK_URL: str = ""
     ERP_ALERT_PAGERDUTY_WEBHOOK_URL: str = ""
 
+    # Master key for ERP field encryption. Per-org keys are derived from it
+    # deterministically (stable across restarts). REQUIRED in production — a
+    # runtime-generated key would make previously-encrypted credentials
+    # undecryptable after a restart.
+    ERP_ENCRYPTION_KEY: str = ""
+
     # Keycloak / SSO (Task 6 — disabled by default)
     KEYCLOAK_ENABLED: bool = False
     KEYCLOAK_URL: str = ""
@@ -279,4 +285,6 @@ def validate_settings(s: "Settings" = None) -> list[str]:
             problems.append("CORS_ALLOW_ORIGINS must be an explicit allowlist in production, not '*' (empty also means '*')")
         if not s.GEOTAB_WEBHOOK_SECRET:
             problems.append("GEOTAB_WEBHOOK_SECRET is empty; the GeoTab webhook is unauthenticated")
+        if not s.ERP_ENCRYPTION_KEY:
+            problems.append("ERP_ENCRYPTION_KEY is unset; ERP field encryption would use an unstable runtime key")
     return problems
