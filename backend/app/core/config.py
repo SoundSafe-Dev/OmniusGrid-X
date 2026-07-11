@@ -243,6 +243,12 @@ class Settings(BaseSettings):
     ROUTING_PROVIDER: str = "haversine"
     ROUTING_OSRM_URL: str = ""   # e.g. http://osrm:5000
 
+    # Run the worker-backed schedulers (export, compliance-report, OTA rollout)
+    # inside the API process. Default true so a standalone API still dispatches;
+    # set false when the dedicated compose workers own dispatch, to avoid two
+    # pollers racing the same queues.
+    SCHEDULERS_IN_API: bool = True
+
     # Dev-only auth conveniences. Both MUST be false in production; the
     # startup hook (validate_settings) hard-fails if they are left on.
     ALLOW_DEV_TOKEN: bool = True   # accept "dev-token" as an admin bypass

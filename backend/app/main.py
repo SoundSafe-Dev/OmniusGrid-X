@@ -52,18 +52,24 @@ async def lifespan(app: FastAPI):
     await websocket_manager.connect()
     await command_executor.start()
     await oee_calculator.start()
-    await export_scheduler.start()
-    await compliance_report_dispatcher.start()
-    await rollout_orchestrator.start()
+    # Worker-backed schedulers: skip in the API when dedicated compose workers
+    # own dispatch (SCHEDULERS_IN_API=false), so two pollers don't race the same
+    # queues. export/compliance are mine; rollout_orchestrator is the OTA lane —
+    # gating only WHETHER the API starts it, not its internals.
+    if settings.SCHEDULERS_IN_API:
+        await export_scheduler.start()
+        await compliance_report_dispatcher.start()
+        await rollout_orchestrator.start()
     await report_scheduler.start()
     await error_tracker.start()
     yield
     # Shutdown
     await error_tracker.stop()
     await report_scheduler.stop()
-    await rollout_orchestrator.stop()
-    await compliance_report_dispatcher.stop()
-    await export_scheduler.stop()
+    if settings.SCHEDULERS_IN_API:
+        await rollout_orchestrator.stop()
+        await compliance_report_dispatcher.stop()
+        await export_scheduler.stop()
     await export_processor.close()
     await oee_calculator.stop()
     await command_executor.stop()

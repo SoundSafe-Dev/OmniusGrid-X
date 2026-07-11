@@ -73,6 +73,10 @@ services:
       SIGNED_URL_AUDIENCE: omniusgrid-report-download
       SIGNED_URL_ACCEPT_LEGACY_EXPORT_TOKENS: ${SIGNED_URL_ACCEPT_LEGACY_EXPORT_TOKENS:-true}
       RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+      # Dedicated workers (export-worker, compliance-reports-worker,
+      # ota-rollout-worker) own scheduler dispatch in compose, so the API must
+      # NOT also run them (avoids two pollers racing the same queues).
+      SCHEDULERS_IN_API: ${SCHEDULERS_IN_API:-false}
       REDIS_URL: redis://redis:6379/0
       EXPORT_STORAGE_PATH: /var/lib/omniusgrid/exports
       EXPORT_PUBLIC_BASE_URL: http://localhost:8002
