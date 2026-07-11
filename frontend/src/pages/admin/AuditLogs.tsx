@@ -62,7 +62,7 @@ export default function AuditLogs() {
       if (dateFrom) params.append('start_time', dateFrom);
       if (dateTo) params.append('end_time', dateTo);
       
-      const token = localStorage.getItem('token') || 'dev-token';
+      const token = localStorage.getItem('accessToken') || localStorage.getItem('devToken');
       const response = await fetch(`/api/v1/audit/logs?${params}`, {
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -85,7 +85,7 @@ export default function AuditLogs() {
 
   const verifyHashChain = async () => {
     try {
-      const token = localStorage.getItem('token') || 'dev-token';
+      const token = localStorage.getItem('accessToken') || localStorage.getItem('devToken');
       const response = await fetch('/api/v1/audit/verify', {
         headers: {
           'Authorization': `Bearer ${token}`,

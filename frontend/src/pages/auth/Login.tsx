@@ -5,8 +5,9 @@ import { useAuthStore } from '../../stores';
 import { Input, Button } from '../../components';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
 
-// Demo default on; production sets VITE_DEV_MODE=false (W3 real-mode cutover).
-const DEV_MODE = import.meta.env.VITE_DEV_MODE !== 'false'
+// Dev login bypass is OFF unless explicitly enabled (VITE_DEV_MODE=true), and
+// only ever in a non-production build. Production bundles can never enable it.
+const DEV_MODE = import.meta.env.DEV && import.meta.env.VITE_DEV_MODE === 'true'
 
 export const Login: FC = () => {
   const navigate = useNavigate();
@@ -23,13 +24,10 @@ export const Login: FC = () => {
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     clearError();
-    console.log('Form submitted', { username, password, DEV_MODE });
 
-    // DEV MODE: Bypass authentication
+    // DEV MODE: bypass authentication when username is "dev" (non-prod only).
     const trimmedUsername = username.trim().toLowerCase();
-    console.log('Trimmed username:', trimmedUsername, 'Matches dev?', trimmedUsername === 'dev');
     if (DEV_MODE && trimmedUsername === 'dev') {
-      console.log('DEV MODE: Bypassing authentication');
       devLogin({
         id: 'dev-user',
         email: 'admin@omniusgrid.com',

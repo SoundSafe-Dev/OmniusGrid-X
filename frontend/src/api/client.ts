@@ -26,18 +26,12 @@ export const api = axios.create({
   timeout: 30000,
 })
 
-// Request interceptor - add auth token
+// Request interceptor - attach the real auth token (or none, letting the
+// backend 401). The dev-token bypass is only ever present when devLogin stored
+// it, which is gated to non-production builds.
 api.interceptors.request.use(
   (config) => {
-    const url = config.url || ''
-    const useDevToken =
-      url.includes('/api/v1/nlp/sessions') ||
-      url.includes('/api/v1/nlp/correlation')
-
-    const token = useDevToken
-      ? 'dev-token'
-      : localStorage.getItem('accessToken') || localStorage.getItem('devToken') || 'dev-token'
-
+    const token = localStorage.getItem('accessToken') || localStorage.getItem('devToken')
     if (token) {
       config.headers.Authorization = `Bearer ${token}`
     }
