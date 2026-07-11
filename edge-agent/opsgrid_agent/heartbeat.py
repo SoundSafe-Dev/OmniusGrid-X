@@ -68,15 +68,29 @@ class HeartbeatReporter:
         except Exception as e:
             logger.warning("heartbeat_failed", error=str(e))
             return False
+
+        # Sample the server clock from ANY response carrying it — including a
+        # stale-signature 401, whose detail embeds server_time precisely so a
+        # drifted clock can calibrate back inside the freshness window.
+        self._observe_server_time(resp)
+
         if status != 200:
             logger.warning("heartbeat_rejected", status=status)
             return False
-
-        server_time = resp.get("server_time")
-        if server_time and self._skew is not None:
-            try:
-                st = datetime.fromisoformat(server_time.replace("Z", "+00:00"))
-                self._skew.observe(datetime.now(timezone.utc), st)
-            except (ValueError, AttributeError):  # pragma: no cover - defensive
-                pass
         return True
+
+    def _observe_server_time(self, resp) -> None:
+        if self._skew is None or not isinstance(resp, dict):
+            return
+        server_time = resp.get("server_time")
+        if not server_time:
+            detail = resp.get("detail")
+            if isinstance(detail, dict):
+                server_time = detail.get("server_time")
+        if not server_time:
+            return
+        try:
+            st = datetime.fromisoformat(str(server_time).replace("Z", "+00:00"))
+            self._skew.observe(datetime.now(timezone.utc), st)
+        except (ValueError, AttributeError):  # pragma: no cover - defensive
+            pass

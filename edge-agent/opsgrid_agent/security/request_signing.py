@@ -14,7 +14,7 @@ Freshness is enforced server-side (default ±5 min) to bound replay.
 import base64
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Dict
 
 from cryptography.hazmat.primitives import hashes
@@ -32,9 +32,16 @@ def body_digest(body: Dict) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def sign_request(identity: AgentIdentity, body: Dict) -> Dict[str, str]:
-    """Signature headers proving possession of the enrolled private key."""
-    timestamp = datetime.now(timezone.utc).isoformat()
+def sign_request(identity: AgentIdentity, body: Dict,
+                 skew_seconds: float = 0.0) -> Dict[str, str]:
+    """Signature headers proving possession of the enrolled private key.
+
+    skew_seconds shifts the signed timestamp by the ClockSkewEstimator's
+    ``server - edge`` offset, so an edge box with a drifted clock (no RTC
+    battery) still lands inside the backend's freshness window.
+    """
+    corrected = datetime.now(timezone.utc) + timedelta(seconds=skew_seconds)
+    timestamp = corrected.isoformat()
     message = f"{timestamp}.{body_digest(body)}".encode("utf-8")
     signature = identity.private_key.sign(message, ec.ECDSA(hashes.SHA256()))
     return {

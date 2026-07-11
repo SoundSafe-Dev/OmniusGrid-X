@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # Bare-metal installer for the OmniusGrid edge agent (FS-36).
-# Usage: sudo ./install.sh [--extras "opcua,modbus"]
+# Usage: sudo ./install.sh
+# Installs the full driver set (dependencies come from requirements.txt,
+# the same list the Docker image uses — one source of truth).
 set -euo pipefail
-
-EXTRAS=""
-if [[ "${1:-}" == "--extras" ]]; then EXTRAS="[${2:?comma-separated extras}]"; fi
 
 INSTALL_DIR=/opt/opsgrid-agent
 STATE_DIR=/var/lib/opsgrid-agent
@@ -21,7 +20,7 @@ chown opsgrid:opsgrid "$STATE_DIR"
 echo ">> installing into a venv at $INSTALL_DIR/venv"
 python3 -m venv "$INSTALL_DIR/venv"
 "$INSTALL_DIR/venv/bin/pip" install --upgrade pip >/dev/null
-"$INSTALL_DIR/venv/bin/pip" install "$SRC_DIR$EXTRAS"
+"$INSTALL_DIR/venv/bin/pip" install "$SRC_DIR"
 
 echo ">> installing config template + systemd unit"
 if [[ ! -f "$CONF_DIR/agent.env" ]]; then

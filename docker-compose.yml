@@ -371,7 +371,7 @@ services:
     ports:
       - "9108:9108"   # Prometheus /metrics
     volumes:
-      - edge-agent-data:/var/lib/omniusgrid-agent
+      - edge-agent-data:/var/lib/opsgrid-agent
       - ./edge-agent:/app
     depends_on:
       redpanda:

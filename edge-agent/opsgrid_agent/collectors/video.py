@@ -82,20 +82,12 @@ def synthesize_frame(tick: int, size: int = 64) -> "np.ndarray":
 class VideoFrameCollector(BaseCollector):
     """Collector emitting frame-metric telemetry from a camera or demo frames."""
 
+    # Defaults to a synthetic source -> BaseCollector enforces explicit config
+    # under EDGE_REQUIRE_EXPLICIT_SOURCES (no silent demo frames).
+    has_synthetic_default = True
+
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
-        # "No silent synthetic data": defaulting to simulate is a dev/demo
-        # convenience only. With EDGE_REQUIRE_EXPLICIT_SOURCES=true (production
-        # posture) an omitted source is a config error — fail loud at startup
-        # instead of quietly emitting demo frames from a misconfigured plant.
-        import os
-        if "source" not in config and os.getenv(
-            "EDGE_REQUIRE_EXPLICIT_SOURCES", "false"
-        ).lower() == "true":
-            raise ValueError(
-                "video collector requires an explicit 'source' "
-                "(EDGE_REQUIRE_EXPLICIT_SOURCES is enabled)"
-            )
         self.source = config.get("source", "simulate")
         self.stream_url = config.get("stream_url")
         self.poll_interval = float(config.get("poll_interval", 10))

@@ -213,6 +213,20 @@ class EdgeAgent:
         await self._initialize_collectors()
         await self.coordinator.start_all()
     
+    def _load_identity(self):
+        """The agent's key/cert identity, loaded once and shared.
+
+        One instance serves both the cloud link (enrollment/heartbeat) and the
+        Kafka TLS context, so rotation updates and the producer always see the
+        same certificate rather than two independently-loaded copies.
+        """
+        if getattr(self, '_identity', None) is None:
+            from opsgrid_agent.security.identity import AgentIdentity
+            self._identity = AgentIdentity(
+                os.getenv('IDENTITY_DIR', '/var/lib/opsgrid-agent/identity')
+            ).load_or_create()
+        return self._identity
+
     def _uplink_ssl_context(self):
         """SSL context for the Kafka uplink, honoring the TLS enforcement flag.
 
@@ -226,15 +240,10 @@ class EdgeAgent:
         if not require_tls and protocol != 'SSL':
             return None
 
-        from opsgrid_agent.security.identity import AgentIdentity
         from opsgrid_agent.security.mtls import build_client_context
-
-        identity = AgentIdentity(
-            os.getenv('IDENTITY_DIR', '/var/lib/opsgrid-agent/identity')
-        ).load_or_create()
         # Raises MTLSNotReady when unenrolled or (strict) missing CA bundle;
         # in require_tls mode the caller lets that abort startup.
-        return build_client_context(identity, strict=require_tls)
+        return build_client_context(self._load_identity(), strict=require_tls)
 
     async def _init_kafka_producer(self):
         """Initialize Kafka/Redpanda producer (TLS when configured)."""
@@ -550,18 +559,21 @@ class EdgeAgent:
             )
 
 
-        # Initialize Kafka producer
+        # Cloud enrollment + heartbeat (audit WIRE #10): opt-in via CLOUD_URL.
+        # Enrolls once (bootstrap token -> mTLS cert), keeps the cert rotated,
+        # and reports health every HEARTBEAT_INTERVAL seconds.
+        # MUST run before the Kafka producer: with EDGE_REQUIRE_TLS=true the
+        # producer needs the enrolled certificate, and starting it first would
+        # deadlock a fresh agent (fail-closed abort before it can ever enroll).
+        await self._start_cloud_link()
+
+        # Initialize Kafka producer (TLS from the enrolled identity when required)
         await self._init_kafka_producer()
-        
+
         # Start background workers
         self._tasks.append(asyncio.create_task(self._backfill_worker()))
         self._tasks.append(asyncio.create_task(self._cleanup_worker()))
         self._tasks.append(asyncio.create_task(self._stats_reporter()))
-
-        # Cloud enrollment + heartbeat (audit WIRE #10): opt-in via CLOUD_URL.
-        # Enrolls once (bootstrap token -> mTLS cert), keeps the cert rotated,
-        # and reports health every HEARTBEAT_INTERVAL seconds.
-        await self._start_cloud_link()
 
         # Initialize collectors from configuration
         await self._initialize_collectors()
@@ -589,16 +601,13 @@ class EdgeAgent:
         if not cloud_url:
             return
         try:
-            from opsgrid_agent.security.identity import AgentIdentity
             from opsgrid_agent.security.enrollment import EnrollmentClient
             from opsgrid_agent.security.rotation import CertificateRotationManager
             from opsgrid_agent.heartbeat import HeartbeatReporter
             from opsgrid_agent.timesync import ClockSkewEstimator
             from opsgrid_agent.security.enrollment import _default_post
 
-            identity = AgentIdentity(
-                os.getenv('IDENTITY_DIR', '/var/lib/opsgrid-agent/identity')
-            ).load_or_create()
+            identity = self._load_identity()
 
             bootstrap = os.getenv('EDGE_BOOTSTRAP_TOKEN', '')
             enrollment = EnrollmentClient(identity, cloud_url, bootstrap)
@@ -630,9 +639,14 @@ class EdgeAgent:
                 # Proof-of-possession: sign the request with the agent's private
                 # key so the (public) certificate header can't be replayed by an
                 # observer — the backend verifies against the cert's public key.
+                # The skew offset keeps drifted clocks inside the server's
+                # freshness window (see ClockSkewEstimator).
                 if identity.has_certificate():
                     from opsgrid_agent.security.request_signing import sign_request
-                    headers.update(sign_request(identity, body))
+                    headers.update(sign_request(
+                        identity, body,
+                        skew_seconds=self._skew.offset_seconds if self._skew else 0.0,
+                    ))
                 return _default_post(url, body, headers)
 
             reporter = HeartbeatReporter(

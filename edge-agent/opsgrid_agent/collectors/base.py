@@ -1,5 +1,6 @@
 """Base Collector Interface for Edge Agent"""
 
+import os
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Callable, Optional
 from datetime import datetime
@@ -11,15 +12,31 @@ logger = structlog.get_logger()
 class BaseCollector(ABC):
     """
     Base class for all collectors.
-    
+
     Defines the interface that all collectors must implement.
     """
-    
+
+    # Set True on collector classes whose default source is SYNTHETIC (video,
+    # audio). Under EDGE_REQUIRE_EXPLICIT_SOURCES=true (production posture) an
+    # omitted 'source' on such a collector is a config error — one shared guard
+    # here so every current and future synthetic-capable collector inherits it.
+    has_synthetic_default = False
+
     def __init__(self, config: Dict[str, Any]):
         self.config = config
         self.asset_id = config.get("asset_id")
         self._running = False
         self._data_handlers: list[Callable[[Dict[str, Any]], None]] = []
+
+        if (
+            self.has_synthetic_default
+            and "source" not in config
+            and os.getenv("EDGE_REQUIRE_EXPLICIT_SOURCES", "false").lower() == "true"
+        ):
+            raise ValueError(
+                f"{type(self).__name__} requires an explicit 'source' "
+                "(EDGE_REQUIRE_EXPLICIT_SOURCES is enabled)"
+            )
     
     @abstractmethod
     async def start(self) -> None:

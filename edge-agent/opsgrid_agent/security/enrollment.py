@@ -13,6 +13,7 @@ network and transport-agnostic (urllib default, or the agent's async client).
 import hashlib
 import json as _json
 import os
+import urllib.error
 import urllib.request
 from typing import Callable, Dict, Optional, Tuple
 
@@ -29,8 +30,18 @@ def _default_post(url: str, body: Dict, headers: Dict) -> Tuple[int, Dict]:
     data = _json.dumps(body).encode("utf-8")
     req = urllib.request.Request(url, data=data, headers=headers, method="POST")
     req.add_header("Content-Type", "application/json")
-    with urllib.request.urlopen(req, timeout=30) as resp:  # nosec - operator-configured URL
-        return resp.status, _json.loads(resp.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:  # nosec - operator-configured URL
+            return resp.status, _json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        # Return 4xx/5xx as (status, parsed-body) instead of raising: callers
+        # need rejection bodies (e.g. the server_time carried in a stale-
+        # signature 401 lets the skew estimator recover a drifted clock).
+        try:
+            payload = _json.loads(e.read().decode("utf-8"))
+        except Exception:  # noqa: BLE001 - body may be empty/non-JSON
+            payload = {}
+        return e.code, payload
 
 
 class EnrollmentError(Exception):

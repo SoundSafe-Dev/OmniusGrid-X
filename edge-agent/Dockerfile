@@ -9,7 +9,6 @@ RUN apt-get update && apt-get install -y \
     libtesseract-dev \
     libgl1 \
     libglib2.0-0 \
-    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
@@ -38,8 +37,13 @@ USER opsgrid
 ENV METRICS_PORT=9108
 EXPOSE 9108
 
+# Health probe via /healthz. Uses python (already in the image, no curl) and
+# passes when METRICS_ENABLED=false — a metrics-less agent is not unhealthy.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD curl -fsS "http://localhost:${METRICS_PORT}/healthz" || exit 1
+    CMD python -c "import os,sys,urllib.request; \
+        sys.exit(0) if os.getenv('METRICS_ENABLED','true').lower()=='false' else \
+        urllib.request.urlopen('http://localhost:'+os.getenv('METRICS_PORT','9108')+'/healthz', timeout=4)" \
+        || exit 1
 
 # Default command (overridden in docker-compose)
 CMD ["python", "-m", "opsgrid_agent.main"]

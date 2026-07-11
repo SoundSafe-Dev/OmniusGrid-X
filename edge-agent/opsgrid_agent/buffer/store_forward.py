@@ -75,10 +75,18 @@ class StoreForwardBuffer:
                 "buffer_corrupt_quarantining",
                 path=str(self.buffer_path), quarantine=str(quarantine), error=str(e),
             )
-            try:
-                self.buffer_path.rename(quarantine)
-            except OSError:
-                self.buffer_path.unlink(missing_ok=True)
+            # Move the WAL/SHM sidecars WITH the main file: a leftover -wal
+            # would be replayed into the fresh database on first connect
+            # (recreating the corruption), and the forensic copy needs its WAL
+            # to be complete anyway.
+            for suffix in ("", "-wal", "-shm"):
+                side = Path(str(self.buffer_path) + suffix)
+                if not side.exists():
+                    continue
+                try:
+                    side.rename(Path(str(quarantine) + suffix))
+                except OSError:
+                    side.unlink(missing_ok=True)
             self._init_db()
 
     def _init_db(self):
@@ -148,23 +156,8 @@ class StoreForwardBuffer:
         """Store a message in the local buffer"""
         async with self._lock:
             try:
-                with sqlite3.connect(self.buffer_path) as conn:
-                    conn.execute(
-                        """
-                        INSERT INTO messages 
-                        (timestamp_edge, asset_id, topic, payload, sequence_num)
-                        VALUES (?, ?, ?, ?, ?)
-                        """,
-                        (
-                            timestamp_edge.isoformat(),
-                            asset_id,
-                            topic,
-                            json.dumps(payload),
-                            sequence_num
-                        )
-                    )
-                    conn.commit()
-                
+                self._insert_row(timestamp_edge, asset_id, topic, payload, sequence_num)
+
                 logger.debug(
                     "message_buffered",
                     asset_id=asset_id,
@@ -179,23 +172,16 @@ class StoreForwardBuffer:
                     asset_id=asset_id,
                     error=str(e)
                 )
-                # Disk-full is the common cause: reclaim space by pruning the
-                # oldest rows, then retry ONCE so the newest reading survives
-                # (dropping new data to keep old data is the wrong trade).
-                if "disk" in str(e).lower() or "full" in str(e).lower():
+                # SQLITE_FULL ("database or disk is full") only: reclaim space
+                # by pruning the oldest rows, then retry ONCE so the newest
+                # reading survives. Deliberately NOT matching generic
+                # "disk I/O error" (bad sector / fsync failure) — pruning there
+                # would destroy backlog without recovering anything.
+                if "full" in str(e).lower():
                     try:
                         self._prune_oldest_sync(500)
-                        with sqlite3.connect(self.buffer_path) as conn:
-                            conn.execute(
-                                """
-                                INSERT INTO messages
-                                (timestamp_edge, asset_id, topic, payload, sequence_num)
-                                VALUES (?, ?, ?, ?, ?)
-                                """,
-                                (timestamp_edge.isoformat(), asset_id, topic,
-                                 json.dumps(payload), sequence_num),
-                            )
-                            conn.commit()
+                        self._insert_row(timestamp_edge, asset_id, topic,
+                                         payload, sequence_num)
                         logger.warning("buffer_store_recovered_after_prune",
                                        asset_id=asset_id)
                         return True
@@ -204,8 +190,29 @@ class StoreForwardBuffer:
                                      asset_id=asset_id, error=str(retry_err))
                 return False
 
+    def _insert_row(self, timestamp_edge: datetime, asset_id: str, topic: str,
+                    payload: Dict[str, Any], sequence_num: int) -> None:
+        with sqlite3.connect(self.buffer_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO messages
+                (timestamp_edge, asset_id, topic, payload, sequence_num)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (timestamp_edge.isoformat(), asset_id, topic,
+                 json.dumps(payload), sequence_num),
+            )
+            conn.commit()
+
     def _prune_oldest_sync(self, rows: int) -> None:
-        """Delete the N oldest buffered rows and reclaim the disk space."""
+        """Delete the N oldest buffered rows.
+
+        No VACUUM here: freeing internal pages is enough for the retry INSERT
+        to succeed, while VACUUM needs the database's size in FREE disk space —
+        unavailable by definition in the disk-full condition this recovers
+        from — and would block the event loop rewriting the whole file. Space
+        reclamation stays with the hourly enforce_size_limit cycle.
+        """
         with sqlite3.connect(self.buffer_path) as conn:
             conn.execute(
                 "DELETE FROM messages WHERE id IN "
@@ -213,7 +220,6 @@ class StoreForwardBuffer:
                 (rows,),
             )
             conn.commit()
-            conn.execute("VACUUM")
 
     async def store_message(self, message: Dict[str, Any]) -> bool:
         """Adapter for coordinator message dicts -> store()."""

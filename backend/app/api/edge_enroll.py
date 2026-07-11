@@ -96,7 +96,13 @@ def _verify_proof_of_possession(pem: str, timestamp: str, signature_b64: str,
     if ts.tzinfo is None:
         ts = ts.replace(tzinfo=timezone.utc)
     if abs((datetime.now(timezone.utc) - ts).total_seconds()) > POP_MAX_SKEW_SECONDS:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="stale request signature")
+        # Embed the server clock so a drifted agent's skew estimator can
+        # calibrate from this rejection and sign its next request correctly.
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            detail={"error": "stale request signature",
+                    "server_time": datetime.now(timezone.utc).isoformat()},
+        )
 
     digest = hashlib.sha256(body_bytes).hexdigest() if body_bytes else hashlib.sha256(b"").hexdigest()
     message = f"{timestamp}.{digest}".encode("utf-8")
