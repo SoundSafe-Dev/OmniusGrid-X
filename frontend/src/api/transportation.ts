@@ -793,7 +793,19 @@ export const geoTabApi = {
       ];
     }
     const response = await api.get<any>(`/api/v1/geotab/devices/${deviceId}/diagnostics`);
-    return toCamel<GeoTabDiagnostic[]>(response.data);
+    const d = response.data;
+    // Backend returns an envelope with diagnostics.dtc_codes; flatten to entries.
+    if (Array.isArray(d)) return toCamel<GeoTabDiagnostic[]>(d);
+    const codes: string[] = d?.diagnostics?.dtc_codes ?? [];
+    return codes.map((code, i) => ({
+      id: `${deviceId}-dtc-${i}`,
+      deviceId,
+      diagnosticCode: code,
+      name: code,
+      source: 'OBDII',
+      timestamp: d?.last_seen ?? new Date().toISOString(),
+      isActive: true,
+    }));
   },
 
   // Exceptions (Rules Violations)

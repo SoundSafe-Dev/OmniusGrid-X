@@ -276,6 +276,200 @@ class GeoTabService:
             "next_break_required": (datetime.utcnow() + timedelta(hours=random.randint(0, 8))).isoformat()
         }
     
+    async def get_devices(
+        self,
+        organization_id: Optional[UUID] = None,
+        db: AsyncSession = None
+    ) -> List[Dict[str, Any]]:
+        """List GeoTab devices: drivers' ELD assignments (DB) + the device registry.
+
+        The DB is the source of truth for device→driver pairing; the registry
+        stands in for the GeoTab API's device inventory.
+        """
+        devices: Dict[str, Dict[str, Any]] = {}
+
+        def _blank(device_id: str) -> Dict[str, Any]:
+            return {
+                "id": device_id,
+                "device_type": "GO9",
+                "serial_number": None,
+                "vehicle_id": None,
+                "driver_id": None,
+                "is_active": True,
+                "last_communication": None,
+                "firmware_version": None,
+            }
+
+        if db is not None:
+            stmt = select(Driver).where(Driver.eld_device_id.isnot(None))
+            if organization_id:
+                stmt = stmt.where(Driver.organization_id == organization_id)
+            result = await db.execute(stmt)
+            for driver in result.scalars().all():
+                entry = _blank(driver.eld_device_id)
+                entry["driver_id"] = str(driver.id)
+                entry["is_active"] = bool(driver.is_active)
+                devices[driver.eld_device_id] = entry
+
+            # Enrich with the latest trip per device (vehicle + last comms).
+            trip_stmt = select(GeoTabTrip).order_by(GeoTabTrip.start_time.desc())
+            if organization_id:
+                trip_stmt = trip_stmt.where(GeoTabTrip.organization_id == organization_id)
+            trips = (await db.execute(trip_stmt.limit(500))).scalars().all()
+            for trip in trips:
+                entry = devices.setdefault(trip.device_id, _blank(trip.device_id))
+                if entry["vehicle_id"] is None:
+                    entry["vehicle_id"] = trip.vehicle_id
+                if entry["last_communication"] is None:
+                    last = trip.end_time or trip.start_time
+                    entry["last_communication"] = last.isoformat() if last else None
+
+        for device_id, info in self.mock_devices.items():
+            entry = devices.setdefault(device_id, _blank(device_id))
+            entry["is_active"] = entry["is_active"] and info["status"] == "active"
+            if entry["last_communication"] is None:
+                entry["last_communication"] = info["last_seen"].isoformat()
+
+        return sorted(devices.values(), key=lambda d: d["id"])
+
+    async def get_device_location(
+        self,
+        device_id: str,
+        organization_id: Optional[UUID] = None,
+        db: AsyncSession = None
+    ) -> Dict[str, Any]:
+        """Latest known position for a device.
+
+        Prefers real data (most recent trip endpoint, then most recent
+        exception fix); falls back to a simulated position in the same
+        region the mock exception generator uses.
+        """
+        known_ids = set(self.mock_devices)
+        location: Optional[Dict[str, Any]] = None
+        timestamp: Optional[datetime] = None
+
+        if db is not None:
+            trip_stmt = (
+                select(GeoTabTrip)
+                .where(GeoTabTrip.device_id == device_id)
+                .order_by(GeoTabTrip.start_time.desc())
+                .limit(1)
+            )
+            trip = (await db.execute(trip_stmt)).scalar_one_or_none()
+            if trip:
+                known_ids.add(device_id)
+                location = trip.end_location or trip.start_location
+                timestamp = trip.end_time or trip.start_time
+
+            if location is None:
+                exc_stmt = (
+                    select(GeoTabException)
+                    .where(GeoTabException.device_id == device_id)
+                    .order_by(GeoTabException.timestamp.desc())
+                    .limit(1)
+                )
+                exc = (await db.execute(exc_stmt)).scalar_one_or_none()
+                if exc and exc.location:
+                    known_ids.add(device_id)
+                    location = exc.location
+                    timestamp = exc.timestamp
+
+        if device_id not in known_ids:
+            raise ValueError(f"Device {device_id} not found")
+
+        if location is None:
+            location = {
+                "latitude": round(random.uniform(40.0, 42.0), 6),
+                "longitude": round(random.uniform(-88.0, -86.0), 6),
+            }
+            timestamp = datetime.utcnow()
+
+        return {
+            "latitude": location.get("latitude"),
+            "longitude": location.get("longitude"),
+            "speed": location.get("speed"),
+            "heading": location.get("heading"),
+            "timestamp": (timestamp or datetime.utcnow()).isoformat(),
+            "address": location.get("address"),
+        }
+
+    async def get_device_trips(
+        self,
+        device_id: str,
+        from_time: datetime,
+        to_time: datetime,
+        organization_id: Optional[UUID] = None,
+        db: AsyncSession = None
+    ) -> List[Dict[str, Any]]:
+        """Trips for a device in [from_time, to_time], frontend-shaped.
+
+        Distances are km and durations/idle minutes (the TS GeoTabTrip
+        contract); the trips table stores miles and seconds.
+        """
+        trips: List[Dict[str, Any]] = []
+        if db is None:
+            return trips
+
+        stmt = (
+            select(GeoTabTrip)
+            .where(
+                GeoTabTrip.device_id == device_id,
+                GeoTabTrip.start_time >= from_time,
+                GeoTabTrip.start_time <= to_time,
+            )
+            .order_by(GeoTabTrip.start_time.desc())
+        )
+        if organization_id:
+            stmt = stmt.where(GeoTabTrip.organization_id == organization_id)
+        rows = (await db.execute(stmt)).scalars().all()
+
+        for trip in rows:
+            distance_km = (
+                round(float(trip.distance_miles) * 1.60934, 1)
+                if trip.distance_miles is not None else 0.0
+            )
+            duration_min = (trip.duration_seconds or 0) // 60
+            idle_min = (trip.idle_time_seconds or 0) // 60
+            meta = trip.meta_data or {}
+
+            # Event counts come from exceptions recorded during the trip window.
+            counts = {"harsh_braking": 0, "harsh_acceleration": 0, "speeding": 0}
+            exc_stmt = select(GeoTabException).where(
+                GeoTabException.device_id == device_id,
+                GeoTabException.timestamp >= trip.start_time,
+            )
+            if trip.end_time:
+                exc_stmt = exc_stmt.where(GeoTabException.timestamp <= trip.end_time)
+            for exc in (await db.execute(exc_stmt)).scalars().all():
+                if exc.exception_type in counts:
+                    counts[exc.exception_type] += 1
+
+            moving_min = max(duration_min - idle_min, 0)
+            average_speed = (
+                round(distance_km / (moving_min / 60), 1) if moving_min else None
+            )
+
+            trips.append({
+                "id": str(trip.id),
+                "device_id": trip.device_id,
+                "driver_id": str(trip.driver_id) if trip.driver_id else None,
+                "vehicle_id": trip.vehicle_id,
+                "start_time": trip.start_time.isoformat(),
+                "end_time": trip.end_time.isoformat() if trip.end_time else None,
+                "distance": distance_km,
+                "duration": duration_min,
+                "start_location": trip.start_location,
+                "end_location": trip.end_location,
+                "max_speed": meta.get("max_speed"),
+                "average_speed": average_speed,
+                "idle_time": idle_min,
+                "harsh_braking_events": counts["harsh_braking"],
+                "harsh_acceleration_events": counts["harsh_acceleration"],
+                "speeding_events": counts["speeding"],
+            })
+
+        return trips
+
     async def get_fleet_summary(
         self,
         organization_id: UUID,

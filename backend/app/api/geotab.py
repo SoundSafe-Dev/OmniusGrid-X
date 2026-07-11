@@ -15,10 +15,59 @@ from app.services.geotab_service import geotab_service
 router = APIRouter(prefix="/geotab", tags=["geotab"])
 
 
+@router.get("/devices")
+async def get_geotab_devices(
+    organization_id: Optional[UUID] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """List GeoTab devices (drivers' ELD assignments + device registry)"""
+    return await geotab_service.get_devices(
+        organization_id=organization_id,
+        db=db
+    )
+
+
+@router.get("/devices/{device_id}/location")
+async def get_device_location(
+    device_id: str,
+    organization_id: Optional[UUID] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """Latest known position for a GeoTab device"""
+    try:
+        return await geotab_service.get_device_location(
+            device_id=device_id,
+            organization_id=organization_id,
+            db=db
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.get("/devices/{device_id}/trips")
+async def get_device_trips(
+    device_id: str,
+    from_time: Optional[datetime] = Query(None, alias="from"),
+    to_time: Optional[datetime] = Query(None, alias="to"),
+    organization_id: Optional[UUID] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """Trips for a GeoTab device within a time window (default: last 24h)"""
+    now = datetime.utcnow()
+    return await geotab_service.get_device_trips(
+        device_id=device_id,
+        from_time=from_time or (now - timedelta(hours=24)),
+        to_time=to_time or now,
+        organization_id=organization_id,
+        db=db
+    )
+
+
 @router.get("/exceptions")
 async def get_geotab_exceptions(
-    organization_id: UUID,
+    organization_id: Optional[UUID] = None,
     driver_id: Optional[UUID] = None,
+    device_id: Optional[str] = None,
     exception_type: Optional[str] = None,
     hours_back: int = Query(24, ge=1, le=168),
     db: AsyncSession = Depends(get_db)
@@ -32,8 +81,10 @@ async def get_geotab_exceptions(
             hours_back=hours_back,
             db=db
         )
+        if device_id:
+            exceptions = [e for e in exceptions if e.get("device_id") == device_id]
         return {
-            "organization_id": str(organization_id),
+            "organization_id": str(organization_id) if organization_id else None,
             "hours_back": hours_back,
             "exception_count": len(exceptions),
             "exceptions": exceptions
@@ -45,7 +96,7 @@ async def get_geotab_exceptions(
 @router.get("/devices/{device_id}/diagnostics")
 async def get_device_diagnostics(
     device_id: str,
-    organization_id: UUID,
+    organization_id: Optional[UUID] = None,
     db: AsyncSession = Depends(get_db)
 ):
     """Get GeoTab device diagnostics (DTC codes, reefer status, etc.)"""
