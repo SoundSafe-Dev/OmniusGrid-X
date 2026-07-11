@@ -238,6 +238,11 @@ class Settings(BaseSettings):
     GEOTAB_USERNAME: str = ""
     GEOTAB_PASSWORD: str = ""
 
+    # Routing/distance provider for shipment ETA + freight costing.
+    # "haversine" (default, always available) | "osrm" (self-hosted road routing).
+    ROUTING_PROVIDER: str = "haversine"
+    ROUTING_OSRM_URL: str = ""   # e.g. http://osrm:5000
+
     # Dev-only auth conveniences. Both MUST be false in production; the
     # startup hook (validate_settings) hard-fails if they are left on.
     ALLOW_DEV_TOKEN: bool = True   # accept "dev-token" as an admin bypass

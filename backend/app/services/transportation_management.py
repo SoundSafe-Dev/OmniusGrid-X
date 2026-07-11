@@ -276,35 +276,13 @@ class RouteOptimizer:
         destination: Dict[str, Any],
         waypoints: List[Dict]
     ) -> float:
-        """Estimate distance (placeholder - would use actual geocoding)"""
-        # This is a simplified placeholder
-        # In production, use actual routing service
-        
-        # If lat/lng available, use haversine as rough estimate
-        origin_lat = origin.get('lat', 0)
-        origin_lng = origin.get('lng', 0)
-        dest_lat = destination.get('lat', 0)
-        dest_lng = destination.get('lng', 0)
-        
-        if origin_lat and dest_lat:
-            # Very rough straight-line distance
-            import math
-            R = 3959  # Earth radius in miles
-            
-            lat1 = math.radians(origin_lat)
-            lat2 = math.radians(dest_lat)
-            dlat = math.radians(dest_lat - origin_lat)
-            dlng = math.radians(dest_lng - origin_lng)
-            
-            a = (math.sin(dlat/2) ** 2 + 
-                 math.cos(lat1) * math.cos(lat2) * math.sin(dlng/2) ** 2)
-            c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
-            distance = R * c
-            
-            # Add 20% for road routing
-            return distance * 1.2
-        
-        return 500.0  # Default placeholder
+        """Distance in miles via the routing provider seam (app.services.routing).
+
+        Real great-circle distance summed through waypoints (OSRM road distance
+        when configured), accepting both {lat,lng} and {latitude,longitude}.
+        """
+        from app.services.routing import estimate_distance_miles
+        return estimate_distance_miles(origin, destination, waypoints)
 
 
 class TransportationManagementService:
