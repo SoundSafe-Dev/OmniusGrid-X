@@ -3,6 +3,7 @@ import { mockApi } from './mockApi';
 import { TelemetryPoint, LatestTelemetry, AvailableMetrics, TelemetryFilters } from '../types';
 
 import { USE_MOCK } from './mockMode';
+import { toCamel } from './transform';
 
 export const telemetryApi = {
   getLatest: async (assetId: string, metricName?: string): Promise<LatestTelemetry | Record<string, LatestTelemetry>> => {
@@ -38,10 +39,10 @@ export const telemetryApi = {
         return allTelemetry;
       }
     }
-    const response = await api.get<LatestTelemetry>(`/api/v1/telemetry/${assetId}/latest`, {
+    const response = await api.get<any>(`/api/v1/telemetry/${assetId}/latest`, {
       params: metricName ? { metric_name: metricName } : undefined,
     });
-    return response.data;
+    return toCamel<LatestTelemetry>(response.data);
   },
 
   getHistory: async (assetId: string, filters?: TelemetryFilters): Promise<TelemetryPoint[]> => {
@@ -75,8 +76,8 @@ export const telemetryApi = {
     if (filters?.endTime) params.end_time = filters.endTime;
     if (filters?.aggregation) params.aggregation = filters.aggregation;
 
-    const response = await api.get<TelemetryPoint[]>(`/api/v1/telemetry/${assetId}/history`, { params });
-    return response.data;
+    const response = await api.get<any>(`/api/v1/telemetry/${assetId}/history`, { params });
+    return toCamel<TelemetryPoint[]>(response.data);
   },
 
   getAvailableMetrics: async (assetId: string): Promise<AvailableMetrics> => {
@@ -84,7 +85,7 @@ export const telemetryApi = {
       const latest = await mockApi.getLatestTelemetry(assetId);
       return { assetId, metrics: Object.keys(latest) };
     }
-    const response = await api.get<AvailableMetrics>(`/api/v1/telemetry/${assetId}/metrics`);
-    return response.data;
+    const response = await api.get<any>(`/api/v1/telemetry/${assetId}/metrics`);
+    return toCamel<AvailableMetrics>(response.data);
   },
 };

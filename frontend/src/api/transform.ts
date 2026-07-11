@@ -6,13 +6,27 @@
 const snakeToCamel = (s: string) => s.replace(/_([a-z0-9])/g, (_, c) => c.toUpperCase())
 const camelToSnake = (s: string) => s.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`)
 
+// Free-form JSON blobs whose inner keys are DATA, not field names. Their keys
+// must not be case-converted (e.g. a collector config {"mqtt_broker_2": ...} or
+// telemetry metadata) — case conversion is lossy and would break round-trips.
+// The key itself is still renamed; only its value is passed through untouched.
+const OPAQUE_KEYS = new Set([
+  'metadata', 'meta_data',
+  'connectionConfig', 'connection_config',
+  'mediaConfig', 'media_config',
+  'settings', 'details', 'payload',
+  'contactInfo', 'contact_info',
+  'contractRate', 'contract_rate',
+])
+
 export function toCamel<T = any>(value: any, aliases: Record<string, string> = {}): T {
   if (Array.isArray(value)) return value.map((v) => toCamel(v, aliases)) as any
   if (value !== null && typeof value === 'object') {
     const out: Record<string, any> = {}
     for (const [k, v] of Object.entries(value)) {
       const camel = snakeToCamel(k)
-      out[aliases[camel] ?? camel] = toCamel(v, aliases)
+      const name = aliases[camel] ?? camel
+      out[name] = OPAQUE_KEYS.has(k) ? v : toCamel(v, aliases)
     }
     return out as T
   }
@@ -25,7 +39,7 @@ export function toSnake<T = any>(value: any, aliases: Record<string, string> = {
     const out: Record<string, any> = {}
     for (const [k, v] of Object.entries(value)) {
       const renamed = aliases[k] ?? k
-      out[camelToSnake(renamed)] = toSnake(v, aliases)
+      out[camelToSnake(renamed)] = OPAQUE_KEYS.has(k) ? v : toSnake(v, aliases)
     }
     return out as T
   }

@@ -1,6 +1,7 @@
 import { api } from './client';
 import { mockApi } from './mockApi';
 import { USE_MOCK } from './mockMode';
+import { toCamel, toSnake } from './transform';
 import { Alarm, AlarmFilters, ActiveAlarmsResponse, AlarmAcknowledge, PaginatedResponse } from '../types';
 
 export const alarmsApi = {
@@ -23,27 +24,28 @@ export const alarmsApi = {
     if (filters?.startTime) params.start_time = filters.startTime;
     if (filters?.endTime) params.end_time = filters.endTime;
 
-    const response = await api.get<Alarm[]>('/api/v1/alarms/', { params });
+    const response = await api.get<any>('/api/v1/alarms/', { params });
+    const items = toCamel<Alarm[]>(response.data);
     return {
-      items: response.data,
-      total: response.data.length,
+      items,
+      total: items.length,
       skip: 0,
-      limit: response.data.length,
+      limit: items.length,
       hasMore: false,
     };
   },
 
   getActive: async (organizationId?: string, severity?: string): Promise<ActiveAlarmsResponse> => {
     if (USE_MOCK) return mockApi.getActiveAlarms();
-    const response = await api.get<ActiveAlarmsResponse>('/api/v1/alarms/active', {
+    const response = await api.get<any>('/api/v1/alarms/active', {
       params: { organization_id: organizationId, severity },
     });
-    return response.data;
+    return toCamel<ActiveAlarmsResponse>(response.data);
   },
 
   get: async (alarmId: string): Promise<Alarm> => {
-    const response = await api.get<Alarm>(`/api/v1/alarms/${alarmId}`);
-    return response.data;
+    const response = await api.get<any>(`/api/v1/alarms/${alarmId}`);
+    return toCamel<Alarm>(response.data);
   },
 
   acknowledge: async (alarmId: string, data?: AlarmAcknowledge): Promise<Alarm> => {
@@ -51,13 +53,13 @@ export const alarmsApi = {
       await mockApi.acknowledgeAlarm(alarmId);
       return {} as Alarm;
     }
-    const response = await api.post<Alarm>(`/api/v1/alarms/${alarmId}/acknowledge`, data || {});
-    return response.data;
+    const response = await api.post<any>(`/api/v1/alarms/${alarmId}/acknowledge`, toSnake(data || {}));
+    return toCamel<Alarm>(response.data);
   },
 
   clear: async (alarmId: string): Promise<Alarm> => {
-    const response = await api.post<Alarm>(`/api/v1/alarms/${alarmId}/clear`, {});
-    return response.data;
+    const response = await api.post<any>(`/api/v1/alarms/${alarmId}/clear`, {});
+    return toCamel<Alarm>(response.data);
   },
 
   acknowledgeAll: async (params?: { assetId?: string; severity?: string }): Promise<{ acknowledgedCount: number }> => {
