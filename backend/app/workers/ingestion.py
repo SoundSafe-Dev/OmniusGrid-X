@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import re
 from datetime import datetime
 from typing import Dict, Any, Optional
 from uuid import UUID
@@ -14,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import sys
 sys.path.insert(0, '/app')
 
+from app.core.config import settings
 from app.db.database import AsyncSessionLocal
 from app.db.models import Telemetry, PackMLState, Asset, Alarm
 from app.services.data_shedding import data_shedder
@@ -52,6 +54,10 @@ class IngestionWorker:
         self.consumer: Optional[AIOKafkaConsumer] = None
         self._running = False
         self._topics = ['telemetry', 'state', 'alarms']
+        self.agent_status_topic = os.getenv(
+            'AGENT_STATUS_TOPIC',
+            settings.AGENT_STATUS_TOPIC,
+        )
     
     async def start(self):
         """Start the ingestion worker"""
@@ -71,6 +77,7 @@ class IngestionWorker:
         
         # Subscribe to topic patterns
         topic_patterns = [f'^{t}\\..*' for t in self._topics]
+        topic_patterns.append(f'^{re.escape(self.agent_status_topic)}$')
         self.consumer.subscribe(pattern='|'.join(topic_patterns))
         
         logger.info("consumer_started", topics=self._topics)
@@ -99,6 +106,16 @@ class IngestionWorker:
         """Process a single message"""
         topic = msg.topic
         data = msg.value
+
+        if topic == self.agent_status_topic:
+            async with AsyncSessionLocal() as session:
+                try:
+                    await self._process_agent_heartbeat(session, data)
+                    await session.commit()
+                except Exception:
+                    await session.rollback()
+                    raise
+            return
         
         # Parse topic structure: telemetry.{org}.{asset_id}
         topic_parts = topic.split('.')
@@ -211,6 +228,56 @@ class IngestionWorker:
             )
         except Exception as e:
             logger.warning("oee_telemetry_tracking_failed", error=str(e), asset_id=asset_id)
+
+    async def _process_agent_heartbeat(self, session: AsyncSession, data: Dict):
+        """Update asset fleet-version fields from an edge-agent heartbeat."""
+        if data.get('message_type') != 'agent_heartbeat':
+            logger.warning("invalid_agent_heartbeat_type", message_type=data.get('message_type'))
+            return
+
+        organization_id = data.get('organization_id')
+        raw_asset_ids = data.get('asset_ids') or []
+        if not organization_id or not raw_asset_ids:
+            logger.warning(
+                "invalid_agent_heartbeat",
+                organization_id=organization_id,
+                asset_count=len(raw_asset_ids),
+            )
+            return
+
+        try:
+            org_uuid = UUID(str(organization_id))
+            asset_ids = [UUID(str(asset_id)) for asset_id in raw_asset_ids]
+        except (TypeError, ValueError) as exc:
+            logger.warning("invalid_agent_heartbeat_uuid", error=str(exc))
+            return
+
+        timestamp_str = data.get('timestamp')
+        if timestamp_str:
+            timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+        else:
+            timestamp = datetime.utcnow()
+
+        result = await session.execute(
+            update(Asset)
+            .where(Asset.organization_id == org_uuid, Asset.id.in_(asset_ids))
+            .values(
+                agent_id=data.get('agent_id'),
+                agent_version=data.get('agent_version'),
+                agent_config_hash=data.get('config_hash'),
+                agent_build_id=data.get('build_id'),
+                agent_last_heartbeat=timestamp,
+                last_seen=timestamp,
+            )
+        )
+
+        logger.info(
+            "agent_heartbeat_ingested",
+            agent_id=data.get('agent_id'),
+            organization_id=str(org_uuid),
+            asset_count=len(asset_ids),
+            updated_assets=result.rowcount,
+        )
     
     async def _process_state(self, session: AsyncSession, asset_id: str, data: Dict, organization_id: str):
         """Process PackML state transitions"""

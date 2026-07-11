@@ -3,13 +3,25 @@
 import asyncio
 import json
 import os
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Dict, Any, List
 import structlog
 
 from opsgrid_agent.buffer.store_forward import StoreForwardBuffer
+from opsgrid_agent.commands import CommandConsumer
+from opsgrid_agent.config_bundle import collectors_from_bundle
 from opsgrid_agent.collectors.coordinator import UnifiedCollectorCoordinator, CollectorConfig
 from opsgrid_agent.packml import PackMLStateMapper
+from opsgrid_agent.ota import OTAUpdateExecutor
 from opsgrid_agent import metrics
+from opsgrid_agent.versioning import (
+    asset_ids_from_collectors,
+    build_heartbeat_payload,
+    build_manifest,
+    compute_config_hash,
+    persist_agent_state,
+)
 
 structlog.configure(
     processors=[
@@ -52,8 +64,31 @@ class EdgeAgent:
             retention_hours=self.config.get('buffer_retention_hours', 24)
         )
         self.kafka_producer = None
+        self.command_consumer = None
+        self.ota_executor = OTAUpdateExecutor(
+            buffer=self.buffer,
+            signing_public_key=self.config.get('ota_signing_public_key', ''),
+            active_bundle_path=self.config.get(
+                'ota_config_bundle_path',
+                '/var/lib/opsgrid-agent/config_bundle.active',
+            ),
+            staging_dir=self.config.get(
+                'ota_staging_dir',
+                '/var/lib/opsgrid-agent/ota-staging',
+            ),
+            drain_timeout_seconds=self.config.get('ota_drain_timeout_seconds', 60),
+            restart_callback=self._restart_runtime_after_update,
+            bundle_validator=self._validate_config_bundle,
+        )
         self._running = False
         self._tasks: List[asyncio.Task] = []
+        self.config_hash = compute_config_hash(self.config.get('collectors', []))
+        self.manifest = build_manifest(
+            list(UnifiedCollectorCoordinator.SUPPORTED_COLLECTORS)
+        )
+        self.state_path = self.config.get('state_path') or str(
+            Path(self.config['buffer_path']).with_name('agent_state.json')
+        )
         
         # Initialize collector coordinator
         self.coordinator = UnifiedCollectorCoordinator(
@@ -63,14 +98,31 @@ class EdgeAgent:
     
     def _load_config(self) -> Dict[str, Any]:
         """Load configuration from environment"""
-        return {
+        config = {
             'organization_id': os.getenv('ORGANIZATION_ID', 'dev-org'),
             'agent_id': os.getenv('AGENT_ID', 'agent-001'),
             'redpanda_url': os.getenv('REDPANDA_URL', 'localhost:9092'),
+            'agent_status_topic': os.getenv('AGENT_STATUS_TOPIC', 'opsgrid.agent-status'),
+            'heartbeat_interval_seconds': int(os.getenv('HEARTBEAT_INTERVAL_SECONDS', '60')),
+            'command_topic': os.getenv('REDPANDA_COMMAND_TOPIC', 'opsgrid.commands'),
+            'command_ack_topic': os.getenv('REDPANDA_COMMAND_ACK_TOPIC', 'opsgrid.commands.acks'),
+            'ota_signing_public_key': os.getenv('OTA_SIGNING_PUBLIC_KEY', ''),
+            'ota_config_bundle_path': os.getenv(
+                'OTA_CONFIG_BUNDLE_PATH',
+                '/var/lib/opsgrid-agent/config_bundle.active',
+            ),
+            'ota_staging_dir': os.getenv(
+                'OTA_STAGING_DIR',
+                '/var/lib/opsgrid-agent/ota-staging',
+            ),
+            'ota_drain_timeout_seconds': int(os.getenv('OTA_DRAIN_TIMEOUT_SECONDS', '60')),
             'buffer_path': os.getenv('BUFFER_PATH', '/var/lib/opsgrid-agent/buffer.db'),
+            'state_path': os.getenv('AGENT_STATE_PATH'),
             'buffer_retention_hours': int(os.getenv('BUFFER_RETENTION_HOURS', '24')),
             'collectors': self._load_collectors(),
         }
+        self._load_active_config_bundle(config)
+        return config
 
     def _load_collectors(self) -> List[Dict[str, Any]]:
         """Load and validate collector definitions.
@@ -106,6 +158,60 @@ class EdgeAgent:
             except Exception as e:
                 logger.error("invalid_collector_config", entry=entry, error=str(e))
         return normalized
+
+    def _validate_config_bundle(self, bundle: bytes) -> None:
+        collectors_from_bundle(bundle)
+
+    def _load_active_config_bundle(self, config: Dict[str, Any]) -> None:
+        bundle_path = Path(config['ota_config_bundle_path'])
+        if not bundle_path.exists():
+            return
+
+        collectors = collectors_from_bundle(bundle_path.read_bytes())
+        config['collectors'] = collectors
+        logger.info(
+            "config_bundle_loaded",
+            path=str(bundle_path),
+            collectors=len(collectors),
+        )
+
+    def register_command_handler(self, action_id: str, handler):
+        """Register a remote command handler."""
+        if self.command_consumer is None:
+            self._init_command_consumer()
+        self.command_consumer.register_handler(action_id, handler)
+
+    def _asset_ids(self) -> List[str]:
+        return [
+            str(collector.get('asset_id'))
+            for collector in self.config.get('collectors', [])
+            if collector.get('asset_id')
+        ]
+
+    def _init_command_consumer(self):
+        """Initialize command transport without starting network I/O."""
+        if self.command_consumer is None:
+            self.command_consumer = CommandConsumer(
+                agent_id=self.config['agent_id'],
+                organization_id=self.config['organization_id'],
+                asset_ids=self._asset_ids(),
+                redpanda_url=self.config['redpanda_url'],
+                command_topic=self.config['command_topic'],
+                ack_topic=self.config['command_ack_topic'],
+            )
+            self.ota_executor.register(self.command_consumer)
+
+    async def _restart_runtime_after_update(self):
+        """Restart collectors after an OTA config-bundle swap."""
+        await self.coordinator.stop_all()
+        self.config = self._load_config()
+        self.coordinator.configs.clear()
+        self.coordinator.collectors.clear()
+        self.coordinator.collector_tasks.clear()
+        if self.command_consumer:
+            self.command_consumer.asset_ids = set(self._asset_ids())
+        await self._initialize_collectors()
+        await self.coordinator.start_all()
     
     async def _init_kafka_producer(self):
         """Initialize Kafka/Redpanda producer"""
@@ -231,6 +337,48 @@ class EdgeAgent:
             except Exception as e:
                 logger.error("cleanup_worker_error", error=str(e))
                 await asyncio.sleep(3600)
+
+    async def _heartbeat_payload(self) -> Dict[str, Any]:
+        stats = await self.buffer.get_stats()
+        status = self.coordinator.get_status()
+        return build_heartbeat_payload(
+            agent_id=self.config['agent_id'],
+            organization_id=self.config['organization_id'],
+            asset_ids=asset_ids_from_collectors(self.config.get('collectors', [])),
+            manifest=self.manifest,
+            config_hash=self.config_hash,
+            collector_status=status,
+            buffer_depth=stats['total_messages'],
+        )
+
+    async def _publish_heartbeat(self):
+        """Publish a best-effort fleet status heartbeat."""
+        if not self.kafka_producer:
+            logger.debug("heartbeat_skipped_no_kafka")
+            return
+
+        payload = await self._heartbeat_payload()
+        await self.kafka_producer.send(
+            self.config['agent_status_topic'],
+            value=payload,
+            key=self.config['agent_id'],
+        )
+        logger.debug(
+            "agent_heartbeat_published",
+            topic=self.config['agent_status_topic'],
+            agent_id=self.config['agent_id'],
+            asset_count=len(payload['asset_ids']),
+        )
+
+    async def _heartbeat_worker(self):
+        """Background worker for fleet version/config visibility."""
+        while self._running:
+            try:
+                await self._publish_heartbeat()
+                await asyncio.sleep(self.config['heartbeat_interval_seconds'])
+            except Exception as e:
+                logger.warning("agent_heartbeat_failed", error=str(e))
+                await asyncio.sleep(self.config['heartbeat_interval_seconds'])
     
     async def _stats_reporter(self):
         """Periodic stats reporting"""
@@ -276,7 +424,7 @@ class EdgeAgent:
         for collector_conf in collectors_config:
             try:
                 asset_id = collector_conf.get('asset_id')
-                collector_type = collector_conf.get('type')
+                collector_type = collector_conf.get('type') or collector_conf.get('collector_type')
                 
                 if not asset_id or not collector_type:
                     logger.error("invalid_collector_config", config=collector_conf)
@@ -338,11 +486,32 @@ class EdgeAgent:
         
         self._running = True
 
-        # Expose Prometheus /metrics + /healthz if configured (opt-in via METRICS_PORT).
-        metrics_port = os.getenv('METRICS_PORT')
-        if metrics_port:
+        try:
+            persist_agent_state(
+                self.state_path,
+                {
+                    "agent_id": self.config['agent_id'],
+                    "agent_version": self.manifest["agent_version"],
+                    "build_id": self.manifest.get("build_id"),
+                    "git_sha": self.manifest.get("git_sha"),
+                    "config_hash": self.config_hash,
+                    "asset_ids": asset_ids_from_collectors(self.config.get('collectors', [])),
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+        except Exception as e:
+            logger.warning("agent_state_persist_failed", error=str(e), path=self.state_path)
+
+        # Prometheus /metrics + /healthz. Default-on (METRICS_ENABLED=false to
+        # disable); METRICS_PORT overrides the default 9100. The metrics_server
+        # module serves the same registry as opsgrid_agent.metrics plus /healthz.
+        if os.getenv('METRICS_ENABLED', 'true').lower() != 'false':
             from opsgrid_agent.metrics_server import start_metrics_server
-            start_metrics_server(int(metrics_port), health_provider=self._health_snapshot)
+            start_metrics_server(
+                int(os.getenv('METRICS_PORT', '9100')),
+                health_provider=self._health_snapshot,
+            )
+
 
         # Initialize Kafka producer
         await self._init_kafka_producer()
@@ -362,6 +531,13 @@ class EdgeAgent:
         
         # Start all collectors via coordinator
         await self.coordinator.start_all()
+
+        self._tasks.append(asyncio.create_task(self._heartbeat_worker()))
+        self._init_command_consumer()
+        try:
+            await self.command_consumer.start()
+        except Exception as e:
+            logger.error("command_consumer_failed", error=str(e))
         
         logger.info("edge_agent_started")
     
@@ -452,6 +628,9 @@ class EdgeAgent:
         
         # Stop all collectors via coordinator
         await self.coordinator.stop_all()
+
+        if self.command_consumer:
+            await self.command_consumer.stop()
         
         # Stop Kafka producer
         await self._stop_kafka_producer()

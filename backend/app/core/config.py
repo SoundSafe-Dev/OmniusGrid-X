@@ -17,6 +17,18 @@ class Settings(BaseSettings):
     REDPANDA_COMMAND_ACK_TOPIC: str = "opsgrid.commands.acks"
     REDPANDA_EXPORT_TOPIC: str = "opsgrid.exports"
     REDPANDA_COMPLIANCE_REPORTS_TOPIC: str = "opsgrid.compliance-reports"
+    AGENT_STATUS_TOPIC: str = "opsgrid.agent-status"
+
+    # Edge-agent OTA release registry
+    OTA_STORAGE_PATH: str = "/var/lib/omniusgrid/ota"
+    OTA_SIGNATURE_ALG: str = "ed25519"
+    OTA_SIGNING_PRIVATE_KEY_PATH: str = ""
+    OTA_SIGNING_PUBLIC_KEY: str = ""
+    OTA_ROLLOUT_DISPATCH_ENABLED: bool = True
+    OTA_ROLLOUT_DISPATCH_INTERVAL_SECONDS: int = 30
+    OTA_ROLLOUT_DEFAULT_COMMAND_TIMEOUT_SECONDS: int = 120
+    OTA_ROLLOUT_DEFAULT_HEALTH_TIMEOUT_SECONDS: int = 300
+    OTA_ROLLOUT_DEFAULT_MIN_SUCCESS_RATIO: float = 1.0
     
     # Security
     JWT_SECRET_KEY: str = "dev_secret_key_change_in_production"
@@ -68,6 +80,8 @@ class Settings(BaseSettings):
     LOCAL_MODEL_DIR: str = "./models"
     MODEL_POLL_INTERVAL: int = 300  # 5 minutes
     TACTICAL_MODEL_PATH: str = "./models/tactical_v1.pt"
+    # Cloud-side registry artifact store (backend writes trained .pt here)
+    MODEL_STORAGE_PATH: str = "/var/lib/omniusgrid/models"
     
     # Correlation AI / Gemma LoRA
     CORRELATION_MODEL_ENABLED: bool = False
