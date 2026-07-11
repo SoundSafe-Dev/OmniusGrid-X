@@ -226,6 +226,23 @@ async def detailed_health(db: AsyncSession = Depends(get_db)):
     return await _run_health_checks(db)
 
 
+@router.get("/health/system")
+@router.get("/api/v1/health/system")
+async def system_metrics():
+    """Real host resource utilization (psutil) for the admin SystemHealth page."""
+    try:
+        import psutil
+    except Exception:
+        return {"available": False, "cpu_percent": None, "memory_percent": None,
+                "disk_percent": None}
+    return {
+        "available": True,
+        "cpu_percent": psutil.cpu_percent(interval=0.1),
+        "memory_percent": psutil.virtual_memory().percent,
+        "disk_percent": psutil.disk_usage("/").percent,
+    }
+
+
 @router.get("/health/db")
 @router.get("/api/v1/health/db")
 async def health_database(db: AsyncSession = Depends(get_db)):

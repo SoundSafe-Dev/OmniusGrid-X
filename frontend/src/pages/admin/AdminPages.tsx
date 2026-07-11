@@ -1,9 +1,9 @@
 import { FC, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
-import { Users, Settings, Activity, HardDrive, X, Plus, Edit, Trash2 } from 'lucide-react';
+import { Activity, HardDrive, X, Plus, Edit, Trash2 } from 'lucide-react';
 import { Card, Badge, Button, Table, SkeletonCard, Input, Select } from '../../components';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
-import { authApi } from '../../api';
+import { authApi, api } from '../../api';
 import { User, UserRole } from '../../types';
 
 export const UsersPage: FC = () => {
@@ -298,107 +298,119 @@ export const UsersPage: FC = () => {
   );
 };
 
+interface EdgeAgent {
+  agent_id: string;
+  liveness: string;
+  last_seen: string | null;
+  buffer_pending: number;
+  dead_lettered: number;
+  active_collectors: number;
+  total_collectors: number;
+  cert_expires_in_seconds: number | null;
+}
+
 export const CollectorsPage: FC = () => {
+  const { data: agents, isLoading } = useQuery('edge-fleet', async () => {
+    const res = await api.get<EdgeAgent[]>('/api/v1/edge/fleet');
+    return res.data;
+  });
+
+  const livenessVariant = (l: string): 'success' | 'warning' | 'error' =>
+    l === 'live' || l === 'online' ? 'success' : l === 'stale' ? 'warning' : 'error';
+
   return (
     <div className="space-y-6">
-      <Card title="Data Collectors" subtitle="Edge data collection agents">
-        <div className="space-y-2">
-          {['MQTT Collector (Bambu)', 'OPC-UA Collector', 'Screen Scraper'].map((collector) => (
-            <Tooltip key={collector}>
-              <TooltipTrigger asChild>
-                <div className="flex items-center justify-between p-3 bg-opsgrid-bg rounded-lg">
-                  <div className="flex items-center gap-3">
-                    <HardDrive className="text-opsgrid-primary" size={20} />
-                    <div>
-                      <p className="font-medium">{collector}</p>
-                      <p className="text-sm text-opsgrid-text-secondary">Running • 2.4.1</p>
+      <Card title="Edge Agents" subtitle="Live data-collection agents reporting via heartbeat">
+        {isLoading ? (
+          <SkeletonCard />
+        ) : !agents || agents.length === 0 ? (
+          <p className="text-sm text-opsgrid-text-secondary">
+            No edge agents have reported yet. Agents appear here once they enroll and send a heartbeat.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {agents.map((a) => (
+              <Tooltip key={a.agent_id}>
+                <TooltipTrigger asChild>
+                  <div className="flex items-center justify-between p-3 bg-opsgrid-bg rounded-lg">
+                    <div className="flex items-center gap-3">
+                      <HardDrive className="text-opsgrid-primary" size={20} />
+                      <div>
+                        <p className="font-medium">{a.agent_id}</p>
+                        <p className="text-sm text-opsgrid-text-secondary">
+                          {a.active_collectors}/{a.total_collectors} collectors
+                          {a.buffer_pending > 0 && ` • ${a.buffer_pending} buffered`}
+                          {a.dead_lettered > 0 && ` • ${a.dead_lettered} dead-lettered`}
+                        </p>
+                      </div>
                     </div>
+                    <Badge variant={livenessVariant(a.liveness)} size="sm">{a.liveness}</Badge>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Badge variant="success" size="sm">Online</Badge>
-                      </TooltipTrigger>
-                      <TooltipContent>Collector is running and connected</TooltipContent>
-                    </Tooltip>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button variant="ghost" size="sm">Restart</Button>
-                      </TooltipTrigger>
-                      <TooltipContent>Restart collector service</TooltipContent>
-                    </Tooltip>
-                  </div>
-                </div>
-              </TooltipTrigger>
-              <TooltipContent>Collector is currently offline</TooltipContent>
-            </Tooltip>
-          ))}
-        </div>
+                </TooltipTrigger>
+                <TooltipContent>
+                  Last seen: {a.last_seen ? new Date(a.last_seen).toLocaleString() : 'never'}
+                  {a.cert_expires_in_seconds != null &&
+                    ` • cert expires in ${Math.round(a.cert_expires_in_seconds / 86400)}d`}
+                </TooltipContent>
+              </Tooltip>
+            ))}
+          </div>
+        )}
       </Card>
     </div>
   );
 };
 
 export const SystemHealthPage: FC = () => {
+  const { data: health } = useQuery('health-detailed', async () => {
+    const res = await api.get<{ status: string; checks: Record<string, string> }>('/health/detailed');
+    return res.data;
+  }, { refetchInterval: 15000 });
+  const { data: sys } = useQuery('health-system', async () => {
+    const res = await api.get<{ available: boolean; cpu_percent: number | null; memory_percent: number | null; disk_percent: number | null }>('/health/system');
+    return res.data;
+  }, { refetchInterval: 15000 });
+
+  const checks = health?.checks ?? {};
+  const healthy = (s: string) => s === 'healthy' || s === 'ok' || s === 'up' || s === 'ready';
+  const label = (k: string) => k.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+  const pct = (v: number | null | undefined) => (v == null ? '—' : `${Math.round(v)}%`);
+
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {[
-          { name: 'API Server', status: 'healthy', icon: Activity },
-          { name: 'Database', status: 'healthy', icon: HardDrive },
-          { name: 'Message Queue', status: 'healthy', icon: Activity },
-        ].map((service) => (
-          <Tooltip key={service.name}>
+        {Object.entries(checks).map(([name, status]) => (
+          <Tooltip key={name}>
             <TooltipTrigger asChild>
               <Card className="p-4">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <service.icon className="w-5 h-5 text-opsgrid-primary" />
-                    <span className="font-medium">{service.name}</span>
+                    <Activity className="w-5 h-5 text-opsgrid-primary" />
+                    <span className="font-medium">{label(name)}</span>
                   </div>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Badge variant="success" size="sm">{service.status}</Badge>
-                    </TooltipTrigger>
-                    <TooltipContent>Service is operational</TooltipContent>
-                  </Tooltip>
+                  <Badge variant={healthy(status) ? 'success' : 'error'} size="sm">{status}</Badge>
                 </div>
               </Card>
             </TooltipTrigger>
-            <TooltipContent>
-              <div className="space-y-1">
-                <p className="font-medium">{service.name}</p>
-                <p className="text-xs text-opsgrid-text-secondary">Infrastructure service</p>
-                <p className="text-xs">Status: {service.status}</p>
-              </div>
-            </TooltipContent>
+            <TooltipContent>{label(name)} status: {status}</TooltipContent>
           </Tooltip>
         ))}
+        {Object.keys(checks).length === 0 && (
+          <p className="text-sm text-opsgrid-text-secondary">Loading component health…</p>
+        )}
       </div>
 
-      <Card title="System Metrics" subtitle="Resource utilization">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <Card title="System Metrics" subtitle={sys?.available ? 'Live host resource utilization' : 'Host metrics unavailable'}>
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
           {[
-            { label: 'CPU', value: '24%', description: 'Processor utilization' },
-            { label: 'Memory', value: '45%', description: 'RAM usage' },
-            { label: 'Disk', value: '32%', description: 'Storage usage' },
-            { label: 'Network', value: '12 Mbps', description: 'Network throughput' },
+            { label: 'CPU', value: pct(sys?.cpu_percent) },
+            { label: 'Memory', value: pct(sys?.memory_percent) },
+            { label: 'Disk', value: pct(sys?.disk_percent) },
           ].map((metric) => (
-            <Tooltip key={metric.label}>
-              <TooltipTrigger asChild>
-                <div className="p-3 bg-opsgrid-bg rounded-lg text-center">
-                  <p className="text-xl font-bold">{metric.value}</p>
-                  <p className="text-sm text-opsgrid-text-secondary">{metric.label}</p>
-                </div>
-              </TooltipTrigger>
-              <TooltipContent>
-                <div className="space-y-1">
-                  <p className="font-medium">{metric.label}</p>
-                  <p className="text-xs text-opsgrid-text-secondary">{metric.description}</p>
-                  <p className="text-xs">Current: {metric.value}</p>
-                </div>
-              </TooltipContent>
-            </Tooltip>
+            <div key={metric.label} className="p-3 bg-opsgrid-bg rounded-lg text-center">
+              <p className="text-xl font-bold">{metric.value}</p>
+              <p className="text-sm text-opsgrid-text-secondary">{metric.label}</p>
+            </div>
           ))}
         </div>
       </Card>
@@ -406,36 +418,80 @@ export const SystemHealthPage: FC = () => {
   );
 };
 
+interface OrgSettings {
+  timezone?: string;
+  date_format?: string;
+  notify_email?: boolean;
+  notify_sms?: boolean;
+  notify_webhook?: boolean;
+}
+
 export const SettingsPage: FC = () => {
+  const queryClient = useQueryClient();
+  const { data: settings } = useQuery('org-settings', async () => {
+    const res = await api.get<OrgSettings>('/api/v1/organizations/settings/current');
+    return res.data;
+  });
+
+  const [draft, setDraft] = useState<OrgSettings>({});
+  const current = { ...settings, ...draft };
+
+  const save = useMutation(
+    (patch: OrgSettings) => api.put('/api/v1/organizations/settings/current', patch),
+    { onSuccess: () => { queryClient.invalidateQueries('org-settings'); setDraft({}); } },
+  );
+
+  const set = (key: keyof OrgSettings, value: any) => setDraft((d) => ({ ...d, [key]: value }));
+  const dirty = Object.keys(draft).length > 0;
+
   return (
     <div className="space-y-6">
-      <Card title="General Settings" subtitle="Application preferences">
-        <div className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Input label="Timezone" value="America/Chicago" readOnly />
-            <Select
-              label="Date Format"
-              value="MM/dd/yyyy"
-              options={[
-                { value: 'MM/dd/yyyy', label: 'MM/DD/YYYY' },
-                { value: 'dd/MM/yyyy', label: 'DD/MM/YYYY' },
-                { value: 'yyyy-MM-dd', label: 'YYYY-MM-DD' },
-              ]}
-            />
-          </div>
+      <Card title="General Settings" subtitle="Organization preferences">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <Input
+            label="Timezone"
+            value={current.timezone ?? 'America/Chicago'}
+            onChange={(e) => set('timezone', e.target.value)}
+          />
+          <Select
+            label="Date Format"
+            value={current.date_format ?? 'MM/dd/yyyy'}
+            onChange={(e) => set('date_format', e.target.value)}
+            options={[
+              { value: 'MM/dd/yyyy', label: 'MM/DD/YYYY' },
+              { value: 'dd/MM/yyyy', label: 'DD/MM/YYYY' },
+              { value: 'yyyy-MM-dd', label: 'YYYY-MM-DD' },
+            ]}
+          />
         </div>
       </Card>
 
       <Card title="Notifications" subtitle="Alert preferences">
         <div className="space-y-3">
-          {['Email alerts', 'SMS notifications', 'Webhook events'].map((setting) => (
-            <label key={setting} className="flex items-center gap-3 cursor-pointer">
-              <input type="checkbox" className="w-4 h-4 rounded border-opsgrid-border" defaultChecked />
-              <span className="text-sm">{setting}</span>
+          {([
+            ['notify_email', 'Email alerts'],
+            ['notify_sms', 'SMS notifications'],
+            ['notify_webhook', 'Webhook events'],
+          ] as [keyof OrgSettings, string][]).map(([key, label]) => (
+            <label key={key} className="flex items-center gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                className="w-4 h-4 rounded border-opsgrid-border"
+                checked={current[key] !== false}
+                onChange={(e) => set(key, e.target.checked)}
+              />
+              <span className="text-sm">{label}</span>
             </label>
           ))}
         </div>
       </Card>
+
+      <div className="flex items-center gap-3">
+        <Button onClick={() => save.mutate(current)} disabled={!dirty || save.isLoading}>
+          {save.isLoading ? 'Saving…' : 'Save changes'}
+        </Button>
+        {save.isSuccess && !dirty && <span className="text-sm text-status-success">Saved</span>}
+      </div>
     </div>
   );
 };

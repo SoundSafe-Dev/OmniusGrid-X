@@ -6,6 +6,7 @@ the read paths those clients need, tenant-scoped to the caller's organization.
 Responses are snake_case; the client camel-cases them via transform.ts.
 """
 
+from typing import Any, Dict
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -92,3 +93,29 @@ async def get_organization(
     if o is None:
         raise HTTPException(status_code=404, detail="organization not found")
     return _org_out(o)
+
+
+@organizations_router.get("/settings/current")
+async def get_org_settings(
+    org_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db),
+):
+    """The caller's organization settings blob (admin Settings page)."""
+    o = (await db.execute(select(Organization).where(Organization.id == org_id))).scalar_one_or_none()
+    return (o.settings or {}) if o else {}
+
+
+@organizations_router.put("/settings/current")
+async def update_org_settings(
+    settings_patch: Dict[str, Any],
+    org_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db),
+):
+    """Merge a patch into the org settings blob and persist it."""
+    o = (await db.execute(select(Organization).where(Organization.id == org_id))).scalar_one_or_none()
+    if o is None:
+        raise HTTPException(status_code=404, detail="organization not found")
+    merged = {**(o.settings or {}), **settings_patch}
+    o.settings = merged
+    await db.commit()
+    return merged
