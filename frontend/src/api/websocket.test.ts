@@ -11,7 +11,7 @@ class FakeWebSocket {
   onclose: (() => void) | null = null
   onerror: (() => void) | null = null
   sent: string[] = []
-  constructor(public url: string) {
+  constructor(public url: string, public protocols?: string[]) {
     FakeWebSocket.instances.push(this)
   }
   send(data: string) {
@@ -54,9 +54,12 @@ describe('WebSocketManager', () => {
     expect(received).toHaveLength(0)
   })
 
-  it('passes the token in the connection url', () => {
+  it('passes the token via the bearer.v1 subprotocol, not the url', () => {
     const mgr = new WebSocketManager()
     mgr.connect('secret')
-    expect(FakeWebSocket.instances[0].url).toContain('token=secret')
+    // FS-49: the token must NOT appear in the URL (query strings land in
+    // access logs); it rides Sec-WebSocket-Protocol as ['bearer.v1', token].
+    expect(FakeWebSocket.instances[0].url).not.toContain('secret')
+    expect(FakeWebSocket.instances[0].protocols).toEqual(['bearer.v1', 'secret'])
   })
 })

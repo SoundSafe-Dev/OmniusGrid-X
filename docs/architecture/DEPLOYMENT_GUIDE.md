@@ -198,7 +198,7 @@ curl -X POST https://staging.omniusgrid.local/api/v1/auth/login \
 
 # Test API
 curl https://staging.omniusgrid.local/api/v1/assets \
-  -H "Authorization: Bearer dev-token"
+  -H "Authorization: Bearer $OPS_TOKEN"
 
 # Test WebSocket
 wscat -c wss://staging.omniusgrid.local/ws

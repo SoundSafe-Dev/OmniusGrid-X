@@ -6,7 +6,7 @@ import json
 import structlog
 
 from app.services.websocket_manager import websocket_manager
-from app.core.security import get_current_user_ws
+from app.api.auth import resolve_websocket_user
 
 logger = structlog.get_logger()
 router = APIRouter()
@@ -38,26 +38,43 @@ async def websocket_endpoint(
     - command_status: Command execution updates
     - connection_established: Initial connection confirmation
     """
-    # Validate authentication
+    # Preferred auth transport: the token rides the Sec-WebSocket-Protocol
+    # header as ["bearer.v1", "<jwt>"] — query-string tokens end up in access
+    # logs and proxies. The ?token= form remains as a legacy fallback.
+    negotiated_subprotocol = None
+    proto_header = websocket.headers.get("sec-websocket-protocol", "")
+    proto_parts = [p.strip() for p in proto_header.split(",") if p.strip()]
+    if len(proto_parts) >= 2 and proto_parts[0] == "bearer.v1":
+        token = proto_parts[1]
+        # Echo the marker protocol back or browsers abort the handshake.
+        negotiated_subprotocol = "bearer.v1"
+
+    # Validate authentication via the shared resolver (handles JWTs and the
+    # dev-token bypass under ALLOW_DEV_TOKEN — one ws auth path, not two).
     user = None
     if token:
         try:
-            user = await get_current_user_ws(token)
+            user = await resolve_websocket_user(token)
         except Exception as e:
             await websocket.close(code=1008, reason="Authentication failed")
             logger.warning("websocket_auth_failed", error=str(e))
             return
-    
+        if user is None:
+            await websocket.close(code=1008, reason="Authentication failed")
+            logger.warning("websocket_auth_failed", error="invalid token")
+            return
+
     # Default to user's organization if not specified
     if not organization_id and user:
         organization_id = str(user.organization_id)
-    
+
     if not organization_id:
         await websocket.close(code=1008, reason="Organization ID required")
         return
-    
+
     # Connect client
-    await websocket_manager.connect_client(websocket, organization_id)
+    await websocket_manager.connect_client(websocket, organization_id,
+                                           subprotocol=negotiated_subprotocol)
     
     # Parse asset filter
     subscribed_assets: Set[str] = set()

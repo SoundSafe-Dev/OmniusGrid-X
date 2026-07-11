@@ -49,8 +49,10 @@ export class WebSocketManager {
     const initialState = this.reconnectAttempts > 0 || this.polling ? 'reconnecting' : 'connecting';
     this.emitStatus(initialState, this.polling);
 
-    const url = token ? `${WS_URL}?token=${token}` : WS_URL;
-    this.ws = new WebSocket(url);
+    // Token rides the Sec-WebSocket-Protocol header (["bearer.v1", token]) so
+    // it never lands in access logs the way ?token= query strings do. The
+    // backend echoes "bearer.v1" back to complete the handshake.
+    this.ws = token ? new WebSocket(WS_URL, ['bearer.v1', token]) : new WebSocket(WS_URL);
 
     this.ws.onopen = () => {
       console.log('WebSocket connected');

@@ -22,7 +22,7 @@ def client(monkeypatch):
     async def fake_auth(token):
         return types.SimpleNamespace(id=uuid.uuid4(), organization_id="org-1")
 
-    monkeypatch.setattr(ws_module, "get_current_user_ws", fake_auth)
+    monkeypatch.setattr(ws_module, "resolve_websocket_user", fake_auth)
     app = FastAPI()
     app.include_router(ws_module.router)
     return TestClient(app)

@@ -267,14 +267,17 @@ docker-compose exec timescaledb psql -U omniusgrid -d omniusgrid \
 
 ### Development Mode Authentication
 
-The application includes a development mode that bypasses normal authentication:
+Development builds include an auth bypass, gated on BOTH sides:
 
-- **Username**: `dev`
-- **Password**: Any password
-- **Backend**: Accepts `dev-token` as a valid Bearer token
-- **Frontend**: Automatically sets `dev-token` in localStorage when logging in with `dev` username
+- **Backend**: accepts `dev-token` as an admin Bearer token only while
+  `ALLOW_DEV_TOKEN=true` (the dev default). Production startup **fails fast**
+  if the flag is left on — the token is never valid in production.
+- **Frontend**: logging in with username `dev` (any password) uses the bypass
+  only in a dev build **and** with `VITE_DEV_MODE=true` set (see
+  `frontend/.env.example`). Production bundles can never enable it.
 
-This mode is intended for development and testing purposes only.
+For real-mode logins, register a user (dev only: `POST /api/v1/auth/register`,
+gated by `ALLOW_OPEN_REGISTRATION`) or seed demo data (`make seed-demo`).
 
 ### Local Development Setup
 

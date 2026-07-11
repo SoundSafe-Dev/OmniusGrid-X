@@ -47,7 +47,10 @@ def test_multisheet_workbook_profiles_all_tabs():
             frame.to_excel(writer, sheet_name=name, index=False)
     buf.seek(0)
 
-    result = asyncio.get_event_loop().run_until_complete(
+    # asyncio.run (not get_event_loop().run_until_complete): the deprecated
+    # form grabs whatever loop earlier tests left behind, making this test
+    # order-dependent — it failed in full-suite runs but passed in isolation.
+    result = asyncio.run(
         _process_uploaded_file(buf.read(), "spreadsheet", "quality_ops.xlsx")
     )
     assert result.get("type") == "spreadsheet"

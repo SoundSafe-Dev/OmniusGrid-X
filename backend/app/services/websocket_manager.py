@@ -110,9 +110,15 @@ class WebSocketManager:
         await self._safe_stop_consumer()
         logger.info("websocket_manager_disconnected")
     
-    async def connect_client(self, websocket: WebSocket, organization_id: str):
-        """Accept WebSocket connection from client"""
-        await websocket.accept()
+    async def connect_client(self, websocket: WebSocket, organization_id: str,
+                             subprotocol: str = None):
+        """Accept WebSocket connection from client.
+
+        subprotocol echoes the negotiated Sec-WebSocket-Protocol ("bearer.v1"
+        token transport) back — browsers abort the handshake if they requested
+        one and the server accepts with none.
+        """
+        await websocket.accept(subprotocol=subprotocol)
         
         if organization_id not in self.active_connections:
             self.active_connections[organization_id] = set()
