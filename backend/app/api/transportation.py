@@ -25,7 +25,9 @@ from app.services.transportation_management import transportation_management_ser
 # No router-level prefix: main.py already includes this router at its /api/v1/...
 # path. (The old prefix double-prefixed every route — e.g. /api/v1/yard/yard/* —
 # never noticed because the frontend ran on mocks.)
-router = APIRouter(tags=["transportation_management"])
+from app.api.auth import get_current_active_user
+
+router = APIRouter(tags=["transportation_management"], dependencies=[Depends(get_current_active_user)])
 
 
 # ==================== Carrier Endpoints ====================

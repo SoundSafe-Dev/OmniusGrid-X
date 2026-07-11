@@ -219,6 +219,11 @@ class Settings(BaseSettings):
     # (and is incompatible with credentialed requests, which browsers reject).
     CORS_ALLOW_ORIGINS: str = "*"
 
+    # Shared secret for the GeoTab webhook (external callback, no user JWT).
+    # When set, callers must send it as X-Webhook-Secret; empty allows all
+    # (dev only — validate_settings flags an empty secret in production).
+    GEOTAB_WEBHOOK_SECRET: str = ""
+
     # Dev-only auth conveniences. Both MUST be false in production; the
     # startup hook (validate_settings) hard-fails if they are left on.
     ALLOW_DEV_TOKEN: bool = True   # accept "dev-token" as an admin bypass
@@ -261,4 +266,6 @@ def validate_settings(s: "Settings" = None) -> list[str]:
             problems.append("ALLOW_OPEN_REGISTRATION must be false in production")
         if "*" in [o.strip() for o in s.CORS_ALLOW_ORIGINS.split(",")]:
             problems.append("CORS_ALLOW_ORIGINS must be an explicit allowlist in production, not '*'")
+        if not s.GEOTAB_WEBHOOK_SECRET:
+            problems.append("GEOTAB_WEBHOOK_SECRET is empty; the GeoTab webhook is unauthenticated")
     return problems

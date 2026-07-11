@@ -12,7 +12,9 @@ from app.db.database import get_db
 from app.db.models import Operation, Asset, PackMLState
 from app.models.schemas import OperationCreate, OperationResponse
 
-router = APIRouter()
+from app.api.auth import get_current_active_user
+
+router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
 
 @router.get("/", response_model=PaginatedResponse[OperationResponse])

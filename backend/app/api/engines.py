@@ -16,7 +16,9 @@ from app.db.database import get_db
 from app.models.domain_interaction import CorrelationScenario
 from app.services.correlation_ai_engine import correlation_ai_engine
 
-router = APIRouter()
+from app.api.auth import get_current_active_user
+
+router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
 
 # Pydantic models

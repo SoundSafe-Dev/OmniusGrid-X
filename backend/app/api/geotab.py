@@ -6,13 +6,29 @@ Fleet telematics, HOS compliance, vehicle diagnostics
 from datetime import datetime, timedelta
 from typing import List, Optional
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import get_current_active_user
+from app.core.config import settings
 from app.db.database import get_db
 from app.services.geotab_service import geotab_service
 
-router = APIRouter(prefix="/geotab", tags=["geotab"])
+# Read/query endpoints require an authenticated user.
+router = APIRouter(prefix="/geotab", tags=["geotab"],
+                   dependencies=[Depends(get_current_active_user)])
+
+
+async def verify_geotab_webhook(x_webhook_secret: Optional[str] = Header(None)):
+    """Guard the external webhook with a shared secret (no user JWT available)."""
+    expected = settings.GEOTAB_WEBHOOK_SECRET
+    if expected and x_webhook_secret != expected:
+        raise HTTPException(status_code=401, detail="Invalid webhook secret")
+
+
+# Webhook is an external callback: secret-guarded, not user-authenticated.
+webhook_router = APIRouter(prefix="/geotab", tags=["geotab"],
+                           dependencies=[Depends(verify_geotab_webhook)])
 
 
 @router.get("/devices")
@@ -111,7 +127,7 @@ async def get_device_diagnostics(
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@router.post("/webhook")
+@webhook_router.post("/webhook")
 async def geotab_webhook(
     webhook_data: dict,
     db: AsyncSession = Depends(get_db)

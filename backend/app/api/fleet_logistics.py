@@ -31,9 +31,12 @@ from app.db.models import Carrier, Driver, Shipment
 
 logger = structlog.get_logger()
 
-geofencing_router = APIRouter(tags=["Geofencing"])
-maintenance_router = APIRouter(tags=["Fleet Maintenance"])
-logistics_router = APIRouter(tags=["Transportation Management"])
+from app.api.auth import get_current_active_user
+
+_auth = [Depends(get_current_active_user)]
+geofencing_router = APIRouter(tags=["Geofencing"], dependencies=_auth)
+maintenance_router = APIRouter(tags=["Fleet Maintenance"], dependencies=_auth)
+logistics_router = APIRouter(tags=["Transportation Management"], dependencies=_auth)
 
 
 # ==================== Geofencing ====================

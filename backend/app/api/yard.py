@@ -30,7 +30,9 @@ from app.services.yard_management import (
 # No router-level prefix: main.py already includes this router at its /api/v1/...
 # path. (The old prefix double-prefixed every route — e.g. /api/v1/yard/yard/* —
 # never noticed because the frontend ran on mocks.)
-router = APIRouter(tags=["yard_management"])
+from app.api.auth import get_current_active_user
+
+router = APIRouter(tags=["yard_management"], dependencies=[Depends(get_current_active_user)])
 
 
 # ==================== Yard Trailer Endpoints ====================
