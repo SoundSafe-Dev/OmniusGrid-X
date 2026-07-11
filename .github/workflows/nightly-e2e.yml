@@ -23,7 +23,7 @@ jobs:
           cache: 'pip'
 
       - name: Start infrastructure (compose)
-        run: docker compose up -d timescaledb redpanda redis
+        run: docker compose up -d --wait timescaledb redpanda redis
 
       - name: Install backend
         working-directory: ./backend

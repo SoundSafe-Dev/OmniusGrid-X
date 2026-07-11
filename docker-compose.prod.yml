@@ -21,6 +21,10 @@
 # rag-inference (htreinen's service) can be added here once containerized —
 # see docs/RAG_CONTAINERIZATION.md.
 
+# Single definition of the backend image ref: a tag-scheme change that missed
+# one worker would silently keep deploying the old image.
+x-backend-image: &backend-image ${REGISTRY:-ghcr.io/omniusgrid}/backend:${IMAGE_TAG:?set IMAGE_TAG}
+
 x-backend-env: &backend-env
   DATABASE_URL: postgresql://omniusgrid:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@timescaledb:5432/omniusgrid
   REDPANDA_URL: redpanda:29092
@@ -98,18 +102,23 @@ services:
       retries: 5
 
   # One-shot migration runner: applies pending SQL migrations, then exits.
+  # The migrations dir is MOUNTED from the repo checkout — the backend image is
+  # built from ./backend and does not contain the repo-root database/ tree; the
+  # runner exits 0 on an empty dir, which would silently skip every migration.
   migrate:
-    image: ${REGISTRY:-ghcr.io/omniusgrid}/backend:${IMAGE_TAG:?set IMAGE_TAG}
+    image: *backend-image
     environment:
       DATABASE_URL: postgresql://omniusgrid:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@timescaledb:5432/omniusgrid
+    volumes:
+      - ./database/migrations:/migrations:ro
     depends_on:
       timescaledb:
         condition: service_healthy
-    command: python scripts/migrate.py
+    command: python scripts/migrate.py --dir /migrations
     restart: "no"
 
   backend:
-    image: ${REGISTRY:-ghcr.io/omniusgrid}/backend:${IMAGE_TAG:?set IMAGE_TAG}
+    image: *backend-image
     restart: unless-stopped
     environment:
       <<: *backend-env
@@ -131,7 +140,7 @@ services:
       start_period: 30s
 
   ingestion-worker:
-    image: ${REGISTRY:-ghcr.io/omniusgrid}/backend:${IMAGE_TAG:?set IMAGE_TAG}
+    image: *backend-image
     restart: unless-stopped
     environment:
       <<: *backend-env
@@ -141,7 +150,7 @@ services:
     command: python -m app.workers.ingestion
 
   export-worker:
-    image: ${REGISTRY:-ghcr.io/omniusgrid}/backend:${IMAGE_TAG:?set IMAGE_TAG}
+    image: *backend-image
     restart: unless-stopped
     environment:
       <<: *backend-env
@@ -153,7 +162,7 @@ services:
     command: python -m app.workers.export_delivery
 
   compliance-reports-worker:
-    image: ${REGISTRY:-ghcr.io/omniusgrid}/backend:${IMAGE_TAG:?set IMAGE_TAG}
+    image: *backend-image
     restart: unless-stopped
     environment:
       <<: *backend-env
@@ -165,7 +174,7 @@ services:
     command: python -m app.workers.compliance_reports
 
   ota-rollout-worker:
-    image: ${REGISTRY:-ghcr.io/omniusgrid}/backend:${IMAGE_TAG:?set IMAGE_TAG}
+    image: *backend-image
     restart: unless-stopped
     environment:
       <<: *backend-env

@@ -1,19 +1,21 @@
 import axios, { AxiosError, AxiosResponse } from 'axios'
 import { ApiError } from '../types'
 
-// Use window.location.hostname to dynamically determine API URL
+// API base resolution:
+//  - VITE_API_URL wins when set
+//  - dev builds (vite dev server) talk to the backend on :8000 directly
+//  - production builds use SAME-ORIGIN ('' base): nginx serves the SPA and
+//    proxies /api and /ws to the backend (frontend/nginx.conf) — the old
+//    http://<hostname>:8000 guess pointed at an unpublished port in prod.
 const getApiUrl = () => {
   // @ts-ignore
   const envUrl = import.meta.env?.VITE_API_URL
   if (envUrl) return envUrl
-  
-  // If accessing from IP, use IP for API calls too
-  const hostname = window.location.hostname
-  if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
-    return `http://${hostname}:8000`
+
+  if (import.meta.env.DEV) {
+    return `http://${window.location.hostname || 'localhost'}:8000`
   }
-  
-  return 'http://localhost:8000'
+  return ''
 }
 
 const API_URL = getApiUrl()

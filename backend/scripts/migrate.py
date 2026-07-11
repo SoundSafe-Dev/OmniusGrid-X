@@ -90,8 +90,12 @@ def main() -> int:
     mdir = Path(args.dir)
     files = _migration_files(mdir)
     if not files:
-        print(f"no .sql migrations found in {mdir}")
-        return 0
+        # Fail LOUDLY: an empty/missing migrations dir almost always means a
+        # wrong --dir or a container without the repo tree mounted — exiting 0
+        # here once let a prod bringup "succeed" with zero tables.
+        print(f"ERROR: no .sql migrations found in {mdir} — wrong --dir or "
+              "missing mount?", file=sys.stderr)
+        return 1
 
     import psycopg2
     import sqlparse

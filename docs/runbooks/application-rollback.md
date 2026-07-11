@@ -38,7 +38,7 @@ users are impacted.
 docker compose logs --no-color backend > /tmp/backend-bad-release.log
 
 # Kubernetes: capture logs first
-kubectl logs deployment/omniusgrid-backend -n omniusgrid --tail=1000 > /tmp/backend-bad-release.log
+kubectl logs deployment/prod-backend -n omniusgrid --tail=1000 > /tmp/backend-bad-release.log
 ```
 
 ---
@@ -96,35 +96,36 @@ curl -fsS http://localhost:9999 >/dev/null && echo "frontend OK"
 
 ## Kubernetes rollback
 
-Manifests live in [`infra/k8s/`](../../../infra/k8s/). The backend Deployment is
-`omniusgrid-backend` in namespace `omniusgrid`.
+Manifests live in [`infrastructure/k8s/`](../../infrastructure/k8s/) (kustomize;
+see its README). The backend Deployment is `prod-backend` (staging:
+`staging-backend`) in namespace `omniusgrid` — the overlays' namePrefix.
 
 Kubernetes keeps a rollout history per Deployment, so the fastest path is
 `kubectl rollout undo`.
 
 ### Step 1 — Inspect rollout history
 ```bash
-kubectl rollout history deployment/omniusgrid-backend -n omniusgrid
+kubectl rollout history deployment/prod-backend -n omniusgrid
 ```
 
 ### Step 2 — Roll back
 
 **Roll back to the immediately previous revision:**
 ```bash
-kubectl rollout undo deployment/omniusgrid-backend -n omniusgrid
+kubectl rollout undo deployment/prod-backend -n omniusgrid
 ```
 
 **Roll back to a specific revision:**
 ```bash
-kubectl rollout undo deployment/omniusgrid-backend -n omniusgrid --to-revision=<N>
+kubectl rollout undo deployment/prod-backend -n omniusgrid --to-revision=<N>
 ```
 
 Repeat for other affected workloads (e.g. the ingestion deployment in
-[`infra/k8s/ingestion-deployment.yml`](../../../infra/k8s/ingestion-deployment.yml)).
+the worker Deployments in [`infrastructure/k8s/base/`](../../infrastructure/k8s/base/)).
 
 ### Step 3 — Watch the rollout complete
 ```bash
-kubectl rollout status deployment/omniusgrid-backend -n omniusgrid --timeout=300s
+kubectl rollout status deployment/prod-backend -n omniusgrid --timeout=300s
 kubectl get pods -n omniusgrid -l app=omniusgrid-backend
 ```
 
@@ -203,7 +204,7 @@ procedures and `infra/scripts/disaster_recovery.sh` for backup/restore commands.
 - [RTO/RPO verification checklist](rto-rpo-checklist.md)
 - [Communication templates](incident-communication-templates.md)
 - [docker-compose.yml](../../../docker-compose.yml)
-- [infra/k8s/backend-deployment.yml](../../../infra/k8s/backend-deployment.yml)
+- [infrastructure/k8s/base/backend-deployment.yaml](../../infrastructure/k8s/base/backend-deployment.yaml)
 
 ---
 

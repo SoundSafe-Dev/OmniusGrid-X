@@ -1,5 +1,13 @@
 # OmniusGrid Deployment Guide
 
+> **⚠️ Superseded.** The canonical deployment docs are
+> [docs/deployment/DEPLOYMENT.md](../deployment/DEPLOYMENT.md) (compose-prod,
+> bare-metal edge, production posture) and
+> [infrastructure/k8s/README.md](../../infrastructure/k8s/README.md)
+> (kubernetes). Several manifests named below (timescaledb-ha, redpanda-ha,
+> network-policies, production-green) were never created — treat this file as
+> historical architecture context, not a procedure.
+
 ## Overview
 
 This guide provides step-by-step instructions for deploying OmniusGrid to staging and production environments.

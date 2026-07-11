@@ -7,8 +7,8 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY . .
-# Build-time API base is left unset on purpose: nginx proxies /api and /ws
-# same-origin, so the app's window.location fallback resolves correctly.
+# Build-time API base is left unset on purpose: production bundles default to
+# SAME-ORIGIN (client.ts / websocket.ts), which nginx proxies to the backend.
 # vite build directly (not `npm run build`): the tsc step in the npm script
 # still carries ~40 pre-existing type errors (tracked, mostly legacy pages)
 # that don't affect the emitted bundle.

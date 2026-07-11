@@ -31,6 +31,29 @@ from app.db.models import Carrier, Driver, Shipment
 
 logger = structlog.get_logger()
 
+
+def _uuid_or_404(value: str) -> str:
+    """Validate a path id before comparing it to a UUIDColumn.
+
+    On Postgres, `WHERE uuid_col = 'not-a-uuid'` is an asyncpg type error →
+    500. A malformed id simply matches nothing, so answer the honest 404.
+    """
+    import uuid as _uuid
+    try:
+        _uuid.UUID(value)
+    except (ValueError, AttributeError, TypeError):
+        raise HTTPException(status_code=404, detail="Not found")
+    return value
+
+
+def _iso_or_400(value: str, field: str) -> datetime:
+    """Parse an ISO-8601 payload field, answering 400 (not a 500) on garbage."""
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=400, detail=f"{field} must be an ISO-8601 datetime")
+
+
 from app.api.auth import get_current_active_user
 
 _auth = [Depends(get_current_active_user)]
@@ -60,6 +83,7 @@ async def list_zones(db: AsyncSession = Depends(get_db)):
 
 @geofencing_router.get("/zones/{zone_id}")
 async def get_zone(zone_id: str, db: AsyncSession = Depends(get_db)):
+    _uuid_or_404(zone_id)
     zone = (await db.execute(select(GeofenceZone).where(GeofenceZone.id == zone_id))).scalar_one_or_none()
     if zone is None:
         raise HTTPException(status_code=404, detail="zone not found")
@@ -90,6 +114,7 @@ async def create_zone(payload: Dict[str, Any], db: AsyncSession = Depends(get_db
 
 @geofencing_router.put("/zones/{zone_id}")
 async def update_zone(zone_id: str, payload: Dict[str, Any], db: AsyncSession = Depends(get_db)):
+    _uuid_or_404(zone_id)
     zone = (await db.execute(select(GeofenceZone).where(GeofenceZone.id == zone_id))).scalar_one_or_none()
     if zone is None:
         raise HTTPException(status_code=404, detail="zone not found")
@@ -110,6 +135,7 @@ async def update_zone(zone_id: str, payload: Dict[str, Any], db: AsyncSession = 
 
 @geofencing_router.delete("/zones/{zone_id}")
 async def delete_zone(zone_id: str, db: AsyncSession = Depends(get_db)):
+    _uuid_or_404(zone_id)
     zone = (await db.execute(select(GeofenceZone).where(GeofenceZone.id == zone_id))).scalar_one_or_none()
     if zone is None:
         raise HTTPException(status_code=404, detail="zone not found")
@@ -144,6 +170,7 @@ async def list_alerts(
 
 @geofencing_router.post("/alerts/{alert_id}/acknowledge")
 async def acknowledge_alert(alert_id: str, db: AsyncSession = Depends(get_db)):
+    _uuid_or_404(alert_id)
     alert = (await db.execute(select(GeofenceAlert).where(GeofenceAlert.id == alert_id))).scalar_one_or_none()
     if alert is None:
         raise HTTPException(status_code=404, detail="alert not found")
@@ -231,6 +258,7 @@ async def list_schedules(
 
 @maintenance_router.get("/schedules/{schedule_id}")
 async def get_schedule(schedule_id: str, db: AsyncSession = Depends(get_db)):
+    _uuid_or_404(schedule_id)
     s = (await db.execute(select(MaintenanceSchedule).where(MaintenanceSchedule.id == schedule_id))).scalar_one_or_none()
     if s is None:
         raise HTTPException(status_code=404, detail="schedule not found")
@@ -239,6 +267,7 @@ async def get_schedule(schedule_id: str, db: AsyncSession = Depends(get_db)):
 
 @maintenance_router.patch("/schedules/{schedule_id}")
 async def update_schedule(schedule_id: str, payload: Dict[str, Any], db: AsyncSession = Depends(get_db)):
+    _uuid_or_404(schedule_id)
     s = (await db.execute(select(MaintenanceSchedule).where(MaintenanceSchedule.id == schedule_id))).scalar_one_or_none()
     if s is None:
         raise HTTPException(status_code=404, detail="schedule not found")
@@ -260,7 +289,7 @@ async def update_schedule(schedule_id: str, payload: Dict[str, Any], db: AsyncSe
             setattr(s, attr, value)
     scheduled = pick("scheduledDate", "dueDate")
     if scheduled:
-        s.due_date = datetime.fromisoformat(scheduled.replace("Z", "+00:00"))
+        s.due_date = _iso_or_400(scheduled, "scheduledDate")
     if payload.get("status") == "completed" and s.completed_at is None:
         s.completed_at = datetime.utcnow()
     await db.commit()
@@ -288,7 +317,7 @@ async def create_schedule(payload: Dict[str, Any], db: AsyncSession = Depends(ge
         vehicle_id=payload.get("vehicleId") or payload.get("vehicle_id"),
         maintenance_type=payload.get("serviceType") or payload.get("maintenanceType") or payload.get("maintenance_type") or "inspection",
         description=payload.get("description"),
-        due_date=datetime.fromisoformat(scheduled.replace("Z", "+00:00")) if scheduled else None,
+        due_date=_iso_or_400(scheduled, "scheduledDate") if scheduled else None,
         due_odometer_miles=payload.get("dueMileage") or payload.get("dueOdometer"),
         estimated_cost=payload.get("estimatedCost"),
     )
@@ -314,6 +343,7 @@ async def list_repair_orders(
 
 @maintenance_router.get("/repair-orders/{order_id}")
 async def get_repair_order(order_id: str, db: AsyncSession = Depends(get_db)):
+    _uuid_or_404(order_id)
     o = (await db.execute(select(RepairOrder).where(RepairOrder.id == order_id))).scalar_one_or_none()
     if o is None:
         raise HTTPException(status_code=404, detail="repair order not found")
@@ -373,7 +403,7 @@ async def add_service_history(payload: Dict[str, Any], db: AsyncSession = Depend
         vendor=payload.get("technician"),
         cost=payload.get("cost"),
         category=payload.get("serviceType"),
-        completed_at=datetime.fromisoformat(payload["serviceDate"].replace("Z", "+00:00")) if payload.get("serviceDate") else datetime.utcnow(),
+        completed_at=_iso_or_400(payload["serviceDate"], "serviceDate") if payload.get("serviceDate") else datetime.utcnow(),
     )
     db.add(order)
     await db.commit()

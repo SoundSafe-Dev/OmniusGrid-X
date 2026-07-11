@@ -1,6 +1,18 @@
 import { WebSocketMessage } from '../types';
 
-const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000/ws';
+// WS endpoint resolution mirrors client.ts: VITE_WS_URL wins; dev builds hit
+// the backend on :8000; production builds use same-origin (nginx proxies /ws),
+// upgrading to wss: when the page is https.
+const getWsUrl = (): string => {
+  const envUrl = import.meta.env.VITE_WS_URL;
+  if (envUrl) return envUrl;
+  if (import.meta.env.DEV) {
+    return `ws://${window.location.hostname || 'localhost'}:8000/ws`;
+  }
+  const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  return `${scheme}://${window.location.host}/ws`;
+};
+const WS_URL = getWsUrl();
 
 // Task 3: reconnection/heartbeat tuning. Kept as named constants so behaviour is
 // easy to adjust without hunting through the logic.
