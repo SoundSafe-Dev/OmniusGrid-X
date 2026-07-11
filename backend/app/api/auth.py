@@ -90,8 +90,8 @@ async def get_current_active_user(
     # DEV MODE: Bypass authentication for dev-token
     # Check both OAuth2 token and header token
     actual_token = token or header_token
-    
-    if actual_token == "dev-token":
+
+    if actual_token == "dev-token" and settings.ALLOW_DEV_TOKEN:
         # Create or get dev user from database
         dev_org_id = "00000000-0000-0000-0000-000000000001"
         dev_user_id = "00000000-0000-0000-0000-000000000001"
@@ -211,6 +211,11 @@ async def register(
     db: AsyncSession = Depends(get_db)
 ):
     """Register a new user (dev only - disable in production)"""
+    if not settings.ALLOW_OPEN_REGISTRATION:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Open registration is disabled; users are provisioned by an administrator.",
+        )
     # Check if user exists
     result = await db.execute(
         select(User).where(User.email == user_data.email)
@@ -294,7 +299,7 @@ async def resolve_websocket_user(token: Optional[str]) -> Optional[User]:
         return None
 
     async with AsyncSessionLocal() as db:
-        if token == "dev-token":
+        if token == "dev-token" and settings.ALLOW_DEV_TOKEN:
             # Same fixed dev identity as get_current_active_user's bypass.
             dev_user_id = "00000000-0000-0000-0000-000000000001"
             result = await db.execute(select(User).where(User.id == dev_user_id))

@@ -39,7 +39,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: omniusgrid
-      POSTGRES_PASSWORD: omniusgrid_dev_password
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-omniusgrid_dev_password}
       POSTGRES_DB: omniusgrid
     ports:
       - "5432:5432"
@@ -62,9 +62,9 @@ services:
     container_name: omniusgrid-backend
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://omniusgrid:omniusgrid_dev_password@timescaledb:5432/omniusgrid
+      DATABASE_URL: postgresql://omniusgrid:${POSTGRES_PASSWORD:-omniusgrid_dev_password}@timescaledb:5432/omniusgrid
       REDPANDA_URL: redpanda:29092
-      JWT_SECRET_KEY: dev_secret_key_change_in_production
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev_secret_key_change_in_production}
       JWT_ALGORITHM: HS256
       JWT_ACCESS_TOKEN_EXPIRE_MINUTES: 30
       SIGNED_URL_SECRET_KEY: ${SIGNED_URL_SECRET_KEY:-dev_signed_link_secret_change_in_production}
@@ -111,7 +111,7 @@ services:
       dockerfile: Dockerfile
     container_name: omniusgrid-ingestion
     environment:
-      DATABASE_URL: postgresql://omniusgrid:omniusgrid_dev_password@timescaledb:5432/omniusgrid
+      DATABASE_URL: postgresql://omniusgrid:${POSTGRES_PASSWORD:-omniusgrid_dev_password}@timescaledb:5432/omniusgrid
       REDPANDA_URL: redpanda:29092
       WORKER_MODE: ingestion
     volumes:
@@ -133,10 +133,10 @@ services:
     container_name: omniusgrid-export-worker
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://omniusgrid:omniusgrid_dev_password@timescaledb:5432/omniusgrid
+      DATABASE_URL: postgresql://omniusgrid:${POSTGRES_PASSWORD:-omniusgrid_dev_password}@timescaledb:5432/omniusgrid
       REDPANDA_URL: redpanda:29092
       REDPANDA_EXPORT_TOPIC: opsgrid.exports
-      JWT_SECRET_KEY: dev_secret_key_change_in_production
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev_secret_key_change_in_production}
       SIGNED_URL_SECRET_KEY: ${SIGNED_URL_SECRET_KEY:-dev_signed_link_secret_change_in_production}
       SIGNED_URL_ALGORITHM: HS256
       SIGNED_URL_ISSUER: omniusgrid-signed-links
@@ -171,10 +171,10 @@ services:
     container_name: omniusgrid-compliance-reports-worker
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://omniusgrid:omniusgrid_dev_password@timescaledb:5432/omniusgrid
+      DATABASE_URL: postgresql://omniusgrid:${POSTGRES_PASSWORD:-omniusgrid_dev_password}@timescaledb:5432/omniusgrid
       REDPANDA_URL: redpanda:29092
       REDPANDA_COMPLIANCE_REPORTS_TOPIC: opsgrid.compliance-reports
-      JWT_SECRET_KEY: dev_secret_key_change_in_production
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev_secret_key_change_in_production}
       SIGNED_URL_SECRET_KEY: ${SIGNED_URL_SECRET_KEY:-dev_signed_link_secret_change_in_production}
       SIGNED_URL_ALGORITHM: HS256
       SIGNED_URL_ISSUER: omniusgrid-signed-links
@@ -210,9 +210,9 @@ services:
     container_name: omniusgrid-ota-rollout-worker
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://omniusgrid:omniusgrid_dev_password@timescaledb:5432/omniusgrid
+      DATABASE_URL: postgresql://omniusgrid:${POSTGRES_PASSWORD:-omniusgrid_dev_password}@timescaledb:5432/omniusgrid
       REDPANDA_URL: redpanda:29092
-      JWT_SECRET_KEY: dev_secret_key_change_in_production
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev_secret_key_change_in_production}
       SIGNED_URL_SECRET_KEY: ${SIGNED_URL_SECRET_KEY:-dev_signed_link_secret_change_in_production}
       EXPORT_PUBLIC_BASE_URL: http://localhost:8002
       OTA_ROLLOUT_DISPATCH_ENABLED: ${OTA_ROLLOUT_DISPATCH_ENABLED:-true}
@@ -301,7 +301,7 @@ services:
     container_name: omniusgrid-grafana
     environment:
       - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=omniusgrid_admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-omniusgrid_admin}
       - GF_INSTALL_PLUGINS=grafana-lokiexplore-app
     volumes:
       - grafana-data:/var/lib/grafana

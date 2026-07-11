@@ -81,13 +81,11 @@ app = FastAPI(
     ```
     
     ### Development Mode
-    
-    For development, you can use the `dev-token` bypass:
-    
-    ```
-    Authorization: Bearer dev-token
-    ```
-    
+
+    In non-production environments only (when `ALLOW_DEV_TOKEN=true`), the
+    `dev-token` value is accepted as an admin bypass. It is rejected in
+    production and the deploy fails fast if the flag is left enabled.
+
     ## Error Codes
     
     - `401 Unauthorized`: Invalid or missing authentication token
@@ -185,11 +183,15 @@ app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 if settings.RATE_LIMIT_ENABLED:
     app.add_middleware(SlowAPIMiddleware)
 
-# CORS middleware
+# CORS middleware — explicit allowlist from config. Wildcard "*" is
+# incompatible with credentialed requests (browsers reject it), so when the
+# allowlist is "*" we disable credentials rather than ship an invalid combo.
+_cors_origins = [o.strip() for o in settings.CORS_ALLOW_ORIGINS.split(",") if o.strip()]
+_cors_wildcard = _cors_origins == ["*"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for development
-    allow_credentials=True,
+    allow_origins=_cors_origins or ["*"],
+    allow_credentials=not _cors_wildcard,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -210,15 +212,17 @@ app.add_middleware(
     ),
 )
 
-# CSRF middleware (optional, can be disabled for API-only usage)
-# Uncomment to enable CSRF protection
-# app.add_middleware(CSRFMiddleware)
+# CSRF protection — off by default (Bearer-JWT API, not cookie sessions).
+if settings.CSRF_ENABLED:
+    app.add_middleware(CSRFMiddleware, secret_key=settings.JWT_SECRET_KEY)
 
-# Security headers middleware (disabled for debugging)
-# app.add_middleware(SecurityHeadersMiddleware)
+# Security headers (self-gates further via SECURITY_HEADERS_ENABLED / CSP_ENABLED).
+if settings.SECURITY_HEADERS_ENABLED:
+    app.add_middleware(SecurityHeadersMiddleware)
 
-# Audit logging middleware (disabled for debugging)
-# app.add_middleware(AuditLoggingMiddleware)
+# Audit logging of sensitive operations (skips requests with no user context).
+if settings.AUDIT_LOGGING_ENABLED:
+    app.add_middleware(AuditLoggingMiddleware)
 
 # Error tracking (gated off via ERROR_TRACKING_ENABLED, default False). Registered
 # before profiling so it sits *inside* the profiling middleware — both observe an

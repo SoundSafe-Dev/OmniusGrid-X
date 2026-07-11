@@ -45,6 +45,11 @@ class Settings(BaseSettings):
     # Security Headers
     SECURITY_HEADERS_ENABLED: bool = True
     CSP_ENABLED: bool = True
+    AUDIT_LOGGING_ENABLED: bool = True
+    # CSRF is a cookie+header token scheme; this API authenticates via Bearer
+    # JWT (not cookies), so CSRF is off by default. Enable only for a
+    # cookie-session deployment, and teach the SPA to echo X-CSRF-Token.
+    CSRF_ENABLED: bool = False
     HSTS_ENABLED: bool = True
     HSTS_MAX_AGE: int = 31536000  # 1 year
     HSTS_INCLUDE_SUBDOMAINS: bool = True
@@ -210,6 +215,15 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     LOG_LEVEL: str = "INFO"
 
+    # CORS: comma-separated allowlist. "*" is permitted ONLY outside production
+    # (and is incompatible with credentialed requests, which browsers reject).
+    CORS_ALLOW_ORIGINS: str = "*"
+
+    # Dev-only auth conveniences. Both MUST be false in production; the
+    # startup hook (validate_settings) hard-fails if they are left on.
+    ALLOW_DEV_TOKEN: bool = True   # accept "dev-token" as an admin bypass
+    ALLOW_OPEN_REGISTRATION: bool = True  # unauthenticated POST /auth/register
+
     class Config:
         env_file = ".env"
 
@@ -241,4 +255,10 @@ def validate_settings(s: "Settings" = None) -> list[str]:
             problems.append("DEBUG must be false in production")
         if not s.EDGE_BOOTSTRAP_TOKEN:
             problems.append("EDGE_BOOTSTRAP_TOKEN is empty; edge enrollment is disabled")
+        if s.ALLOW_DEV_TOKEN:
+            problems.append("ALLOW_DEV_TOKEN must be false in production (admin auth bypass)")
+        if s.ALLOW_OPEN_REGISTRATION:
+            problems.append("ALLOW_OPEN_REGISTRATION must be false in production")
+        if "*" in [o.strip() for o in s.CORS_ALLOW_ORIGINS.split(",")]:
+            problems.append("CORS_ALLOW_ORIGINS must be an explicit allowlist in production, not '*'")
     return problems
