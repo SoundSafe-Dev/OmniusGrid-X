@@ -213,26 +213,63 @@ class EdgeAgent:
         await self._initialize_collectors()
         await self.coordinator.start_all()
     
+    def _uplink_ssl_context(self):
+        """SSL context for the Kafka uplink, honoring the TLS enforcement flag.
+
+        Returns None for plaintext (dev/legacy). With KAFKA_SECURITY_PROTOCOL=SSL
+        the enrolled identity's mTLS context is used; EDGE_REQUIRE_TLS=true
+        additionally makes any failure to produce a context FATAL (fail closed)
+        rather than degrading to plaintext.
+        """
+        require_tls = os.getenv('EDGE_REQUIRE_TLS', 'false').lower() == 'true'
+        protocol = os.getenv('KAFKA_SECURITY_PROTOCOL', 'PLAINTEXT').upper()
+        if not require_tls and protocol != 'SSL':
+            return None
+
+        from opsgrid_agent.security.identity import AgentIdentity
+        from opsgrid_agent.security.mtls import build_client_context
+
+        identity = AgentIdentity(
+            os.getenv('IDENTITY_DIR', '/var/lib/opsgrid-agent/identity')
+        ).load_or_create()
+        # Raises MTLSNotReady when unenrolled or (strict) missing CA bundle;
+        # in require_tls mode the caller lets that abort startup.
+        return build_client_context(identity, strict=require_tls)
+
     async def _init_kafka_producer(self):
-        """Initialize Kafka/Redpanda producer"""
+        """Initialize Kafka/Redpanda producer (TLS when configured)."""
+        require_tls = os.getenv('EDGE_REQUIRE_TLS', 'false').lower() == 'true'
         try:
             from aiokafka import AIOKafkaProducer
-            
-            self.kafka_producer = AIOKafkaProducer(
+
+            ssl_context = self._uplink_ssl_context()
+            kwargs = dict(
                 bootstrap_servers=self.config['redpanda_url'],
                 value_serializer=lambda v: json.dumps(v).encode('utf-8'),
                 key_serializer=lambda k: k.encode('utf-8') if k else None,
             )
+            if ssl_context is not None:
+                kwargs['security_protocol'] = 'SSL'
+                kwargs['ssl_context'] = ssl_context
+
+            self.kafka_producer = AIOKafkaProducer(**kwargs)
             await self.kafka_producer.start()
-            
+
             # Set coordinator's Kafka producer
             self.coordinator.kafka_producer = self.kafka_producer
-            
+
             logger.info(
                 "kafka_producer_started",
-                brokers=self.config['redpanda_url']
+                brokers=self.config['redpanda_url'],
+                tls=ssl_context is not None,
             )
         except Exception as e:
+            if require_tls:
+                # Fail closed: a required-TLS agent must not run with a broken
+                # or absent secure uplink (store-and-forward would queue data
+                # that could only ever leave in plaintext).
+                logger.critical("kafka_tls_required_but_unavailable", error=str(e))
+                raise
             logger.error("kafka_producer_failed", error=str(e))
             self.kafka_producer = None
     
@@ -590,6 +627,12 @@ class EdgeAgent:
                 headers = {**headers, 'X-Client-Cert':
                            identity.crt_path.read_text().replace('\n', '\\n')
                            if identity.has_certificate() else ''}
+                # Proof-of-possession: sign the request with the agent's private
+                # key so the (public) certificate header can't be replayed by an
+                # observer — the backend verifies against the cert's public key.
+                if identity.has_certificate():
+                    from opsgrid_agent.security.request_signing import sign_request
+                    headers.update(sign_request(identity, body))
                 return _default_post(url, body, headers)
 
             reporter = HeartbeatReporter(
@@ -671,5 +714,10 @@ async def main():
     await agent.run()
 
 
-if __name__ == "__main__":
+def run():
+    """Console-script entrypoint (pyproject [project.scripts])."""
     asyncio.run(main())
+
+
+if __name__ == "__main__":
+    run()

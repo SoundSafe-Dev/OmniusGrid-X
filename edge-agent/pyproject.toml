@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "opsgrid-agent"
+version = "1.0.0"
+description = "OmniusGrid edge agent: industrial protocol collectors with store-and-forward buffering and an mTLS cloud uplink"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+dependencies = [
+    "aiokafka>=0.10",
+    "paho-mqtt>=1.6",
+    "structlog>=23",
+    "aiohttp>=3.9",
+    "prometheus-client>=0.19",
+    "cryptography>=46",
+    "PyYAML>=6",
+    "pydantic>=2",
+]
+
+[project.optional-dependencies]
+# Protocol drivers are optional: each collector degrades gracefully when its
+# driver is absent (see collectors/*.py lazy imports). Install the extras that
+# match the site's hardware.
+opcua = ["asyncua>=1.1"]
+modbus = ["pymodbus>=3.6"]
+vision = ["opencv-python-headless>=4.8", "pytesseract>=0.3", "Pillow>=10"]
+audio = ["sounddevice>=0.4", "numpy>=1.26"]
+
+[project.scripts]
+opsgrid-agent = "opsgrid_agent.main:run"
+
+[tool.setuptools.packages.find]
+include = ["opsgrid_agent*"]

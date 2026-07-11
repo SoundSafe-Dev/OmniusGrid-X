@@ -26,6 +26,7 @@ def test_production_flags_insecure_defaults():
     assert any("GEOTAB_WEBHOOK_SECRET" in p for p in problems)
     assert any("ERP_ENCRYPTION_KEY" in p for p in problems)
     assert any("GEOTAB_SIMULATED" in p for p in problems)
+    assert any("EDGE_REQUIRE_PROOF_OF_POSSESSION" in p for p in problems)
 
 
 def test_production_with_secure_config_passes():
@@ -40,5 +41,6 @@ def test_production_with_secure_config_passes():
         GEOTAB_WEBHOOK_SECRET="rotate-me-too",
         ERP_ENCRYPTION_KEY="a-stable-erp-master-key",
         GEOTAB_SIMULATED=False,
+        EDGE_REQUIRE_PROOF_OF_POSSESSION=True,
     )
     assert validate_settings(s) == []

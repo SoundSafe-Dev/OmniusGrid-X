@@ -243,6 +243,13 @@ class Settings(BaseSettings):
     ROUTING_PROVIDER: str = "haversine"
     ROUTING_OSRM_URL: str = ""   # e.g. http://osrm:5000
 
+    # Require edge requests to carry a proof-of-possession signature
+    # (X-Agent-Timestamp/X-Agent-Signature) in addition to the CA-verified
+    # certificate header. The cert is public material — without the signature a
+    # captured header is replayable. Default false for rolling upgrades (old
+    # agents don't sign yet); flagged in production.
+    EDGE_REQUIRE_PROOF_OF_POSSESSION: bool = False
+
     # Run the worker-backed schedulers (export, compliance-report, OTA rollout)
     # inside the API process. Default true so a standalone API still dispatches;
     # set false when the dedicated compose workers own dispatch, to avoid two
@@ -308,4 +315,6 @@ def validate_settings(s: "Settings" = None) -> list[str]:
             problems.append("ERP_ENCRYPTION_KEY is unset; ERP field encryption would use an unstable runtime key")
         if s.GEOTAB_SIMULATED:
             problems.append("GEOTAB_SIMULATED must be false in production (random demo telematics would be served as real data)")
+        if not s.EDGE_REQUIRE_PROOF_OF_POSSESSION:
+            problems.append("EDGE_REQUIRE_PROOF_OF_POSSESSION should be true in production (unsigned edge requests are replayable)")
     return problems

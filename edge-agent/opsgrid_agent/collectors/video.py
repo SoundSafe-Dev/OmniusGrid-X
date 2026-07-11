@@ -84,6 +84,18 @@ class VideoFrameCollector(BaseCollector):
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
+        # "No silent synthetic data": defaulting to simulate is a dev/demo
+        # convenience only. With EDGE_REQUIRE_EXPLICIT_SOURCES=true (production
+        # posture) an omitted source is a config error — fail loud at startup
+        # instead of quietly emitting demo frames from a misconfigured plant.
+        import os
+        if "source" not in config and os.getenv(
+            "EDGE_REQUIRE_EXPLICIT_SOURCES", "false"
+        ).lower() == "true":
+            raise ValueError(
+                "video collector requires an explicit 'source' "
+                "(EDGE_REQUIRE_EXPLICIT_SOURCES is enabled)"
+            )
         self.source = config.get("source", "simulate")
         self.stream_url = config.get("stream_url")
         self.poll_interval = float(config.get("poll_interval", 10))
@@ -149,6 +161,10 @@ class VideoFrameCollector(BaseCollector):
                     self._frames_analyzed += 1
                     self._tick += 1
                     payload = {**metrics, "frames_analyzed": self._frames_analyzed}
+                    if self.source == "simulate":
+                        # Stamp synthetic data so it can never masquerade as a
+                        # real camera downstream.
+                        payload["simulated"] = True
                     await self.emit({
                         "asset_id": self.asset_id,
                         "collector_type": "video",

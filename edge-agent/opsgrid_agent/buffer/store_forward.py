@@ -49,13 +49,46 @@ class StoreForwardBuffer:
         
         # Ensure directory exists
         self.buffer_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        # Initialize database
-        self._init_db()
-    
+
+        # Initialize database (quarantining a corrupt file rather than crashing)
+        self._init_db_with_recovery()
+
+    def _init_db_with_recovery(self):
+        """Initialize the DB; quarantine-and-recreate on corruption.
+
+        A power-cut mid-write can corrupt SQLite. Telemetry buffering must come
+        back up: the corrupt file is moved aside (kept for forensics/possible
+        manual salvage) and a fresh buffer is created — losing the buffered
+        backlog is preferable to an agent that can never start again.
+        """
+        try:
+            self._init_db()
+            with sqlite3.connect(self.buffer_path) as conn:
+                result = conn.execute("PRAGMA integrity_check").fetchone()
+            if result and result[0] != "ok":
+                raise sqlite3.DatabaseError(f"integrity_check: {result[0]}")
+        except sqlite3.DatabaseError as e:
+            quarantine = self.buffer_path.with_suffix(
+                f".corrupt-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
+            )
+            logger.error(
+                "buffer_corrupt_quarantining",
+                path=str(self.buffer_path), quarantine=str(quarantine), error=str(e),
+            )
+            try:
+                self.buffer_path.rename(quarantine)
+            except OSError:
+                self.buffer_path.unlink(missing_ok=True)
+            self._init_db()
+
     def _init_db(self):
         """Initialize SQLite database with required tables"""
         with sqlite3.connect(self.buffer_path) as conn:
+            # WAL survives crashes far better than the default rollback journal,
+            # and busy_timeout prevents spurious 'database is locked' failures
+            # between the async worker tasks sharing this file.
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=5000")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS messages (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -146,7 +179,41 @@ class StoreForwardBuffer:
                     asset_id=asset_id,
                     error=str(e)
                 )
+                # Disk-full is the common cause: reclaim space by pruning the
+                # oldest rows, then retry ONCE so the newest reading survives
+                # (dropping new data to keep old data is the wrong trade).
+                if "disk" in str(e).lower() or "full" in str(e).lower():
+                    try:
+                        self._prune_oldest_sync(500)
+                        with sqlite3.connect(self.buffer_path) as conn:
+                            conn.execute(
+                                """
+                                INSERT INTO messages
+                                (timestamp_edge, asset_id, topic, payload, sequence_num)
+                                VALUES (?, ?, ?, ?, ?)
+                                """,
+                                (timestamp_edge.isoformat(), asset_id, topic,
+                                 json.dumps(payload), sequence_num),
+                            )
+                            conn.commit()
+                        logger.warning("buffer_store_recovered_after_prune",
+                                       asset_id=asset_id)
+                        return True
+                    except sqlite3.Error as retry_err:
+                        logger.error("buffer_store_retry_failed",
+                                     asset_id=asset_id, error=str(retry_err))
                 return False
+
+    def _prune_oldest_sync(self, rows: int) -> None:
+        """Delete the N oldest buffered rows and reclaim the disk space."""
+        with sqlite3.connect(self.buffer_path) as conn:
+            conn.execute(
+                "DELETE FROM messages WHERE id IN "
+                "(SELECT id FROM messages ORDER BY created_at ASC LIMIT ?)",
+                (rows,),
+            )
+            conn.commit()
+            conn.execute("VACUUM")
 
     async def store_message(self, message: Dict[str, Any]) -> bool:
         """Adapter for coordinator message dicts -> store()."""

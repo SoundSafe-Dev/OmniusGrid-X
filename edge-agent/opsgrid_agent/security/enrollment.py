@@ -10,7 +10,9 @@ network and transport-agnostic (urllib default, or the agent's async client).
 ``post_fn(url, json_body, headers) -> (status_code, response_dict)``.
 """
 
+import hashlib
 import json as _json
+import os
 import urllib.request
 from typing import Callable, Dict, Optional, Tuple
 
@@ -76,8 +78,58 @@ class EnrollmentClient:
             raise EnrollmentError("enrollment response missing 'certificate'")
 
         ca_pem = resp.get("ca_certificate")
+        self._verify_issued_material(cert_pem, ca_pem)
         self.identity.store_certificate(
             cert_pem.encode("utf-8"),
             ca_pem.encode("utf-8") if ca_pem else None,
         )
         logger.info("agent_enrolled", agent_id=self.identity.agent_id)
+
+    def _verify_issued_material(self, cert_pem: str, ca_pem: Optional[str]) -> None:
+        """Verify the issued cert/CA BEFORE trusting and persisting them.
+
+        1. The certificate's public key must match the agent's own private key —
+           otherwise a tampered response could bind the agent to a key the
+           attacker controls (or simply brick the identity).
+        2. When ENROLLMENT_CA_FINGERPRINT is configured (sha256 hex of the CA
+           cert DER), the returned CA bundle must match it. The enrollment call
+           is the trust root for the whole fleet; the fingerprint pins it to the
+           operator-provisioned value instead of whatever the network returned.
+        """
+        from cryptography import x509
+        from cryptography.hazmat.primitives import serialization
+
+        try:
+            cert = x509.load_pem_x509_certificate(cert_pem.encode("utf-8"))
+        except Exception as e:
+            raise EnrollmentError(f"issued certificate is not valid PEM: {e}") from e
+
+        cert_pub = cert.public_key().public_bytes(
+            serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+        )
+        own_pub = self.identity.private_key.public_key().public_bytes(
+            serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+        )
+        if cert_pub != own_pub:
+            raise EnrollmentError(
+                "issued certificate public key does not match this agent's key"
+            )
+
+        pin = os.getenv("ENROLLMENT_CA_FINGERPRINT", "").strip().lower().replace(":", "")
+        if pin:
+            if not ca_pem:
+                raise EnrollmentError(
+                    "ENROLLMENT_CA_FINGERPRINT is set but the response carried no CA certificate"
+                )
+            try:
+                ca = x509.load_pem_x509_certificate(ca_pem.encode("utf-8"))
+            except Exception as e:
+                raise EnrollmentError(f"CA certificate is not valid PEM: {e}") from e
+            fingerprint = hashlib.sha256(
+                ca.public_bytes(serialization.Encoding.DER)
+            ).hexdigest()
+            if fingerprint != pin:
+                raise EnrollmentError(
+                    f"CA fingerprint mismatch: got {fingerprint}, pinned {pin} — "
+                    "possible enrollment interception"
+                )

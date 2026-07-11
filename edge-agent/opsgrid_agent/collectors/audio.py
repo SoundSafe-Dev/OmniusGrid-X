@@ -102,6 +102,16 @@ class AudioFeatureCollector(BaseCollector):
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
+        # See video.py: with EDGE_REQUIRE_EXPLICIT_SOURCES=true, an omitted
+        # source fails loud instead of silently synthesizing a demo tone.
+        import os
+        if "source" not in config and os.getenv(
+            "EDGE_REQUIRE_EXPLICIT_SOURCES", "false"
+        ).lower() == "true":
+            raise ValueError(
+                "audio collector requires an explicit 'source' "
+                "(EDGE_REQUIRE_EXPLICIT_SOURCES is enabled)"
+            )
         self.source = config.get("source", "simulate")
         self.sample_rate = int(config.get("sample_rate", 16000))
         self.frame_seconds = float(config.get("frame_seconds", 1.0))
@@ -148,6 +158,10 @@ class AudioFeatureCollector(BaseCollector):
             try:
                 samples = await asyncio.to_thread(self._capture)
                 features = extract_audio_features(samples, self.sample_rate)
+                if self.source == "simulate":
+                    # Stamp synthetic data so it can never masquerade as a
+                    # real microphone downstream.
+                    features["simulated"] = True
                 self._tick += 1
                 await self.emit({
                     "asset_id": self.asset_id,
