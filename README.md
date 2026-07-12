@@ -15,9 +15,38 @@
 
 ---
 
+## Quickstart
+
+```bash
+# 1. Create local env files from the templates
+make env            # copies .env.example -> .env for root/backend/frontend/edge-agent
+
+# 2. Start the stack (Redpanda, TimescaleDB, backend, frontend, observability)
+make up             # docker-compose up -d;  add tracing with `make tracing`
+
+# 3. Run the test suites
+make test           # backend + edge (pytest) + frontend (vitest)
+make e2e            # frontend Playwright smoke
+
+# Other handy targets
+make sdk            # regenerate the typed TS API client from the OpenAPI schema
+make help           # list all targets
+```
+
+Migrations: `python backend/scripts/migrate.py` (Postgres; `--status`,
+`--baseline`, `--rebaseline-drifted` for adopting existing databases).
+Production deploys: see [docs/deployment/DEPLOYMENT.md](docs/deployment/DEPLOYMENT.md)
+(compose-prod, Kubernetes, bare-metal edge, broker TLS).
+
+Backend: http://localhost:8000 (`/docs` for the API). Frontend: http://localhost:9999.
+Jaeger (with `make tracing`): http://localhost:16686. Copy and edit the `.env`
+files for real credentials — never commit them.
+
+---
+
 ## Overview
 
-OmniusGrid is a resilient manufacturing operations platform designed for Industry 4.0. It unifies data collection from diverse industrial equipment, provides real-time edge AI inference, and maintains secure cloud connectivity for model training and fleet-wide optimization.
+OmniusGrid is a resilient manufacturing operations platform designed for Industry 4.0. It correlates data from across the entire operation — industrial equipment on the factory floor (10 protocol collectors), audio/video sensors, fleet telematics (GeoTab), yard and transportation logistics, ERP systems (13 connectors), and unstructured business documents (spreadsheets, PDFs, images via the intake pipeline) — into one queryable, cross-correlated picture. On top of that substrate it provides real-time edge AI inference, an NLP correlation assistant, compliance registries with RAG-backed document search, and secure cloud connectivity for model training and fleet-wide optimization.
 
 ### Key Capabilities
 
@@ -29,8 +58,8 @@ OmniusGrid is a resilient manufacturing operations platform designed for Industr
 | **OEE Automation** | Automated OEE calculation from PackML states and telemetry part counting |
 | **Edge AI** | <100ms inference loops, TorchScript models, automated model lifecycle, graceful fallback |
 | **Observability** | Prometheus metrics, Loki logs, Grafana dashboards, TimescaleDB |
-| **Security** | mTLS device authentication, certificate generation, zero-trust networking, audit trails |
-| **DevOps** | GitHub Actions CI/CD, Kubernetes manifests (staging/production), auto-scaling |
+| **Security** | Agent enrollment with CA pinning, mTLS + proof-of-possession request signing, Redpanda broker mTLS, route-walk auth enforcement test, tamper-evident audit trails |
+| **DevOps** | GitHub Actions CI/CD with blocking gates (tsc/eslint/pytest/vitest), kustomize deploys, Kubernetes base incl. workers + db-migrate Job, checksum-tracked SQL migration runner |
 | **Operations** | K3s-orchestrated, Patroni HA, automatic disaster recovery |
 | **Logistics** | YMS/TMS with GeoTab telematics, detention billing, HOS compliance, dock-production sync, webhook processing |
 | **Task Management** | Kanban board with task grouping, assignment, approval workflows |
@@ -41,81 +70,71 @@ OmniusGrid is a resilient manufacturing operations platform designed for Industr
 
 ## Active Development & Team Progress
 
-> **Snapshot: July 5, 2026.** Both remotes (`origin` = SoundSafe-ai, `backup` = SoundSafe-Dev)
+> **Snapshot: July 12, 2026.** Both remotes (`origin` = SoundSafe-ai, `backup` = SoundSafe-Dev)
 > are in sync. This maps in-flight work to owners so contributors can coordinate and avoid
 > overlap. Branch tips move — treat this as a directory, not a record of exact commits.
 
-### Recently landed on `main`
+### Convergence branch — `hamad/converged-pre-main` (merge candidate)
 
-- **Edge protocol collectors** — EtherNet/IP, PROFINET, BACnet, and CAN bus fully implemented
-  (driver-backed, lazy imports, worker-thread I/O) and registered in `UnifiedCollectorCoordinator`
-  via an adapter; HTTP/REST collector activated (BaseCollector lifecycle fix). _(Hamad)_
-- **Backend port standardized on 8000** across compose/scripts/docs; README + glossary refreshed
-  to match the codebase. _(Hamad)_
-- **Intake cross-correlation** — PDF/DOCX/image parsing, shared-key detection, multi-tab workbook
-  correlation. _(Hamad)_
-- **Store-and-forward buffer fix** — the coordinator persisted collector readings via a
-  non-existent buffer method, silently dropping data whenever Kafka was down; fixed and
-  regression-tested. _(Hamad)_
+The integration branch for the next `main`: it merges every workstream
+(Hridyansh's OTA + tenant/RBAC hardening, Harsh's correlation-AI + MLOps +
+mobile/kanban, Hudson's RAG compliance-doc pipeline) and carries the completed
+**66-task hardening program** (fixed sprints FS-01..66, each sprint
+code-reviewed). ~178 commits ahead of `main`. Highlights:
 
-### Active branches
+- **Real mode is the default** — the frontend mock layer is opt-in
+  (`VITE_USE_MOCK=true`); every API client has a real backend path, bridged by
+  one prefix-gated snake↔camel transform seam instead of per-call converters.
+- **Auth actually enforced** — all routers gated; a route-walking test fails CI
+  by name on any route that answers anonymously; websocket auth rides
+  `Sec-WebSocket-Protocol` (tokens out of query strings/access logs);
+  `validate_settings` fail-fasts insecure production config (dev-token, open
+  registration, missing secrets).
+- **One schema, one migration path** — `backend/scripts/migrate.py`
+  (checksum-tracked, idempotent, baseline/rebaseline flows) applies the full
+  chain `001..033` on a clean Postgres for the first time in repo history;
+  UUIDs are native on Postgres everywhere (dialect-aware `UUIDString`, with a
+  guarded conversion migration for pre-existing databases); tests build their
+  schema through the same runner (tenant-isolation RLS suite runs against the
+  real chain).
+- **Edge security chain complete** — enrollment with CA pinning, mTLS,
+  proof-of-possession request signing with clock-skew recovery, quarantining
+  store-and-forward buffer, and a Redpanda **mTLS listener** (broker certs
+  issued by the same edge CA agents already trust; proven end-to-end incl.
+  certless-client rejection).
+- **Production deploy paths that work** — `docker-compose.prod.yml` (required
+  secrets, one-shot migration service, nginx-served SPA with same-origin
+  proxying), Kubernetes base with **all four workers + a db-migrate Job**
+  (migrations baked into the backend image), CI deploys via
+  `kustomize edit set image`, and blocking CI gates (tsc, eslint, pytest,
+  vitest, builds — all at zero).
+- **Sensor story finished** — audio/video collectors have real-capture config
+  templates + cutover guide (`docs/edge/SENSOR_CAPTURE.md`); AssetDetail
+  switches panes by `sensor_class` and renders live telemetry; the once-orphaned
+  chart suite is wired (or deleted).
+- **Product demo video** — Remotion compositions (4K + mobile 9:16) under
+  `frontend/video/` (`npm run video:*`; renders are not committed).
 
-| Branch | Owner | Status | Scope |
-|--------|-------|--------|-------|
-| `feature/gemma-correlation-ai` | Harsh | active | Correlation AI + intake: multi-XLSX cross-file YoY trends, safer spreadsheet profiling, data-driven "suggested questions". Bumps `torch≥2.4` / `transformers 5.x`. |
-| `HARSH-CONTRIBUTION` | Harsh | active (divergent) | Supervisor **mobile app**, Kanban fixes, demo/live API opt-in, backend schema fixes. Branched from an older base (large diff). |
-| `feature/RAG-Compliance-Doc-Pipeline` | Hudson (htreinen) | active | RAG compliance doc pipeline: SeaweedFS document-store client + S3 config. |
-| `hridyansh/tenant-isolation-middleware` | Hridyansh | ready to merge | JWT-derived org scoping on assets/telemetry (IDOR fix); new `core/tenant.py`. |
-| `hridyansh/edge-agent-retry-logic` | Hridyansh | ready to merge | Exponential backoff + circuit breaker for Modbus/MQTT/OPC-UA collectors (`resilience.py`). |
-| `hridyansh/edge-command-dispatch` | Hridyansh | active | Edge command-dispatch acknowledgements, atop RBAC / error-triage hardening. |
-| `hridyansh/integration-erp` | Hridyansh | active | ERP integration foundation + sync/alerting test hardening. |
-| `hridyansh/integration` | Hridyansh | umbrella | Combines Hridyansh's feature branches + backend hardening; integration/testing only. |
-| `hridyansh/package-renaming-fix` | Hridyansh | needs split | `omniusgrid_agent` → `opsgrid_agent` rename (currently bundled with unrelated deletions — extract a rename-only PR). |
-
-_Hridyansh's four multi-commit branches share a common backend-hardening base (RBAC, error triage,
-WebSocket protocol, Keycloak, feature-flag/bulk-op validation). The `htreinen` branch is stale —
-fully contained in `main`; Hudson's active work is on `feature/RAG-Compliance-Doc-Pipeline`._
+Deferred/flagged on this branch: k8s NetworkPolicies have no egress rules
+(only correct on non-enforcing CNIs); dependency-upgrade pass (npm audit
+criticals, fastapi 0.104→current) not started; 3 intake-lane tests fail
+pre-existing (owner: Harsh).
 
 ### Subsystem ownership — check here before starting work
 
 | Area | Active owner(s) | Notes |
 |------|-----------------|-------|
-| Correlation AI / NLP / intake / spreadsheet parsing | **Harsh** | Coordinate before touching `correlation_ai_engine.py`, `nlp_correlation.py`, intake services. |
-| Mobile app / Kanban / demo API | **Harsh** | `HARSH-CONTRIBUTION`. |
-| RAG / compliance doc store (SeaweedFS/S3) | **Hudson** | `feature/RAG-Compliance-Doc-Pipeline`. |
-| Tenant isolation / RBAC / security hardening | **Hridyansh** | `tenant-isolation-middleware` + hardening across integration branches. |
-| ERP integration | **Hridyansh** | `integration-erp`. |
-| Edge agent resilience / command dispatch | **Hridyansh** | Backoff/circuit-breaker on existing collectors + command acks. |
-| Package rename (`opsgrid_agent`) | **Hridyansh** | Scoped rename PR pending. |
-| Edge platform — collectors / coordinator / store-and-forward / observability / local analytics / deployment / CI / docs | **Hamad** | On `main` + the `hamad/fixed-sprints` program (below). |
+| Correlation AI / NLP / intake / spreadsheet parsing | **Harsh** | Coordinate before touching `correlation_ai_engine.py`, `nlp_correlation.py`, intake services. Also owns the 3 failing intake tests + scenario-builder import drift. |
+| Mobile app / Kanban / demo API | **Harsh** | Merged into the convergence branch; kanban/nlp files received mechanical-only fixes there (flagged in commit messages). |
+| MLOps (model registry + training) | **Harsh** | `model_registry` / `model_training_runs`. |
+| RAG / compliance doc store (SeaweedFS/S3) | **Hudson** | `feature/RAG-Compliance-Doc-Pipeline` (merged into convergence); containerization seam documented in `docs/RAG_CONTAINERIZATION.md`. |
+| Tenant isolation / RBAC / security hardening | **Hridyansh** | Merged; RLS now enforced through the canonical `app.current_org_id` GUC everywhere (incl. ERP tables). |
+| OTA / edge command dispatch / agent releases | **Hridyansh** | Rollout orchestrator + agent-side executor merged; `ota-rollout-worker` runs in compose + k8s. |
+| Everything else (edge platform, backend platform, frontend, deploy/CI, schema, docs) | **Hamad** | The convergence branch program above. |
 
-> ⚠️ **Known overlap — edge collector files.** `edge-agent/opsgrid_agent/collectors/{modbus,mqtt,opcua}*.py`
-> are touched by Hridyansh's `edge-agent-retry-logic` (adds backoff), his `package-renaming-fix`
-> (renames imports), **and** the new collector work already on `main` (lifecycle + adapter). Expect
-> merge conflicts there — sequence these merges deliberately and rebase before starting new collector work.
-
-### Hamad's working branch — `hamad/fixed-sprints`
-
-A large **additive** edge-platform hardening program (~13 commits, ~54 edge tests), ready to open as
-a PR. Everything is rename-independent (relative imports; new files or body-local edits) to avoid
-conflicts with Hridyansh's collector/rename branches. Highlights:
-
-- **Collectors production-complete** — config schema + validation + YAML loader (`COLLECTORS_FILE`);
-  optional PackML state mapping for the new collectors.
-- **Store-and-forward integrity** — enforced size cap (bounded ring) and dead-letter for
-  retry-exhausted messages; backfill now preserves `packml_state` (was dropped → broke backend OEE).
-- **Local analytics activated** — OEE, anomaly detection (z-score), and config-driven alerting, fed
-  from the collector message stream (previously dead modules).
-- **Edge observability** — Prometheus metrics (collectors, buffer, OEE, anomalies, alerts) on
-  `/metrics`, a `/healthz` endpoint, a scrape job, edge alert rules, and Grafana dashboards (edge +
-  backend/system).
-- **Deployment & CI** — docker-compose + Kubernetes manifests for the edge agent; edge-agent tests
-  wired into CI; backend OEE-calculator tests.
-
-_Deferred (flagged): enabling backend OEE at startup; full end-to-end runtime awaits Hridyansh's
-`opsgrid_agent` rename — this code is rename-independent._
-
----
+> ⚠️ The pre-convergence feature branches listed in older revisions of this
+> README are merged into `hamad/converged-pre-main`. Start new work from the
+> convergence branch (or `main` after it merges), not from those branches.
 
 ## Architecture
 
@@ -243,14 +262,17 @@ docker-compose exec timescaledb psql -U omniusgrid -d omniusgrid \
 
 ### Development Mode Authentication
 
-The application includes a development mode that bypasses normal authentication:
+Development builds include an auth bypass, gated on BOTH sides:
 
-- **Username**: `dev`
-- **Password**: Any password
-- **Backend**: Accepts `dev-token` as a valid Bearer token
-- **Frontend**: Automatically sets `dev-token` in localStorage when logging in with `dev` username
+- **Backend**: accepts `dev-token` as an admin Bearer token only while
+  `ALLOW_DEV_TOKEN=true` (the dev default). Production startup **fails fast**
+  if the flag is left on — the token is never valid in production.
+- **Frontend**: logging in with username `dev` (any password) uses the bypass
+  only in a dev build **and** with `VITE_DEV_MODE=true` set (see
+  `frontend/.env.example`). Production bundles can never enable it.
 
-This mode is intended for development and testing purposes only.
+For real-mode logins, register a user (dev only: `POST /api/v1/auth/register`,
+gated by `ALLOW_OPEN_REGISTRATION`) or seed demo data (`make seed-demo`).
 
 ### Local Development Setup
 
@@ -348,7 +370,7 @@ A: No rename in flight - this is a bug. The correct convention is `opsgrid_agent
 
 **Q: Kanban endpoints derive organization_id from the authenticated user, but assets.py and telemetry.py take it as a query parameter or skip it entirely. Is there a tenant isolation middleware or Postgres RLS policy I'm missing?**
 
-A: No, you're not missing anything - there is a security gap. No tenant isolation middleware or Postgres RLS policies exist. Kanban correctly derives `organization_id` from the authenticated user, but assets.py and telemetry.py accept `organization_id` as an optional query parameter without enforcing tenant isolation. This means an authenticated user could potentially query another organization's data by passing their `organization_id`. This needs to be fixed by adding middleware to automatically inject the user's `organization_id` and removing client-provided parameters.
+A: Assets and telemetry derive organization ownership from the authenticated user, not from client input. The canonical dependencies are ``get_tenant_org_id`` and ``get_tenant_db`` (implemented in ``app/core/tenant.py`` and imported through ``app/middleware/tenant_isolation.py``). Tenant-scoped endpoints declare ``org_id: UUID = Depends(get_tenant_org_id)`` and ``db: AsyncSession = Depends(get_tenant_db)``; the session configures PostgreSQL RLS via ``app.current_org_id``. Application queries still include explicit ``organization_id`` predicates. Cross-tenant asset and telemetry requests return ``404``. Client-provided ``organization_id`` values do not control tenant scope.
 
 ---
 
@@ -801,7 +823,7 @@ The Intake Cross-Correlation enhancement extends the intake system to support co
 
 **Database Schema Changes:**
 
-Migration `012_intake_cross_correlation.sql` adds:
+Migration `021_intake_cross_correlation.sql` adds:
 - `shared_keys` JSON column to `intake_items` and `session_data_sources`
 - `structure_metadata` JSON column for document structure info
 - `processing_time_seconds` INTEGER for actual processing time
@@ -1714,7 +1736,7 @@ sequenceDiagram
 - Sync status tracking
 - Connection testing and manual sync triggers
 
-**Database Schema** (`database/migrations/011_erp_integration_tables.sql`)
+**Database Schema** (`database/migrations/020_erp_integration_tables.sql`)
 - `erp_integration_events` - Event tracking with deduplication
 - `erp_data_mappings` - Field mapping configuration
 - `erp_sync_status` - Sync status tracking
