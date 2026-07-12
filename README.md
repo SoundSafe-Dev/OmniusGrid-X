@@ -46,7 +46,7 @@ files for real credentials — never commit them.
 
 ## Overview
 
-OmniusGrid is a resilient manufacturing operations platform designed for Industry 4.0. It correlates data from across the entire operation — industrial equipment on the factory floor (10 protocol collectors), audio/video sensors, fleet telematics (GeoTab), yard and transportation logistics, ERP systems (13 connectors), and unstructured business documents (spreadsheets, PDFs, images via the intake pipeline) — into one queryable, cross-correlated picture. On top of that substrate it provides real-time edge AI inference, an NLP correlation assistant, compliance registries with RAG-backed document search, and secure cloud connectivity for model training and fleet-wide optimization.
+OmniusGrid is a resilient manufacturing operations platform designed for Industry 4.0. It correlates data from across the entire operation, unstructured business documents (spreadsheets, PDFs, images via the intake pipeline), ERP systems (13 connectors), industrial equipment on the factory floor (10 protocol collectors), audio/video sensors, fleet telematics (GeoTab), and yard and transportation logistics, into one queryable, cross-correlated picture. On top of that substrate it provides real-time edge AI inference, an NLP correlation assistant, compliance registries with RAG-backed document search, and secure cloud connectivity for model training and fleet-wide optimization.
 
 ### Key Capabilities
 
