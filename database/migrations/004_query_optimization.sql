@@ -47,9 +47,17 @@ BEGIN
   END IF;
 END $$;
 
--- Grant access to monitoring role
-GRANT SELECT ON pg_stat_statements TO omniusgrid;
-GRANT SELECT ON slow_queries TO omniusgrid;
+-- Grant access to monitoring role (guarded: objects exist only when the
+-- pg_stat_statements extension installed)
+DO $$
+BEGIN
+  IF to_regclass('public.pg_stat_statements') IS NOT NULL THEN
+    GRANT SELECT ON pg_stat_statements TO omniusgrid;
+  END IF;
+  IF to_regclass('public.slow_queries') IS NOT NULL THEN
+    GRANT SELECT ON slow_queries TO omniusgrid;
+  END IF;
+END $$;
 
 -- Create function to reset query statistics
 CREATE OR REPLACE FUNCTION reset_query_stats()
@@ -147,8 +155,12 @@ BEGIN
   END IF;
 END $$;
 
--- Grant access to monitoring role
-GRANT SELECT ON query_performance_trends TO omniusgrid;
+DO $$
+BEGIN
+  IF to_regclass('public.query_performance_trends') IS NOT NULL THEN
+    GRANT SELECT ON query_performance_trends TO omniusgrid;
+  END IF;
+END $$;
 
 -- Create function to analyze query performance
 CREATE OR REPLACE FUNCTION analyze_query_performance()

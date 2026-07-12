@@ -17,10 +17,10 @@ CREATE TABLE IF NOT EXISTS api_keys (
 );
 
 -- Indexes
-CREATE INDEX idx_api_keys_organization ON api_keys(organization_id);
-CREATE INDEX idx_api_keys_key_hash ON api_keys(key_hash);
-CREATE INDEX idx_api_keys_key_prefix ON api_keys(key_prefix);
-CREATE INDEX idx_api_keys_is_active ON api_keys(is_active) WHERE is_active = true;
+CREATE INDEX IF NOT EXISTS idx_api_keys_organization ON api_keys(organization_id);
+CREATE INDEX IF NOT EXISTS idx_api_keys_key_hash ON api_keys(key_hash);
+CREATE INDEX IF NOT EXISTS idx_api_keys_key_prefix ON api_keys(key_prefix);
+CREATE INDEX IF NOT EXISTS idx_api_keys_is_active ON api_keys(is_active) WHERE is_active = true;
 
 -- Permissions table for RBAC
 CREATE TABLE IF NOT EXISTS permissions (
@@ -111,10 +111,10 @@ CREATE TABLE IF NOT EXISTS user_sessions (
 );
 
 -- Indexes for sessions
-CREATE INDEX idx_user_sessions_user ON user_sessions(user_id);
-CREATE INDEX idx_user_sessions_token_hash ON user_sessions(token_hash);
-CREATE INDEX idx_user_sessions_is_active ON user_sessions(is_active) WHERE is_active = true;
-CREATE INDEX idx_user_sessions_expires_at ON user_sessions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_sessions_token_hash ON user_sessions(token_hash);
+CREATE INDEX IF NOT EXISTS idx_user_sessions_is_active ON user_sessions(is_active) WHERE is_active = true;
+CREATE INDEX IF NOT EXISTS idx_user_sessions_expires_at ON user_sessions(expires_at);
 
 -- Consent records for GDPR
 CREATE TABLE IF NOT EXISTS consent_records (
@@ -130,8 +130,8 @@ CREATE TABLE IF NOT EXISTS consent_records (
     metadata JSONB DEFAULT '{}'
 );
 
-CREATE INDEX idx_consent_records_user ON consent_records(user_id);
-CREATE INDEX idx_consent_records_type ON consent_records(consent_type);
+CREATE INDEX IF NOT EXISTS idx_consent_records_user ON consent_records(user_id);
+CREATE INDEX IF NOT EXISTS idx_consent_records_type ON consent_records(consent_type);
 
 -- Data processing records for GDPR
 CREATE TABLE IF NOT EXISTS data_processing_records (
@@ -148,7 +148,7 @@ CREATE TABLE IF NOT EXISTS data_processing_records (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-CREATE INDEX idx_data_processing_org ON data_processing_records(organization_id);
+CREATE INDEX IF NOT EXISTS idx_data_processing_org ON data_processing_records(organization_id);
 
 -- Assets table for ISO 27001
 CREATE TABLE IF NOT EXISTS security_assets (
@@ -165,8 +165,8 @@ CREATE TABLE IF NOT EXISTS security_assets (
     metadata JSONB DEFAULT '{}'
 );
 
-CREATE INDEX idx_security_assets_type ON security_assets(asset_type);
-CREATE INDEX idx_security_assets_owner ON security_assets(owner_id);
+CREATE INDEX IF NOT EXISTS idx_security_assets_type ON security_assets(asset_type);
+CREATE INDEX IF NOT EXISTS idx_security_assets_owner ON security_assets(owner_id);
 
 -- Vendor risk assessments for SOC 2
 CREATE TABLE IF NOT EXISTS vendor_risk_assessments (
@@ -184,8 +184,8 @@ CREATE TABLE IF NOT EXISTS vendor_risk_assessments (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-CREATE INDEX idx_vendor_risk_vendor ON vendor_risk_assessments(vendor_name);
-CREATE INDEX idx_vendor_risk_level ON vendor_risk_assessments(risk_level);
+CREATE INDEX IF NOT EXISTS idx_vendor_risk_vendor ON vendor_risk_assessments(vendor_name);
+CREATE INDEX IF NOT EXISTS idx_vendor_risk_level ON vendor_risk_assessments(risk_level);
 
 -- Integration configurations
 CREATE TABLE IF NOT EXISTS integration_configurations (
@@ -204,9 +204,9 @@ CREATE TABLE IF NOT EXISTS integration_configurations (
     created_by UUID REFERENCES users(id)
 );
 
-CREATE INDEX idx_integration_config_type ON integration_configurations(integration_type);
-CREATE INDEX idx_integration_config_org ON integration_configurations(organization_id);
-CREATE INDEX idx_integration_config_active ON integration_configurations(is_active) WHERE is_active = true;
+CREATE INDEX IF NOT EXISTS idx_integration_config_type ON integration_configurations(integration_type);
+CREATE INDEX IF NOT EXISTS idx_integration_config_org ON integration_configurations(organization_id);
+CREATE INDEX IF NOT EXISTS idx_integration_config_active ON integration_configurations(is_active) WHERE is_active = true;
 
 -- Data residency tags
 CREATE TABLE IF NOT EXISTS data_residency_tags (
@@ -220,5 +220,5 @@ CREATE TABLE IF NOT EXISTS data_residency_tags (
     UNIQUE(table_name, record_id)
 );
 
-CREATE INDEX idx_data_residency_table ON data_residency_tags(table_name);
-CREATE INDEX idx_data_residency_region ON data_residency_tags(region);
+CREATE INDEX IF NOT EXISTS idx_data_residency_table ON data_residency_tags(table_name);
+CREATE INDEX IF NOT EXISTS idx_data_residency_region ON data_residency_tags(region);

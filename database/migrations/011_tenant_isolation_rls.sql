@@ -69,29 +69,22 @@
 
 BEGIN;
 
--- T: guarded — created later in the chain (030) on fresh builds;
--- 033_rls_backfill re-applies for tables this skips.
-DO $$
-BEGIN
-  IF to_regclass('public.T') IS NOT NULL THEN
-    -- -----------------------------------------------------------------------------
-    -- Helper macro pattern (documented, not implemented as a function — the
-    -- DDL below is intentionally repetitive so it's easy to grep / review).
-    --
-    -- For each strict-RLS table T:
-    --   ALTER TABLE T ENABLE ROW LEVEL SECURITY;
-    --   ALTER TABLE T FORCE  ROW LEVEL SECURITY;
-    --   DROP POLICY IF EXISTS tenant_isolation ON T;
-    --   CREATE POLICY tenant_isolation ON T
-    --     FOR ALL
-    --     USING      (organization_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid)
-    --     WITH CHECK (organization_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid);
-    --
-    -- For permissive-RLS tables the predicate is:
-    --   (organization_id IS NULL OR organization_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid)
-    -- -----------------------------------------------------------------------------
-  END IF;
-END $$;
+-- -----------------------------------------------------------------------------
+-- Helper macro pattern (documented, not implemented as a function — the
+-- DDL below is intentionally repetitive so it's easy to grep / review).
+--
+-- For each strict-RLS table T:
+--   ALTER TABLE T ENABLE ROW LEVEL SECURITY;
+--   ALTER TABLE T FORCE  ROW LEVEL SECURITY;
+--   DROP POLICY IF EXISTS tenant_isolation ON T;
+--   CREATE POLICY tenant_isolation ON T
+--     FOR ALL
+--     USING      (organization_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid)
+--     WITH CHECK (organization_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid);
+--
+-- For permissive-RLS tables the predicate is:
+--   (organization_id IS NULL OR organization_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid)
+-- -----------------------------------------------------------------------------
 
 
 -- =============================================================================
@@ -102,7 +95,13 @@ END $$;
 -- 033_rls_backfill re-applies for tables this skips.
 DO $$
 BEGIN
-  IF to_regclass('public.assets') IS NOT NULL THEN
+  IF to_regclass('public.assets') IS NOT NULL AND NOT EXISTS (
+    -- legacy varchar org column: the ::uuid policy qual would fail at
+    -- CREATE POLICY; 032 converts the type, 033 re-applies this policy
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='assets'
+      AND column_name='organization_id' AND data_type='character varying'
+  ) THEN
     -- ---- Core manufacturing ----
     ALTER TABLE assets ENABLE ROW LEVEL SECURITY;
     ALTER TABLE assets FORCE  ROW LEVEL SECURITY;
@@ -118,7 +117,13 @@ END $$;
 -- 033_rls_backfill re-applies for tables this skips.
 DO $$
 BEGIN
-  IF to_regclass('public.workcells') IS NOT NULL THEN
+  IF to_regclass('public.workcells') IS NOT NULL AND NOT EXISTS (
+    -- legacy varchar org column: the ::uuid policy qual would fail at
+    -- CREATE POLICY; 032 converts the type, 033 re-applies this policy
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='workcells'
+      AND column_name='organization_id' AND data_type='character varying'
+  ) THEN
     ALTER TABLE workcells ENABLE ROW LEVEL SECURITY;
     ALTER TABLE workcells FORCE  ROW LEVEL SECURITY;
     DROP POLICY IF EXISTS tenant_isolation ON workcells;
@@ -133,7 +138,13 @@ END $$;
 -- 033_rls_backfill re-applies for tables this skips.
 DO $$
 BEGIN
-  IF to_regclass('public.commands') IS NOT NULL THEN
+  IF to_regclass('public.commands') IS NOT NULL AND NOT EXISTS (
+    -- legacy varchar org column: the ::uuid policy qual would fail at
+    -- CREATE POLICY; 032 converts the type, 033 re-applies this policy
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='commands'
+      AND column_name='organization_id' AND data_type='character varying'
+  ) THEN
     ALTER TABLE commands ENABLE ROW LEVEL SECURITY;
     ALTER TABLE commands FORCE  ROW LEVEL SECURITY;
     DROP POLICY IF EXISTS tenant_isolation ON commands;
@@ -148,7 +159,13 @@ END $$;
 -- 033_rls_backfill re-applies for tables this skips.
 DO $$
 BEGIN
-  IF to_regclass('public.yard_trailers') IS NOT NULL THEN
+  IF to_regclass('public.yard_trailers') IS NOT NULL AND NOT EXISTS (
+    -- legacy varchar org column: the ::uuid policy qual would fail at
+    -- CREATE POLICY; 032 converts the type, 033 re-applies this policy
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='yard_trailers'
+      AND column_name='organization_id' AND data_type='character varying'
+  ) THEN
     -- ---- Yard management ----
     ALTER TABLE yard_trailers ENABLE ROW LEVEL SECURITY;
     ALTER TABLE yard_trailers FORCE  ROW LEVEL SECURITY;
@@ -164,7 +181,13 @@ END $$;
 -- 033_rls_backfill re-applies for tables this skips.
 DO $$
 BEGIN
-  IF to_regclass('public.dock_doors') IS NOT NULL THEN
+  IF to_regclass('public.dock_doors') IS NOT NULL AND NOT EXISTS (
+    -- legacy varchar org column: the ::uuid policy qual would fail at
+    -- CREATE POLICY; 032 converts the type, 033 re-applies this policy
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='dock_doors'
+      AND column_name='organization_id' AND data_type='character varying'
+  ) THEN
     ALTER TABLE dock_doors ENABLE ROW LEVEL SECURITY;
     ALTER TABLE dock_doors FORCE  ROW LEVEL SECURITY;
     DROP POLICY IF EXISTS tenant_isolation ON dock_doors;
@@ -179,7 +202,13 @@ END $$;
 -- 033_rls_backfill re-applies for tables this skips.
 DO $$
 BEGIN
-  IF to_regclass('public.yard_moves') IS NOT NULL THEN
+  IF to_regclass('public.yard_moves') IS NOT NULL AND NOT EXISTS (
+    -- legacy varchar org column: the ::uuid policy qual would fail at
+    -- CREATE POLICY; 032 converts the type, 033 re-applies this policy
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='yard_moves'
+      AND column_name='organization_id' AND data_type='character varying'
+  ) THEN
     ALTER TABLE yard_moves ENABLE ROW LEVEL SECURITY;
     ALTER TABLE yard_moves FORCE  ROW LEVEL SECURITY;
     DROP POLICY IF EXISTS tenant_isolation ON yard_moves;
@@ -194,7 +223,13 @@ END $$;
 -- 033_rls_backfill re-applies for tables this skips.
 DO $$
 BEGIN
-  IF to_regclass('public.driver_wait_times') IS NOT NULL THEN
+  IF to_regclass('public.driver_wait_times') IS NOT NULL AND NOT EXISTS (
+    -- legacy varchar org column: the ::uuid policy qual would fail at
+    -- CREATE POLICY; 032 converts the type, 033 re-applies this policy
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='driver_wait_times'
+      AND column_name='organization_id' AND data_type='character varying'
+  ) THEN
     ALTER TABLE driver_wait_times ENABLE ROW LEVEL SECURITY;
     ALTER TABLE driver_wait_times FORCE  ROW LEVEL SECURITY;
     DROP POLICY IF EXISTS tenant_isolation ON driver_wait_times;
@@ -209,7 +244,13 @@ END $$;
 -- 033_rls_backfill re-applies for tables this skips.
 DO $$
 BEGIN
-  IF to_regclass('public.yard_checkpoints') IS NOT NULL THEN
+  IF to_regclass('public.yard_checkpoints') IS NOT NULL AND NOT EXISTS (
+    -- legacy varchar org column: the ::uuid policy qual would fail at
+    -- CREATE POLICY; 032 converts the type, 033 re-applies this policy
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='yard_checkpoints'
+      AND column_name='organization_id' AND data_type='character varying'
+  ) THEN
     ALTER TABLE yard_checkpoints ENABLE ROW LEVEL SECURITY;
     ALTER TABLE yard_checkpoints FORCE  ROW LEVEL SECURITY;
     DROP POLICY IF EXISTS tenant_isolation ON yard_checkpoints;
@@ -224,7 +265,13 @@ END $$;
 -- 033_rls_backfill re-applies for tables this skips.
 DO $$
 BEGIN
-  IF to_regclass('public.carriers') IS NOT NULL THEN
+  IF to_regclass('public.carriers') IS NOT NULL AND NOT EXISTS (
+    -- legacy varchar org column: the ::uuid policy qual would fail at
+    -- CREATE POLICY; 032 converts the type, 033 re-applies this policy
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='carriers'
+      AND column_name='organization_id' AND data_type='character varying'
+  ) THEN
     -- ---- Transportation / logistics ----
     ALTER TABLE carriers ENABLE ROW LEVEL SECURITY;
     ALTER TABLE carriers FORCE  ROW LEVEL SECURITY;
@@ -240,7 +287,13 @@ END $$;
 -- 033_rls_backfill re-applies for tables this skips.
 DO $$
 BEGIN
-  IF to_regclass('public.drivers') IS NOT NULL THEN
+  IF to_regclass('public.drivers') IS NOT NULL AND NOT EXISTS (
+    -- legacy varchar org column: the ::uuid policy qual would fail at
+    -- CREATE POLICY; 032 converts the type, 033 re-applies this policy
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='drivers'
+      AND column_name='organization_id' AND data_type='character varying'
+  ) THEN
     ALTER TABLE drivers ENABLE ROW LEVEL SECURITY;
     ALTER TABLE drivers FORCE  ROW LEVEL SECURITY;
     DROP POLICY IF EXISTS tenant_isolation ON drivers;
@@ -255,7 +308,13 @@ END $$;
 -- 033_rls_backfill re-applies for tables this skips.
 DO $$
 BEGIN
-  IF to_regclass('public.shipments') IS NOT NULL THEN
+  IF to_regclass('public.shipments') IS NOT NULL AND NOT EXISTS (
+    -- legacy varchar org column: the ::uuid policy qual would fail at
+    -- CREATE POLICY; 032 converts the type, 033 re-applies this policy
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='shipments'
+      AND column_name='organization_id' AND data_type='character varying'
+  ) THEN
     ALTER TABLE shipments ENABLE ROW LEVEL SECURITY;
     ALTER TABLE shipments FORCE  ROW LEVEL SECURITY;
     DROP POLICY IF EXISTS tenant_isolation ON shipments;
@@ -270,7 +329,13 @@ END $$;
 -- 033_rls_backfill re-applies for tables this skips.
 DO $$
 BEGIN
-  IF to_regclass('public.routes') IS NOT NULL THEN
+  IF to_regclass('public.routes') IS NOT NULL AND NOT EXISTS (
+    -- legacy varchar org column: the ::uuid policy qual would fail at
+    -- CREATE POLICY; 032 converts the type, 033 re-applies this policy
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='routes'
+      AND column_name='organization_id' AND data_type='character varying'
+  ) THEN
     ALTER TABLE routes ENABLE ROW LEVEL SECURITY;
     ALTER TABLE routes FORCE  ROW LEVEL SECURITY;
     DROP POLICY IF EXISTS tenant_isolation ON routes;
@@ -285,7 +350,13 @@ END $$;
 -- 033_rls_backfill re-applies for tables this skips.
 DO $$
 BEGIN
-  IF to_regclass('public.load_plans') IS NOT NULL THEN
+  IF to_regclass('public.load_plans') IS NOT NULL AND NOT EXISTS (
+    -- legacy varchar org column: the ::uuid policy qual would fail at
+    -- CREATE POLICY; 032 converts the type, 033 re-applies this policy
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='load_plans'
+      AND column_name='organization_id' AND data_type='character varying'
+  ) THEN
     ALTER TABLE load_plans ENABLE ROW LEVEL SECURITY;
     ALTER TABLE load_plans FORCE  ROW LEVEL SECURITY;
     DROP POLICY IF EXISTS tenant_isolation ON load_plans;
@@ -300,7 +371,13 @@ END $$;
 -- 033_rls_backfill re-applies for tables this skips.
 DO $$
 BEGIN
-  IF to_regclass('public.freight_charges') IS NOT NULL THEN
+  IF to_regclass('public.freight_charges') IS NOT NULL AND NOT EXISTS (
+    -- legacy varchar org column: the ::uuid policy qual would fail at
+    -- CREATE POLICY; 032 converts the type, 033 re-applies this policy
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='freight_charges'
+      AND column_name='organization_id' AND data_type='character varying'
+  ) THEN
     ALTER TABLE freight_charges ENABLE ROW LEVEL SECURITY;
     ALTER TABLE freight_charges FORCE  ROW LEVEL SECURITY;
     DROP POLICY IF EXISTS tenant_isolation ON freight_charges;
@@ -315,7 +392,13 @@ END $$;
 -- 033_rls_backfill re-applies for tables this skips.
 DO $$
 BEGIN
-  IF to_regclass('public.dock_appointments') IS NOT NULL THEN
+  IF to_regclass('public.dock_appointments') IS NOT NULL AND NOT EXISTS (
+    -- legacy varchar org column: the ::uuid policy qual would fail at
+    -- CREATE POLICY; 032 converts the type, 033 re-applies this policy
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='dock_appointments'
+      AND column_name='organization_id' AND data_type='character varying'
+  ) THEN
     ALTER TABLE dock_appointments ENABLE ROW LEVEL SECURITY;
     ALTER TABLE dock_appointments FORCE  ROW LEVEL SECURITY;
     DROP POLICY IF EXISTS tenant_isolation ON dock_appointments;
@@ -330,7 +413,13 @@ END $$;
 -- 033_rls_backfill re-applies for tables this skips.
 DO $$
 BEGIN
-  IF to_regclass('public.truck_asset_correlations') IS NOT NULL THEN
+  IF to_regclass('public.truck_asset_correlations') IS NOT NULL AND NOT EXISTS (
+    -- legacy varchar org column: the ::uuid policy qual would fail at
+    -- CREATE POLICY; 032 converts the type, 033 re-applies this policy
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='truck_asset_correlations'
+      AND column_name='organization_id' AND data_type='character varying'
+  ) THEN
     ALTER TABLE truck_asset_correlations ENABLE ROW LEVEL SECURITY;
     ALTER TABLE truck_asset_correlations FORCE  ROW LEVEL SECURITY;
     DROP POLICY IF EXISTS tenant_isolation ON truck_asset_correlations;
@@ -345,7 +434,13 @@ END $$;
 -- 033_rls_backfill re-applies for tables this skips.
 DO $$
 BEGIN
-  IF to_regclass('public.load_quality_logs') IS NOT NULL THEN
+  IF to_regclass('public.load_quality_logs') IS NOT NULL AND NOT EXISTS (
+    -- legacy varchar org column: the ::uuid policy qual would fail at
+    -- CREATE POLICY; 032 converts the type, 033 re-applies this policy
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='load_quality_logs'
+      AND column_name='organization_id' AND data_type='character varying'
+  ) THEN
     ALTER TABLE load_quality_logs ENABLE ROW LEVEL SECURITY;
     ALTER TABLE load_quality_logs FORCE  ROW LEVEL SECURITY;
     DROP POLICY IF EXISTS tenant_isolation ON load_quality_logs;
@@ -360,7 +455,13 @@ END $$;
 -- 033_rls_backfill re-applies for tables this skips.
 DO $$
 BEGIN
-  IF to_regclass('public.task_boards') IS NOT NULL THEN
+  IF to_regclass('public.task_boards') IS NOT NULL AND NOT EXISTS (
+    -- legacy varchar org column: the ::uuid policy qual would fail at
+    -- CREATE POLICY; 032 converts the type, 033 re-applies this policy
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='task_boards'
+      AND column_name='organization_id' AND data_type='character varying'
+  ) THEN
     -- ---- Kanban / task management ----
     ALTER TABLE task_boards ENABLE ROW LEVEL SECURITY;
     ALTER TABLE task_boards FORCE  ROW LEVEL SECURITY;
@@ -376,7 +477,13 @@ END $$;
 -- 033_rls_backfill re-applies for tables this skips.
 DO $$
 BEGIN
-  IF to_regclass('public.task_rules') IS NOT NULL THEN
+  IF to_regclass('public.task_rules') IS NOT NULL AND NOT EXISTS (
+    -- legacy varchar org column: the ::uuid policy qual would fail at
+    -- CREATE POLICY; 032 converts the type, 033 re-applies this policy
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='task_rules'
+      AND column_name='organization_id' AND data_type='character varying'
+  ) THEN
     ALTER TABLE task_rules ENABLE ROW LEVEL SECURITY;
     ALTER TABLE task_rules FORCE  ROW LEVEL SECURITY;
     DROP POLICY IF EXISTS tenant_isolation ON task_rules;
@@ -391,7 +498,13 @@ END $$;
 -- 033_rls_backfill re-applies for tables this skips.
 DO $$
 BEGIN
-  IF to_regclass('public.actionable_registries') IS NOT NULL THEN
+  IF to_regclass('public.actionable_registries') IS NOT NULL AND NOT EXISTS (
+    -- legacy varchar org column: the ::uuid policy qual would fail at
+    -- CREATE POLICY; 032 converts the type, 033 re-applies this policy
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='actionable_registries'
+      AND column_name='organization_id' AND data_type='character varying'
+  ) THEN
     ALTER TABLE actionable_registries ENABLE ROW LEVEL SECURITY;
     ALTER TABLE actionable_registries FORCE  ROW LEVEL SECURITY;
     DROP POLICY IF EXISTS tenant_isolation ON actionable_registries;
@@ -406,7 +519,13 @@ END $$;
 -- 033_rls_backfill re-applies for tables this skips.
 DO $$
 BEGIN
-  IF to_regclass('public.data_correlations') IS NOT NULL THEN
+  IF to_regclass('public.data_correlations') IS NOT NULL AND NOT EXISTS (
+    -- legacy varchar org column: the ::uuid policy qual would fail at
+    -- CREATE POLICY; 032 converts the type, 033 re-applies this policy
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='data_correlations'
+      AND column_name='organization_id' AND data_type='character varying'
+  ) THEN
     -- ---- Correlation / analysis ----
     ALTER TABLE data_correlations ENABLE ROW LEVEL SECURITY;
     ALTER TABLE data_correlations FORCE  ROW LEVEL SECURITY;
@@ -422,7 +541,13 @@ END $$;
 -- 033_rls_backfill re-applies for tables this skips.
 DO $$
 BEGIN
-  IF to_regclass('public.analysis_sessions') IS NOT NULL THEN
+  IF to_regclass('public.analysis_sessions') IS NOT NULL AND NOT EXISTS (
+    -- legacy varchar org column: the ::uuid policy qual would fail at
+    -- CREATE POLICY; 032 converts the type, 033 re-applies this policy
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='analysis_sessions'
+      AND column_name='organization_id' AND data_type='character varying'
+  ) THEN
     ALTER TABLE analysis_sessions ENABLE ROW LEVEL SECURITY;
     ALTER TABLE analysis_sessions FORCE  ROW LEVEL SECURITY;
     DROP POLICY IF EXISTS tenant_isolation ON analysis_sessions;
@@ -437,7 +562,13 @@ END $$;
 -- 033_rls_backfill re-applies for tables this skips.
 DO $$
 BEGIN
-  IF to_regclass('public.intake_items') IS NOT NULL THEN
+  IF to_regclass('public.intake_items') IS NOT NULL AND NOT EXISTS (
+    -- legacy varchar org column: the ::uuid policy qual would fail at
+    -- CREATE POLICY; 032 converts the type, 033 re-applies this policy
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='intake_items'
+      AND column_name='organization_id' AND data_type='character varying'
+  ) THEN
     ALTER TABLE intake_items ENABLE ROW LEVEL SECURITY;
     ALTER TABLE intake_items FORCE  ROW LEVEL SECURITY;
     DROP POLICY IF EXISTS tenant_isolation ON intake_items;
@@ -461,7 +592,13 @@ END $$;
 -- 033_rls_backfill re-applies for tables this skips.
 DO $$
 BEGIN
-  IF to_regclass('public.geotab_trips') IS NOT NULL THEN
+  IF to_regclass('public.geotab_trips') IS NOT NULL AND NOT EXISTS (
+    -- legacy varchar org column: the ::uuid policy qual would fail at
+    -- CREATE POLICY; 032 converts the type, 033 re-applies this policy
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='geotab_trips'
+      AND column_name='organization_id' AND data_type='character varying'
+  ) THEN
     ALTER TABLE geotab_trips ENABLE ROW LEVEL SECURITY;
     ALTER TABLE geotab_trips FORCE  ROW LEVEL SECURITY;
     DROP POLICY IF EXISTS tenant_isolation ON geotab_trips;
@@ -478,7 +615,13 @@ END $$;
 -- 033_rls_backfill re-applies for tables this skips.
 DO $$
 BEGIN
-  IF to_regclass('public.geotab_diagnostics') IS NOT NULL THEN
+  IF to_regclass('public.geotab_diagnostics') IS NOT NULL AND NOT EXISTS (
+    -- legacy varchar org column: the ::uuid policy qual would fail at
+    -- CREATE POLICY; 032 converts the type, 033 re-applies this policy
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='geotab_diagnostics'
+      AND column_name='organization_id' AND data_type='character varying'
+  ) THEN
     ALTER TABLE geotab_diagnostics ENABLE ROW LEVEL SECURITY;
     ALTER TABLE geotab_diagnostics FORCE  ROW LEVEL SECURITY;
     DROP POLICY IF EXISTS tenant_isolation ON geotab_diagnostics;
@@ -495,7 +638,13 @@ END $$;
 -- 033_rls_backfill re-applies for tables this skips.
 DO $$
 BEGIN
-  IF to_regclass('public.geotab_exceptions') IS NOT NULL THEN
+  IF to_regclass('public.geotab_exceptions') IS NOT NULL AND NOT EXISTS (
+    -- legacy varchar org column: the ::uuid policy qual would fail at
+    -- CREATE POLICY; 032 converts the type, 033 re-applies this policy
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='geotab_exceptions'
+      AND column_name='organization_id' AND data_type='character varying'
+  ) THEN
     ALTER TABLE geotab_exceptions ENABLE ROW LEVEL SECURITY;
     ALTER TABLE geotab_exceptions FORCE  ROW LEVEL SECURITY;
     DROP POLICY IF EXISTS tenant_isolation ON geotab_exceptions;
@@ -512,7 +661,13 @@ END $$;
 -- 033_rls_backfill re-applies for tables this skips.
 DO $$
 BEGIN
-  IF to_regclass('public.audit_logs') IS NOT NULL THEN
+  IF to_regclass('public.audit_logs') IS NOT NULL AND NOT EXISTS (
+    -- legacy varchar org column: the ::uuid policy qual would fail at
+    -- CREATE POLICY; 032 converts the type, 033 re-applies this policy
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='audit_logs'
+      AND column_name='organization_id' AND data_type='character varying'
+  ) THEN
     ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
     ALTER TABLE audit_logs FORCE  ROW LEVEL SECURITY;
     DROP POLICY IF EXISTS tenant_isolation ON audit_logs;
@@ -529,7 +684,13 @@ END $$;
 -- 033_rls_backfill re-applies for tables this skips.
 DO $$
 BEGIN
-  IF to_regclass('public.data_processing_records') IS NOT NULL THEN
+  IF to_regclass('public.data_processing_records') IS NOT NULL AND NOT EXISTS (
+    -- legacy varchar org column: the ::uuid policy qual would fail at
+    -- CREATE POLICY; 032 converts the type, 033 re-applies this policy
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='data_processing_records'
+      AND column_name='organization_id' AND data_type='character varying'
+  ) THEN
     ALTER TABLE data_processing_records ENABLE ROW LEVEL SECURITY;
     ALTER TABLE data_processing_records FORCE  ROW LEVEL SECURITY;
     DROP POLICY IF EXISTS tenant_isolation ON data_processing_records;
@@ -546,7 +707,13 @@ END $$;
 -- 033_rls_backfill re-applies for tables this skips.
 DO $$
 BEGIN
-  IF to_regclass('public.integration_configurations') IS NOT NULL THEN
+  IF to_regclass('public.integration_configurations') IS NOT NULL AND NOT EXISTS (
+    -- legacy varchar org column: the ::uuid policy qual would fail at
+    -- CREATE POLICY; 032 converts the type, 033 re-applies this policy
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='integration_configurations'
+      AND column_name='organization_id' AND data_type='character varying'
+  ) THEN
     ALTER TABLE integration_configurations ENABLE ROW LEVEL SECURITY;
     ALTER TABLE integration_configurations FORCE  ROW LEVEL SECURITY;
     DROP POLICY IF EXISTS tenant_isolation ON integration_configurations;

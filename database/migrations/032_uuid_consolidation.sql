@@ -541,6 +541,541 @@ BEGIN
     END LOOP;
 END $$;
 
+-- 1b. Views over conversion tables block ALTER COLUMN TYPE. Save their
+--     definitions, drop them, and recreate at the end (section 4). Runs only
+--     when a conversion is actually pending.
+DO $$
+DECLARE
+    r RECORD;
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns c
+        WHERE c.table_schema = 'public' AND c.data_type = 'character varying'
+          AND (c.table_name, c.column_name) IN (
+            ('actionable_registries', 'assigned_owner_id'),
+            ('actionable_registries', 'assigned_team_id'),
+            ('actionable_registries', 'created_by'),
+            ('actionable_registries', 'id'),
+            ('actionable_registries', 'organization_id'),
+            ('actionable_registry_items', 'id'),
+            ('actionable_registry_items', 'registry_id'),
+            ('actionable_registry_items', 'related_task_id'),
+            ('agent_releases', 'created_by'),
+            ('agent_releases', 'id'),
+            ('agent_releases', 'organization_id'),
+            ('agent_rollout_events', 'asset_id'),
+            ('agent_rollout_events', 'id'),
+            ('agent_rollout_events', 'organization_id'),
+            ('agent_rollout_events', 'rollout_id'),
+            ('agent_rollout_targets', 'asset_id'),
+            ('agent_rollout_targets', 'id'),
+            ('agent_rollout_targets', 'organization_id'),
+            ('agent_rollout_targets', 'rollout_id'),
+            ('agent_rollouts', 'created_by'),
+            ('agent_rollouts', 'id'),
+            ('agent_rollouts', 'organization_id'),
+            ('agent_rollouts', 'release_id'),
+            ('alarms', 'asset_id'),
+            ('alarms', 'id'),
+            ('analysis_sessions', 'id'),
+            ('analysis_sessions', 'organization_id'),
+            ('analysis_sessions', 'user_id'),
+            ('api_keys', 'created_by'),
+            ('api_keys', 'id'),
+            ('api_keys', 'organization_id'),
+            ('api_keys', 'revoked_by'),
+            ('asset_types', 'id'),
+            ('assets', 'asset_type_id'),
+            ('assets', 'id'),
+            ('assets', 'organization_id'),
+            ('assets', 'workcell_id'),
+            ('audit_logs', 'id'),
+            ('audit_logs', 'organization_id'),
+            ('audit_logs', 'user_id'),
+            ('carriers', 'id'),
+            ('carriers', 'organization_id'),
+            ('commands', 'asset_id'),
+            ('commands', 'id'),
+            ('commands', 'issued_by'),
+            ('commands', 'organization_id'),
+            ('compliance_report_jobs', 'id'),
+            ('compliance_report_jobs', 'organization_id'),
+            ('compliance_report_jobs', 'requested_by'),
+            ('compliance_report_jobs', 'schedule_id'),
+            ('consent_records', 'id'),
+            ('consent_records', 'user_id'),
+            ('data_correlations', 'created_by'),
+            ('data_correlations', 'id'),
+            ('data_correlations', 'organization_id'),
+            ('data_correlations', 'source_id'),
+            ('data_correlations', 'target_id'),
+            ('data_processing_records', 'id'),
+            ('data_processing_records', 'organization_id'),
+            ('data_residency_tags', 'id'),
+            ('data_residency_tags', 'tagged_by'),
+            ('dock_appointments', 'carrier_id'),
+            ('dock_appointments', 'dock_door_id'),
+            ('dock_appointments', 'driver_id'),
+            ('dock_appointments', 'id'),
+            ('dock_appointments', 'operation_id'),
+            ('dock_appointments', 'organization_id'),
+            ('dock_appointments', 'shipment_id'),
+            ('dock_appointments', 'trailer_id'),
+            ('dock_doors', 'current_trailer_id'),
+            ('dock_doors', 'id'),
+            ('dock_doors', 'organization_id'),
+            ('driver_wait_times', 'driver_id'),
+            ('driver_wait_times', 'id'),
+            ('driver_wait_times', 'organization_id'),
+            ('driver_wait_times', 'trailer_id'),
+            ('drivers', 'carrier_id'),
+            ('drivers', 'id'),
+            ('drivers', 'organization_id'),
+            ('erp_correlations', 'erp_event_id'),
+            ('erp_correlations', 'id'),
+            ('erp_correlations', 'organization_id'),
+            ('erp_correlations', 'sensor_event_id'),
+            ('erp_data_mappings', 'id'),
+            ('erp_data_mappings', 'integration_id'),
+            ('erp_data_mappings', 'organization_id'),
+            ('erp_entities', 'id'),
+            ('erp_entities', 'integration_id'),
+            ('erp_entities', 'organization_id'),
+            ('erp_integration_events', 'id'),
+            ('erp_integration_events', 'integration_id'),
+            ('erp_integration_events', 'organization_id'),
+            ('erp_sync_status', 'id'),
+            ('erp_sync_status', 'integration_id'),
+            ('erp_sync_status', 'organization_id'),
+            ('error_events', 'organization_id'),
+            ('error_events', 'status_changed_by'),
+            ('export_delivery_jobs', 'id'),
+            ('export_delivery_jobs', 'organization_id'),
+            ('export_delivery_jobs', 'requested_by'),
+            ('export_delivery_jobs', 'schedule_id'),
+            ('export_delivery_jobs', 'template_id'),
+            ('export_templates', 'created_by'),
+            ('export_templates', 'id'),
+            ('export_templates', 'organization_id'),
+            ('freight_charges', 'carrier_id'),
+            ('freight_charges', 'id'),
+            ('freight_charges', 'organization_id'),
+            ('freight_charges', 'shipment_id'),
+            ('geofence_alerts', 'id'),
+            ('geofence_zones', 'id'),
+            ('geotab_diagnostics', 'id'),
+            ('geotab_diagnostics', 'organization_id'),
+            ('geotab_exceptions', 'acknowledged_by'),
+            ('geotab_exceptions', 'driver_id'),
+            ('geotab_exceptions', 'id'),
+            ('geotab_exceptions', 'organization_id'),
+            ('geotab_trips', 'driver_id'),
+            ('geotab_trips', 'id'),
+            ('geotab_trips', 'organization_id'),
+            ('intake_items', 'id'),
+            ('intake_items', 'organization_id'),
+            ('intake_items', 'user_id'),
+            ('integration_configurations', 'created_by'),
+            ('integration_configurations', 'id'),
+            ('integration_configurations', 'organization_id'),
+            ('load_plans', 'id'),
+            ('load_plans', 'organization_id'),
+            ('load_plans', 'shipment_id'),
+            ('load_plans', 'trailer_id'),
+            ('load_quality_logs', 'asset_id'),
+            ('load_quality_logs', 'id'),
+            ('load_quality_logs', 'operation_id'),
+            ('load_quality_logs', 'organization_id'),
+            ('load_quality_logs', 'root_cause_asset'),
+            ('load_quality_logs', 'root_cause_operation'),
+            ('load_quality_logs', 'shipment_id'),
+            ('load_quality_logs', 'trailer_id'),
+            ('maintenance_schedules', 'id'),
+            ('model_registry', 'created_by'),
+            ('model_registry', 'id'),
+            ('model_registry', 'organization_id'),
+            ('model_registry', 'training_run_id'),
+            ('model_training_runs', 'created_by'),
+            ('model_training_runs', 'id'),
+            ('model_training_runs', 'organization_id'),
+            ('model_training_runs', 'produced_model_id'),
+            ('notification_deliveries', 'id'),
+            ('notification_deliveries', 'organization_id'),
+            ('notification_deliveries', 'subscription_id'),
+            ('notification_subscriptions', 'asset_id'),
+            ('notification_subscriptions', 'id'),
+            ('notification_subscriptions', 'organization_id'),
+            ('operations', 'asset_id'),
+            ('operations', 'id'),
+            ('organizations', 'id'),
+            ('packml_states', 'asset_id'),
+            ('packml_states', 'id'),
+            ('permissions', 'id'),
+            ('repair_orders', 'id'),
+            ('role_permissions', 'id'),
+            ('role_permissions', 'permission_id'),
+            ('routes', 'id'),
+            ('routes', 'organization_id'),
+            ('scheduled_compliance_reports', 'created_by'),
+            ('scheduled_compliance_reports', 'id'),
+            ('scheduled_compliance_reports', 'organization_id'),
+            ('scheduled_exports', 'created_by'),
+            ('scheduled_exports', 'id'),
+            ('scheduled_exports', 'organization_id'),
+            ('scheduled_exports', 'template_id'),
+            ('security_assets', 'id'),
+            ('security_assets', 'organization_id'),
+            ('security_assets', 'owner_id'),
+            ('session_data_sources', 'id'),
+            ('session_data_sources', 'session_id'),
+            ('session_messages', 'id'),
+            ('session_messages', 'session_id'),
+            ('shipments', 'carrier_id'),
+            ('shipments', 'driver_id'),
+            ('shipments', 'id'),
+            ('shipments', 'organization_id'),
+            ('shipments', 'route_id'),
+            ('shipments', 'trailer_id'),
+            ('task_boards', 'id'),
+            ('task_boards', 'organization_id'),
+            ('task_columns', 'board_id'),
+            ('task_columns', 'id'),
+            ('task_comments', 'id'),
+            ('task_comments', 'task_id'),
+            ('task_comments', 'user_id'),
+            ('task_escalations', 'id'),
+            ('task_escalations', 'rule_id'),
+            ('task_escalations', 'task_id'),
+            ('task_rules', 'created_by'),
+            ('task_rules', 'id'),
+            ('task_rules', 'organization_id'),
+            ('task_rules', 'specific_assignee_id'),
+            ('task_rules', 'target_board_id'),
+            ('task_rules', 'target_column_id'),
+            ('task_timers', 'id'),
+            ('task_timers', 'task_id'),
+            ('task_timers', 'user_id'),
+            ('tasks', 'approved_by'),
+            ('tasks', 'asset_id'),
+            ('tasks', 'assigned_by'),
+            ('tasks', 'assigned_to'),
+            ('tasks', 'board_id'),
+            ('tasks', 'column_id'),
+            ('tasks', 'completed_by'),
+            ('tasks', 'created_by'),
+            ('tasks', 'id'),
+            ('tasks', 'operation_id'),
+            ('tasks', 'parent_task_id'),
+            ('tasks', 'rule_id'),
+            ('telemetry', 'asset_id'),
+            ('truck_asset_correlations', 'asset_id'),
+            ('truck_asset_correlations', 'id'),
+            ('truck_asset_correlations', 'operation_id'),
+            ('truck_asset_correlations', 'organization_id'),
+            ('truck_asset_correlations', 'shipment_id'),
+            ('truck_asset_correlations', 'trailer_id'),
+            ('user_sessions', 'id'),
+            ('user_sessions', 'user_id'),
+            ('users', 'id'),
+            ('users', 'organization_id'),
+            ('vehicles', 'id'),
+            ('vendor_risk_assessments', 'assessor_id'),
+            ('vendor_risk_assessments', 'id'),
+            ('vendor_risk_assessments', 'organization_id'),
+            ('workcells', 'id'),
+            ('workcells', 'organization_id'),
+            ('yard_checkpoints', 'id'),
+            ('yard_checkpoints', 'organization_id'),
+            ('yard_checkpoints', 'trailer_id'),
+            ('yard_moves', 'id'),
+            ('yard_moves', 'jockey_driver_id'),
+            ('yard_moves', 'organization_id'),
+            ('yard_moves', 'trailer_id'),
+            ('yard_trailers', 'carrier_id'),
+            ('yard_trailers', 'dock_door_id'),
+            ('yard_trailers', 'driver_id'),
+            ('yard_trailers', 'id'),
+            ('yard_trailers', 'organization_id'),
+            ('yard_trailers', 'shipment_id')
+          )
+    ) AND NOT EXISTS (
+        -- reverse conversions (section 2b) also need dependent views gone
+        SELECT 1 FROM information_schema.columns c
+        WHERE c.table_schema = 'public' AND c.data_type = 'uuid'
+          AND (c.table_name, c.column_name) IN (
+            ('audit_logs', 'resource_id'), ('data_residency_tags', 'record_id')
+          )
+    ) THEN
+        RETURN;  -- nothing to convert; leave views alone
+    END IF;
+    CREATE TABLE IF NOT EXISTS _uuid_consolidation_saved_views (
+        viewname text PRIMARY KEY,
+        definition text NOT NULL
+    );
+    FOR r IN
+        SELECT DISTINCT v.viewname
+        FROM pg_views v
+        WHERE v.schemaname = 'public'
+          AND EXISTS (
+            SELECT 1 FROM information_schema.view_column_usage u
+            WHERE u.view_schema = 'public' AND u.view_name = v.viewname
+              AND u.table_schema = 'public'
+              AND (u.table_name, u.column_name) IN (
+                ('actionable_registries', 'assigned_owner_id'),
+            ('actionable_registries', 'assigned_team_id'),
+            ('actionable_registries', 'created_by'),
+            ('actionable_registries', 'id'),
+            ('actionable_registries', 'organization_id'),
+            ('actionable_registry_items', 'id'),
+            ('actionable_registry_items', 'registry_id'),
+            ('actionable_registry_items', 'related_task_id'),
+            ('agent_releases', 'created_by'),
+            ('agent_releases', 'id'),
+            ('agent_releases', 'organization_id'),
+            ('agent_rollout_events', 'asset_id'),
+            ('agent_rollout_events', 'id'),
+            ('agent_rollout_events', 'organization_id'),
+            ('agent_rollout_events', 'rollout_id'),
+            ('agent_rollout_targets', 'asset_id'),
+            ('agent_rollout_targets', 'id'),
+            ('agent_rollout_targets', 'organization_id'),
+            ('agent_rollout_targets', 'rollout_id'),
+            ('agent_rollouts', 'created_by'),
+            ('agent_rollouts', 'id'),
+            ('agent_rollouts', 'organization_id'),
+            ('agent_rollouts', 'release_id'),
+            ('alarms', 'asset_id'),
+            ('alarms', 'id'),
+            ('analysis_sessions', 'id'),
+            ('analysis_sessions', 'organization_id'),
+            ('analysis_sessions', 'user_id'),
+            ('api_keys', 'created_by'),
+            ('api_keys', 'id'),
+            ('api_keys', 'organization_id'),
+            ('api_keys', 'revoked_by'),
+            ('asset_types', 'id'),
+            ('assets', 'asset_type_id'),
+            ('assets', 'id'),
+            ('assets', 'organization_id'),
+            ('assets', 'workcell_id'),
+            ('audit_logs', 'id'),
+            ('audit_logs', 'organization_id'),
+            ('audit_logs', 'user_id'),
+            ('carriers', 'id'),
+            ('carriers', 'organization_id'),
+            ('commands', 'asset_id'),
+            ('commands', 'id'),
+            ('commands', 'issued_by'),
+            ('commands', 'organization_id'),
+            ('compliance_report_jobs', 'id'),
+            ('compliance_report_jobs', 'organization_id'),
+            ('compliance_report_jobs', 'requested_by'),
+            ('compliance_report_jobs', 'schedule_id'),
+            ('consent_records', 'id'),
+            ('consent_records', 'user_id'),
+            ('data_correlations', 'created_by'),
+            ('data_correlations', 'id'),
+            ('data_correlations', 'organization_id'),
+            ('data_correlations', 'source_id'),
+            ('data_correlations', 'target_id'),
+            ('data_processing_records', 'id'),
+            ('data_processing_records', 'organization_id'),
+            ('data_residency_tags', 'id'),
+            ('data_residency_tags', 'tagged_by'),
+            ('dock_appointments', 'carrier_id'),
+            ('dock_appointments', 'dock_door_id'),
+            ('dock_appointments', 'driver_id'),
+            ('dock_appointments', 'id'),
+            ('dock_appointments', 'operation_id'),
+            ('dock_appointments', 'organization_id'),
+            ('dock_appointments', 'shipment_id'),
+            ('dock_appointments', 'trailer_id'),
+            ('dock_doors', 'current_trailer_id'),
+            ('dock_doors', 'id'),
+            ('dock_doors', 'organization_id'),
+            ('driver_wait_times', 'driver_id'),
+            ('driver_wait_times', 'id'),
+            ('driver_wait_times', 'organization_id'),
+            ('driver_wait_times', 'trailer_id'),
+            ('drivers', 'carrier_id'),
+            ('drivers', 'id'),
+            ('drivers', 'organization_id'),
+            ('erp_correlations', 'erp_event_id'),
+            ('erp_correlations', 'id'),
+            ('erp_correlations', 'organization_id'),
+            ('erp_correlations', 'sensor_event_id'),
+            ('erp_data_mappings', 'id'),
+            ('erp_data_mappings', 'integration_id'),
+            ('erp_data_mappings', 'organization_id'),
+            ('erp_entities', 'id'),
+            ('erp_entities', 'integration_id'),
+            ('erp_entities', 'organization_id'),
+            ('erp_integration_events', 'id'),
+            ('erp_integration_events', 'integration_id'),
+            ('erp_integration_events', 'organization_id'),
+            ('erp_sync_status', 'id'),
+            ('erp_sync_status', 'integration_id'),
+            ('erp_sync_status', 'organization_id'),
+            ('error_events', 'organization_id'),
+            ('error_events', 'status_changed_by'),
+            ('export_delivery_jobs', 'id'),
+            ('export_delivery_jobs', 'organization_id'),
+            ('export_delivery_jobs', 'requested_by'),
+            ('export_delivery_jobs', 'schedule_id'),
+            ('export_delivery_jobs', 'template_id'),
+            ('export_templates', 'created_by'),
+            ('export_templates', 'id'),
+            ('export_templates', 'organization_id'),
+            ('freight_charges', 'carrier_id'),
+            ('freight_charges', 'id'),
+            ('freight_charges', 'organization_id'),
+            ('freight_charges', 'shipment_id'),
+            ('geofence_alerts', 'id'),
+            ('geofence_zones', 'id'),
+            ('geotab_diagnostics', 'id'),
+            ('geotab_diagnostics', 'organization_id'),
+            ('geotab_exceptions', 'acknowledged_by'),
+            ('geotab_exceptions', 'driver_id'),
+            ('geotab_exceptions', 'id'),
+            ('geotab_exceptions', 'organization_id'),
+            ('geotab_trips', 'driver_id'),
+            ('geotab_trips', 'id'),
+            ('geotab_trips', 'organization_id'),
+            ('intake_items', 'id'),
+            ('intake_items', 'organization_id'),
+            ('intake_items', 'user_id'),
+            ('integration_configurations', 'created_by'),
+            ('integration_configurations', 'id'),
+            ('integration_configurations', 'organization_id'),
+            ('load_plans', 'id'),
+            ('load_plans', 'organization_id'),
+            ('load_plans', 'shipment_id'),
+            ('load_plans', 'trailer_id'),
+            ('load_quality_logs', 'asset_id'),
+            ('load_quality_logs', 'id'),
+            ('load_quality_logs', 'operation_id'),
+            ('load_quality_logs', 'organization_id'),
+            ('load_quality_logs', 'root_cause_asset'),
+            ('load_quality_logs', 'root_cause_operation'),
+            ('load_quality_logs', 'shipment_id'),
+            ('load_quality_logs', 'trailer_id'),
+            ('maintenance_schedules', 'id'),
+            ('model_registry', 'created_by'),
+            ('model_registry', 'id'),
+            ('model_registry', 'organization_id'),
+            ('model_registry', 'training_run_id'),
+            ('model_training_runs', 'created_by'),
+            ('model_training_runs', 'id'),
+            ('model_training_runs', 'organization_id'),
+            ('model_training_runs', 'produced_model_id'),
+            ('notification_deliveries', 'id'),
+            ('notification_deliveries', 'organization_id'),
+            ('notification_deliveries', 'subscription_id'),
+            ('notification_subscriptions', 'asset_id'),
+            ('notification_subscriptions', 'id'),
+            ('notification_subscriptions', 'organization_id'),
+            ('operations', 'asset_id'),
+            ('operations', 'id'),
+            ('organizations', 'id'),
+            ('packml_states', 'asset_id'),
+            ('packml_states', 'id'),
+            ('permissions', 'id'),
+            ('repair_orders', 'id'),
+            ('role_permissions', 'id'),
+            ('role_permissions', 'permission_id'),
+            ('routes', 'id'),
+            ('routes', 'organization_id'),
+            ('scheduled_compliance_reports', 'created_by'),
+            ('scheduled_compliance_reports', 'id'),
+            ('scheduled_compliance_reports', 'organization_id'),
+            ('scheduled_exports', 'created_by'),
+            ('scheduled_exports', 'id'),
+            ('scheduled_exports', 'organization_id'),
+            ('scheduled_exports', 'template_id'),
+            ('security_assets', 'id'),
+            ('security_assets', 'organization_id'),
+            ('security_assets', 'owner_id'),
+            ('session_data_sources', 'id'),
+            ('session_data_sources', 'session_id'),
+            ('session_messages', 'id'),
+            ('session_messages', 'session_id'),
+            ('shipments', 'carrier_id'),
+            ('shipments', 'driver_id'),
+            ('shipments', 'id'),
+            ('shipments', 'organization_id'),
+            ('shipments', 'route_id'),
+            ('shipments', 'trailer_id'),
+            ('task_boards', 'id'),
+            ('task_boards', 'organization_id'),
+            ('task_columns', 'board_id'),
+            ('task_columns', 'id'),
+            ('task_comments', 'id'),
+            ('task_comments', 'task_id'),
+            ('task_comments', 'user_id'),
+            ('task_escalations', 'id'),
+            ('task_escalations', 'rule_id'),
+            ('task_escalations', 'task_id'),
+            ('task_rules', 'created_by'),
+            ('task_rules', 'id'),
+            ('task_rules', 'organization_id'),
+            ('task_rules', 'specific_assignee_id'),
+            ('task_rules', 'target_board_id'),
+            ('task_rules', 'target_column_id'),
+            ('task_timers', 'id'),
+            ('task_timers', 'task_id'),
+            ('task_timers', 'user_id'),
+            ('tasks', 'approved_by'),
+            ('tasks', 'asset_id'),
+            ('tasks', 'assigned_by'),
+            ('tasks', 'assigned_to'),
+            ('tasks', 'board_id'),
+            ('tasks', 'column_id'),
+            ('tasks', 'completed_by'),
+            ('tasks', 'created_by'),
+            ('tasks', 'id'),
+            ('tasks', 'operation_id'),
+            ('tasks', 'parent_task_id'),
+            ('tasks', 'rule_id'),
+            ('telemetry', 'asset_id'),
+            ('truck_asset_correlations', 'asset_id'),
+            ('truck_asset_correlations', 'id'),
+            ('truck_asset_correlations', 'operation_id'),
+            ('truck_asset_correlations', 'organization_id'),
+            ('truck_asset_correlations', 'shipment_id'),
+            ('truck_asset_correlations', 'trailer_id'),
+            ('user_sessions', 'id'),
+            ('user_sessions', 'user_id'),
+            ('users', 'id'),
+            ('users', 'organization_id'),
+            ('vehicles', 'id'),
+            ('vendor_risk_assessments', 'assessor_id'),
+            ('vendor_risk_assessments', 'id'),
+            ('vendor_risk_assessments', 'organization_id'),
+            ('workcells', 'id'),
+            ('workcells', 'organization_id'),
+            ('yard_checkpoints', 'id'),
+            ('yard_checkpoints', 'organization_id'),
+            ('yard_checkpoints', 'trailer_id'),
+            ('yard_moves', 'id'),
+            ('yard_moves', 'jockey_driver_id'),
+            ('yard_moves', 'organization_id'),
+            ('yard_moves', 'trailer_id'),
+            ('yard_trailers', 'carrier_id'),
+            ('yard_trailers', 'dock_door_id'),
+            ('yard_trailers', 'driver_id'),
+            ('yard_trailers', 'id'),
+            ('yard_trailers', 'organization_id'),
+            ('yard_trailers', 'shipment_id')
+              )
+          )
+    LOOP
+        INSERT INTO _uuid_consolidation_saved_views (viewname, definition)
+        VALUES (r.viewname, pg_get_viewdef(('public.' || quote_ident(r.viewname))::regclass, true))
+        ON CONFLICT (viewname) DO NOTHING;
+        EXECUTE format('DROP VIEW IF EXISTS %I CASCADE', r.viewname);
+    END LOOP;
+END $$;
+
 -- 2. Type conversions (guarded per column)
 
 -- actionable_registries
@@ -2790,6 +3325,26 @@ BEGIN
     END IF;
 END $$;
 
+-- 2b. Reverse conversions: columns the ORM deliberately types as String
+--    (polymorphic ids) that pre-FS-56 migration DDL created as uuid.
+DO $$
+BEGIN
+    IF to_regclass('public.audit_logs') IS NOT NULL AND EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema='public' AND table_name='audit_logs'
+          AND column_name='resource_id' AND data_type='uuid'
+    ) THEN
+        ALTER TABLE audit_logs ALTER COLUMN resource_id TYPE VARCHAR(36) USING resource_id::text;
+    END IF;
+    IF to_regclass('public.data_residency_tags') IS NOT NULL AND EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema='public' AND table_name='data_residency_tags'
+          AND column_name='record_id' AND data_type='uuid'
+    ) THEN
+        ALTER TABLE data_residency_tags ALTER COLUMN record_id TYPE VARCHAR(36) USING record_id::text;
+    END IF;
+END $$;
+
 -- 3. Re-add FKs with explicit names
 
 DO $$
@@ -2884,7 +3439,7 @@ BEGIN
         WHERE con.contype = 'f' AND src.relname = 'agent_releases' AND a.attname = 'created_by'
     ) THEN
         ALTER TABLE agent_releases ADD CONSTRAINT fk_agent_releases_created_by
-            FOREIGN KEY (created_by) REFERENCES users (id);
+            FOREIGN KEY (created_by) REFERENCES users (id) ON DELETE SET NULL;
     END IF;
 END $$;
 
@@ -2900,7 +3455,7 @@ BEGIN
         WHERE con.contype = 'f' AND src.relname = 'agent_releases' AND a.attname = 'organization_id'
     ) THEN
         ALTER TABLE agent_releases ADD CONSTRAINT fk_agent_releases_organization_id
-            FOREIGN KEY (organization_id) REFERENCES organizations (id);
+            FOREIGN KEY (organization_id) REFERENCES organizations (id) ON DELETE CASCADE;
     END IF;
 END $$;
 
@@ -2916,7 +3471,7 @@ BEGIN
         WHERE con.contype = 'f' AND src.relname = 'agent_rollout_events' AND a.attname = 'asset_id'
     ) THEN
         ALTER TABLE agent_rollout_events ADD CONSTRAINT fk_agent_rollout_events_asset_id
-            FOREIGN KEY (asset_id) REFERENCES assets (id);
+            FOREIGN KEY (asset_id) REFERENCES assets (id) ON DELETE SET NULL;
     END IF;
 END $$;
 
@@ -2932,7 +3487,7 @@ BEGIN
         WHERE con.contype = 'f' AND src.relname = 'agent_rollout_events' AND a.attname = 'organization_id'
     ) THEN
         ALTER TABLE agent_rollout_events ADD CONSTRAINT fk_agent_rollout_events_organization_id
-            FOREIGN KEY (organization_id) REFERENCES organizations (id);
+            FOREIGN KEY (organization_id) REFERENCES organizations (id) ON DELETE CASCADE;
     END IF;
 END $$;
 
@@ -2948,7 +3503,7 @@ BEGIN
         WHERE con.contype = 'f' AND src.relname = 'agent_rollout_events' AND a.attname = 'rollout_id'
     ) THEN
         ALTER TABLE agent_rollout_events ADD CONSTRAINT fk_agent_rollout_events_rollout_id
-            FOREIGN KEY (rollout_id) REFERENCES agent_rollouts (id);
+            FOREIGN KEY (rollout_id) REFERENCES agent_rollouts (id) ON DELETE CASCADE;
     END IF;
 END $$;
 
@@ -2964,7 +3519,7 @@ BEGIN
         WHERE con.contype = 'f' AND src.relname = 'agent_rollout_targets' AND a.attname = 'asset_id'
     ) THEN
         ALTER TABLE agent_rollout_targets ADD CONSTRAINT fk_agent_rollout_targets_asset_id
-            FOREIGN KEY (asset_id) REFERENCES assets (id);
+            FOREIGN KEY (asset_id) REFERENCES assets (id) ON DELETE CASCADE;
     END IF;
 END $$;
 
@@ -2980,7 +3535,7 @@ BEGIN
         WHERE con.contype = 'f' AND src.relname = 'agent_rollout_targets' AND a.attname = 'organization_id'
     ) THEN
         ALTER TABLE agent_rollout_targets ADD CONSTRAINT fk_agent_rollout_targets_organization_id
-            FOREIGN KEY (organization_id) REFERENCES organizations (id);
+            FOREIGN KEY (organization_id) REFERENCES organizations (id) ON DELETE CASCADE;
     END IF;
 END $$;
 
@@ -2996,7 +3551,7 @@ BEGIN
         WHERE con.contype = 'f' AND src.relname = 'agent_rollout_targets' AND a.attname = 'rollout_id'
     ) THEN
         ALTER TABLE agent_rollout_targets ADD CONSTRAINT fk_agent_rollout_targets_rollout_id
-            FOREIGN KEY (rollout_id) REFERENCES agent_rollouts (id);
+            FOREIGN KEY (rollout_id) REFERENCES agent_rollouts (id) ON DELETE CASCADE;
     END IF;
 END $$;
 
@@ -3012,7 +3567,7 @@ BEGIN
         WHERE con.contype = 'f' AND src.relname = 'agent_rollouts' AND a.attname = 'created_by'
     ) THEN
         ALTER TABLE agent_rollouts ADD CONSTRAINT fk_agent_rollouts_created_by
-            FOREIGN KEY (created_by) REFERENCES users (id);
+            FOREIGN KEY (created_by) REFERENCES users (id) ON DELETE SET NULL;
     END IF;
 END $$;
 
@@ -3028,7 +3583,7 @@ BEGIN
         WHERE con.contype = 'f' AND src.relname = 'agent_rollouts' AND a.attname = 'organization_id'
     ) THEN
         ALTER TABLE agent_rollouts ADD CONSTRAINT fk_agent_rollouts_organization_id
-            FOREIGN KEY (organization_id) REFERENCES organizations (id);
+            FOREIGN KEY (organization_id) REFERENCES organizations (id) ON DELETE CASCADE;
     END IF;
 END $$;
 
@@ -3044,7 +3599,7 @@ BEGIN
         WHERE con.contype = 'f' AND src.relname = 'agent_rollouts' AND a.attname = 'release_id'
     ) THEN
         ALTER TABLE agent_rollouts ADD CONSTRAINT fk_agent_rollouts_release_id
-            FOREIGN KEY (release_id) REFERENCES agent_releases (id);
+            FOREIGN KEY (release_id) REFERENCES agent_releases (id) ON DELETE RESTRICT;
     END IF;
 END $$;
 
@@ -3300,7 +3855,7 @@ BEGIN
         WHERE con.contype = 'f' AND src.relname = 'compliance_report_jobs' AND a.attname = 'organization_id'
     ) THEN
         ALTER TABLE compliance_report_jobs ADD CONSTRAINT fk_compliance_report_jobs_organization_id
-            FOREIGN KEY (organization_id) REFERENCES organizations (id);
+            FOREIGN KEY (organization_id) REFERENCES organizations (id) ON DELETE CASCADE;
     END IF;
 END $$;
 
@@ -3316,7 +3871,7 @@ BEGIN
         WHERE con.contype = 'f' AND src.relname = 'compliance_report_jobs' AND a.attname = 'requested_by'
     ) THEN
         ALTER TABLE compliance_report_jobs ADD CONSTRAINT fk_compliance_report_jobs_requested_by
-            FOREIGN KEY (requested_by) REFERENCES users (id);
+            FOREIGN KEY (requested_by) REFERENCES users (id) ON DELETE SET NULL;
     END IF;
 END $$;
 
@@ -3332,7 +3887,7 @@ BEGIN
         WHERE con.contype = 'f' AND src.relname = 'compliance_report_jobs' AND a.attname = 'schedule_id'
     ) THEN
         ALTER TABLE compliance_report_jobs ADD CONSTRAINT fk_compliance_report_jobs_schedule_id
-            FOREIGN KEY (schedule_id) REFERENCES scheduled_compliance_reports (id);
+            FOREIGN KEY (schedule_id) REFERENCES scheduled_compliance_reports (id) ON DELETE SET NULL;
     END IF;
 END $$;
 
@@ -3812,7 +4367,7 @@ BEGIN
         WHERE con.contype = 'f' AND src.relname = 'error_events' AND a.attname = 'status_changed_by'
     ) THEN
         ALTER TABLE error_events ADD CONSTRAINT fk_error_events_status_changed_by
-            FOREIGN KEY (status_changed_by) REFERENCES users (id);
+            FOREIGN KEY (status_changed_by) REFERENCES users (id) ON DELETE SET NULL;
     END IF;
 END $$;
 
@@ -3828,7 +4383,7 @@ BEGIN
         WHERE con.contype = 'f' AND src.relname = 'export_delivery_jobs' AND a.attname = 'organization_id'
     ) THEN
         ALTER TABLE export_delivery_jobs ADD CONSTRAINT fk_export_delivery_jobs_organization_id
-            FOREIGN KEY (organization_id) REFERENCES organizations (id);
+            FOREIGN KEY (organization_id) REFERENCES organizations (id) ON DELETE CASCADE;
     END IF;
 END $$;
 
@@ -3844,7 +4399,7 @@ BEGIN
         WHERE con.contype = 'f' AND src.relname = 'export_delivery_jobs' AND a.attname = 'requested_by'
     ) THEN
         ALTER TABLE export_delivery_jobs ADD CONSTRAINT fk_export_delivery_jobs_requested_by
-            FOREIGN KEY (requested_by) REFERENCES users (id);
+            FOREIGN KEY (requested_by) REFERENCES users (id) ON DELETE SET NULL;
     END IF;
 END $$;
 
@@ -3860,7 +4415,7 @@ BEGIN
         WHERE con.contype = 'f' AND src.relname = 'export_delivery_jobs' AND a.attname = 'schedule_id'
     ) THEN
         ALTER TABLE export_delivery_jobs ADD CONSTRAINT fk_export_delivery_jobs_schedule_id
-            FOREIGN KEY (schedule_id) REFERENCES scheduled_exports (id);
+            FOREIGN KEY (schedule_id) REFERENCES scheduled_exports (id) ON DELETE CASCADE;
     END IF;
 END $$;
 
@@ -3876,7 +4431,7 @@ BEGIN
         WHERE con.contype = 'f' AND src.relname = 'export_delivery_jobs' AND a.attname = 'template_id'
     ) THEN
         ALTER TABLE export_delivery_jobs ADD CONSTRAINT fk_export_delivery_jobs_template_id
-            FOREIGN KEY (template_id) REFERENCES export_templates (id);
+            FOREIGN KEY (template_id) REFERENCES export_templates (id) ON DELETE CASCADE;
     END IF;
 END $$;
 
@@ -3892,7 +4447,7 @@ BEGIN
         WHERE con.contype = 'f' AND src.relname = 'export_templates' AND a.attname = 'created_by'
     ) THEN
         ALTER TABLE export_templates ADD CONSTRAINT fk_export_templates_created_by
-            FOREIGN KEY (created_by) REFERENCES users (id);
+            FOREIGN KEY (created_by) REFERENCES users (id) ON DELETE SET NULL;
     END IF;
 END $$;
 
@@ -3908,7 +4463,7 @@ BEGIN
         WHERE con.contype = 'f' AND src.relname = 'export_templates' AND a.attname = 'organization_id'
     ) THEN
         ALTER TABLE export_templates ADD CONSTRAINT fk_export_templates_organization_id
-            FOREIGN KEY (organization_id) REFERENCES organizations (id);
+            FOREIGN KEY (organization_id) REFERENCES organizations (id) ON DELETE CASCADE;
     END IF;
 END $$;
 
@@ -4292,7 +4847,7 @@ BEGIN
         WHERE con.contype = 'f' AND src.relname = 'model_registry' AND a.attname = 'created_by'
     ) THEN
         ALTER TABLE model_registry ADD CONSTRAINT fk_model_registry_created_by
-            FOREIGN KEY (created_by) REFERENCES users (id);
+            FOREIGN KEY (created_by) REFERENCES users (id) ON DELETE SET NULL;
     END IF;
 END $$;
 
@@ -4308,7 +4863,7 @@ BEGIN
         WHERE con.contype = 'f' AND src.relname = 'model_registry' AND a.attname = 'organization_id'
     ) THEN
         ALTER TABLE model_registry ADD CONSTRAINT fk_model_registry_organization_id
-            FOREIGN KEY (organization_id) REFERENCES organizations (id);
+            FOREIGN KEY (organization_id) REFERENCES organizations (id) ON DELETE CASCADE;
     END IF;
 END $$;
 
@@ -4324,7 +4879,7 @@ BEGIN
         WHERE con.contype = 'f' AND src.relname = 'model_training_runs' AND a.attname = 'created_by'
     ) THEN
         ALTER TABLE model_training_runs ADD CONSTRAINT fk_model_training_runs_created_by
-            FOREIGN KEY (created_by) REFERENCES users (id);
+            FOREIGN KEY (created_by) REFERENCES users (id) ON DELETE SET NULL;
     END IF;
 END $$;
 
@@ -4340,7 +4895,7 @@ BEGIN
         WHERE con.contype = 'f' AND src.relname = 'model_training_runs' AND a.attname = 'organization_id'
     ) THEN
         ALTER TABLE model_training_runs ADD CONSTRAINT fk_model_training_runs_organization_id
-            FOREIGN KEY (organization_id) REFERENCES organizations (id);
+            FOREIGN KEY (organization_id) REFERENCES organizations (id) ON DELETE CASCADE;
     END IF;
 END $$;
 
@@ -4356,7 +4911,7 @@ BEGIN
         WHERE con.contype = 'f' AND src.relname = 'model_training_runs' AND a.attname = 'produced_model_id'
     ) THEN
         ALTER TABLE model_training_runs ADD CONSTRAINT fk_model_training_runs_produced_model_id
-            FOREIGN KEY (produced_model_id) REFERENCES model_registry (id);
+            FOREIGN KEY (produced_model_id) REFERENCES model_registry (id) ON DELETE SET NULL;
     END IF;
 END $$;
 
@@ -4436,7 +4991,7 @@ BEGIN
         WHERE con.contype = 'f' AND src.relname = 'scheduled_compliance_reports' AND a.attname = 'created_by'
     ) THEN
         ALTER TABLE scheduled_compliance_reports ADD CONSTRAINT fk_scheduled_compliance_reports_created_by
-            FOREIGN KEY (created_by) REFERENCES users (id);
+            FOREIGN KEY (created_by) REFERENCES users (id) ON DELETE SET NULL;
     END IF;
 END $$;
 
@@ -4452,7 +5007,7 @@ BEGIN
         WHERE con.contype = 'f' AND src.relname = 'scheduled_compliance_reports' AND a.attname = 'organization_id'
     ) THEN
         ALTER TABLE scheduled_compliance_reports ADD CONSTRAINT fk_scheduled_compliance_reports_organization_id
-            FOREIGN KEY (organization_id) REFERENCES organizations (id);
+            FOREIGN KEY (organization_id) REFERENCES organizations (id) ON DELETE CASCADE;
     END IF;
 END $$;
 
@@ -4468,7 +5023,7 @@ BEGIN
         WHERE con.contype = 'f' AND src.relname = 'scheduled_exports' AND a.attname = 'created_by'
     ) THEN
         ALTER TABLE scheduled_exports ADD CONSTRAINT fk_scheduled_exports_created_by
-            FOREIGN KEY (created_by) REFERENCES users (id);
+            FOREIGN KEY (created_by) REFERENCES users (id) ON DELETE SET NULL;
     END IF;
 END $$;
 
@@ -4484,7 +5039,7 @@ BEGIN
         WHERE con.contype = 'f' AND src.relname = 'scheduled_exports' AND a.attname = 'organization_id'
     ) THEN
         ALTER TABLE scheduled_exports ADD CONSTRAINT fk_scheduled_exports_organization_id
-            FOREIGN KEY (organization_id) REFERENCES organizations (id);
+            FOREIGN KEY (organization_id) REFERENCES organizations (id) ON DELETE CASCADE;
     END IF;
 END $$;
 
@@ -4500,7 +5055,7 @@ BEGIN
         WHERE con.contype = 'f' AND src.relname = 'scheduled_exports' AND a.attname = 'template_id'
     ) THEN
         ALTER TABLE scheduled_exports ADD CONSTRAINT fk_scheduled_exports_template_id
-            FOREIGN KEY (template_id) REFERENCES export_templates (id);
+            FOREIGN KEY (template_id) REFERENCES export_templates (id) ON DELETE CASCADE;
     END IF;
 END $$;
 
@@ -5365,5 +5920,31 @@ BEGIN
     ) THEN
         ALTER TABLE yard_trailers ADD CONSTRAINT fk_yard_trailers_shipment_id
             FOREIGN KEY (shipment_id) REFERENCES shipments (id);
+    END IF;
+END $$;
+
+-- 4. Recreate the views dropped in 1b (two passes for inter-view deps)
+DO $$
+DECLARE
+    r RECORD;
+    pass INT;
+BEGIN
+    IF to_regclass('public._uuid_consolidation_saved_views') IS NULL THEN
+        RETURN;
+    END IF;
+    FOR pass IN 1..2 LOOP
+        FOR r IN SELECT viewname, definition FROM _uuid_consolidation_saved_views LOOP
+            BEGIN
+                EXECUTE format('CREATE OR REPLACE VIEW %I AS %s', r.viewname, r.definition);
+                DELETE FROM _uuid_consolidation_saved_views WHERE viewname = r.viewname;
+            EXCEPTION WHEN OTHERS THEN
+                IF pass = 2 THEN
+                    RAISE WARNING 'could not recreate view %: %', r.viewname, SQLERRM;
+                END IF;
+            END;
+        END LOOP;
+    END LOOP;
+    IF NOT EXISTS (SELECT 1 FROM _uuid_consolidation_saved_views) THEN
+        DROP TABLE _uuid_consolidation_saved_views;
     END IF;
 END $$;

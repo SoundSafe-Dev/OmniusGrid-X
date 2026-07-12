@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
+os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://gen:gen@localhost/gen")
 
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.schema import CreateTable, CreateIndex, AddConstraint, ForeignKeyConstraint

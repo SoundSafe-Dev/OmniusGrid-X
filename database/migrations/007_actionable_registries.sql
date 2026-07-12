@@ -2,7 +2,7 @@
 -- Description: Adds tables for actionable registries (compliance and operational) and data correlation mapping
 
 -- Actionable Registries table
-CREATE TABLE actionable_registries (
+CREATE TABLE IF NOT EXISTS actionable_registries (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     registry_name VARCHAR(255) NOT NULL,
@@ -27,7 +27,7 @@ CREATE TABLE actionable_registries (
 );
 
 -- Actionable Registry Items table
-CREATE TABLE actionable_registry_items (
+CREATE TABLE IF NOT EXISTS actionable_registry_items (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     registry_id UUID NOT NULL REFERENCES actionable_registries(id) ON DELETE CASCADE,
     item_code VARCHAR(100) NOT NULL,
@@ -51,7 +51,7 @@ CREATE TABLE actionable_registry_items (
 );
 
 -- Data Correlations table
-CREATE TABLE data_correlations (
+CREATE TABLE IF NOT EXISTS data_correlations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     correlation_type VARCHAR(50) NOT NULL,
@@ -71,36 +71,39 @@ CREATE TABLE data_correlations (
 );
 
 -- Indexes for actionable_registries
-CREATE INDEX idx_actionable_registries_org ON actionable_registries(organization_id);
-CREATE INDEX idx_actionable_registries_type ON actionable_registries(registry_type);
-CREATE INDEX idx_actionable_registries_compliance ON actionable_registries(is_compliance);
-CREATE INDEX idx_actionable_registries_active ON actionable_registries(is_active);
-CREATE INDEX idx_actionable_registries_due ON actionable_registries(next_due_date);
-CREATE INDEX idx_actionable_registries_owner ON actionable_registries(assigned_owner_id);
+CREATE INDEX IF NOT EXISTS idx_actionable_registries_org ON actionable_registries(organization_id);
+CREATE INDEX IF NOT EXISTS idx_actionable_registries_type ON actionable_registries(registry_type);
+CREATE INDEX IF NOT EXISTS idx_actionable_registries_compliance ON actionable_registries(is_compliance);
+CREATE INDEX IF NOT EXISTS idx_actionable_registries_active ON actionable_registries(is_active);
+CREATE INDEX IF NOT EXISTS idx_actionable_registries_due ON actionable_registries(next_due_date);
+CREATE INDEX IF NOT EXISTS idx_actionable_registries_owner ON actionable_registries(assigned_owner_id);
 
 -- Indexes for actionable_registry_items
-CREATE INDEX idx_actionable_registry_items_registry ON actionable_registry_items(registry_id);
-CREATE INDEX idx_actionable_registry_items_task ON actionable_registry_items(related_task_id);
-CREATE INDEX idx_actionable_registry_items_severity ON actionable_registry_items(severity_level);
-CREATE INDEX idx_actionable_registry_items_active ON actionable_registry_items(is_active);
-CREATE INDEX idx_actionable_registry_items_due ON actionable_registry_items(next_due_at);
-CREATE INDEX idx_actionable_registry_items_risk ON actionable_registry_items(risk_score);
+CREATE INDEX IF NOT EXISTS idx_actionable_registry_items_registry ON actionable_registry_items(registry_id);
+CREATE INDEX IF NOT EXISTS idx_actionable_registry_items_task ON actionable_registry_items(related_task_id);
+CREATE INDEX IF NOT EXISTS idx_actionable_registry_items_severity ON actionable_registry_items(severity_level);
+CREATE INDEX IF NOT EXISTS idx_actionable_registry_items_active ON actionable_registry_items(is_active);
+CREATE INDEX IF NOT EXISTS idx_actionable_registry_items_due ON actionable_registry_items(next_due_at);
+CREATE INDEX IF NOT EXISTS idx_actionable_registry_items_risk ON actionable_registry_items(risk_score);
 
 -- Indexes for data_correlations
-CREATE INDEX idx_data_correlations_org ON data_correlations(organization_id);
-CREATE INDEX idx_data_correlations_type ON data_correlations(correlation_type);
-CREATE INDEX idx_data_correlations_source ON data_correlations(source_type, source_id);
-CREATE INDEX idx_data_correlations_target ON data_correlations(target_type, target_id);
-CREATE INDEX idx_data_correlations_strength ON data_correlations(correlation_strength);
-CREATE INDEX idx_data_correlations_active ON data_correlations(is_active);
+CREATE INDEX IF NOT EXISTS idx_data_correlations_org ON data_correlations(organization_id);
+CREATE INDEX IF NOT EXISTS idx_data_correlations_type ON data_correlations(correlation_type);
+CREATE INDEX IF NOT EXISTS idx_data_correlations_source ON data_correlations(source_type, source_id);
+CREATE INDEX IF NOT EXISTS idx_data_correlations_target ON data_correlations(target_type, target_id);
+CREATE INDEX IF NOT EXISTS idx_data_correlations_strength ON data_correlations(correlation_strength);
+CREATE INDEX IF NOT EXISTS idx_data_correlations_active ON data_correlations(is_active);
 
 -- Update trigger for updated_at
+DROP TRIGGER IF EXISTS update_actionable_registries_updated_at ON actionable_registries;
 CREATE TRIGGER update_actionable_registries_updated_at BEFORE UPDATE ON actionable_registries 
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_actionable_registry_items_updated_at ON actionable_registry_items;
 CREATE TRIGGER update_actionable_registry_items_updated_at BEFORE UPDATE ON actionable_registry_items 
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_data_correlations_updated_at ON data_correlations;
 CREATE TRIGGER update_data_correlations_updated_at BEFORE UPDATE ON data_correlations 
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 

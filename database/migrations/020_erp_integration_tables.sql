@@ -120,35 +120,80 @@ CREATE INDEX IF NOT EXISTS idx_integration_erp_type ON integration_configuration
 -- app.current_organization_id GUC (which nothing sets; the canonical GUC is
 -- app.current_org_id, see 011). Rewritten to the codebase convention so ERP
 -- tenant isolation actually enforces.
-ALTER TABLE erp_integration_events ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS erp_events_org_isolation ON erp_integration_events;
-CREATE POLICY erp_events_org_isolation ON erp_integration_events
-    FOR ALL
-    USING (organization_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid);
+DO $$
+BEGIN
+  IF to_regclass('public.erp_integration_events') IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='erp_integration_events'
+      AND column_name='organization_id' AND data_type='character varying'
+  ) THEN
+    ALTER TABLE erp_integration_events ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS erp_events_org_isolation ON erp_integration_events;
+    CREATE POLICY erp_events_org_isolation ON erp_integration_events
+        FOR ALL
+        USING (organization_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid);
+  END IF;
+END $$;
 
-ALTER TABLE erp_data_mappings ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS erp_mappings_org_isolation ON erp_data_mappings;
-CREATE POLICY erp_mappings_org_isolation ON erp_data_mappings
-    FOR ALL
-    USING (organization_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid);
+DO $$
+BEGIN
+  IF to_regclass('public.erp_data_mappings') IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='erp_data_mappings'
+      AND column_name='organization_id' AND data_type='character varying'
+  ) THEN
+    ALTER TABLE erp_data_mappings ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS erp_mappings_org_isolation ON erp_data_mappings;
+    CREATE POLICY erp_mappings_org_isolation ON erp_data_mappings
+        FOR ALL
+        USING (organization_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid);
+  END IF;
+END $$;
 
-ALTER TABLE erp_sync_status ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS erp_sync_org_isolation ON erp_sync_status;
-CREATE POLICY erp_sync_org_isolation ON erp_sync_status
-    FOR ALL
-    USING (organization_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid);
+DO $$
+BEGIN
+  IF to_regclass('public.erp_sync_status') IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='erp_sync_status'
+      AND column_name='organization_id' AND data_type='character varying'
+  ) THEN
+    ALTER TABLE erp_sync_status ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS erp_sync_org_isolation ON erp_sync_status;
+    CREATE POLICY erp_sync_org_isolation ON erp_sync_status
+        FOR ALL
+        USING (organization_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid);
+  END IF;
+END $$;
 
-ALTER TABLE erp_entities ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS erp_entities_org_isolation ON erp_entities;
-CREATE POLICY erp_entities_org_isolation ON erp_entities
-    FOR ALL
-    USING (organization_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid);
+DO $$
+BEGIN
+  IF to_regclass('public.erp_entities') IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='erp_entities'
+      AND column_name='organization_id' AND data_type='character varying'
+  ) THEN
+    ALTER TABLE erp_entities ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS erp_entities_org_isolation ON erp_entities;
+    CREATE POLICY erp_entities_org_isolation ON erp_entities
+        FOR ALL
+        USING (organization_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid);
+  END IF;
+END $$;
 
-ALTER TABLE erp_correlations ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS erp_correlations_org_isolation ON erp_correlations;
-CREATE POLICY erp_correlations_org_isolation ON erp_correlations
-    FOR ALL
-    USING (organization_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid);
+DO $$
+BEGIN
+  IF to_regclass('public.erp_correlations') IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='erp_correlations'
+      AND column_name='organization_id' AND data_type='character varying'
+  ) THEN
+    ALTER TABLE erp_correlations ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS erp_correlations_org_isolation ON erp_correlations;
+    CREATE POLICY erp_correlations_org_isolation ON erp_correlations
+        FOR ALL
+        USING (organization_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid);
+  END IF;
+END $$;
 
 -- Grant permissions
 DO $$

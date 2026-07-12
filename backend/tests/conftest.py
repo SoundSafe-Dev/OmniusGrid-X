@@ -57,12 +57,27 @@ def _setup_schema(sync_url: str) -> None:
     container image provides it).
     """
     import subprocess
+    import time
+
     import psycopg2
+
+    # The timescaledb entrypoint restarts postgres after init; testcontainers'
+    # readiness check can pass against the temp server, so retry the first
+    # real connection instead of racing it.
+    last_exc = None
+    for _ in range(30):
+        try:
+            conn = psycopg2.connect(sync_url)
+            break
+        except psycopg2.OperationalError as exc:
+            last_exc = exc
+            time.sleep(2)
+    else:
+        raise RuntimeError(f"test postgres never became reachable: {last_exc}")
 
     # Roles some migrations grant to (optional least-privilege roles in real
     # deployments; the runner's guards skip them when absent, but creating
     # them here exercises the grant paths too).
-    conn = psycopg2.connect(sync_url)
     conn.autocommit = True
     try:
         with conn.cursor() as cur:

@@ -13,7 +13,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, Field
 import structlog
 
-from app.db.database import get_db
+from app.core.tenant import get_tenant_db
+# NOTE (FS-56, for HARSH's review): ERP routes now use get_tenant_db — 020's
+# RLS policies were rewritten onto the canonical app.current_org_id GUC, and a
+# session that never sets it would read zero rows under any non-owner DB role.
+from app.db.database import get_db  # noqa: F401 - kept for any non-tenant use
 from app.api.auth import get_current_active_user
 from app.db.models import User, IntegrationConfiguration, ERPDataMapping, ERPSyncStatus, ERPEntity
 from app.services.erp_connector_base import ERPType, AuthType, ERPConfig
@@ -131,7 +135,7 @@ class SyncStatusResponse(BaseModel):
 @router.post("", response_model=ERPIntegrationResponse)
 async def create_integration(
     request: ERPIntegrationCreate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -217,7 +221,7 @@ async def create_integration(
 
 @router.get("", response_model=List[ERPIntegrationResponse])
 async def list_integrations(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -255,7 +259,7 @@ async def list_integrations(
 @router.get("/{integration_id}", response_model=ERPIntegrationResponse)
 async def get_integration(
     integration_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -294,7 +298,7 @@ async def get_integration(
 async def update_integration(
     integration_id: UUID,
     request: ERPIntegrationUpdate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -368,7 +372,7 @@ async def update_integration(
 @router.delete("/{integration_id}")
 async def delete_integration(
     integration_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -403,7 +407,7 @@ async def delete_integration(
 @router.post("/{integration_id}/test")
 async def test_connection(
     integration_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -462,7 +466,7 @@ async def trigger_sync(
     integration_id: UUID,
     background_tasks: BackgroundTasks,
     entity_type: Optional[str] = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -624,7 +628,7 @@ async def run_erp_sync(integration_id: str, organization_id: str, entity_types: 
 @router.get("/{integration_id}/sync-status", response_model=List[SyncStatusResponse])
 async def get_sync_status(
     integration_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -660,7 +664,7 @@ async def get_sync_status(
 async def create_field_mapping(
     integration_id: UUID,
     request: FieldMappingCreate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -720,7 +724,7 @@ async def create_field_mapping(
 @router.get("/{integration_id}/mappings", response_model=List[FieldMappingResponse])
 async def list_field_mappings(
     integration_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -758,7 +762,7 @@ async def update_field_mapping(
     integration_id: UUID,
     mapping_id: UUID,
     request: FieldMappingUpdate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -818,7 +822,7 @@ async def update_field_mapping(
 async def delete_field_mapping(
     integration_id: UUID,
     mapping_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -858,7 +862,7 @@ async def list_erp_entities(
     integration_id: UUID,
     entity_type: Optional[str] = None,
     limit: int = 200,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """Synced ERP business objects (erp_entities) for the hub's Entities tab."""
@@ -887,7 +891,7 @@ async def list_erp_events(
     integration_id: UUID,
     status: Optional[str] = None,
     limit: int = 100,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """Webhook/sync event feed (erp_integration_events) for the hub's Events tab."""
@@ -916,7 +920,7 @@ async def list_erp_events(
 @router.get("/correlations/recent")
 async def list_erp_correlations(
     limit: int = 100,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """ERP<->sensor correlations recorded in erp_correlations (AI tab)."""

@@ -28,7 +28,10 @@ from collections import defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
+# postgres placeholder (never connects): StringListColumn shapes itself from
+# settings.DATABASE_URL at import time — sqlite here would emit JSON where
+# postgres deployments use ARRAY.
+os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://gen:gen@localhost/gen")
 
 from app.db import models  # noqa: F401
 from app.db import logistics_models, notification_models, edge_fleet_models  # noqa: F401
@@ -42,7 +45,8 @@ for table in Base.metadata.sorted_tables:
         if isinstance(col.type, UUIDString):
             cols[table.name].append(col.name)
             for fk in col.foreign_keys:
-                fks.append((table.name, col.name, fk.column.table.name, fk.column.name))
+                fks.append((table.name, col.name, fk.column.table.name,
+                            fk.column.name, fk.ondelete))
 
 pairs = sorted((t, c) for t, cs in cols.items() for c in cs)
 pairs_sql = ",\n            ".join(f"('{t}', '{c}')" for t, c in pairs)
@@ -111,11 +115,12 @@ END $$;""")
 
 readd_blocks = []
 seen = set()
-for tname, cname, rtable, rcol in sorted(fks):
+for tname, cname, rtable, rcol, ondelete in sorted(fks, key=lambda t: (t[0], t[1])):
     conname = f"fk_{tname}_{cname}"
     if conname in seen:
         continue
     seen.add(conname)
+    od = f" ON DELETE {ondelete}" if ondelete else ""
     readd_blocks.append(f"""DO $$
 BEGIN
     IF to_regclass('public.{tname}') IS NOT NULL
@@ -128,7 +133,7 @@ BEGIN
         WHERE con.contype = 'f' AND src.relname = '{tname}' AND a.attname = '{cname}'
     ) THEN
         ALTER TABLE {tname} ADD CONSTRAINT {conname}
-            FOREIGN KEY ({cname}) REFERENCES {rtable} ({rcol});
+            FOREIGN KEY ({cname}) REFERENCES {rtable} ({rcol}){od};
     END IF;
 END $$;""")
 
@@ -146,12 +151,107 @@ header = f"""-- 032_uuid_consolidation.sql (FS-56)
 -- Idempotent/resumable: every block re-checks information_schema/pg_constraint.
 """
 
+view_block = """-- 1b. Views over conversion tables block ALTER COLUMN TYPE. Save their
+--     definitions, drop them, and recreate at the end (section 4). Runs only
+--     when a conversion is actually pending.
+DO $$
+DECLARE
+    r RECORD;
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns c
+        WHERE c.table_schema = 'public' AND c.data_type = 'character varying'
+          AND (c.table_name, c.column_name) IN (
+            """ + pairs_sql + """
+          )
+    ) AND NOT EXISTS (
+        -- reverse conversions (section 2b) also need dependent views gone
+        SELECT 1 FROM information_schema.columns c
+        WHERE c.table_schema = 'public' AND c.data_type = 'uuid'
+          AND (c.table_name, c.column_name) IN (
+            ('audit_logs', 'resource_id'), ('data_residency_tags', 'record_id')
+          )
+    ) THEN
+        RETURN;  -- nothing to convert; leave views alone
+    END IF;
+    CREATE TABLE IF NOT EXISTS _uuid_consolidation_saved_views (
+        viewname text PRIMARY KEY,
+        definition text NOT NULL
+    );
+    FOR r IN
+        SELECT DISTINCT v.viewname
+        FROM pg_views v
+        WHERE v.schemaname = 'public'
+          AND EXISTS (
+            SELECT 1 FROM information_schema.view_column_usage u
+            WHERE u.view_schema = 'public' AND u.view_name = v.viewname
+              AND u.table_schema = 'public'
+              AND (u.table_name, u.column_name) IN (
+                """ + pairs_sql + """
+              )
+          )
+    LOOP
+        INSERT INTO _uuid_consolidation_saved_views (viewname, definition)
+        VALUES (r.viewname, pg_get_viewdef(('public.' || quote_ident(r.viewname))::regclass, true))
+        ON CONFLICT (viewname) DO NOTHING;
+        EXECUTE format('DROP VIEW IF EXISTS %I CASCADE', r.viewname);
+    END LOOP;
+END $$;"""
+
+recreate_block = """-- 4. Recreate the views dropped in 1b (two passes for inter-view deps)
+DO $$
+DECLARE
+    r RECORD;
+    pass INT;
+BEGIN
+    IF to_regclass('public._uuid_consolidation_saved_views') IS NULL THEN
+        RETURN;
+    END IF;
+    FOR pass IN 1..2 LOOP
+        FOR r IN SELECT viewname, definition FROM _uuid_consolidation_saved_views LOOP
+            BEGIN
+                EXECUTE format('CREATE OR REPLACE VIEW %I AS %s', r.viewname, r.definition);
+                DELETE FROM _uuid_consolidation_saved_views WHERE viewname = r.viewname;
+            EXCEPTION WHEN OTHERS THEN
+                IF pass = 2 THEN
+                    RAISE WARNING 'could not recreate view %: %', r.viewname, SQLERRM;
+                END IF;
+            END;
+        END LOOP;
+    END LOOP;
+    IF NOT EXISTS (SELECT 1 FROM _uuid_consolidation_saved_views) THEN
+        DROP TABLE _uuid_consolidation_saved_views;
+    END IF;
+END $$;"""
+
+reverse_block = """-- 2b. Reverse conversions: columns the ORM deliberately types as String
+--    (polymorphic ids) that pre-FS-56 migration DDL created as uuid.
+DO $$
+BEGIN
+    IF to_regclass('public.audit_logs') IS NOT NULL AND EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema='public' AND table_name='audit_logs'
+          AND column_name='resource_id' AND data_type='uuid'
+    ) THEN
+        ALTER TABLE audit_logs ALTER COLUMN resource_id TYPE VARCHAR(36) USING resource_id::text;
+    END IF;
+    IF to_regclass('public.data_residency_tags') IS NOT NULL AND EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema='public' AND table_name='data_residency_tags'
+          AND column_name='record_id' AND data_type='uuid'
+    ) THEN
+        ALTER TABLE data_residency_tags ALTER COLUMN record_id TYPE VARCHAR(36) USING record_id::text;
+    END IF;
+END $$;"""
+
 dest = Path(__file__).resolve().parents[2] / "database" / "migrations" / "032_uuid_consolidation.sql"
 dest.write_text(
-    header + "\n" + drop_block + "\n\n"
+    header + "\n" + drop_block + "\n\n" + view_block + "\n\n"
     + "-- 2. Type conversions (guarded per column)\n\n"
     + "\n\n".join(convert_blocks)
+    + "\n\n" + reverse_block
     + "\n\n-- 3. Re-add FKs with explicit names\n\n"
-    + "\n\n".join(readd_blocks) + "\n"
+    + "\n\n".join(readd_blocks)
+    + "\n\n" + recreate_block + "\n"
 )
 print(f"wrote {dest}: {len(pairs)} columns / {len(cols)} tables / {len(seen)} FKs")

@@ -21,6 +21,13 @@ Usage (from backend/):
     python scripts/migrate.py --dir PATH     # override migrations dir
 
 Postgres only — SQLite/dev builds the schema from ORM metadata via init_db().
+
+FS-56 adoption (existing databases): 12 files were fixed in place because they
+could never have applied as written (004/005/005-kanban/006/008/009-audit/
+009-floor/010/011/020/021/030). A previously-baselined database refuses on
+checksum drift — run `migrate.py --rebaseline-drifted` once, then `migrate.py`
+to apply the pending convergence migrations (032 varchar->uuid, 033 RLS
+backfill).
 """
 
 import argparse
@@ -29,6 +36,10 @@ import sys
 from pathlib import Path
 
 DEFAULT_DIR = Path(__file__).resolve().parents[2] / "database" / "migrations"
+
+# Migrations that CONVERGE existing schemas (as opposed to defining them) —
+# excluded from --baseline so adopted databases still run them.
+CONVERGENCE_PREFIXES = ("032_", "033_")
 
 
 def _pg_dsn() -> str:
@@ -87,10 +98,17 @@ def main() -> int:
     ap.add_argument(
         "--rebaseline",
         metavar="FILE",
-        help="re-record the stored checksum for an already-applied migration "
-             "whose file was deliberately edited (e.g. 030's FS-56 regeneration). "
-             "Does NOT run the file — pair with a follow-up migration that "
-             "converges existing databases (032).",
+        nargs="+",
+        help="re-record the stored checksum for already-applied migration "
+             "file(s) that were deliberately edited (e.g. the FS-56 fixes). "
+             "Does NOT run them — pair with the convergence migrations (032+). "
+             "Use --rebaseline-drifted to adopt every drifted file at once.",
+    )
+    ap.add_argument(
+        "--rebaseline-drifted",
+        action="store_true",
+        help="re-record checksums for ALL applied files whose content drifted "
+             "(the FS-56 batch edited 12 files; see --status for the list)",
     )
     ap.add_argument("--dir", default=str(DEFAULT_DIR), help="migrations directory")
     args = ap.parse_args()
@@ -128,35 +146,54 @@ def main() -> int:
                 print(f"  [{mark}] {f.name}{drift}")
             return 0
 
-        if args.rebaseline:
-            target = mdir / args.rebaseline
-            if not target.exists():
-                print(f"ERROR: {target} does not exist", file=sys.stderr)
-                return 1
-            if target.name not in applied:
-                print(
-                    f"ERROR: {target.name} is not recorded as applied — nothing "
-                    "to rebaseline (a pending file just runs normally).",
-                    file=sys.stderr,
-                )
-                return 1
+        if args.rebaseline or args.rebaseline_drifted:
+            if args.rebaseline_drifted:
+                targets = [
+                    f for f in files
+                    if f.name in applied and applied[f.name] != _checksum(f)
+                ]
+                if not targets:
+                    print("no checksum drift found; nothing to rebaseline")
+                    return 0
+            else:
+                targets = [mdir / name for name in args.rebaseline]
+            for target in targets:
+                if not target.exists():
+                    print(f"ERROR: {target} does not exist", file=sys.stderr)
+                    return 1
+                if target.name not in applied:
+                    print(
+                        f"ERROR: {target.name} is not recorded as applied — nothing "
+                        "to rebaseline (a pending file just runs normally).",
+                        file=sys.stderr,
+                    )
+                    return 1
             with conn.cursor() as cur:
-                cur.execute(
-                    "UPDATE schema_migrations SET checksum = %s WHERE version = %s",
-                    (_checksum(target), target.name),
-                )
-            print(f"rebaselined {target.name} (checksum re-recorded; file NOT run)")
+                for target in targets:
+                    cur.execute(
+                        "UPDATE schema_migrations SET checksum = %s WHERE version = %s",
+                        (_checksum(target), target.name),
+                    )
+                    print(f"rebaselined {target.name} (checksum re-recorded; file NOT run)")
             return 0
 
         if args.baseline:
+            # Convergence migrations must RUN on adopted databases — that is
+            # their whole purpose (an adopted create_all DB is exactly the
+            # varchar-era schema 032 converts). Recording them here would
+            # silently skip the conversion forever.
+            skipped = [f.name for f in files if f.name.startswith(CONVERGENCE_PREFIXES)]
             with conn.cursor() as cur:
                 for f in files:
-                    if f.name not in applied:
-                        cur.execute(
-                            "INSERT INTO schema_migrations (version, checksum) VALUES (%s, %s)",
-                            (f.name, _checksum(f)),
-                        )
-            print(f"baselined {len(files) - len(applied)} migration(s) as applied (not run)")
+                    if f.name in applied or f.name.startswith(CONVERGENCE_PREFIXES):
+                        continue
+                    cur.execute(
+                        "INSERT INTO schema_migrations (version, checksum) VALUES (%s, %s)",
+                        (f.name, _checksum(f)),
+                    )
+            print(f"baselined {len(files) - len(applied) - len(skipped)} migration(s) as applied (not run)")
+            if skipped:
+                print(f"NOT baselined (convergence migrations, run `migrate.py` to apply): {', '.join(skipped)}")
             return 0
 
         # Safety: an initdb-built database (docker-entrypoint-initdb.d already ran
