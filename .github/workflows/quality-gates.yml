@@ -97,17 +97,18 @@ jobs:
   # --- task 20: supply-chain scanning --------------------------------------
   supply-chain:
     runs-on: ubuntu-latest
-    # Advisory: the current lockfile already fails (npm audit: 2 critical +
-    # 9 high; 2024-era backend pins). Blocking requires a dependency-upgrade
-    # pass first — until then this surfaces vulns without gating merges.
-    continue-on-error: true
+    # BLOCKING since FS-70: backend/edge pins are pip-audit clean and the npm
+    # lockfile is at 0 vulnerabilities. One documented ignore below.
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
       - name: pip-audit (backend)
-        run: pip install pip-audit && pip-audit -r backend/requirements.txt
+        # --ignore-vuln PYSEC-2026-1325: ecdsa Minerva timing side-channel via
+        # python-jose; NO fixed release exists. Follow-up filed: swap
+        # python-jose -> PyJWT (~10 call sites), which drops ecdsa entirely.
+        run: pip install pip-audit && pip-audit -r backend/requirements.txt --ignore-vuln PYSEC-2026-1325
       - name: pip-audit (edge-agent)
         run: pip-audit -r edge-agent/requirements.txt
       - uses: actions/setup-node@v4

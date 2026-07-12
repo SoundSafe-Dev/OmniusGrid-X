@@ -61,7 +61,7 @@ export const useAuthStore = create<AuthState>()(
       logout: async () => {
         try {
           await authApi.logout();
-        } catch (error) {
+        } catch {
           // Ignore logout errors
         }
 
@@ -91,7 +91,7 @@ export const useAuthStore = create<AuthState>()(
           localStorage.setItem('accessToken', response.accessToken);
           set({ accessToken: response.accessToken });
           return true;
-        } catch (error) {
+        } catch {
           // Refresh failed, logout
           get().logout();
           return false;
