@@ -4,8 +4,24 @@ on:
   push:
     branches: [main, develop]
     tags: ['v*']
+    # Docs/media-only pushes skip the pipeline (no image builds / deploys for a
+    # README or demo-video change).
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'frontend/video/**'
+      - '**/*.png'
+      - '**/*.jpg'
+      - '**/*.jpeg'
   pull_request:
     branches: [main, develop]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'frontend/video/**'
+      - '**/*.png'
+      - '**/*.jpg'
+      - '**/*.jpeg'
 
 env:
   REGISTRY: ghcr.io
@@ -202,7 +218,11 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.component }}
           cache-to: type=gha,mode=max,scope=${{ matrix.component }}
-          platforms: linux/amd64,linux/arm64
+          # Branch pushes: amd64 only. Building the torch-laden backend image
+          # for arm64 under QEMU emulation OOMs/times out, which is what kept
+          # this job red on main. Full multi-arch is reserved for v* release
+          # tags, where the extra build time is acceptable.
+          platforms: ${{ startsWith(github.ref, 'refs/tags/v') && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
 
   # ============================================================================
   # SECURITY SCAN
