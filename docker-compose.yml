@@ -58,8 +58,10 @@ services:
   # Backend API - FastAPI
   backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      # Repo-root context: backend/Dockerfile bakes in database/migrations
+      # for the k8s migration Job (see backend/Dockerfile header).
+      context: .
+      dockerfile: backend/Dockerfile
     container_name: omniusgrid-backend
     restart: unless-stopped
     environment:
@@ -112,8 +114,8 @@ services:
   # Ingestion Workers - Process data from Redpanda to TimescaleDB
   ingestion-worker:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: backend/Dockerfile
     container_name: omniusgrid-ingestion
     environment:
       DATABASE_URL: postgresql://omniusgrid:${POSTGRES_PASSWORD:-omniusgrid_dev_password}@timescaledb:5432/omniusgrid
@@ -133,8 +135,8 @@ services:
   # Durable scheduled export generation and company SMTP delivery
   export-worker:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: backend/Dockerfile
     container_name: omniusgrid-export-worker
     restart: unless-stopped
     environment:
@@ -171,8 +173,8 @@ services:
   # Async compliance report generation and email delivery
   compliance-reports-worker:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: backend/Dockerfile
     container_name: omniusgrid-compliance-reports-worker
     restart: unless-stopped
     environment:
@@ -210,8 +212,8 @@ services:
   # OTA staged rollout orchestration and health-gated rollback
   ota-rollout-worker:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: backend/Dockerfile
     container_name: omniusgrid-ota-rollout-worker
     restart: unless-stopped
     environment:

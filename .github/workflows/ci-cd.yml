@@ -149,7 +149,10 @@ jobs:
         include:
           - component: backend
             dockerfile: ./backend/Dockerfile
-            context: ./backend
+            # Repo-root context: the backend image bakes in repo-root
+            # database/migrations for the k8s migration Job (see the
+            # backend/Dockerfile header).
+            context: .
           - component: frontend
             # Production image: vite build + nginx (the plain Dockerfile is the
             # dev hot-reload server and must not ship).

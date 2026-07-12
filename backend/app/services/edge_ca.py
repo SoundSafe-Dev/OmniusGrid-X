@@ -138,6 +138,54 @@ class EdgeCA:
         logger.info("agent_csr_signed", agent_id=expected_agent_id)
         return cert.public_bytes(serialization.Encoding.PEM)
 
+    # --- server certificates (FS-65) -----------------------------------------
+
+    def issue_server_cert(
+        self,
+        common_name: str,
+        dns_names: list[str],
+        ttl_days: int = 365,
+    ) -> tuple[bytes, bytes]:
+        """Issue a TLS SERVER certificate (e.g. the Redpanda broker) signed by
+        the same CA every enrolled agent already trusts.
+
+        Distinct from agent certs: SAN DNSNames + serverAuth EKU, and the key
+        pair is generated HERE (broker deployments mount cert+key; there is no
+        CSR round-trip). Returns (cert_pem, key_pem).
+        """
+        self._load_or_bootstrap()
+        if not dns_names:
+            raise ValueError("at least one DNS SAN is required for a server cert")
+
+        key = ec.generate_private_key(ec.SECP256R1())
+        now = datetime.now(timezone.utc)
+        cert = (
+            x509.CertificateBuilder()
+            .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)]))
+            .issuer_name(self._ca_cert.subject)
+            .public_key(key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(now - timedelta(minutes=1))
+            .not_valid_after(now + timedelta(days=ttl_days))
+            .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+            .add_extension(
+                x509.SubjectAlternativeName([x509.DNSName(n) for n in dns_names]),
+                critical=False,
+            )
+            .add_extension(
+                x509.ExtendedKeyUsage([x509.oid.ExtendedKeyUsageOID.SERVER_AUTH]),
+                critical=False,
+            )
+            .sign(self._ca_key, hashes.SHA256())
+        )
+        key_pem = key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+        logger.info("server_cert_issued", common_name=common_name, dns_names=dns_names)
+        return cert.public_bytes(serialization.Encoding.PEM), key_pem
+
     # --- verification (task 5) ----------------------------------------------
 
     def verify_agent_certificate(self, cert_pem: str, now: Optional[datetime] = None) -> AgentPrincipal:

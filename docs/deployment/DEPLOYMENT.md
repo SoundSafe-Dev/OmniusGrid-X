@@ -64,6 +64,31 @@ Edge agents in production should additionally set `EDGE_REQUIRE_TLS=true`,
 `KAFKA_SECURITY_PROTOCOL=SSL`, `EDGE_REQUIRE_EXPLICIT_SOURCES=true`, and pin
 `ENROLLMENT_CA_FINGERPRINT` (sha256 of the edge CA cert DER).
 
+### Broker TLS (FS-66)
+
+Prod compose and k8s Redpanda expose an **mTLS listener on 9094** for agents
+(`require_client_auth: true` — the agent's enrolled cert IS the client cert).
+The internal plaintext listener (29092 / 9092) stays for cloud-side workers
+on the private network.
+
+```bash
+# 1. Issue broker cert+key from the edge CA agents already trust
+cd backend && python scripts/issue_broker_cert.py \
+  --cn redpanda --dns redpanda --dns broker.your-site.example \
+  --out-dir ../infra/redpanda/tls
+
+# 2a. compose: certs bind-mount from infra/redpanda/tls automatically
+# 2b. k8s: kubectl -n omniusgrid create secret generic redpanda-broker-tls \
+#       --from-file=infra/redpanda/tls/broker.crt \
+#       --from-file=infra/redpanda/tls/broker.key \
+#       --from-file=infra/redpanda/tls/ca.crt
+
+# 3. Agent side (agent.env):
+#   KAFKA_BOOTSTRAP=broker.your-site.example:9094
+#   KAFKA_SECURITY_PROTOCOL=SSL
+#   EDGE_REQUIRE_TLS=true
+```
+
 ## Observability
 
 Prometheus/Grafana/Loki configs live under `infra/`; alert rules include edge

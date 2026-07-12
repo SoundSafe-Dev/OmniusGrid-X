@@ -12,11 +12,15 @@
 #   - frontend serves the built SPA via nginx (Dockerfile.prod)
 #   - restart policies + healthchecks on everything
 #
-# Edge TLS: to terminate agent mTLS at Redpanda, add a TLS listener under
-# `redpanda.command` (--kafka-addr TLS://0.0.0.0:9094 plus
-# redpanda.kafka_api_tls config mounting the edge CA) and point agents at it
-# with KAFKA_SECURITY_PROTOCOL=SSL / EDGE_REQUIRE_TLS=true. Cert provisioning
-# is site-specific, so the listener is documented rather than preconfigured.
+# Edge TLS (FS-66): the broker exposes an mTLS listener on 9094 for agents
+# (INTERNAL plaintext on 29092 stays for cloud-side workers on the compose
+# network). Provision certs once with the edge CA the agents already trust:
+#   cd backend && python scripts/issue_broker_cert.py \
+#     --cn redpanda --dns redpanda --dns <public-broker-hostname> \
+#     --out-dir ../infra/redpanda/tls
+# Agents flip KAFKA_SECURITY_PROTOCOL=SSL + EDGE_REQUIRE_TLS=true and point
+# KAFKA_BOOTSTRAP at <broker-host>:9094; require_client_auth enforces the
+# agent's enrolled client cert (mTLS).
 #
 # rag-inference (htreinen's service) can be added here once containerized —
 # see docs/RAG_CONTAINERIZATION.md.
@@ -64,11 +68,16 @@ services:
       - --node-id
       - '0'
       - --kafka-addr
-      - PLAINTEXT://0.0.0.0:29092
+      - INTERNAL://0.0.0.0:29092,TLS://0.0.0.0:9094
       - --advertise-kafka-addr
-      - PLAINTEXT://redpanda:29092
+      - INTERNAL://redpanda:29092,TLS://${BROKER_TLS_HOSTNAME:-redpanda}:9094
+      - --set
+      - redpanda.kafka_api_tls=[{"name":"TLS","enabled":true,"cert_file":"/etc/redpanda/tls/broker.crt","key_file":"/etc/redpanda/tls/broker.key","truststore_file":"/etc/redpanda/tls/ca.crt","require_client_auth":true}]
+    ports:
+      - "${BROKER_TLS_PORT:-9094}:9094"
     volumes:
       - redpanda-data:/var/lib/redpanda/data
+      - ./infra/redpanda/tls:/etc/redpanda/tls:ro
     healthcheck:
       test: ["CMD", "rpk", "cluster", "health"]
       interval: 10s

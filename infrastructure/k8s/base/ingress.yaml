@@ -124,11 +124,16 @@ spec:
   ingress:
     - from:
         - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: backend
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: ingestion-worker
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - backend
+                  - ingestion-worker
+                  - export-worker
+                  - compliance-reports-worker
+                  - ota-rollout-worker
+                  - db-migrate
       ports:
         - protocol: TCP
           port: 5432
@@ -147,14 +152,16 @@ spec:
   ingress:
     - from:
         - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: backend
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: ingestion-worker
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: edge-agent
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - backend
+                  - ingestion-worker
+                  - export-worker
+                  - compliance-reports-worker
+                  - ota-rollout-worker
+                  - edge-agent
       ports:
         - protocol: TCP
           port: 9092

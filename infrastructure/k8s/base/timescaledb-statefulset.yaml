@@ -63,9 +63,9 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data
-            - name: init-scripts
-              mountPath: /docker-entrypoint-initdb.d
-          
+            # No docker-entrypoint-initdb.d mount: schema is applied by the
+            # db-migrate Job (see migration-job.yaml), matching compose prod.
+
           resources:
             requests:
               memory: "1Gi"
@@ -98,11 +98,6 @@ spec:
             timeoutSeconds: 3
             failureThreshold: 3
       
-      volumes:
-        - name: init-scripts
-          configMap:
-            name: timescaledb-init-scripts
-  
   volumeClaimTemplates:
     - metadata:
         name: data

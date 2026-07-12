@@ -18,9 +18,6 @@ replicas:
   - name: frontend
     count: 2
 
-patchesStrategicMerge:
-  - backend-resources.yaml
-
 images:
   - name: omniusgrid/backend
     newName: ghcr.io/omniusgrid/backend
@@ -38,6 +35,12 @@ configMapGenerator:
 
 
 patches:
+  # Explicit target: the base resources carry namespace omniusgrid, so a bare
+  # patchesStrategicMerge id (no namespace) never matches under kustomize v5.
+  - path: backend-resources.yaml
+    target:
+      kind: Deployment
+      name: backend
   - target:
       kind: Ingress
       name: omniusgrid-ingress

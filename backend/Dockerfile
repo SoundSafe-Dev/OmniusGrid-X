@@ -1,3 +1,8 @@
+# Build CONTEXT is the REPO ROOT (not backend/):
+#   docker build -f backend/Dockerfile .
+# because the image bakes in repo-root database/migrations for the k8s
+# migration Job (compose prod bind-mounts them instead; k8s cannot).
+# docker-compose.yml and .github/workflows/ci-cd.yml are set up accordingly.
 FROM python:3.11-slim
 
 WORKDIR /app
@@ -9,11 +14,15 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
-COPY requirements.txt .
+COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
-COPY . .
+COPY backend/ .
+
+# SQL migrations for `python scripts/migrate.py --dir /app/db-migrations`
+# (k8s migration Job); compose prod keeps using its bind mount.
+COPY database/migrations /app/db-migrations
 
 # Expose port
 EXPOSE 8000

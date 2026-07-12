@@ -1,0 +1,75 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ota-rollout-worker
+  namespace: omniusgrid
+  labels:
+    app.kubernetes.io/name: ota-rollout-worker
+    app.kubernetes.io/component: worker
+    app.kubernetes.io/part-of: omniusgrid
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ota-rollout-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ota-rollout-worker
+        app.kubernetes.io/component: worker
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: ota-rollout-worker
+          image: omniusgrid/backend:latest
+          imagePullPolicy: Always
+          command: ["python", "-m", "app.workers.ota_rollouts"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: database-credentials
+                  key: url
+            - name: REDPANDA_URL
+              value: "redpanda:9092"
+            - name: JWT_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: jwt-secret
+                  key: secret
+            - name: OTA_ROLLOUT_DISPATCH_ENABLED
+              value: "true"
+            - name: OTA_ROLLOUT_DISPATCH_INTERVAL_SECONDS
+              value: "30"
+            - name: LOG_LEVEL
+              value: "info"
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+            - name: PYTHONUNBUFFERED
+              value: "1"
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      terminationGracePeriodSeconds: 30
