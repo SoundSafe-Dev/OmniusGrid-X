@@ -3,7 +3,6 @@ import { mockApi } from './mockApi';
 import {
   TacticalEngineStatus,
   TacticalDecision,
-  InferenceRequest,
   StrategicRecommendation,
   MLOpsStatus,
   CloudGatewayStatus,
@@ -15,8 +14,7 @@ export const enginesApi = {
   // Tactical Engine
   getTacticalStatus: async (): Promise<TacticalEngineStatus> => {
     if (USE_MOCK) {
-      const status = await mockApi.getTacticalStatus();
-      return status as TacticalEngineStatus;
+      return mockApi.getTacticalStatus();
     }
     const response = await api.get<any>('/api/v1/engines/tactical/status');
     return toCamel<TacticalEngineStatus>(response.data);
@@ -33,8 +31,7 @@ export const enginesApi = {
   // Strategic Engine
   getStrategicRecommendations: async (minPriority?: number): Promise<StrategicRecommendation[]> => {
     if (USE_MOCK) {
-      const recs = await mockApi.getStrategicRecommendations();
-      return recs as StrategicRecommendation[];
+      return mockApi.getStrategicRecommendations();
     }
     const response = await api.get<any>('/api/v1/engines/strategic/recommendations', {
       params: minPriority !== undefined ? { min_priority: minPriority } : undefined,
@@ -58,7 +55,7 @@ export const enginesApi = {
 
   // MLOps Pipeline
   getMLOpsStatus: async (): Promise<MLOpsStatus> => {
-    if (USE_MOCK) return mockApi.getMLOpsStatus() as MLOpsStatus;
+    if (USE_MOCK) return mockApi.getMLOpsStatus();
     const response = await api.get<any>('/api/v1/engines/mlops/status');
     return toCamel<MLOpsStatus>(response.data);
   },
@@ -73,7 +70,7 @@ export const enginesApi = {
 
   // Cloud Gateway
   getCloudGatewayStatus: async (): Promise<CloudGatewayStatus> => {
-    if (USE_MOCK) return mockApi.getCloudGatewayStatus() as CloudGatewayStatus;
+    if (USE_MOCK) return mockApi.getCloudGatewayStatus();
     const response = await api.get<any>('/api/v1/engines/cloud/status');
     return toCamel<CloudGatewayStatus>(response.data);
   },

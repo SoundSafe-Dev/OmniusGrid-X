@@ -18,8 +18,6 @@ export function useWebSocket() {
     setConnectionError,
     updateTelemetry,
     addAlarm,
-    acknowledgeAlarm,
-    clearAlarm,
     updateAssetState,
     addDecision,
   } = useRealtimeStore();

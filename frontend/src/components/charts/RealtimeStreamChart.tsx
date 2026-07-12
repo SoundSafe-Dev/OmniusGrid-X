@@ -1,5 +1,6 @@
 import { FC, useEffect, useState } from 'react';
 import Plot from 'react-plotly.js';
+import type { Config, Layout, PlotData } from 'plotly.js';
 import { Card } from '../ui';
 import { websocketManager } from '../../api';
 
@@ -83,28 +84,28 @@ export const RealtimeStreamChart: FC<RealtimeStreamChartProps> = ({
   }, [assetId, metrics, maxPoints]);
   
   // Prepare Plotly data
-  const plotData = metrics.map((metric, index) => ({
-    type: 'scattergl' as const,
+  const plotData = metrics.map((metric, index): Partial<PlotData> => ({
+    type: 'scattergl',
     mode: 'lines',
     name: metric,
     x: data.map(d => d.timestamp),
     y: data.map(d => d[metric] as number),
     line: { color: COLORS[index % COLORS.length], width: 2 }
   }));
-  
-  const layout = {
+
+  const layout: Partial<Layout> = {
     title: {
       text: title,
       font: { size: 18, color: '#94a3b8' }
     },
     xaxis: {
-      title: 'Time',
-      type: 'date' as const,
+      title: { text: 'Time' },
+      type: 'date',
       color: '#94a3b8',
       gridcolor: '#334155'
     },
     yaxis: {
-      title: 'Value',
+      title: { text: 'Value' },
       color: '#94a3b8',
       gridcolor: '#334155'
     },
@@ -114,8 +115,8 @@ export const RealtimeStreamChart: FC<RealtimeStreamChartProps> = ({
     margin: { l: 60, r: 40, t: 60, b: 60 },
     showlegend: true
   };
-  
-  const config = {
+
+  const config: Partial<Config> = {
     responsive: true,
     displayModeBar: true,
     displaylogo: false

@@ -1,8 +1,9 @@
 // Mock API data for demo mode when backend is unavailable
-import { 
-  Asset, Alarm, TelemetryPoint, DashboardOverview, 
+import {
+  Asset, Alarm, TelemetryPoint, DashboardOverview,
   ActiveAlarmsResponse, OEEMetrics, FleetOEE, User,
-  Workcell, Organization, PackMLState, AssetType
+  Workcell, Organization, AssetType,
+  TacticalEngineStatus, StrategicRecommendation, MLOpsStatus, CloudGatewayStatus
 } from '../types';
 
 // Simulated network delay; override with VITE_MOCK_DELAY=0 for deterministic renders
@@ -161,10 +162,12 @@ const mockAlarms: Alarm[] = [
     alarmCode: 'TEMP_HIGH',
     severity: 'high',
     message: 'Nozzle temperature exceeds safe threshold',
-    description: 'The nozzle temperature has exceeded 280°C, which is above the safe operating limit.',
+    metadata: { detail: 'The nozzle temperature has exceeded 280°C, which is above the safe operating limit.' },
     isActive: true,
     isAcknowledged: false,
     occurredAt: new Date(Date.now() - 3600000).toISOString(),
+    createdAt: new Date(Date.now() - 3600000).toISOString(),
+    updatedAt: new Date(Date.now() - 3600000).toISOString(),
   },
   {
     id: 'alarm-2',
@@ -173,13 +176,15 @@ const mockAlarms: Alarm[] = [
     alarmCode: 'FILAMENT_RUNOUT',
     severity: 'medium',
     message: 'Filament runout detected',
-    description: 'The AMS has detected that filament has run out on spool 1.',
+    metadata: { detail: 'The AMS has detected that filament has run out on spool 1.' },
     isActive: true,
     isAcknowledged: true,
     acknowledgedBy: 'user-1',
     acknowledgedAt: new Date(Date.now() - 1800000).toISOString(),
     acknowledgedComment: 'Replenished filament',
     occurredAt: new Date(Date.now() - 7200000).toISOString(),
+    createdAt: new Date(Date.now() - 7200000).toISOString(),
+    updatedAt: new Date(Date.now() - 1800000).toISOString(),
   },
   {
     id: 'alarm-3',
@@ -188,10 +193,12 @@ const mockAlarms: Alarm[] = [
     alarmCode: 'SPINDLE_WARN',
     severity: 'low',
     message: 'Spindle bearing temperature elevated',
-    description: 'Spindle bearing temperature is at 65°C, approaching warning threshold.',
+    metadata: { detail: 'Spindle bearing temperature is at 65°C, approaching warning threshold.' },
     isActive: true,
     isAcknowledged: false,
     occurredAt: new Date(Date.now() - 10800000).toISOString(),
+    createdAt: new Date(Date.now() - 10800000).toISOString(),
+    updatedAt: new Date(Date.now() - 10800000).toISOString(),
   },
   {
     id: 'alarm-4',
@@ -200,7 +207,7 @@ const mockAlarms: Alarm[] = [
     alarmCode: 'BED_LEVEL_FAIL',
     severity: 'critical',
     message: 'Bed leveling failed after 3 attempts',
-    description: 'Automatic bed leveling procedure failed. Manual calibration required.',
+    metadata: { detail: 'Automatic bed leveling procedure failed. Manual calibration required.' },
     isActive: false,
     isAcknowledged: true,
     acknowledgedBy: 'user-1',
@@ -208,6 +215,8 @@ const mockAlarms: Alarm[] = [
     acknowledgedComment: 'Recalibrated bed manually',
     occurredAt: new Date(Date.now() - 90000000).toISOString(),
     clearedAt: new Date(Date.now() - 85000000).toISOString(),
+    createdAt: new Date(Date.now() - 90000000).toISOString(),
+    updatedAt: new Date(Date.now() - 85000000).toISOString(),
   },
 ];
 
@@ -270,8 +279,8 @@ const mockOrganizations: Organization[] = [
   {
     id: 'org-1',
     name: 'Main Factory',
-    slug: 'main-factory',
-    settings: { timezone: 'America/Chicago', language: 'en' },
+    description: 'Primary manufacturing site',
+    metadata: { timezone: 'America/Chicago', language: 'en' },
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   },
@@ -282,31 +291,30 @@ const mockAssetTypes: AssetType[] = [
     id: 'printer',
     name: '3D Printer',
     category: 'additive_manufacturing',
-    packmlConfig: { states: ['Idle', 'Execute', 'Held', 'Stopped'] },
-    telemetrySchema: { temperature: 'number', progress: 'number' },
-    actionSpace: ['start', 'stop', 'pause', 'resume'],
+    description: 'FDM 3D printers (temperature, progress telemetry)',
+    capabilities: ['start', 'stop', 'pause', 'resume'],
     createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
   },
   {
     id: 'conveyor',
     name: 'Conveyor Belt',
     category: 'material_handling',
-    packmlConfig: { states: ['Idle', 'Execute', 'Stopped'] },
-    telemetrySchema: { speed: 'number', load: 'number' },
-    actionSpace: ['start', 'stop', 'set_speed'],
+    description: 'Belt conveyors (speed, load telemetry)',
+    capabilities: ['start', 'stop', 'set_speed'],
     createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
   },
   {
     id: 'cnc',
     name: 'CNC Machine',
     category: 'subtractive_manufacturing',
-    packmlConfig: { states: ['Idle', 'Execute', 'Held', 'Stopped'] },
-    telemetrySchema: { spindle_rpm: 'number', feed_rate: 'number' },
-    actionSpace: ['start', 'stop', 'pause', 'home'],
+    description: 'CNC mills (spindle RPM, feed rate telemetry)',
+    capabilities: ['start', 'stop', 'pause', 'home'],
     createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
   },
-  // Sensor taxonomy demo types (migration 024). These match the AssetType
-  // interface (unlike the older entries above, which predate it).
+  // Sensor taxonomy demo types (migration 024).
   {
     id: 'audio_sensor',
     name: 'Acoustic Sensor',
@@ -389,7 +397,6 @@ const mockFleetOEE: FleetOEE = {
   timeRange: 'Last 24 hours',
   assetCount: 8,
   fleetAverageAvailability: 0.91,
-  fleetAveragePerformance: 0.85,
   fleetAverageOee: 0.78,
   assets: [
     { assetId: 'asset-1', assetName: 'Printer #1 (Bambu Labs X1)', availability: 0.94, oee: 0.86 },
@@ -404,16 +411,15 @@ const mockFleetOEE: FleetOEE = {
 };
 
 const mockOEEMetrics: OEEMetrics = {
-  oee: 0.78,
+  assetId: 'asset-1',
+  assetName: 'Printer #1 (Bambu Labs X1)',
+  timeRange: 'Last 24 hours',
   availability: 0.91,
   performance: 0.85,
   quality: 0.99,
-  runTimeMinutes: 480,
-  plannedProductionTimeMinutes: 525,
-  idealCycleTimeSeconds: 120,
-  totalCount: 2400,
-  goodCount: 2376,
-  rejectedCount: 24,
+  oee: 0.78,
+  stateDurations: { Execute: 28800, Idle: 1620, Held: 900, Stopped: 180 },
+  totalPlannedTimeSeconds: 31500,
 };
 
 // Helper to simulate async delay
@@ -477,9 +483,10 @@ export const mockApi = {
     return mockFleetOEE;
   },
   
-  getAssetOEE: async (_assetId: string): Promise<OEEMetrics> => {
+  getAssetOEE: async (assetId: string): Promise<OEEMetrics> => {
     await delay(MOCK_DELAY);
-    return mockOEEMetrics;
+    const asset = mockAssets.find(a => a.id === assetId);
+    return { ...mockOEEMetrics, assetId, assetName: asset?.name ?? mockOEEMetrics.assetName };
   },
   
   // Telemetry
@@ -644,29 +651,33 @@ export const mockApi = {
   },
   
   // AI Engines - Tactical
-  getTacticalStatus: async () => {
+  getTacticalStatus: async (): Promise<TacticalEngineStatus> => {
     await delay(MOCK_DELAY);
     return {
       modelLoaded: true,
       modelVersion: 'v2.1.0',
+      maxLatencyTargetMs: 100,
+      safetyThresholds: { max_nozzle_temp_c: 280, max_spindle_load_pct: 95 },
+      lastInferenceAt: new Date().toISOString(),
       averageLatencyMs: 45.2,
       totalInferences: 154320,
-      inferencesPerMinute: 120,
     };
   },
   
   // AI Engines - Strategic
-  getStrategicRecommendations: async () => {
+  getStrategicRecommendations: async (): Promise<StrategicRecommendation[]> => {
     await delay(MOCK_DELAY);
     return [
       {
         recommendationId: 'rec-1',
         assetId: 'asset-1',
         assetName: 'Printer #1',
+        type: 'parameter_optimization',
         description: 'Increase print speed by 10% during off-peak hours',
         priority: 8,
         confidence: 0.92,
         expectedImpact: { oeeImprovement: 0.05, costSavings: 1200 },
+        requiresApproval: true,
         status: 'pending',
         validUntil: new Date(Date.now() + 86400000 * 7).toISOString(),
         createdAt: new Date().toISOString(),
@@ -675,10 +686,12 @@ export const mockApi = {
         recommendationId: 'rec-2',
         assetId: 'asset-3',
         assetName: 'Printer #3',
+        type: 'maintenance_scheduling',
         description: 'Schedule preventive maintenance for next weekend',
         priority: 9,
         confidence: 0.88,
         expectedImpact: { oeeImprovement: 0.03, timeSavings: 4 },
+        requiresApproval: true,
         status: 'pending',
         validUntil: new Date(Date.now() + 86400000 * 3).toISOString(),
         createdAt: new Date().toISOString(),
@@ -687,7 +700,7 @@ export const mockApi = {
   },
   
   // AI Engines - MLOps
-  getMLOpsStatus: async () => {
+  getMLOpsStatus: async (): Promise<MLOpsStatus> => {
     await delay(MOCK_DELAY);
     return {
       currentModel: 'manufacturing-optimizer-v2.1.0.pt',
@@ -707,7 +720,7 @@ export const mockApi = {
   },
   
   // AI Engines - Cloud Gateway
-  getCloudGatewayStatus: async () => {
+  getCloudGatewayStatus: async (): Promise<CloudGatewayStatus> => {
     await delay(MOCK_DELAY);
     return {
       connected: true,
@@ -716,6 +729,7 @@ export const mockApi = {
       mTlsCertificateExpiry: new Date(Date.now() + 86400000 * 90).toISOString(),
       egressStats: {
         totalBytesSent: 157286400,
+        totalBytesCompressed: 133693440,
         compressionRatio: 0.85,
         averageBandwidthKbps: 256,
         queueDepth: 12,

@@ -1,5 +1,6 @@
 import { FC, useState, useCallback, useMemo } from 'react';
 import Plot from 'react-plotly.js';
+import type { Config, ModeBarDefaultButtons } from 'plotly.js';
 import { Card } from '../ui';
 import { Button } from '../ui';
 
@@ -84,10 +85,14 @@ export const AnnotatedChart: FC<AnnotatedChartProps> = ({
     console.log('Export chart as PNG');
   }, [data, plotLayout]);
   
-  const config = {
+  // These shape-drawing buttons exist in plotly.js at runtime but are missing
+  // from the ModeBarDefaultButtons union in @types/plotly.js.
+  const drawButtons: string[] = ['drawline', 'drawopenpath', 'drawclosedpath', 'drawcircle', 'drawrect', 'eraseshape'];
+
+  const config: Partial<Config> = {
     responsive: true,
     displayModeBar: true,
-    modeBarButtonsToAdd: ['drawline', 'drawopenpath', 'drawclosedpath', 'drawcircle', 'drawrect', 'eraseshape'],
+    modeBarButtonsToAdd: drawButtons as ModeBarDefaultButtons[],
     displaylogo: false,
     editable: editable
   };

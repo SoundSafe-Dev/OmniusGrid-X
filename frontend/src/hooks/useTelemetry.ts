@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient, UseQueryOptions } from 'react-query';
+import { useQuery, UseQueryOptions } from 'react-query';
 import { telemetryApi } from '../api';
 import {
   TelemetryPoint,
@@ -10,7 +10,8 @@ import {
 const TELEMETRY_QUERY_KEY = 'telemetry';
 
 export function useLatestTelemetry(assetId: string, metricName?: string) {
-  return useQuery<LatestTelemetry, Error>(
+  // Without a metricName the API returns a record of all metrics.
+  return useQuery<LatestTelemetry | Record<string, LatestTelemetry>, Error>(
     [TELEMETRY_QUERY_KEY, 'latest', assetId, metricName],
     () => telemetryApi.getLatest(assetId, metricName),
     {

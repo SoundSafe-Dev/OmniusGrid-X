@@ -1,6 +1,9 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { Theme, TimeRange, TIME_RANGES } from '../types';
+import { Theme, TIME_RANGES } from '../types';
+// The legacy { label, hours } TimeRange interface (the '../types' barrel
+// re-exports the logistics string-union TimeRange instead).
+import type { TimeRange } from '../types/common';
 
 interface UIState {
   // Sidebar

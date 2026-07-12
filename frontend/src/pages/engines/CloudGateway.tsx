@@ -1,6 +1,6 @@
 import { FC } from 'react';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
-import { Cloud, Upload, Wifi, WifiOff, Shield, Clock } from 'lucide-react';
+import { Cloud, Upload, Wifi, Shield, Clock } from 'lucide-react';
 import { Card, Badge, Button, SkeletonCard } from '../../components';
 import { enginesApi } from '../../api';
 import { formatBytes, formatDateTime, formatDuration } from '../../utils';

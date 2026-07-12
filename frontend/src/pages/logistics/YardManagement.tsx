@@ -16,12 +16,10 @@ import {
   Thermometer,
   Package
 } from 'lucide-react';
-import { yardApi, geoTabYardApi } from '../../api';
+import { yardApi } from '../../api';
 import {
   YardTrailer,
   DockDoor,
-  DockAppointment,
-  DetentionAlert,
   TrailerFilters
 } from '../../types';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';

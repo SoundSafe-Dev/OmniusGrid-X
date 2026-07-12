@@ -12,6 +12,15 @@ const OEE: FC = () => {
     dashboardApi.getFleetOEE()
   )
 
+  // The FleetOEE type does not (yet) declare fleetAveragePerformance, but the
+  // API can return it; narrow locally so the 100% fallback below is preserved.
+  const fleetAveragePerformance =
+    fleetOEE &&
+    'fleetAveragePerformance' in fleetOEE &&
+    typeof fleetOEE.fleetAveragePerformance === 'number'
+      ? fleetOEE.fleetAveragePerformance
+      : undefined
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -37,7 +46,7 @@ const OEE: FC = () => {
           <Tooltip>
             <TooltipTrigger asChild>
               <div className="text-sm text-opsgrid-text-secondary">
-                {fleetOEE?.time_range || 'Last 24 hours'}
+                {fleetOEE?.timeRange || 'Last 24 hours'}
               </div>
             </TooltipTrigger>
             <TooltipContent>Time range for OEE calculation</TooltipContent>
@@ -82,7 +91,7 @@ const OEE: FC = () => {
                 <p className="text-opsgrid-text-secondary">Performance</p>
               </div>
               <p className="text-3xl font-bold">
-                {(fleetOEE?.fleetAveragePerformance * 100 || 100).toFixed(1)}%
+                {((fleetAveragePerformance ?? NaN) * 100 || 100).toFixed(1)}%
               </p>
               <p className="text-sm text-opsgrid-text-secondary mt-1">
                 Speed vs ideal cycle time

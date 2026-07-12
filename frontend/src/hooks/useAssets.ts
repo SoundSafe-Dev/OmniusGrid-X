@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient, UseQueryOptions } from 'react-query';
-import { assetsApi, dashboardApi } from '../api';
+import { assetsApi, dashboardApi, workcellsApi, organizationsApi } from '../api';
 import {
   Asset,
   AssetCreate,
@@ -83,14 +83,14 @@ export function useAssetTypes(category?: string) {
 export function useWorkcells(organizationId?: string) {
   return useQuery<Workcell[], Error>(
     [ASSETS_QUERY_KEY, 'workcells', organizationId],
-    () => assetsApi.workcellsApi.list(organizationId)
+    () => workcellsApi.list(organizationId)
   );
 }
 
 export function useOrganizations() {
   return useQuery<Organization[], Error>(
     [ASSETS_QUERY_KEY, 'organizations'],
-    () => assetsApi.organizationsApi.list()
+    () => organizationsApi.list()
   );
 }
 

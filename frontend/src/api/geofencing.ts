@@ -1,15 +1,13 @@
 import { api } from './client';
-import type { 
-  GeofenceZoneExtended, 
-  GeofenceAlertExtended,
-  GeoLocation 
+import type {
+  GeofenceZoneExtended,
+  GeofenceAlertExtended
 } from '../types';
 import {
   mockGeofenceZones,
   mockGeofenceAlerts,
   getMockZoneById,
   getMockAlertsByVehicle,
-  getMockAlertsByZone,
   getMockUnacknowledgedAlerts,
   getMockCriticalAlerts,
 } from './mocks/geofencingMocks';

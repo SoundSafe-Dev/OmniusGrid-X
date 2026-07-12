@@ -8,7 +8,6 @@ import type {
 import {
   mockMaintenanceSchedules,
   mockRepairOrders,
-  mockServiceHistory,
   mockMaintenanceCosts,
   getMockScheduleById,
   getMockScheduleByVehicle,

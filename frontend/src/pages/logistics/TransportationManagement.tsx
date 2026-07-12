@@ -11,20 +11,17 @@ import {
   Navigation,
   Fuel,
   Gauge,
-  Route,
   Calendar,
   Filter,
   Search,
   RefreshCw,
-  DollarSign,
   Shield,
   Activity,
   Thermometer,
-  Phone,
   Package,
   Wrench
 } from 'lucide-react';
-import { transportationApi, geoTabApi, fleetTrackerApi } from '../../api';
+import { transportationApi, geoTabApi } from '../../api';
 import {
   FleetTrackerMap,
   GeofencingPanel,
@@ -33,15 +30,12 @@ import {
   PerformancePanel
 } from '../../components';
 import type {
-  Carrier,
   Driver,
   Shipment,
   Vehicle,
   ShipmentFilters,
   GeoLocation,
-  MapFilterType,
-  FleetVehiclePosition,
-  ShipmentRoute
+  MapFilterType
 } from '../../types';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
 
@@ -50,7 +44,7 @@ const TRANSPORT_QUERY_KEY = 'transportation';
 export const TransportationManagement: FC = () => {
   const [selectedShipment, setSelectedShipment] = useState<Shipment | null>(null);
   const [selectedDriver, setSelectedDriver] = useState<Driver | null>(null);
-  const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
+  const [, setSelectedVehicle] = useState<Vehicle | null>(null);
   const [filters, setFilters] = useState<ShipmentFilters>({});
   const [activeTab, setActiveTab] = useState<'shipments' | 'fleet' | 'carriers' | 'compliance' | 'geofencing' | 'health' | 'maintenance' | 'performance'>('shipments');
   const [fleetLocation, setFleetLocation] = useState<GeoLocation | null>(null);

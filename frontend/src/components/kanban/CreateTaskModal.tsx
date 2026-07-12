@@ -5,7 +5,7 @@
 import React, { useState } from 'react';
 import { useKanban, Task } from '../../stores/kanbanStore';
 import { Button } from '../ui/Button';
-import { X, Plus } from 'lucide-react';
+import { X } from 'lucide-react';
 
 interface CreateTaskModalProps {
   isOpen: boolean;

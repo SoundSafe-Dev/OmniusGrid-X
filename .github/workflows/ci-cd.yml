@@ -118,11 +118,10 @@ jobs:
         # below are the blocking frontend gates.
         run: npm run lint || true
 
-      - name: Type check frontend (advisory)
+      - name: Type check frontend
         working-directory: ./frontend
-        # ~40 pre-existing tsc errors (legacy pages, tracked); advisory until
-        # cleared so new errors are at least VISIBLE in the log.
-        run: npx tsc --noEmit || true
+        # Blocking since FS-53: the tree is at 0 tsc errors.
+        run: npx tsc --noEmit
 
       - name: Run frontend tests
         working-directory: ./frontend
@@ -130,9 +129,7 @@ jobs:
 
       - name: Build frontend
         working-directory: ./frontend
-        # vite build directly: the `npm run build` script prefixes tsc, which
-        # still carries the tracked pre-existing errors.
-        run: npx vite build
+        run: npm run build
 
   # ============================================================================
   # BUILD AND PUSH IMAGES

@@ -39,7 +39,7 @@ export const GeofencingPanel: FC<GeofencingPanelProps> = ({ onAlert }) => {
   const [zones, setZones] = useState<GeofenceZoneExtended[]>([]);
   const [alerts, setAlerts] = useState<GeofenceAlertExtended[]>([]);
   const [selectedZone, setSelectedZone] = useState<GeofenceZoneExtended | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [, setIsLoading] = useState(true);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [showAlertPanel, setShowAlertPanel] = useState(true);
 

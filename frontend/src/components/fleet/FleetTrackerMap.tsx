@@ -1,9 +1,9 @@
 import { FC, useEffect, useState, useRef, useCallback } from 'react';
-import { MapContainer, TileLayer, useMap, Marker, Popup, Polyline, Circle, Polygon } from 'react-leaflet';
+import { MapContainer, TileLayer, useMap, Marker, Popup, Polyline, Circle } from 'react-leaflet';
 import { Map as MapIcon, Truck, Navigation, AlertTriangle, Shield, X } from 'lucide-react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { fleetTrackerApi, simulateVehicleMovement } from '../../api/fleetTracker';
+import { fleetTrackerApi } from '../../api/fleetTracker';
 import type { 
   FleetVehiclePosition, 
   ShipmentRoute, 
