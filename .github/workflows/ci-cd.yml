@@ -272,7 +272,11 @@ jobs:
             omniusgrid/frontend=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/frontend:develop-${{ github.sha }}
           cd -
 
+          # Jobs are immutable once created: delete last deploy's migration
+          # Job so the freshly image-pinned one can be applied.
+          kubectl delete job staging-db-migrate -n omniusgrid-staging --ignore-not-found
           kubectl apply -k infrastructure/k8s/overlays/staging/
+          kubectl wait --for=condition=complete job/staging-db-migrate -n omniusgrid-staging --timeout=300s
 
           kubectl rollout status deployment/staging-backend -n omniusgrid-staging --timeout=300s
           kubectl rollout status deployment/staging-frontend -n omniusgrid-staging --timeout=300s
@@ -325,7 +329,9 @@ jobs:
             omniusgrid/frontend=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/frontend:${VERSION}
           cd -
 
+          kubectl delete job prod-db-migrate -n omniusgrid --ignore-not-found
           kubectl apply -k infrastructure/k8s/overlays/production/
+          kubectl wait --for=condition=complete job/prod-db-migrate -n omniusgrid --timeout=300s
 
           kubectl rollout status deployment/prod-backend -n omniusgrid --timeout=600s
           kubectl rollout status deployment/prod-frontend -n omniusgrid --timeout=600s

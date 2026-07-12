@@ -37,6 +37,10 @@ spec:
               drop:
                 - ALL
           env:
+            # download links are built from this — dev default is localhost;
+            # overlays patch the real public hostname
+            - name: EXPORT_PUBLIC_BASE_URL
+              value: "https://api.omniusgrid.local"
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:

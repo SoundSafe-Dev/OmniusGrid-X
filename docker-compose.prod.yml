@@ -22,6 +22,10 @@
 # KAFKA_BOOTSTRAP at <broker-host>:9094; require_client_auth enforces the
 # agent's enrolled client cert (mTLS).
 #
+# Cert provisioning is a REQUIRED bring-up step (secure by default): redpanda
+# FAILS FAST if infra/redpanda/tls is empty — same posture as the ${VAR:?}
+# secrets. Run the issue_broker_cert.py step before first `up`.
+#
 # rag-inference (htreinen's service) can be added here once containerized —
 # see docs/RAG_CONTAINERIZATION.md.
 
@@ -70,7 +74,7 @@ services:
       - --kafka-addr
       - INTERNAL://0.0.0.0:29092,TLS://0.0.0.0:9094
       - --advertise-kafka-addr
-      - INTERNAL://redpanda:29092,TLS://${BROKER_TLS_HOSTNAME:-redpanda}:9094
+      - INTERNAL://redpanda:29092,TLS://${BROKER_TLS_HOSTNAME:-redpanda}:${BROKER_TLS_PORT:-9094}
       - --set
       - redpanda.kafka_api_tls=[{"name":"TLS","enabled":true,"cert_file":"/etc/redpanda/tls/broker.crt","key_file":"/etc/redpanda/tls/broker.key","truststore_file":"/etc/redpanda/tls/ca.crt","require_client_auth":true}]
     ports:

@@ -79,6 +79,11 @@ spec:
                 secretKeyRef:
                   name: jwt-secret
                   key: secret
+            - name: SIGNED_URL_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: signed-url-secret
+                  key: secret
             - name: MTLS_ENABLED
               value: "true"
             - name: CA_CERT_PATH

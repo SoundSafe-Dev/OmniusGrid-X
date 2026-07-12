@@ -166,4 +166,6 @@ spec:
         - protocol: TCP
           port: 9092
         - protocol: TCP
+          port: 9094   # FS-66 mTLS listener
+        - protocol: TCP
           port: 9644
