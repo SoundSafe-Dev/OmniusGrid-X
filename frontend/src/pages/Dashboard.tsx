@@ -197,7 +197,7 @@ const Dashboard: FC = () => {
                       <TooltipContent>Alarm details: {alarm.message}</TooltipContent>
                     </Tooltip>
                     <p className="text-sm text-opsgrid-text-secondary">
-                      {alarm.asset_name} • {new Date(alarm.occurred_at).toLocaleString()}
+                      {alarm.assetName} • {new Date(alarm.occurredAt).toLocaleString()}
                     </p>
                   </div>
                   <Tooltip>

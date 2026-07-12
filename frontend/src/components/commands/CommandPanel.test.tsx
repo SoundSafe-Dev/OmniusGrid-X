@@ -17,7 +17,7 @@ const wrap = (ui: React.ReactElement) => {
 
 describe('CommandPanel', () => {
   it('renders command options, state badge, and emergency stop', () => {
-    wrap(<CommandPanel assetId="a1" assetName="Printer #1" currentState="Execute" />)
+    wrap(<CommandPanel canEmergencyStop assetId="a1" assetName="Printer #1" currentState="Execute" />)
     expect(screen.getByText('Command Control')).toBeInTheDocument()
     expect(screen.getByText('Printer #1')).toBeInTheDocument()
     expect(screen.getByText('State: Execute')).toBeInTheDocument()
@@ -29,7 +29,7 @@ describe('CommandPanel', () => {
 
   it('posts emergency stop to the /api/v1/commands route', async () => {
     const { api } = await import('../../api')
-    wrap(<CommandPanel assetId="a1" assetName="Printer #1" />)
+    wrap(<CommandPanel canEmergencyStop assetId="a1" assetName="Printer #1" />)
     fireEvent.click(screen.getByText('STOP NOW'))
     await waitFor(() =>
       expect(api.post).toHaveBeenCalledWith('/api/v1/commands/asset/a1/emergency-stop')

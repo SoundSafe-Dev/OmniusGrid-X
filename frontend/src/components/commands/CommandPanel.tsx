@@ -5,6 +5,8 @@ import { api } from '../../api';
 import { Button, Card, Badge, Input } from '../ui';
 
 interface CommandPanelProps {
+  /** backend gates emergency-stop (and submit of emergency_stop) to admins */
+  canEmergencyStop?: boolean;
   assetId: string;
   assetName: string;
   currentState?: string;
@@ -75,6 +77,7 @@ export const CommandPanel: FC<CommandPanelProps> = ({
   assetId,
   assetName,
   currentState,
+  canEmergencyStop = false,
 }) => {
   const [selectedCommand, setSelectedCommand] = useState<CommandOption | null>(null);
   const [paramValue, setParamValue] = useState<string>('');
@@ -181,7 +184,9 @@ export const CommandPanel: FC<CommandPanelProps> = ({
           )}
         </div>
 
-        {/* Emergency Stop */}
+        {/* Emergency Stop — backend routes are @require_admin; rendering it
+            for operators would show a safety control that always 403s. */}
+        {canEmergencyStop && (
         <div className="mb-4 p-3 bg-red-500/10 border border-red-500/30 rounded-lg">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -201,6 +206,7 @@ export const CommandPanel: FC<CommandPanelProps> = ({
             Immediately halts all operations. Use with caution.
           </p>
         </div>
+        )}
 
         {/* Command Selection */}
         <div className="grid grid-cols-2 gap-2 mb-4">

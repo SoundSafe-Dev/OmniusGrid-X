@@ -34,7 +34,13 @@ const AssetDetail: FC = () => {
     ? ''
     : 'metricName' in (telemetry as any)
       ? ((telemetry as any).metricName ?? '')
-      : Object.keys(telemetry as Record<string, unknown>).slice(0, 6).join(',')
+      : Object.entries(telemetry as Record<string, unknown>)
+          // record form maps metric name -> point object; the backend's
+          // no-data envelope ({message: '...'}) must not become a "metric"
+          .filter(([, v]) => v !== null && typeof v === 'object')
+          .map(([k]) => k)
+          .slice(0, 6)
+          .join(',')
   const liveMetrics = useMemo(
     () => (liveMetricsKey ? liveMetricsKey.split(',') : undefined),
     [liveMetricsKey]
@@ -242,6 +248,7 @@ const AssetDetail: FC = () => {
           RBAC (@require_operator_or_admin on /api/v1/commands/submit). */}
       {id && isOperator && (
         <CommandPanel
+          canEmergencyStop={isAdmin}
           assetId={id}
           assetName={asset.name}
           currentState={asset.currentPackmlState}

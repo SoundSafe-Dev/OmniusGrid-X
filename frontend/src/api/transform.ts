@@ -14,6 +14,7 @@ const OPAQUE_KEYS = new Set([
   // every spelling a wire or client can produce — a missing variant means
   // toCamel/toSnake recurse INTO the blob and corrupt its data keys
   'metadata', 'meta_data', 'metaData',
+  'featureVector', 'feature_vector',  // ML feature names are data, not fields
   'connectionConfig', 'connection_config',
   'mediaConfig', 'media_config',
   'settings', 'details', 'payload',

@@ -125,7 +125,7 @@ const Alarms: FC = () => {
             <div
               key={alarm.id}
               className={`p-4 flex items-center justify-between ${
-                alarm.is_active ? 'bg-opsgrid-bg/50' : ''
+                alarm.isActive ? 'bg-opsgrid-bg/50' : ''
               }`}
             >
               <div className="flex items-center gap-4">
@@ -145,7 +145,7 @@ const Alarms: FC = () => {
                 <div>
                   <p className="font-medium">{alarm.message}</p>
                   <p className="text-sm text-opsgrid-text-secondary">
-                    {alarm.alarm_code} • {new Date(alarm.occurred_at).toLocaleString()}
+                    {alarm.alarmCode} • {new Date(alarm.occurredAt).toLocaleString()}
                   </p>
                 </div>
               </div>
@@ -155,18 +155,18 @@ const Alarms: FC = () => {
                   <TooltipTrigger asChild>
                     <span
                       className={`px-2 py-1 rounded text-xs ${
-                        alarm.is_active
+                        alarm.isActive
                           ? 'bg-status-alarm/20 text-status-alarm'
                           : 'bg-status-running/20 text-status-running'
                       }`}
                     >
-                      {alarm.is_active ? 'Active' : 'Cleared'}
+                      {alarm.isActive ? 'Active' : 'Cleared'}
                     </span>
                   </TooltipTrigger>
-                  <TooltipContent>{alarm.is_active ? 'Alarm is currently active' : 'Alarm has been cleared'}</TooltipContent>
+                  <TooltipContent>{alarm.isActive ? 'Alarm is currently active' : 'Alarm has been cleared'}</TooltipContent>
                 </Tooltip>
                 
-                {alarm.is_active && !alarm.is_acknowledged && (
+                {alarm.isActive && !alarm.isAcknowledged && (
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <button
@@ -180,7 +180,7 @@ const Alarms: FC = () => {
                   </Tooltip>
                 )}
                 
-                {alarm.is_acknowledged && (
+                {alarm.isAcknowledged && (
                   <span className="text-sm text-opsgrid-text-secondary">
                     Acknowledged
                   </span>
