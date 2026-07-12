@@ -53,6 +53,7 @@ export const GeofencingPanel: FC<GeofencingPanelProps> = ({ onAlert }) => {
       onAlert?.(alert);
     });
     return unsubscribe;
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- pre-existing; adding deps changes retrigger behavior (FS-54)
   }, [soundEnabled]);
 
   const loadData = async () => {

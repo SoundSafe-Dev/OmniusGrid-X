@@ -83,6 +83,7 @@ export const AnnotatedChart: FC<AnnotatedChartProps> = ({
     // Export functionality - requires Plotly to be available globally
     // This is a placeholder - actual implementation depends on Plotly API
     console.log('Export chart as PNG');
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- pre-existing; adding deps changes retrigger behavior (FS-54)
   }, [data, plotLayout]);
   
   // These shape-drawing buttons exist in plotly.js at runtime but are missing

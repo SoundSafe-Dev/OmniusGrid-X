@@ -6,7 +6,6 @@ import 'vitest';
 declare module 'vitest' {
   // The type parameter list must match vitest's own Assertion declaration for
   // interface merging, including its `any` default.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   interface Assertion<T = any> {
     toHaveNoViolations(): T;
   }

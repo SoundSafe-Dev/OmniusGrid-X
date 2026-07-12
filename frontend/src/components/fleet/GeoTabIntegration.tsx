@@ -187,6 +187,7 @@ export const GeoTabIntegration: FC<GeoTabIntegrationProps> = ({
       unsubscribeStatus();
       unsubscribeGeoTab();
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- pre-existing; adding deps changes retrigger behavior (FS-54)
   }, [organizationId, showTrail]);
 
   const fetchVehicles = useCallback(async () => {

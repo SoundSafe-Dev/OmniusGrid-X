@@ -111,12 +111,10 @@ jobs:
         working-directory: ./frontend
         run: npm ci
 
-      - name: Lint frontend (advisory)
+      - name: Lint frontend
         working-directory: ./frontend
-        # The repo has NO eslint config yet — eslint exits 2 before linting a
-        # single file. Advisory until a config lands; the vitest + build steps
-        # below are the blocking frontend gates.
-        run: npm run lint || true
+        # Blocking since FS-54 (.eslintrc.cjs; tree lints clean at 0/0).
+        run: npm run lint
 
       - name: Type check frontend
         working-directory: ./frontend

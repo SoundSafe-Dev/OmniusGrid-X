@@ -262,6 +262,7 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
     return () => {
       cancelled = true;
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- pre-existing; adding deps changes retrigger behavior (FS-54)
   }, []);
 
   const handleCreateNewSession = async () => {

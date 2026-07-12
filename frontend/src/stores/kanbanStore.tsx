@@ -213,55 +213,39 @@ export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) 
 
   // Move task
   const moveTask = useCallback(async (taskId: string, targetColumnId: string, position?: number) => {
-    try {
-      await api.post(`/api/v1/kanban/tasks/${taskId}/move`, { target_column_id: targetColumnId, position });
+    await api.post(`/api/v1/kanban/tasks/${taskId}/move`, { target_column_id: targetColumnId, position });
 
-      // Update local state optimistically
-      setTasks(prev => prev.map(t =>
-        t.id === taskId
-          ? { ...t, column_id: targetColumnId, position: position ?? t.position }
-          : t
-      ));
+    // Update local state optimistically
+    setTasks(prev => prev.map(t =>
+      t.id === taskId
+        ? { ...t, column_id: targetColumnId, position: position ?? t.position }
+        : t
+    ));
 
-      // Refresh to get server state
-      await refreshBoard();
-      await refreshMetrics();
-    } catch (err) {
-      throw err;
-    }
+    // Refresh to get server state
+    await refreshBoard();
+    await refreshMetrics();
   }, [refreshBoard, refreshMetrics]);
 
   // Approve/reject task
   const approveTask = useCallback(async (taskId: string, action: 'approve' | 'reject', reason?: string) => {
-    try {
-      await api.post(`/api/v1/kanban/tasks/${taskId}/approve`, { action, reason });
-      await refreshBoard();
-      await refreshMetrics();
-    } catch (err) {
-      throw err;
-    }
+    await api.post(`/api/v1/kanban/tasks/${taskId}/approve`, { action, reason });
+    await refreshBoard();
+    await refreshMetrics();
   }, [refreshBoard, refreshMetrics]);
 
   // Start task
   const startTask = useCallback(async (taskId: string) => {
-    try {
-      await api.post(`/api/v1/kanban/tasks/${taskId}/start`);
-      await refreshBoard();
-      await refreshMetrics();
-    } catch (err) {
-      throw err;
-    }
+    await api.post(`/api/v1/kanban/tasks/${taskId}/start`);
+    await refreshBoard();
+    await refreshMetrics();
   }, [refreshBoard, refreshMetrics]);
 
   // Complete task
   const completeTask = useCallback(async (taskId: string) => {
-    try {
-      await api.post(`/api/v1/kanban/tasks/${taskId}/complete`);
-      await refreshBoard();
-      await refreshMetrics();
-    } catch (err) {
-      throw err;
-    }
+    await api.post(`/api/v1/kanban/tasks/${taskId}/complete`);
+    await refreshBoard();
+    await refreshMetrics();
   }, [refreshBoard, refreshMetrics]);
 
   // Create task

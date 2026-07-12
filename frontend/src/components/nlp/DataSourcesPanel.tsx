@@ -43,6 +43,7 @@ export const DataSourcesPanel = React.forwardRef<DataSourcesPanelHandle, DataSou
     if (sessionId) {
       loadDataSources();
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- pre-existing; adding deps changes retrigger behavior (FS-54)
   }, [sessionId]);
 
   const isSessionNotFound = (error: any) =>

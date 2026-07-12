@@ -8,7 +8,6 @@ import { ApiError } from '../types'
 //    proxies /api and /ws to the backend (frontend/nginx.conf) — the old
 //    http://<hostname>:8000 guess pointed at an unpublished port in prod.
 const getApiUrl = () => {
-  // @ts-ignore
   const envUrl = import.meta.env?.VITE_API_URL
   if (envUrl) return envUrl
 

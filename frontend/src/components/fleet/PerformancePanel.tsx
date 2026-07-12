@@ -50,6 +50,7 @@ export const PerformancePanel: FC = () => {
 
   useEffect(() => {
     loadData();
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- pre-existing; adding deps changes retrigger behavior (FS-54)
   }, [timeRange]);
 
   const loadData = async () => {

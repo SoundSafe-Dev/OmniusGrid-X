@@ -23,28 +23,33 @@ export const RealTimeDataPanel: React.FC<RealTimeDataPanelProps> = ({
     if (sessionId) {
       loadData();
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- pre-existing; adding deps changes retrigger behavior (FS-54)
   }, [sessionId, activeTab]);
 
   const loadData = async () => {
     setIsLoading(true);
     try {
       switch (activeTab) {
-        case 'telemetry':
+        case 'telemetry': {
           const telemetryData = await analysisSessionsApi.getSessionTelemetryContext(sessionId);
           setTelemetry(telemetryData);
           break;
-        case 'alarms':
+        }
+        case 'alarms': {
           const alarmsData = await analysisSessionsApi.getSessionAlarmsContext(sessionId);
           setAlarms(alarmsData);
           break;
-        case 'kanban':
+        }
+        case 'kanban': {
           const kanbanData = await analysisSessionsApi.getSessionKanbanContext(sessionId);
           setKanban(kanbanData);
           break;
-        case 'registries':
+        }
+        case 'registries': {
           const registriesData = await analysisSessionsApi.getSessionRegistriesContext(sessionId);
           setRegistries(registriesData);
           break;
+        }
       }
     } catch (error) {
       console.error('Error loading context data:', error);
@@ -89,7 +94,7 @@ export const RealTimeDataPanel: React.FC<RealTimeDataPanelProps> = ({
 
     // Render actual data based on active tab
     switch (activeTab) {
-      case 'telemetry':
+      case 'telemetry': {
         const telemetryItems = data.telemetry || [];
         if (telemetryItems.length === 0) {
           return <p className="text-sm text-opsgrid-text-secondary">No telemetry data</p>;
@@ -117,7 +122,8 @@ export const RealTimeDataPanel: React.FC<RealTimeDataPanelProps> = ({
           </div>
         );
 
-      case 'alarms':
+      }
+      case 'alarms': {
         const alarmItems = data.alarms || [];
         if (alarmItems.length === 0) {
           return <p className="text-sm text-opsgrid-text-secondary">No alarms</p>;
@@ -155,7 +161,8 @@ export const RealTimeDataPanel: React.FC<RealTimeDataPanelProps> = ({
           </div>
         );
 
-      case 'kanban':
+      }
+      case 'kanban': {
         const taskItems = data.tasks || [];
         if (taskItems.length === 0) {
           return <p className="text-sm text-opsgrid-text-secondary">No tasks</p>;
@@ -187,7 +194,8 @@ export const RealTimeDataPanel: React.FC<RealTimeDataPanelProps> = ({
           </div>
         );
 
-      case 'registries':
+      }
+      case 'registries': {
         const registryItems = data.registry_items || [];
         if (registryItems.length === 0) {
           return <p className="text-sm text-opsgrid-text-secondary">No registry items</p>;
@@ -219,6 +227,7 @@ export const RealTimeDataPanel: React.FC<RealTimeDataPanelProps> = ({
           </div>
         );
 
+      }
       default:
         return <p className="text-sm text-opsgrid-text-secondary">Unknown tab</p>;
     }
