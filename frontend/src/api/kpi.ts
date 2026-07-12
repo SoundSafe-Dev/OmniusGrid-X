@@ -19,7 +19,11 @@ import {
 } from './mocks/kpiMocks';
 
 import { USE_MOCK } from './mockMode';
-import { toCamel } from './transform';
+import { registerTransform } from './transformRegistry';
+
+// FS-61: casing handled by the axios seam — no per-call toCamel/toSnake.
+registerTransform('/api/v1/kpi');
+
 const MOCK_DELAY = 300;
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -29,8 +33,8 @@ export const kpiApi = {
       await delay(MOCK_DELAY);
       return mockFuelEfficiencyData;
     }
-    const response = await api.get<any>(`/api/v1/kpi/fuel-efficiency?range=${timeRange}`);
-    return toCamel<FuelEfficiencyData>(response.data);
+    const response = await api.get<FuelEfficiencyData>(`/api/v1/kpi/fuel-efficiency?range=${timeRange}`);
+    return response.data;
   },
 
   getIdleTime: async (timeRange: TimeRange = 'month'): Promise<IdleTimeData> => {
@@ -38,8 +42,8 @@ export const kpiApi = {
       await delay(MOCK_DELAY);
       return mockIdleTimeData;
     }
-    const response = await api.get<any>(`/api/v1/kpi/idle-time?range=${timeRange}`);
-    return toCamel<IdleTimeData>(response.data);
+    const response = await api.get<IdleTimeData>(`/api/v1/kpi/idle-time?range=${timeRange}`);
+    return response.data;
   },
 
   getOnTimePerformance: async (timeRange: TimeRange = 'month'): Promise<OnTimePerformanceData> => {
@@ -47,8 +51,8 @@ export const kpiApi = {
       await delay(MOCK_DELAY);
       return mockOnTimePerformanceData;
     }
-    const response = await api.get<any>(`/api/v1/kpi/on-time-performance?range=${timeRange}`);
-    return toCamel<OnTimePerformanceData>(response.data);
+    const response = await api.get<OnTimePerformanceData>(`/api/v1/kpi/on-time-performance?range=${timeRange}`);
+    return response.data;
   },
 
   getVehicleHealthScore: async (): Promise<VehicleHealthScoreData> => {
@@ -56,8 +60,8 @@ export const kpiApi = {
       await delay(MOCK_DELAY);
       return mockVehicleHealthScoreData;
     }
-    const response = await api.get<any>('/api/v1/kpi/vehicle-health');
-    return toCamel<VehicleHealthScoreData>(response.data);
+    const response = await api.get<VehicleHealthScoreData>('/api/v1/kpi/vehicle-health');
+    return response.data;
   },
 
   getCostPerMile: async (timeRange: TimeRange = 'month'): Promise<CostPerMileData> => {
@@ -65,8 +69,8 @@ export const kpiApi = {
       await delay(MOCK_DELAY);
       return mockCostPerMileData;
     }
-    const response = await api.get<any>(`/api/v1/kpi/cost-per-mile?range=${timeRange}`);
-    return toCamel<CostPerMileData>(response.data);
+    const response = await api.get<CostPerMileData>(`/api/v1/kpi/cost-per-mile?range=${timeRange}`);
+    return response.data;
   },
 
   getDTCCount: async (): Promise<DTCCountData> => {
@@ -74,8 +78,8 @@ export const kpiApi = {
       await delay(MOCK_DELAY);
       return mockDTCCountData;
     }
-    const response = await api.get<any>('/api/v1/kpi/dtc-count');
-    return toCamel<DTCCountData>(response.data);
+    const response = await api.get<DTCCountData>('/api/v1/kpi/dtc-count');
+    return response.data;
   },
 
   getAllKPIs: async (timeRange: TimeRange = 'month') => {
@@ -84,6 +88,6 @@ export const kpiApi = {
       return getMockKPIDataByRange(timeRange);
     }
     const response = await api.get<any>(`/api/v1/kpi/dashboard?range=${timeRange}`);
-    return toCamel(response.data);
+    return response.data;
   },
 };

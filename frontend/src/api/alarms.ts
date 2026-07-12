@@ -1,8 +1,11 @@
 import { api } from './client';
 import { mockApi } from './mockApi';
 import { USE_MOCK } from './mockMode';
-import { toCamel, toSnake } from './transform';
+import { registerTransform } from './transformRegistry';
 import { Alarm, AlarmFilters, ActiveAlarmsResponse, AlarmAcknowledge, PaginatedResponse } from '../types';
+
+// FS-61: casing handled by the axios seam — no per-call toCamel/toSnake.
+registerTransform('/api/v1/alarms');
 
 export const alarmsApi = {
   list: async (filters?: AlarmFilters): Promise<PaginatedResponse<Alarm>> => {
@@ -24,8 +27,8 @@ export const alarmsApi = {
     if (filters?.startTime) params.start_time = filters.startTime;
     if (filters?.endTime) params.end_time = filters.endTime;
 
-    const response = await api.get<any>('/api/v1/alarms/', { params });
-    const items = toCamel<Alarm[]>(response.data);
+    const response = await api.get<Alarm[]>('/api/v1/alarms/', { params });
+    const items = response.data;
     return {
       items,
       total: items.length,
@@ -37,15 +40,15 @@ export const alarmsApi = {
 
   getActive: async (organizationId?: string, severity?: string): Promise<ActiveAlarmsResponse> => {
     if (USE_MOCK) return mockApi.getActiveAlarms();
-    const response = await api.get<any>('/api/v1/alarms/active', {
+    const response = await api.get<ActiveAlarmsResponse>('/api/v1/alarms/active', {
       params: { organization_id: organizationId, severity },
     });
-    return toCamel<ActiveAlarmsResponse>(response.data);
+    return response.data;
   },
 
   get: async (alarmId: string): Promise<Alarm> => {
-    const response = await api.get<any>(`/api/v1/alarms/${alarmId}`);
-    return toCamel<Alarm>(response.data);
+    const response = await api.get<Alarm>(`/api/v1/alarms/${alarmId}`);
+    return response.data;
   },
 
   acknowledge: async (alarmId: string, data?: AlarmAcknowledge): Promise<Alarm> => {
@@ -53,13 +56,13 @@ export const alarmsApi = {
       await mockApi.acknowledgeAlarm(alarmId);
       return {} as Alarm;
     }
-    const response = await api.post<any>(`/api/v1/alarms/${alarmId}/acknowledge`, toSnake(data || {}));
-    return toCamel<Alarm>(response.data);
+    const response = await api.post<Alarm>(`/api/v1/alarms/${alarmId}/acknowledge`, data || {});
+    return response.data;
   },
 
   clear: async (alarmId: string): Promise<Alarm> => {
-    const response = await api.post<any>(`/api/v1/alarms/${alarmId}/clear`, {});
-    return toCamel<Alarm>(response.data);
+    const response = await api.post<Alarm>(`/api/v1/alarms/${alarmId}/clear`, {});
+    return response.data;
   },
 
   acknowledgeAll: async (params?: { assetId?: string; severity?: string }): Promise<{ acknowledgedCount: number }> => {
@@ -68,7 +71,8 @@ export const alarmsApi = {
     const query: Record<string, string> = {};
     if (params?.assetId) query.asset_id = params.assetId;
     if (params?.severity) query.severity = params.severity;
-    const response = await api.post<{ acknowledged_count: number }>('/api/v1/alarms/acknowledge-all', null, { params: query });
-    return { acknowledgedCount: response.data.acknowledged_count };
+    // Response is camelized by the transform seam (acknowledged_count -> acknowledgedCount).
+    const response = await api.post<{ acknowledgedCount: number }>('/api/v1/alarms/acknowledge-all', null, { params: query });
+    return response.data;
   },
 };

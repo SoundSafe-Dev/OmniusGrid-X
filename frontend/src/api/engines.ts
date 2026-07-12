@@ -8,7 +8,10 @@ import {
   CloudGatewayStatus,
 } from '../types';
 import { USE_MOCK } from './mockMode';
-import { toCamel } from './transform';
+import { registerTransform } from './transformRegistry';
+
+// FS-61: casing handled by the axios seam — no per-call toCamel/toSnake.
+registerTransform('/api/v1/engines');
 
 export const enginesApi = {
   // Tactical Engine
@@ -16,16 +19,16 @@ export const enginesApi = {
     if (USE_MOCK) {
       return mockApi.getTacticalStatus();
     }
-    const response = await api.get<any>('/api/v1/engines/tactical/status');
-    return toCamel<TacticalEngineStatus>(response.data);
+    const response = await api.get<TacticalEngineStatus>('/api/v1/engines/tactical/status');
+    return response.data;
   },
 
   runInference: async (assetId: string, featureVector: Record<string, number>): Promise<TacticalDecision> => {
-    const response = await api.post<any>('/api/v1/engines/tactical/infer', {
+    const response = await api.post<TacticalDecision>('/api/v1/engines/tactical/infer', {
       asset_id: assetId,
       feature_vector: featureVector,
     });
-    return toCamel<TacticalDecision>(response.data);
+    return response.data;
   },
 
   // Strategic Engine
@@ -33,10 +36,10 @@ export const enginesApi = {
     if (USE_MOCK) {
       return mockApi.getStrategicRecommendations();
     }
-    const response = await api.get<any>('/api/v1/engines/strategic/recommendations', {
+    const response = await api.get<StrategicRecommendation[]>('/api/v1/engines/strategic/recommendations', {
       params: minPriority !== undefined ? { min_priority: minPriority } : undefined,
     });
-    return toCamel<StrategicRecommendation[]>(response.data);
+    return response.data;
   },
 
   approveRecommendation: async (recId: string, operatorId: string, notes?: string): Promise<void> => {
@@ -56,8 +59,8 @@ export const enginesApi = {
   // MLOps Pipeline
   getMLOpsStatus: async (): Promise<MLOpsStatus> => {
     if (USE_MOCK) return mockApi.getMLOpsStatus();
-    const response = await api.get<any>('/api/v1/engines/mlops/status');
-    return toCamel<MLOpsStatus>(response.data);
+    const response = await api.get<MLOpsStatus>('/api/v1/engines/mlops/status');
+    return response.data;
   },
 
   deployModel: async (version: string): Promise<void> => {
@@ -71,8 +74,8 @@ export const enginesApi = {
   // Cloud Gateway
   getCloudGatewayStatus: async (): Promise<CloudGatewayStatus> => {
     if (USE_MOCK) return mockApi.getCloudGatewayStatus();
-    const response = await api.get<any>('/api/v1/engines/cloud/status');
-    return toCamel<CloudGatewayStatus>(response.data);
+    const response = await api.get<CloudGatewayStatus>('/api/v1/engines/cloud/status');
+    return response.data;
   },
 
   forceCloudFlush: async (): Promise<void> => {

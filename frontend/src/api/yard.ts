@@ -1,5 +1,6 @@
 import { api } from './client';
-import { toCamel, toSnake, YARD_ALIASES, YARD_OUT_ALIASES } from './transform';
+import { YARD_ALIASES, YARD_OUT_ALIASES } from './transform';
+import { registerTransform } from './transformRegistry';
 import { 
   YardTrailer, 
   DockDoor, 
@@ -13,6 +14,10 @@ import {
 } from '../types';
 
 import { USE_MOCK } from './mockMode';
+
+// FS-61: casing handled by the axios seam — no per-call toCamel/toSnake.
+// (/api/v1/geotab is registered in transportation.ts alongside geoTabApi.)
+registerTransform('/api/v1/yard', { inAliases: YARD_ALIASES, outAliases: YARD_OUT_ALIASES });
 
 const MOCK_DELAY = 500;
 
@@ -258,8 +263,8 @@ export const yardApi = {
         hasMore: false,
       };
     }
-    const response = await api.get<any>('/api/v1/yard/trailers', { params: toSnake(filters ?? {}, YARD_OUT_ALIASES) });
-    return { items: toCamel<YardTrailer[]>(response.data, YARD_ALIASES), total: (response.data as any[]).length } as any;
+    const response = await api.get<YardTrailer[]>('/api/v1/yard/trailers', { params: filters ?? {} });
+    return { items: response.data, total: (response.data as any[]).length } as any;
   },
 
   getTrailer: async (id: string): Promise<YardTrailer> => {
@@ -269,8 +274,8 @@ export const yardApi = {
       if (!trailer) throw new Error('Trailer not found');
       return trailer;
     }
-    const response = await api.get<any>(`/api/v1/yard/trailers/${id}`);
-    return toCamel<YardTrailer>(response.data, YARD_ALIASES);
+    const response = await api.get<YardTrailer>(`/api/v1/yard/trailers/${id}`);
+    return response.data;
   },
 
   checkInTrailer: async (data: Partial<YardTrailer>): Promise<YardTrailer> => {
@@ -289,8 +294,8 @@ export const yardApi = {
       mockTrailers.push(newTrailer);
       return newTrailer;
     }
-    const response = await api.post<any>('/api/v1/yard/trailers/checkin', toSnake(data, YARD_OUT_ALIASES));
-    return toCamel<YardTrailer>(response.data, YARD_ALIASES);
+    const response = await api.post<YardTrailer>('/api/v1/yard/trailers/checkin', data);
+    return response.data;
   },
 
   checkOutTrailer: async (id: string): Promise<YardTrailer> => {
@@ -303,8 +308,8 @@ export const yardApi = {
       trailer.updatedAt = new Date().toISOString();
       return trailer;
     }
-    const response = await api.post<any>(`/api/v1/yard/trailers/${id}/checkout`);
-    return toCamel<YardTrailer>(response.data, YARD_ALIASES);
+    const response = await api.post<YardTrailer>(`/api/v1/yard/trailers/${id}/checkout`);
+    return response.data;
   },
 
   assignToDoor: async (trailerId: string, doorId: string): Promise<YardTrailer> => {
@@ -324,8 +329,8 @@ export const yardApi = {
       door.updatedAt = new Date().toISOString();
       return trailer;
     }
-    const response = await api.post<any>(`/api/v1/yard/dock/doors/${doorId}/assign/${trailerId}`);
-    return toCamel<YardTrailer>(response.data, YARD_ALIASES);
+    const response = await api.post<YardTrailer>(`/api/v1/yard/dock/doors/${doorId}/assign/${trailerId}`);
+    return response.data;
   },
 
   // Dock Doors
@@ -337,8 +342,8 @@ export const yardApi = {
       }
       return mockDockDoors;
     }
-    const response = await api.get<any>('/api/v1/yard/dock/doors', { params: { workcell_id: workcellId } });
-    return toCamel<DockDoor[]>(response.data, YARD_ALIASES);
+    const response = await api.get<DockDoor[]>('/api/v1/yard/dock/doors', { params: { workcell_id: workcellId } });
+    return response.data;
   },
 
   // Appointments
@@ -358,8 +363,8 @@ export const yardApi = {
         hasMore: false,
       };
     }
-    const response = await api.get<any>('/api/v1/yard/dock/appointments', { params: toSnake(filters ?? {}, YARD_OUT_ALIASES) });
-    return { items: toCamel<DockAppointment[]>(response.data, YARD_ALIASES), total: (response.data as any[]).length } as any;
+    const response = await api.get<DockAppointment[]>('/api/v1/yard/dock/appointments', { params: filters ?? {} });
+    return { items: response.data, total: (response.data as any[]).length } as any;
   },
 
   createAppointment: async (data: Partial<DockAppointment>): Promise<DockAppointment> => {
@@ -420,7 +425,7 @@ export const yardApi = {
       };
     }
     const response = await api.get('/api/v1/yard/dwell-times');
-    return toCamel(response.data, YARD_ALIASES);
+    return response.data;
   },
 
   getDetentionAlerts: async (): Promise<DetentionAlert[]> => {
@@ -443,8 +448,8 @@ export const yardApi = {
         },
       ];
     }
-    const response = await api.get<any>('/api/v1/yard/detention-alerts');
-    return toCamel<DetentionAlert[]>(response.data, YARD_ALIASES);
+    const response = await api.get<DetentionAlert[]>('/api/v1/yard/detention-alerts');
+    return response.data;
   },
 };
 

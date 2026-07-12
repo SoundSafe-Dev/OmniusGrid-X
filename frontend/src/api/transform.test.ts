@@ -46,6 +46,11 @@ describe('transform adapters', () => {
     expect(wire.check_in_at).toBe('now')
   })
 
+  it('treats camelCase metaData as opaque (FS-59: a missing spelling variant meant toCamel recursed into blob data keys)', () => {
+    const back = toCamel<any>({ id: 'x', metaData: { seal_code: 'S1', dock_door: 4 } })
+    expect(back.metaData).toEqual({ seal_code: 'S1', dock_door: 4 })
+  })
+
   it('passes through primitives and string arrays (metric names stay intact)', () => {
     expect(toCamel<any>({ asset_id: 'a', metrics: ['spindle_speed', 'motor_temp'] })).toEqual({
       assetId: 'a',

@@ -11,7 +11,9 @@ const camelToSnake = (s: string) => s.replace(/[A-Z]/g, (c) => `_${c.toLowerCase
 // telemetry metadata) — case conversion is lossy and would break round-trips.
 // The key itself is still renamed; only its value is passed through untouched.
 const OPAQUE_KEYS = new Set([
-  'metadata', 'meta_data',
+  // every spelling a wire or client can produce — a missing variant means
+  // toCamel/toSnake recurse INTO the blob and corrupt its data keys
+  'metadata', 'meta_data', 'metaData',
   'connectionConfig', 'connection_config',
   'mediaConfig', 'media_config',
   'settings', 'details', 'payload',

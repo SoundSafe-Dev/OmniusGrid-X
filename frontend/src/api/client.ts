@@ -1,4 +1,5 @@
 import axios, { AxiosError, AxiosResponse } from 'axios'
+import { requestTransform, responseTransform } from './transformRegistry'
 import { ApiError } from '../types'
 
 // API base resolution:
@@ -30,6 +31,8 @@ export const api = axios.create({
 // Request interceptor - attach the real auth token (or none, letting the
 // backend 401). The dev-token bypass is only ever present when devLogin stored
 // it, which is gated to non-production builds.
+api.interceptors.request.use(requestTransform)
+
 api.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem('accessToken') || localStorage.getItem('devToken')
@@ -42,6 +45,8 @@ api.interceptors.request.use(
 )
 
 // Response interceptor - handle errors and token refresh
+api.interceptors.response.use(responseTransform)
+
 api.interceptors.response.use(
   (response: AxiosResponse) => response,
   async (error: AxiosError) => {
@@ -52,11 +57,18 @@ api.interceptors.response.use(
       const refreshToken = localStorage.getItem('refreshToken')
       if (refreshToken) {
         try {
+          // Raw axios on purpose: must not recurse through this interceptor.
+          // Request body is camelCase (matches backend RefreshRequest);
+          // the RESPONSE is the snake_case Token schema — reading
+          // `accessToken` here stored undefined and broke every refresh.
           const response = await axios.post(`${API_URL}/api/v1/auth/refresh`, {
             refreshToken,
           })
-          const { accessToken } = response.data
+          const { access_token: accessToken, refresh_token: newRefreshToken } = response.data
           localStorage.setItem('accessToken', accessToken)
+          if (newRefreshToken) {
+            localStorage.setItem('refreshToken', newRefreshToken)
+          }
           originalRequest.headers.Authorization = `Bearer ${accessToken}`
           return api(originalRequest)
         } catch (refreshError) {

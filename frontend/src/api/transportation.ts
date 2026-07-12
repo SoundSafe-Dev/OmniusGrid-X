@@ -1,5 +1,6 @@
 import { api } from './client';
-import { toCamel, toSnake, TRANSPORT_ALIASES, TRANSPORT_OUT_ALIASES } from './transform';
+import { TRANSPORT_ALIASES, TRANSPORT_OUT_ALIASES } from './transform';
+import { registerTransform } from './transformRegistry';
 import {
   Carrier, 
   Driver, 
@@ -16,6 +17,11 @@ import {
 } from '../types';
 
 import { USE_MOCK } from './mockMode';
+
+// FS-61: casing handled by the axios seam — no per-call toCamel/toSnake.
+// (/api/v1/logistics is deliberately NOT registered: legacy-camel backend.)
+registerTransform('/api/v1/transportation', { inAliases: TRANSPORT_ALIASES, outAliases: TRANSPORT_OUT_ALIASES });
+registerTransform('/api/v1/geotab');
 
 const MOCK_DELAY = 500;
 
@@ -414,8 +420,8 @@ export const transportationApi = {
         hasMore: false,
       };
     }
-    const response = await api.get<any>('/api/v1/transportation/carriers');
-    const items = toCamel<Carrier[]>(response.data, TRANSPORT_ALIASES);
+    const response = await api.get<Carrier[]>('/api/v1/transportation/carriers');
+    const items = response.data;
     return {
       items,
       total: items.length,
@@ -432,8 +438,8 @@ export const transportationApi = {
       if (!carrier) throw new Error('Carrier not found');
       return carrier;
     }
-    const response = await api.get<any>(`/api/v1/transportation/carriers/${id}`);
-    return toCamel<Carrier>(response.data, TRANSPORT_ALIASES);
+    const response = await api.get<Carrier>(`/api/v1/transportation/carriers/${id}`);
+    return response.data;
   },
 
   getCarrierCompliance: async (id: string): Promise<{ score: number; issues: string[]; ctpatStatus: string }> => {
@@ -447,7 +453,7 @@ export const transportationApi = {
       };
     }
     const response = await api.get(`/api/v1/transportation/carriers/${id}/compliance`);
-    return toCamel(response.data);
+    return response.data;
   },
 
   // Drivers
@@ -464,8 +470,8 @@ export const transportationApi = {
         hasMore: false,
       };
     }
-    const response = await api.get<any>('/api/v1/transportation/drivers', { params: { carrier_id: carrierId } });
-    const items = toCamel<Driver[]>(response.data, TRANSPORT_ALIASES);
+    const response = await api.get<Driver[]>('/api/v1/transportation/drivers', { params: { carrier_id: carrierId } });
+    const items = response.data;
     return {
       items,
       total: items.length,
@@ -482,8 +488,8 @@ export const transportationApi = {
       if (!driver) throw new Error('Driver not found');
       return driver;
     }
-    const response = await api.get<any>(`/api/v1/transportation/drivers/${id}`);
-    return toCamel<Driver>(response.data, TRANSPORT_ALIASES);
+    const response = await api.get<Driver>(`/api/v1/transportation/drivers/${id}`);
+    return response.data;
   },
 
   getDriverHOS: async (id: string): Promise<{ 
@@ -505,7 +511,7 @@ export const transportationApi = {
       };
     }
     const response = await api.get(`/api/v1/transportation/drivers/${id}/hos`);
-    return toCamel(response.data);
+    return response.data;
   },
 
   // Vehicles
@@ -522,8 +528,8 @@ export const transportationApi = {
         hasMore: false,
       };
     }
-    const response = await api.get<any>('/api/v1/transportation/vehicles', { params: { carrier_id: carrierId } });
-    const items = toCamel<Vehicle[]>(response.data, TRANSPORT_ALIASES);
+    const response = await api.get<Vehicle[]>('/api/v1/transportation/vehicles', { params: { carrier_id: carrierId } });
+    const items = response.data;
     return {
       items,
       total: items.length,
@@ -540,8 +546,8 @@ export const transportationApi = {
       if (!vehicle) throw new Error('Vehicle not found');
       return vehicle;
     }
-    const response = await api.get<any>(`/api/v1/transportation/vehicles/${id}`);
-    return toCamel<Vehicle>(response.data, TRANSPORT_ALIASES);
+    const response = await api.get<Vehicle>(`/api/v1/transportation/vehicles/${id}`);
+    return response.data;
   },
 
   // Shipments
@@ -560,8 +566,8 @@ export const transportationApi = {
         hasMore: false,
       };
     }
-    const response = await api.get<any>('/api/v1/transportation/shipments', { params: toSnake(filters ?? {}, TRANSPORT_OUT_ALIASES) });
-    const items = toCamel<Shipment[]>(response.data, TRANSPORT_ALIASES);
+    const response = await api.get<Shipment[]>('/api/v1/transportation/shipments', { params: filters ?? {} });
+    const items = response.data;
     return {
       items,
       total: items.length,
@@ -578,8 +584,8 @@ export const transportationApi = {
       if (!shipment) throw new Error('Shipment not found');
       return shipment;
     }
-    const response = await api.get<any>(`/api/v1/transportation/shipments/${id}`);
-    return toCamel<Shipment>(response.data, TRANSPORT_ALIASES);
+    const response = await api.get<Shipment>(`/api/v1/transportation/shipments/${id}`);
+    return response.data;
   },
 
   createShipment: async (data: Partial<Shipment>): Promise<Shipment> => {
@@ -596,8 +602,8 @@ export const transportationApi = {
       mockShipments.push(newShipment);
       return newShipment;
     }
-    const response = await api.post<any>('/api/v1/transportation/shipments', toSnake(data, TRANSPORT_OUT_ALIASES));
-    return toCamel<Shipment>(response.data, TRANSPORT_ALIASES);
+    const response = await api.post<Shipment>('/api/v1/transportation/shipments', data);
+    return response.data;
   },
 
   dispatchShipment: async (id: string, driverId: string, vehicleId: string): Promise<Shipment> => {
@@ -624,8 +630,8 @@ export const transportationApi = {
       }
       return shipment;
     }
-    const response = await api.post<any>(`/api/v1/transportation/shipments/${id}/dispatch`, { driver_id: driverId, vehicle_id: vehicleId });
-    return toCamel<Shipment>(response.data, TRANSPORT_ALIASES);
+    const response = await api.post<Shipment>(`/api/v1/transportation/shipments/${id}/dispatch`, { driver_id: driverId, vehicle_id: vehicleId });
+    return response.data;
   },
 
   // Lifecycle status transitions (delivered, exception, ...) — task D22.
@@ -639,11 +645,11 @@ export const transportationApi = {
       shipment.updatedAt = new Date().toISOString();
       return shipment;
     }
-    const response = await api.post<any>(
+    const response = await api.post<Shipment>(
       `/api/v1/transportation/shipments/${id}/status`,
       { status, note }
     );
-    return toCamel<Shipment>(response.data, TRANSPORT_ALIASES);
+    return response.data;
   },
 
   getShipmentCosts: async (id: string): Promise<{ freight: number; fuel: number; accessorials: number; detention: number; total: number }> => {
@@ -663,7 +669,7 @@ export const transportationApi = {
       };
     }
     const response = await api.get(`/api/v1/transportation/shipments/${id}/costs`);
-    return toCamel(response.data);
+    return response.data;
   },
 
   // Routes
@@ -672,8 +678,8 @@ export const transportationApi = {
       await delay(MOCK_DELAY);
       return mockRoutes;
     }
-    const response = await api.get<any>('/api/v1/transportation/routes');
-    return toCamel<Route[]>(response.data, TRANSPORT_ALIASES);
+    const response = await api.get<Route[]>('/api/v1/transportation/routes');
+    return response.data;
   },
 
   // Analytics
@@ -694,8 +700,9 @@ export const transportationApi = {
         lateDeliveries: delivered.length - onTime,
       };
     }
+    // /api/v1/logistics is legacy-camel (never-registered); data arrives camelCase.
     const response = await api.get('/api/v1/logistics/delivery-efficiency');
-    return toCamel(response.data);
+    return response.data;
   },
 
   getComplianceSummary: async (): Promise<{
@@ -714,7 +721,7 @@ export const transportationApi = {
       };
     }
     const response = await api.get('/api/v1/logistics/compliance/summary');
-    return toCamel(response.data);
+    return response.data;
   },
 };
 
@@ -790,16 +797,17 @@ export const geoTabApi = {
     }
     const response = await api.get<any>(`/api/v1/geotab/devices/${deviceId}/diagnostics`);
     const d = response.data;
-    // Backend returns an envelope with diagnostics.dtc_codes; flatten to entries.
-    if (Array.isArray(d)) return toCamel<GeoTabDiagnostic[]>(d);
-    const codes: string[] = d?.diagnostics?.dtc_codes ?? [];
+    // Backend returns an envelope with diagnostics.dtc_codes; the transform
+    // seam camelizes it (dtcCodes/lastSeen) before we flatten to entries.
+    if (Array.isArray(d)) return d as GeoTabDiagnostic[];
+    const codes: string[] = d?.diagnostics?.dtcCodes ?? [];
     return codes.map((code, i) => ({
       id: `${deviceId}-dtc-${i}`,
       deviceId,
       diagnosticCode: code,
       name: code,
       source: 'OBDII',
-      timestamp: d?.last_seen ?? new Date().toISOString(),
+      timestamp: d?.lastSeen ?? new Date().toISOString(),
       isActive: true,
     }));
   },
@@ -827,7 +835,7 @@ export const geoTabApi = {
     }
     const response = await api.get<any>('/api/v1/geotab/exceptions', { params: deviceId ? { device_id: deviceId } : undefined });
     // Backend wraps the list in an envelope ({exceptions: [...]}); unwrap either shape.
-    return toCamel<GeoTabException[]>(response.data?.exceptions ?? response.data);
+    return (response.data?.exceptions ?? response.data) as GeoTabException[];
   },
 
   // Fleet Summary from GeoTab
@@ -853,6 +861,6 @@ export const geoTabApi = {
       };
     }
     const response = await api.get('/api/v1/geotab/fleet/summary');
-    return toCamel(response.data);
+    return response.data;
   },
 };

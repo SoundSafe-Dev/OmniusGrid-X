@@ -418,20 +418,22 @@ export const SystemHealthPage: FC = () => {
   );
 };
 
+// camelCase: /api/v1/organizations is registered with the transform seam
+// (src/api/assets.ts), which camelizes responses and snake_cases the PUT body.
 interface OrgSettings {
   timezone?: string;
-  date_format?: string;
-  notify_email?: boolean;
-  notify_sms?: boolean;
-  notify_webhook?: boolean;
+  dateFormat?: string;
+  notifyEmail?: boolean;
+  notifySms?: boolean;
+  notifyWebhook?: boolean;
 }
 
 const SETTING_DEFAULTS: Required<OrgSettings> = {
   timezone: 'America/Chicago',
-  date_format: 'MM/dd/yyyy',
-  notify_email: true,
-  notify_sms: true,
-  notify_webhook: true,
+  dateFormat: 'MM/dd/yyyy',
+  notifyEmail: true,
+  notifySms: true,
+  notifyWebhook: true,
 };
 
 export const SettingsPage: FC = () => {
@@ -466,8 +468,8 @@ export const SettingsPage: FC = () => {
           />
           <Select
             label="Date Format"
-            value={current.date_format}
-            onChange={(e) => set('date_format', e.target.value)}
+            value={current.dateFormat}
+            onChange={(e) => set('dateFormat', e.target.value)}
             options={[
               { value: 'MM/dd/yyyy', label: 'MM/DD/YYYY' },
               { value: 'dd/MM/yyyy', label: 'DD/MM/YYYY' },
@@ -480,9 +482,9 @@ export const SettingsPage: FC = () => {
       <Card title="Notifications" subtitle="Alert preferences">
         <div className="space-y-3">
           {([
-            ['notify_email', 'Email alerts'],
-            ['notify_sms', 'SMS notifications'],
-            ['notify_webhook', 'Webhook events'],
+            ['notifyEmail', 'Email alerts'],
+            ['notifySms', 'SMS notifications'],
+            ['notifyWebhook', 'Webhook events'],
           ] as [keyof OrgSettings, string][]).map(([key, label]) => (
             <label key={key} className="flex items-center gap-3 cursor-pointer">
               <input
