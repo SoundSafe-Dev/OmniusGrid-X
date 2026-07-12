@@ -251,3 +251,31 @@ collectors:
         - name: "breaker_status"
           group: "binary"
           index: 1
+
+  # 10. Audio features — REAL microphone capture (FS-63)
+  # Requires `pip install sounddevice` on the agent host + microphone access
+  # (macOS: grant mic permission to the python binary; Linux: add the agent
+  # user to the `audio` group). Default source is "simulate" — flip to
+  # "device" for real capture. Emits FEATURE telemetry only (audio_rms,
+  # audio_peak_hz, band energies), never raw audio.
+  - asset_id: "compressor-room-mic-001"
+    collector_type: "audio"
+    enabled: false
+    config:
+      source: "device"          # "simulate" for demo tone
+      sample_rate: 16000
+      frame_seconds: 1.0
+      poll_interval: 10
+
+  # 11. Video frame metrics — REAL camera/stream capture (FS-63)
+  # Requires opencv-python on the agent host. stream_url accepts RTSP, MJPEG
+  # or a local device index ("0"). Emits frame METRICS (brightness, contrast,
+  # motion_score) — raw video is never proxied; the AssetDetail camera pane
+  # connects to the asset's media_config.stream_url directly.
+  - asset_id: "dock-camera-001"
+    collector_type: "video"
+    enabled: false
+    config:
+      source: "stream"          # "simulate" for synthetic frames
+      stream_url: "rtsp://192.168.1.210:554/stream1"
+      poll_interval: 10
