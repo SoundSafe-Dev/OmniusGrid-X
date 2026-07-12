@@ -115,34 +115,74 @@ ADD COLUMN IF NOT EXISTS sync_frequency_minutes INTEGER DEFAULT 60;
 CREATE INDEX IF NOT EXISTS idx_integration_erp_type ON integration_configurations(erp_type) WHERE erp_type IS NOT NULL;
 
 -- Row-level security policies for multi-tenant isolation
+-- FS-56: these policies originally said TO authenticated_users (a role that
+-- never existed anywhere — the file could not apply) and keyed on the
+-- app.current_organization_id GUC (which nothing sets; the canonical GUC is
+-- app.current_org_id, see 011). Rewritten to the codebase convention so ERP
+-- tenant isolation actually enforces.
 ALTER TABLE erp_integration_events ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS erp_events_org_isolation ON erp_integration_events;
 CREATE POLICY erp_events_org_isolation ON erp_integration_events
-    FOR ALL TO authenticated_users
-    USING (organization_id = current_setting('app.current_organization_id')::UUID);
+    FOR ALL
+    USING (organization_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid);
 
 ALTER TABLE erp_data_mappings ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS erp_mappings_org_isolation ON erp_data_mappings;
 CREATE POLICY erp_mappings_org_isolation ON erp_data_mappings
-    FOR ALL TO authenticated_users
-    USING (organization_id = current_setting('app.current_organization_id')::UUID);
+    FOR ALL
+    USING (organization_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid);
 
 ALTER TABLE erp_sync_status ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS erp_sync_org_isolation ON erp_sync_status;
 CREATE POLICY erp_sync_org_isolation ON erp_sync_status
-    FOR ALL TO authenticated_users
-    USING (organization_id = current_setting('app.current_organization_id')::UUID);
+    FOR ALL
+    USING (organization_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid);
 
 ALTER TABLE erp_entities ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS erp_entities_org_isolation ON erp_entities;
 CREATE POLICY erp_entities_org_isolation ON erp_entities
-    FOR ALL TO authenticated_users
-    USING (organization_id = current_setting('app.current_organization_id')::UUID);
+    FOR ALL
+    USING (organization_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid);
 
 ALTER TABLE erp_correlations ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS erp_correlations_org_isolation ON erp_correlations;
 CREATE POLICY erp_correlations_org_isolation ON erp_correlations
-    FOR ALL TO authenticated_users
-    USING (organization_id = current_setting('app.current_organization_id')::UUID);
+    FOR ALL
+    USING (organization_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid);
 
 -- Grant permissions
-GRANT SELECT, INSERT, UPDATE, DELETE ON erp_integration_events TO opsgrid_user;
-GRANT SELECT, INSERT, UPDATE, DELETE ON erp_data_mappings TO opsgrid_user;
-GRANT SELECT, INSERT, UPDATE, DELETE ON erp_sync_status TO opsgrid_user;
-GRANT SELECT, INSERT, UPDATE, DELETE ON erp_entities TO opsgrid_user;
-GRANT SELECT, INSERT, UPDATE, DELETE ON erp_correlations TO opsgrid_user;
+DO $$
+BEGIN
+    -- optional least-privilege role; default deployments run as omniusgrid
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'opsgrid_user') THEN
+        GRANT SELECT, INSERT, UPDATE, DELETE ON erp_integration_events TO opsgrid_user;
+    END IF;
+END $$;
+DO $$
+BEGIN
+    -- optional least-privilege role; default deployments run as omniusgrid
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'opsgrid_user') THEN
+        GRANT SELECT, INSERT, UPDATE, DELETE ON erp_data_mappings TO opsgrid_user;
+    END IF;
+END $$;
+DO $$
+BEGIN
+    -- optional least-privilege role; default deployments run as omniusgrid
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'opsgrid_user') THEN
+        GRANT SELECT, INSERT, UPDATE, DELETE ON erp_sync_status TO opsgrid_user;
+    END IF;
+END $$;
+DO $$
+BEGIN
+    -- optional least-privilege role; default deployments run as omniusgrid
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'opsgrid_user') THEN
+        GRANT SELECT, INSERT, UPDATE, DELETE ON erp_entities TO opsgrid_user;
+    END IF;
+END $$;
+DO $$
+BEGIN
+    -- optional least-privilege role; default deployments run as omniusgrid
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'opsgrid_user') THEN
+        GRANT SELECT, INSERT, UPDATE, DELETE ON erp_correlations TO opsgrid_user;
+    END IF;
+END $$;

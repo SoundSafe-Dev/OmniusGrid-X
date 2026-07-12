@@ -14,7 +14,15 @@ DECLARE
 BEGIN
     -- Get existing board for dev organization (don't create new one)
     SELECT id INTO v_board_id FROM task_boards WHERE organization_id = v_dev_org_id AND is_active = TRUE LIMIT 1;
-    
+
+    -- Dev sample data only: on a clean database there is no dev board yet
+    -- (the app creates it at first login) — skip instead of violating
+    -- task_columns.board_id NOT NULL.
+    IF v_board_id IS NULL THEN
+        RAISE NOTICE 'no dev board found; skipping kanban sample data';
+        RETURN;
+    END IF;
+
     -- Create columns
     INSERT INTO task_columns (board_id, name, position, wip_limit, column_type, color)
     VALUES 

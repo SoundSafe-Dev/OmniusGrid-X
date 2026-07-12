@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 from typing import Optional, List
-from sqlalchemy import Column, String, DateTime, Boolean, Numeric, JSON, ForeignKey, Text, BigInteger, Integer, ARRAY, Date, UUID, UniqueConstraint, CheckConstraint, Index, func
+from sqlalchemy import Column, String, DateTime, Boolean, Numeric, JSON, ForeignKey, Text, BigInteger, Integer, ARRAY, Date, UniqueConstraint, CheckConstraint, Index, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.types import TypeDecorator
@@ -14,18 +14,35 @@ Base = declarative_base()
 
 
 class UUIDString(TypeDecorator):
-    """VARCHAR(36) UUID that accepts uuid.UUID or str binds.
+    """Dialect-aware UUID column: native ``uuid`` on Postgres, VARCHAR(36)
+    elsewhere — reads and binds are ``str`` everywhere.
 
-    Endpoints pass FastAPI ``UUID`` path/body params straight into filters and
-    inserts. asyncpg silently coerces UUID->text, but SQLite (local dev / smoke
-    tests) raises "type 'UUID' is not supported" — so coerce at the type layer
-    for every dialect instead of str()-ing at each call site.
+    History (FS-55): this used to be plain VARCHAR(36) on every dialect while
+    ~13 newer tables hand-wrote native ``UUID(as_uuid=True)`` FK columns
+    pointing at the VARCHAR PKs — cross-type FKs that Postgres rejects. The
+    SQL migrations (001 etc.) always used native UUID, so the ORM now matches
+    prod instead of fighting it.
+
+    - binds: uuid.UUID or str accepted (FastAPI UUID params pass straight in;
+      SQLite would otherwise raise "type 'UUID' is not supported").
+    - reads: coerced to canonical dashed str on every dialect, so JSON
+      serialization / dict keys keep their long-standing str assumption.
     """
 
     impl = String(36)
     cache_ok = True
 
+    def load_dialect_impl(self, dialect):
+        if dialect.name == "postgresql":
+            from sqlalchemy.dialects.postgresql import UUID as PGUUID
+            return dialect.type_descriptor(PGUUID(as_uuid=False))
+        return dialect.type_descriptor(String(36))
+
     def process_bind_param(self, value, dialect):
+        return str(value) if value is not None else None
+
+    def process_result_value(self, value, dialect):
+        # asyncpg's uuid codec can hand back uuid.UUID; normalize to str.
         return str(value) if value is not None else None
 
 
@@ -41,12 +58,17 @@ def StringListColumn(nullable: bool = False, default=None):
         kwargs["default"] = default
     return Column(ARRAY(String), **kwargs)
 
-# SQLite-compatible UUID column type (UUIDString coerces UUID-object binds).
+# Dialect-aware UUID column type (UUIDString: native uuid on PG, str reads).
 def UUIDColumn():
     return Column(UUIDString(), primary_key=True, default=lambda: str(uuid.uuid4()))
 
-def UUIDForeignKey(foreign_key, nullable=False):
-    return Column(UUIDString(), ForeignKey(foreign_key), nullable=nullable)
+def UUIDForeignKey(foreign_key, nullable=False, ondelete=None, index=False):
+    return Column(
+        UUIDString(),
+        ForeignKey(foreign_key, ondelete=ondelete),
+        nullable=nullable,
+        index=index,
+    )
 
 
 class Organization(Base):
@@ -764,7 +786,7 @@ class ActionableRegistry(Base):
     compliance_score = Column(Integer, default=0)  # 0-100
     priority_level = Column(String(20), default="medium")  # low, medium, high, critical
     assigned_owner_id = UUIDForeignKey("users.id")
-    assigned_team_id = Column(String(36))  # team reference if applicable
+    assigned_team_id = Column(UUIDString())  # team reference if applicable
     reference_url = Column(String(500))  # link to official documentation
     checklist_requirements = Column(JSON, default=list)  # [{id, requirement, completed, notes}]
     meta_data = Column(JSON, default=dict)
@@ -807,9 +829,9 @@ class DataCorrelation(Base):
     organization_id = UUIDForeignKey("organizations.id")
     correlation_type = Column(String(50), nullable=False)  # task_to_registry, task_to_asset, task_to_alarm, registry_to_asset
     source_type = Column(String(50), nullable=False)  # task, registry_item, asset, alarm, operation
-    source_id = Column(String(36))
+    source_id = Column(UUIDString())
     target_type = Column(String(50), nullable=False)  # task, registry_item, asset, alarm, operation
-    target_id = Column(String(36))
+    target_id = Column(UUIDString())
     correlation_strength = Column(Integer, default=50)  # 0-100, strength of correlation
     correlation_method = Column(String(50), default="manual")  # manual, automated, ai_suggested
     confidence_score = Column(Integer, default=0)  # 0-100, confidence in correlation
@@ -1019,7 +1041,7 @@ class ExportTemplate(Base):
 
     id = UUIDColumn()
     organization_id = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
     )
@@ -1040,7 +1062,7 @@ class ExportTemplate(Base):
         nullable=False,
     )
     created_by = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
@@ -1060,12 +1082,12 @@ class ScheduledExport(Base):
 
     id = UUIDColumn()
     organization_id = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
     )
     template_id = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("export_templates.id", ondelete="CASCADE"),
         nullable=False,
     )
@@ -1083,7 +1105,7 @@ class ScheduledExport(Base):
     last_run_at = Column(DateTime(timezone=True))
     last_status = Column(String(50), default="never_run")
     created_by = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
@@ -1103,22 +1125,22 @@ class ExportDeliveryJob(Base):
 
     id = UUIDColumn()
     organization_id = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
     )
     schedule_id = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("scheduled_exports.id", ondelete="CASCADE"),
         nullable=False,
     )
     template_id = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("export_templates.id", ondelete="CASCADE"),
         nullable=False,
     )
     requested_by = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
@@ -1284,7 +1306,7 @@ class ScheduledComplianceReport(Base):
 
     id = UUIDColumn()
     organization_id = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
     )
@@ -1306,7 +1328,7 @@ class ScheduledComplianceReport(Base):
         String(50), nullable=False, default="never_run", server_default="never_run"
     )
     created_by = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
@@ -1351,17 +1373,17 @@ class ComplianceReportJob(Base):
 
     id = UUIDColumn()
     organization_id = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
     )
     requested_by = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
     schedule_id = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("scheduled_compliance_reports.id", ondelete="SET NULL"),
         nullable=True,
     )
@@ -1421,7 +1443,7 @@ class AgentRelease(Base):
 
     id = UUIDColumn()
     organization_id = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
     )
@@ -1435,7 +1457,7 @@ class AgentRelease(Base):
     release_notes = Column(Text)
     status = Column(String(30), nullable=False, default="draft", server_default="draft")
     created_by = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
@@ -1462,12 +1484,12 @@ class AgentRollout(Base):
 
     id = UUIDColumn()
     organization_id = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
     )
     release_id = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("agent_releases.id", ondelete="RESTRICT"),
         nullable=False,
     )
@@ -1476,7 +1498,7 @@ class AgentRollout(Base):
     strategy = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False, default=dict)
     status = Column(String(30), nullable=False, default="pending", server_default="pending")
     created_by = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
@@ -1517,17 +1539,17 @@ class AgentRolloutTarget(Base):
 
     id = UUIDColumn()
     rollout_id = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("agent_rollouts.id", ondelete="CASCADE"),
         nullable=False,
     )
     organization_id = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
     )
     asset_id = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("assets.id", ondelete="CASCADE"),
         nullable=False,
     )
@@ -1551,18 +1573,18 @@ class AgentRolloutEvent(Base):
 
     id = UUIDColumn()
     rollout_id = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("agent_rollouts.id", ondelete="CASCADE"),
         nullable=False,
     )
     organization_id = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
     )
     event_type = Column(String(100), nullable=False)
     asset_id = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("assets.id", ondelete="SET NULL"),
         nullable=True,
     )
@@ -1697,7 +1719,7 @@ class ERPCorrelation(Base):
     organization_id = UUIDForeignKey("organizations.id", nullable=False)
     correlation_type = Column(String(100), nullable=False)
     erp_event_id = UUIDForeignKey("erp_integration_events.id", nullable=True)
-    sensor_event_id = Column(String(36), nullable=True)
+    sensor_event_id = Column(UUIDString(), nullable=True)
     correlation_score = Column(Numeric, nullable=True)
     correlation_metadata = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
@@ -1730,14 +1752,14 @@ class ErrorEvent(Base):
     regression_count = Column(Integer, nullable=False, default=0, server_default="0")
     status = Column(String(20), nullable=False, default="open", server_default="open")
     status_changed_by = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
     status_changed_at = Column(DateTime(timezone=True))
     first_seen = Column(DateTime(timezone=True), nullable=False)
     last_seen = Column(DateTime(timezone=True), nullable=False)
-    organization_id = Column(UUID(as_uuid=True), nullable=True)
+    organization_id = Column(UUIDString(), nullable=True)
 
     buckets = relationship(
         "ErrorEventBucket",
@@ -1784,7 +1806,7 @@ class ModelRegistryEntry(Base):
 
     id = UUIDColumn()
     organization_id = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
     )
@@ -1795,11 +1817,11 @@ class ModelRegistryEntry(Base):
     checksum_sha256 = Column(String(64), nullable=False)
     feature_contract = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False, default=dict)
     metrics = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False, default=dict)
-    training_run_id = Column(UUID(as_uuid=True), nullable=True)
+    training_run_id = Column(UUIDString(), nullable=True)
     release_notes = Column(Text)
     status = Column(String(30), nullable=False, default="draft", server_default="draft")
     created_by = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
@@ -1824,7 +1846,7 @@ class ModelTrainingRun(Base):
 
     id = UUIDColumn()
     organization_id = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
     )
@@ -1836,13 +1858,13 @@ class ModelTrainingRun(Base):
     dataset_window_end = Column(DateTime(timezone=True))
     sample_count = Column(Integer)
     produced_model_id = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("model_registry.id", ondelete="SET NULL"),
         nullable=True,
     )
     error = Column(Text)
     created_by = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )

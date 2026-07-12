@@ -1,73 +1,9 @@
--- =============================================================================
--- Migration 011: Tenant Isolation via Postgres Row Level Security (RLS)
--- =============================================================================
---
--- Purpose
--- -------
--- Defense-in-depth security at the database layer. Complements the
--- application-layer enforcement added in PR #2/3 (`get_tenant_org_id`
--- dependency on assets/telemetry endpoints). If a future endpoint
--- forgets to filter by organization_id, Postgres itself refuses to
--- return cross-tenant rows.
---
--- How it works
--- ------------
--- Each request sets the GUC `app.current_org_id` (connection/session
--- scoped, reset when the request finishes) derived from the
--- authenticated user's JWT (see `get_tenant_db` in
--- `backend/app/core/tenant.py`). Session scope is required because some
--- endpoints commit mid-request and then issue further queries; a
--- transaction-local (`SET LOCAL`) value would be lost after that commit.
--- Policies use `NULLIF(current_setting(...), '')::uuid` so that an unset
--- or reset (empty) value becomes NULL and matches no rows — i.e. queries
--- return zero rows from RLS-protected tables (fail-closed) rather than
--- erroring on an invalid empty UUID.
---
--- Scope
--- -----
--- 29 of the 31 tenant-scoped tables receive RLS:
---   * 23 strict-RLS tables (NOT NULL organization_id):
---       assets, workcells, yard_trailers, dock_doors, yard_moves,
---       driver_wait_times, yard_checkpoints, carriers, drivers,
---       shipments, routes, load_plans, freight_charges, dock_appointments,
---       truck_asset_correlations, load_quality_logs, commands,
---       task_boards, task_rules, actionable_registries,
---       data_correlations, analysis_sessions, intake_items
---   * 6 permissive-RLS tables (nullable organization_id; NULL means global):
---       geotab_trips, geotab_diagnostics, geotab_exceptions,
---       audit_logs, data_processing_records, integration_configurations
---
--- 2 tables are intentionally EXCLUDED from RLS:
---   * users    — accessed by email during /auth/login BEFORE any org
---                context exists; adding RLS here would break login.
---   * api_keys — accessed by key hash during API-key authentication
---                BEFORE any org context exists.
---   Both remain protected by application-layer enforcement. A follow-up
---   could re-enable RLS here via SECURITY DEFINER lookup functions.
---
--- Operational notes
--- -----------------
--- 1. SUPERUSER CAVEAT: Postgres superusers bypass RLS even with FORCE.
---    The dev compose stack creates `omniusgrid` as a superuser via
---    POSTGRES_USER, so RLS is silently a no-op against the dev DB.
---    Production deployments MUST connect the application as a
---    non-superuser role for RLS to actually take effect. The Task 5
---    integration tests verify the policies work against a non-superuser
---    role inside an ephemeral test Postgres.
---
--- 2. Background services (websocket_manager, command_executor,
---    oee_calculator) currently use the un-scoped `get_db` session.
---    Under RLS-enforced production they will need to set
---    `app.current_org_id` per record they process, or run as a separate
---    role that bypasses RLS. Not addressed in this migration — flagged
---    as follow-up work.
---
--- 3. Idempotent: every `CREATE POLICY` is preceded by
---    `DROP POLICY IF EXISTS`, and `ENABLE ROW LEVEL SECURITY` is itself
---    idempotent. Safe to re-apply.
--- =============================================================================
-
-BEGIN;
+-- 033_rls_backfill.sql (FS-56)
+-- Re-applies 011's tenant-isolation policies. 011 runs before 030 creates the
+-- yard/transportation/geotab/session tables, so its per-table guards skip them
+-- on a fresh migrations build; this file runs after 030/032 when every table
+-- exists. All statements are the same guarded, idempotent DO blocks
+-- (DROP POLICY IF EXISTS + CREATE POLICY), so re-running is safe everywhere.
 
 -- T: guarded — created later in the chain (030) on fresh builds;
 -- 033_rls_backfill re-applies for tables this skips.
@@ -92,11 +28,6 @@ BEGIN
     -- -----------------------------------------------------------------------------
   END IF;
 END $$;
-
-
--- =============================================================================
--- STRICT RLS (23 tables): organization_id is NOT NULL
--- =============================================================================
 
 -- assets: guarded — created later in the chain (030) on fresh builds;
 -- 033_rls_backfill re-applies for tables this skips.
@@ -448,15 +379,6 @@ BEGIN
   END IF;
 END $$;
 
-
--- =============================================================================
--- PERMISSIVE RLS (6 tables): organization_id IS NULLABLE
---
--- NULL means "global / cross-tenant" (admin tooling, system audit, etc.).
--- Policy lets NULL rows be visible to everyone; non-NULL rows are
--- restricted to their organization.
--- =============================================================================
-
 -- geotab_trips: guarded — created later in the chain (030) on fresh builds;
 -- 033_rls_backfill re-applies for tables this skips.
 DO $$
@@ -559,17 +481,32 @@ BEGIN
   END IF;
 END $$;
 
+-- 021's intake/session columns (021 runs pre-030 and skips on fresh builds)
+DO $$
+BEGIN
+  IF to_regclass('public.intake_items') IS NOT NULL THEN
+    ALTER TABLE intake_items
+    ADD COLUMN IF NOT EXISTS shared_keys JSON DEFAULT '[]',
+    ADD COLUMN IF NOT EXISTS structure_metadata JSON DEFAULT '{}',
+    ADD COLUMN IF NOT EXISTS processing_time_seconds INTEGER;
 
--- =============================================================================
--- EXPLICITLY NOT under RLS:
---   * users    — login lookup by email must succeed pre-authentication
---   * api_keys — API-key auth lookup by hash must succeed pre-authentication
---
--- Application-layer enforcement on tenant-scoped endpoints still applies.
--- Follow-up could re-enable RLS here via SECURITY DEFINER functions for
--- the two auth lookups.
--- =============================================================================
+    CREATE INDEX IF NOT EXISTS idx_intake_items_shared_keys
+        ON intake_items USING GIN ((shared_keys::jsonb));
 
-COMMIT;
+    COMMENT ON COLUMN intake_items.shared_keys IS 'Normalized shared keys (asset_id, date, order_number, etc.) extracted from filename, metadata, and content for cross-file correlation';
+    COMMENT ON COLUMN intake_items.structure_metadata IS 'Document structure info (page_count, section_count, tables, headers) for PDF/DOCX/image parsing';
+    COMMENT ON COLUMN intake_items.processing_time_seconds IS 'Actual time in seconds taken to parse and process the file (for estimation calibration)';
+  END IF;
 
--- End of migration 011.
+  IF to_regclass('public.session_data_sources') IS NOT NULL THEN
+    ALTER TABLE session_data_sources
+    ADD COLUMN IF NOT EXISTS shared_keys JSON DEFAULT '[]',
+    ADD COLUMN IF NOT EXISTS structure_metadata JSON DEFAULT '{}';
+
+    CREATE INDEX IF NOT EXISTS idx_session_data_sources_shared_keys
+        ON session_data_sources USING GIN ((shared_keys::jsonb));
+
+    COMMENT ON COLUMN session_data_sources.shared_keys IS 'Normalized shared keys for cross-file correlation within analysis sessions';
+    COMMENT ON COLUMN session_data_sources.structure_metadata IS 'Document structure info for session data sources';
+  END IF;
+END $$;

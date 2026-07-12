@@ -3,8 +3,8 @@
 Strategy
 --------
 1. Spin up an ephemeral TimescaleDB container (Docker, via testcontainers).
-2. Build the schema from ``app.db.models`` (matching what ``init_db``
-   does in dev/prod), install the real audit trigger, and apply the RLS migrations.
+2. Build the schema from the REAL migration chain (scripts/migrate.py over
+   database/migrations/*.sql) — the same path production uses (FS-57).
 3. Create a non-superuser role ``tenant_user`` and grant it the
    privileges the app would have in production. Critical because
    superusers bypass RLS even with FORCE.
@@ -21,6 +21,7 @@ ends, the container is destroyed and all data with it.
 from __future__ import annotations
 
 import os
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import AsyncIterator
@@ -46,38 +47,21 @@ os.environ.setdefault(
 # ---------------------------------------------------------------------------
 
 def _setup_schema(sync_url: str) -> None:
-    """Create the test schema and apply RLS migrations.
+    """Build the test schema from the REAL migration chain (FS-57).
 
-    Schema is built from ``app.db.models.Base.metadata`` — the same
-    source ``init_db`` uses in dev/prod. The audit and RLS migrations
-    are applied on top in order.
+    Previously this used ``Base.metadata.create_all`` plus a hand-picked
+    11-migration overlay — a third schema-build path that diverged from both
+    dev (sqlite create_all) and prod (full migrations). Tests now exercise
+    exactly what production runs: scripts/migrate.py over
+    database/migrations/*.sql. Migrations 002/005 need timescaledb (the
+    container image provides it).
     """
+    import subprocess
     import psycopg2
-    import sqlparse
-    from sqlalchemy import create_engine
 
-    from app.db.models import Base
-
-    sync_engine = create_engine(sync_url)
-    try:
-        Base.metadata.create_all(sync_engine)
-    finally:
-        sync_engine.dispose()
-
-    migration_files = [
-        "009_audit_logs.sql",
-        "011_tenant_isolation_rls.sql",
-        "012_export_templates.sql",
-        "014_compliance_tenant_isolation.sql",
-        "015_compliance_report_jobs.sql",
-        "016_finalize_compliance_tenant_ownership.sql",
-        "017_scheduled_compliance_reports.sql",
-        "020_erp_integration_tables.sql",
-        "027_agent_ota.sql",
-        "028_agent_rollout_orchestration.sql",
-        "029_model_registry.sql",
-    ]
-
+    # Roles some migrations grant to (optional least-privilege roles in real
+    # deployments; the runner's guards skip them when absent, but creating
+    # them here exercises the grant paths too).
     conn = psycopg2.connect(sync_url)
     conn.autocommit = True
     try:
@@ -87,40 +71,31 @@ def _setup_schema(sync_url: str) -> None:
                 """
                 DO $$
                 BEGIN
-                    IF NOT EXISTS (
-                        SELECT 1 FROM pg_roles WHERE rolname = 'omniusgrid_app'
-                    ) THEN
+                    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'omniusgrid_app') THEN
                         CREATE ROLE omniusgrid_app NOLOGIN;
                     END IF;
-                    IF NOT EXISTS (
-                        SELECT 1 FROM pg_roles WHERE rolname = 'omniusgrid_readonly'
-                    ) THEN
+                    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'omniusgrid_readonly') THEN
                         CREATE ROLE omniusgrid_readonly NOLOGIN;
                     END IF;
                 END
                 $$;
                 """
             )
-            for migration_name in migration_files:
-                migration_path = MIGRATIONS_DIR / migration_name
-                sql = migration_path.read_text()
-                statements = []
-                for raw in sqlparse.split(sql):
-                    if not sqlparse.format(raw, strip_comments=True).strip():
-                        continue
-                    statements.append(raw.strip())
-
-                for stmt in statements:
-                    try:
-                        cur.execute(stmt)
-                    except Exception as exc:  # noqa: BLE001
-                        raise RuntimeError(
-                            f"{migration_name} failed on statement:\n"
-                            f"{stmt[:200]}{'...' if len(stmt) > 200 else ''}\n"
-                            f"Error: {exc}"
-                        ) from exc
     finally:
         conn.close()
+
+    result = subprocess.run(
+        [sys.executable, str(Path(__file__).resolve().parents[1] / "scripts" / "migrate.py")],
+        env={**os.environ, "DATABASE_URL": sync_url},
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"migration chain failed building the test schema:\n"
+            f"{result.stdout[-2000:]}\n{result.stderr[-2000:]}"
+        )
+
 
 
 def _provision_tenant_role(sync_url: str, role: str, password: str) -> None:

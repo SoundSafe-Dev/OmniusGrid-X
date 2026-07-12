@@ -17,7 +17,7 @@ INSERT INTO assets (
 )
 SELECT
     '00000000-0000-0000-0000-000000000001'::uuid,
-    NULL,
+    w.id,
     t.id,
     'Demo line — 3D printer',
     'DEMO-3DP-001',
@@ -28,6 +28,11 @@ SELECT
     TRUE,
     NOW()
 FROM (SELECT id FROM asset_types ORDER BY created_at ASC LIMIT 1) AS t
+CROSS JOIN (
+    SELECT id FROM workcells
+    WHERE organization_id = '00000000-0000-0000-0000-000000000001'::uuid
+    ORDER BY created_at ASC LIMIT 1
+) AS w
 WHERE NOT EXISTS (
     SELECT 1
     FROM assets a

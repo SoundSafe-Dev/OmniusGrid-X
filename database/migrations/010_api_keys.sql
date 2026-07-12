@@ -212,7 +212,7 @@ CREATE INDEX idx_integration_config_active ON integration_configurations(is_acti
 CREATE TABLE IF NOT EXISTS data_residency_tags (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     table_name VARCHAR(100) NOT NULL,
-    record_id UUID NOT NULL,
+    record_id VARCHAR(36) NOT NULL,  -- polymorphic record pointer
     region VARCHAR(50) NOT NULL DEFAULT 'USA',
     tagged_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     tagged_by UUID REFERENCES users(id),

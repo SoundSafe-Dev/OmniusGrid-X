@@ -11,6 +11,12 @@ DECLARE
     v_internal_quality_id UUID;
     v_internal_ops_id UUID;
 BEGIN
+    -- Dev sample data only: requires the dev organization (created by the app
+    -- at first boot). Skip on a clean database instead of violating the org FK.
+    IF NOT EXISTS (SELECT 1 FROM organizations WHERE id = v_dev_org_id) THEN
+        RAISE NOTICE 'dev organization missing; skipping registry sample data';
+        RETURN;
+    END IF;
     -- Create Compliance Registries (OSHA, ISO)
     
     -- OSHA 1910.147 - Lockout/Tagout

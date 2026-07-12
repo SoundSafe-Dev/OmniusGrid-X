@@ -84,6 +84,14 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Apply pending SQL migrations.")
     ap.add_argument("--status", action="store_true", help="show applied/pending and exit")
     ap.add_argument("--baseline", action="store_true", help="record all as applied without running")
+    ap.add_argument(
+        "--rebaseline",
+        metavar="FILE",
+        help="re-record the stored checksum for an already-applied migration "
+             "whose file was deliberately edited (e.g. 030's FS-56 regeneration). "
+             "Does NOT run the file — pair with a follow-up migration that "
+             "converges existing databases (032).",
+    )
     ap.add_argument("--dir", default=str(DEFAULT_DIR), help="migrations directory")
     args = ap.parse_args()
 
@@ -118,6 +126,26 @@ def main() -> int:
                 if f.name in applied and applied[f.name] != _checksum(f):
                     drift = "  !! checksum drift"
                 print(f"  [{mark}] {f.name}{drift}")
+            return 0
+
+        if args.rebaseline:
+            target = mdir / args.rebaseline
+            if not target.exists():
+                print(f"ERROR: {target} does not exist", file=sys.stderr)
+                return 1
+            if target.name not in applied:
+                print(
+                    f"ERROR: {target.name} is not recorded as applied — nothing "
+                    "to rebaseline (a pending file just runs normally).",
+                    file=sys.stderr,
+                )
+                return 1
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE schema_migrations SET checksum = %s WHERE version = %s",
+                    (_checksum(target), target.name),
+                )
+            print(f"rebaselined {target.name} (checksum re-recorded; file NOT run)")
             return 0
 
         if args.baseline:
@@ -173,7 +201,12 @@ def main() -> int:
             return 0
 
         for f in pending:
-            statements = [s for s in sqlparse.split(f.read_text()) if s.strip()]
+            statements = [
+                s for s in sqlparse.split(f.read_text())
+                # comment-only "statements" strip to non-empty text but are an
+                # empty query to the server — filter on comment-stripped form
+                if sqlparse.format(s, strip_comments=True).strip()
+            ]
             try:
                 with conn.cursor() as cur:
                     for stmt in statements:

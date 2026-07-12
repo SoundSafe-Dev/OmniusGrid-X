@@ -1,20 +1,26 @@
--- 030_orm_backfill_tables.sql (FS-24)
+-- 030_orm_backfill_tables.sql (FS-24, regenerated FS-56)
 -- Backfills the 21 tables that previously existed ONLY via SQLAlchemy
 -- create_all() (yard, transportation, geotab, analysis-session, intake), so the
 -- SQL migration path builds a complete schema without depending on the API
 -- process having run init_db() first.
 --
--- Generated from the ORM metadata (Base.metadata.create_all, postgresql
--- dialect) so the DDL matches the models exactly. Foreign keys are emitted as
--- separate ALTER TABLE statements to break the dock_doors<->shipments<->
--- yard_trailers cycle. All statements are IF NOT EXISTS / additive, so this is
--- safe to run on a database already built via init_db().
+-- Generated from the ORM metadata (postgresql dialect) by
+-- backend/scripts/gen_030.py. FS-56 regeneration: UUIDString now renders
+-- native UUID on Postgres, fixing the 28 varchar->uuid cross-type FKs that
+-- made the original file unappliable on a migrations-built database (it
+-- failed at the first FK to organizations). Intra-set FKs are emitted as
+-- trailing guarded ALTERs to break the dock_doors<->shipments<->yard_trailers
+-- cycle. All statements are IF NOT EXISTS / guarded, so this is safe to run
+-- on a database already built via init_db().
+--
+-- NOTE: a pre-FS-56 database built via create_all (VARCHAR ids) must run
+-- 032_uuid_consolidation.sql (applied after this) to converge.
 
 CREATE TABLE IF NOT EXISTS yard_trailers (
-	id VARCHAR(36) NOT NULL, 
-	organization_id VARCHAR(36) NOT NULL, 
+	id UUID NOT NULL, 
+	organization_id UUID NOT NULL, 
 	trailer_number VARCHAR(50) NOT NULL, 
-	carrier_id VARCHAR(36), 
+	carrier_id UUID, 
 	trailer_type VARCHAR(50), 
 	status VARCHAR(50), 
 	yard_location VARCHAR(100), 
@@ -23,35 +29,37 @@ CREATE TABLE IF NOT EXISTS yard_trailers (
 	weight_lbs NUMERIC, 
 	check_in_at TIMESTAMP WITH TIME ZONE, 
 	check_out_at TIMESTAMP WITH TIME ZONE, 
-	dock_door_id VARCHAR(36), 
-	driver_id VARCHAR(36), 
-	shipment_id VARCHAR(36), 
+	dock_door_id UUID, 
+	driver_id UUID, 
+	shipment_id UUID, 
 	temperature_setpoint NUMERIC, 
 	temperature_actual NUMERIC, 
 	meta_data JSON, 
 	created_at TIMESTAMP WITH TIME ZONE, 
 	updated_at TIMESTAMP WITH TIME ZONE, 
-	PRIMARY KEY (id)
+	PRIMARY KEY (id), 
+	FOREIGN KEY(organization_id) REFERENCES organizations (id)
 );
 
 CREATE TABLE IF NOT EXISTS dock_doors (
-	id VARCHAR(36) NOT NULL, 
-	organization_id VARCHAR(36) NOT NULL, 
+	id UUID NOT NULL, 
+	organization_id UUID NOT NULL, 
 	door_number VARCHAR(50) NOT NULL, 
 	door_type VARCHAR(50), 
 	status VARCHAR(50), 
 	equipment_capabilities JSON, 
-	current_trailer_id VARCHAR(36), 
+	current_trailer_id UUID, 
 	last_occupied_at TIMESTAMP WITH TIME ZONE, 
 	is_active BOOLEAN, 
 	created_at TIMESTAMP WITH TIME ZONE, 
 	updated_at TIMESTAMP WITH TIME ZONE, 
-	PRIMARY KEY (id)
+	PRIMARY KEY (id), 
+	FOREIGN KEY(organization_id) REFERENCES organizations (id)
 );
 
 CREATE TABLE IF NOT EXISTS carriers (
-	id VARCHAR(36) NOT NULL, 
-	organization_id VARCHAR(36) NOT NULL, 
+	id UUID NOT NULL, 
+	organization_id UUID NOT NULL, 
 	carrier_name VARCHAR(255) NOT NULL, 
 	dot_number VARCHAR(50), 
 	mc_number VARCHAR(50), 
@@ -71,11 +79,11 @@ CREATE TABLE IF NOT EXISTS carriers (
 );
 
 CREATE TABLE IF NOT EXISTS shipments (
-	id VARCHAR(36) NOT NULL, 
-	organization_id VARCHAR(36) NOT NULL, 
-	carrier_id VARCHAR(36), 
-	driver_id VARCHAR(36), 
-	trailer_id VARCHAR(36), 
+	id UUID NOT NULL, 
+	organization_id UUID NOT NULL, 
+	carrier_id UUID, 
+	driver_id UUID, 
+	trailer_id UUID, 
 	shipment_number VARCHAR(100) NOT NULL, 
 	pro_number VARCHAR(100), 
 	bol_number VARCHAR(100), 
@@ -94,16 +102,17 @@ CREATE TABLE IF NOT EXISTS shipments (
 	temperature_required BOOLEAN, 
 	temperature_min NUMERIC, 
 	temperature_max NUMERIC, 
-	route_id VARCHAR(36), 
+	route_id UUID, 
 	meta_data JSON, 
 	created_at TIMESTAMP WITH TIME ZONE, 
 	updated_at TIMESTAMP WITH TIME ZONE, 
-	PRIMARY KEY (id)
+	PRIMARY KEY (id), 
+	FOREIGN KEY(organization_id) REFERENCES organizations (id)
 );
 
 CREATE TABLE IF NOT EXISTS routes (
-	id VARCHAR(36) NOT NULL, 
-	organization_id VARCHAR(36) NOT NULL, 
+	id UUID NOT NULL, 
+	organization_id UUID NOT NULL, 
 	route_name VARCHAR(255), 
 	origin JSON NOT NULL, 
 	destination JSON NOT NULL, 
@@ -121,9 +130,9 @@ CREATE TABLE IF NOT EXISTS routes (
 );
 
 CREATE TABLE IF NOT EXISTS analysis_sessions (
-	id VARCHAR(36) NOT NULL, 
-	user_id VARCHAR(36) NOT NULL, 
-	organization_id VARCHAR(36) NOT NULL, 
+	id UUID NOT NULL, 
+	user_id UUID NOT NULL, 
+	organization_id UUID NOT NULL, 
 	title VARCHAR(500) NOT NULL, 
 	description TEXT, 
 	status VARCHAR(50), 
@@ -139,9 +148,9 @@ CREATE TABLE IF NOT EXISTS analysis_sessions (
 );
 
 CREATE TABLE IF NOT EXISTS intake_items (
-	id VARCHAR(36) NOT NULL, 
-	user_id VARCHAR(36) NOT NULL, 
-	organization_id VARCHAR(36) NOT NULL, 
+	id UUID NOT NULL, 
+	user_id UUID NOT NULL, 
+	organization_id UUID NOT NULL, 
 	title VARCHAR(255) NOT NULL, 
 	description TEXT, 
 	data_type VARCHAR(50), 
@@ -160,10 +169,10 @@ CREATE TABLE IF NOT EXISTS intake_items (
 );
 
 CREATE TABLE IF NOT EXISTS geotab_diagnostics (
-	id VARCHAR(36) NOT NULL, 
+	id UUID NOT NULL, 
 	device_id VARCHAR(100) NOT NULL, 
 	vehicle_id VARCHAR(100), 
-	organization_id VARCHAR(36), 
+	organization_id UUID, 
 	dtc_code VARCHAR(20) NOT NULL, 
 	severity VARCHAR(20), 
 	description TEXT, 
@@ -185,9 +194,9 @@ CREATE TABLE IF NOT EXISTS geotab_diagnostics (
 CREATE INDEX IF NOT EXISTS ix_geotab_diagnostics_device_id ON geotab_diagnostics (device_id);
 
 CREATE TABLE IF NOT EXISTS yard_checkpoints (
-	id VARCHAR(36) NOT NULL, 
-	organization_id VARCHAR(36) NOT NULL, 
-	trailer_id VARCHAR(36), 
+	id UUID NOT NULL, 
+	organization_id UUID NOT NULL, 
+	trailer_id UUID, 
 	checkpoint_type VARCHAR(50) NOT NULL, 
 	checkpoint_name VARCHAR(100), 
 	passed_at TIMESTAMP WITH TIME ZONE, 
@@ -197,14 +206,13 @@ CREATE TABLE IF NOT EXISTS yard_checkpoints (
 	meta_data JSON, 
 	created_at TIMESTAMP WITH TIME ZONE, 
 	PRIMARY KEY (id), 
-	FOREIGN KEY(organization_id) REFERENCES organizations (id), 
-	FOREIGN KEY(trailer_id) REFERENCES yard_trailers (id)
+	FOREIGN KEY(organization_id) REFERENCES organizations (id)
 );
 
 CREATE TABLE IF NOT EXISTS drivers (
-	id VARCHAR(36) NOT NULL, 
-	organization_id VARCHAR(36) NOT NULL, 
-	carrier_id VARCHAR(36), 
+	id UUID NOT NULL, 
+	organization_id UUID NOT NULL, 
+	carrier_id UUID, 
 	first_name VARCHAR(100) NOT NULL, 
 	last_name VARCHAR(100) NOT NULL, 
 	license_number VARCHAR(100), 
@@ -224,15 +232,14 @@ CREATE TABLE IF NOT EXISTS drivers (
 	created_at TIMESTAMP WITH TIME ZONE, 
 	updated_at TIMESTAMP WITH TIME ZONE, 
 	PRIMARY KEY (id), 
-	FOREIGN KEY(organization_id) REFERENCES organizations (id), 
-	FOREIGN KEY(carrier_id) REFERENCES carriers (id)
+	FOREIGN KEY(organization_id) REFERENCES organizations (id)
 );
 
 CREATE TABLE IF NOT EXISTS load_plans (
-	id VARCHAR(36) NOT NULL, 
-	organization_id VARCHAR(36) NOT NULL, 
-	shipment_id VARCHAR(36), 
-	trailer_id VARCHAR(36), 
+	id UUID NOT NULL, 
+	organization_id UUID NOT NULL, 
+	shipment_id UUID, 
+	trailer_id UUID, 
 	planned_by VARCHAR(36), 
 	planned_at TIMESTAMP WITH TIME ZONE, 
 	load_sequence JSON, 
@@ -246,16 +253,14 @@ CREATE TABLE IF NOT EXISTS load_plans (
 	created_at TIMESTAMP WITH TIME ZONE, 
 	updated_at TIMESTAMP WITH TIME ZONE, 
 	PRIMARY KEY (id), 
-	FOREIGN KEY(organization_id) REFERENCES organizations (id), 
-	FOREIGN KEY(shipment_id) REFERENCES shipments (id), 
-	FOREIGN KEY(trailer_id) REFERENCES yard_trailers (id)
+	FOREIGN KEY(organization_id) REFERENCES organizations (id)
 );
 
 CREATE TABLE IF NOT EXISTS freight_charges (
-	id VARCHAR(36) NOT NULL, 
-	organization_id VARCHAR(36) NOT NULL, 
-	shipment_id VARCHAR(36), 
-	carrier_id VARCHAR(36), 
+	id UUID NOT NULL, 
+	organization_id UUID NOT NULL, 
+	shipment_id UUID, 
+	carrier_id UUID, 
 	charge_type VARCHAR(50) NOT NULL, 
 	charge_description VARCHAR(255), 
 	rate_basis VARCHAR(50), 
@@ -272,18 +277,16 @@ CREATE TABLE IF NOT EXISTS freight_charges (
 	created_at TIMESTAMP WITH TIME ZONE, 
 	updated_at TIMESTAMP WITH TIME ZONE, 
 	PRIMARY KEY (id), 
-	FOREIGN KEY(organization_id) REFERENCES organizations (id), 
-	FOREIGN KEY(shipment_id) REFERENCES shipments (id), 
-	FOREIGN KEY(carrier_id) REFERENCES carriers (id)
+	FOREIGN KEY(organization_id) REFERENCES organizations (id)
 );
 
 CREATE TABLE IF NOT EXISTS truck_asset_correlations (
-	id VARCHAR(36) NOT NULL, 
-	organization_id VARCHAR(36) NOT NULL, 
-	shipment_id VARCHAR(36), 
-	trailer_id VARCHAR(36), 
-	asset_id VARCHAR(36) NOT NULL, 
-	operation_id VARCHAR(36), 
+	id UUID NOT NULL, 
+	organization_id UUID NOT NULL, 
+	shipment_id UUID, 
+	trailer_id UUID, 
+	asset_id UUID NOT NULL, 
+	operation_id UUID, 
 	truck_arrived_at TIMESTAMP WITH TIME ZONE, 
 	asset_ready_at TIMESTAMP WITH TIME ZONE, 
 	asset_completion_forecast TIMESTAMP WITH TIME ZONE, 
@@ -297,24 +300,22 @@ CREATE TABLE IF NOT EXISTS truck_asset_correlations (
 	created_at TIMESTAMP WITH TIME ZONE, 
 	PRIMARY KEY (id), 
 	FOREIGN KEY(organization_id) REFERENCES organizations (id), 
-	FOREIGN KEY(shipment_id) REFERENCES shipments (id), 
-	FOREIGN KEY(trailer_id) REFERENCES yard_trailers (id), 
 	FOREIGN KEY(asset_id) REFERENCES assets (id), 
 	FOREIGN KEY(operation_id) REFERENCES operations (id)
 );
 
 CREATE TABLE IF NOT EXISTS load_quality_logs (
-	id VARCHAR(36) NOT NULL, 
-	organization_id VARCHAR(36) NOT NULL, 
-	shipment_id VARCHAR(36), 
-	trailer_id VARCHAR(36), 
-	asset_id VARCHAR(36) NOT NULL, 
-	operation_id VARCHAR(36), 
+	id UUID NOT NULL, 
+	organization_id UUID NOT NULL, 
+	shipment_id UUID, 
+	trailer_id UUID, 
+	asset_id UUID NOT NULL, 
+	operation_id UUID, 
 	defect_type VARCHAR(100), 
 	severity VARCHAR(20), 
 	quantity_affected NUMERIC, 
-	root_cause_asset VARCHAR(36) NOT NULL, 
-	root_cause_operation VARCHAR(36), 
+	root_cause_asset UUID NOT NULL, 
+	root_cause_operation UUID, 
 	manufacturing_correlation_score NUMERIC, 
 	carrier_liable BOOLEAN, 
 	claim_filed BOOLEAN, 
@@ -325,8 +326,6 @@ CREATE TABLE IF NOT EXISTS load_quality_logs (
 	updated_at TIMESTAMP WITH TIME ZONE, 
 	PRIMARY KEY (id), 
 	FOREIGN KEY(organization_id) REFERENCES organizations (id), 
-	FOREIGN KEY(shipment_id) REFERENCES shipments (id), 
-	FOREIGN KEY(trailer_id) REFERENCES yard_trailers (id), 
 	FOREIGN KEY(asset_id) REFERENCES assets (id), 
 	FOREIGN KEY(operation_id) REFERENCES operations (id), 
 	FOREIGN KEY(root_cause_asset) REFERENCES assets (id), 
@@ -334,8 +333,8 @@ CREATE TABLE IF NOT EXISTS load_quality_logs (
 );
 
 CREATE TABLE IF NOT EXISTS session_data_sources (
-	id VARCHAR(36) NOT NULL, 
-	session_id VARCHAR(36) NOT NULL, 
+	id UUID NOT NULL, 
+	session_id UUID NOT NULL, 
 	source_type VARCHAR(50) NOT NULL, 
 	source_id VARCHAR(36), 
 	file_name VARCHAR(255), 
@@ -343,13 +342,12 @@ CREATE TABLE IF NOT EXISTS session_data_sources (
 	processed_data JSON, 
 	added_at TIMESTAMP WITH TIME ZONE, 
 	meta_data JSON, 
-	PRIMARY KEY (id), 
-	FOREIGN KEY(session_id) REFERENCES analysis_sessions (id)
+	PRIMARY KEY (id)
 );
 
 CREATE TABLE IF NOT EXISTS session_messages (
-	id VARCHAR(36) NOT NULL, 
-	session_id VARCHAR(36) NOT NULL, 
+	id UUID NOT NULL, 
+	session_id UUID NOT NULL, 
 	role VARCHAR(20) NOT NULL, 
 	content TEXT NOT NULL, 
 	analysis JSON, 
@@ -359,34 +357,31 @@ CREATE TABLE IF NOT EXISTS session_messages (
 	timestamp TIMESTAMP WITH TIME ZONE, 
 	context_used JSON, 
 	meta_data JSON, 
-	PRIMARY KEY (id), 
-	FOREIGN KEY(session_id) REFERENCES analysis_sessions (id)
+	PRIMARY KEY (id)
 );
 
 CREATE TABLE IF NOT EXISTS yard_moves (
-	id VARCHAR(36) NOT NULL, 
-	organization_id VARCHAR(36) NOT NULL, 
-	trailer_id VARCHAR(36), 
+	id UUID NOT NULL, 
+	organization_id UUID NOT NULL, 
+	trailer_id UUID, 
 	from_location VARCHAR(100) NOT NULL, 
 	to_location VARCHAR(100) NOT NULL, 
 	move_type VARCHAR(50), 
-	jockey_driver_id VARCHAR(36), 
+	jockey_driver_id UUID, 
 	started_at TIMESTAMP WITH TIME ZONE, 
 	completed_at TIMESTAMP WITH TIME ZONE, 
 	duration_seconds NUMERIC, 
 	meta_data JSON, 
 	created_at TIMESTAMP WITH TIME ZONE, 
 	PRIMARY KEY (id), 
-	FOREIGN KEY(organization_id) REFERENCES organizations (id), 
-	FOREIGN KEY(trailer_id) REFERENCES yard_trailers (id), 
-	FOREIGN KEY(jockey_driver_id) REFERENCES drivers (id)
+	FOREIGN KEY(organization_id) REFERENCES organizations (id)
 );
 
 CREATE TABLE IF NOT EXISTS driver_wait_times (
-	id VARCHAR(36) NOT NULL, 
-	organization_id VARCHAR(36) NOT NULL, 
-	driver_id VARCHAR(36), 
-	trailer_id VARCHAR(36), 
+	id UUID NOT NULL, 
+	organization_id UUID NOT NULL, 
+	driver_id UUID, 
+	trailer_id UUID, 
 	check_in_at TIMESTAMP WITH TIME ZONE NOT NULL, 
 	docked_at TIMESTAMP WITH TIME ZONE, 
 	unloaded_at TIMESTAMP WITH TIME ZONE, 
@@ -403,26 +398,24 @@ CREATE TABLE IF NOT EXISTS driver_wait_times (
 	created_at TIMESTAMP WITH TIME ZONE, 
 	updated_at TIMESTAMP WITH TIME ZONE, 
 	PRIMARY KEY (id), 
-	FOREIGN KEY(organization_id) REFERENCES organizations (id), 
-	FOREIGN KEY(driver_id) REFERENCES drivers (id), 
-	FOREIGN KEY(trailer_id) REFERENCES yard_trailers (id)
+	FOREIGN KEY(organization_id) REFERENCES organizations (id)
 );
 
 CREATE TABLE IF NOT EXISTS dock_appointments (
-	id VARCHAR(36) NOT NULL, 
-	organization_id VARCHAR(36) NOT NULL, 
-	dock_door_id VARCHAR(36), 
-	trailer_id VARCHAR(36), 
-	shipment_id VARCHAR(36), 
-	operation_id VARCHAR(36), 
+	id UUID NOT NULL, 
+	organization_id UUID NOT NULL, 
+	dock_door_id UUID, 
+	trailer_id UUID, 
+	shipment_id UUID, 
+	operation_id UUID, 
 	appointment_type VARCHAR(50), 
 	scheduled_start TIMESTAMP WITH TIME ZONE NOT NULL, 
 	scheduled_end TIMESTAMP WITH TIME ZONE NOT NULL, 
 	actual_start TIMESTAMP WITH TIME ZONE, 
 	actual_end TIMESTAMP WITH TIME ZONE, 
 	status VARCHAR(50), 
-	carrier_id VARCHAR(36), 
-	driver_id VARCHAR(36), 
+	carrier_id UUID, 
+	driver_id UUID, 
 	priority VARCHAR(20), 
 	compliance_required BOOLEAN, 
 	meta_data JSON, 
@@ -430,20 +423,15 @@ CREATE TABLE IF NOT EXISTS dock_appointments (
 	updated_at TIMESTAMP WITH TIME ZONE, 
 	PRIMARY KEY (id), 
 	FOREIGN KEY(organization_id) REFERENCES organizations (id), 
-	FOREIGN KEY(dock_door_id) REFERENCES dock_doors (id), 
-	FOREIGN KEY(trailer_id) REFERENCES yard_trailers (id), 
-	FOREIGN KEY(shipment_id) REFERENCES shipments (id), 
-	FOREIGN KEY(operation_id) REFERENCES operations (id), 
-	FOREIGN KEY(carrier_id) REFERENCES carriers (id), 
-	FOREIGN KEY(driver_id) REFERENCES drivers (id)
+	FOREIGN KEY(operation_id) REFERENCES operations (id)
 );
 
 CREATE TABLE IF NOT EXISTS geotab_trips (
-	id VARCHAR(36) NOT NULL, 
+	id UUID NOT NULL, 
 	device_id VARCHAR(100) NOT NULL, 
-	driver_id VARCHAR(36), 
+	driver_id UUID, 
 	vehicle_id VARCHAR(100), 
-	organization_id VARCHAR(36), 
+	organization_id UUID, 
 	start_time TIMESTAMP WITH TIME ZONE NOT NULL, 
 	end_time TIMESTAMP WITH TIME ZONE, 
 	duration_seconds INTEGER, 
@@ -458,29 +446,29 @@ CREATE TABLE IF NOT EXISTS geotab_trips (
 	created_at TIMESTAMP WITH TIME ZONE, 
 	updated_at TIMESTAMP WITH TIME ZONE, 
 	PRIMARY KEY (id), 
-	FOREIGN KEY(driver_id) REFERENCES drivers (id), 
 	FOREIGN KEY(organization_id) REFERENCES organizations (id)
 );
+
+CREATE INDEX IF NOT EXISTS ix_geotab_trips_device_start ON geotab_trips (device_id, start_time);
 
 CREATE INDEX IF NOT EXISTS ix_geotab_trips_device_id ON geotab_trips (device_id);
 
 CREATE TABLE IF NOT EXISTS geotab_exceptions (
-	id VARCHAR(36) NOT NULL, 
+	id UUID NOT NULL, 
 	device_id VARCHAR(100) NOT NULL, 
-	driver_id VARCHAR(36), 
-	organization_id VARCHAR(36), 
+	driver_id UUID, 
+	organization_id UUID, 
 	exception_type VARCHAR(50) NOT NULL, 
 	severity VARCHAR(20), 
 	timestamp TIMESTAMP WITH TIME ZONE NOT NULL, 
 	location JSON, 
 	details JSON, 
 	acknowledged BOOLEAN, 
-	acknowledged_by VARCHAR(36), 
+	acknowledged_by UUID, 
 	acknowledged_at TIMESTAMP WITH TIME ZONE, 
 	meta_data JSON, 
 	created_at TIMESTAMP WITH TIME ZONE, 
 	PRIMARY KEY (id), 
-	FOREIGN KEY(driver_id) REFERENCES drivers (id), 
 	FOREIGN KEY(organization_id) REFERENCES organizations (id), 
 	FOREIGN KEY(acknowledged_by) REFERENCES users (id)
 );
@@ -489,27 +477,258 @@ CREATE INDEX IF NOT EXISTS ix_geotab_exceptions_timestamp ON geotab_exceptions (
 
 CREATE INDEX IF NOT EXISTS ix_geotab_exceptions_device_id ON geotab_exceptions (device_id);
 
-ALTER TABLE dock_doors ADD FOREIGN KEY(organization_id) REFERENCES organizations (id);
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_yard_trailers_shipment_id') THEN
+        ALTER TABLE yard_trailers ADD CONSTRAINT fk_yard_trailers_shipment_id
+            FOREIGN KEY (shipment_id) REFERENCES shipments (id);
+    END IF;
+END $$;
 
-ALTER TABLE yard_trailers ADD FOREIGN KEY(carrier_id) REFERENCES carriers (id);
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_yard_trailers_dock_door_id') THEN
+        ALTER TABLE yard_trailers ADD CONSTRAINT fk_yard_trailers_dock_door_id
+            FOREIGN KEY (dock_door_id) REFERENCES dock_doors (id);
+    END IF;
+END $$;
 
-ALTER TABLE shipments ADD FOREIGN KEY(trailer_id) REFERENCES yard_trailers (id);
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_yard_trailers_carrier_id') THEN
+        ALTER TABLE yard_trailers ADD CONSTRAINT fk_yard_trailers_carrier_id
+            FOREIGN KEY (carrier_id) REFERENCES carriers (id);
+    END IF;
+END $$;
 
-ALTER TABLE shipments ADD FOREIGN KEY(carrier_id) REFERENCES carriers (id);
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_yard_trailers_driver_id') THEN
+        ALTER TABLE yard_trailers ADD CONSTRAINT fk_yard_trailers_driver_id
+            FOREIGN KEY (driver_id) REFERENCES drivers (id);
+    END IF;
+END $$;
 
-ALTER TABLE yard_trailers ADD FOREIGN KEY(driver_id) REFERENCES drivers (id);
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_dock_doors_current_trailer_id') THEN
+        ALTER TABLE dock_doors ADD CONSTRAINT fk_dock_doors_current_trailer_id
+            FOREIGN KEY (current_trailer_id) REFERENCES yard_trailers (id);
+    END IF;
+END $$;
 
-ALTER TABLE dock_doors ADD FOREIGN KEY(current_trailer_id) REFERENCES yard_trailers (id);
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_shipments_route_id') THEN
+        ALTER TABLE shipments ADD CONSTRAINT fk_shipments_route_id
+            FOREIGN KEY (route_id) REFERENCES routes (id);
+    END IF;
+END $$;
 
-ALTER TABLE shipments ADD FOREIGN KEY(route_id) REFERENCES routes (id);
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_shipments_driver_id') THEN
+        ALTER TABLE shipments ADD CONSTRAINT fk_shipments_driver_id
+            FOREIGN KEY (driver_id) REFERENCES drivers (id);
+    END IF;
+END $$;
 
-ALTER TABLE yard_trailers ADD FOREIGN KEY(organization_id) REFERENCES organizations (id);
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_shipments_trailer_id') THEN
+        ALTER TABLE shipments ADD CONSTRAINT fk_shipments_trailer_id
+            FOREIGN KEY (trailer_id) REFERENCES yard_trailers (id);
+    END IF;
+END $$;
 
-ALTER TABLE shipments ADD FOREIGN KEY(driver_id) REFERENCES drivers (id);
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_shipments_carrier_id') THEN
+        ALTER TABLE shipments ADD CONSTRAINT fk_shipments_carrier_id
+            FOREIGN KEY (carrier_id) REFERENCES carriers (id);
+    END IF;
+END $$;
 
-ALTER TABLE shipments ADD FOREIGN KEY(organization_id) REFERENCES organizations (id);
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_yard_checkpoints_trailer_id') THEN
+        ALTER TABLE yard_checkpoints ADD CONSTRAINT fk_yard_checkpoints_trailer_id
+            FOREIGN KEY (trailer_id) REFERENCES yard_trailers (id);
+    END IF;
+END $$;
 
-ALTER TABLE yard_trailers ADD FOREIGN KEY(shipment_id) REFERENCES shipments (id);
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_drivers_carrier_id') THEN
+        ALTER TABLE drivers ADD CONSTRAINT fk_drivers_carrier_id
+            FOREIGN KEY (carrier_id) REFERENCES carriers (id);
+    END IF;
+END $$;
 
-ALTER TABLE yard_trailers ADD FOREIGN KEY(dock_door_id) REFERENCES dock_doors (id);
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_load_plans_trailer_id') THEN
+        ALTER TABLE load_plans ADD CONSTRAINT fk_load_plans_trailer_id
+            FOREIGN KEY (trailer_id) REFERENCES yard_trailers (id);
+    END IF;
+END $$;
 
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_load_plans_shipment_id') THEN
+        ALTER TABLE load_plans ADD CONSTRAINT fk_load_plans_shipment_id
+            FOREIGN KEY (shipment_id) REFERENCES shipments (id);
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_freight_charges_carrier_id') THEN
+        ALTER TABLE freight_charges ADD CONSTRAINT fk_freight_charges_carrier_id
+            FOREIGN KEY (carrier_id) REFERENCES carriers (id);
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_freight_charges_shipment_id') THEN
+        ALTER TABLE freight_charges ADD CONSTRAINT fk_freight_charges_shipment_id
+            FOREIGN KEY (shipment_id) REFERENCES shipments (id);
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_truck_asset_correlations_trailer_id') THEN
+        ALTER TABLE truck_asset_correlations ADD CONSTRAINT fk_truck_asset_correlations_trailer_id
+            FOREIGN KEY (trailer_id) REFERENCES yard_trailers (id);
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_truck_asset_correlations_shipment_id') THEN
+        ALTER TABLE truck_asset_correlations ADD CONSTRAINT fk_truck_asset_correlations_shipment_id
+            FOREIGN KEY (shipment_id) REFERENCES shipments (id);
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_load_quality_logs_trailer_id') THEN
+        ALTER TABLE load_quality_logs ADD CONSTRAINT fk_load_quality_logs_trailer_id
+            FOREIGN KEY (trailer_id) REFERENCES yard_trailers (id);
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_load_quality_logs_shipment_id') THEN
+        ALTER TABLE load_quality_logs ADD CONSTRAINT fk_load_quality_logs_shipment_id
+            FOREIGN KEY (shipment_id) REFERENCES shipments (id);
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_session_data_sources_session_id') THEN
+        ALTER TABLE session_data_sources ADD CONSTRAINT fk_session_data_sources_session_id
+            FOREIGN KEY (session_id) REFERENCES analysis_sessions (id);
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_session_messages_session_id') THEN
+        ALTER TABLE session_messages ADD CONSTRAINT fk_session_messages_session_id
+            FOREIGN KEY (session_id) REFERENCES analysis_sessions (id);
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_yard_moves_trailer_id') THEN
+        ALTER TABLE yard_moves ADD CONSTRAINT fk_yard_moves_trailer_id
+            FOREIGN KEY (trailer_id) REFERENCES yard_trailers (id);
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_yard_moves_jockey_driver_id') THEN
+        ALTER TABLE yard_moves ADD CONSTRAINT fk_yard_moves_jockey_driver_id
+            FOREIGN KEY (jockey_driver_id) REFERENCES drivers (id);
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_driver_wait_times_trailer_id') THEN
+        ALTER TABLE driver_wait_times ADD CONSTRAINT fk_driver_wait_times_trailer_id
+            FOREIGN KEY (trailer_id) REFERENCES yard_trailers (id);
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_driver_wait_times_driver_id') THEN
+        ALTER TABLE driver_wait_times ADD CONSTRAINT fk_driver_wait_times_driver_id
+            FOREIGN KEY (driver_id) REFERENCES drivers (id);
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_dock_appointments_driver_id') THEN
+        ALTER TABLE dock_appointments ADD CONSTRAINT fk_dock_appointments_driver_id
+            FOREIGN KEY (driver_id) REFERENCES drivers (id);
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_dock_appointments_trailer_id') THEN
+        ALTER TABLE dock_appointments ADD CONSTRAINT fk_dock_appointments_trailer_id
+            FOREIGN KEY (trailer_id) REFERENCES yard_trailers (id);
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_dock_appointments_carrier_id') THEN
+        ALTER TABLE dock_appointments ADD CONSTRAINT fk_dock_appointments_carrier_id
+            FOREIGN KEY (carrier_id) REFERENCES carriers (id);
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_dock_appointments_shipment_id') THEN
+        ALTER TABLE dock_appointments ADD CONSTRAINT fk_dock_appointments_shipment_id
+            FOREIGN KEY (shipment_id) REFERENCES shipments (id);
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_dock_appointments_dock_door_id') THEN
+        ALTER TABLE dock_appointments ADD CONSTRAINT fk_dock_appointments_dock_door_id
+            FOREIGN KEY (dock_door_id) REFERENCES dock_doors (id);
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_geotab_trips_driver_id') THEN
+        ALTER TABLE geotab_trips ADD CONSTRAINT fk_geotab_trips_driver_id
+            FOREIGN KEY (driver_id) REFERENCES drivers (id);
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_geotab_exceptions_driver_id') THEN
+        ALTER TABLE geotab_exceptions ADD CONSTRAINT fk_geotab_exceptions_driver_id
+            FOREIGN KEY (driver_id) REFERENCES drivers (id);
+    END IF;
+END $$;

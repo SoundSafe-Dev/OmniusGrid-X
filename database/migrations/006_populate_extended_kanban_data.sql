@@ -15,6 +15,12 @@ DECLARE
 BEGIN
     -- Get existing board for dev organization
     SELECT id INTO v_board_id FROM task_boards WHERE organization_id = v_dev_org_id AND is_active = TRUE LIMIT 1;
+
+    -- Dev sample data only: skip on a clean database (no dev board yet).
+    IF v_board_id IS NULL THEN
+        RAISE NOTICE 'no dev board found; skipping extended kanban sample data';
+        RETURN;
+    END IF;
     
     -- Get column IDs
     SELECT id INTO v_backlog_col_id FROM task_columns WHERE board_id = v_board_id AND column_type = 'backlog' LIMIT 1;
