@@ -48,7 +48,7 @@ follow-up action.
 - [ ] (k8s) All pods `Running` and `Ready`: `kubectl get pods -n omniusgrid`
 
 ```bash
-curl -fsS http://localhost:8002/health/detailed | jq .
+curl -fsS -H "Authorization: Bearer $OPS_TOKEN" http://localhost:8002/health/detailed | jq .  # auth-gated
 ```
 
 ## Step 3 — Data integrity verification (RPO confirmation)

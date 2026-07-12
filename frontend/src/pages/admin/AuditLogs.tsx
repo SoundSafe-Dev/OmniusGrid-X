@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { Fragment, useState, useEffect } from 'react';
 import { Shield, Search, Download, AlertTriangle, CheckCircle } from 'lucide-react';
 import { Card, Button, Input, Select, Table, Badge } from '../../components/ui';
 
@@ -251,7 +251,7 @@ export default function AuditLogs() {
             </Table.Head>
             <Table.Body>
               {filteredLogs.map((log) => (
-                <>
+                <Fragment key={log.id}>
                   <Table.Row key={log.id}>
                     <Table.Cell className="font-mono text-sm">
                       {new Date(log.timestamp).toLocaleString()}
@@ -337,7 +337,7 @@ export default function AuditLogs() {
                       </Table.Cell>
                     </Table.Row>
                   )}
-                </>
+                </Fragment>
               ))}
             </Table.Body>
           </Table>

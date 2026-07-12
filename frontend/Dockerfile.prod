@@ -9,9 +9,8 @@ RUN npm ci
 COPY . .
 # Build-time API base is left unset on purpose: production bundles default to
 # SAME-ORIGIN (client.ts / websocket.ts), which nginx proxies to the backend.
-# vite build directly (not `npm run build`): the tsc step in the npm script
-# still carries ~40 pre-existing type errors (tracked, mostly legacy pages)
-# that don't affect the emitted bundle.
+# vite build only: type checking is CI's job (blocking tsc + `npm run build`
+# gates since FS-53/54); the image build just emits the bundle.
 RUN npx vite build
 
 FROM nginx:1.27-alpine

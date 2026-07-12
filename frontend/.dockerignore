@@ -1,0 +1,10 @@
+# Keep the docker build context lean and PLATFORM-CORRECT:
+#  - node_modules: COPY . . after npm ci would overwrite the image's linux
+#    node_modules with the host's darwin tree (esbuild/rollup native binaries)
+#  - out/: local Remotion renders (~160MB of MP4s, git-ignored but NOT
+#    docker-ignored by .gitignore)
+node_modules
+out
+dist
+.DS_Store
+*.log

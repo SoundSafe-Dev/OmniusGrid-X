@@ -34,6 +34,7 @@ export const MobileLogisticsScene: React.FC = () => (
     ]}
     overlays={
       <>
+        <LiftFocus x={14} y={86} w={1894} h={94} inAt={70} outAt={94} radius={10} />
         <LiftFocus x={155} y={212} w={1580} h={410} inAt={106} outAt={128} />
         <LiftFocus x={215} y={1106} w={1240} h={88} inAt={138} outAt={158} fadeEdge="right" radius={10} />
       </>

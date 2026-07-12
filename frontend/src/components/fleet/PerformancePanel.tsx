@@ -8,9 +8,7 @@ import type {
   FuelEfficiencyData, IdleTimeData, OnTimePerformanceData,
   VehicleHealthScoreData, CostPerMileData, DTCCountData
 } from '../../types';
-// TimeRange is ambiguously re-exported from '../../types' (common.ts and logistics.ts
-// both export a TimeRange), so import the string-union declaration directly.
-import type { TimeRange } from '../../types/logistics';
+import type { TimeRange } from '../../types';
 
 const TimeRangeSelector: FC<{ value: TimeRange; onChange: (r: TimeRange) => void }> = ({ value, onChange }) => (
   <select 
@@ -54,10 +52,7 @@ export const PerformancePanel: FC = () => {
   }, [timeRange]);
 
   const loadData = async () => {
-    // kpiApi's TimeRange parameter currently resolves through the ambiguous
-    // '../../types' barrel; bridge until that re-export is disambiguated. This
-    // cast stays valid (and becomes a no-op) once the barrel exports the union.
-    const range = timeRange as unknown as Parameters<typeof kpiApi.getFuelEfficiency>[0];
+    const range = timeRange;
     const [fuel, idle, performance, health, cost, dtc] = await Promise.all([
       kpiApi.getFuelEfficiency(range),
       kpiApi.getIdleTime(range),

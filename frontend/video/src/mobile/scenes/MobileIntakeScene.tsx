@@ -16,9 +16,10 @@ export const MobileIntakeScene: React.FC = () => (
         moves={[
           { at: 0, ...M_FULL },
           { at: 45, ...M_FULL },
-          // Q3 card lifted large, panning left cluster → domains chips
-          { at: 58, scale: 1.25, focusX: 480, focusY: 798 },
-          { at: 80, scale: 1.25, focusX: 990, focusY: 812 },
+          // Q3 card lifted large — hold on the left cluster (title, risk,
+          // the anomaly-cluster analysis); the right side is empty space
+          { at: 58, scale: 1.25, focusX: 455, focusY: 790 },
+          { at: 80, scale: 1.25, focusX: 480, focusY: 802 },
           { at: 98, ...M_FULL },
           { at: 112, ...M_FULL },
         ]}

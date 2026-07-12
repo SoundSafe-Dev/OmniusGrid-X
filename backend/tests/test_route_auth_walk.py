@@ -32,7 +32,6 @@ PUBLIC_EXACT = {
     "/health/live",
     "/health/ready",
     "/health/startup",
-    "/health/detailed",
     "/health/redis",           # infra probes, same class as the other health routes
     "/health/db",
     "/health/kafka",

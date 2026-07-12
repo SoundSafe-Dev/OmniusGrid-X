@@ -1,6 +1,5 @@
 """Async compliance report generation API (Task 7 — independent router)."""
 
-from __future__ import annotations
 
 import json
 import uuid

@@ -19,9 +19,9 @@ export const MobileDashboardScene: React.FC = () => (
           // Active Alarms stat card, lifted big
           { at: 72, scale: 2.0, focusX: 1199, focusY: 46 },
           { at: 94, scale: 2.0, focusX: 1199, focusY: 50 },
-          // first alarm row, lifted with a fade edge + pan along the row
-          { at: 104, scale: 1.15, focusX: 480, focusY: 502 },
-          { at: 124, scale: 1.15, focusX: 620, focusY: 504 },
+          // first alarm row, lifted — subtle drift, title stays in frame
+          { at: 104, scale: 1.15, focusX: 490, focusY: 502 },
+          { at: 124, scale: 1.15, focusX: 510, focusY: 504 },
           { at: 132, ...M_FULL },
           { at: 148, ...M_FULL },
         ]}

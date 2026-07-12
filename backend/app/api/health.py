@@ -221,8 +221,16 @@ async def startup_probe():
 
 
 @router.get("/health/detailed")
-async def detailed_health(db: AsyncSession = Depends(get_db)):
-    """Engineer-facing health report with per-component detail (not cached)."""
+async def detailed_health(
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_active_user),
+):
+    """Engineer-facing health report with per-component detail (not cached).
+
+    Auth-gated for the same reason as /health/system: the per-component report
+    (broker/redis/ingestion state, connection error strings) is recon-useful.
+    Probes use /health/live|ready, which stay public.
+    """
     return await _run_health_checks(db)
 
 

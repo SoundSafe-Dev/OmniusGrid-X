@@ -7,7 +7,6 @@ sha256_hash}`` shape the edge MLOps client (``services/mlops_pipeline.py``)
 polls.
 """
 
-from __future__ import annotations
 
 from datetime import datetime
 from typing import Any

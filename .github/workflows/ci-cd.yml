@@ -127,7 +127,9 @@ jobs:
 
       - name: Build frontend
         working-directory: ./frontend
-        run: npm run build
+        # vite only — the dedicated tsc step above already typechecks
+        # (better failure attribution); `npm run build` would run tsc twice.
+        run: npx vite build
 
   # ============================================================================
   # BUILD AND PUSH IMAGES

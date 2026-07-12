@@ -213,6 +213,17 @@ export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) 
 
   // Move task
   const moveTask = useCallback(async (taskId: string, targetColumnId: string, position?: number) => {
+    // Mock mode: local-state move only (demo boards have no backend to POST
+    // to — the read path is mocked, so mutations must be too or every drag
+    // rejects and snaps back).
+    if (USE_MOCK) {
+      setTasks(prev => prev.map(t =>
+        t.id === taskId
+          ? { ...t, column_id: targetColumnId, position: position ?? t.position }
+          : t
+      ));
+      return;
+    }
     await api.post(`/api/v1/kanban/tasks/${taskId}/move`, { target_column_id: targetColumnId, position });
 
     // Update local state optimistically
@@ -229,6 +240,12 @@ export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) 
 
   // Approve/reject task
   const approveTask = useCallback(async (taskId: string, action: 'approve' | 'reject', reason?: string) => {
+    if (USE_MOCK) {
+      setTasks(prev => prev.map(t =>
+        t.id === taskId ? { ...t, approval_status: action === 'approve' ? 'approved' : 'rejected' } : t
+      ));
+      return;
+    }
     await api.post(`/api/v1/kanban/tasks/${taskId}/approve`, { action, reason });
     await refreshBoard();
     await refreshMetrics();
@@ -236,6 +253,10 @@ export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) 
 
   // Start task
   const startTask = useCallback(async (taskId: string) => {
+    if (USE_MOCK) {
+      setTasks(prev => prev.map(t => (t.id === taskId ? { ...t, status: 'in_progress' } : t)));
+      return;
+    }
     await api.post(`/api/v1/kanban/tasks/${taskId}/start`);
     await refreshBoard();
     await refreshMetrics();
@@ -243,6 +264,10 @@ export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) 
 
   // Complete task
   const completeTask = useCallback(async (taskId: string) => {
+    if (USE_MOCK) {
+      setTasks(prev => prev.map(t => (t.id === taskId ? { ...t, status: 'completed' } : t)));
+      return;
+    }
     await api.post(`/api/v1/kanban/tasks/${taskId}/complete`);
     await refreshBoard();
     await refreshMetrics();
@@ -250,6 +275,16 @@ export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) 
 
   // Create task
   const createTask = useCallback(async (taskData: Partial<Task>): Promise<Task | null> => {
+    if (USE_MOCK) {
+      const newTask = {
+        id: `task-demo-${Date.now()}`,
+        position: 0,
+        status: 'pending',
+        ...taskData,
+      } as Task;
+      setTasks(prev => [newTask, ...prev]);
+      return newTask;
+    }
     try {
       const response = await api.post<Task>('/api/v1/kanban/tasks', taskData);
       await refreshBoard();
@@ -263,6 +298,10 @@ export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) 
 
   // Update task
   const updateTask = useCallback(async (taskId: string, updates: Partial<Task>) => {
+    if (USE_MOCK) {
+      setTasks(prev => prev.map(t => (t.id === taskId ? { ...t, ...updates } : t)));
+      return;
+    }
     try {
       await api.put(`/api/v1/kanban/tasks/${taskId}`, updates);
       await refreshBoard();
@@ -275,6 +314,10 @@ export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) 
 
   // Delete task
   const deleteTask = useCallback(async (taskId: string) => {
+    if (USE_MOCK) {
+      setTasks(prev => prev.filter(t => t.id !== taskId));
+      return;
+    }
     try {
       await api.delete(`/api/v1/kanban/tasks/${taskId}`);
       await refreshBoard();

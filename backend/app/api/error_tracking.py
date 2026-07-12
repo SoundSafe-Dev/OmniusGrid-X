@@ -7,7 +7,6 @@ queries hit only the two error-tracking tables, so there is zero impact on any
 existing table.
 """
 
-from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from typing import Literal, Optional
