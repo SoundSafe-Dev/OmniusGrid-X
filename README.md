@@ -59,7 +59,7 @@ OmniusGrid is a resilient manufacturing operations platform designed for Industr
 | **Edge AI** | <100ms inference loops, TorchScript models, automated model lifecycle, graceful fallback |
 | **Observability** | Prometheus metrics, Loki logs, Grafana dashboards, TimescaleDB |
 | **Security** | Agent enrollment with CA pinning, mTLS + proof-of-possession request signing, Redpanda broker mTLS, route-walk auth enforcement test, tamper-evident audit trails |
-| **DevOps** | GitHub Actions CI/CD with blocking gates (tsc/eslint/pytest/vitest), kustomize deploys, Kubernetes base incl. workers + db-migrate Job, checksum-tracked SQL migration runner |
+| **DevOps** | GitHub Actions CI/CD with blocking gates (tsc/eslint/pytest/vitest + supply-chain: pip-audit/npm-audit/Trivy), kustomize deploys, Kubernetes base incl. workers + db-migrate Job, checksum-tracked SQL migration runner |
 | **Operations** | K3s-orchestrated, Patroni HA, automatic disaster recovery |
 | **Logistics** | YMS/TMS with GeoTab telematics, detention billing, HOS compliance, dock-production sync, webhook processing |
 | **Task Management** | Kanban board with task grouping, assignment, approval workflows |
@@ -78,9 +78,9 @@ OmniusGrid is a resilient manufacturing operations platform designed for Industr
 
 The integration branch for the next `main`: it merges every workstream
 (Hridyansh's OTA + tenant/RBAC hardening, Harsh's correlation-AI + MLOps +
-mobile/kanban, Hudson's RAG compliance-doc pipeline) and carries the completed
-**66-task hardening program** (fixed sprints FS-01..66, each sprint
-code-reviewed). ~178 commits ahead of `main`. Highlights:
+mobile/kanban, Hudson's RAG compliance-doc pipeline) and carries the
+**70-task hardening program** (fixed sprints FS-01..70, each sprint
+code-reviewed). ~185 commits ahead of `main`. Highlights:
 
 - **Real mode is the default** — the frontend mock layer is opt-in
   (`VITE_USE_MOCK=true`); every API client has a real backend path, bridged by
@@ -114,11 +114,17 @@ code-reviewed). ~178 commits ahead of `main`. Highlights:
   chart suite is wired (or deleted).
 - **Product demo video** — Remotion compositions (4K + mobile 9:16) under
   `frontend/video/` (`npm run video:*`; renders are not committed).
+- **Dependencies current, supply chain gated** — backend/edge Python pins
+  jumped ~2 years to current (FastAPI 0.139, Pydantic 2.11, SQLAlchemy 2.0.51,
+  aiokafka 0.14, cryptography 48; `pip-audit` 60 → 0 modulo one documented,
+  fix-less advisory) and the frontend npm audit went 19 → 0 (vite 7, vitest 4,
+  ts-eslint 8). The `supply-chain` CI job is now **blocking** (`pip-audit` +
+  `npm audit --audit-level=high` + Trivy fs scan).
 
 Deferred/flagged on this branch: k8s NetworkPolicies have no egress rules
-(only correct on non-enforcing CNIs); dependency-upgrade pass (npm audit
-criticals, fastapi 0.104→current) not started; 3 intake-lane tests fail
-pre-existing (owner: Harsh).
+(only correct on non-enforcing CNIs); 3 intake-lane tests fail pre-existing
+(owner: Harsh). Filed follow-ups: swap `python-jose` → PyJWT (removes the last
+audit ignore), a py3.11 DNP3 driver, and `react-query` v3 → `@tanstack` v5.
 
 ### Subsystem ownership — check here before starting work
 
