@@ -1,8 +1,9 @@
 import { FC, useState } from 'react';
 import { useQuery } from 'react-query';
-import { AlertTriangle, Wrench } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronRight, Wrench } from 'lucide-react';
 import { Card, Badge } from '../../components';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
+import { AnnotatedChart, FacilityHeatmap } from '../../components/charts';
 import { assetsApi, dashboardApi, telemetryApi, maintenanceApi } from '../../api';
 import {
   LineChart,
@@ -123,6 +124,7 @@ const METRIC_COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#8B5CF6', '#EF4444'];
 
 export const TelemetryCharts: FC = () => {
   const [timeRange, setTimeRange] = useState('24h');
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   // Real data: first asset's telemetry history, current fleet OEE, and the
   // fleet's PackML-state distribution. (Nozzle/bed/vibration were 3D-printer
@@ -177,6 +179,35 @@ export const TelemetryCharts: FC = () => {
     else healthBuckets['Down/Other']++;
   }
   const healthDistribution = Object.entries(healthBuckets).map(([status, count]) => ({ status, count }));
+
+  // Advanced Plotly section (FS-62): per-asset OEE mapped onto a grid for the
+  // heatmap (x = index % cols, y = row, value = OEE %), plus the fleet OEE
+  // trend rendered through the annotatable plotly wrapper.
+  const HEATMAP_COLS = 4;
+  const oeeHeatmapData = (fleetOEE?.assets ?? []).map((a, i) => ({
+    x: i % HEATMAP_COLS,
+    y: Math.floor(i / HEATMAP_COLS),
+    value: asPct(a.oee),
+    label: `${a.assetName}: ${asPct(a.oee)}%`,
+  }));
+  const oeeTrendTraces = [
+    {
+      type: 'scatter',
+      mode: 'lines+markers',
+      name: 'Availability (%)',
+      x: oeeData.map((d) => d.time),
+      y: oeeData.map((d) => d.availability),
+      line: { color: '#3B82F6' },
+    },
+    {
+      type: 'scatter',
+      mode: 'lines+markers',
+      name: 'OEE (%)',
+      x: oeeData.map((d) => d.time),
+      y: oeeData.map((d) => d.oee),
+      line: { color: '#10B981' },
+    },
+  ];
 
   return (
     <div className="space-y-6">
@@ -268,6 +299,45 @@ export const TelemetryCharts: FC = () => {
             </div>
           </div>
         </div>
+      </Card>
+
+      {/* Advanced Plotly visualizations (FS-62), collapsed by default */}
+      <Card
+        title="Advanced Visualizations"
+        subtitle="Per-asset OEE heatmap and annotatable OEE trend"
+        action={
+          <button
+            onClick={() => setShowAdvanced((v) => !v)}
+            className="flex items-center gap-1 px-3 py-1.5 text-sm text-opsgrid-text-secondary hover:text-opsgrid-text border border-opsgrid-border rounded-lg transition-colors"
+            aria-expanded={showAdvanced}
+          >
+            {showAdvanced ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+            {showAdvanced ? 'Hide' : 'Show'}
+          </button>
+        }
+      >
+        {showAdvanced ? (
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+            {oeeHeatmapData.length > 0 ? (
+              <FacilityHeatmap
+                data={oeeHeatmapData}
+                title="OEE by Asset"
+                height={400}
+              />
+            ) : (
+              <p className="text-sm text-opsgrid-text-secondary">No per-asset OEE data available.</p>
+            )}
+            <AnnotatedChart
+              data={oeeTrendTraces}
+              title="Fleet OEE Trend"
+              editable
+            />
+          </div>
+        ) : (
+          <p className="text-sm text-opsgrid-text-secondary">
+            Expand to load the plotly-based OEE heatmap and annotatable trend chart.
+          </p>
+        )}
       </Card>
     </div>
   );

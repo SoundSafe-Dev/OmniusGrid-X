@@ -15,6 +15,8 @@ import {
 } from 'lucide-react';
 import { Card, Badge } from '../ui';
 import { websocketManager } from '../../api';
+import { fleetTrackerApi } from '../../api/fleetTracker';
+import type { FleetVehiclePosition, GeofenceZone } from '../../types';
 
 // GeoTab Vehicle Data Interface
 interface GeoTabVehicle {
@@ -190,35 +192,70 @@ export const GeoTabIntegration: FC<GeoTabIntegrationProps> = ({
   // eslint-disable-next-line react-hooks/exhaustive-deps -- pre-existing; adding deps changes retrigger behavior (FS-54)
   }, [organizationId, showTrail]);
 
+  // Initial loads go through the shared authenticated api client (the old raw
+  // fetch() calls sent no Authorization header and targeted a non-existent
+  // /api/v1/fleet/vehicles route). The backend scopes both endpoints to the
+  // caller's organization via the auth token, so organizationId is not sent.
   const fetchVehicles = useCallback(async () => {
     try {
-      const response = await fetch(`/api/v1/fleet/vehicles?organization_id=${organizationId}`);
-      if (response.ok) {
-        const data = await response.json();
-        setVehicles(data.vehicles || []);
-        
-        // Center map on first vehicle if exists
-        if (data.vehicles?.length > 0) {
-          const first = data.vehicles[0];
-          setMapCenter([first.currentPosition.latitude, first.currentPosition.longitude]);
-        }
+      const positions = await fleetTrackerApi.getAllVehiclePositions();
+      const mapped: GeoTabVehicle[] = positions
+        .filter((p: FleetVehiclePosition) => p.position?.latitude != null && p.position?.longitude != null)
+        .map((p: FleetVehiclePosition) => ({
+          id: p.deviceId,
+          name: p.vehicleId || p.deviceId,
+          deviceId: p.deviceId,
+          licensePlate: '',
+          vin: '',
+          currentPosition: {
+            latitude: p.position.latitude,
+            longitude: p.position.longitude,
+            heading: p.heading ?? 0,
+            speed: p.speed ?? 0,
+            timestamp: p.position.timestamp || p.lastUpdate,
+          },
+          status: p.status ?? 'offline',
+          alerts: [],
+          odometer: 0,
+        }));
+      setVehicles(mapped);
+
+      // Center map on first vehicle if exists
+      if (mapped.length > 0) {
+        setMapCenter([mapped[0].currentPosition.latitude, mapped[0].currentPosition.longitude]);
       }
     } catch (error) {
       console.error('Failed to fetch vehicles:', error);
     }
-  }, [organizationId]);
+  }, []);
 
   const fetchGeofences = useCallback(async () => {
     try {
-      const response = await fetch(`/api/v1/fleet/geofences?organization_id=${organizationId}`);
-      if (response.ok) {
-        const data = await response.json();
-        setGeofences(data.geofences || []);
-      }
+      const zones = await fleetTrackerApi.getGeofenceZones();
+      const mapped: GeoTabGeofence[] = zones
+        .filter((z: GeofenceZone) => z.center || (z.coordinates && z.coordinates.length > 0))
+        .map((z: GeofenceZone) => {
+          const coordinates: [number, number][] = (z.coordinates ?? []).map(
+            (c) => [c.latitude, c.longitude] as [number, number]
+          );
+          const center: [number, number] = z.center
+            ? [z.center.latitude, z.center.longitude]
+            : coordinates[0];
+          return {
+            id: z.id,
+            name: z.name,
+            // Backend severity color -> local zone semantics (red = restricted).
+            type: z.color === 'red' ? 'restricted' as const : 'customer' as const,
+            coordinates,
+            center,
+            radius: z.radius,
+          };
+        });
+      setGeofences(mapped);
     } catch (error) {
       console.error('Failed to fetch geofences:', error);
     }
-  }, [organizationId]);
+  }, []);
 
   // Filter visible vehicles
   const visibleVehicles = selectedVehicleId

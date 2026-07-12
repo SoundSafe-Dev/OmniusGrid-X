@@ -3,11 +3,14 @@ import { useQuery } from 'react-query';
 import { Building2, MapPin, Users, ChevronRight, ChevronDown, Factory, Box, Activity } from 'lucide-react';
 import { Card, Badge } from '../../components';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
+import { GeoTabIntegration } from '../../components/fleet/GeoTabIntegration';
 import { workcellsApi, assetsApi, organizationsApi } from '../../api';
 
 export const FleetOverview: FC = () => {
   const { data: workcells } = useQuery('fleet-workcells', () => workcellsApi.list());
   const { data: assetsPage } = useQuery('fleet-assets', () => assetsApi.list({ limit: 500 }));
+  const { data: orgs } = useQuery('fleet-orgs', () => organizationsApi.list());
+  const orgId = orgs?.[0]?.id;
 
   const assets = assetsPage?.items ?? [];
   const workcellList = workcells ?? [];
@@ -63,6 +66,10 @@ export const FleetOverview: FC = () => {
           </div>
         )}
       </Card>
+
+      {/* Live vehicle tracking (FS-62): GeoTab telematics map — vehicles,
+          geofences, and websocket position updates. Renders its own Card. */}
+      {orgId && <GeoTabIntegration organizationId={orgId} height={480} />}
     </div>
   );
 };

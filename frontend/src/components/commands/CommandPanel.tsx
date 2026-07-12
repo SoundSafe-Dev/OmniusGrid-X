@@ -87,7 +87,9 @@ export const CommandPanel: FC<CommandPanelProps> = ({
       action: CommandAction;
       parameters: Record<string, any>;
     }) => {
-      const response = await api.post('/commands/submit', {
+      // Backend router is mounted at /api/v1/commands (backend/app/main.py);
+      // the shared api client's baseURL does not add the /api/v1 prefix.
+      const response = await api.post('/api/v1/commands/submit', {
         asset_id: assetId,
         command_type: 'operator',
         action_id: data.action,
@@ -113,7 +115,7 @@ export const CommandPanel: FC<CommandPanelProps> = ({
 
   const emergencyStop = useMutation({
     mutationFn: async () => {
-      const response = await api.post(`/commands/asset/${assetId}/emergency-stop`);
+      const response = await api.post(`/api/v1/commands/asset/${assetId}/emergency-stop`);
       return response.data;
     },
     onSuccess: () => {

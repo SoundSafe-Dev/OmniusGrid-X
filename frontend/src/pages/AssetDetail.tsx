@@ -1,20 +1,21 @@
-import { FC } from 'react'
+import { FC, useMemo } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery } from 'react-query'
 import { ArrowLeft, Activity, Clock, Box } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { assetsApi, telemetryApi } from '../api'
 import { Tooltip, TooltipTrigger, TooltipContent } from '../components/ui'
-import { TelemetryHistoryChart } from '../components/charts'
+import { RealtimeTelemetryChart, TelemetryHistoryChart } from '../components/charts'
 import { SensorPanels } from '../components/assets/SensorPanels'
+import { CommandPanel } from '../components/commands'
 import { TrendingUp } from 'lucide-react'
 import { ExportButton } from '../components/common'
 import { useAuth } from '../hooks/useAuth'
 
 const AssetDetail: FC = () => {
   const { id } = useParams<{ id: string }>()
-  const { isAdmin } = useAuth()
-  
+  const { isAdmin, isOperator } = useAuth()
+
   const { data: asset, isLoading } = useQuery(['asset', id], () =>
     assetsApi.get(id!)
   )
@@ -23,6 +24,20 @@ const AssetDetail: FC = () => {
     ['telemetry', id],
     () => telemetryApi.getLatest(id!),
     { refetchInterval: 5000 }
+  )
+
+  // Metrics for the live chart, derived from whatever the asset actually
+  // reports. Keyed by the metric NAMES (a string), not the telemetry object
+  // identity — the query refetches every 5s and the chart resubscribes to the
+  // websocket whenever the metrics array changes.
+  const liveMetricsKey = !telemetry
+    ? ''
+    : 'metricName' in (telemetry as any)
+      ? ((telemetry as any).metricName ?? '')
+      : Object.keys(telemetry as Record<string, unknown>).slice(0, 6).join(',')
+  const liveMetrics = useMemo(
+    () => (liveMetricsKey ? liveMetricsKey.split(',') : undefined),
+    [liveMetricsKey]
   )
 
   if (isLoading) {
@@ -198,6 +213,19 @@ const AssetDetail: FC = () => {
         telemetry={telemetry && !('metricName' in (telemetry as any)) ? (telemetry as any) : null}
       />
 
+      {/* Live telemetry (FS-62): websocket-driven stream of the asset's own
+          metrics, complements the polled latest-values grid above. Rendered
+          once we know which metrics the asset reports. */}
+      {id && liveMetrics && liveMetrics.length > 0 && (
+        <RealtimeTelemetryChart
+          assetId={id}
+          assetName={asset.name}
+          metrics={liveMetrics}
+          height={340}
+          title={`Live Telemetry — ${asset.name}`}
+        />
+      )}
+
       {/* Telemetry History (task B8): stored history + aggregation, complements
           the latest-values grid above. */}
       {id && (
@@ -208,6 +236,16 @@ const AssetDetail: FC = () => {
           </h2>
           <TelemetryHistoryChart assetId={id} />
         </div>
+      )}
+
+      {/* Command Control (FS-62): operator/admin actions area. Backend enforces
+          RBAC (@require_operator_or_admin on /api/v1/commands/submit). */}
+      {id && isOperator && (
+        <CommandPanel
+          assetId={id}
+          assetName={asset.name}
+          currentState={asset.currentPackmlState}
+        />
       )}
 
       {/* Connection Info */}

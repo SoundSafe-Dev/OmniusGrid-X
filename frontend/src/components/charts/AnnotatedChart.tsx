@@ -79,12 +79,38 @@ export const AnnotatedChart: FC<AnnotatedChartProps> = ({
     setLocalAnnotations(updatedAnnotations);
   }, [localAnnotations]);
   
+  // Download the visible traces as CSV: one row per point index, one x/y
+  // column pair per trace (traces may have different lengths).
   const handleExport = useCallback(() => {
-    // Export functionality - requires Plotly to be available globally
-    // This is a placeholder - actual implementation depends on Plotly API
-    console.log('Export chart as PNG');
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- pre-existing; adding deps changes retrigger behavior (FS-54)
-  }, [data, plotLayout]);
+    const traces = data.filter((t) => Array.isArray(t?.x) && Array.isArray(t?.y));
+    if (traces.length === 0) return;
+
+    const escape = (v: unknown) => {
+      if (v === null || v === undefined) return '';
+      const s = String(v);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+
+    const header = traces.flatMap((t, i) => {
+      const name = t.name || `trace_${i + 1}`;
+      return [`${name}_x`, `${name}_y`];
+    });
+    const rowCount = Math.max(...traces.map((t) => t.x.length));
+    const rows = Array.from({ length: rowCount }, (_, r) =>
+      traces.flatMap((t) => [escape(t.x[r]), escape(t.y[r])]).join(',')
+    );
+    const csv = [header.map(escape).join(','), ...rows].join('\n');
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${title.toLowerCase().replace(/[^a-z0-9]+/g, '_')}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }, [data, title]);
   
   // These shape-drawing buttons exist in plotly.js at runtime but are missing
   // from the ModeBarDefaultButtons union in @types/plotly.js.
@@ -120,7 +146,7 @@ export const AnnotatedChart: FC<AnnotatedChartProps> = ({
             )}
           </>
         )}
-        <Button onClick={handleExport} variant="outline">Export PNG</Button>
+        <Button onClick={handleExport} variant="outline">Export CSV</Button>
       </div>
       
       {localAnnotations.length > 0 && (
