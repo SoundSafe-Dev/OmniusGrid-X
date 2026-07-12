@@ -1,7 +1,7 @@
 # Backend dev/test-only dependencies (not installed in the runtime image).
 -r requirements.txt
 
-pytest==8.3.3
-pytest-asyncio==0.24.0
-schemathesis==3.36.0    # property-based API contract testing (task 12)
+pytest==9.1.1
+pytest-asyncio==1.4.0
+schemathesis==4.22.4    # property-based API contract testing (task 12); 4.x for OpenAPI 3.1 (fastapi >=0.99 emits 3.1)
 pip-audit==2.7.3        # dependency vulnerability audit (task 20)

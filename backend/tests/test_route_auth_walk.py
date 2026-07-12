@@ -81,15 +81,39 @@ def client():
     app.dependency_overrides.pop(get_tenant_db, None)
 
 
+def _flatten(routes, prefix=""):
+    """Recursively expand router containers, carrying include prefixes.
+
+    fastapi >=0.130 keeps include_router() results as lazy _IncludedRouter
+    entries in app.routes (child Route.path is RELATIVE; the prefix lives on
+    the container's include_context) — without recursion + prefix carrying
+    the walk silently visits ~6 routes and passes vacuously.
+    """
+    for route in routes:
+        ctx = getattr(route, "include_context", None)
+        if ctx is not None:
+            child_prefix = prefix + (getattr(ctx, "prefix", "") or "")
+            yield from _flatten(ctx.included_router.routes, child_prefix)
+        elif getattr(route, "routes", None) is not None and not isinstance(route, Route):
+            yield from _flatten(route.routes, prefix)
+        else:
+            yield route, prefix
+
+
 def _http_routes():
-    for route in app.routes:
+    seen = set()
+    for route, prefix in _flatten(app.routes):
         if not isinstance(route, Route):  # skips WebSocketRoute (/ws) + mounts
             continue
-        if route.path in ("/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"):
+        path = prefix + route.path
+        if path in ("/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"):
             continue
-        methods = (route.methods or set()) - {"HEAD", "OPTIONS"}
+        methods = (getattr(route, "methods", None) or set()) - {"HEAD", "OPTIONS"}
         for method in sorted(methods):
-            yield method, route.path
+            if (method, path) in seen:
+                continue
+            seen.add((method, path))
+            yield method, path
 
 
 def _probe_path(path: str) -> str:
@@ -141,6 +165,6 @@ def test_every_route_rejects_unauthenticated_requests(client):
 def test_allowlist_paths_exist():
     # A stale allowlist hides regressions: every exact entry must still be a
     # real route.
-    actual = {r.path for r in app.routes if isinstance(r, Route)}
+    actual = {prefix + r.path for r, prefix in _flatten(app.routes) if isinstance(r, Route)}
     missing = PUBLIC_EXACT - actual
     assert not missing, f"allowlisted paths no longer exist: {missing}"

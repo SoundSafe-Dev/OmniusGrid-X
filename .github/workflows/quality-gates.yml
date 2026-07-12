@@ -42,6 +42,7 @@ jobs:
         working-directory: ./backend
         env:
           DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/omniusgrid_test
+          RUN_CONTRACT_TESTS: "1"
         run: pytest tests/test_api_contract.py -q
 
   # --- task 1: frontend unit tests (Vitest) --------------------------------
