@@ -70,11 +70,14 @@ class CommandExecutor:
         
         # Initialize Redpanda producer
         try:
+            # No `retries=` kwarg: aiokafka doesn't take one (newer releases
+            # reject it outright) — delivery retry is acks='all' +
+            # enable_idempotence, matching the other producers in this app.
             self._producer = AIOKafkaProducer(
                 bootstrap_servers=settings.REDPANDA_URL,
                 value_serializer=lambda v: json.dumps(v).encode('utf-8'),
                 acks='all',
-                retries=3,
+                enable_idempotence=True,
                 compression_type='gzip'
             )
             await self._producer.start()

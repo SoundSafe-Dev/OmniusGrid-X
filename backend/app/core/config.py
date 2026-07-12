@@ -1,6 +1,6 @@
 """Application configuration"""
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 
 
@@ -261,8 +261,7 @@ class Settings(BaseSettings):
     ALLOW_DEV_TOKEN: bool = True   # accept "dev-token" as an admin bypass
     ALLOW_OPEN_REGISTRATION: bool = True  # unauthenticated POST /auth/register
 
-    class Config:
-        env_file = ".env"
+    model_config = SettingsConfigDict(env_file=".env")
 
     @property
     def cors_origins(self) -> list[str]:

@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 from uuid import UUID
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import ConfigDict, AliasChoices, BaseModel, Field
 
 
 # Asset Schemas
@@ -47,8 +47,7 @@ class AssetResponse(AssetBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Asset Type Schemas
@@ -65,8 +64,7 @@ class AssetTypeResponse(AssetTypeCreate):
     id: UUID
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Alarm Schemas
@@ -89,8 +87,7 @@ class AlarmResponse(AlarmCreate):
     occurred_at: datetime
     cleared_at: Optional[datetime]
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AlarmAcknowledge(BaseModel):
@@ -115,8 +112,7 @@ class OperationResponse(OperationCreate):
     actual_duration: Optional[int]
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Telemetry Schemas
@@ -218,8 +214,7 @@ class YardTrailerResponse(YardTrailerBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class DockDoorBase(BaseModel):
@@ -249,8 +244,7 @@ class DockDoorResponse(DockDoorBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class YardMoveBase(BaseModel):
@@ -276,8 +270,7 @@ class YardMoveResponse(YardMoveBase):
     completed_at: Optional[datetime]
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class DriverWaitTimeBase(BaseModel):
@@ -310,8 +303,7 @@ class DriverWaitTimeResponse(DriverWaitTimeBase):
     updated_at: datetime
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class YardCheckPointBase(BaseModel):
@@ -335,8 +327,7 @@ class YardCheckPointResponse(YardCheckPointBase):
     passed_at: datetime
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ==================== TMS Schemas ====================
@@ -381,8 +372,7 @@ class CarrierResponse(CarrierBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class DriverBase(BaseModel):
@@ -432,8 +422,7 @@ class DriverResponse(DriverBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ShipmentBase(BaseModel):
@@ -486,8 +475,7 @@ class ShipmentResponse(ShipmentBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class RouteBase(BaseModel):
@@ -521,8 +509,7 @@ class RouteResponse(RouteBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class LoadPlanBase(BaseModel):
@@ -553,8 +540,7 @@ class LoadPlanResponse(LoadPlanBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class FreightChargeBase(BaseModel):
@@ -588,8 +574,7 @@ class FreightChargeResponse(FreightChargeBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ==================== Correlation Schemas ====================
@@ -636,8 +621,7 @@ class DockAppointmentResponse(DockAppointmentBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TruckAssetCorrelationBase(BaseModel):
@@ -670,8 +654,7 @@ class TruckAssetCorrelationResponse(TruckAssetCorrelationBase):
     operation_id: Optional[UUID]
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class LoadQualityLogBase(BaseModel):
@@ -708,8 +691,7 @@ class LoadQualityLogResponse(LoadQualityLogBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ==================== Analytics Schemas ====================
@@ -776,8 +758,7 @@ class TaskBoardResponse(TaskBoardBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TaskColumnBase(BaseModel):
@@ -801,8 +782,7 @@ class TaskColumnResponse(TaskColumnBase):
     updated_at: datetime
     task_count: Optional[int] = 0  # Computed field
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TaskChecklistItem(BaseModel):
@@ -885,8 +865,7 @@ class TaskResponse(TaskBase):
     completed_at: Optional[datetime]
     completed_by: Optional[UUID]
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TaskMoveRequest(BaseModel):
@@ -915,8 +894,7 @@ class TaskCommentResponse(TaskCommentBase):
     extra_data: Dict[str, Any]
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TaskTimerStart(BaseModel):
@@ -938,8 +916,7 @@ class TaskTimerResponse(BaseModel):
     description: Optional[str]
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TaskRuleBase(BaseModel):
@@ -988,8 +965,7 @@ class TaskRuleResponse(TaskRuleBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TaskRuleTestRequest(BaseModel):
@@ -1056,8 +1032,7 @@ class TaskEscalationResponse(BaseModel):
     actions_taken: List[str]
     notification_channels: List[str]
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ============ Actionable Registries Schemas ============
@@ -1111,8 +1086,7 @@ class ActionableRegistryResponse(ActionableRegistryBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ActionableRegistryItemBase(BaseModel):
@@ -1163,8 +1137,7 @@ class ActionableRegistryItemResponse(ActionableRegistryItemBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class DataCorrelationBase(BaseModel):
@@ -1198,5 +1171,4 @@ class DataCorrelationResponse(DataCorrelationBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

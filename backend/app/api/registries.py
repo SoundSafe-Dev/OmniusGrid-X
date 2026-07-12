@@ -99,7 +99,7 @@ async def create_registry(
     new_registry = ActionableRegistry(
         organization_id=current_user.organization_id,
         created_by=current_user.id,
-        **registry.dict()
+        **registry.model_dump()
     )
     
     db.add(new_registry)
@@ -231,7 +231,7 @@ async def create_registry_item(
     
     new_item = ActionableRegistryItem(
         registry_id=registry_id,
-        **item.dict()
+        **item.model_dump()
     )
     
     db.add(new_item)
@@ -343,7 +343,7 @@ async def create_correlation(
     new_correlation = DataCorrelation(
         organization_id=current_user.organization_id,
         created_by=current_user.id,
-        **correlation.dict()
+        **correlation.model_dump()
     )
     
     db.add(new_correlation)

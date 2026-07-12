@@ -9,7 +9,7 @@ from typing import Dict, Any, Optional, List, Set
 from dataclasses import dataclass, field
 from enum import Enum
 import structlog
-from pydantic import BaseModel, ValidationError, Extra
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 logger = structlog.get_logger()
 
@@ -38,9 +38,7 @@ class DataContract(BaseModel):
     Strict data contract for collector payloads.
     Uses Pydantic with extra="forbid" to catch schema drift.
     """
-    class Config:
-        extra = Extra.forbid  # Reject unknown fields
-        validate_assignment = True
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
 
 class BambuLabsContract(DataContract):
