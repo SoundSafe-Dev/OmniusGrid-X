@@ -95,7 +95,8 @@ def _flatten(routes, prefix=""):
             child_prefix = prefix + (getattr(ctx, "prefix", "") or "")
             yield from _flatten(ctx.included_router.routes, child_prefix)
         elif getattr(route, "routes", None) is not None and not isinstance(route, Route):
-            yield from _flatten(route.routes, prefix)
+            # Mount containers carry their own path prefix; plain routers don't
+            yield from _flatten(route.routes, prefix + (getattr(route, "path", "") or ""))
         else:
             yield route, prefix
 

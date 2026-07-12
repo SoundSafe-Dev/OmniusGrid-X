@@ -56,8 +56,11 @@ jobs:
       - name: Install backend dependencies
         working-directory: ./backend
         run: |
-          pip install -r requirements.txt
-          pip install pytest pytest-asyncio pytest-cov flake8 black isort
+          # requirements-dev pins the VALIDATED pytest/pytest-asyncio (the
+          # runtime file no longer carries test pins); lint/coverage extras
+          # aren't in either pin file.
+          pip install -r requirements-dev.txt
+          pip install pytest-cov flake8 black isort
 
       - name: Lint Python code
         working-directory: ./backend

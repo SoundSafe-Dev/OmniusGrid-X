@@ -108,7 +108,7 @@ jobs:
         # --ignore-vuln PYSEC-2026-1325: ecdsa Minerva timing side-channel via
         # python-jose; NO fixed release exists. Follow-up filed: swap
         # python-jose -> PyJWT (~10 call sites), which drops ecdsa entirely.
-        run: pip install pip-audit && pip-audit -r backend/requirements.txt --ignore-vuln PYSEC-2026-1325
+        run: pip install pip-audit==2.7.3 && pip-audit -r backend/requirements.txt --ignore-vuln PYSEC-2026-1325
       - name: pip-audit (edge-agent)
         run: pip-audit -r edge-agent/requirements.txt
       - uses: actions/setup-node@v4
@@ -124,6 +124,9 @@ jobs:
           scan-ref: .
           scanners: vuln,secret,misconfig
           severity: HIGH,CRITICAL
+          # without this trivy exits 0 regardless of findings — the step
+          # could never actually block
+          exit-code: "1"
 
   # --- task 20: k6 load test (non-blocking) --------------------------------
   load-test:
