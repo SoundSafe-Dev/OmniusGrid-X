@@ -5,23 +5,25 @@ import Kanban from '../../../../src/pages/Kanban';
 import { MobileAppFrame } from '../MobileAppFrame';
 import { MobilePanZoom } from '../MobilePanZoom';
 import { MobileCaption } from '../MobileCaption';
-import { MobileNavDrawer } from '../MobileNavDrawer';
 import { Cursor } from '../../components/Interactions';
 import { LiftFocus } from '../components/LiftFocus';
+import { MobileNavDrawer } from '../MobileNavDrawer';
 import { theme } from '../../theme';
 import { M_FULL } from '../theme';
 
 /**
- * Portrait Kanban with the task-assignment interaction — replica popover,
- * assignee-chip swap and toast at the same page coordinates as desktop; one
- * held portrait camera keeps card + popover + toast in frame throughout.
+ * Multi-departmental action: full board, the WO-4482 card lifts, then the
+ * cursor assigns the task — picker popover, R. Okafor picked (check), the
+ * card's assignee chip flips, and a confirmation toast lands. Frame-driven
+ * replica UI — portrait edition, same beats and coordinates as desktop.
  */
 
-const PICK_OPEN = 108;
-const PICK_AT = 128;
-const POP_OUT = 136;
-const TOAST_IN = 138;
-const TOAST_OUT = 172;
+const CHIP_CLICK = 124;
+const PICK_OPEN = 130; // popover opens
+const PICK_AT = 152; // member row clicked
+const POP_OUT = 160;
+const TOAST_IN = 162;
+const TOAST_OUT = 204;
 
 const MEMBERS = [
   { initials: 'DA', name: 'Dev Admin', role: 'Operations' },
@@ -44,7 +46,7 @@ const AssignPopover: React.FC = () => {
     extrapolateLeft: 'clamp',
     extrapolateRight: 'clamp',
   });
-  const hover = frame >= PICK_AT - 8;
+  const hover = frame >= PICK_AT - 10;
   const picked = frame >= PICK_AT;
 
   return (
@@ -172,14 +174,14 @@ export const MobileKanbanScene: React.FC = () => (
       <MobilePanZoom
         moves={[
           { at: 0, ...M_FULL },
-          { at: 50, ...M_FULL },
+          { at: 58, ...M_FULL },
           // WO-4482 card lifted big, then the window widens for the popover
-          { at: 68, scale: 2.0, focusX: 850, focusY: 386 },
-          { at: 100, scale: 2.0, focusX: 850, focusY: 386 },
-          { at: 112, scale: 1.35, focusX: 990, focusY: 520 },
-          { at: 170, scale: 1.35, focusX: 990, focusY: 525 },
-          { at: 186, ...M_FULL },
-          { at: 202, ...M_FULL },
+          { at: 66, scale: 2.0, focusX: 850, focusY: 386 },
+          { at: 114, scale: 2.0, focusX: 850, focusY: 386 },
+          { at: 126, scale: 1.35, focusX: 990, focusY: 520 },
+          { at: 204, scale: 1.35, focusX: 990, focusY: 525 },
+          { at: 216, ...M_FULL },
+          { at: 236, ...M_FULL },
         ]}
       >
         <Kanban />
@@ -188,34 +190,34 @@ export const MobileKanbanScene: React.FC = () => (
           y={278}
           w={312}
           h={216}
-          inAt={72}
-          outAt={176}
-          to={{ at: 104, x: 640, y: 270, w: 700, h: 510 }}
+          inAt={70}
+          outAt={212}
+          to={{ at: 118, x: 640, y: 270, w: 700, h: 510 }}
         />
         <AssignPopover />
         <AssigneeSwap />
         <AssignToast />
         <Cursor
           path={[
-            { at: 78, x: 400, y: 600 },
-            { at: 96, x: 750, y: 440 },
-            { at: 110, x: 750, y: 440 },
-            { at: 120, x: 1110, y: 513 },
-            { at: 134, x: 1110, y: 513 },
-            { at: 156, x: 1250, y: 640 },
+            { at: 90, x: 400, y: 600 },
+            { at: 108, x: 750, y: 440 },
+            { at: 130, x: 750, y: 440 },
+            { at: 144, x: 1110, y: 513 },
+            { at: 164, x: 1110, y: 513 },
+            { at: 188, x: 1250, y: 640 },
           ]}
-          clicks={[102, PICK_AT]}
-          inAt={74}
-          outAt={176}
+          clicks={[CHIP_CLICK, PICK_AT]}
+          inAt={86}
+          outAt={214}
         />
       </MobilePanZoom>
-      <MobileNavDrawer activePath="/kanban" targetPath="/nlp" inAt={186} clickAt={204} />
+      <MobileNavDrawer activePath="/kanban" targetPath="/nlp" inAt={222} clickAt={242} />
     </MobileAppFrame>
     <MobileCaption
       text="One incident, four departments — work assigned to each, against shared goals."
       accent="four departments"
       inAt={10}
-      outAt={94}
+      outAt={112}
     />
   </AbsoluteFill>
 );

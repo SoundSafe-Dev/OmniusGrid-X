@@ -28,9 +28,9 @@ export const CorrelationIntroScene: React.FC = () => (
     extraCss={HIDE_MESSAGES_CSS}
     moves={[
       { at: 0, scale: 1.0, focusX: 960, focusY: 515 },
-      { at: 70, scale: 1.06, focusX: 900, focusY: 540 },
-      { at: 118, scale: 1.0, focusX: 960, focusY: 515 },
+      { at: 78, scale: 1.06, focusX: 900, focusY: 540 },
+      { at: 130, scale: 1.0, focusX: 960, focusY: 515 },
     ]}
-    stageOverlay={<NavDrawer activePath="" targetPath="/nlp" inAt={120} clickAt={142} />}
+    stageOverlay={<NavDrawer activePath="" targetPath="/nlp" inAt={136} clickAt={158} />}
   />
 );

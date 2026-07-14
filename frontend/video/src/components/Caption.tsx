@@ -51,9 +51,9 @@ export const Caption: React.FC<CaptionProps> = ({ text, accent, inAt = 8, outAt 
     <div
       style={{
         position: 'absolute',
-        left: 160,
+        left: 140,
         bottom: 140,
-        maxWidth: 2900,
+        maxWidth: 3580,
         transform: `translateY(${y}px)`,
         opacity,
         overflow: 'hidden',
@@ -68,14 +68,15 @@ export const Caption: React.FC<CaptionProps> = ({ text, accent, inAt = 8, outAt 
           boxShadow: '0 30px 90px rgba(0, 0, 0, 0.5)',
         }}
       >
-        <div style={{ width: 14, background: theme.highlight }} />
+        <div style={{ width: 16, background: theme.highlight }} />
         <div
           style={{
-            padding: '38px 60px',
+            padding: '44px 68px',
             background: 'rgba(10, 10, 10, 0.94)',
             fontFamily: theme.fontFamily,
-            fontSize: 62,
+            fontSize: 74,
             lineHeight: 1.28,
+            whiteSpace: 'nowrap',
             fontWeight: 600,
             letterSpacing: 0.2,
             color: theme.darkText,

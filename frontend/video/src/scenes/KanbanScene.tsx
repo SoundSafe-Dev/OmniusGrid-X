@@ -5,22 +5,24 @@ import Kanban from '../../../src/pages/Kanban';
 import { AppFrame } from '../AppFrame';
 import { PanZoom } from '../components/PanZoom';
 import { Caption } from '../components/Caption';
-import { Cursor, Highlight } from '../components/Interactions';
+import { Cursor } from '../components/Interactions';
+import { LiftFocus } from '../mobile/components/LiftFocus';
 import { NavDrawer } from '../components/NavDrawer';
 import { theme } from '../theme';
 
 /**
- * Multi-departmental action: full board, punch on the WO-4482 card, then the
- * cursor assigns the task — an assignee picker opens, the maintenance
- * engineer is selected, and a confirmation toast lands. Frame-driven replica
- * UI (same Tailwind vocabulary as the app), no component state involved.
+ * Multi-departmental action: full board, the WO-4482 card lifts, then the
+ * cursor assigns the task — picker popover, R. Okafor picked (check), the
+ * card's assignee chip flips, and a confirmation toast lands. Frame-driven
+ * replica UI (same Tailwind vocabulary as the app), no component state.
  */
 
-const PICK_OPEN = 108; // popover opens (after click on the assignee chip)
-const PICK_AT = 128; // member row clicked
-const POP_OUT = 136;
-const TOAST_IN = 138;
-const TOAST_OUT = 172;
+const CHIP_CLICK = 124;
+const PICK_OPEN = 130; // popover opens
+const PICK_AT = 152; // member row clicked
+const POP_OUT = 160;
+const TOAST_IN = 162;
+const TOAST_OUT = 204;
 
 const MEMBERS = [
   { initials: 'DA', name: 'Dev Admin', role: 'Operations' },
@@ -43,7 +45,7 @@ const AssignPopover: React.FC = () => {
     extrapolateLeft: 'clamp',
     extrapolateRight: 'clamp',
   });
-  const hover = frame >= PICK_AT - 8;
+  const hover = frame >= PICK_AT - 10;
   const picked = frame >= PICK_AT;
 
   return (
@@ -95,11 +97,7 @@ const AssignPopover: React.FC = () => {
   );
 };
 
-/**
- * After the pick, the card's assignee chip itself flips from Dev Admin to
- * R. Okafor — the click visibly took effect on the card.
- */
-const CHIP = { x: 705, y: 427, w: 100, h: 27 }; // avatar + name area on the WO-4482 card
+const CHIP = { x: 705, y: 427, w: 100, h: 27 };
 const AssigneeSwap: React.FC = () => {
   const frame = useCurrentFrame();
   if (frame < PICK_AT + 4) return null;
@@ -175,40 +173,50 @@ export const KanbanScene: React.FC = () => (
       <PanZoom
         moves={[
           { at: 0, scale: 1.0, focusX: 960, focusY: 500 },
-          { at: 50, scale: 1.0, focusX: 960, focusY: 500 },
-          { at: 68, scale: 1.4, focusX: 850, focusY: 420 },
-          { at: 170, scale: 1.4, focusX: 850, focusY: 440 },
-          { at: 186, scale: 1.0, focusX: 960, focusY: 500 },
-          { at: 202, scale: 1.0, focusX: 960, focusY: 500 },
+          { at: 58, scale: 1.0, focusX: 960, focusY: 500 },
+          // WO-4482 card lifted big, then the window widens for the popover
+          { at: 66, scale: 2.0, focusX: 860, focusY: 386 },
+          { at: 114, scale: 2.0, focusX: 860, focusY: 386 },
+          { at: 126, scale: 1.35, focusX: 990, focusY: 520 },
+          { at: 204, scale: 1.35, focusX: 990, focusY: 525 },
+          { at: 216, scale: 1.0, focusX: 960, focusY: 500 },
+          { at: 236, scale: 1.0, focusX: 960, focusY: 500 },
         ]}
       >
         <Kanban />
-        {/* the WO-4482 corrective-maintenance card */}
-        <Highlight x={694} y={278} w={312} h={216} inAt={72} outAt={98} radius={14} />
+        <LiftFocus
+          x={694}
+          y={278}
+          w={312}
+          h={216}
+          inAt={70}
+          outAt={212}
+          to={{ at: 118, x: 640, y: 270, w: 700, h: 510 }}
+        />
         <AssignPopover />
         <AssigneeSwap />
         <AssignToast />
         <Cursor
           path={[
-            { at: 78, x: 400, y: 600 },
-            { at: 96, x: 750, y: 440 },
-            { at: 110, x: 750, y: 440 },
-            { at: 120, x: 1110, y: 513 },
-            { at: 134, x: 1110, y: 513 },
-            { at: 156, x: 1250, y: 640 },
+            { at: 90, x: 400, y: 600 },
+            { at: 108, x: 750, y: 440 },
+            { at: 130, x: 750, y: 440 },
+            { at: 144, x: 1110, y: 513 },
+            { at: 164, x: 1110, y: 513 },
+            { at: 188, x: 1250, y: 640 },
           ]}
-          clicks={[102, PICK_AT]}
-          inAt={74}
-          outAt={176}
+          clicks={[CHIP_CLICK, PICK_AT]}
+          inAt={86}
+          outAt={214}
         />
       </PanZoom>
-      <NavDrawer activePath="/kanban" targetPath="/nlp" inAt={186} clickAt={204} />
+      <NavDrawer activePath="/kanban" targetPath="/nlp" inAt={222} clickAt={242} />
     </AppFrame>
     <Caption
       text="One incident, four departments — work assigned to each, against shared goals."
       accent="four departments"
       inAt={10}
-      outAt={94}
+      outAt={112}
     />
   </AbsoluteFill>
 );

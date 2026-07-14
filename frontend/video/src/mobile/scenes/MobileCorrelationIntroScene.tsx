@@ -29,9 +29,9 @@ export const MobileCorrelationIntroScene: React.FC = () => (
     moves={[
       // portrait-window cameras (viewport 1064x906, fit-width 0.554)
       { at: 0, scale: 0.554, focusX: 960, focusY: 518 },
-      { at: 70, scale: 0.63, focusX: 920, focusY: 518 },
-      { at: 118, scale: 0.554, focusX: 960, focusY: 518 },
+      { at: 78, scale: 0.63, focusX: 920, focusY: 518 },
+      { at: 130, scale: 0.554, focusX: 960, focusY: 518 },
     ]}
-    stageOverlay={<NavDrawer activePath="" targetPath="/nlp" inAt={120} clickAt={142} />}
+    stageOverlay={<NavDrawer activePath="" targetPath="/nlp" inAt={136} clickAt={158} />}
   />
 );

@@ -124,17 +124,19 @@ export const StackScene: React.FC = () => {
           // grid pose
           const gridY = gy + interpolate(flyIn, [0, 1], [620, 0]);
           const gridRotY = [7, 3, -3, -7][col];
-          // stacked pose (center, fanned)
-          const cx = (3840 - CARD_W * 0.42) / 2 + (i - 3.5) * 14;
-          const cy = (2160 - CARD_H * 0.42) / 2 - 60 + (i - 3.5) * 12;
+          // collapse target: the logo tile's center — the panes shrink into
+          // it and fade out completely as the identity pops in
+          const cx = 1920 - CARD_W / 2 + (i - 3.5) * 6;
+          const cy = 1285 - CARD_H / 2 + (i - 3.5) * 5;
 
           const x = interpolate(converge, [0, 1], [gx, cx]);
           const y = interpolate(converge, [0, 1], [gridY, cy]);
-          const sc = interpolate(converge, [0, 1], [1, 0.42]);
+          const sc = interpolate(converge, [0, 1], [1, 0.2]);
           const rotY = interpolate(converge, [0, 1], [gridRotY, 0]);
           const rotZ = interpolate(converge, [0, 1], [0, (i - 3.5) * 2.2]);
           const opacity =
-            Math.min(flyIn * 1.3, 1) * interpolate(converge, [0.6, 1], [1, i === 0 ? 1 : 0.6], {
+            Math.min(flyIn * 1.3, 1) *
+            interpolate(converge, [0.55, 0.92], [1, 0], {
               extrapolateLeft: 'clamp',
               extrapolateRight: 'clamp',
             });

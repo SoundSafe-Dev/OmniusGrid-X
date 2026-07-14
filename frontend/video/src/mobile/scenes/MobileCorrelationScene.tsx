@@ -17,15 +17,15 @@ import { M_FULL } from '../theme';
 const QUESTION =
   "Why did Line 3's scrap rate jump 3.4% last week? I've added the production log, compressor report and whiteboard photo.";
 
-const SEND_CLICK = 262;
-const ACT2_AT = 268;
-const ACT3_AT = 352;
+const SEND_CLICK = 280;
+const ACT2_AT = 286;
+const ACT3_AT = 380;
 
 const MSG_LIST = '.og-video-stage div.space-y-4.overflow-x-hidden';
 const SOURCES = '.og-video-stage .w-72 .space-y-2';
 
 const sourcesShown = (frame: number) =>
-  Math.max(0, Math.min(6, Math.floor((frame - 32) / 12)));
+  Math.max(0, Math.min(6, Math.floor((frame - 36) / 14)));
 
 const ActCss: React.FC = () => {
   const frame = useCurrentFrame();
@@ -49,29 +49,29 @@ export const MobileCorrelationScene: React.FC = () => (
       <MobilePanZoom
         moves={[
           { at: 0, ...M_FULL },
-          { at: 28, ...M_FULL },
+          { at: 32, ...M_FULL },
           // sources rail, lifted tall
-          { at: 44, scale: 1.9, focusX: 270, focusY: 530 },
-          { at: 108, scale: 1.9, focusX: 270, focusY: 545 },
+          { at: 48, scale: 1.9, focusX: 270, focusY: 530 },
+          { at: 124, scale: 1.9, focusX: 270, focusY: 545 },
           // tight on the input while typing, then pan right to the Send button
-          { at: 126, scale: 1.35, focusX: 730, focusY: 970 },
-          { at: 234, scale: 1.35, focusX: 730, focusY: 970 },
-          { at: 250, scale: 1.35, focusX: 1270, focusY: 970 },
-          { at: 264, scale: 1.35, focusX: 1270, focusY: 970 },
+          { at: 142, scale: 1.35, focusX: 730, focusY: 970 },
+          { at: 250, scale: 1.35, focusX: 730, focusY: 970 },
+          { at: 266, scale: 1.35, focusX: 1270, focusY: 970 },
+          { at: 282, scale: 1.35, focusX: 1270, focusY: 970 },
           // thinking card lift
           { at: ACT2_AT + 4, scale: 1.4, focusX: 650, focusY: 298 },
           { at: ACT3_AT - 8, scale: 1.4, focusX: 650, focusY: 298 },
           // answer lift (badge + domains + chain)
           { at: ACT3_AT + 12, scale: 1.2, focusX: 741, focusY: 432 },
-          { at: 452, scale: 1.2, focusX: 745, focusY: 436 },
-          { at: 492, ...M_FULL },
-          { at: 540, ...M_FULL },
+          { at: 500, scale: 1.2, focusX: 745, focusY: 436 },
+          { at: 545, ...M_FULL },
+          { at: 598, ...M_FULL },
         ]}
       >
         <CorrelationAIPane />
         {/* ghost-context lifts per beat */}
-        <LiftFocus x={0} y={60} w={300} h={940} inAt={46} outAt={112} radius={10} />
-        <LiftFocus x={320} y={935} w={1340} h={70} inAt={130} outAt={266} radius={10} />
+        <LiftFocus x={0} y={60} w={300} h={940} inAt={50} outAt={128} radius={10} />
+        <LiftFocus x={320} y={935} w={1340} h={70} inAt={146} outAt={284} radius={10} />
         <LiftFocus x={322} y={184} w={650} h={225} inAt={ACT2_AT + 8} outAt={ACT3_AT - 6} />
         <LiftFocus
           x={326}
@@ -79,10 +79,10 @@ export const MobileCorrelationScene: React.FC = () => (
           w={830}
           h={492}
           inAt={ACT3_AT + 14}
-          outAt={470}
+          outAt={512}
           fadeEdge="right"
         />
-        <TypeText x={337} y={964} text={QUESTION} startAt={140} cpf={1.15} outAt={ACT2_AT} />
+        <TypeText x={337} y={964} text={QUESTION} startAt={158} cpf={1.15} outAt={ACT2_AT} />
         <Highlight
           x={1583}
           y={938}
@@ -95,37 +95,39 @@ export const MobileCorrelationScene: React.FC = () => (
         <Cursor
           path={[
             { at: 24, x: 1250, y: 700 },
-            { at: 40, x: 150, y: 560 },
-            { at: 56, x: 170, y: 645 },
-            { at: 80, x: 180, y: 765 },
-            { at: 104, x: 190, y: 880 },
-            { at: 126, x: 500, y: 955 },
-            { at: 240, x: 520, y: 960 },
-            { at: 256, x: 1610, y: 962 },
-            { at: 276, x: 1610, y: 962 },
-            { at: 310, x: 1500, y: 640 },
-            { at: 390, x: 1720, y: 520 },
+            { at: 44, x: 150, y: 560 },
+            { at: 62, x: 170, y: 645 },
+            { at: 88, x: 180, y: 765 },
+            { at: 116, x: 190, y: 880 },
+            { at: 142, x: 500, y: 955 },
+            // park below the input while the question types — never over text
+            { at: 158, x: 820, y: 1014 },
+            { at: 256, x: 860, y: 1016 },
+            { at: 272, x: 1610, y: 962 },
+            { at: 294, x: 1610, y: 962 },
+            { at: 330, x: 1500, y: 640 },
+            { at: 420, x: 1720, y: 520 },
           ]}
-          clicks={[132, SEND_CLICK]}
+          clicks={[148, SEND_CLICK]}
           inAt={20}
-          outAt={420}
+          outAt={460}
         />
-        <ThinkingCard x={333} y={196} inAt={ACT2_AT + 6} outAt={ACT3_AT - 4} stepEvery={13} />
-        <Highlight x={330} y={192} w={155} h={38} inAt={ACT3_AT + 16} outAt={ACT3_AT + 70} />
+        <ThinkingCard x={333} y={196} inAt={ACT2_AT + 6} outAt={ACT3_AT - 4} stepEvery={15} />
+        <Highlight x={330} y={192} w={155} h={38} inAt={ACT3_AT + 16} outAt={ACT3_AT + 80} />
       </MobilePanZoom>
-      <MobileNavDrawer activePath="/nlp" targetPath="/intake" inAt={500} clickAt={524} />
+      <MobileNavDrawer activePath="/nlp" targetPath="/intake" inAt={552} clickAt={578} />
     </MobileAppFrame>
     <MobileCaption
       text="Excel tabs, PDFs, a whiteboard photo, live feeds — one session, one question."
       accent="one session"
-      inAt={48}
-      outAt={116}
+      inAt={52}
+      outAt={132}
     />
     <MobileCaption
       text="No dashboards to build. No data to wrangle. Just ask — and get the correlated answer."
       accent="Just ask"
       inAt={ACT3_AT + 10}
-      outAt={488}
+      outAt={540}
     />
   </AbsoluteFill>
 );

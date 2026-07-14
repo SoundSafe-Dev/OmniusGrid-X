@@ -105,6 +105,41 @@ const mockIntegrations: ERPIntegration[] = [
     last_successful_sync: new Date(Date.now() - 1800_000).toISOString(),
     created_at: '2026-06-15T10:00:00Z', updated_at: '2026-07-09T08:30:00Z',
   },
+  {
+    id: 'erp-oracle-1', integration_name: 'Oracle Fusion Cloud (SCM)', erp_type: 'oracle',
+    erp_version: '24C', auth_type: 'oauth2', base_url: 'https://oraclecloud.example.com',
+    is_active: true, sync_schedule: '*/15 * * * *', sync_frequency_minutes: 15,
+    last_successful_sync: new Date(Date.now() - 900_000).toISOString(),
+    created_at: '2026-06-18T10:00:00Z', updated_at: '2026-07-09T08:45:00Z',
+  },
+  {
+    id: 'erp-dynamics-1', integration_name: 'Dynamics 365 (F&O)', erp_type: 'dynamics',
+    erp_version: '10.0.39', auth_type: 'oauth2', base_url: 'https://dynamics.example.com',
+    is_active: true, sync_schedule: '*/20 * * * *', sync_frequency_minutes: 20,
+    last_successful_sync: new Date(Date.now() - 1200_000).toISOString(),
+    created_at: '2026-06-20T10:00:00Z', updated_at: '2026-07-09T08:40:00Z',
+  },
+  {
+    id: 'erp-odoo-1', integration_name: 'Odoo (Manufacturing)', erp_type: 'odoo',
+    erp_version: '17.0', auth_type: 'api_key', base_url: 'https://odoo.example.com',
+    is_active: true, sync_schedule: '*/30 * * * *', sync_frequency_minutes: 30,
+    last_successful_sync: new Date(Date.now() - 1500_000).toISOString(),
+    created_at: '2026-06-22T10:00:00Z', updated_at: '2026-07-09T08:20:00Z',
+  },
+  {
+    id: 'erp-infor-1', integration_name: 'Infor CloudSuite (Industrial)', erp_type: 'infor',
+    erp_version: '2024.06', auth_type: 'oauth2', base_url: 'https://infor.example.com',
+    is_active: true, sync_schedule: '0 */2 * * *', sync_frequency_minutes: 120,
+    last_successful_sync: new Date(Date.now() - 5400_000).toISOString(),
+    created_at: '2026-06-25T10:00:00Z', updated_at: '2026-07-09T07:50:00Z',
+  },
+  {
+    id: 'erp-epicor-1', integration_name: 'Epicor Kinetic (Plant 2)', erp_type: 'epicor',
+    erp_version: '2024.1', auth_type: 'token', base_url: 'https://epicor.example.com',
+    is_active: true, sync_schedule: '0 * * * *', sync_frequency_minutes: 60,
+    last_successful_sync: new Date(Date.now() - 2700_000).toISOString(),
+    created_at: '2026-06-28T10:00:00Z', updated_at: '2026-07-09T07:30:00Z',
+  },
 ]
 const mockSyncStatus: Record<string, SyncStatus[]> = {
   'erp-sap-1': [

@@ -9,8 +9,8 @@ import { LiftFocus } from '../components/LiftFocus';
 import { M_FULL } from '../theme';
 
 /**
- * Portrait return beat: Recommended Actions punch, then the Real-Time Data
- * rail where the REAL Kanban tab is clicked (RealClick) and flips selected.
+ * Portrait return beat: Recommended Actions lifted, then the Real-Time Data
+ * panel — the REAL Kanban tab is clicked (RealClick) and flips selected.
  */
 const kanbanTabSettled = () => {
   const btn = document.querySelector('.og-video-stage button[title="Kanban"]');
@@ -28,34 +28,33 @@ export const MobileCorrelationReturnScene: React.FC = () => (
         entrance={false}
         moves={[
           { at: 0, ...M_FULL },
-          { at: 26, ...M_FULL },
-          // Recommended Actions lifted, then the Real-Time Data panel — big
-          { at: 40, scale: 1.85, focusX: 566, focusY: 608 },
-          { at: 70, scale: 1.85, focusX: 576, focusY: 612 },
-          { at: 86, scale: 2.2, focusX: 1780, focusY: 855 },
-          { at: 116, scale: 2.2, focusX: 1780, focusY: 855 },
-          { at: 130, scale: 2.2, focusX: 1790, focusY: 860 },
+          { at: 34, ...M_FULL },
+          { at: 48, scale: 1.85, focusX: 566, focusY: 608 },
+          { at: 88, scale: 1.85, focusX: 576, focusY: 612 },
+          { at: 100, scale: 2.2, focusX: 1780, focusY: 855 },
+          { at: 140, scale: 2.2, focusX: 1780, focusY: 855 },
           { at: 150, scale: 2.2, focusX: 1790, focusY: 860 },
+          { at: 178, scale: 2.2, focusX: 1790, focusY: 860 },
         ]}
       >
         <CorrelationAIPane />
         <RealClick
-          at={107}
+          at={131}
           selector='.og-video-stage button[title="Kanban"]'
           settledWhen={kanbanTabSettled}
         />
-        <LiftFocus x={326} y={540} w={480} h={136} inAt={44} outAt={76} />
-        <LiftFocus x={1652} y={730} w={256} h={300} inAt={90} outAt={148} />
+        <LiftFocus x={326} y={540} w={480} h={136} inAt={50} outAt={92} />
+        <LiftFocus x={1652} y={730} w={256} h={300} inAt={104} outAt={176} />
         <Cursor
           path={[
-            { at: 84, x: 1300, y: 620 },
-            { at: 100, x: 1818, y: 798 },
+            { at: 98, x: 1300, y: 620 },
             { at: 116, x: 1818, y: 798 },
-            { at: 132, x: 1795, y: 825 },
+            { at: 144, x: 1818, y: 798 },
+            { at: 160, x: 1795, y: 825 },
           ]}
-          clicks={[106]}
-          inAt={82}
-          outAt={144}
+          clicks={[130]}
+          inAt={96}
+          outAt={172}
         />
       </MobilePanZoom>
     </MobileAppFrame>
@@ -63,13 +62,13 @@ export const MobileCorrelationReturnScene: React.FC = () => (
       text="Rapid insight on disparate data. End to end."
       accent="End to end"
       inAt={8}
-      outAt={68}
+      outAt={84}
     />
     <MobileCaption
       text="Live telemetry, alarms, Kanban and registries — toggled right inside the session."
       accent="Kanban"
-      inAt={94}
-      outAt={142}
+      inAt={108}
+      outAt={170}
     />
   </AbsoluteFill>
 );

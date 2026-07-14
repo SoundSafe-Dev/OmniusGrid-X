@@ -124,18 +124,19 @@ export const MobileStackScene: React.FC = () => {
 
           const gridY = gy + interpolate(flyIn, [0, 1], [620, 0]);
           const gridRotY = col === 0 ? 5 : -5;
-          // stacked pose (center, fanned) — above the identity block
-          const cx = (MOBILE_W - CARD_W * 0.5) / 2 + (i - 3.5) * 14;
-          const cy = 1150 + (i - 3.5) * 12;
+          // collapse target: the logo tile's center — the panes shrink into
+          // it and fade out completely as the identity pops in
+          const cx = MOBILE_W / 2 - CARD_W / 2 + (i - 3.5) * 6;
+          const cy = 2015 - CARD_H / 2 + (i - 3.5) * 5;
 
           const x = interpolate(converge, [0, 1], [gx, cx]);
           const y = interpolate(converge, [0, 1], [gridY, cy]);
-          const sc = interpolate(converge, [0, 1], [1, 0.5]);
+          const sc = interpolate(converge, [0, 1], [1, 0.18]);
           const rotY = interpolate(converge, [0, 1], [gridRotY, 0]);
           const rotZ = interpolate(converge, [0, 1], [0, (i - 3.5) * 2.2]);
           const opacity =
             Math.min(flyIn * 1.3, 1) *
-            interpolate(converge, [0.6, 1], [1, i === 0 ? 1 : 0.6], {
+            interpolate(converge, [0.55, 0.92], [1, 0], {
               extrapolateLeft: 'clamp',
               extrapolateRight: 'clamp',
             });

@@ -4,9 +4,15 @@ import { CorrelationAIPane } from '../../../src/components/nlp/CorrelationAIPane
 import { AppFrame } from '../AppFrame';
 import { PanZoom } from '../components/PanZoom';
 import { Caption } from '../components/Caption';
-import { Cursor, Highlight, RealClick } from '../components/Interactions';
+import { Cursor, RealClick } from '../components/Interactions';
+import { LiftFocus } from '../mobile/components/LiftFocus';
+import { NavDrawer } from '../components/NavDrawer';
 
-/** Post-click settle: Kanban tab styled active + its task list rendered. */
+/**
+ * Return beat: full session view → Recommended Actions lifted → the
+ * Real-Time Data rail where the REAL Kanban tab is clicked (RealClick) and
+ * flips to its selected state with the live task list.
+ */
 const kanbanTabSettled = () => {
   const btn = document.querySelector('.og-video-stage button[title="Kanban"]');
   if (!btn || !btn.className.includes('bg-white')) return false;
@@ -16,11 +22,6 @@ const kanbanTabSettled = () => {
   return (panel.textContent || '').includes('WO-4482');
 };
 
-/**
- * Return beat: full session view → punch on Recommended Actions → pan to the
- * right rail where the Real-Time Data toggles (Live / Alarms / Kanban /
- * Registries) get emphasized with a cursor click on the Kanban tab.
- */
 export const CorrelationReturnScene: React.FC = () => (
   <AbsoluteFill>
     <AppFrame route="/nlp" fitHeight>
@@ -28,37 +29,33 @@ export const CorrelationReturnScene: React.FC = () => (
         entrance={false}
         moves={[
           { at: 0, scale: 1.0, focusX: 960, focusY: 515 },
-          { at: 26, scale: 1.0, focusX: 960, focusY: 515 },
-          { at: 40, scale: 1.8, focusX: 500, focusY: 600 },
-          { at: 70, scale: 1.8, focusX: 510, focusY: 615 },
-          { at: 86, scale: 1.75, focusX: 1500, focusY: 720 },
-          { at: 116, scale: 1.75, focusX: 1500, focusY: 720 },
-          { at: 130, scale: 1.85, focusX: 1550, focusY: 750 },
-          { at: 150, scale: 1.85, focusX: 1550, focusY: 750 },
+          { at: 34, scale: 1.0, focusX: 960, focusY: 515 },
+          { at: 48, scale: 1.85, focusX: 566, focusY: 608 },
+          { at: 88, scale: 1.85, focusX: 576, focusY: 612 },
+          { at: 100, scale: 2.0, focusX: 1780, focusY: 855 },
+          { at: 140, scale: 2.0, focusX: 1780, focusY: 855 },
+          { at: 150, scale: 2.05, focusX: 1790, focusY: 860 },
+          { at: 178, scale: 2.05, focusX: 1790, focusY: 860 },
         ]}
       >
         <CorrelationAIPane />
-        {/* the real Kanban tab is clicked — it flips to its selected style
-            and the panel content swaps to the live task list */}
         <RealClick
-          at={107}
+          at={131}
           selector='.og-video-stage button[title="Kanban"]'
           settledWhen={kanbanTabSettled}
         />
-        {/* Recommended Actions */}
-        <Highlight x={326} y={540} w={480} h={136} inAt={44} outAt={74} />
-        {/* Real-Time Data panel + its source toggles */}
-        <Highlight x={1652} y={730} w={256} h={292} inAt={94} outAt={146} radius={14} />
+        <LiftFocus x={326} y={540} w={480} h={136} inAt={50} outAt={92} />
+        <LiftFocus x={1652} y={730} w={256} h={300} inAt={104} outAt={176} />
         <Cursor
           path={[
-            { at: 84, x: 1300, y: 620 },
-            { at: 100, x: 1818, y: 798 },
+            { at: 98, x: 1300, y: 620 },
             { at: 116, x: 1818, y: 798 },
-            { at: 132, x: 1795, y: 825 },
+            { at: 144, x: 1818, y: 798 },
+            { at: 160, x: 1795, y: 825 },
           ]}
-          clicks={[106]}
-          inAt={82}
-          outAt={144}
+          clicks={[130]}
+          inAt={96}
+          outAt={172}
         />
       </PanZoom>
     </AppFrame>
@@ -66,13 +63,13 @@ export const CorrelationReturnScene: React.FC = () => (
       text="Rapid insight on disparate data. End to end."
       accent="End to end"
       inAt={8}
-      outAt={68}
+      outAt={84}
     />
     <Caption
       text="Live telemetry, alarms, Kanban and registries — toggled right inside the session."
       accent="Kanban"
-      inAt={94}
-      outAt={142}
+      inAt={108}
+      outAt={170}
     />
   </AbsoluteFill>
 );

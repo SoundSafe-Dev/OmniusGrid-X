@@ -21,6 +21,23 @@ import { ERPScene } from './scenes/ERPScene';
 import { KanbanScene } from './scenes/KanbanScene';
 import { CorrelationReturnScene } from './scenes/CorrelationReturnScene';
 import { WordmarkCard } from './components/WordmarkCard';
+import { PromoLogo, PromoTagline, PromoIndustry } from './promo/PromoCards';
+import {
+  ClientSlide1,
+  ClientSlide2,
+  ClientSlide3,
+  InvestorSlide1,
+  InvestorSlide2,
+  InvestorSlide3,
+} from './promo/DeckCards';
+import {
+  ClientSlide1Light,
+  ClientSlide2Light,
+  ClientSlide3Light,
+  InvestorSlide1Light,
+  InvestorSlide2Light,
+  InvestorSlide3Light,
+} from './promo/DeckCardsLight';
 
 const T = 12; // transition overlap frames
 
@@ -34,17 +51,17 @@ const SCENES: {
 }[] = [
   { id: 'Problem', comp: ProblemLine, duration: 100, transition: 'fade' },
   { id: 'Title', comp: TitleCard, duration: 110, transition: 'fade' },
-  { id: 'CorrelationIntro', comp: CorrelationIntroScene, duration: 165, transition: 'slide-l' },
-  { id: 'Correlation', comp: CorrelationScene, duration: 545, transition: 'fade' },
-  { id: 'Intake', comp: IntakeScene, duration: 135, transition: 'slide-l' },
-  { id: 'AssetsDetail', comp: AssetsDetailScene, duration: 240, transition: 'slide-l' },
-  { id: 'Dashboard', comp: DashboardScene, duration: 150, transition: 'slide-l' },
-  { id: 'OEE', comp: OEEScene, duration: 165, transition: 'slide-l' },
-  { id: 'Logistics', comp: LogisticsScene, duration: 200, transition: 'fade' },
-  { id: 'Yard', comp: YardScene, duration: 160, transition: 'slide-l' },
-  { id: 'ERP', comp: ERPScene, duration: 150, transition: 'fade' },
-  { id: 'Kanban', comp: KanbanScene, duration: 210, transition: 'slide-l' },
-  { id: 'CorrelationReturn', comp: CorrelationReturnScene, duration: 155, transition: 'wipe' },
+  { id: 'CorrelationIntro', comp: CorrelationIntroScene, duration: 180, transition: 'slide-l' },
+  { id: 'Correlation', comp: CorrelationScene, duration: 600, transition: 'fade' },
+  { id: 'Intake', comp: IntakeScene, duration: 175, transition: 'slide-l' },
+  { id: 'AssetsDetail', comp: AssetsDetailScene, duration: 270, transition: 'slide-l' },
+  { id: 'Dashboard', comp: DashboardScene, duration: 185, transition: 'slide-l' },
+  { id: 'OEE', comp: OEEScene, duration: 205, transition: 'slide-l' },
+  { id: 'Logistics', comp: LogisticsScene, duration: 260, transition: 'fade' },
+  { id: 'Yard', comp: YardScene, duration: 210, transition: 'slide-l' },
+  { id: 'ERP', comp: ERPScene, duration: 210, transition: 'fade' },
+  { id: 'Kanban', comp: KanbanScene, duration: 250, transition: 'slide-l' },
+  { id: 'CorrelationReturn', comp: CorrelationReturnScene, duration: 185, transition: 'wipe' },
   { id: 'Stack', comp: StackScene, duration: 240, transition: 'fade' },
   { id: 'Outro', comp: Outro, duration: 105, transition: 'fade' },
 ];
@@ -118,5 +135,23 @@ export const RemotionRoot: React.FC = () => (
     ))}
     {/* brand asset: wordmark white-on-black */}
     <Still id="WordmarkPng" component={WordmarkCard} width={3840} height={1400} />
+    {/* Instagram 4:5 promo cards (render 2x, deliver 1080x1350) */}
+    <Still id="PromoLogo" component={PromoLogo} width={2160} height={2700} />
+    <Still id="PromoTagline" component={PromoTagline} width={2160} height={2700} />
+    <Still id="PromoIndustry" component={PromoIndustry} width={2160} height={2700} />
+    {/* 16:9 deck slides (render 2x, deliver 1920x1080) */}
+    <Still id="DeckClient1" component={ClientSlide1} width={3840} height={2160} />
+    <Still id="DeckClient2" component={ClientSlide2} width={3840} height={2160} />
+    <Still id="DeckClient3" component={ClientSlide3} width={3840} height={2160} />
+    <Still id="DeckInvestor1" component={InvestorSlide1} width={3840} height={2160} />
+    <Still id="DeckInvestor2" component={InvestorSlide2} width={3840} height={2160} />
+    <Still id="DeckInvestor3" component={InvestorSlide3} width={3840} height={2160} />
+    {/* light-theme deck variants */}
+    <Still id="DeckClient1Light" component={ClientSlide1Light} width={3840} height={2160} />
+    <Still id="DeckClient2Light" component={ClientSlide2Light} width={3840} height={2160} />
+    <Still id="DeckClient3Light" component={ClientSlide3Light} width={3840} height={2160} />
+    <Still id="DeckInvestor1Light" component={InvestorSlide1Light} width={3840} height={2160} />
+    <Still id="DeckInvestor2Light" component={InvestorSlide2Light} width={3840} height={2160} />
+    <Still id="DeckInvestor3Light" component={InvestorSlide3Light} width={3840} height={2160} />
   </>
 );

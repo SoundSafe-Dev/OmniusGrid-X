@@ -1,5 +1,6 @@
 import React from 'react';
 import { Easing, interpolate, spring, useCurrentFrame, useVideoConfig } from 'remotion';
+import { theme } from '../../theme';
 
 /**
  * Ghost-context element isolation for the portrait edition. Rendered INSIDE
@@ -26,6 +27,9 @@ interface LiftFocusProps extends LiftRect {
   fadeEdge?: 'right' | 'left' | 'none';
   /** Tween the rect to a second pose (e.g. widen when a popover opens) */
   to?: LiftRect & { at: number };
+  /** Full keyframe list for multi-step lifts (e.g. stepping item by item);
+   *  overrides x/y/w/h/to — the rect eases between consecutive keyframes */
+  steps?: (LiftRect & { at: number })[];
 }
 
 const EASE = Easing.bezier(0.3, 0, 0.12, 1);
@@ -43,6 +47,7 @@ export const LiftFocus: React.FC<LiftFocusProps> = ({
   radius = 14,
   fadeEdge = 'none',
   to,
+  steps,
 }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
@@ -60,18 +65,25 @@ export const LiftFocus: React.FC<LiftFocusProps> = ({
   });
   const opacity = Math.min(enter * 1.4, 1) * (1 - exit);
 
-  // Optional rect tween (12 frames, eased)
-  const t = to
-    ? interpolate(frame, [to.at, to.at + 12], [0, 1], {
-        easing: EASE,
-        extrapolateLeft: 'clamp',
-        extrapolateRight: 'clamp',
-      })
-    : 0;
-  const rx = to ? interpolate(t, [0, 1], [x, to.x]) : x;
-  const ry = to ? interpolate(t, [0, 1], [y, to.y]) : y;
-  const rw = to ? interpolate(t, [0, 1], [w, to.w]) : w;
-  const rh = to ? interpolate(t, [0, 1], [h, to.h]) : h;
+  // Rect keyframes: explicit steps, or base rect (+ optional 12f `to` tween)
+  const keyframes: (LiftRect & { at: number })[] = steps ?? [
+    { at: inAt, x, y, w, h },
+    ...(to ? [{ at: to.at, x, y, w, h }, { ...to, at: to.at + 12 }] : []),
+  ];
+  const opts = {
+    easing: EASE,
+    extrapolateLeft: 'clamp' as const,
+    extrapolateRight: 'clamp' as const,
+  };
+  const times = keyframes.map((k) => k.at);
+  const kf = (sel: (k: LiftRect) => number) =>
+    keyframes.length > 1
+      ? interpolate(frame, times, keyframes.map(sel), opts)
+      : sel(keyframes[0]);
+  const rx = kf((k) => k.x);
+  const ry = kf((k) => k.y);
+  const rw = kf((k) => k.w);
+  const rh = kf((k) => k.h);
 
   const panel: React.CSSProperties = {
     position: 'absolute',
@@ -118,8 +130,9 @@ export const LiftFocus: React.FC<LiftFocusProps> = ({
           width: rw + 4,
           height: rh + 4,
           borderRadius: radius,
-          border: '2px solid rgba(255,255,255,0.5)',
-          boxShadow: '0 30px 90px rgba(0,0,0,0.5)',
+          border: `3px solid ${theme.highlight}`,
+          boxShadow:
+            '0 0 0 6px rgba(59,130,246,0.16), 0 0 36px rgba(59,130,246,0.45), 0 30px 90px rgba(0,0,0,0.5)',
           opacity,
           maskImage: ringMask,
           WebkitMaskImage: ringMask,
