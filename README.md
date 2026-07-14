@@ -125,8 +125,37 @@ code-reviewed). ~185 commits ahead of `main`. Highlights:
 
 Deferred/flagged on this branch: k8s NetworkPolicies have no egress rules
 (only correct on non-enforcing CNIs); 3 intake-lane tests fail pre-existing
-(owner: Harsh). Filed follow-ups: swap `python-jose` → PyJWT (removes the last
-audit ignore), a py3.11 DNP3 driver, and `react-query` v3 → `@tanstack` v5.
+(owner: Harsh). The filed follow-ups — `python-jose` → PyJWT (removes the last
+audit ignore), non-root container images, k8s egress rules, `react-query` v3 →
+`@tanstack` v5 — are now scheduled into the **FS-71..82 program** below; the
+py3.11 DNP3 driver stays deferred (upstream ships no compatible wheel yet).
+
+### Next: hardening & product buildout — FS-71..82 (planned, not yet started)
+
+The next batch of fixed sprints, scoped against the current tree so nothing
+already built is re-done (the notifications center, the SNMP/Sparkplug B/DNP3
+collectors, the Monte-Carlo simulation service, and k8s pod `securityContext`
+already exist). All in Hamad's lane; cross-lane touches are coordinated.
+
+- **Sprint L — API contract hardening (FS-71..74).** Document error responses
+  (`responses=` at the router mount + per-route on core routers); flip the
+  schemathesis contract gate from advisory to **blocking**; introduce one
+  `Page[T]` pagination envelope (migrated backend + frontend client together,
+  per endpoint); raise `response_model` coverage.
+- **Sprint M — Supply-chain & runtime hardening (FS-75..78).** Swap
+  `python-jose` → PyJWT and drop the last `pip-audit` ignore; run the backend,
+  frontend, and RAG images as a non-root `USER` (frontend/nginx port move
+  cascades to k8s + compose); add k8s egress allow-lists; then re-block the
+  Trivy filesystem scan.
+- **Sprint N — Predictive & strategic intelligence (FS-79..81).** A new
+  Predictive Maintenance subsystem (health/RUL from OEE + telemetry + anomaly
+  trends, migration `034`); a **local** strategic generator that feeds the
+  existing cloud-relay approve/reject queue (fleet OEE rollup + Monte-Carlo
+  what-if + maintenance-window scheduler) without displacing the cloud path;
+  plus the frontend wiring.
+- **Sprint O — Frontend dependency currency (FS-82).** `react-query` v3 →
+  `@tanstack/react-query` v5 codemod (~28 sites), coordinated with Harsh on the
+  correlation/kanban components.
 
 ### Subsystem ownership — check here before starting work
 
