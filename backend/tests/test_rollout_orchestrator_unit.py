@@ -163,3 +163,52 @@ async def test_process_rollout_does_not_duplicate_dispatch_for_updating_target()
     assert len(fake_commands.submissions) == 1
     assert rollout.targets[0].status == "updating"
     assert rollout.targets[0].command_id == "cmd-1"
+
+
+@pytest.mark.asyncio
+async def test_pause_mid_wave_resume_reconciles_before_next_dispatch(monkeypatch):
+    session = FakeSession()
+    fake_commands = FakeCommandClient()
+    orchestrator = RolloutOrchestrator(command_client=fake_commands)
+    rollout = _rollout(waves=(0, 1))
+
+    async def healthy(_session, _target, _release, _strategy):
+        return True
+
+    monkeypatch.setattr(orchestrator, "_target_healthy", healthy)
+
+    await orchestrator._process_rollout(session, rollout)
+    assert [target.status for target in rollout.targets] == ["updating", "pending"]
+
+    rollout.status = "paused"
+    fake_commands.statuses["cmd-1"] = {"status": "completed", "result": {}}
+    await orchestrator._process_rollout(session, rollout)
+
+    assert [target.status for target in rollout.targets] == ["updating", "pending"]
+    assert len(fake_commands.submissions) == 1
+
+    rollout.status = "running"
+    await orchestrator._process_rollout(session, rollout)
+
+    assert [target.status for target in rollout.targets] == ["success", "updating"]
+    assert len(fake_commands.submissions) == 2
+    assert _event_types(session).index("device_updated") < _event_types(session).index(
+        "wave_started", 2
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("rollout_status", ["paused", "cancelled"])
+async def test_inactive_rollout_never_dispatches(rollout_status):
+    session = FakeSession()
+    fake_commands = FakeCommandClient()
+    orchestrator = RolloutOrchestrator(command_client=fake_commands)
+    rollout = _rollout(waves=(0,))
+    rollout.status = rollout_status
+
+    await orchestrator._process_rollout(session, rollout)
+    await orchestrator._dispatch_wave(session, rollout, 0)
+
+    assert fake_commands.submissions == []
+    assert rollout.targets[0].status == "pending"
+    assert _event_types(session) == []
