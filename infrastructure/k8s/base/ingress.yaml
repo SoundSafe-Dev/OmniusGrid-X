@@ -129,6 +129,9 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: ingestion-worker
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ota-rollout-worker
       ports:
         - protocol: TCP
           port: 5432
@@ -154,9 +157,51 @@ spec:
               app.kubernetes.io/name: ingestion-worker
         - podSelector:
             matchLabels:
+              app.kubernetes.io/name: ota-rollout-worker
+        - podSelector:
+            matchLabels:
               app.kubernetes.io/name: edge-agent
       ports:
         - protocol: TCP
           port: 9092
         - protocol: TCP
           port: 9644
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ota-rollout-worker-egress
+  namespace: omniusgrid
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: ota-rollout-worker
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: timescaledb
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redpanda
+      ports:
+        - protocol: TCP
+          port: 9092

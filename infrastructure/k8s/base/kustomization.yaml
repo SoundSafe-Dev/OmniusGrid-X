@@ -7,6 +7,7 @@ resources:
   - namespace.yaml
   - backend-deployment.yaml
   - backend-service.yaml
+  - ota-rollout-worker-deployment.yaml
   - frontend-deployment.yaml
   - timescaledb-statefulset.yaml
   - redpanda-statefulset.yaml

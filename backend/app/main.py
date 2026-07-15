@@ -35,23 +35,25 @@ async def lifespan(app: FastAPI):
     # Startup
     await init_db()
     await websocket_manager.connect()
-    await command_executor.start()
     await oee_calculator.start()
-    await export_scheduler.start()
-    await compliance_report_dispatcher.start()
-    await rollout_orchestrator.start()
+    if settings.SCHEDULERS_IN_API:
+        await command_executor.start()
+        await export_scheduler.start()
+        await compliance_report_dispatcher.start()
+        await rollout_orchestrator.start()
     await report_scheduler.start()
     await error_tracker.start()
     yield
     # Shutdown
     await error_tracker.stop()
     await report_scheduler.stop()
-    await rollout_orchestrator.stop()
-    await compliance_report_dispatcher.stop()
-    await export_scheduler.stop()
+    if settings.SCHEDULERS_IN_API:
+        await rollout_orchestrator.stop()
+        await compliance_report_dispatcher.stop()
+        await export_scheduler.stop()
+        await command_executor.stop()
     await export_processor.close()
     await oee_calculator.stop()
-    await command_executor.stop()
     await websocket_manager.disconnect()
 
 
