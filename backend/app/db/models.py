@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 from typing import Optional, List
-from sqlalchemy import Column, String, DateTime, Boolean, Numeric, JSON, ForeignKey, Text, BigInteger, Integer, ARRAY, Date, UUID, UniqueConstraint, CheckConstraint, func
+from sqlalchemy import Column, String, DateTime, Boolean, Numeric, JSON, ForeignKey, Text, BigInteger, Integer, ARRAY, Date, UUID, UniqueConstraint, CheckConstraint, Index, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import declarative_base, relationship
 
@@ -567,6 +567,31 @@ class User(Base):
 class Command(Base):
     """Command execution log for actionable decisions"""
     __tablename__ = "commands"
+    __table_args__ = (
+        CheckConstraint(
+            "timeout_seconds > 0",
+            name="ck_commands_timeout_seconds_positive",
+        ),
+        CheckConstraint(
+            "dispatch_attempts >= 0",
+            name="ck_commands_dispatch_attempts_nonnegative",
+        ),
+        Index(
+            "idx_commands_dispatch_ready",
+            "organization_id",
+            "next_dispatch_at",
+            "issued_at",
+            postgresql_where=text("status = 'pending'"),
+        ),
+        Index(
+            "idx_commands_ack_deadline",
+            "organization_id",
+            "deadline_at",
+            postgresql_where=text(
+                "status = 'executing' AND deadline_at IS NOT NULL"
+            ),
+        ),
+    )
 
     id = UUIDColumn()
     asset_id = UUIDForeignKey("assets.id")
@@ -575,15 +600,21 @@ class Command(Base):
     parameters = Column(JSON, default=dict)
     status = Column(String(50), default="pending")  # pending, executing, completed, failed, cancelled
     priority = Column(String(20), default="normal")  # low, normal, high, critical
+    timeout_seconds = Column(Integer, nullable=False, default=60)
+    dispatch_attempts = Column(Integer, nullable=False, default=0)
+    next_dispatch_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    dispatched_at = Column(DateTime(timezone=True))
+    deadline_at = Column(DateTime(timezone=True))
+    last_dispatch_error = Column(Text)
     issued_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    issued_by = UUIDForeignKey("users.id")
+    issued_by = UUIDForeignKey("users.id", nullable=True)
     executed_at = Column(DateTime(timezone=True))
     completed_at = Column(DateTime(timezone=True))
     result = Column(JSON, default=dict)
     error_message = Column(Text)
     organization_id = UUIDForeignKey("organizations.id")
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 # ==================== Kanban Task Management Models ====================

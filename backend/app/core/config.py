@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     REDPANDA_TOPICS_PREFIX: str = "opsgrid"
     REDPANDA_COMMAND_TOPIC: str = "opsgrid.commands"
     REDPANDA_COMMAND_ACK_TOPIC: str = "opsgrid.commands.acks"
+    REDPANDA_COMMAND_DLQ_TOPIC: str = "opsgrid.commands.dlq"
     REDPANDA_EXPORT_TOPIC: str = "opsgrid.exports"
     REDPANDA_COMPLIANCE_REPORTS_TOPIC: str = "opsgrid.compliance-reports"
     AGENT_STATUS_TOPIC: str = "opsgrid.agent-status"

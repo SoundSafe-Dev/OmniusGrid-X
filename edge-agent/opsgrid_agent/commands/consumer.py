@@ -1,11 +1,15 @@
-"""Redpanda command consumer and acknowledgement producer."""
+"""Redpanda command consumer, acknowledgement producer, and command DLQ."""
+
+from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
 import json
 from collections import OrderedDict
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Dict, Iterable, Optional, Set
+from uuid import UUID
 
 import structlog
 
@@ -15,7 +19,7 @@ CommandHandler = Callable[[Dict[str, Any]], Awaitable[Optional[Dict[str, Any]]]]
 
 
 class CommandConsumer:
-    """Consume backend command envelopes, dispatch handlers, and emit acks."""
+    """Validate command records, dispatch owned commands, and emit durable outcomes."""
 
     def __init__(
         self,
@@ -26,14 +30,18 @@ class CommandConsumer:
         redpanda_url: str,
         command_topic: str = "opsgrid.commands",
         ack_topic: str = "opsgrid.commands.acks",
+        dlq_topic: str = "opsgrid.commands.dlq",
         seen_capacity: int = 1024,
     ):
         self.agent_id = str(agent_id)
         self.organization_id = str(organization_id)
-        self.asset_ids: Set[str] = {str(asset_id) for asset_id in asset_ids if asset_id}
+        self.asset_ids: Set[str] = {
+            str(asset_id) for asset_id in asset_ids if asset_id
+        }
         self.redpanda_url = redpanda_url
         self.command_topic = command_topic
         self.ack_topic = ack_topic
+        self.dlq_topic = dlq_topic
         self.seen_capacity = seen_capacity
 
         self._handlers: Dict[str, CommandHandler] = {}
@@ -52,7 +60,7 @@ class CommandConsumer:
         self._handlers[str(action_id)] = handler
 
     async def start(self) -> None:
-        """Start command consumption."""
+        """Start raw command consumption with manual offset commits."""
         if self._running:
             return
 
@@ -62,14 +70,15 @@ class CommandConsumer:
             self.command_topic,
             bootstrap_servers=self.redpanda_url,
             group_id=f"agent-{self.agent_id}",
-            value_deserializer=self._deserialize_value,
-            enable_auto_commit=True,
+            enable_auto_commit=False,
+            auto_offset_reset="earliest",
         )
         self._producer = AIOKafkaProducer(
             bootstrap_servers=self.redpanda_url,
             value_serializer=lambda value: json.dumps(value).encode("utf-8"),
             key_serializer=lambda key: key.encode("utf-8") if key else None,
             acks="all",
+            enable_idempotence=True,
         )
 
         try:
@@ -82,15 +91,15 @@ class CommandConsumer:
                 agent_id=self.agent_id,
                 command_topic=self.command_topic,
                 ack_topic=self.ack_topic,
+                dlq_topic=self.dlq_topic,
             )
         except Exception:
             await self._stop_clients()
             raise
 
     async def stop(self) -> None:
-        """Stop command consumption and ack production."""
+        """Stop command consumption and publication."""
         self._running = False
-
         if self._task:
             self._task.cancel()
             try:
@@ -98,26 +107,37 @@ class CommandConsumer:
             except asyncio.CancelledError:
                 pass
             self._task = None
-
         await self._stop_clients()
-
         logger.info("command_consumer_stopped", agent_id=self.agent_id)
 
-    async def handle_message(self, payload: Any) -> Optional[Dict[str, Any]]:
-        """Handle one decoded command payload. Returns the ack if one was emitted."""
-        payload = self._normalize_payload(payload)
-        if not payload:
-            logger.warning("command_payload_malformed")
+    async def handle_message(
+        self,
+        payload: Any,
+        *,
+        source_partition: Optional[int] = None,
+        source_offset: Optional[int] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Validate and handle one raw command record."""
+        command, validation_error = self._decode_and_validate(payload)
+        if validation_error:
+            await self._publish_dead_letter(
+                payload,
+                reason=validation_error,
+                source_partition=source_partition,
+                source_offset=source_offset,
+            )
+            logger.warning(
+                "command_dead_lettered",
+                reason=validation_error,
+                partition=source_partition,
+                offset=source_offset,
+            )
             return None
 
-        if not self._should_process(payload):
+        if not self._should_process(command):
             return None
 
-        command_id = str(payload.get("command_id") or "")
-        if not command_id:
-            logger.warning("command_missing_command_id", payload=payload)
-            return None
-
+        command_id = str(command["command_id"])
         cached_ack = self._seen_acks.get(command_id)
         if cached_ack:
             self._seen_acks.move_to_end(command_id)
@@ -125,11 +145,11 @@ class CommandConsumer:
             logger.info("command_duplicate_ack_reemitted", command_id=command_id)
             return cached_ack
 
-        action_id = str(payload.get("action_id") or "")
+        action_id = str(command["action_id"])
         handler = self._handlers.get(action_id)
         if handler is None:
             ack = self._build_ack(
-                payload,
+                command,
                 status="rejected",
                 success=False,
                 result={"error": "unknown_action", "action_id": action_id},
@@ -139,7 +159,7 @@ class CommandConsumer:
             return ack
 
         try:
-            result = handler(payload)
+            result = handler(command)
             if inspect.isawaitable(result):
                 result = await result
             if result is None:
@@ -148,12 +168,12 @@ class CommandConsumer:
                 result = {"value": result}
 
             ack = self._build_ack(
-                payload,
+                command,
                 status="completed",
                 success=True,
                 result=result,
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             logger.exception(
                 "command_handler_failed",
                 command_id=command_id,
@@ -161,7 +181,7 @@ class CommandConsumer:
                 error=str(exc),
             )
             ack = self._build_ack(
-                payload,
+                command,
                 status="failed",
                 success=False,
                 result={
@@ -176,13 +196,43 @@ class CommandConsumer:
         return ack
 
     async def _consume_loop(self) -> None:
+        from aiokafka import TopicPartition
+
         while self._running and self._consumer is not None:
             try:
                 async for message in self._consumer:
-                    await self.handle_message(message.value)
+                    if not self._running:
+                        return
+                    try:
+                        await self.handle_message(
+                            message.value,
+                            source_partition=message.partition,
+                            source_offset=message.offset,
+                        )
+                        await self._consumer.commit(
+                            {
+                                TopicPartition(message.topic, message.partition):
+                                    message.offset + 1
+                            }
+                        )
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:  # noqa: BLE001
+                        logger.error(
+                            "command_processing_failed",
+                            error=str(exc),
+                            partition=message.partition,
+                            offset=message.offset,
+                        )
+                        self._consumer.seek(
+                            TopicPartition(message.topic, message.partition),
+                            message.offset,
+                        )
+                        await asyncio.sleep(1)
+                        break
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 logger.error("command_consumer_loop_error", error=str(exc))
                 await asyncio.sleep(5)
 
@@ -190,7 +240,6 @@ class CommandConsumer:
         if self._consumer:
             await self._consumer.stop()
             self._consumer = None
-
         if self._producer:
             await self._producer.stop()
             self._producer = None
@@ -204,12 +253,7 @@ class CommandConsumer:
 
     async def _emit_ack(self, ack: Dict[str, Any]) -> None:
         if self._producer is None:
-            logger.warning(
-                "command_ack_producer_unavailable",
-                command_id=ack.get("command_id"),
-            )
-            return
-
+            raise RuntimeError("Command acknowledgement producer unavailable")
         await self._producer.send_and_wait(
             self.ack_topic,
             ack,
@@ -222,20 +266,45 @@ class CommandConsumer:
             success=ack["success"],
         )
 
+    async def _publish_dead_letter(
+        self,
+        payload: Any,
+        *,
+        reason: str,
+        source_partition: Optional[int],
+        source_offset: Optional[int],
+    ) -> None:
+        if self._producer is None:
+            raise RuntimeError("Command DLQ producer unavailable")
+        raw = self._payload_bytes(payload)
+        summary = self._safe_payload_summary(payload)
+        payload_hash = hashlib.sha256(raw).hexdigest()
+        envelope = {
+            "schema_version": 1,
+            "message_type": "dead_letter",
+            "reason": reason,
+            "source_topic": self.command_topic,
+            "source_partition": source_partition,
+            "source_offset": source_offset,
+            "agent_id": self.agent_id,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "payload_size": len(raw),
+            "payload_sha256": payload_hash,
+            "payload_summary": summary,
+        }
+        await self._producer.send_and_wait(
+            self.dlq_topic,
+            envelope,
+            key=str(summary.get("command_id") or payload_hash),
+        )
+
     def _should_process(self, payload: Dict[str, Any]) -> bool:
-        if payload.get("message_type") != "command":
+        if str(payload["organization_id"]) != self.organization_id:
             return False
-
-        organization_id = payload.get("organization_id")
-        if organization_id and str(organization_id) != self.organization_id:
-            return False
-
         target_agent_id = payload.get("agent_id")
         if target_agent_id:
             return str(target_agent_id) == self.agent_id
-
-        asset_id = payload.get("asset_id")
-        return bool(asset_id and str(asset_id) in self.asset_ids)
+        return str(payload["asset_id"]) in self.asset_ids
 
     def _build_ack(
         self,
@@ -250,6 +319,7 @@ class CommandConsumer:
             "command_id": str(payload["command_id"]),
             "agent_id": self.agent_id,
             "asset_id": str(payload.get("asset_id") or ""),
+            "organization_id": self.organization_id,
             "status": status,
             "success": success,
             "result": result,
@@ -260,14 +330,78 @@ class CommandConsumer:
         return ack
 
     @staticmethod
-    def _deserialize_value(value: bytes) -> Any:
-        return json.loads(value.decode("utf-8"))
-
-    @staticmethod
-    def _normalize_payload(payload: Any) -> Optional[Dict[str, Any]]:
+    def _decode_and_validate(
+        payload: Any,
+    ) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
         if isinstance(payload, bytes):
             try:
                 payload = json.loads(payload.decode("utf-8"))
-            except (UnicodeDecodeError, json.JSONDecodeError):
-                return None
-        return payload if isinstance(payload, dict) else None
+            except UnicodeDecodeError:
+                return None, "invalid_utf8"
+            except json.JSONDecodeError:
+                return None, "invalid_json"
+        if not isinstance(payload, dict):
+            return None, "payload_not_object"
+        if payload.get("schema_version") != 1:
+            return None, "unsupported_schema_version"
+        if payload.get("message_type") != "command":
+            return None, "unsupported_message_type"
+        for field in ("command_id", "organization_id", "asset_id"):
+            value = payload.get(field)
+            if not value:
+                return None, f"missing_{field}"
+            try:
+                UUID(str(value))
+            except (ValueError, TypeError, AttributeError):
+                return None, f"invalid_{field}"
+        if not payload.get("action_id"):
+            return None, "missing_action_id"
+        if not isinstance(payload.get("parameters"), dict):
+            return None, "invalid_parameters"
+        timeout = payload.get("timeout_seconds")
+        if timeout is not None and (
+            not isinstance(timeout, int) or isinstance(timeout, bool) or timeout <= 0
+        ):
+            return None, "invalid_timeout_seconds"
+        return payload, None
+
+    @staticmethod
+    def _payload_bytes(payload: Any) -> bytes:
+        if isinstance(payload, bytes):
+            return payload
+        try:
+            return json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
+        except Exception:  # noqa: BLE001
+            return repr(type(payload)).encode("utf-8")
+
+    @classmethod
+    def _safe_payload_summary(cls, payload: Any) -> Dict[str, Any]:
+        if isinstance(payload, bytes):
+            decoded, error = cls._decode_for_summary(payload)
+            if error:
+                return {"payload_type": "bytes"}
+            payload = decoded
+        if not isinstance(payload, dict):
+            return {"payload_type": type(payload).__name__}
+        allowed = (
+            "schema_version",
+            "message_type",
+            "command_id",
+            "organization_id",
+            "asset_id",
+            "agent_id",
+            "action_id",
+        )
+        return {key: payload[key] for key in allowed if key in payload}
+
+    @staticmethod
+    def _decode_for_summary(
+        payload: bytes,
+    ) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+        try:
+            decoded = json.loads(payload.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return None, "invalid_json"
+        if not isinstance(decoded, dict):
+            return None, "payload_not_object"
+        return decoded, None
