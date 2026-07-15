@@ -130,6 +130,9 @@ class Settings(BaseSettings):
     # Application
     DEBUG: bool = True
     LOG_LEVEL: str = "INFO"
+    # Dedicated workers own command publication and worker-backed schedulers by
+    # default. Enable only for an intentional single-process deployment.
+    SCHEDULERS_IN_API: bool = False
     
     class Config:
         env_file = ".env"

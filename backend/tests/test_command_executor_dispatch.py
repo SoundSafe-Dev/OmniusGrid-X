@@ -13,6 +13,9 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.config import settings
 from app.db.models import (
+    AgentRelease,
+    AgentRollout,
+    AgentRolloutTarget,
     Asset,
     AssetType,
     Base,
@@ -22,6 +25,7 @@ from app.db.models import (
     Workcell,
 )
 from app.services.command_executor import CommandExecutor, CommandStatus
+from app.services.rollout_orchestrator import RolloutOrchestrator
 
 
 @pytest_asyncio.fixture
@@ -187,6 +191,80 @@ async def test_new_executor_replica_dispatches_db_pending_command(command_db):
     assert command.deadline_at is not None
     sent_payload = worker_after_restart._producer.send_and_wait.await_args.args[1]
     assert sent_payload["command_id"] == command_id
+
+
+@pytest.mark.asyncio
+async def test_rollout_created_command_reaches_command_topic(
+    monkeypatch,
+    command_db,
+):
+    executor = _executor(command_db)
+    orchestrator = RolloutOrchestrator(command_client=executor)
+    release = AgentRelease(
+        id=uuid4(),
+        organization_id=command_db["organization_id"],
+        version="2.0.0",
+        channel="stable",
+        image_tag="registry.local/opsgrid-agent:2.0.0",
+        bundle_storage_key="bundle",
+        checksum_sha256="a" * 64,
+        signature_ed25519="signature",
+        signing_key_id="test-key",
+        status="published",
+    )
+    rollout = AgentRollout(
+        id=uuid4(),
+        organization_id=command_db["organization_id"],
+        release_id=release.id,
+        release=release,
+        name="Worker topology rollout",
+        target_selector={},
+        strategy={},
+        status="pending",
+        created_by=None,
+    )
+    target = AgentRolloutTarget(
+        id=uuid4(),
+        rollout_id=rollout.id,
+        organization_id=rollout.organization_id,
+        asset_id=command_db["asset_id"],
+        wave_index=0,
+        status="pending",
+    )
+    rollout.targets = [target]
+    session = SimpleNamespace(add=Mock())
+    monkeypatch.setattr(
+        orchestrator,
+        "_current_asset_version",
+        AsyncMock(return_value="1.0.0"),
+    )
+    monkeypatch.setattr(
+        settings,
+        "SIGNED_URL_SECRET_KEY",
+        "worker-test-secret",
+    )
+    monkeypatch.setattr(
+        settings,
+        "EXPORT_PUBLIC_BASE_URL",
+        "http://backend:8000",
+    )
+    monkeypatch.setattr(settings, "REDPANDA_COMMAND_TOPIC", "opsgrid.commands")
+
+    await orchestrator._process_rollout(session, rollout)
+
+    assert target.status == "updating"
+    assert UUID(target.command_id)
+    created_command = await _load_command(command_db, target.command_id)
+    assert created_command.status == "pending"
+
+    executor._producer = AsyncMock()
+    assert await executor.dispatch_pending() == 1
+
+    topic, payload = executor._producer.send_and_wait.await_args.args[:2]
+    assert topic == "opsgrid.commands"
+    assert payload["command_id"] == target.command_id
+    assert payload["action_id"] == "agent_update"
+    assert payload["parameters"]["release_id"] == str(release.id)
 
 
 @pytest.mark.asyncio
