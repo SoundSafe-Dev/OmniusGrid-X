@@ -22,7 +22,11 @@ class CommandSubmitRequest(BaseModel):
     command_type: str = Field(default="operator", description="Type: tactical, operator, system")
     action_id: str = Field(..., description="Action identifier: set_speed, pause_job, etc.")
     parameters: Dict[str, Any] = Field(default_factory=dict, description="Command parameters")
-    timeout_seconds: Optional[int] = Field(default=None, description="Custom timeout")
+    timeout_seconds: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Custom timeout",
+    )
 
 
 class CommandResponse(BaseModel):
@@ -103,7 +107,10 @@ async def get_command_status(
     current_user = Depends(get_current_active_user)
 ):
     """Get status of a specific command"""
-    status = await command_executor.get_command_status(command_id)
+    status = await command_executor.get_command_status(
+        command_id,
+        organization_id=str(current_user.organization_id),
+    )
     
     if not status:
         raise HTTPException(status_code=404, detail="Command not found")
@@ -120,7 +127,8 @@ async def cancel_command(
     """Cancel a pending or executing command"""
     success = await command_executor.cancel_command(
         command_id,
-        cancelled_by=str(current_user.id)
+        cancelled_by=str(current_user.id),
+        organization_id=str(current_user.organization_id),
     )
     
     if not success:
@@ -181,7 +189,9 @@ async def get_queue_status(
 ):
     """Get current command queue status"""
     return {
-        "pending_count": command_executor.get_pending_count(),
+        "pending_count": await command_executor.get_pending_count(
+            organization_id=str(current_user.organization_id)
+        ),
         "max_retries": command_executor._max_retries,
         "default_timeout": command_executor._timeout_seconds
     }
@@ -224,7 +234,7 @@ async def emergency_stop(
     
     return {
         "command_id": command_id,
-        "status": "executing",
+        "status": CommandStatus.PENDING.value,
         "message": "Emergency stop initiated",
         "priority": "critical"
     }
