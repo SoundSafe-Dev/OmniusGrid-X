@@ -15,6 +15,9 @@ from app.api import fleet_agents, agent_releases, agent_rollouts, models
 from app.api import kpi
 from app.api import workcells
 from app.api import fleet_health
+# Integration branch (hridyansh): tenant historian/retention, model OTA releases,
+# predictive-maintenance RUL, and the digital-twin optimizer.
+from app.api import model_releases, historian, data_retention, rul, twin_optimizer
 from app.core.config import settings
 from app.core.logging_filters import install_sensitive_query_access_log_filter
 from app.db.database import init_db
@@ -33,7 +36,11 @@ from app.middleware.idempotency import IdempotencyMiddleware
 from app.middleware.audit import AuditLoggingMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.middleware.csrf import CSRFMiddleware
-from app.middleware.rate_limit import limiter, rate_limit_exceeded_handler
+from app.middleware.rate_limit import (
+    auth_limiter,
+    limiter,
+    rate_limit_exceeded_handler,
+)
 from app.middleware.profiling import setup_profiling
 from app.middleware.error_tracking import setup_error_tracking
 from app.services.error_tracker import error_tracker
@@ -50,13 +57,14 @@ async def lifespan(app: FastAPI):
     # Converged: integration branch enables the realtime/worker services that
     # fixed-sprints had commented out (the audit's "wire the machinery" item).
     await websocket_manager.connect()
-    await command_executor.start()
     await oee_calculator.start()
     # Worker-backed schedulers: skip in the API when dedicated compose workers
     # own dispatch (SCHEDULERS_IN_API=false), so two pollers don't race the same
     # queues. export/compliance are mine; rollout_orchestrator is the OTA lane —
-    # gating only WHETHER the API starts it, not its internals.
+    # gating only WHETHER the API starts it, not its internals. Command dispatch
+    # is now durable and worker-owned (integration branch), so it joins the set.
     if settings.SCHEDULERS_IN_API:
+        await command_executor.start()
         await export_scheduler.start()
         await compliance_report_dispatcher.start()
         await rollout_orchestrator.start()
@@ -70,9 +78,9 @@ async def lifespan(app: FastAPI):
         await rollout_orchestrator.stop()
         await compliance_report_dispatcher.stop()
         await export_scheduler.stop()
+        await command_executor.stop()
     await export_processor.close()
     await oee_calculator.stop()
-    await command_executor.stop()
     await websocket_manager.disconnect()
 
 
@@ -196,6 +204,7 @@ setup_tracing(app, engine=_db_engine)
 # Register the limiter and handler unconditionally so explicitly enabled endpoint
 # limits work in tests and dynamically configured deployments.
 app.state.limiter = limiter
+app.state.auth_limiter = auth_limiter
 app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
 # Application-wide middleware remains gated on settings.RATE_LIMIT_ENABLED.
@@ -312,8 +321,17 @@ app.include_router(fleet_agents.router, prefix="/api/v1/fleet", tags=["Fleet"])
 app.include_router(agent_releases.router, prefix="/api/v1/fleet", tags=["Fleet"])
 app.include_router(agent_releases.public_router, prefix="/api/v1/fleet", tags=["Fleet"])
 app.include_router(agent_rollouts.router, prefix="/api/v1/fleet", tags=["Fleet"])
+app.include_router(model_releases.router, prefix="/api/v1/fleet", tags=["Fleet"])
 app.include_router(models.router, prefix="/api/v1", tags=["Models"])
 app.include_router(models.public_router, prefix="/api/v1", tags=["Models"])
+app.include_router(historian.router, prefix="/api/v1/historian", tags=["Historian"])
+app.include_router(rul.router, prefix="/api/v1/rul", tags=["Predictive Maintenance"])
+app.include_router(twin_optimizer.router, prefix="/api/v1/twin", tags=["Digital Twin"])
+app.include_router(
+    data_retention.tenant_router,
+    prefix="/api/v1/data-retention",
+    tags=["Data Retention"],
+)
 
 
 @app.get("/")

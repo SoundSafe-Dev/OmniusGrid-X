@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import get_current_active_user
 from app.db.database import get_db
 from app.db.models import Asset, Alarm, PackMLState, Organization, Telemetry
 from app.api.auth import get_current_active_user

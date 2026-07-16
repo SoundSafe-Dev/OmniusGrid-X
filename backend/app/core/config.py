@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     REDPANDA_TOPICS_PREFIX: str = "opsgrid"
     REDPANDA_COMMAND_TOPIC: str = "opsgrid.commands"
     REDPANDA_COMMAND_ACK_TOPIC: str = "opsgrid.commands.acks"
+    REDPANDA_COMMAND_DLQ_TOPIC: str = "opsgrid.commands.dlq"
     REDPANDA_EXPORT_TOPIC: str = "opsgrid.exports"
     REDPANDA_COMPLIANCE_REPORTS_TOPIC: str = "opsgrid.compliance-reports"
     AGENT_STATUS_TOPIC: str = "opsgrid.agent-status"
@@ -35,12 +36,19 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = 7
-    
+    # CSRF protection for cookie-authenticated writes (integration branch). Off by
+    # default — this is a Bearer-JWT API; the middleware ignores bearer requests.
+    CSRF_ENABLED: bool = False
+
     # Rate Limiting
     RATE_LIMIT_ENABLED: bool = False
     RATE_LIMIT_PER_USER: str = "100/minute"
     RATE_LIMIT_GLOBAL: str = "1000/minute"
     RATE_LIMIT_BURST: int = 10
+    AUTH_LOGIN_RATE_LIMIT: str = "10/minute"
+    AUTH_REGISTER_RATE_LIMIT: str = "5/hour"
+    AUTH_REFRESH_RATE_LIMIT: str = "30/minute"
+    AUTH_LOGOUT_RATE_LIMIT: str = "30/minute"
     
     # Security Headers
     SECURITY_HEADERS_ENABLED: bool = True

@@ -44,15 +44,42 @@ spec:
                   key: url
             - name: REDPANDA_URL
               value: "redpanda:9092"
+            - name: REDPANDA_COMMAND_TOPIC
+              value: "opsgrid.commands"
+            - name: REDPANDA_COMMAND_ACK_TOPIC
+              value: "opsgrid.commands.acks"
+            - name: REDPANDA_COMMAND_DLQ_TOPIC
+              value: "opsgrid.commands.dlq"
             - name: JWT_SECRET_KEY
               valueFrom:
                 secretKeyRef:
                   name: jwt-secret
                   key: secret
+            - name: SIGNED_URL_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: signed-url-secret
+                  key: secret
+            - name: SIGNED_URL_ALGORITHM
+              value: "HS256"
+            - name: SIGNED_URL_ISSUER
+              value: "omniusgrid-signed-links"
+            - name: SIGNED_URL_AUDIENCE
+              value: "omniusgrid-report-download"
+            - name: EXPORT_PUBLIC_BASE_URL
+              value: "https://api.omniusgrid.local"
+            - name: SCHEDULERS_IN_API
+              value: "false"
             - name: OTA_ROLLOUT_DISPATCH_ENABLED
               value: "true"
             - name: OTA_ROLLOUT_DISPATCH_INTERVAL_SECONDS
               value: "30"
+            - name: OTA_ROLLOUT_DEFAULT_COMMAND_TIMEOUT_SECONDS
+              value: "120"
+            - name: OTA_ROLLOUT_DEFAULT_HEALTH_TIMEOUT_SECONDS
+              value: "300"
+            - name: OTA_ROLLOUT_DEFAULT_MIN_SUCCESS_RATIO
+              value: "1.0"
             - name: LOG_LEVEL
               value: "info"
             - name: PYTHONDONTWRITEBYTECODE

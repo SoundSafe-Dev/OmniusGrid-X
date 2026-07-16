@@ -1087,7 +1087,6 @@ export const BrandPage9: React.FC = () => (
             'Real product UI for every capability claim',
             '"by SoundSafe" pill, bottom-right',
             'Dark + light variants where the channel needs both',
-            'No "app.omniusgrid.io" URLs until launch',
           ].map((item) => (
             <div key={item} style={{ display: 'flex', alignItems: 'flex-start', gap: 24 }}>
               <div

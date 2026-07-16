@@ -219,11 +219,21 @@ services:
     environment:
       DATABASE_URL: postgresql://omniusgrid:${POSTGRES_PASSWORD:-omniusgrid_dev_password}@timescaledb:5432/omniusgrid
       REDPANDA_URL: redpanda:29092
+      REDPANDA_COMMAND_TOPIC: ${REDPANDA_COMMAND_TOPIC:-opsgrid.commands}
+      REDPANDA_COMMAND_ACK_TOPIC: ${REDPANDA_COMMAND_ACK_TOPIC:-opsgrid.commands.acks}
+      REDPANDA_COMMAND_DLQ_TOPIC: ${REDPANDA_COMMAND_DLQ_TOPIC:-opsgrid.commands.dlq}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev_secret_key_change_in_production}
       SIGNED_URL_SECRET_KEY: ${SIGNED_URL_SECRET_KEY:-dev_signed_link_secret_change_in_production}
-      EXPORT_PUBLIC_BASE_URL: http://localhost:8002
+      SIGNED_URL_ALGORITHM: HS256
+      SIGNED_URL_ISSUER: omniusgrid-signed-links
+      SIGNED_URL_AUDIENCE: omniusgrid-report-download
+      EXPORT_PUBLIC_BASE_URL: ${EXPORT_PUBLIC_BASE_URL:-http://backend:8000}
+      SCHEDULERS_IN_API: "false"
       OTA_ROLLOUT_DISPATCH_ENABLED: ${OTA_ROLLOUT_DISPATCH_ENABLED:-true}
       OTA_ROLLOUT_DISPATCH_INTERVAL_SECONDS: ${OTA_ROLLOUT_DISPATCH_INTERVAL_SECONDS:-30}
+      OTA_ROLLOUT_DEFAULT_COMMAND_TIMEOUT_SECONDS: ${OTA_ROLLOUT_DEFAULT_COMMAND_TIMEOUT_SECONDS:-120}
+      OTA_ROLLOUT_DEFAULT_HEALTH_TIMEOUT_SECONDS: ${OTA_ROLLOUT_DEFAULT_HEALTH_TIMEOUT_SECONDS:-300}
+      OTA_ROLLOUT_DEFAULT_MIN_SUCCESS_RATIO: ${OTA_ROLLOUT_DEFAULT_MIN_SUCCESS_RATIO:-1.0}
     volumes:
       - ./backend:/app
       - export-data:/var/lib/omniusgrid/exports

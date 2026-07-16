@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from contextlib import asynccontextmanager
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
@@ -438,7 +439,7 @@ async def test_maintenance_update_uses_bound_parameters():
 
     asset_id = uuid4()
     session = FakeSession()
-    response = await health_api.set_maintenance_mode.__wrapped__(
+    response = await health_api.set_maintenance_mode(
         asset_id=asset_id,
         enabled=True,
         current_user=SimpleNamespace(id=uuid4(), role="admin"),
@@ -454,3 +455,42 @@ async def test_maintenance_update_uses_bound_parameters():
     }
     assert session.committed is True
     assert response["asset_id"] == str(asset_id)
+
+
+def test_permission_cleanup_migration_is_upgrade_safe_and_idempotent(
+    admin_sync_url,
+):
+    migration = (
+        Path(__file__).resolve().parents[2]
+        / "database"
+        / "migrations"
+        / "037_remove_unused_permission_rbac.sql"
+    ).read_text()
+    conn = psycopg2.connect(admin_sync_url)
+    conn.autocommit = True
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS permissions (
+                    id UUID PRIMARY KEY,
+                    name TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS role_permissions (
+                    id UUID PRIMARY KEY,
+                    permission_id UUID NOT NULL REFERENCES permissions(id)
+                );
+                """
+            )
+            cur.execute(migration)
+            cur.execute(migration)
+            cur.execute(
+                """
+                SELECT
+                    to_regclass('public.role_permissions'),
+                    to_regclass('public.permissions');
+                """
+            )
+            assert cur.fetchone() == (None, None)
+    finally:
+        conn.close()

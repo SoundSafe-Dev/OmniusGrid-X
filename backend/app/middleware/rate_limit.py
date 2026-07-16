@@ -1,12 +1,12 @@
 """Rate limiting middleware using slowapi with Redis backend.
 
-Gated on ``settings.RATE_LIMIT_ENABLED`` so it can be toggled per
-environment. Keys per authenticated user when a bearer token is present,
-otherwise per remote IP.
+General API limits remain gated on settings.RATE_LIMIT_ENABLED.
+Authentication limits use a separate always-enabled limiter keyed by client
+IP so disabling the global limiter cannot disable brute-force protection.
 """
 
 import re
-from typing import Callable
+from typing import Callable, get_type_hints
 from uuid import UUID
 
 import structlog
@@ -51,6 +51,11 @@ def get_user_id_from_request(request: Request) -> str:
     return f"ip:{get_remote_address(request)}"
 
 
+def get_auth_client_key(request: Request) -> str:
+    """Key authentication budgets by source IP, never by supplied tokens."""
+    return f"auth-ip:{get_remote_address(request)}"
+
+
 limiter = Limiter(
     key_func=get_user_id_from_request,
     storage_uri=settings.REDIS_URL,
@@ -61,6 +66,16 @@ limiter = Limiter(
     # exception handler below.
     headers_enabled=False,
     enabled=settings.RATE_LIMIT_ENABLED,
+)
+
+# This limiter is intentionally independent from RATE_LIMIT_ENABLED. Auth
+# decorators execute their own checks, so they do not require the optional
+# application-wide SlowAPI middleware.
+auth_limiter = Limiter(
+    key_func=get_auth_client_key,
+    storage_uri=settings.REDIS_URL,
+    headers_enabled=False,
+    enabled=True,
 )
 
 
@@ -125,6 +140,28 @@ def rate_limit(limit: str = "100/minute") -> Callable:
     """Decorator for rate-limiting specific endpoints."""
 
     def decorator(func: Callable) -> Callable:
+        _resolve_postponed_annotations(func)
         return limiter.limit(limit)(func)
 
     return decorator
+
+
+def auth_rate_limit(limit: str) -> Callable:
+    """Always enforce an IP-based limit on an authentication endpoint."""
+
+    def decorator(func: Callable) -> Callable:
+        _resolve_postponed_annotations(func)
+        return auth_limiter.limit(limit)(func)
+
+    return decorator
+
+
+def _resolve_postponed_annotations(func: Callable) -> None:
+    """Resolve string annotations before SlowAPI moves the wrapper globals."""
+    try:
+        func.__annotations__ = get_type_hints(func)
+    except (NameError, TypeError):
+        # FastAPI can still resolve ordinary annotations itself. This fallback
+        # preserves existing behavior for callables with intentionally local
+        # or incomplete typing namespaces.
+        return

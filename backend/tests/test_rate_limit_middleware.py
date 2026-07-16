@@ -8,6 +8,9 @@ from limits.strategies import FixedWindowRateLimiter
 from slowapi.errors import RateLimitExceeded
 
 from app.middleware.rate_limit import (
+    auth_limiter,
+    auth_rate_limit,
+    get_auth_client_key,
     get_user_id_from_request,
     limiter,
     rate_limit,
@@ -15,6 +18,7 @@ from app.middleware.rate_limit import (
 )
 
 _LIMITED_APP: FastAPI | None = None
+_AUTH_LIMITED_APP: FastAPI | None = None
 
 
 @pytest.fixture
@@ -37,6 +41,26 @@ def in_memory_limiter():
         limiter._limiter = old_limiter
 
 
+@pytest.fixture
+def in_memory_auth_limiter():
+    old_enabled = auth_limiter.enabled
+    old_storage = auth_limiter._storage
+    old_limiter = auth_limiter._limiter
+
+    storage = MemoryStorage()
+    auth_limiter._storage = storage
+    auth_limiter._limiter = FixedWindowRateLimiter(storage)
+    auth_limiter.enabled = True
+    auth_limiter.reset()
+    try:
+        yield auth_limiter
+    finally:
+        auth_limiter.reset()
+        auth_limiter.enabled = old_enabled
+        auth_limiter._storage = old_storage
+        auth_limiter._limiter = old_limiter
+
+
 def _limited_app() -> FastAPI:
     global _LIMITED_APP
     if _LIMITED_APP is not None:
@@ -52,6 +76,24 @@ def _limited_app() -> FastAPI:
         return {"key": get_user_id_from_request(request)}
 
     _LIMITED_APP = app
+    return app
+
+
+def _auth_limited_app() -> FastAPI:
+    global _AUTH_LIMITED_APP
+    if _AUTH_LIMITED_APP is not None:
+        return _AUTH_LIMITED_APP
+
+    app = FastAPI()
+    app.state.auth_limiter = auth_limiter
+    app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
+
+    @app.post("/auth-limited")
+    @auth_rate_limit("2/second")
+    async def auth_limited(request: Request):
+        return {"key": get_auth_client_key(request)}
+
+    _AUTH_LIMITED_APP = app
     return app
 
 
@@ -115,3 +157,26 @@ async def test_rate_limit_falls_back_to_client_ip_for_anonymous_requests(
 
     assert response.status_code == 200
     assert response.json()["key"] == "ip:203.0.113.13"
+
+
+@pytest.mark.asyncio
+async def test_auth_limit_stays_active_when_global_limiter_is_disabled(
+    in_memory_auth_limiter,
+):
+    old_global_enabled = limiter.enabled
+    limiter.enabled = False
+    try:
+        transport = ASGITransport(
+            app=_auth_limited_app(),
+            client=("203.0.113.14", 1234),
+        )
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+        ) as client:
+            responses = [await client.post("/auth-limited") for _ in range(3)]
+    finally:
+        limiter.enabled = old_global_enabled
+
+    assert [response.status_code for response in responses] == [200, 200, 429]
+    assert responses[0].json()["key"] == "auth-ip:203.0.113.14"
