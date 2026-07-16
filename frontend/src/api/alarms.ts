@@ -27,14 +27,19 @@ export const alarmsApi = {
     if (filters?.startTime) params.start_time = filters.startTime;
     if (filters?.endTime) params.end_time = filters.endTime;
 
-    const response = await api.get<Alarm[]>('/api/v1/alarms/', { params });
-    const items = response.data;
+    // Backend returns a {items, meta} envelope (FS-82) with a real total; alarms
+    // is on the transform seam so has_more arrives camelCased as hasMore.
+    const response = await api.get<{
+      items: Alarm[];
+      meta: { total: number; skip: number; limit: number; has_more?: boolean; hasMore?: boolean };
+    }>('/api/v1/alarms/', { params });
+    const { items, meta } = response.data;
     return {
       items,
-      total: items.length,
-      skip: 0,
-      limit: items.length,
-      hasMore: false,
+      total: meta.total,
+      skip: meta.skip,
+      limit: meta.limit,
+      hasMore: meta.hasMore ?? meta.has_more ?? meta.skip + items.length < meta.total,
     };
   },
 
