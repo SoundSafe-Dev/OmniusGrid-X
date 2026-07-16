@@ -1,8 +1,9 @@
 import { FC } from 'react';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
-import { Lightbulb, CheckCircle, XCircle, Clock } from 'lucide-react';
+import { Lightbulb, CheckCircle, XCircle, Clock, Zap, TrendingUp } from 'lucide-react';
 import { Card, Badge, Button, SkeletonCard } from '../../components';
-import { enginesApi } from '../../api';
+import { enginesApi, twinOptimizerApi, defaultOptimizeRequest } from '../../api';
+import type { OptimizeRecommendation } from '../../api/twinOptimizer';
 import { StrategicRecommendation } from '../../types';
 import { formatDateTime, formatPercentage } from '../../utils';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
@@ -31,6 +32,13 @@ export const StrategicEngine: FC = () => {
       onSuccess: () => queryClient.invalidateQueries('strategic-recommendations'),
     }
   );
+
+  // Digital-twin what-if optimizer (FS-84): POST a default two-candidate
+  // scenario and render the ranked recommendations the twin returns.
+  const optimizeMutation = useMutation(() =>
+    twinOptimizerApi.optimize(defaultOptimizeRequest())
+  );
+  const optimizeResult = optimizeMutation.data;
 
   if (isLoading) {
     return (
@@ -96,6 +104,56 @@ export const StrategicEngine: FC = () => {
         </Tooltip>
       </div>
 
+      {/* Digital-Twin What-If Optimizer */}
+      <Card
+        title="Digital-Twin Optimizer"
+        subtitle="Run a Monte-Carlo what-if simulation across the active fleet"
+        action={
+          <Button
+            variant="primary"
+            size="sm"
+            loading={optimizeMutation.isLoading}
+            disabled={optimizeMutation.isLoading}
+            onClick={() => optimizeMutation.mutate()}
+          >
+            <Zap size={16} className="mr-1" />
+            Run Optimization
+          </Button>
+        }
+      >
+        {optimizeMutation.isError ? (
+          <p className="text-status-alarm text-sm py-4">
+            Optimization failed. Please try again.
+          </p>
+        ) : !optimizeResult ? (
+          <p className="text-opsgrid-text-secondary text-center py-8">
+            Run an optimization to rank beneficial what-if actions for your fleet.
+          </p>
+        ) : (
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+              <div className="p-3 bg-opsgrid-bg rounded-lg">
+                <p className="text-opsgrid-text-secondary">Objective</p>
+                <p className="font-medium">{optimizeResult.objective}</p>
+              </div>
+              <div className="p-3 bg-opsgrid-bg rounded-lg">
+                <p className="text-opsgrid-text-secondary">Candidates Evaluated</p>
+                <p className="font-medium">{optimizeResult.evaluatedCandidates}</p>
+              </div>
+            </div>
+            {optimizeResult.recommendations.length === 0 ? (
+              <p className="text-opsgrid-text-secondary text-sm">
+                No candidate cleared the improvement threshold.
+              </p>
+            ) : (
+              optimizeResult.recommendations.map((rec) => (
+                <OptimizeResultCard key={rec.recommendationId} rec={rec} />
+              ))
+            )}
+          </div>
+        )}
+      </Card>
+
       {/* Pending Recommendations */}
       <Card title="Pending Recommendations" subtitle="Cloud-derived optimization suggestions">
         <div className="space-y-4">
@@ -145,6 +203,54 @@ export const StrategicEngine: FC = () => {
           ))}
         </div>
       </Card>
+    </div>
+  );
+};
+
+const OptimizeResultCard: FC<{ rec: OptimizeRecommendation }> = ({ rec }) => {
+  const impact = rec.expectedImpact;
+  return (
+    <div className="p-4 bg-opsgrid-bg rounded-lg border border-opsgrid-border">
+      <div className="flex items-start justify-between mb-3">
+        <div className="flex items-center gap-3">
+          <Badge variant="info" size="sm">
+            Rank {rec.rank}
+          </Badge>
+          <span className="font-medium">{rec.name}</span>
+        </div>
+        <Badge variant="info" size="sm">
+          {formatPercentage(rec.confidence)} confidence
+        </Badge>
+      </div>
+
+      <p className="text-sm text-opsgrid-text-secondary mb-3">{rec.description}</p>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-2 p-3 bg-opsgrid-panel rounded">
+        <div>
+          <p className="text-xs text-opsgrid-text-secondary">Throughput</p>
+          <p className="font-medium text-status-running flex items-center gap-1">
+            <TrendingUp size={14} />+{impact.throughputImprovementPercent.toFixed(1)}%
+          </p>
+        </div>
+        <div>
+          <p className="text-xs text-opsgrid-text-secondary">Added Parts</p>
+          <p className="font-medium">{Math.round(impact.throughputDeltaParts)}</p>
+        </div>
+        <div>
+          <p className="text-xs text-opsgrid-text-secondary">Downtime Saved</p>
+          <p className="font-medium">{impact.downtimeReductionHours.toFixed(1)}h</p>
+        </div>
+        <div>
+          <p className="text-xs text-opsgrid-text-secondary">Availability</p>
+          <p className="font-medium">+{impact.availabilityImprovementPoints.toFixed(1)} pts</p>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2 text-xs text-opsgrid-text-secondary">
+        <Badge variant="neutral" size="sm">{rec.recommendationType}</Badge>
+        <span>Basis: {rec.simulationBasis}</span>
+        {rec.requiresApproval && <span>· Requires approval</span>}
+      </div>
     </div>
   );
 };

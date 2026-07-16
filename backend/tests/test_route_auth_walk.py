@@ -249,6 +249,16 @@ AUTHENTICATED_OPERATIONAL_MUTATIONS = {
     ("POST", "/api/v1/rag/ingest"),
     ("POST", "/api/v1/rag/query"),
     ("DELETE", "/api/v1/rag/documents/{doc_id}"),
+    # Newly-wired orphan routers. model-monitoring (Harsh, MLOps drift) is
+    # authenticated; admin query-performance diagnostics are admin-gated via
+    # auth.require_admin_user (not the rbac helper the graph-walk recognizes).
+    ("POST", "/api/v1/model-monitoring/drift/detect"),
+    ("POST", "/api/v1/model-monitoring/data-drift/detect"),
+    ("POST", "/api/v1/model-monitoring/performance/prediction"),
+    ("POST", "/api/v1/model-monitoring/reset/{model_id}"),
+    ("POST", "/api/v1/admin/query-performance/record-snapshot"),
+    ("POST", "/api/v1/admin/query-performance/refresh-frequent-queries"),
+    ("POST", "/api/v1/admin/query-performance/reset-stats"),
 }
 
 

@@ -27,6 +27,10 @@ const TelemetryCharts = named(() => import('./pages/analytics'), 'TelemetryChart
 const AssetHealth = named(() => import('./pages/analytics'), 'AssetHealth')
 const PredictiveMaintenance = named(() => import('./pages/analytics'), 'PredictiveMaintenance')
 
+// FS-84: predictive-maintenance (RUL) and historian pages, lazy like the rest.
+const PredictiveRUL = named(() => import('./pages/predictive'), 'PredictiveMaintenance')
+const Historian = named(() => import('./pages/predictive'), 'Historian')
+
 const FleetOverview = named(() => import('./pages/fleet'), 'FleetOverview')
 const OrganizationTree = named(() => import('./pages/fleet'), 'OrganizationTree')
 
@@ -95,6 +99,10 @@ const App: FC = () => {
                 <Route path="/analytics/telemetry" element={<TelemetryCharts />} />
                 <Route path="/analytics/health" element={<AssetHealth />} />
                 <Route path="/analytics/maintenance" element={<PredictiveMaintenance />} />
+
+                {/* Predictive maintenance (RUL) & Historian (FS-84) */}
+                <Route path="/predictive/rul" element={<PredictiveRUL />} />
+                <Route path="/predictive/historian" element={<Historian />} />
 
                 {/* Fleet */}
                 <Route path="/fleet" element={<FleetOverview />} />
