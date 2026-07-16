@@ -1,5 +1,5 @@
 import { FC, useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from 'react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Brain, Plus, RefreshCw, Trash2, Zap, X, Database } from 'lucide-react'
 import { Card, Badge, Button, Input, Select } from '../../components'
 import { erpApi, ERPIntegration, ERPIntegrationCreate } from '../../api/erp'
@@ -16,38 +16,41 @@ const EMPTY_FORM: ERPIntegrationCreate = {
 
 export const ERPIntegrationsPage: FC = () => {
   const qc = useQueryClient()
-  const { data: integrations, isLoading } = useQuery('erp-integrations', () => erpApi.listIntegrations())
+  const { data: integrations, isLoading } = useQuery({ queryKey: ['erp-integrations'], queryFn: () => erpApi.listIntegrations() })
   const [showAdd, setShowAdd] = useState(false)
   const [form, setForm] = useState<ERPIntegrationCreate>(EMPTY_FORM)
   const [authConfigText, setAuthConfigText] = useState('{}')
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [testResult, setTestResult] = useState<Record<string, string>>({})
 
-  const createMut = useMutation((body: ERPIntegrationCreate) => erpApi.createIntegration(body), {
+  const createMut = useMutation({
+    mutationFn: (body: ERPIntegrationCreate) => erpApi.createIntegration(body),
     onSuccess: () => {
-      qc.invalidateQueries('erp-integrations')
+      qc.invalidateQueries({ queryKey: ['erp-integrations'] })
       setShowAdd(false)
       setForm(EMPTY_FORM)
       setAuthConfigText('{}')
     },
   })
-  const deleteMut = useMutation((id: string) => erpApi.deleteIntegration(id), {
-    onSuccess: () => qc.invalidateQueries('erp-integrations'),
+  const deleteMut = useMutation({
+    mutationFn: (id: string) => erpApi.deleteIntegration(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['erp-integrations'] }),
   })
-  const testMut = useMutation((id: string) => erpApi.testConnection(id), {
+  const testMut = useMutation({
+    mutationFn: (id: string) => erpApi.testConnection(id),
     onSuccess: (res, id) => setTestResult((p) => ({ ...p, [id]: `${res.status}: ${res.message}` })),
   })
-  const syncMut = useMutation(
-    (id: string) => erpApi.triggerSync(id),
-    { onSuccess: (res, id) => setTestResult((p) => ({ ...p, [id]: res.message })) }
-  )
+  const syncMut = useMutation({
+    mutationFn: (id: string) => erpApi.triggerSync(id),
+    onSuccess: (res, id) => setTestResult((p) => ({ ...p, [id]: res.message })),
+  })
 
   // "Analyze": this integration's synced data becomes a Correlation AI source —
   // creates an analysis session and attaches the ERP entities; the session then
   // appears in the Correlation AI page where sensor/yard/transport sources can
   // be added and correlated against it.
-  const analyzeMut = useMutation(
-    async (it: ERPIntegration) => {
+  const analyzeMut = useMutation({
+    mutationFn: async (it: ERPIntegration) => {
       const session = await analysisSessionsApi.createSession({
         title: `ERP analysis — ${it.integration_name}`,
       })
@@ -56,19 +59,17 @@ export const ERPIntegrationsPage: FC = () => {
       })
       return { session, attached }
     },
-    {
-      onSuccess: ({ session, attached }, it) =>
-        setTestResult((p) => ({
-          ...p,
-          [it.id]: `Attached ${attached.row_count} synced records to session "${session.title}" — open Correlation AI to analyze against sensors, yard, and shipments.`,
-        })),
-      onError: (e: any, it) =>
-        setTestResult((p) => ({
-          ...p,
-          [it.id]: e?.response?.data?.detail || 'Failed to start analysis session',
-        })),
-    }
-  )
+    onSuccess: ({ session, attached }, it) =>
+      setTestResult((p) => ({
+        ...p,
+        [it.id]: `Attached ${attached.row_count} synced records to session "${session.title}" — open Correlation AI to analyze against sensors, yard, and shipments.`,
+      })),
+    onError: (e: any, it) =>
+      setTestResult((p) => ({
+        ...p,
+        [it.id]: e?.response?.data?.detail || 'Failed to start analysis session',
+      })),
+  })
 
   const submit = () => {
     let auth_config: Record<string, any> = {}
@@ -119,13 +120,13 @@ export const ERPIntegrationsPage: FC = () => {
                   )}
                 </div>
                 <div className="flex gap-2">
-                  <Button size="sm" variant="outline" onClick={() => testMut.mutate(it.id)} disabled={testMut.isLoading}>
+                  <Button size="sm" variant="outline" onClick={() => testMut.mutate(it.id)} disabled={testMut.isPending}>
                     <Zap className="w-3 h-3 mr-1" /> Test
                   </Button>
-                  <Button size="sm" variant="outline" onClick={() => syncMut.mutate(it.id)} disabled={syncMut.isLoading}>
+                  <Button size="sm" variant="outline" onClick={() => syncMut.mutate(it.id)} disabled={syncMut.isPending}>
                     <RefreshCw className="w-3 h-3 mr-1" /> Sync
                   </Button>
-                  <Button size="sm" variant="outline" onClick={() => analyzeMut.mutate(it)} disabled={analyzeMut.isLoading}>
+                  <Button size="sm" variant="outline" onClick={() => analyzeMut.mutate(it)} disabled={analyzeMut.isPending}>
                     <Brain className="w-3 h-3 mr-1" /> Analyze
                   </Button>
                   <Button size="sm" variant="outline" onClick={() => setSelectedId(selectedId === it.id ? null : it.id)}>
@@ -172,7 +173,7 @@ export const ERPIntegrationsPage: FC = () => {
             {testResult.__form && <div className="text-xs text-status-alarm">{testResult.__form}</div>}
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="outline" onClick={() => setShowAdd(false)}>Cancel</Button>
-              <Button onClick={submit} loading={createMut.isLoading}>Create</Button>
+              <Button onClick={submit} loading={createMut.isPending}>Create</Button>
             </div>
           </Card>
         </div>
@@ -182,8 +183,8 @@ export const ERPIntegrationsPage: FC = () => {
 }
 
 const SyncStatusPanel: FC<{ id: string }> = ({ id }) => {
-  const { data: statuses } = useQuery(['erp-sync-status', id], () => erpApi.getSyncStatus(id))
-  const { data: mappings } = useQuery(['erp-mappings', id], () => erpApi.listFieldMappings(id))
+  const { data: statuses } = useQuery({ queryKey: ['erp-sync-status', id], queryFn: () => erpApi.getSyncStatus(id) })
+  const { data: mappings } = useQuery({ queryKey: ['erp-mappings', id], queryFn: () => erpApi.listFieldMappings(id) })
   return (
     <div className="mt-4 border-t border-opsgrid-border pt-3 grid md:grid-cols-2 gap-4">
       <div>

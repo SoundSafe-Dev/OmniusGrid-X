@@ -1,5 +1,5 @@
 import { FC } from 'react'
-import { useQuery } from 'react-query'
+import { useQuery } from '@tanstack/react-query'
 import { BarChart3, TrendingUp, Clock } from 'lucide-react'
 import { dashboardApi } from '../api'
 import { Tooltip, TooltipTrigger, TooltipContent } from '../components/ui'
@@ -8,9 +8,10 @@ import { useAuth } from '../hooks/useAuth'
 
 const OEE: FC = () => {
   const { isAdmin } = useAuth()
-  const { data: fleetOEE, isLoading } = useQuery('fleet-oee', () =>
-    dashboardApi.getFleetOEE()
-  )
+  const { data: fleetOEE, isLoading } = useQuery({
+    queryKey: ['fleet-oee'],
+    queryFn: () => dashboardApi.getFleetOEE(),
+  })
 
   // The FleetOEE type does not (yet) declare fleetAveragePerformance, but the
   // API can return it; narrow locally so the 100% fallback below is preserved.

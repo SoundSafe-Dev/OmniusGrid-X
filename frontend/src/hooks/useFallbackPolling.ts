@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { useQueryClient } from 'react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { useRealtimeStore } from '../stores';
 
 // Task 3: when the WebSocket exhausts its reconnect attempts the app falls back
@@ -18,7 +18,7 @@ export function useFallbackPolling(): void {
     if (!pollingFallback) return;
 
     const intervalId = window.setInterval(() => {
-      POLLED_QUERY_KEYS.forEach((key) => queryClient.invalidateQueries([key]));
+      POLLED_QUERY_KEYS.forEach((key) => queryClient.invalidateQueries({ queryKey: [key] }));
     }, FALLBACK_POLL_INTERVAL_MS);
 
     return () => window.clearInterval(intervalId);

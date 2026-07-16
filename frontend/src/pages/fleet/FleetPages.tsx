@@ -1,5 +1,5 @@
 import { FC, useState } from 'react';
-import { useQuery } from 'react-query';
+import { useQuery } from '@tanstack/react-query';
 import { Building2, MapPin, Users, ChevronRight, ChevronDown, Factory, Box, Activity } from 'lucide-react';
 import { Card, Badge } from '../../components';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
@@ -7,9 +7,9 @@ import { GeoTabIntegration } from '../../components/fleet/GeoTabIntegration';
 import { workcellsApi, assetsApi, organizationsApi } from '../../api';
 
 export const FleetOverview: FC = () => {
-  const { data: workcells } = useQuery('fleet-workcells', () => workcellsApi.list());
-  const { data: assetsPage } = useQuery('fleet-assets', () => assetsApi.list({ limit: 500 }));
-  const { data: orgs } = useQuery('fleet-orgs', () => organizationsApi.list());
+  const { data: workcells } = useQuery({ queryKey: ['fleet-workcells'], queryFn: () => workcellsApi.list() });
+  const { data: assetsPage } = useQuery({ queryKey: ['fleet-assets'], queryFn: () => assetsApi.list({ limit: 500 }) });
+  const { data: orgs } = useQuery({ queryKey: ['fleet-orgs'], queryFn: () => organizationsApi.list() });
   const orgId = orgs?.[0]?.id;
 
   const assets = assetsPage?.items ?? [];
@@ -83,9 +83,9 @@ const packmlStatus = (state?: string): string => {
 };
 
 export const OrganizationTree: FC = () => {
-  const { data: orgs } = useQuery('orgtree-orgs', () => organizationsApi.list());
-  const { data: workcells } = useQuery('orgtree-workcells', () => workcellsApi.list());
-  const { data: assetsPage } = useQuery('orgtree-assets', () => assetsApi.list({ limit: 500 }));
+  const { data: orgs } = useQuery({ queryKey: ['orgtree-orgs'], queryFn: () => organizationsApi.list() });
+  const { data: workcells } = useQuery({ queryKey: ['orgtree-workcells'], queryFn: () => workcellsApi.list() });
+  const { data: assetsPage } = useQuery({ queryKey: ['orgtree-assets'], queryFn: () => assetsApi.list({ limit: 500 }) });
 
   const org = orgs?.[0];
   // Constant root node id so the default-expanded set stays valid once the org

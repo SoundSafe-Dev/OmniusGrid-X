@@ -1,18 +1,20 @@
 import { FC } from 'react'
 import { Link } from 'react-router-dom'
-import { useQuery } from 'react-query'
+import { useQuery } from '@tanstack/react-query'
 import { AlertTriangle, CheckCircle, Box, Activity } from 'lucide-react'
 import { dashboardApi, alarmsApi } from '../api'
 import { Tooltip, TooltipTrigger, TooltipContent } from '../components/ui'
 
 const Dashboard: FC = () => {
-  const { data: overview, isLoading, error } = useQuery('dashboard-overview', () =>
-    dashboardApi.getOverview()
-  )
-  
-  const { data: activeAlarms } = useQuery('active-alarms', () =>
-    alarmsApi.getActive()
-  )
+  const { data: overview, isLoading, error } = useQuery({
+    queryKey: ['dashboard-overview'],
+    queryFn: () => dashboardApi.getOverview(),
+  })
+
+  const { data: activeAlarms } = useQuery({
+    queryKey: ['active-alarms'],
+    queryFn: () => alarmsApi.getActive(),
+  })
 
   console.log('Dashboard render:', { isLoading, overview, error, activeAlarms })
 

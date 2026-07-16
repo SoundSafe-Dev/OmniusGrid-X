@@ -1,5 +1,5 @@
 import { FC, useState } from 'react';
-import { useQuery } from 'react-query';
+import { useQuery } from '@tanstack/react-query';
 import { Zap, Activity, Shield, Play, Pause } from 'lucide-react';
 import { Card, Badge, Button, SkeletonCard } from '../../components';
 import { enginesApi } from '../../api';
@@ -8,11 +8,11 @@ import { formatDuration, formatNumber } from '../../utils';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
 
 export const TacticalEngine: FC = () => {
-  const { data: status, isLoading } = useQuery(
-    'tactical-status',
-    () => enginesApi.getTacticalStatus(),
-    { refetchInterval: 5000 }
-  );
+  const { data: status, isLoading } = useQuery({
+    queryKey: ['tactical-status'],
+    queryFn: () => enginesApi.getTacticalStatus(),
+    refetchInterval: 5000,
+  });
 
   const [decisions] = useState<TacticalDecision[]>([]);
   const [safetyEnabled, setSafetyEnabled] = useState(true);

@@ -1,14 +1,15 @@
 import { FC } from 'react'
 import { Link } from 'react-router-dom'
-import { useQuery } from 'react-query'
+import { useQuery } from '@tanstack/react-query'
 import { Box, ChevronRight } from 'lucide-react'
 import { assetsApi } from '../api'
 import { Tooltip, TooltipTrigger, TooltipContent } from '../components/ui'
 
 const Assets: FC = () => {
-  const { data: assetsData, isLoading } = useQuery('assets', () =>
-    assetsApi.list()
-  )
+  const { data: assetsData, isLoading } = useQuery({
+    queryKey: ['assets'],
+    queryFn: () => assetsApi.list(),
+  })
   const assets = assetsData?.items || []
 
   const getStatusColor = (state: string) => {

@@ -330,7 +330,7 @@ export const Fleet: FC = () => {
                 {formError && <p className="text-sm text-status-alarm">{formError}</p>}
                 <div className="flex justify-end gap-2">
                   <Button type="button" variant="ghost" onClick={() => setShowReleaseForm(false)}>Cancel</Button>
-                  <Button type="submit" loading={createRelease.isLoading}>Create release</Button>
+                  <Button type="submit" loading={createRelease.isPending}>Create release</Button>
                 </div>
               </form>
             </Card>
@@ -374,7 +374,7 @@ export const Fleet: FC = () => {
                 {formError && <p className="text-sm text-status-alarm">{formError}</p>}
                 <div className="flex justify-end gap-2">
                   <Button type="button" variant="ghost" onClick={() => setShowRolloutForm(false)}>Cancel</Button>
-                  <Button type="submit" loading={createRollout.isLoading}>Create rollout</Button>
+                  <Button type="submit" loading={createRollout.isPending}>Create rollout</Button>
                 </div>
               </form>
             </Card>
@@ -451,12 +451,12 @@ export const Fleet: FC = () => {
                     <Table.Cell>
                       <div className="flex flex-wrap gap-2">
                         {release.status === 'draft' && (
-                          <Button size="sm" variant="secondary" onClick={() => publishRelease.mutate(release.id)} loading={publishRelease.isLoading}>
+                          <Button size="sm" variant="secondary" onClick={() => publishRelease.mutate(release.id)} loading={publishRelease.isPending}>
                             Publish
                           </Button>
                         )}
                         {release.status === 'published' && (
-                          <Button size="sm" variant="outline" onClick={() => yankRelease.mutate(release.id)} loading={yankRelease.isLoading}>
+                          <Button size="sm" variant="outline" onClick={() => yankRelease.mutate(release.id)} loading={yankRelease.isPending}>
                             Yank
                           </Button>
                         )}
@@ -516,7 +516,7 @@ export const Fleet: FC = () => {
                       <Table.Cell>
                         <div className="flex flex-wrap gap-2">
                           {['pending', 'running'].includes(rollout.status) && (
-                            <Button size="sm" variant="secondary" onClick={() => cancelRollout.mutate(rollout.id)} loading={cancelRollout.isLoading}>
+                            <Button size="sm" variant="secondary" onClick={() => cancelRollout.mutate(rollout.id)} loading={cancelRollout.isPending}>
                               Cancel
                             </Button>
                           )}

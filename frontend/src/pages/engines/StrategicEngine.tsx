@@ -1,5 +1,5 @@
 import { FC } from 'react';
-import { useQuery, useMutation, useQueryClient } from 'react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Lightbulb, CheckCircle, XCircle, Clock, Zap, TrendingUp } from 'lucide-react';
 import { Card, Badge, Button, SkeletonCard } from '../../components';
 import { enginesApi, twinOptimizerApi, defaultOptimizeRequest } from '../../api';
@@ -11,33 +11,29 @@ import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
 export const StrategicEngine: FC = () => {
   const queryClient = useQueryClient();
 
-  const { data: recommendations, isLoading } = useQuery(
-    'strategic-recommendations',
-    () => enginesApi.getStrategicRecommendations(),
-    { refetchInterval: 30000 }
-  );
+  const { data: recommendations, isLoading } = useQuery({
+    queryKey: ['strategic-recommendations'],
+    queryFn: () => enginesApi.getStrategicRecommendations(),
+    refetchInterval: 30000,
+  });
 
-  const approveMutation = useMutation(
-    ({ recId, operatorId }: { recId: string; operatorId: string }) =>
+  const approveMutation = useMutation({
+    mutationFn: ({ recId, operatorId }: { recId: string; operatorId: string }) =>
       enginesApi.approveRecommendation(recId, operatorId),
-    {
-      onSuccess: () => queryClient.invalidateQueries('strategic-recommendations'),
-    }
-  );
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['strategic-recommendations'] }),
+  });
 
-  const rejectMutation = useMutation(
-    ({ recId, operatorId, reason }: { recId: string; operatorId: string; reason: string }) =>
+  const rejectMutation = useMutation({
+    mutationFn: ({ recId, operatorId, reason }: { recId: string; operatorId: string; reason: string }) =>
       enginesApi.rejectRecommendation(recId, operatorId, reason),
-    {
-      onSuccess: () => queryClient.invalidateQueries('strategic-recommendations'),
-    }
-  );
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['strategic-recommendations'] }),
+  });
 
   // Digital-twin what-if optimizer (FS-84): POST a default two-candidate
   // scenario and render the ranked recommendations the twin returns.
-  const optimizeMutation = useMutation(() =>
-    twinOptimizerApi.optimize(defaultOptimizeRequest())
-  );
+  const optimizeMutation = useMutation({
+    mutationFn: () => twinOptimizerApi.optimize(defaultOptimizeRequest()),
+  });
   const optimizeResult = optimizeMutation.data;
 
   if (isLoading) {
@@ -112,8 +108,8 @@ export const StrategicEngine: FC = () => {
           <Button
             variant="primary"
             size="sm"
-            loading={optimizeMutation.isLoading}
-            disabled={optimizeMutation.isLoading}
+            loading={optimizeMutation.isPending}
+            disabled={optimizeMutation.isPending}
             onClick={() => optimizeMutation.mutate()}
           >
             <Zap size={16} className="mr-1" />
