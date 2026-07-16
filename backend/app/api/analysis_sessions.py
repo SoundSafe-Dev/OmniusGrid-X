@@ -72,14 +72,11 @@ async def _get_analysis_session(
     result = await db.execute(query)
     session = result.scalar_one_or_none()
 
-    if session is None:
-        result = await db.execute(
-            select(AnalysisSession).where(func.lower(AnalysisSession.id) == sid)
-        )
-        session = result.scalar_one_or_none()
-        if session is not None and not _is_dev_user(current_user):
-            if str(session.user_id).strip().lower() != uid:
-                session = None
+    # NOTE (convergence seam): a legacy case-insensitive fallback here did
+    # `func.lower(AnalysisSession.id)`, which 500s now that migration 032 made id
+    # a native postgres uuid ("function lower(uuid) does not exist"). The uuid
+    # type already compares case-insensitively, so the primary query above covers
+    # it and the fallback is removed. Flagged for Harsh's nlp/session lane.
 
     if session is None:
         logger.warning(

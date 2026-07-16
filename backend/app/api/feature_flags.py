@@ -62,7 +62,10 @@ async def evaluate_feature_flags(current_user: User = Depends(get_current_active
 
 @router.get("/{key}", summary="Get a single feature flag")
 async def get_feature_flag(key: str, _: User = Depends(require_admin)):
-    flag = await feature_flag_service.get_flag(key)
+    try:
+        flag = await feature_flag_service.get_flag(key)
+    except Exception as exc:  # store (redis) unreachable — match the list endpoint
+        raise HTTPException(status_code=503, detail=f"Feature flag store unavailable: {exc}")
     if flag is None:
         raise HTTPException(status_code=404, detail=f"Feature flag '{key}' not found")
     return flag
