@@ -7,10 +7,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import get_current_active_user
 from app.db.database import get_db
 from app.db.models import Alarm, Asset
-from app.api.auth import get_current_active_user
 from app.models.schemas import AlarmCreate, AlarmResponse, AlarmAcknowledge
+from app.middleware.rbac import require_operator_or_admin
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
@@ -111,7 +112,7 @@ async def get_alarm(
     return alarm
 
 
-@router.post("/{alarm_id}/acknowledge", summary="Acknowledge alarm", description="Mark an alarm as acknowledged with optional notes. Acknowledged alarms remain active but are tracked as reviewed by an operator.")
+@router.post("/{alarm_id}/acknowledge", summary="Acknowledge alarm", description="Mark an alarm as acknowledged with optional notes. Acknowledged alarms remain active but are tracked as reviewed by an operator.", dependencies=[Depends(require_operator_or_admin)])
 async def acknowledge_alarm(
     alarm_id: UUID,
     ack_data: AlarmAcknowledge,
@@ -141,7 +142,7 @@ async def acknowledge_alarm(
     return alarm
 
 
-@router.post("/{alarm_id}/clear", summary="Clear alarm", description="Mark an alarm as resolved/cleared. This should only be done when the underlying issue has been fixed.")
+@router.post("/{alarm_id}/clear", summary="Clear alarm", description="Mark an alarm as resolved/cleared. This should only be done when the underlying issue has been fixed.", dependencies=[Depends(require_operator_or_admin)])
 async def clear_alarm(
     alarm_id: UUID,
     db: AsyncSession = Depends(get_db),
@@ -164,7 +165,7 @@ async def clear_alarm(
     return alarm
 
 
-@router.post("/acknowledge-all", summary="Acknowledge all active alarms", description="Bulk acknowledge all currently active alarms, optionally filtered by asset and severity. Used during shift handover or after maintenance.")
+@router.post("/acknowledge-all", summary="Acknowledge all active alarms", description="Bulk acknowledge all currently active alarms, optionally filtered by asset and severity. Used during shift handover or after maintenance.", dependencies=[Depends(require_operator_or_admin)])
 async def acknowledge_all_alarms(
     asset_id: Optional[UUID] = None,
     severity: Optional[str] = None,

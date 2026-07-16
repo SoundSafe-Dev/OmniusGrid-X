@@ -80,7 +80,10 @@ async def get_device_trips(
     )
 
 
-@router.get("/exceptions")
+@router.get(
+    "/exceptions",
+    dependencies=[Depends(get_current_active_user)],
+)
 async def get_geotab_exceptions(
     organization_id: Optional[UUID] = None,
     driver_id: Optional[UUID] = None,
@@ -110,7 +113,10 @@ async def get_geotab_exceptions(
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@router.get("/devices/{device_id}/diagnostics")
+@router.get(
+    "/devices/{device_id}/diagnostics",
+    dependencies=[Depends(get_current_active_user)],
+)
 async def get_device_diagnostics(
     device_id: str,
     organization_id: Optional[UUID] = None,
@@ -148,7 +154,10 @@ async def geotab_webhook(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.get("/drivers/{driver_id}/hos")
+@router.get(
+    "/drivers/{driver_id}/hos",
+    dependencies=[Depends(get_current_active_user)],
+)
 async def get_driver_hos_geotab(
     driver_id: UUID,
     organization_id: UUID,
@@ -166,7 +175,10 @@ async def get_driver_hos_geotab(
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@router.get("/fleet/summary")
+@router.get(
+    "/fleet/summary",
+    dependencies=[Depends(get_current_active_user)],
+)
 async def get_fleet_summary(
     organization_id: UUID,
     db: AsyncSession = Depends(get_db)

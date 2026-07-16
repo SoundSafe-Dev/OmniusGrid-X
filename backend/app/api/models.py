@@ -1,7 +1,7 @@
 """Cloud model registry API (MLOps producer side).
 
 Mirrors the fleet release registry (``api/agent_releases.py``): tenant-scoped
-reads, ``@require_admin`` mutations, and a public signed-URL artifact download.
+reads, admin-dependent mutations, and a public signed-URL artifact download.
 ``GET /models/{name}/latest`` returns the exact ``{version, download_url,
 sha256_hash}`` shape the edge MLOps client (``services/mlops_pipeline.py``)
 polls.
@@ -191,9 +191,9 @@ async def get_model(
     "/models/{name}/train",
     response_model=TrainingRunResponse,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_admin)],
 )
 @rate_limit("10/hour")
-@require_admin()
 async def train_model(
     request: Request,
     name: str,
@@ -228,9 +228,8 @@ async def train_model(
     return _run_response(run)
 
 
-@router.post("/models/{model_id}/publish", response_model=ModelResponse)
+@router.post("/models/{model_id}/publish", response_model=ModelResponse, dependencies=[Depends(require_admin)])
 @rate_limit("30/hour")
-@require_admin()
 async def publish_model(
     request: Request,
     model_id: UUID,
@@ -247,9 +246,8 @@ async def publish_model(
     return _model_response(entry)
 
 
-@router.post("/models/{model_id}/yank", response_model=ModelResponse)
+@router.post("/models/{model_id}/yank", response_model=ModelResponse, dependencies=[Depends(require_admin)])
 @rate_limit("30/hour")
-@require_admin()
 async def yank_model(
     request: Request,
     model_id: UUID,

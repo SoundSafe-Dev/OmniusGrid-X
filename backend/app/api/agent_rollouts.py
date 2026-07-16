@@ -2,9 +2,10 @@
 
 
 import math
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import UUID
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -23,8 +24,20 @@ from app.db.models import (
 )
 from app.middleware.rate_limit import rate_limit
 from app.middleware.rbac import require_admin
+from app.services.command_executor import command_executor
 
 router = APIRouter()
+logger = structlog.get_logger()
+
+PAUSABLE_ROLLOUT_STATUSES = frozenset({"pending", "running"})
+RESUMABLE_ROLLOUT_STATUSES = frozenset({"paused"})
+CANCELLABLE_ROLLOUT_STATUSES = frozenset({"pending", "running", "paused"})
+UNFINISHED_TARGET_STATUSES = frozenset({"pending", "updating"})
+CANCELLED_TARGET_REASON = "Rollout cancelled by administrator"
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 class AgentRolloutCreate(BaseModel):
@@ -140,6 +153,38 @@ async def _get_rollout(rollout_id: UUID, org_id: UUID, db: AsyncSession) -> Agen
     return rollout
 
 
+async def _lock_rollout(
+    rollout_id: UUID,
+    org_id: UUID,
+    db: AsyncSession,
+) -> AgentRollout:
+    rollout = (
+        await db.execute(
+            select(AgentRollout)
+            .where(
+                AgentRollout.id == rollout_id,
+                AgentRollout.organization_id == org_id,
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if rollout is None:
+        raise HTTPException(status_code=404, detail="Agent rollout not found")
+    return rollout
+
+
+def _require_rollout_status(
+    rollout: AgentRollout,
+    allowed_statuses: frozenset[str],
+    action: str,
+) -> None:
+    if rollout.status not in allowed_statuses:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Rollout in '{rollout.status}' state cannot be {action}",
+        )
+
+
 async def _resolve_targets(
     selector: dict,
     org_id: UUID,
@@ -195,9 +240,8 @@ def _wave_for_position(position: int, total: int, strategy: dict) -> int:
     return 0
 
 
-@router.post("/rollouts", response_model=AgentRolloutResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/rollouts", response_model=AgentRolloutResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_admin)])
 @rate_limit("30/hour")
-@require_admin()
 async def create_rollout(
     request: Request,
     payload: AgentRolloutCreate,
@@ -284,9 +328,8 @@ async def get_rollout(
     return _rollout_response(await _get_rollout(rollout_id, org_id, db))
 
 
-@router.post("/rollouts/{rollout_id}/pause", response_model=AgentRolloutResponse)
+@router.post("/rollouts/{rollout_id}/pause", response_model=AgentRolloutResponse, dependencies=[Depends(require_admin)])
 @rate_limit("30/hour")
-@require_admin()
 async def pause_rollout(
     request: Request,
     rollout_id: UUID,
@@ -294,11 +337,12 @@ async def pause_rollout(
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),
 ):
-    rollout = await _get_rollout(rollout_id, org_id, db)
-    if rollout.status in {"completed", "cancelled", "rolled_back", "failed"}:
-        raise HTTPException(status_code=400, detail="Terminal rollouts cannot be paused")
+    rollout = await _lock_rollout(rollout_id, org_id, db)
+    _require_rollout_status(rollout, PAUSABLE_ROLLOUT_STATUSES, "paused")
+    now = _utcnow()
     rollout.status = "paused"
-    rollout.events.append(
+    rollout.updated_at = now
+    db.add(
         AgentRolloutEvent(
             rollout_id=rollout.id,
             organization_id=org_id,
@@ -310,9 +354,34 @@ async def pause_rollout(
     return _rollout_response(await _get_rollout(rollout_id, org_id, db))
 
 
-@router.post("/rollouts/{rollout_id}/cancel", response_model=AgentRolloutResponse)
+@router.post("/rollouts/{rollout_id}/resume", response_model=AgentRolloutResponse, dependencies=[Depends(require_admin)])
 @rate_limit("30/hour")
-@require_admin()
+async def resume_rollout(
+    request: Request,
+    rollout_id: UUID,
+    current_user: User = Depends(get_current_active_user),
+    org_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db),
+):
+    rollout = await _lock_rollout(rollout_id, org_id, db)
+    _require_rollout_status(rollout, RESUMABLE_ROLLOUT_STATUSES, "resumed")
+    now = _utcnow()
+    rollout.status = "running"
+    rollout.updated_at = now
+    db.add(
+        AgentRolloutEvent(
+            rollout_id=rollout.id,
+            organization_id=org_id,
+            event_type="resumed",
+            detail={"by": str(current_user.id)},
+        )
+    )
+    await db.commit()
+    return _rollout_response(await _get_rollout(rollout_id, org_id, db))
+
+
+@router.post("/rollouts/{rollout_id}/cancel", response_model=AgentRolloutResponse, dependencies=[Depends(require_admin)])
+@rate_limit("30/hour")
 async def cancel_rollout(
     request: Request,
     rollout_id: UUID,
@@ -320,20 +389,78 @@ async def cancel_rollout(
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),
 ):
-    rollout = await _get_rollout(rollout_id, org_id, db)
-    if rollout.status in {"completed", "cancelled"}:
-        raise HTTPException(status_code=400, detail="Rollout is already terminal")
+    rollout = await _lock_rollout(rollout_id, org_id, db)
+    _require_rollout_status(rollout, CANCELLABLE_ROLLOUT_STATUSES, "cancelled")
+    unfinished_targets = list(
+        (
+            await db.execute(
+                select(AgentRolloutTarget)
+                .where(
+                    AgentRolloutTarget.rollout_id == rollout.id,
+                    AgentRolloutTarget.organization_id == org_id,
+                    AgentRolloutTarget.status.in_(UNFINISHED_TARGET_STATUSES),
+                )
+                .order_by(
+                    AgentRolloutTarget.wave_index,
+                    AgentRolloutTarget.asset_id,
+                )
+                .with_for_update()
+            )
+        )
+        .scalars()
+        .all()
+    )
+    now = _utcnow()
+    command_ids = sorted(
+        {target.command_id for target in unfinished_targets if target.command_id}
+    )
     rollout.status = "cancelled"
-    rollout.events.append(
+    rollout.updated_at = now
+    for target in unfinished_targets:
+        target.status = "cancelled"
+        target.completed_at = now
+        target.last_event_at = now
+        target.failure_reason = CANCELLED_TARGET_REASON
+        db.add(
+            AgentRolloutEvent(
+                rollout_id=rollout.id,
+                organization_id=org_id,
+                event_type="device_cancelled",
+                asset_id=target.asset_id,
+                detail={
+                    "command_id": target.command_id,
+                    "reason": CANCELLED_TARGET_REASON,
+                    "wave_index": target.wave_index,
+                },
+            )
+        )
+    db.add(
         AgentRolloutEvent(
             rollout_id=rollout.id,
             organization_id=org_id,
             event_type="cancelled",
-            detail={"by": str(current_user.id)},
+            detail={
+                "by": str(current_user.id),
+                "target_count": len(unfinished_targets),
+                "command_count": len(command_ids),
+            },
         )
     )
-    for target in rollout.targets:
-        if target.status == "pending":
-            target.status = "cancelled"
     await db.commit()
+
+    for command_id in command_ids:
+        try:
+            await command_executor.cancel_command(
+                command_id,
+                cancelled_by=str(current_user.id),
+                organization_id=str(org_id),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "ota_rollout_command_cancel_failed",
+                rollout_id=str(rollout_id),
+                command_id=command_id,
+                error=str(exc),
+            )
+
     return _rollout_response(await _get_rollout(rollout_id, org_id, db))

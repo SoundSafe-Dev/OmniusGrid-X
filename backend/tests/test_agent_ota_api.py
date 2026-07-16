@@ -7,8 +7,16 @@ from uuid import uuid4
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from fastapi import HTTPException
 
+from app.api.agent_rollouts import (
+    CANCELLABLE_ROLLOUT_STATUSES,
+    PAUSABLE_ROLLOUT_STATUSES,
+    RESUMABLE_ROLLOUT_STATUSES,
+    _require_rollout_status,
+)
 from app.core.config import settings
+from app.db.models import AgentRollout
 from app.services.agent_signing import public_key_to_base64, verify_bundle_signature
 
 
@@ -83,6 +91,20 @@ async def _create_release(client, tmp_path, monkeypatch, version: str = "1.2.3")
     return response.json()
 
 
+@pytest.mark.parametrize("rollout_status", ["completed", "cancelled", "rolled_back", "failed"])
+def test_terminal_rollout_states_reject_lifecycle_mutations(rollout_status):
+    rollout = AgentRollout(status=rollout_status)
+
+    for allowed_statuses, action in (
+        (PAUSABLE_ROLLOUT_STATUSES, "paused"),
+        (RESUMABLE_ROLLOUT_STATUSES, "resumed"),
+        (CANCELLABLE_ROLLOUT_STATUSES, "cancelled"),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            _require_rollout_status(rollout, allowed_statuses, action)
+        assert exc_info.value.status_code == 400
+
+
 @pytest.mark.asyncio
 async def test_release_create_signs_stores_and_downloads_bundle(client_a, tmp_path, monkeypatch):
     release = await _create_release(client_a, tmp_path, monkeypatch)
@@ -129,7 +151,7 @@ async def test_release_lifecycle_and_cross_tenant_404(client_a, client_b, tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_release_mutations_require_admin(
+async def test_ota_mutations_require_admin(
     client_a,
     admin_sync_url,
     seeded_orgs,
@@ -152,6 +174,13 @@ async def test_release_mutations_require_admin(
     _write_signing_key(tmp_path, monkeypatch)
     response = await client_a.post("/api/v1/fleet/releases", json=_release_payload("1.2.5"))
     assert response.status_code == 403
+
+    missing_rollout_id = uuid4()
+    for action in ("pause", "resume", "cancel"):
+        response = await client_a.post(
+            f"/api/v1/fleet/rollouts/{missing_rollout_id}/{action}"
+        )
+        assert response.status_code == 403
 
 
 @pytest.mark.asyncio
@@ -221,9 +250,34 @@ async def test_rollout_creation_resolves_only_tenant_targets(
     assert paused.status_code == 200
     assert paused.json()["status"] == "paused"
 
+    duplicate_pause = await client_a.post(f"/api/v1/fleet/rollouts/{body['id']}/pause")
+    assert duplicate_pause.status_code == 400
+
+    resumed = await client_a.post(f"/api/v1/fleet/rollouts/{body['id']}/resume")
+    assert resumed.status_code == 200
+    assert resumed.json()["status"] == "running"
+    assert [event["event_type"] for event in resumed.json()["events"]][-2:] == [
+        "paused",
+        "resumed",
+    ]
+
+    duplicate_resume = await client_a.post(f"/api/v1/fleet/rollouts/{body['id']}/resume")
+    assert duplicate_resume.status_code == 400
+
+    foreign_resume = await client_b.post(f"/api/v1/fleet/rollouts/{body['id']}/resume")
+    assert foreign_resume.status_code == 404
+
+    paused_again = await client_a.post(f"/api/v1/fleet/rollouts/{body['id']}/pause")
+    assert paused_again.status_code == 200
+    assert paused_again.json()["status"] == "paused"
+
     cancelled = await client_a.post(f"/api/v1/fleet/rollouts/{body['id']}/cancel")
     assert cancelled.status_code == 200
     assert cancelled.json()["status"] == "cancelled"
+    assert {target["status"] for target in cancelled.json()["targets"]} == {"cancelled"}
+
+    duplicate_cancel = await client_a.post(f"/api/v1/fleet/rollouts/{body['id']}/cancel")
+    assert duplicate_cancel.status_code == 400
 
 
 @pytest.mark.asyncio

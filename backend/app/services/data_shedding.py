@@ -1,10 +1,13 @@
 """Data shedding and prioritization for ingestion workers"""
 
-import asyncio
+import time
 from datetime import datetime, timezone
-from typing import Dict, Set, Optional
+from typing import Dict, Optional, Tuple
 from dataclasses import dataclass
+
 import structlog
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = structlog.get_logger()
 
@@ -62,18 +65,87 @@ class DataSheddingManager:
         self._message_count = 0
         self._dropped_count = 0
         self._last_reset = datetime.utcnow()
-    
-    def should_shed(self, metric_name: str, timestamp: datetime) -> bool:
+        self._tenant_priorities: Dict[Tuple[str, str], PriorityConfig] = {}
+        self._tenant_policy_refresh: Dict[str, float] = {}
+        self._policy_cache_seconds = 60.0
+
+    async def refresh_tenant_policies(
+        self,
+        db: AsyncSession,
+        organization_id: str,
+        *,
+        force: bool = False,
+    ) -> None:
+        """Refresh one tenant's metric shedding overrides from the database."""
+        organization_id = str(organization_id)
+        now = time.monotonic()
+        refreshed_at = self._tenant_policy_refresh.get(organization_id, 0.0)
+        if not force and now - refreshed_at < self._policy_cache_seconds:
+            return
+
+        result = await db.execute(
+            text(
+                """
+                SELECT metric_name, ingestion_priority,
+                       ingestion_sample_rate, max_ingest_age_seconds
+                FROM historian_retention_policies
+                WHERE organization_id = :organization_id
+                """
+            ),
+            {"organization_id": organization_id},
+        )
+        rows = result.mappings().all()
+
+        self._tenant_priorities = {
+            key: value
+            for key, value in self._tenant_priorities.items()
+            if key[0] != organization_id
+        }
+        for row in rows:
+            self._tenant_priorities[(organization_id, row["metric_name"])] = (
+                PriorityConfig(
+                    priority=int(row["ingestion_priority"]),
+                    max_age_seconds=int(row["max_ingest_age_seconds"]),
+                    sample_rate=float(row["ingestion_sample_rate"]),
+                )
+            )
+        self._tenant_policy_refresh[organization_id] = now
+
+    def invalidate_tenant_policies(self, organization_id: str) -> None:
+        """Force the next ingestion message to reload this tenant's policies."""
+        self._tenant_policy_refresh.pop(str(organization_id), None)
+
+    def _priority_for(
+        self,
+        metric_name: str,
+        organization_id: Optional[str],
+    ) -> PriorityConfig:
+        base = self._priorities.get(
+            metric_name,
+            PriorityConfig(priority=3, max_age_seconds=30, sample_rate=1.0),
+        )
+        if organization_id is None or base.priority == 1:
+            return base
+
+        tenant_id = str(organization_id)
+        return self._tenant_priorities.get(
+            (tenant_id, metric_name),
+            self._tenant_priorities.get((tenant_id, "*"), base),
+        )
+
+    def should_shed(
+        self,
+        metric_name: str,
+        timestamp: datetime,
+        organization_id: Optional[str] = None,
+    ) -> bool:
         """
         Determine if a message should be shed based on priority and system load.
         
         Returns True if message should be dropped.
         """
-        # Get priority config
-        config = self._priorities.get(metric_name)
-        if not config:
-            # Unknown metrics default to medium priority
-            config = PriorityConfig(priority=3, max_age_seconds=30, sample_rate=1.0)
+        self._message_count += 1
+        config = self._priority_for(metric_name, organization_id)
         
         # Priority 1 (critical) never shed
         if config.priority == 1:

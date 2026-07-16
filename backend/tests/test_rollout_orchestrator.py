@@ -142,7 +142,7 @@ def _fetch_rollout(admin_sync_url, rollout_id):
             cur.execute(
                 """
                 SELECT asset_id, wave_index, status, command_id, rollback_command_id,
-                       failure_reason
+                       failure_reason, completed_at, last_event_at
                 FROM agent_rollout_targets
                 WHERE rollout_id = %s
                 ORDER BY wave_index, asset_id;
@@ -282,3 +282,123 @@ async def test_running_target_is_not_dispatched_twice(
     _, targets, _ = _fetch_rollout(admin_sync_url, seeded["rollout_id"])
     assert targets[0]["status"] == "updating"
     assert targets[0]["command_id"] == "cmd-1"
+
+
+@pytest.mark.asyncio
+async def test_pause_mid_wave_resume_reconciles_and_continues(
+    app,
+    client_a,
+    admin_sync_url,
+    seeded_orgs,
+    monkeypatch,
+):
+    monkeypatch.setattr("app.core.config.settings.EXPORT_PUBLIC_BASE_URL", "http://test")
+    seeded = _seed_rollout(admin_sync_url, seeded_orgs, waves=(0, 1))
+    fake_commands = FakeCommandClient()
+    orchestrator = RolloutOrchestrator(command_client=fake_commands)
+
+    async def healthy(_session, _target, _release, _strategy):
+        return True
+
+    monkeypatch.setattr(orchestrator, "_target_healthy", healthy)
+
+    await orchestrator.dispatch_rollout(seeded["rollout_id"], seeded["org_id"])
+    paused = await client_a.post(
+        f"/api/v1/fleet/rollouts/{seeded['rollout_id']}/pause"
+    )
+    assert paused.status_code == 200
+    assert paused.json()["status"] == "paused"
+
+    fake_commands.statuses["cmd-1"] = {"status": "completed", "result": {}}
+    await orchestrator.dispatch_rollout(seeded["rollout_id"], seeded["org_id"])
+    _, paused_targets, _ = _fetch_rollout(admin_sync_url, seeded["rollout_id"])
+    assert [target["status"] for target in paused_targets] == ["updating", "pending"]
+    assert len(fake_commands.submissions) == 1
+
+    resumed = await client_a.post(
+        f"/api/v1/fleet/rollouts/{seeded['rollout_id']}/resume"
+    )
+    assert resumed.status_code == 200
+    assert resumed.json()["status"] == "running"
+
+    await orchestrator.dispatch_rollout(seeded["rollout_id"], seeded["org_id"])
+    _, resumed_targets, events = _fetch_rollout(admin_sync_url, seeded["rollout_id"])
+    assert [target["status"] for target in resumed_targets] == ["success", "updating"]
+    assert len(fake_commands.submissions) == 2
+
+    event_types = [event["event_type"] for event in events]
+    assert event_types.index("paused") < event_types.index("resumed")
+    assert event_types.index("resumed") < event_types.index("device_updated")
+
+    fake_commands.statuses["cmd-2"] = {"status": "completed", "result": {}}
+    await orchestrator.dispatch_rollout(seeded["rollout_id"], seeded["org_id"])
+    completed, targets, _ = _fetch_rollout(admin_sync_url, seeded["rollout_id"])
+    assert completed["status"] == "completed"
+    assert [target["status"] for target in targets] == ["success", "success"]
+
+
+@pytest.mark.asyncio
+async def test_cancel_running_rollout_stops_unfinished_targets_and_dispatch(
+    app,
+    client_a,
+    admin_sync_url,
+    seeded_orgs,
+    monkeypatch,
+):
+    monkeypatch.setattr("app.core.config.settings.EXPORT_PUBLIC_BASE_URL", "http://test")
+    seeded = _seed_rollout(admin_sync_url, seeded_orgs, waves=(0, 1))
+    fake_commands = FakeCommandClient()
+    orchestrator = RolloutOrchestrator(command_client=fake_commands)
+    cancelled_commands = []
+
+    async def cancel_command(command_id, *, cancelled_by, organization_id):
+        cancelled_commands.append(
+            {
+                "command_id": command_id,
+                "cancelled_by": cancelled_by,
+                "organization_id": organization_id,
+            }
+        )
+        return True
+
+    monkeypatch.setattr(
+        "app.api.agent_rollouts.command_executor.cancel_command",
+        cancel_command,
+    )
+
+    await orchestrator.dispatch_rollout(seeded["rollout_id"], seeded["org_id"])
+    assert len(fake_commands.submissions) == 1
+
+    cancelled = await client_a.post(
+        f"/api/v1/fleet/rollouts/{seeded['rollout_id']}/cancel"
+    )
+    assert cancelled.status_code == 200, cancelled.text
+    assert cancelled.json()["status"] == "cancelled"
+
+    rollout, targets, events = _fetch_rollout(admin_sync_url, seeded["rollout_id"])
+    assert rollout["status"] == "cancelled"
+    assert [target["status"] for target in targets] == ["cancelled", "cancelled"]
+    assert all(target["completed_at"] is not None for target in targets)
+    assert all(target["last_event_at"] is not None for target in targets)
+    assert all(
+        target["failure_reason"] == "Rollout cancelled by administrator"
+        for target in targets
+    )
+    assert cancelled_commands == [
+        {
+            "command_id": "cmd-1",
+            "cancelled_by": str(seeded_orgs["user_a_id"]),
+            "organization_id": str(seeded["org_id"]),
+        }
+    ]
+    assert [event["event_type"] for event in events].count("device_cancelled") == 2
+    assert [event["event_type"] for event in events].count("cancelled") == 1
+
+    fake_commands.statuses["cmd-1"] = {"status": "completed", "result": {}}
+    await orchestrator.dispatch_rollout(seeded["rollout_id"], seeded["org_id"])
+    assert len(fake_commands.submissions) == 1
+    _, unchanged_targets, _ = _fetch_rollout(admin_sync_url, seeded["rollout_id"])
+    assert [target["status"] for target in unchanged_targets] == [
+        "cancelled",
+        "cancelled",
+    ]

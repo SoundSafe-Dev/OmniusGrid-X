@@ -12,19 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db
 from app.db.models import AuditLog, User
-from app.api.auth import get_current_active_user
+from app.middleware.rbac import require_admin
 
 router = APIRouter()
-
-
-async def require_admin(current_user: User = Depends(get_current_active_user)):
-    """Dependency to require admin role"""
-    if current_user.role != "admin":
-        raise HTTPException(
-            status_code=403,
-            detail="Admin access required"
-        )
-    return current_user
 
 
 @router.get("/logs", summary="List audit logs", description="Retrieve audit logs with optional filtering. Admin access required.")

@@ -165,9 +165,9 @@ async def _get_owned_job(
     "/reports",
     status_code=status.HTTP_202_ACCEPTED,
     summary="Enqueue async compliance report generation",
+    dependencies=[Depends(require_admin)],
 )
 @rate_limit("10/hour")
-@require_admin()
 async def enqueue_compliance_report(
     request: Request,
     payload: ComplianceReportEnqueueRequest,
@@ -383,9 +383,9 @@ async def _get_owned_schedule(
 @router.get(
     "/reports/schedules",
     summary="List scheduled compliance report definitions",
+    dependencies=[Depends(require_admin)],
 )
 @rate_limit("100/minute")
-@require_admin()
 async def list_compliance_report_schedules(
     request: Request,
     current_user: User = Depends(get_current_active_user),
@@ -406,9 +406,9 @@ async def list_compliance_report_schedules(
     "/reports/schedules",
     status_code=status.HTTP_201_CREATED,
     summary="Create a scheduled compliance report definition",
+    dependencies=[Depends(require_admin)],
 )
 @rate_limit("20/hour")
-@require_admin()
 async def create_compliance_report_schedule(
     request: Request,
     payload: ScheduledComplianceReportCreate,
@@ -467,9 +467,9 @@ async def create_compliance_report_schedule(
 @router.get(
     "/reports/schedules/{schedule_id}",
     summary="Get a scheduled compliance report definition",
+    dependencies=[Depends(require_admin)],
 )
 @rate_limit("100/minute")
-@require_admin()
 async def get_compliance_report_schedule(
     schedule_id: UUID,
     request: Request,
@@ -484,9 +484,9 @@ async def get_compliance_report_schedule(
 @router.put(
     "/reports/schedules/{schedule_id}",
     summary="Update a scheduled compliance report definition",
+    dependencies=[Depends(require_admin)],
 )
 @rate_limit("20/hour")
-@require_admin()
 async def update_compliance_report_schedule(
     schedule_id: UUID,
     payload: ScheduledComplianceReportUpdate,
@@ -554,9 +554,9 @@ async def update_compliance_report_schedule(
 @router.delete(
     "/reports/schedules/{schedule_id}",
     summary="Delete a scheduled compliance report definition",
+    dependencies=[Depends(require_admin)],
 )
 @rate_limit("20/hour")
-@require_admin()
 async def delete_compliance_report_schedule(
     schedule_id: UUID,
     request: Request,
@@ -595,9 +595,9 @@ async def delete_compliance_report_schedule(
 @router.get(
     "/reports/{job_id}",
     summary="Get compliance report job status",
+    dependencies=[Depends(require_roles('admin', 'viewer'))],
 )
 @rate_limit("100/minute")
-@require_roles("admin", "viewer")
 async def get_compliance_report_job(
     job_id: UUID,
     request: Request,
@@ -612,9 +612,9 @@ async def get_compliance_report_job(
 @router.get(
     "/reports/{job_id}/download",
     summary="Download a completed compliance report",
+    dependencies=[Depends(require_roles('admin', 'viewer'))],
 )
 @rate_limit("100/minute")
-@require_roles("admin", "viewer")
 async def download_compliance_report(
     job_id: UUID,
     request: Request,

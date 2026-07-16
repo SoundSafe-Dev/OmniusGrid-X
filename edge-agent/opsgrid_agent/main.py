@@ -106,6 +106,7 @@ class EdgeAgent:
             'heartbeat_interval_seconds': int(os.getenv('HEARTBEAT_INTERVAL_SECONDS', '60')),
             'command_topic': os.getenv('REDPANDA_COMMAND_TOPIC', 'opsgrid.commands'),
             'command_ack_topic': os.getenv('REDPANDA_COMMAND_ACK_TOPIC', 'opsgrid.commands.acks'),
+            'command_dlq_topic': os.getenv('REDPANDA_COMMAND_DLQ_TOPIC', 'opsgrid.commands.dlq'),
             'ota_signing_public_key': os.getenv('OTA_SIGNING_PUBLIC_KEY', ''),
             'ota_config_bundle_path': os.getenv(
                 'OTA_CONFIG_BUNDLE_PATH',
@@ -198,6 +199,7 @@ class EdgeAgent:
                 redpanda_url=self.config['redpanda_url'],
                 command_topic=self.config['command_topic'],
                 ack_topic=self.config['command_ack_topic'],
+                dlq_topic=self.config['command_dlq_topic'],
             )
             self.ota_executor.register(self.command_consumer)
 

@@ -9,7 +9,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -45,11 +45,15 @@ class AgentReleaseCreate(BaseModel):
 
 
 class AgentReleaseResponse(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
     id: UUID
     organization_id: UUID
     version: str
     channel: str
-    image_tag: str
+    image_tag: str | None
+    artifact_type: str = "config"
+    model_name: str | None = None
     checksum_sha256: str
     signature_ed25519: str
     signing_key_id: str
@@ -83,6 +87,8 @@ def _release_response(
         version=release.version,
         channel=release.channel,
         image_tag=release.image_tag,
+        artifact_type=release.artifact_type,
+        model_name=release.model_name,
         checksum_sha256=release.checksum_sha256,
         signature_ed25519=release.signature_ed25519,
         signing_key_id=release.signing_key_id,
@@ -117,9 +123,9 @@ async def _get_release(
     "/releases",
     response_model=AgentReleaseResponse,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_admin)],
 )
 @rate_limit("30/hour")
-@require_admin()
 async def create_release(
     request: Request,
     payload: AgentReleaseCreate,
@@ -198,9 +204,8 @@ async def get_release(
     return _release_response(release, include_url=True)
 
 
-@router.post("/releases/{release_id}/publish", response_model=AgentReleaseResponse)
+@router.post("/releases/{release_id}/publish", response_model=AgentReleaseResponse, dependencies=[Depends(require_admin)])
 @rate_limit("30/hour")
-@require_admin()
 async def publish_release(
     request: Request,
     release_id: UUID,
@@ -217,9 +222,8 @@ async def publish_release(
     return _release_response(release, include_url=True)
 
 
-@router.post("/releases/{release_id}/yank", response_model=AgentReleaseResponse)
+@router.post("/releases/{release_id}/yank", response_model=AgentReleaseResponse, dependencies=[Depends(require_admin)])
 @rate_limit("30/hour")
-@require_admin()
 async def yank_release(
     request: Request,
     release_id: UUID,

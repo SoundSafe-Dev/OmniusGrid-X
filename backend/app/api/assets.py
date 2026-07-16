@@ -23,7 +23,7 @@ from app.models.schemas import (
     AssetTypeCreate, AssetTypeResponse
 )
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
 
 @router.get("/", response_model=List[AssetResponse], summary="List all assets", description="Retrieve a paginated list of manufacturing assets in the authenticated user's organization, with optional filtering by workcell, asset type, and active status.")
@@ -76,9 +76,8 @@ async def get_asset(
     return asset
 
 
-@router.post("/", response_model=AssetResponse, summary="Create a new asset", description="Register a new manufacturing asset in the authenticated user's organization. The organization is derived from the JWT — any client-supplied organization_id in the request body is ignored.")
+@router.post("/", response_model=AssetResponse, summary="Create a new asset", description="Register a new manufacturing asset in the authenticated user's organization. The organization is derived from the JWT — any client-supplied organization_id in the request body is ignored.", dependencies=[Depends(require_admin)])
 @rate_limit("30/minute")
-@require_admin()
 async def create_asset(
     request: Request,
     asset_data: AssetCreate,
@@ -106,9 +105,8 @@ async def create_asset(
     return asset
 
 
-@router.put("/{asset_id}", response_model=AssetResponse, summary="Update asset", description="Modify an existing asset's configuration. Only provided fields will be updated (partial update). Returns 404 if the asset belongs to a different organization.")
+@router.put("/{asset_id}", response_model=AssetResponse, summary="Update asset", description="Modify an existing asset's configuration. Only provided fields will be updated (partial update). Returns 404 if the asset belongs to a different organization.", dependencies=[Depends(require_admin)])
 @rate_limit("30/minute")
-@require_admin()
 async def update_asset(
     request: Request,
     asset_id: UUID,
@@ -139,9 +137,8 @@ async def update_asset(
     return asset
 
 
-@router.delete("/{asset_id}", summary="Deactivate asset", description="Soft delete an asset by setting its active status to false. Returns 404 if the asset belongs to a different organization.")
+@router.delete("/{asset_id}", summary="Deactivate asset", description="Soft delete an asset by setting its active status to false. Returns 404 if the asset belongs to a different organization.", dependencies=[Depends(require_admin)])
 @rate_limit("30/minute")
-@require_admin()
 async def delete_asset(
     request: Request,
     asset_id: UUID,

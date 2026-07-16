@@ -1,23 +1,25 @@
-"""
-Command Executor Service - Queue processor for asset commands
-Handles command queuing, execution tracking, and status updates
-"""
+"""Durable command dispatch and acknowledgement processing."""
+
+from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
-from datetime import datetime
-from typing import Dict, Optional, Any, List
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from enum import Enum
-import structlog
-from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession
-from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
+from typing import Any, Dict, Optional
+from uuid import UUID, uuid4
 
-from app.db.database import AsyncSessionLocal
-from app.db.models import Command, Asset
-from app.services.websocket_manager import websocket_manager
+import structlog
+from aiokafka import AIOKafkaConsumer, AIOKafkaProducer, TopicPartition
+from sqlalchemy import func, select, text
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.config import settings
+from app.db.database import AsyncSessionLocal
+from app.db.models import Command, Organization
+from app.services.websocket_manager import websocket_manager
 
 logger = structlog.get_logger()
 
@@ -31,525 +33,953 @@ class CommandStatus(Enum):
     TIMEOUT = "timeout"
 
 
+TERMINAL_STATUSES = {
+    CommandStatus.COMPLETED.value,
+    CommandStatus.FAILED.value,
+    CommandStatus.CANCELLED.value,
+    CommandStatus.TIMEOUT.value,
+}
+
+
 @dataclass
 class CommandResult:
-    """Result of command execution"""
+    """Result of publishing a command to the edge topic."""
+
     success: bool
     message: str
-    data: Optional[Dict] = None
+    data: Optional[Dict[str, Any]] = None
     error_code: Optional[str] = None
 
 
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _uuid(value: Any) -> Optional[UUID]:
+    if isinstance(value, UUID):
+        return value
+    try:
+        return UUID(str(value))
+    except (TypeError, ValueError, AttributeError):
+        return None
+
+
 class CommandExecutor:
-    """
-    Command execution orchestrator.
-    
-    Responsibilities:
-    - Queue commands from API/clients
-    - Track execution status
-    - Interface with edge agents via Redpanda
-    - Handle timeouts and retries
-    - Broadcast status updates via WebSocket
-    """
-    
-    def __init__(self):
-        self._command_queue: asyncio.Queue = asyncio.Queue()
-        self._pending_commands: Dict[str, Dict] = {}  # command_id -> command info
+    """Persist commands, publish claimed rows, and reconcile acks via the DB."""
+
+    def __init__(self, *, session_factory=None) -> None:
+        self._session_factory = session_factory
         self._running = False
-        self._worker_task: Optional[asyncio.Task] = None
-        self._timeout_seconds = 60
-        self._max_retries = 3
+        self._dispatch_task: Optional[asyncio.Task] = None
+        self._timeout_task: Optional[asyncio.Task] = None
+        self._ack_consumer_task: Optional[asyncio.Task] = None
         self._producer: Optional[AIOKafkaProducer] = None
         self._ack_consumer: Optional[AIOKafkaConsumer] = None
-        self._ack_consumer_task: Optional[asyncio.Task] = None
-    
-    async def start(self):
-        """Start the command executor"""
+        self._timeout_seconds = 60
+        self._max_retries = 3
+        self._poll_interval_seconds = 1.0
+
+    @property
+    def _sessions(self):
+        return self._session_factory or AsyncSessionLocal
+
+    async def start(self) -> None:
+        """Start durable dispatch, acknowledgement, and timeout loops."""
+        if self._running:
+            return
+
         logger.info("command_executor_starting")
         self._running = True
-        
-        # Initialize Redpanda producer
-        try:
-            # No `retries=` kwarg: aiokafka doesn't take one (newer releases
-            # reject it outright) — delivery retry is acks='all' +
-            # enable_idempotence, matching the other producers in this app.
-            self._producer = AIOKafkaProducer(
-                bootstrap_servers=settings.REDPANDA_URL,
-                value_serializer=lambda v: json.dumps(v).encode('utf-8'),
-                acks='all',
-                enable_idempotence=True,
-                compression_type='gzip'
-            )
-            await self._producer.start()
-            logger.info("redpanda_producer_started", url=settings.REDPANDA_URL)
-        except Exception as e:
-            logger.error("redpanda_producer_start_failed", error=str(e))
-            self._producer = None
-
-        try:
-            self._ack_consumer = AIOKafkaConsumer(
-                settings.REDPANDA_COMMAND_ACK_TOPIC,
-                bootstrap_servers=settings.REDPANDA_URL,
-                value_deserializer=lambda v: json.loads(v.decode("utf-8")),
-                group_id="opsgrid-command-executor",
-                enable_auto_commit=True,
-            )
-            await self._ack_consumer.start()
-            self._ack_consumer_task = asyncio.create_task(self._ack_consumer_loop())
-            logger.info(
-                "redpanda_command_ack_consumer_started",
-                topic=settings.REDPANDA_COMMAND_ACK_TOPIC,
-                url=settings.REDPANDA_URL,
-            )
-        except Exception as e:
-            logger.error("redpanda_command_ack_consumer_start_failed", error=str(e))
-            self._ack_consumer = None
-        
-        self._worker_task = asyncio.create_task(self._command_worker())
-        
-        # Start timeout monitor
-        asyncio.create_task(self._timeout_monitor())
-        
+        await self._ensure_producer()
+        self._dispatch_task = asyncio.create_task(self._dispatch_loop())
+        self._timeout_task = asyncio.create_task(self._timeout_loop())
+        self._ack_consumer_task = asyncio.create_task(self._ack_consumer_loop())
         logger.info("command_executor_started")
-    
-    async def stop(self):
-        """Stop the command executor"""
+
+    async def stop(self) -> None:
+        """Stop command processing and broker clients."""
+        if not self._running and not any(
+            (self._dispatch_task, self._timeout_task, self._ack_consumer_task)
+        ):
+            return
+
         logger.info("command_executor_stopping")
         self._running = False
-        
-        if self._worker_task:
-            self._worker_task.cancel()
-            try:
-                await self._worker_task
-            except asyncio.CancelledError:
-                pass
+        tasks = (
+            self._dispatch_task,
+            self._timeout_task,
+            self._ack_consumer_task,
+        )
+        for task in tasks:
+            if task:
+                task.cancel()
+        for task in tasks:
+            if task:
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
 
-        if self._ack_consumer_task:
-            self._ack_consumer_task.cancel()
-            try:
-                await self._ack_consumer_task
-            except asyncio.CancelledError:
-                pass
-        
-        # Stop Redpanda producer
-        if self._producer:
-            try:
-                await self._producer.stop()
-                logger.info("redpanda_producer_stopped")
-            except Exception as e:
-                logger.error("redpanda_producer_stop_failed", error=str(e))
-
-        if self._ack_consumer:
-            try:
-                await self._ack_consumer.stop()
-                logger.info("redpanda_command_ack_consumer_stopped")
-            except Exception as e:
-                logger.error("redpanda_command_ack_consumer_stop_failed", error=str(e))
-        
+        self._dispatch_task = None
+        self._timeout_task = None
+        self._ack_consumer_task = None
+        await self._reset_ack_consumer()
+        await self._reset_producer()
         logger.info("command_executor_stopped")
-    
+
     async def submit_command(
         self,
         asset_id: str,
-        command_type: str,  # 'tactical', 'operator', 'system'
-        action_id: str,     # e.g., 'set_speed', 'pause_job', 'emergency_stop'
+        command_type: str,
+        action_id: str,
         parameters: Dict[str, Any],
         issued_by: Optional[str] = None,
         organization_id: Optional[str] = None,
-        timeout_seconds: Optional[int] = None
+        timeout_seconds: Optional[int] = None,
     ) -> str:
-        """
-        Submit a new command for execution.
-        Returns command ID for tracking.
-        """
-        command_id = f"cmd_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{asset_id[:8]}"
-        
-        async with AsyncSessionLocal() as session:
-            # Create command record
+        """Persist a command. A running executor replica will claim it."""
+        command_id = uuid4()
+        asset_uuid = _uuid(asset_id)
+        organization_uuid = _uuid(organization_id)
+        issuer_uuid = _uuid(issued_by) if issued_by else None
+        timeout = timeout_seconds if timeout_seconds is not None else self._timeout_seconds
+
+        if asset_uuid is None:
+            raise ValueError("asset_id must be a UUID")
+        if organization_uuid is None:
+            raise ValueError("organization_id must be a UUID")
+        if issued_by and issuer_uuid is None:
+            raise ValueError("issued_by must be a UUID")
+        if not command_type:
+            raise ValueError("command_type is required")
+        if not action_id:
+            raise ValueError("action_id is required")
+        if timeout <= 0:
+            raise ValueError("timeout_seconds must be positive")
+
+        now = _utcnow()
+        async with self._sessions() as session:
+            await self._set_org(session, organization_uuid)
             command = Command(
                 id=command_id,
-                asset_id=asset_id,
+                asset_id=asset_uuid,
+                organization_id=organization_uuid,
                 command_type=command_type,
                 action_id=action_id,
-                parameters=parameters,
+                parameters=dict(parameters or {}),
                 status=CommandStatus.PENDING.value,
-                issued_by=issued_by,
-                issued_at=datetime.utcnow()
+                timeout_seconds=int(timeout),
+                dispatch_attempts=0,
+                next_dispatch_at=now,
+                issued_by=issuer_uuid,
+                issued_at=now,
+                created_at=now,
+                updated_at=now,
             )
             session.add(command)
             await session.commit()
-        
-        # Queue for execution
-        command_info = {
-            'command_id': command_id,
-            'asset_id': asset_id,
-            'organization_id': organization_id,
-            'command_type': command_type,
-            'action_id': action_id,
-            'parameters': parameters,
-            'timeout': timeout_seconds or self._timeout_seconds,
-            'retry_count': 0,
-            'submitted_at': datetime.utcnow()
-        }
-        
-        await self._command_queue.put(command_info)
-        
-        # Broadcast pending status
-        if organization_id:
-            await websocket_manager.publish_telemetry(
-                organization_id=organization_id,
-                asset_id=asset_id,
-                telemetry_data={
-                    'command_status': CommandStatus.PENDING.value,
-                    'command_id': command_id,
-                    'action': action_id
-                }
-            )
-        
+
+        await self._broadcast_safely(
+            str(organization_uuid),
+            str(asset_uuid),
+            str(command_id),
+            CommandStatus.PENDING,
+            action_id,
+        )
         logger.info(
             "command_submitted",
-            command_id=command_id,
-            asset_id=asset_id,
-            action=action_id
+            command_id=str(command_id),
+            asset_id=str(asset_uuid),
+            organization_id=str(organization_uuid),
+            action=action_id,
         )
-        
-        return command_id
-    
-    async def get_command_status(self, command_id: str) -> Optional[Dict]:
-        """Get current status of a command"""
-        async with AsyncSessionLocal() as session:
-            result = await session.execute(
-                select(Command).where(Command.id == command_id)
-            )
-            command = result.scalar_one_or_none()
-            
-            if command:
-                return {
-                    'command_id': command.id,
-                    'status': command.status,
-                    'asset_id': str(command.asset_id),
-                    'action': command.action_id,
-                    'issued_at': command.issued_at.isoformat() if command.issued_at else None,
-                    'executed_at': command.executed_at.isoformat() if command.executed_at else None,
-                    'result': command.result
-                }
-        
+        return str(command_id)
+
+    async def get_command_status(
+        self,
+        command_id: str,
+        organization_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Return command state, optionally scoped to a known tenant."""
+        command_uuid = _uuid(command_id)
+        if command_uuid is None:
+            return None
+
+        for org_id in await self._candidate_org_ids(organization_id):
+            async with self._sessions() as session:
+                await self._set_org(session, org_id)
+                command = (
+                    await session.execute(
+                        select(Command).where(
+                            Command.id == command_uuid,
+                            Command.organization_id == org_id,
+                        )
+                    )
+                ).scalar_one_or_none()
+                if command is not None:
+                    return self._command_status_payload(command)
         return None
-    
-    async def cancel_command(self, command_id: str, cancelled_by: str) -> bool:
-        """Cancel a pending command"""
-        async with AsyncSessionLocal() as session:
-            result = await session.execute(
-                select(Command).where(
-                    Command.id == command_id,
-                    Command.status.in_([CommandStatus.PENDING.value, CommandStatus.EXECUTING.value])
-                )
+
+    async def cancel_command(
+        self,
+        command_id: str,
+        cancelled_by: str,
+        organization_id: Optional[str] = None,
+    ) -> bool:
+        """Atomically cancel a pending or executing command."""
+        command_uuid = _uuid(command_id)
+        if command_uuid is None:
+            return False
+
+        for org_id in await self._candidate_org_ids(organization_id):
+            snapshot = None
+            async with self._sessions() as session:
+                await self._set_org(session, org_id)
+                command = (
+                    await session.execute(
+                        select(Command)
+                        .where(
+                            Command.id == command_uuid,
+                            Command.organization_id == org_id,
+                            Command.status.in_(
+                                [
+                                    CommandStatus.PENDING.value,
+                                    CommandStatus.EXECUTING.value,
+                                ]
+                            ),
+                        )
+                        .with_for_update()
+                    )
+                ).scalar_one_or_none()
+                if command is None:
+                    continue
+
+                now = _utcnow()
+                command.status = CommandStatus.CANCELLED.value
+                command.completed_at = now
+                command.updated_at = now
+                command.error_message = "Command cancelled"
+                command.result = {
+                    "cancelled_by": cancelled_by,
+                    "cancelled_at": now.isoformat(),
+                }
+                snapshot = self._command_snapshot(command)
+                await session.commit()
+
+            await self._broadcast_safely(
+                snapshot["organization_id"],
+                snapshot["asset_id"],
+                snapshot["command_id"],
+                CommandStatus.CANCELLED,
+                snapshot["action_id"],
+                error="Command cancelled",
             )
-            command = result.scalar_one_or_none()
-            
-            if not command:
-                return False
-            
-            command.status = CommandStatus.CANCELLED.value
-            command.result = {'cancelled_by': cancelled_by, 'cancelled_at': datetime.utcnow().isoformat()}
-            await session.commit()
-            
-            # Remove from pending queue if still there
-            if command_id in self._pending_commands:
-                del self._pending_commands[command_id]
-            
-            logger.info("command_cancelled", command_id=command_id, cancelled_by=cancelled_by)
+            logger.info(
+                "command_cancelled",
+                command_id=str(command_uuid),
+                cancelled_by=cancelled_by,
+            )
             return True
-    
-    async def _command_worker(self):
-        """Main worker loop processing commands"""
+        return False
+
+    async def dispatch_pending(self, *, limit: int = 100) -> int:
+        """Claim and publish ready DB rows across tenants."""
+        if limit <= 0 or not await self._ensure_producer():
+            return 0
+
+        processed = 0
+        for org_id in await self._organization_ids():
+            while processed < limit:
+                outcome = await self._dispatch_one_for_org(org_id)
+                if outcome is None:
+                    break
+                processed += 1
+                if outcome == "retry":
+                    return processed
+            if processed >= limit:
+                break
+        return processed
+
+    async def handle_command_ack(self, ack_payload: Dict[str, Any]) -> bool:
+        """Reconcile an edge ack against its DB row from any replica."""
+        if not isinstance(ack_payload, dict):
+            return False
+        command_uuid = _uuid(ack_payload.get("command_id"))
+        if command_uuid is None:
+            logger.warning("command_ack_invalid_command_id")
+            return False
+
+        outcome = self._ack_outcome(ack_payload)
+        if outcome is None:
+            logger.warning(
+                "command_ack_invalid_status",
+                command_id=str(command_uuid),
+                status=ack_payload.get("status"),
+            )
+            return False
+        status, error = outcome
+
+        organization_id = ack_payload.get("organization_id")
+        for org_id in await self._candidate_org_ids(organization_id):
+            snapshot = None
+            duplicate = False
+            async with self._sessions() as session:
+                await self._set_org(session, org_id)
+                command = (
+                    await session.execute(
+                        select(Command)
+                        .where(
+                            Command.id == command_uuid,
+                            Command.organization_id == org_id,
+                        )
+                        .with_for_update()
+                    )
+                ).scalar_one_or_none()
+                if command is None:
+                    continue
+
+                ack_asset_id = ack_payload.get("asset_id")
+                if ack_asset_id and str(command.asset_id) != str(ack_asset_id):
+                    logger.warning(
+                        "command_ack_asset_mismatch",
+                        command_id=str(command_uuid),
+                        expected_asset_id=str(command.asset_id),
+                        received_asset_id=str(ack_asset_id),
+                    )
+                    return False
+
+                if command.status in TERMINAL_STATUSES:
+                    duplicate = True
+                elif command.status not in {
+                    CommandStatus.PENDING.value,
+                    CommandStatus.EXECUTING.value,
+                }:
+                    return False
+                else:
+                    now = _utcnow()
+                    command.status = status.value
+                    command.completed_at = now
+                    command.updated_at = now
+                    command.error_message = error
+                    command.result = {
+                        "ack_received_at": now.isoformat(),
+                        "edge_ack": ack_payload,
+                        **({"error": error} if error else {}),
+                    }
+                    snapshot = self._command_snapshot(command)
+                    await session.commit()
+
+            if duplicate:
+                logger.info(
+                    "command_ack_duplicate_terminal",
+                    command_id=str(command_uuid),
+                )
+                return True
+
+            await self._broadcast_safely(
+                snapshot["organization_id"],
+                snapshot["asset_id"],
+                snapshot["command_id"],
+                status,
+                snapshot["action_id"],
+                result=ack_payload if status is CommandStatus.COMPLETED else None,
+                error=error,
+            )
+            logger.info(
+                "command_ack_handled",
+                command_id=str(command_uuid),
+                status=status.value,
+            )
+            return True
+
+        logger.warning("command_ack_for_unknown_command", command_id=str(command_uuid))
+        return False
+
+    async def expire_timed_out(self, *, limit: int = 100) -> int:
+        """Mark commands whose durable acknowledgement deadline has passed."""
+        if limit <= 0:
+            return 0
+
+        expired = 0
+        now = _utcnow()
+        for org_id in await self._organization_ids():
+            if expired >= limit:
+                break
+            snapshots = []
+            async with self._sessions() as session:
+                await self._set_org(session, org_id)
+                commands = (
+                    await session.execute(
+                        select(Command)
+                        .where(
+                            Command.organization_id == org_id,
+                            Command.status == CommandStatus.EXECUTING.value,
+                            Command.deadline_at.is_not(None),
+                            Command.deadline_at <= now,
+                        )
+                        .order_by(Command.deadline_at)
+                        .limit(limit - expired)
+                        .with_for_update(skip_locked=True)
+                    )
+                ).scalars().all()
+                for command in commands:
+                    command.status = CommandStatus.TIMEOUT.value
+                    command.completed_at = now
+                    command.updated_at = now
+                    command.error_message = "Command acknowledgement timed out"
+                    command.result = {"timeout_at": now.isoformat()}
+                    snapshots.append(self._command_snapshot(command))
+                if commands:
+                    await session.commit()
+
+            for snapshot in snapshots:
+                await self._broadcast_safely(
+                    snapshot["organization_id"],
+                    snapshot["asset_id"],
+                    snapshot["command_id"],
+                    CommandStatus.TIMEOUT,
+                    snapshot["action_id"],
+                    error="Command acknowledgement timed out",
+                )
+                logger.warning("command_timeout", command_id=snapshot["command_id"])
+            expired += len(snapshots)
+        return expired
+
+    async def get_pending_count(self, organization_id: Optional[str] = None) -> int:
+        """Count non-terminal commands from the database."""
+        total = 0
+        for org_id in await self._candidate_org_ids(organization_id):
+            async with self._sessions() as session:
+                await self._set_org(session, org_id)
+                total += int(
+                    (
+                        await session.execute(
+                            select(func.count(Command.id)).where(
+                                Command.organization_id == org_id,
+                                Command.status.in_(
+                                    [
+                                        CommandStatus.PENDING.value,
+                                        CommandStatus.EXECUTING.value,
+                                    ]
+                                ),
+                            )
+                        )
+                    ).scalar_one()
+                )
+        return total
+
+    async def _dispatch_loop(self) -> None:
         while self._running:
             try:
-                # Get next command from queue
-                try:
-                    command_info = await asyncio.wait_for(
-                        self._command_queue.get(),
-                        timeout=1.0
+                await self.dispatch_pending()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("command_dispatch_iteration_failed", error=str(exc))
+            await asyncio.sleep(self._poll_interval_seconds)
+
+    async def _timeout_loop(self) -> None:
+        while self._running:
+            try:
+                await self.expire_timed_out()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("command_timeout_iteration_failed", error=str(exc))
+            await asyncio.sleep(10)
+
+    async def _dispatch_one_for_org(self, org_id: UUID) -> Optional[str]:
+        now = _utcnow()
+        snapshot = None
+        failure = None
+        terminal_failure = False
+
+        async with self._sessions() as session:
+            await self._set_org(session, org_id)
+            command = (
+                await session.execute(
+                    select(Command)
+                    .where(
+                        Command.organization_id == org_id,
+                        Command.status == CommandStatus.PENDING.value,
+                        Command.next_dispatch_at <= now,
                     )
-                except asyncio.TimeoutError:
-                    continue
-                
-                command_id = command_info['command_id']
-                
-                # Track as pending
-                self._pending_commands[command_id] = command_info
-                
-                # Execute command
-                await self._execute_command(command_info)
-                
-                self._command_queue.task_done()
-                
-            except Exception as e:
-                logger.error("command_worker_error", error=str(e))
-    
-    async def _execute_command(self, command_info: Dict):
-        """Execute a single command"""
-        command_id = command_info['command_id']
-        asset_id = command_info['asset_id']
-        organization_id = command_info.get('organization_id')
-        action_id = command_info['action_id']
-        parameters = command_info['parameters']
-        
-        try:
-            # Update status to executing
-            await self._update_command_status(
-                command_id,
+                    .order_by(Command.next_dispatch_at, Command.issued_at)
+                    .limit(1)
+                    .with_for_update(skip_locked=True)
+                )
+            ).scalar_one_or_none()
+            if command is None:
+                return None
+
+            command.dispatch_attempts = int(command.dispatch_attempts or 0) + 1
+            command.updated_at = now
+            publish_result = await self._send_to_edge_agent(
+                command_id=str(command.id),
+                asset_id=str(command.asset_id),
+                organization_id=str(command.organization_id),
+                action_id=command.action_id,
+                parameters=dict(command.parameters or {}),
+                timeout_seconds=command.timeout_seconds,
+            )
+
+            if publish_result.success:
+                dispatched_at = _utcnow()
+                command.status = CommandStatus.EXECUTING.value
+                command.executed_at = dispatched_at
+                command.dispatched_at = dispatched_at
+                command.deadline_at = dispatched_at + timedelta(
+                    seconds=command.timeout_seconds
+                )
+                command.last_dispatch_error = None
+                command.error_message = None
+                command.result = {
+                    "dispatched_at": dispatched_at.isoformat(),
+                    **(publish_result.data or {}),
+                }
+                snapshot = self._command_snapshot(command)
+                await session.commit()
+            else:
+                failure = publish_result.message[:2000]
+                command.last_dispatch_error = failure
+                command.error_message = failure
+                if command.dispatch_attempts >= self._max_retries:
+                    terminal_failure = True
+                    command.status = CommandStatus.FAILED.value
+                    command.completed_at = now
+                    command.result = {
+                        "error": failure,
+                        "failed_at": now.isoformat(),
+                        "dispatch_attempts": command.dispatch_attempts,
+                    }
+                    snapshot = self._command_snapshot(command)
+                else:
+                    command.status = CommandStatus.PENDING.value
+                    command.next_dispatch_at = now + timedelta(
+                        seconds=min(2 ** command.dispatch_attempts, 60)
+                    )
+                    command.result = {
+                        "dispatch_error": failure,
+                        "retry_at": command.next_dispatch_at.isoformat(),
+                        "dispatch_attempts": command.dispatch_attempts,
+                    }
+                await session.commit()
+
+        if publish_result.success:
+            await self._broadcast_safely(
+                snapshot["organization_id"],
+                snapshot["asset_id"],
+                snapshot["command_id"],
                 CommandStatus.EXECUTING,
-                result={'started_at': datetime.utcnow().isoformat()}
+                snapshot["action_id"],
             )
-            
-            # Broadcast executing status
-            if organization_id:
-                await self._broadcast_command_status(
-                    organization_id, asset_id, command_id,
-                    CommandStatus.EXECUTING, action_id
-                )
-            
-            result = await self._send_to_edge_agent(
-                command_id=command_id,
-                asset_id=asset_id,
-                organization_id=organization_id,
-                action_id=action_id,
-                parameters=parameters,
-                timeout_seconds=command_info["timeout"],
+            logger.info(
+                "command_dispatched",
+                command_id=snapshot["command_id"],
+                asset_id=snapshot["asset_id"],
             )
-            
-            if result.success:
-                logger.info(
-                    "command_dispatched",
-                    command_id=command_id,
-                    asset_id=asset_id,
-                    topic=(result.data or {}).get("topic"),
-                )
-                await self._update_command_status(
-                    command_id,
-                    CommandStatus.EXECUTING,
-                    result={"dispatched_at": datetime.utcnow().isoformat(), **(result.data or {})},
-                )
-            else:
-                raise Exception(result.message)
-        
-        except Exception as e:
-            # Check if we should retry
-            command_info['retry_count'] += 1
-            
-            if command_info['retry_count'] < self._max_retries:
-                logger.warning(
-                    "command_retry",
-                    command_id=command_id,
-                    retry=command_info['retry_count'],
-                    error=str(e)
-                )
-                # Re-queue with delay
-                await asyncio.sleep(2 ** command_info['retry_count'])  # Exponential backoff
-                self._pending_commands.pop(command_id, None)
-                await self._command_queue.put(command_info)
-            else:
-                # Mark as failed
-                await self._update_command_status(
-                    command_id,
-                    CommandStatus.FAILED,
-                    result={'error': str(e), 'failed_at': datetime.utcnow().isoformat()}
-                )
-                
-                if organization_id:
-                    await self._broadcast_command_status(
-                        organization_id, asset_id, command_id,
-                        CommandStatus.FAILED, action_id,
-                        error=str(e)
-                    )
-                
-                logger.error(
-                    "command_failed",
-                    command_id=command_id,
-                    asset_id=asset_id,
-                    error=str(e)
-                )
-                self._pending_commands.pop(command_id, None)
-    
+            return "dispatched"
+
+        await self._reset_producer()
+        if terminal_failure:
+            await self._broadcast_safely(
+                snapshot["organization_id"],
+                snapshot["asset_id"],
+                snapshot["command_id"],
+                CommandStatus.FAILED,
+                snapshot["action_id"],
+                error=failure,
+            )
+            logger.error(
+                "command_dispatch_failed",
+                command_id=snapshot["command_id"],
+                error=failure,
+            )
+            return "failed"
+        return "retry"
+
     async def _send_to_edge_agent(
         self,
         command_id: str,
         asset_id: str,
         organization_id: Optional[str],
         action_id: str,
-        parameters: Dict,
+        parameters: Dict[str, Any],
         timeout_seconds: int,
     ) -> CommandResult:
-        """
-        Send command to edge agent via Redpanda message broker.
-        """
+        if self._producer is None:
+            return CommandResult(
+                success=False,
+                message="Redpanda producer not available",
+                error_code="PRODUCER_UNAVAILABLE",
+            )
+
+        command_message = {
+            "schema_version": 1,
+            "message_type": "command",
+            "command_id": command_id,
+            "asset_id": asset_id,
+            "organization_id": organization_id,
+            "action_id": action_id,
+            "parameters": parameters,
+            "timeout_seconds": timeout_seconds,
+            "timestamp": _utcnow().isoformat(),
+        }
         try:
-            # Check if producer is available
-            if not self._producer:
-                logger.warning("redpanda_producer_not_available", asset_id=asset_id)
-                return CommandResult(
-                    success=False,
-                    message="Redpanda producer not available",
-                    error_code="PRODUCER_UNAVAILABLE"
-                )
-            
-            # Build command message
-            command_message = {
-                'schema_version': 1,
-                'message_type': 'command',
-                'command_id': command_id,
-                'asset_id': asset_id,
-                'organization_id': organization_id,
-                'action_id': action_id,
-                'parameters': parameters,
-                'timeout_seconds': timeout_seconds,
-                'timestamp': datetime.utcnow().isoformat(),
-            }
-            
-            topic = settings.REDPANDA_COMMAND_TOPIC
-            
-            # Send to Redpanda
             await self._producer.send_and_wait(
-                topic,
+                settings.REDPANDA_COMMAND_TOPIC,
                 command_message,
                 key=command_id.encode("utf-8"),
             )
-            
-            logger.info(
-                "command_sent_to_redpanda",
-                command_id=command_id,
-                asset_id=asset_id,
-                action=action_id,
-                topic=topic
-            )
-            
-            return CommandResult(
-                success=True,
-                message="Command sent to edge agent via Redpanda",
-                data={
-                    'sent_at': datetime.utcnow().isoformat(),
-                    'topic': topic,
-                    'ack_topic': settings.REDPANDA_COMMAND_ACK_TOPIC,
-                }
-            )
-        
-        except Exception as e:
+        except Exception as exc:  # noqa: BLE001
             logger.error(
                 "redpanda_send_failed",
                 command_id=command_id,
                 asset_id=asset_id,
                 action=action_id,
-                error=str(e)
+                error=str(exc),
             )
             return CommandResult(
                 success=False,
-                message=f"Failed to send command: {str(e)}",
-                error_code="SEND_FAILED"
+                message=f"Failed to send command: {exc}",
+                error_code="SEND_FAILED",
             )
 
-    async def handle_command_ack(self, ack_payload: Dict[str, Any]) -> bool:
-        """Handle an edge-agent command acknowledgement payload."""
-        command_id = str(ack_payload.get("command_id") or "")
-        if not command_id:
-            logger.warning("command_ack_missing_command_id", payload=ack_payload)
+        return CommandResult(
+            success=True,
+            message="Command sent to edge agent via Redpanda",
+            data={
+                "sent_at": _utcnow().isoformat(),
+                "topic": settings.REDPANDA_COMMAND_TOPIC,
+                "ack_topic": settings.REDPANDA_COMMAND_ACK_TOPIC,
+            },
+        )
+
+    async def _ack_consumer_loop(self) -> None:
+        while self._running:
+            if not await self._ensure_ack_consumer():
+                await asyncio.sleep(5)
+                continue
+
+            try:
+                async for message in self._ack_consumer:
+                    if not self._running:
+                        return
+                    try:
+                        payload, error = self._decode_json_object(message.value)
+                        if error:
+                            await self._publish_dead_letter(
+                                message.value,
+                                reason=error,
+                                source_topic=message.topic,
+                                partition=message.partition,
+                                offset=message.offset,
+                                consumer="backend-command-ack",
+                            )
+                        elif not await self.handle_command_ack(payload):
+                            await self._publish_dead_letter(
+                                payload,
+                                reason="unmatched_or_invalid_ack",
+                                source_topic=message.topic,
+                                partition=message.partition,
+                                offset=message.offset,
+                                consumer="backend-command-ack",
+                            )
+                        await self._ack_consumer.commit(
+                            {
+                                TopicPartition(message.topic, message.partition):
+                                    message.offset + 1
+                            }
+                        )
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:  # noqa: BLE001
+                        logger.error(
+                            "command_ack_processing_failed",
+                            error=str(exc),
+                            topic=message.topic,
+                            partition=message.partition,
+                            offset=message.offset,
+                        )
+                        self._ack_consumer.seek(
+                            TopicPartition(message.topic, message.partition),
+                            message.offset,
+                        )
+                        await asyncio.sleep(1)
+                        break
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                logger.error("command_ack_consumer_error", error=str(exc))
+                await self._reset_ack_consumer()
+                await asyncio.sleep(5)
+
+    async def _ensure_producer(self) -> bool:
+        if self._producer is not None:
+            return True
+        producer = AIOKafkaProducer(
+            bootstrap_servers=settings.REDPANDA_URL,
+            value_serializer=lambda value: json.dumps(value).encode("utf-8"),
+            acks="all",
+            enable_idempotence=True,
+            compression_type="gzip",
+        )
+        try:
+            await producer.start()
+        except Exception as exc:  # noqa: BLE001
+            logger.error("redpanda_producer_start_failed", error=str(exc))
+            try:
+                await producer.stop()
+            except Exception:  # noqa: BLE001
+                pass
             return False
+        self._producer = producer
+        logger.info("redpanda_producer_started", url=settings.REDPANDA_URL)
+        return True
 
-        command_info = self._pending_commands.get(command_id)
-        if not command_info:
-            logger.warning("command_ack_for_unknown_command", command_id=command_id)
+    async def _ensure_ack_consumer(self) -> bool:
+        if self._ack_consumer is not None:
+            return True
+        consumer = AIOKafkaConsumer(
+            settings.REDPANDA_COMMAND_ACK_TOPIC,
+            bootstrap_servers=settings.REDPANDA_URL,
+            group_id="opsgrid-command-executor",
+            enable_auto_commit=False,
+            auto_offset_reset="earliest",
+        )
+        try:
+            await consumer.start()
+        except Exception as exc:  # noqa: BLE001
+            logger.error("redpanda_command_ack_consumer_start_failed", error=str(exc))
+            try:
+                await consumer.stop()
+            except Exception:  # noqa: BLE001
+                pass
             return False
+        self._ack_consumer = consumer
+        logger.info(
+            "redpanda_command_ack_consumer_started",
+            topic=settings.REDPANDA_COMMAND_ACK_TOPIC,
+        )
+        return True
 
-        raw_status = str(ack_payload.get("status") or "").lower()
-        success = bool(ack_payload.get("success"))
-        if raw_status in {"completed", "success", "succeeded"}:
-            success = True
-        elif raw_status in {"failed", "error", "rejected"}:
-            success = False
+    async def _reset_producer(self) -> None:
+        producer, self._producer = self._producer, None
+        if producer is not None:
+            try:
+                await producer.stop()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("redpanda_producer_stop_failed", error=str(exc))
 
-        now = datetime.utcnow().isoformat()
-        result = {
-            "ack_received_at": now,
-            "edge_ack": ack_payload,
+    async def _reset_ack_consumer(self) -> None:
+        consumer, self._ack_consumer = self._ack_consumer, None
+        if consumer is not None:
+            try:
+                await consumer.stop()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("redpanda_ack_consumer_stop_failed", error=str(exc))
+
+    async def _publish_dead_letter(
+        self,
+        payload: Any,
+        *,
+        reason: str,
+        source_topic: str,
+        partition: Optional[int] = None,
+        offset: Optional[int] = None,
+        consumer: str,
+    ) -> None:
+        if not await self._ensure_producer():
+            raise RuntimeError("DLQ producer unavailable")
+        raw = self._payload_bytes(payload)
+        summary = self._safe_payload_summary(payload)
+        envelope = {
+            "schema_version": 1,
+            "message_type": "dead_letter",
+            "reason": reason,
+            "source_topic": source_topic,
+            "source_partition": partition,
+            "source_offset": offset,
+            "consumer": consumer,
+            "timestamp": _utcnow().isoformat(),
+            "payload_size": len(raw),
+            "payload_sha256": hashlib.sha256(raw).hexdigest(),
+            "payload_summary": summary,
         }
+        key = str(summary.get("command_id") or envelope["payload_sha256"])
+        await self._producer.send_and_wait(
+            settings.REDPANDA_COMMAND_DLQ_TOPIC,
+            envelope,
+            key=key.encode("utf-8"),
+        )
 
-        if success:
-            result["completed_at"] = now
-            status = CommandStatus.COMPLETED
-            error = None
-        else:
-            result["failed_at"] = now
-            status = CommandStatus.FAILED
-            error = (
+    async def _organization_ids(self) -> list[UUID]:
+        async with self._sessions() as session:
+            return list(
+                (await session.execute(select(Organization.id))).scalars().all()
+            )
+
+    async def _candidate_org_ids(self, organization_id: Optional[str]) -> list[UUID]:
+        if organization_id is not None:
+            parsed = _uuid(organization_id)
+            return [parsed] if parsed is not None else []
+        return await self._organization_ids()
+
+    @staticmethod
+    async def _set_org(session: AsyncSession, organization_id: UUID) -> None:
+        bind = session.get_bind()
+        if bind is not None and bind.dialect.name == "postgresql":
+            await session.execute(
+                text("SELECT set_config('app.current_org_id', :org_id, true)"),
+                {"org_id": str(organization_id)},
+            )
+
+    @staticmethod
+    def _ack_outcome(
+        ack_payload: Dict[str, Any],
+    ) -> Optional[tuple[CommandStatus, Optional[str]]]:
+        raw_status = str(ack_payload.get("status") or "").lower()
+        success = ack_payload.get("success")
+        if isinstance(success, bool):
+            if raw_status in {"completed", "success", "succeeded"} and not success:
+                return None
+            if raw_status in {
+                "failed",
+                "error",
+                "rejected",
+                "cancelled",
+                "timeout",
+            } and success:
+                return None
+        if raw_status in {"completed", "success", "succeeded"}:
+            return CommandStatus.COMPLETED, None
+        if raw_status == "cancelled":
+            error = str(
+                ack_payload.get("error")
+                or ack_payload.get("message")
+                or "Edge agent cancelled command"
+            )
+            return CommandStatus.CANCELLED, error
+        if raw_status == "timeout":
+            error = str(
+                ack_payload.get("error")
+                or ack_payload.get("message")
+                or "Edge agent timed out command"
+            )
+            return CommandStatus.TIMEOUT, error
+        if raw_status in {"failed", "error", "rejected"}:
+            error = str(
                 ack_payload.get("error")
                 or ack_payload.get("message")
                 or "Edge agent reported command failure"
             )
-            result["error"] = error
-
-        await self._update_command_status(command_id, status, result=result)
-
-        organization_id = command_info.get("organization_id")
-        if organization_id:
-            await self._broadcast_command_status(
-                organization_id,
-                command_info["asset_id"],
-                command_id,
-                status,
-                command_info["action_id"],
-                result=ack_payload if success else None,
-                error=error,
+            return CommandStatus.FAILED, error
+        if isinstance(success, bool):
+            if success:
+                return CommandStatus.COMPLETED, None
+            error = str(
+                ack_payload.get("error")
+                or ack_payload.get("message")
+                or "Edge agent reported command failure"
             )
+            return CommandStatus.FAILED, error
+        return None
 
-        self._pending_commands.pop(command_id, None)
-        logger.info(
-            "command_ack_handled",
-            command_id=command_id,
-            status=status.value,
-        )
-        return True
+    @staticmethod
+    def _command_snapshot(command: Command) -> Dict[str, str]:
+        return {
+            "command_id": str(command.id),
+            "organization_id": str(command.organization_id),
+            "asset_id": str(command.asset_id),
+            "action_id": command.action_id,
+        }
 
-    async def _ack_consumer_loop(self):
-        """Consume edge-agent command acknowledgements from Redpanda."""
-        while self._running and self._ack_consumer is not None:
+    @staticmethod
+    def _command_status_payload(command: Command) -> Dict[str, Any]:
+        return {
+            "command_id": str(command.id),
+            "status": command.status,
+            "asset_id": str(command.asset_id),
+            "action": command.action_id,
+            "issued_at": command.issued_at.isoformat() if command.issued_at else None,
+            "executed_at": (
+                command.executed_at.isoformat() if command.executed_at else None
+            ),
+            "result": command.result,
+        }
+
+    @staticmethod
+    def _decode_json_object(value: Any) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+        if isinstance(value, bytes):
             try:
-                async for message in self._ack_consumer:
-                    payload = message.value
-                    if isinstance(payload, bytes):
-                        payload = json.loads(payload.decode("utf-8"))
-                    if not isinstance(payload, dict):
-                        logger.warning("command_ack_invalid_payload", payload=payload)
-                        continue
-                    await self.handle_command_ack(payload)
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:
-                logger.error("command_ack_consumer_error", error=str(e))
-                await asyncio.sleep(5)
-    
-    async def _update_command_status(
+                value = json.loads(value.decode("utf-8"))
+            except UnicodeDecodeError:
+                return None, "invalid_utf8"
+            except json.JSONDecodeError:
+                return None, "invalid_json"
+        if not isinstance(value, dict):
+            return None, "payload_not_object"
+        return value, None
+
+    @staticmethod
+    def _payload_bytes(payload: Any) -> bytes:
+        if isinstance(payload, bytes):
+            return payload
+        try:
+            return json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
+        except Exception:  # noqa: BLE001
+            return repr(type(payload)).encode("utf-8")
+
+    @staticmethod
+    def _safe_payload_summary(payload: Any) -> Dict[str, Any]:
+        if isinstance(payload, bytes):
+            decoded, error = CommandExecutor._decode_json_object(payload)
+            if error:
+                return {"payload_type": "bytes"}
+            payload = decoded
+        if not isinstance(payload, dict):
+            return {"payload_type": type(payload).__name__}
+        allowed = (
+            "schema_version",
+            "message_type",
+            "command_id",
+            "organization_id",
+            "asset_id",
+            "agent_id",
+            "action_id",
+            "status",
+            "success",
+        )
+        return {key: payload[key] for key in allowed if key in payload}
+
+    async def _broadcast_safely(
         self,
+        organization_id: str,
+        asset_id: str,
         command_id: str,
         status: CommandStatus,
-        result: Optional[Dict] = None
-    ):
-        """Update command status in database"""
-        async with AsyncSessionLocal() as session:
-            update_data = {
-                'status': status.value,
-                'executed_at': datetime.utcnow() if status in [CommandStatus.EXECUTING, CommandStatus.COMPLETED] else None
-            }
-            
-            if result:
-                update_data['result'] = result
-            
-            await session.execute(
-                update(Command)
-                .where(Command.id == command_id)
-                .values(**update_data)
+        action: str,
+        result: Optional[Dict[str, Any]] = None,
+        error: Optional[str] = None,
+    ) -> None:
+        try:
+            await self._broadcast_command_status(
+                organization_id,
+                asset_id,
+                command_id,
+                status,
+                action,
+                result=result,
+                error=error,
             )
-            await session.commit()
-    
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "command_status_broadcast_failed",
+                command_id=command_id,
+                status=status.value,
+                error=str(exc),
+            )
+
     async def _broadcast_command_status(
         self,
         organization_id: str,
@@ -557,89 +987,22 @@ class CommandExecutor:
         command_id: str,
         status: CommandStatus,
         action: str,
-        result: Optional[Dict] = None,
-        error: Optional[str] = None
-    ):
-        """Broadcast command status update via WebSocket"""
-        payload = {
-            'command_id': command_id,
-            'status': status.value,
-            'action': action,
-            'asset_id': asset_id,
-            'timestamp': datetime.utcnow().isoformat()
-        }
-        
-        if result:
-            payload['result'] = result
-        if error:
-            payload['error'] = error
-        
-        # Use the alarm publish method with command_status type
+        result: Optional[Dict[str, Any]] = None,
+        error: Optional[str] = None,
+    ) -> None:
         await websocket_manager.publish_alarm(
             organization_id=organization_id,
             asset_id=asset_id,
             alarm_data={
-                'type': 'command_status',
-                'severity': 'info',
-                'message': f"Command {action} {status.value}",
-                'command_id': command_id,
-                'status': status.value,
-                'result': result,
-                'error': error
-            }
-        )
-    
-    async def _timeout_monitor(self):
-        """Monitor for timed out commands"""
-        while self._running:
-            try:
-                now = datetime.utcnow()
-                timed_out = []
-                
-                for command_id, command_info in self._pending_commands.items():
-                    elapsed = (now - command_info['submitted_at']).total_seconds()
-                    
-                    if elapsed > command_info['timeout']:
-                        timed_out.append(command_id)
-                
-                for command_id in timed_out:
-                    await self._mark_command_timeout(command_id, now)
-                
-                await asyncio.sleep(10)  # Check every 10 seconds
-            
-            except Exception as e:
-                logger.error("timeout_monitor_error", error=str(e))
-                await asyncio.sleep(10)
-    
-    def get_pending_count(self) -> int:
-        """Get count of pending commands"""
-        return len(self._pending_commands)
-
-    async def _mark_command_timeout(self, command_id: str, now: datetime):
-        """Mark a pending command timed out and remove it from pending tracking."""
-        command_info = self._pending_commands.pop(command_id, None)
-        if not command_info:
-            return
-
-        await self._update_command_status(
-            command_id,
-            CommandStatus.TIMEOUT,
-            result={'timeout_at': now.isoformat()}
+                "type": "command_status",
+                "severity": "info",
+                "message": f"Command {action} {status.value}",
+                "command_id": command_id,
+                "status": status.value,
+                "result": result,
+                "error": error,
+            },
         )
 
-        organization_id = command_info.get("organization_id")
-        if organization_id:
-            await self._broadcast_command_status(
-                organization_id,
-                command_info["asset_id"],
-                command_id,
-                CommandStatus.TIMEOUT,
-                command_info["action_id"],
-                error="Command acknowledgement timed out",
-            )
 
-        logger.warning("command_timeout", command_id=command_id)
-
-
-# Global instance
 command_executor = CommandExecutor()

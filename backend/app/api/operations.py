@@ -13,6 +13,7 @@ from app.db.models import Operation, Asset, PackMLState
 from app.models.schemas import OperationCreate, OperationResponse
 
 from app.api.auth import get_current_active_user
+from app.middleware.rbac import require_operator_or_admin
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
@@ -114,7 +115,7 @@ async def get_operation(
     return operation
 
 
-@router.post("/", response_model=OperationResponse)
+@router.post("/", response_model=OperationResponse, dependencies=[Depends(require_operator_or_admin)])
 async def create_operation(
     operation_data: OperationCreate,
     db: AsyncSession = Depends(get_db)
@@ -139,7 +140,7 @@ async def create_operation(
     return operation
 
 
-@router.post("/{operation_id}/complete")
+@router.post("/{operation_id}/complete", dependencies=[Depends(require_operator_or_admin)])
 async def complete_operation(
     operation_id: UUID,
     success: bool = True,
