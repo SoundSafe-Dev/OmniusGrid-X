@@ -18,6 +18,8 @@ from app.api import fleet_health
 # Integration branch (hridyansh): tenant historian/retention, model OTA releases,
 # predictive-maintenance RUL, and the digital-twin optimizer.
 from app.api import model_releases, historian, data_retention, rul, twin_optimizer
+# RAG compliance-doc pipeline (Hudson): retrieval + ingestion router.
+from app.api import rag
 from app.core.config import settings
 from app.core.logging_filters import install_sensitive_query_access_log_filter
 from app.db.database import init_db
@@ -70,6 +72,17 @@ async def lifespan(app: FastAPI):
         await rollout_orchestrator.start()
     await report_scheduler.start()
     await error_tracker.start()
+    # Best-effort: create the RAG vector collection if the store is reachable
+    # (Hudson). Never blocks startup — storage/retrieval-only deployments run
+    # without it.
+    try:
+        from app.services.vector_store import get_vector_store
+        vector_store = get_vector_store()
+        if vector_store.available:
+            await vector_store.ensure_collection()
+    except Exception as exc:  # noqa: BLE001 - startup must not crash on RAG
+        import structlog
+        structlog.get_logger().warning("rag.collection_bootstrap_failed", error=str(exc))
     yield
     # Shutdown
     await error_tracker.stop()
@@ -332,6 +345,7 @@ app.include_router(
     prefix="/api/v1/data-retention",
     tags=["Data Retention"],
 )
+app.include_router(rag.router, prefix="/api/v1/rag", tags=["RAG"])
 
 
 @app.get("/")
