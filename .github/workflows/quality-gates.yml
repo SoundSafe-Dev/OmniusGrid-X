@@ -29,10 +29,13 @@ jobs:
   # --- task 12: property-based API contract tests ---------------------------
   api-contract:
     runs-on: ubuntu-latest
-    # Advisory: handlers still return undocumented 400/404s (FastAPI only
-    # auto-documents 200/422) and schemathesis-generated ids hit real 500s on
-    # postgres (e.g. non-UUID path params). Gate it AFTER responses are
-    # documented; flipping it blocking today is a permanently red pipeline.
+    # Advisory (ready to flip pending one green CI run). The two known blockers
+    # are now fixed: (1) FS-80 documents 401/403/404/422/429/500 on every router
+    # mount (app/core/responses.py), and (2) migrations 039/040 repaired the
+    # ORM<->schema drift that 500'd reads on a real postgres. Kept advisory only
+    # because schemathesis (a CI-only dev dep) can't be run locally to prove the
+    # full ~400-op property suite is clean; flip to blocking once this job is
+    # observed green in CI.
     continue-on-error: true
     services:
       postgres:
