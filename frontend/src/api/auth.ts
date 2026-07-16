@@ -7,7 +7,11 @@ import {
 } from '../types';
 
 export const authApi = {
-  login: async (credentials: LoginCredentials): Promise<{ accessToken: string; user: User }> => {
+  login: async (credentials: LoginCredentials): Promise<{
+    accessToken: string;
+    refreshToken: string;
+    user: User;
+  }> => {
     const formData = new URLSearchParams();
     formData.append('username', credentials.email);
     formData.append('password', credentials.password);
@@ -27,19 +31,28 @@ export const authApi = {
     
     return {
       accessToken: response.data.access_token,
+      refreshToken: response.data.refresh_token,
       user: userResponse.data,
     };
   },
 
-  logout: async (): Promise<void> => {
-    await api.post('/api/v1/auth/logout');
+  logout: async (refreshToken?: string | null): Promise<void> => {
+    await api.post('/api/v1/auth/logout', {
+      refreshToken: refreshToken ?? undefined,
+    });
   },
 
-  refreshToken: async (refreshToken: string): Promise<{ accessToken: string }> => {
-    const response = await api.post<{ accessToken: string }>('/api/v1/auth/refresh', {
+  refreshToken: async (refreshToken: string): Promise<{
+    accessToken: string;
+    refreshToken: string;
+  }> => {
+    const response = await api.post<AuthResponse>('/api/v1/auth/refresh', {
       refreshToken,
     });
-    return response.data;
+    return {
+      accessToken: response.data.access_token,
+      refreshToken: response.data.refresh_token,
+    };
   },
 
   getMe: async (): Promise<User> => {

@@ -1212,10 +1212,15 @@ class APIKey(Base):
 class UserSession(Base):
     """User session management"""
     __tablename__ = "user_sessions"
+    __table_args__ = (
+        Index("uq_user_sessions_jti", "jti", unique=True),
+    )
 
     id = UUIDColumn()
     user_id = UUIDForeignKey("users.id", nullable=False)
     token_hash = Column(String(64), nullable=False, unique=True)
+    jti = Column(UUID(as_uuid=True), nullable=False)
+    token_type = Column(String(20), nullable=False, default="refresh")
     ip_address = Column(String(45), nullable=True)
     user_agent = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
@@ -1223,7 +1228,33 @@ class UserSession(Base):
     expires_at = Column(DateTime(timezone=True), nullable=False)
     is_active = Column(Boolean, nullable=False, default=True)
     revoked_at = Column(DateTime(timezone=True), nullable=True)
-    meta_data = Column(JSON, default={})
+    revoked_reason = Column(String(100), nullable=True)
+    replaced_by_jti = Column(UUID(as_uuid=True), nullable=True)
+    meta_data = Column("metadata", JSONB, default=dict)
+
+
+class RevokedToken(Base):
+    """Durable local-JWT denylist shared by every backend replica."""
+
+    __tablename__ = "revoked_tokens"
+    __table_args__ = (
+        Index("idx_revoked_tokens_expires_at", "expires_at"),
+        Index("idx_revoked_tokens_user_id", "user_id"),
+    )
+
+    id = UUIDColumn()
+    jti = Column(UUID(as_uuid=True), nullable=False, unique=True)
+    user_id = UUIDForeignKey("users.id", nullable=False)
+    session_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("user_sessions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    token_type = Column(String(20), nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    revoked_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    reason = Column(String(100), nullable=True)
+    meta_data = Column("metadata", JSONB, default=dict)
 
 
 class ConsentRecord(Base):

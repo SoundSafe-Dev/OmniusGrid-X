@@ -20,7 +20,11 @@ from app.services.oee_calculator import oee_calculator
 from app.middleware.audit import AuditLoggingMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.middleware.csrf import CSRFMiddleware
-from app.middleware.rate_limit import limiter, rate_limit_exceeded_handler
+from app.middleware.rate_limit import (
+    auth_limiter,
+    limiter,
+    rate_limit_exceeded_handler,
+)
 from app.middleware.profiling import setup_profiling
 from app.middleware.error_tracking import setup_error_tracking
 from app.services.error_tracker import error_tracker
@@ -146,6 +150,7 @@ app = FastAPI(
 # Register the limiter and handler unconditionally so explicitly enabled endpoint
 # limits work in tests and dynamically configured deployments.
 app.state.limiter = limiter
+app.state.auth_limiter = auth_limiter
 app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
 # Application-wide middleware remains gated on settings.RATE_LIMIT_ENABLED.
@@ -161,9 +166,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# CSRF middleware (optional, can be disabled for API-only usage)
-# Uncomment to enable CSRF protection
-# app.add_middleware(CSRFMiddleware)
+# CSRF remains off for bearer-only deployments. When enabled, the middleware
+# protects cookie-authenticated writes and explicitly ignores bearer requests.
+if settings.CSRF_ENABLED:
+    app.add_middleware(CSRFMiddleware)
 
 # Security headers middleware (disabled for debugging)
 # app.add_middleware(SecurityHeadersMiddleware)

@@ -35,12 +35,18 @@ class Settings(BaseSettings):
     JWT_SECRET_KEY: str = "dev_secret_key_change_in_production"
     JWT_ALGORITHM: str = "HS256"
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    CSRF_ENABLED: bool = False
     
     # Rate Limiting
     RATE_LIMIT_ENABLED: bool = False
     RATE_LIMIT_PER_USER: str = "100/minute"
     RATE_LIMIT_GLOBAL: str = "1000/minute"
     RATE_LIMIT_BURST: int = 10
+    AUTH_LOGIN_RATE_LIMIT: str = "10/minute"
+    AUTH_REGISTER_RATE_LIMIT: str = "5/hour"
+    AUTH_REFRESH_RATE_LIMIT: str = "30/minute"
+    AUTH_LOGOUT_RATE_LIMIT: str = "30/minute"
     
     # Security Headers
     SECURITY_HEADERS_ENABLED: bool = True

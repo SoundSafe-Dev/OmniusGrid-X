@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { User, AuthResponse, LoginCredentials, hasPermission, Permission } from '../types';
+import { User, LoginCredentials, hasPermission, Permission } from '../types';
 import { authApi } from '../api';
 
 interface AuthState {
@@ -35,14 +35,17 @@ export const useAuthStore = create<AuthState>()(
         set({ isLoading: true, error: null });
         try {
           const response = await authApi.login(credentials);
-          const { accessToken, user } = response;
+          const { accessToken, refreshToken, user } = response;
 
           localStorage.setItem('accessToken', accessToken);
+          localStorage.setItem('refreshToken', refreshToken);
+          localStorage.removeItem('devToken');
           localStorage.setItem('user', JSON.stringify(user));
 
           set({
             user,
             accessToken,
+            refreshToken,
             isAuthenticated: true,
             isLoading: false,
           });
@@ -57,14 +60,16 @@ export const useAuthStore = create<AuthState>()(
       },
 
       logout: async () => {
+        const liveRefreshToken = localStorage.getItem('refreshToken') || get().refreshToken;
         try {
-          await authApi.logout();
-        } catch (error) {
+          await authApi.logout(liveRefreshToken);
+        } catch {
           // Ignore logout errors
         }
 
         localStorage.removeItem('accessToken');
         localStorage.removeItem('refreshToken');
+        localStorage.removeItem('devToken');
         localStorage.removeItem('user');
 
         set({
@@ -77,7 +82,7 @@ export const useAuthStore = create<AuthState>()(
       },
 
       refreshAccessToken: async () => {
-        const { refreshToken } = get();
+        const refreshToken = localStorage.getItem('refreshToken') || get().refreshToken;
         if (!refreshToken) {
           set({ isAuthenticated: false });
           return false;
@@ -86,11 +91,15 @@ export const useAuthStore = create<AuthState>()(
         try {
           const response = await authApi.refreshToken(refreshToken);
           localStorage.setItem('accessToken', response.accessToken);
-          set({ accessToken: response.accessToken });
+          localStorage.setItem('refreshToken', response.refreshToken);
+          set({
+            accessToken: response.accessToken,
+            refreshToken: response.refreshToken,
+          });
           return true;
-        } catch (error) {
+        } catch {
           // Refresh failed, logout
-          get().logout();
+          void get().logout();
           return false;
         }
       },
@@ -101,17 +110,17 @@ export const useAuthStore = create<AuthState>()(
       },
 
       devLogin: (user: User, token: string) => {
-        console.log('DEV LOGIN CALLED', user, token);
         localStorage.setItem('accessToken', token);
         localStorage.setItem('devToken', token);
+        localStorage.removeItem('refreshToken');
         localStorage.setItem('user', JSON.stringify(user));
         set({
           user,
           accessToken: token,
+          refreshToken: null,
           isAuthenticated: true,
           isLoading: false,
         });
-        console.log('DEV LOGIN STATE SET');
       },
 
       clearError: () => set({ error: null }),
