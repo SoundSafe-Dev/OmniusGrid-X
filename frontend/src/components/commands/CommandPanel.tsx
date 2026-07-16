@@ -1,6 +1,6 @@
 import { FC, useState, useCallback } from 'react';
 import { Send, AlertTriangle, Pause, Play, Thermometer, Gauge } from 'lucide-react';
-import { useMutation, useQueryClient } from 'react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api';
 import { Button, Card, Badge, Input } from '../ui';
 
@@ -197,7 +197,7 @@ export const CommandPanel: FC<CommandPanelProps> = ({
               variant="danger"
               size="sm"
               onClick={() => emergencyStop.mutate()}
-              loading={emergencyStop.isLoading}
+              loading={emergencyStop.isPending}
             >
               STOP NOW
             </Button>
@@ -264,9 +264,9 @@ export const CommandPanel: FC<CommandPanelProps> = ({
               variant={selectedCommand.variant}
               className="flex-1"
               onClick={handleCommandSubmit}
-              loading={submitCommand.isLoading}
+              loading={submitCommand.isPending}
             >
-              {!submitCommand.isLoading && <Send className="w-4 h-4 mr-2" />}
+              {!submitCommand.isPending && <Send className="w-4 h-4 mr-2" />}
               Send Command
             </Button>
             <Button

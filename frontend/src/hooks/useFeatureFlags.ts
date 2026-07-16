@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient, UseQueryOptions } from 'react-query';
+import { useQuery, useMutation, useQueryClient, UseQueryOptions } from '@tanstack/react-query';
 import { featureFlagsApi, FeatureFlag, FeatureFlagCreate, FeatureFlagUpdate } from '../api/featureFlags';
 
 const FEATURE_FLAGS_QUERY_KEY = 'featureFlags';
@@ -11,14 +11,12 @@ type FlagMap = Record<string, boolean>;
  * a flag never appears on unless the backend explicitly says so.
  */
 export function useFeatureFlags(options?: UseQueryOptions<FlagMap, Error>) {
-  const query = useQuery<FlagMap, Error>(
-    [FEATURE_FLAGS_QUERY_KEY, 'evaluate'],
-    () => featureFlagsApi.evaluate(),
-    {
-      staleTime: 60_000,
-      ...options,
-    }
-  );
+  const query = useQuery<FlagMap, Error>({
+    queryKey: [FEATURE_FLAGS_QUERY_KEY, 'evaluate'],
+    queryFn: () => featureFlagsApi.evaluate(),
+    staleTime: 60_000,
+    ...options,
+  });
 
   const flags = query.data ?? {};
   const isEnabled = (key: string): boolean => flags[key] === true;
@@ -36,36 +34,40 @@ export function useFeatureFlag(key: string): boolean {
 const ADMIN_QUERY_KEY = [FEATURE_FLAGS_QUERY_KEY, 'admin'];
 
 export function useFeatureFlagList(options?: UseQueryOptions<FeatureFlag[], Error>) {
-  return useQuery<FeatureFlag[], Error>(ADMIN_QUERY_KEY, () => featureFlagsApi.list(), options);
+  return useQuery<FeatureFlag[], Error>({
+    queryKey: ADMIN_QUERY_KEY,
+    queryFn: () => featureFlagsApi.list(),
+    ...options,
+  });
 }
 
 export function useCreateFeatureFlag() {
   const queryClient = useQueryClient();
-  return useMutation((payload: FeatureFlagCreate) => featureFlagsApi.create(payload), {
+  return useMutation({
+    mutationFn: (payload: FeatureFlagCreate) => featureFlagsApi.create(payload),
     onSuccess: () => {
-      queryClient.invalidateQueries([FEATURE_FLAGS_QUERY_KEY]);
+      queryClient.invalidateQueries({ queryKey: [FEATURE_FLAGS_QUERY_KEY] });
     },
   });
 }
 
 export function useUpdateFeatureFlag() {
   const queryClient = useQueryClient();
-  return useMutation(
-    ({ key, payload }: { key: string; payload: FeatureFlagUpdate }) =>
+  return useMutation({
+    mutationFn: ({ key, payload }: { key: string; payload: FeatureFlagUpdate }) =>
       featureFlagsApi.update(key, payload),
-    {
-      onSuccess: () => {
-        queryClient.invalidateQueries([FEATURE_FLAGS_QUERY_KEY]);
-      },
-    }
-  );
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [FEATURE_FLAGS_QUERY_KEY] });
+    },
+  });
 }
 
 export function useDeleteFeatureFlag() {
   const queryClient = useQueryClient();
-  return useMutation((key: string) => featureFlagsApi.remove(key), {
+  return useMutation({
+    mutationFn: (key: string) => featureFlagsApi.remove(key),
     onSuccess: () => {
-      queryClient.invalidateQueries([FEATURE_FLAGS_QUERY_KEY]);
+      queryClient.invalidateQueries({ queryKey: [FEATURE_FLAGS_QUERY_KEY] });
     },
   });
 }

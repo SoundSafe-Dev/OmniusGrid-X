@@ -1,5 +1,5 @@
 import { FC, useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from 'react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Activity, HardDrive, X, Plus, Edit, Trash2 } from 'lucide-react';
 import { Card, Badge, Button, Table, SkeletonCard, Input, Select } from '../../components';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
@@ -8,7 +8,7 @@ import { User, UserRole } from '../../types';
 
 export const UsersPage: FC = () => {
   const queryClient = useQueryClient();
-  const { data: users, isLoading } = useQuery('users', () => authApi.getUsers());
+  const { data: users, isLoading } = useQuery({ queryKey: ['users'], queryFn: () => authApi.getUsers() });
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
@@ -20,37 +20,31 @@ export const UsersPage: FC = () => {
     password: '',
   });
 
-  const createMutation = useMutation(
-    (userData: typeof formData) => authApi.createUser(userData),
-    {
-      onSuccess: () => {
-        queryClient.invalidateQueries('users');
-        setShowAddModal(false);
-        setFormData({ name: '', email: '', role: 'viewer', isActive: true, password: '' });
-      },
-    }
-  );
+  const createMutation = useMutation({
+    mutationFn: (userData: typeof formData) => authApi.createUser(userData),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+      setShowAddModal(false);
+      setFormData({ name: '', email: '', role: 'viewer', isActive: true, password: '' });
+    },
+  });
 
-  const updateMutation = useMutation(
-    ({ userId, userData }: { userId: string; userData: Partial<User> }) =>
+  const updateMutation = useMutation({
+    mutationFn: ({ userId, userData }: { userId: string; userData: Partial<User> }) =>
       authApi.updateUser(userId, userData),
-    {
-      onSuccess: () => {
-        queryClient.invalidateQueries('users');
-        setShowEditModal(false);
-        setSelectedUser(null);
-      },
-    }
-  );
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+      setShowEditModal(false);
+      setSelectedUser(null);
+    },
+  });
 
-  const deleteMutation = useMutation(
-    (userId: string) => authApi.deleteUser(userId),
-    {
-      onSuccess: () => {
-        queryClient.invalidateQueries('users');
-      },
-    }
-  );
+  const deleteMutation = useMutation({
+    mutationFn: (userId: string) => authApi.deleteUser(userId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+    },
+  });
 
   const handleAddUser = () => {
     if (!formData.name || !formData.email || !formData.password) {
@@ -226,9 +220,9 @@ export const UsersPage: FC = () => {
               <Button
                 variant="primary"
                 onClick={handleAddUser}
-                disabled={createMutation.isLoading}
+                disabled={createMutation.isPending}
               >
-                {createMutation.isLoading ? 'Creating...' : 'Create User'}
+                {createMutation.isPending ? 'Creating...' : 'Create User'}
               </Button>
             </div>
           </div>
@@ -286,9 +280,9 @@ export const UsersPage: FC = () => {
               <Button
                 variant="primary"
                 onClick={handleEditUser}
-                disabled={updateMutation.isLoading}
+                disabled={updateMutation.isPending}
               >
-                {updateMutation.isLoading ? 'Updating...' : 'Update User'}
+                {updateMutation.isPending ? 'Updating...' : 'Update User'}
               </Button>
             </div>
           </div>
@@ -310,10 +304,14 @@ interface EdgeAgent {
 }
 
 export const CollectorsPage: FC = () => {
-  const { data: agents, isLoading } = useQuery('edge-fleet', async () => {
-    const res = await api.get<EdgeAgent[]>('/api/v1/edge/fleet');
-    return res.data;
-  }, { refetchInterval: 30_000 }); // liveness must refresh, not freeze at mount
+  const { data: agents, isLoading } = useQuery({
+    queryKey: ['edge-fleet'],
+    queryFn: async () => {
+      const res = await api.get<EdgeAgent[]>('/api/v1/edge/fleet');
+      return res.data;
+    },
+    refetchInterval: 30_000, // liveness must refresh, not freeze at mount
+  });
 
   const livenessVariant = (l: string): 'success' | 'warning' | 'error' =>
     l === 'live' || l === 'online' ? 'success' : l === 'stale' ? 'warning' : 'error';
@@ -362,14 +360,22 @@ export const CollectorsPage: FC = () => {
 };
 
 export const SystemHealthPage: FC = () => {
-  const { data: health } = useQuery('health-detailed', async () => {
-    const res = await api.get<{ status: string; checks: Record<string, string> }>('/health/detailed');
-    return res.data;
-  }, { refetchInterval: 15000 });
-  const { data: sys } = useQuery('health-system', async () => {
-    const res = await api.get<{ available: boolean; cpu_percent: number | null; memory_percent: number | null; disk_percent: number | null }>('/health/system');
-    return res.data;
-  }, { refetchInterval: 15000 });
+  const { data: health } = useQuery({
+    queryKey: ['health-detailed'],
+    queryFn: async () => {
+      const res = await api.get<{ status: string; checks: Record<string, string> }>('/health/detailed');
+      return res.data;
+    },
+    refetchInterval: 15000,
+  });
+  const { data: sys } = useQuery({
+    queryKey: ['health-system'],
+    queryFn: async () => {
+      const res = await api.get<{ available: boolean; cpu_percent: number | null; memory_percent: number | null; disk_percent: number | null }>('/health/system');
+      return res.data;
+    },
+    refetchInterval: 15000,
+  });
 
   const checks = health?.checks ?? {};
   const healthy = (s: string) => s === 'healthy' || s === 'ok' || s === 'up' || s === 'ready';
@@ -438,21 +444,24 @@ const SETTING_DEFAULTS: Required<OrgSettings> = {
 
 export const SettingsPage: FC = () => {
   const queryClient = useQueryClient();
-  const { data: settings } = useQuery('org-settings', async () => {
-    const res = await api.get<OrgSettings>('/api/v1/organizations/settings/current');
-    return res.data;
+  const { data: settings } = useQuery({
+    queryKey: ['org-settings'],
+    queryFn: async () => {
+      const res = await api.get<OrgSettings>('/api/v1/organizations/settings/current');
+      return res.data;
+    },
   });
 
   const [draft, setDraft] = useState<OrgSettings>({});
   // Explicit defaults first, stored values over them, unsaved edits on top.
   const current = { ...SETTING_DEFAULTS, ...settings, ...draft };
 
-  const save = useMutation(
+  const save = useMutation({
     // Send only the edited keys: the server merges, and re-sending the full
     // snapshot would clobber concurrent edits from another admin/tab.
-    (patch: OrgSettings) => api.put('/api/v1/organizations/settings/current', patch),
-    { onSuccess: () => { queryClient.invalidateQueries('org-settings'); setDraft({}); } },
-  );
+    mutationFn: (patch: OrgSettings) => api.put('/api/v1/organizations/settings/current', patch),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['org-settings'] }); setDraft({}); },
+  });
 
   const set = (key: keyof OrgSettings, value: any) => setDraft((d) => ({ ...d, [key]: value }));
   const dirty = Object.keys(draft).length > 0;
@@ -500,8 +509,8 @@ export const SettingsPage: FC = () => {
       </Card>
 
       <div className="flex items-center gap-3">
-        <Button onClick={() => save.mutate(draft)} disabled={!dirty || save.isLoading}>
-          {save.isLoading ? 'Saving…' : 'Save changes'}
+        <Button onClick={() => save.mutate(draft)} disabled={!dirty || save.isPending}>
+          {save.isPending ? 'Saving…' : 'Save changes'}
         </Button>
         {save.isSuccess && !dirty && <span className="text-sm text-status-success">Saved</span>}
       </div>

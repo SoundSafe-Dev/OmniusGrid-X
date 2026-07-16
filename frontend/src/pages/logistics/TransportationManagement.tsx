@@ -1,5 +1,5 @@
 import { FC, useState, useEffect } from 'react';
-import { useQuery } from 'react-query';
+import { useQuery } from '@tanstack/react-query';
 import {
   Truck,
   MapPin,
@@ -51,40 +51,40 @@ export const TransportationManagement: FC = () => {
   const [selectedMapVehicle, setSelectedMapVehicle] = useState<string | null>(null);
   const [selectedMapShipment, setSelectedMapShipment] = useState<string | null>(null);
 
-  const { data: shipmentsData, isLoading: shipmentsLoading, refetch: refetchShipments } = useQuery(
-    [TRANSPORT_QUERY_KEY, 'shipments', filters],
-    () => transportationApi.getShipments(filters)
-  );
+  const { data: shipmentsData, isLoading: shipmentsLoading, refetch: refetchShipments } = useQuery({
+    queryKey: [TRANSPORT_QUERY_KEY, 'shipments', filters],
+    queryFn: () => transportationApi.getShipments(filters),
+  });
 
-  const { data: carriersData, isLoading: carriersLoading } = useQuery(
-    [TRANSPORT_QUERY_KEY, 'carriers'],
-    () => transportationApi.getCarriers()
-  );
+  const { data: carriersData, isLoading: carriersLoading } = useQuery({
+    queryKey: [TRANSPORT_QUERY_KEY, 'carriers'],
+    queryFn: () => transportationApi.getCarriers(),
+  });
 
-  const { data: driversData, isLoading: driversLoading } = useQuery(
-    [TRANSPORT_QUERY_KEY, 'drivers'],
-    () => transportationApi.getDrivers()
-  );
+  const { data: driversData, isLoading: driversLoading } = useQuery({
+    queryKey: [TRANSPORT_QUERY_KEY, 'drivers'],
+    queryFn: () => transportationApi.getDrivers(),
+  });
 
-  const { data: vehiclesData, isLoading: vehiclesLoading } = useQuery(
-    [TRANSPORT_QUERY_KEY, 'vehicles'],
-    () => transportationApi.getVehicles()
-  );
+  const { data: vehiclesData, isLoading: vehiclesLoading } = useQuery({
+    queryKey: [TRANSPORT_QUERY_KEY, 'vehicles'],
+    queryFn: () => transportationApi.getVehicles(),
+  });
 
-  const { data: fleetSummary } = useQuery(
-    [TRANSPORT_QUERY_KEY, 'fleet-summary'],
-    () => geoTabApi.getFleetSummary()
-  );
+  const { data: fleetSummary } = useQuery({
+    queryKey: [TRANSPORT_QUERY_KEY, 'fleet-summary'],
+    queryFn: () => geoTabApi.getFleetSummary(),
+  });
 
-  const { data: deliveryEfficiency } = useQuery(
-    [TRANSPORT_QUERY_KEY, 'efficiency'],
-    () => transportationApi.getDeliveryEfficiency()
-  );
+  const { data: deliveryEfficiency } = useQuery({
+    queryKey: [TRANSPORT_QUERY_KEY, 'efficiency'],
+    queryFn: () => transportationApi.getDeliveryEfficiency(),
+  });
 
-  const { data: complianceSummary } = useQuery(
-    [TRANSPORT_QUERY_KEY, 'compliance'],
-    () => transportationApi.getComplianceSummary()
-  );
+  const { data: complianceSummary } = useQuery({
+    queryKey: [TRANSPORT_QUERY_KEY, 'compliance'],
+    queryFn: () => transportationApi.getComplianceSummary(),
+  });
 
   const shipments = shipmentsData?.items || [];
   const carriers = carriersData?.items || [];

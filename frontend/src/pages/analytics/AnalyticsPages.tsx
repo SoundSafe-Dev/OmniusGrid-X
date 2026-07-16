@@ -1,5 +1,5 @@
 import { FC, useState } from 'react';
-import { useQuery } from 'react-query';
+import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, ChevronDown, ChevronRight, Wrench } from 'lucide-react';
 import { Card, Badge } from '../../components';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
@@ -22,7 +22,7 @@ const RUNNING_STATES = ['Execute', 'Idle'];
 const AT_RISK_STATES = ['Held', 'Holding', 'Suspended', 'Aborted', 'Aborting', 'Stopped', 'Stopping'];
 
 export const AssetHealth: FC = () => {
-  const { data: assetsPage } = useQuery('assethealth-assets', () => assetsApi.list({ limit: 500 }));
+  const { data: assetsPage } = useQuery({ queryKey: ['assethealth-assets'], queryFn: () => assetsApi.list({ limit: 500 }) });
   const assets = assetsPage?.items ?? [];
 
   const buckets = [
@@ -79,7 +79,7 @@ export const AssetHealth: FC = () => {
 };
 
 export const PredictiveMaintenance: FC = () => {
-  const { data: upcoming } = useQuery('predictive-upcoming', () => maintenanceApi.getUpcomingMaintenance(30));
+  const { data: upcoming } = useQuery({ queryKey: ['predictive-upcoming'], queryFn: () => maintenanceApi.getUpcomingMaintenance(30) });
   const items = upcoming ?? [];
 
   const dueLabel = (dateStr?: string) => {
@@ -129,17 +129,17 @@ export const TelemetryCharts: FC = () => {
   // Real data: first asset's telemetry history, current fleet OEE, and the
   // fleet's PackML-state distribution. (Nozzle/bed/vibration were 3D-printer
   // demo metrics; the chart now plots whatever metrics the asset actually has.)
-  const { data: assetsPage } = useQuery('analytics-assets', () => assetsApi.list({ limit: 500 }));
+  const { data: assetsPage } = useQuery({ queryKey: ['analytics-assets'], queryFn: () => assetsApi.list({ limit: 500 }) });
   const assets = assetsPage?.items ?? [];
   const firstAsset = assets[0];
 
   const startTime = new Date(Date.now() - (RANGE_HOURS[timeRange] ?? 24) * 3600_000).toISOString();
-  const { data: history } = useQuery(
-    ['analytics-telemetry', firstAsset?.id, timeRange],
-    () => telemetryApi.getHistory(firstAsset!.id, { startTime }),
-    { enabled: !!firstAsset },
-  );
-  const { data: fleetOEE } = useQuery('analytics-fleet-oee', () => dashboardApi.getFleetOEE());
+  const { data: history } = useQuery({
+    queryKey: ['analytics-telemetry', firstAsset?.id, timeRange],
+    queryFn: () => telemetryApi.getHistory(firstAsset!.id, { startTime }),
+    enabled: !!firstAsset,
+  });
+  const { data: fleetOEE } = useQuery({ queryKey: ['analytics-fleet-oee'], queryFn: () => dashboardApi.getFleetOEE() });
 
   // Pivot the flat TelemetryPoint[] into chart rows keyed by the full timestamp
   // (not time-of-day) so multi-day ranges don't collapse different days into the

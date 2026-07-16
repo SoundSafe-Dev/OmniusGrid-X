@@ -1,5 +1,5 @@
 import { FC } from 'react';
-import { useQuery } from 'react-query';
+import { useQuery } from '@tanstack/react-query';
 import { Activity, AlertTriangle, HeartPulse } from 'lucide-react';
 import { Card, Badge, SkeletonCard } from '../../components';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
@@ -29,11 +29,11 @@ const formatHours = (hours: number): string => {
 };
 
 export const PredictiveMaintenance: FC = () => {
-  const { data, isLoading, isError } = useQuery(
-    'rul-assessments',
-    () => rulApi.listAssessments({ hours: 24, limit: 100 }),
-    { refetchInterval: 60000 }
-  );
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['rul-assessments'],
+    queryFn: () => rulApi.listAssessments({ hours: 24, limit: 100 }),
+    refetchInterval: 60000,
+  });
 
   if (isLoading) {
     return (

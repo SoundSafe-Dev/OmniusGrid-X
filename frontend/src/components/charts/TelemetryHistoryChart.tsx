@@ -1,5 +1,5 @@
 import { FC, useMemo, useState } from 'react'
-import { useQuery } from 'react-query'
+import { useQuery } from '@tanstack/react-query'
 import {
   Line, LineChart, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis, CartesianGrid,
 } from 'recharts'
@@ -24,14 +24,17 @@ export const TelemetryHistoryChart: FC<Props> = ({ assetId, height = 260 }) => {
   const [metric, setMetric] = useState<string | undefined>(undefined)
   const [agg, setAgg] = useState<'1min' | '5min' | '1hour' | undefined>(undefined)
 
-  const { data: available } = useQuery(['metrics', assetId], () => telemetryApi.getAvailableMetrics(assetId))
+  const { data: available } = useQuery({
+    queryKey: ['metrics', assetId],
+    queryFn: () => telemetryApi.getAvailableMetrics(assetId),
+  })
   const activeMetric = metric ?? available?.metrics?.[0]
 
-  const { data: history, isLoading } = useQuery(
-    ['history', assetId, activeMetric, agg],
-    () => telemetryApi.getHistory(assetId, { metricName: activeMetric, aggregation: agg }),
-    { enabled: !!activeMetric }
-  )
+  const { data: history, isLoading } = useQuery({
+    queryKey: ['history', assetId, activeMetric, agg],
+    queryFn: () => telemetryApi.getHistory(assetId, { metricName: activeMetric, aggregation: agg }),
+    enabled: !!activeMetric,
+  })
 
   const series = useMemo(
     () => (history ?? []).map((p) => ({ t: new Date(p.timestamp).toLocaleTimeString(), value: p.value })),

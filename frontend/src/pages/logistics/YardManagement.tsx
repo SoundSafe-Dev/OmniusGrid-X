@@ -1,5 +1,5 @@
 import { FC, useState, useEffect } from 'react';
-import { useQuery } from 'react-query';
+import { useQuery } from '@tanstack/react-query';
 import {
   Truck,
   Warehouse,
@@ -35,30 +35,30 @@ export const YardManagement: FC = () => {
   const [showCheckIn, setShowCheckIn] = useState(false);
   const [activeTab, setActiveTab] = useState<'trailers' | 'map' | 'doors' | 'appointments' | 'detention'>('trailers');
 
-  const { data: trailersData, isLoading: trailersLoading, refetch: refetchTrailers } = useQuery(
-    [YARD_QUERY_KEY, 'trailers', filters],
-    () => yardApi.getTrailers(filters)
-  );
+  const { data: trailersData, isLoading: trailersLoading, refetch: refetchTrailers } = useQuery({
+    queryKey: [YARD_QUERY_KEY, 'trailers', filters],
+    queryFn: () => yardApi.getTrailers(filters),
+  });
 
-  const { data: doorsData, isLoading: doorsLoading } = useQuery(
-    [YARD_QUERY_KEY, 'doors'],
-    () => yardApi.getDockDoors()
-  );
+  const { data: doorsData, isLoading: doorsLoading } = useQuery({
+    queryKey: [YARD_QUERY_KEY, 'doors'],
+    queryFn: () => yardApi.getDockDoors(),
+  });
 
-  const { data: appointmentsData, isLoading: appointmentsLoading } = useQuery(
-    [YARD_QUERY_KEY, 'appointments'],
-    () => yardApi.getAppointments()
-  );
+  const { data: appointmentsData, isLoading: appointmentsLoading } = useQuery({
+    queryKey: [YARD_QUERY_KEY, 'appointments'],
+    queryFn: () => yardApi.getAppointments(),
+  });
 
-  const { data: detentionAlerts } = useQuery(
-    [YARD_QUERY_KEY, 'detention'],
-    () => yardApi.getDetentionAlerts()
-  );
+  const { data: detentionAlerts } = useQuery({
+    queryKey: [YARD_QUERY_KEY, 'detention'],
+    queryFn: () => yardApi.getDetentionAlerts(),
+  });
 
-  const { data: dwellTimes } = useQuery(
-    [YARD_QUERY_KEY, 'dwell-times'],
-    () => yardApi.getDwellTimes()
-  );
+  const { data: dwellTimes } = useQuery({
+    queryKey: [YARD_QUERY_KEY, 'dwell-times'],
+    queryFn: () => yardApi.getDwellTimes(),
+  });
 
   const allTrailers = trailersData?.items || [];
   const trailers = searchTerm

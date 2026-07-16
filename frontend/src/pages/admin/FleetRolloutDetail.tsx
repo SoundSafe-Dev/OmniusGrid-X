@@ -100,7 +100,7 @@ export const FleetRolloutDetail: FC = () => {
             <Button
               variant="secondary"
               onClick={() => pauseRollout.mutate(rollout.data!.id)}
-              loading={pauseRollout.isLoading}
+              loading={pauseRollout.isPending}
             >
               Pause
             </Button>
@@ -109,7 +109,7 @@ export const FleetRolloutDetail: FC = () => {
             <Button
               variant="danger"
               onClick={() => cancelRollout.mutate(rollout.data!.id)}
-              loading={cancelRollout.isLoading}
+              loading={cancelRollout.isPending}
             >
               Cancel
             </Button>

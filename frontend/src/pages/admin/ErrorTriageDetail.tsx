@@ -120,7 +120,7 @@ export const ErrorTriageDetail: FC = () => {
             </div>
             <div className="flex flex-wrap items-center gap-2">
               {data.status === 'open' && (
-                <Button variant="secondary" onClick={() => changeStatus('acknowledged')} loading={updateStatus.isLoading}>
+                <Button variant="secondary" onClick={() => changeStatus('acknowledged')} loading={updateStatus.isPending}>
                   Acknowledge
                 </Button>
               )}
@@ -129,14 +129,14 @@ export const ErrorTriageDetail: FC = () => {
               )}
               {confirmingResolve && (
                 <>
-                  <Button variant="primary" onClick={() => changeStatus('resolved')} loading={updateStatus.isLoading}>
+                  <Button variant="primary" onClick={() => changeStatus('resolved')} loading={updateStatus.isPending}>
                     Confirm resolve
                   </Button>
                   <Button variant="ghost" onClick={() => setConfirmingResolve(false)}>Cancel</Button>
                 </>
               )}
               {data.status === 'resolved' && (
-                <Button variant="secondary" onClick={() => changeStatus('open')} loading={updateStatus.isLoading}>
+                <Button variant="secondary" onClick={() => changeStatus('open')} loading={updateStatus.isPending}>
                   Reopen
                 </Button>
               )}
