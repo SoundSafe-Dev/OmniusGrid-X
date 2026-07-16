@@ -1,5 +1,5 @@
 import { FC, useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from 'react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Cpu, History, RotateCcw, Download, CheckCircle } from 'lucide-react';
 import { Card, Badge, Button, Select, SkeletonCard } from '../../components';
 import { enginesApi } from '../../api';
@@ -10,25 +10,21 @@ export const MLOpsPipeline: FC = () => {
   const queryClient = useQueryClient();
   const [selectedVersion, setSelectedVersion] = useState('');
 
-  const { data: status, isLoading } = useQuery(
-    'mlops-status',
-    () => enginesApi.getMLOpsStatus(),
-    { refetchInterval: 30000 }
-  );
+  const { data: status, isLoading } = useQuery({
+    queryKey: ['mlops-status'],
+    queryFn: () => enginesApi.getMLOpsStatus(),
+    refetchInterval: 30000,
+  });
 
-  const deployMutation = useMutation(
-    (version: string) => enginesApi.deployModel(version),
-    {
-      onSuccess: () => queryClient.invalidateQueries('mlops-status'),
-    }
-  );
+  const deployMutation = useMutation({
+    mutationFn: (version: string) => enginesApi.deployModel(version),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['mlops-status'] }),
+  });
 
-  const rollbackMutation = useMutation(
-    () => enginesApi.rollbackModel(),
-    {
-      onSuccess: () => queryClient.invalidateQueries('mlops-status'),
-    }
-  );
+  const rollbackMutation = useMutation({
+    mutationFn: () => enginesApi.rollbackModel(),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['mlops-status'] }),
+  });
 
   if (isLoading) {
     return (
@@ -103,8 +99,8 @@ export const MLOpsPipeline: FC = () => {
             <TooltipTrigger asChild>
               <Button
                 variant="primary"
-                disabled={!selectedVersion || deployMutation.isLoading}
-                loading={deployMutation.isLoading}
+                disabled={!selectedVersion || deployMutation.isPending}
+                loading={deployMutation.isPending}
                 onClick={() => deployMutation.mutate(selectedVersion)}
               >
                 <Download size={16} className="mr-1" />
@@ -129,8 +125,8 @@ export const MLOpsPipeline: FC = () => {
               </div>
               <Button
                 variant="danger"
-                disabled={rollbackMutation.isLoading || deploymentHistory.length < 2}
-                loading={rollbackMutation.isLoading}
+                disabled={rollbackMutation.isPending || deploymentHistory.length < 2}
+                loading={rollbackMutation.isPending}
                 onClick={() => rollbackMutation.mutate()}
               >
                 <RotateCcw size={16} className="mr-1" />

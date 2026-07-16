@@ -1,5 +1,5 @@
 import { FC } from 'react'
-import { useQuery, useMutation, useQueryClient } from 'react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AlertTriangle, CheckCircle, Bell } from 'lucide-react'
 import { alarmsApi } from '../api'
 import { Tooltip, TooltipTrigger, TooltipContent } from '../components/ui'
@@ -7,24 +7,24 @@ import { Tooltip, TooltipTrigger, TooltipContent } from '../components/ui'
 const Alarms: FC = () => {
   const queryClient = useQueryClient()
   
-  const { data: alarmsData, isLoading } = useQuery('alarms-list', () =>
-    alarmsApi.list()
-  )
+  const { data: alarmsData, isLoading } = useQuery({
+    queryKey: ['alarms-list'],
+    queryFn: () => alarmsApi.list(),
+  })
   const alarms = alarmsData?.items || []
 
-  const { data: activeAlarms } = useQuery('active-alarms', () =>
-    alarmsApi.getActive()
-  )
+  const { data: activeAlarms } = useQuery({
+    queryKey: ['active-alarms'],
+    queryFn: () => alarmsApi.getActive(),
+  })
 
-  const acknowledgeMutation = useMutation(
-    (alarmId: string) => alarmsApi.acknowledge(alarmId),
-    {
-      onSuccess: () => {
-        queryClient.invalidateQueries('alarms-list')
-        queryClient.invalidateQueries('active-alarms')
-      },
-    }
-  )
+  const acknowledgeMutation = useMutation({
+    mutationFn: (alarmId: string) => alarmsApi.acknowledge(alarmId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['alarms-list'] })
+      queryClient.invalidateQueries({ queryKey: ['active-alarms'] })
+    },
+  })
 
   const getSeverityColor = (severity: string) => {
     switch (severity) {

@@ -1,6 +1,6 @@
 import { FC, useMemo } from 'react'
 import { useParams } from 'react-router-dom'
-import { useQuery } from 'react-query'
+import { useQuery } from '@tanstack/react-query'
 import { ArrowLeft, Activity, Clock, Box } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { assetsApi, telemetryApi } from '../api'
@@ -16,15 +16,16 @@ const AssetDetail: FC = () => {
   const { id } = useParams<{ id: string }>()
   const { isAdmin, isOperator } = useAuth()
 
-  const { data: asset, isLoading } = useQuery(['asset', id], () =>
-    assetsApi.get(id!)
-  )
+  const { data: asset, isLoading } = useQuery({
+    queryKey: ['asset', id],
+    queryFn: () => assetsApi.get(id!),
+  })
 
-  const { data: telemetry } = useQuery(
-    ['telemetry', id],
-    () => telemetryApi.getLatest(id!),
-    { refetchInterval: 5000 }
-  )
+  const { data: telemetry } = useQuery({
+    queryKey: ['telemetry', id],
+    queryFn: () => telemetryApi.getLatest(id!),
+    refetchInterval: 5000,
+  })
 
   // Metrics for the live chart, derived from whatever the asset actually
   // reports. Keyed by the metric NAMES (a string), not the telemetry object

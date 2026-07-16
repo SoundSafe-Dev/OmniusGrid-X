@@ -1,5 +1,5 @@
 import { FC, useMemo, useState } from 'react';
-import { useQuery } from 'react-query';
+import { useQuery } from '@tanstack/react-query';
 import { Database, Search } from 'lucide-react';
 import {
   LineChart,
@@ -25,9 +25,10 @@ const GRANULARITIES: { value: HistorianGranularity; label: string }[] = [
 const RANGE_HOURS: Record<string, number> = { '24h': 24, '7d': 168, '30d': 720 };
 
 export const Historian: FC = () => {
-  const { data: assetsPage } = useQuery('historian-assets', () =>
-    assetsApi.list({ limit: 500 })
-  );
+  const { data: assetsPage } = useQuery({
+    queryKey: ['historian-assets'],
+    queryFn: () => assetsApi.list({ limit: 500 }),
+  });
   const assets = assetsPage?.items ?? [];
 
   const [assetId, setAssetId] = useState('');
@@ -38,11 +39,11 @@ export const Historian: FC = () => {
 
   const effectiveAssetId = assetId || assets[0]?.id || '';
 
-  const { data, isFetching, isError } = useQuery(
-    ['historian-query', submitted],
-    () => historianApi.query(submitted!),
-    { enabled: !!submitted }
-  );
+  const { data, isFetching, isError } = useQuery({
+    queryKey: ['historian-query', submitted],
+    queryFn: () => historianApi.query(submitted!),
+    enabled: !!submitted,
+  });
 
   const runQuery = () => {
     if (!effectiveAssetId || !metric) return;
