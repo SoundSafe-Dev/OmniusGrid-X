@@ -35,14 +35,20 @@ interface AssetListParams {
 export const assetsApi = {
   list: async (params?: AssetListParams): Promise<PaginatedResponse<Asset>> => {
     if (USE_MOCK) return mockApi.getAssets();
-    const response = await api.get<Asset[]>('/api/v1/assets/', { params });
-    const items = response.data;
+    // Backend now returns a {items, meta} envelope (FS-82) with a real total,
+    // instead of a bare array we had to fake a count from. Map it to the flat
+    // PaginatedResponse; tolerate either casing of has_more from the transform seam.
+    const response = await api.get<{
+      items: Asset[];
+      meta: { total: number; skip: number; limit: number; has_more?: boolean; hasMore?: boolean };
+    }>('/api/v1/assets/', { params });
+    const { items, meta } = response.data;
     return {
       items,
-      total: items.length,
-      skip: params?.skip || 0,
-      limit: params?.limit || 100,
-      hasMore: items.length === (params?.limit || 100),
+      total: meta.total,
+      skip: meta.skip,
+      limit: meta.limit,
+      hasMore: meta.hasMore ?? meta.has_more ?? meta.skip + items.length < meta.total,
     };
   },
 
