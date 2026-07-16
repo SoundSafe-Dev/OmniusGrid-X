@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
+from app.api.auth import get_current_active_user
 from app.db.database import get_db
 from app.db.models import Carrier, Driver, Shipment, Route, LoadPlan, FreightCharge
 from app.models.schemas import (
@@ -25,14 +26,14 @@ from app.services.transportation_management import transportation_management_ser
 # No router-level prefix: main.py already includes this router at its /api/v1/...
 # path. (The old prefix double-prefixed every route — e.g. /api/v1/yard/yard/* —
 # never noticed because the frontend ran on mocks.)
-from app.api.auth import get_current_active_user
+from app.middleware.rbac import require_operator_or_admin
 
 router = APIRouter(tags=["transportation_management"], dependencies=[Depends(get_current_active_user)])
 
 
 # ==================== Carrier Endpoints ====================
 
-@router.post("/carriers", response_model=CarrierResponse)
+@router.post("/carriers", response_model=CarrierResponse, dependencies=[Depends(require_operator_or_admin)])
 async def create_carrier(
     data: CarrierCreate,
     db: AsyncSession = Depends(get_db)
@@ -86,7 +87,7 @@ async def get_carrier(
     return carrier
 
 
-@router.put("/carriers/{carrier_id}", response_model=CarrierResponse)
+@router.put("/carriers/{carrier_id}", response_model=CarrierResponse, dependencies=[Depends(require_operator_or_admin)])
 async def update_carrier(
     carrier_id: UUID,
     data: CarrierUpdate,
@@ -127,7 +128,7 @@ async def get_carrier_compliance(
 
 # ==================== Driver Endpoints ====================
 
-@router.post("/drivers", response_model=DriverResponse)
+@router.post("/drivers", response_model=DriverResponse, dependencies=[Depends(require_operator_or_admin)])
 async def create_driver(
     data: DriverCreate,
     db: AsyncSession = Depends(get_db)
@@ -186,7 +187,7 @@ async def get_driver(
     return driver
 
 
-@router.put("/drivers/{driver_id}", response_model=DriverResponse)
+@router.put("/drivers/{driver_id}", response_model=DriverResponse, dependencies=[Depends(require_operator_or_admin)])
 async def update_driver(
     driver_id: UUID,
     data: DriverUpdate,
@@ -227,7 +228,7 @@ async def get_driver_hos(
 
 # ==================== Shipment Endpoints ====================
 
-@router.post("/shipments", response_model=ShipmentResponse)
+@router.post("/shipments", response_model=ShipmentResponse, dependencies=[Depends(require_operator_or_admin)])
 async def create_shipment(
     data: ShipmentCreate,
     db: AsyncSession = Depends(get_db)
@@ -290,7 +291,7 @@ async def get_shipment(
     return shipment
 
 
-@router.put("/shipments/{shipment_id}", response_model=ShipmentResponse)
+@router.put("/shipments/{shipment_id}", response_model=ShipmentResponse, dependencies=[Depends(require_operator_or_admin)])
 async def update_shipment(
     shipment_id: UUID,
     data: ShipmentUpdate,
@@ -313,7 +314,7 @@ async def update_shipment(
     return shipment
 
 
-@router.post("/shipments/{shipment_id}/dispatch")
+@router.post("/shipments/{shipment_id}/dispatch", dependencies=[Depends(require_operator_or_admin)])
 async def dispatch_shipment(
     shipment_id: UUID,
     driver_id: UUID,
@@ -338,7 +339,7 @@ async def dispatch_shipment(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.post("/shipments/{shipment_id}/status")
+@router.post("/shipments/{shipment_id}/status", dependencies=[Depends(require_operator_or_admin)])
 async def update_shipment_status(
     shipment_id: UUID,
     status: str,
@@ -382,7 +383,7 @@ async def get_shipment_costs(
 
 # ==================== Route Endpoints ====================
 
-@router.post("/routes", response_model=RouteResponse)
+@router.post("/routes", response_model=RouteResponse, dependencies=[Depends(require_operator_or_admin)])
 async def create_route(
     data: RouteCreate,
     db: AsyncSession = Depends(get_db)
@@ -419,7 +420,7 @@ async def get_routes(
 
 # ==================== Load Plan Endpoints ====================
 
-@router.post("/load-plans", response_model=LoadPlanResponse)
+@router.post("/load-plans", response_model=LoadPlanResponse, dependencies=[Depends(require_operator_or_admin)])
 async def create_load_plan(
     data: LoadPlanCreate,
     db: AsyncSession = Depends(get_db)
@@ -456,7 +457,7 @@ async def get_load_plan(
 
 # ==================== Freight Charge Endpoints ====================
 
-@router.post("/freight-charges", response_model=FreightChargeResponse)
+@router.post("/freight-charges", response_model=FreightChargeResponse, dependencies=[Depends(require_operator_or_admin)])
 async def create_freight_charge(
     data: FreightChargeCreate,
     db: AsyncSession = Depends(get_db)

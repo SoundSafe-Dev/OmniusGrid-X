@@ -179,7 +179,6 @@ shadow (light) `0 24px 70px rgba(15,23,42,.07)` · logo glow (dark)
 - [ ] Real product UI for every capability claim
 - [ ] "by SoundSafe" pill, bottom-right
 - [ ] Dark + light variants where the channel needs both
-- [ ] No "app.omniusgrid.io" URLs until launch
 
 ## Asset library (all code, all re-renderable)
 

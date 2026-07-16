@@ -68,9 +68,8 @@ async def verify_api_key(
     return api_key_obj
 
 
-@router.post("/generate", summary="Generate API key", description="Generate a new API key for external integrations. Returns the full key (only shown once).")
+@router.post("/generate", summary="Generate API key", description="Generate a new API key for external integrations. Returns the full key (only shown once).", dependencies=[Depends(require_admin)])
 @rate_limit("10/hour")
-@require_admin()
 async def generate_api_key_endpoint(
     request: Request,
     name: str,
@@ -175,7 +174,7 @@ async def list_api_keys(
     return {"items": key_list, "total": len(key_list)}
 
 
-@router.delete("/{key_id}", summary="Revoke API key", description="Revoke an API key by ID.")
+@router.delete("/{key_id}", summary="Revoke API key", description="Revoke an API key by ID.", dependencies=[Depends(require_admin)])
 @rate_limit("10/minute")
 async def revoke_api_key(
     request: Request,

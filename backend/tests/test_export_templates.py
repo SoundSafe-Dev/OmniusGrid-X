@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from app.api.exports import require_export_admin
+from app.middleware.rbac import require_admin
 from app.services.export_delivery import (
     create_download_signature,
     next_run_at,
@@ -100,7 +100,9 @@ def test_legacy_export_signature_remains_valid(monkeypatch):
 
 async def test_exports_reject_non_admin_users():
     with pytest.raises(HTTPException) as exc:
-        await require_export_admin(SimpleNamespace(role="operator"))
+        await require_admin(
+            current_user=SimpleNamespace(id=uuid4(), role="operator")
+        )
     assert exc.value.status_code == 403
 
 

@@ -74,6 +74,8 @@ spec:
                   key: url
             - name: REDPANDA_URL
               value: "redpanda:9092"
+            - name: SCHEDULERS_IN_API
+              value: "false"
             - name: JWT_SECRET_KEY
               valueFrom:
                 secretKeyRef:

@@ -77,7 +77,9 @@ def _setup_schema(sync_url: str) -> None:
 
     # Roles some migrations grant to (optional least-privilege roles in real
     # deployments; the runner's guards skip them when absent, but creating
-    # them here exercises the grant paths too).
+    # them here exercises the grant paths too). The full migrate.py chain below
+    # (which now includes the renumbered 034..038 integration migrations) builds
+    # every table, so the old create_all + hand-picked overlay is not needed.
     conn.autocommit = True
     try:
         with conn.cursor() as cur:
@@ -178,9 +180,13 @@ def _make_jwt(user_id: UUID, secret: str, algorithm: str = "HS256") -> str:
     """Mint a JWT the auth dependency will accept."""
     from jose import jwt
 
+    now = datetime.now(timezone.utc)
     payload = {
         "sub": str(user_id),
-        "exp": datetime.now(timezone.utc) + timedelta(hours=1),
+        "type": "access",
+        "jti": str(uuid4()),
+        "iat": now,
+        "exp": now + timedelta(hours=1),
     }
     return jwt.encode(payload, secret, algorithm=algorithm)
 
@@ -196,7 +202,7 @@ def pg_container():
 
     container = PostgresContainer(
         image="timescale/timescaledb:latest-pg15",
-        username="omniusgrid",
+        user="omniusgrid",
         password="omniusgrid_dev_password",
         dbname="omniusgrid_test",
     )

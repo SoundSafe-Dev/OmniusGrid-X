@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 from typing import Optional, List
-from sqlalchemy import Column, String, DateTime, Boolean, Numeric, JSON, ForeignKey, Text, BigInteger, Integer, ARRAY, Date, UniqueConstraint, CheckConstraint, Index, func
+from sqlalchemy import Column, String, DateTime, Boolean, Numeric, JSON, ForeignKey, Text, BigInteger, Integer, ARRAY, Date, UUID, UniqueConstraint, CheckConstraint, Index, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.types import TypeDecorator
@@ -158,6 +158,70 @@ class Telemetry(Base):
     packml_state = Column(String(50))
     meta_data = Column("metadata", JSON, default={})
     sequence_num = Column(BigInteger)
+
+
+class HistorianRetentionPolicy(Base):
+    """Tenant and metric-specific historian retention and ingestion settings."""
+
+    __tablename__ = "historian_retention_policies"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "metric_name",
+            name="uq_historian_retention_org_metric",
+        ),
+        CheckConstraint(
+            "length(btrim(metric_name)) > 0",
+            name="ck_historian_retention_metric",
+        ),
+        CheckConstraint(
+            "hot_retention_days BETWEEN 1 AND 1825 "
+            "AND warm_retention_days BETWEEN hot_retention_days AND 1825 "
+            "AND cold_retention_days BETWEEN warm_retention_days AND 3650",
+            name="ck_historian_retention_days",
+        ),
+        CheckConstraint(
+            "ingestion_priority BETWEEN 1 AND 5",
+            name="ck_historian_retention_priority",
+        ),
+        CheckConstraint(
+            "ingestion_sample_rate > 0 AND ingestion_sample_rate <= 1",
+            name="ck_historian_retention_sample_rate",
+        ),
+        CheckConstraint(
+            "max_ingest_age_seconds BETWEEN 1 AND 86400",
+            name="ck_historian_retention_max_age",
+        ),
+    )
+
+    id = UUIDColumn()
+    organization_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    metric_name = Column(String(100), nullable=False, default="*", server_default="*")
+    hot_retention_days = Column(Integer, nullable=False, default=30, server_default="30")
+    warm_retention_days = Column(Integer, nullable=False, default=365, server_default="365")
+    cold_retention_days = Column(Integer, nullable=False, default=1825, server_default="1825")
+    ingestion_priority = Column(Integer, nullable=False, default=3, server_default="3")
+    ingestion_sample_rate = Column(Numeric(5, 4), nullable=False, default=1.0, server_default="1.0")
+    max_ingest_age_seconds = Column(Integer, nullable=False, default=30, server_default="30")
+    archival_enabled = Column(Boolean, nullable=False, default=True, server_default="true")
+    created_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at = Column(
+        DateTime(timezone=True), default=datetime.utcnow, server_default=func.now()
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        server_default=func.now(),
+    )
 
 
 class Alarm(Base):
@@ -562,6 +626,31 @@ class User(Base):
 class Command(Base):
     """Command execution log for actionable decisions"""
     __tablename__ = "commands"
+    __table_args__ = (
+        CheckConstraint(
+            "timeout_seconds > 0",
+            name="ck_commands_timeout_seconds_positive",
+        ),
+        CheckConstraint(
+            "dispatch_attempts >= 0",
+            name="ck_commands_dispatch_attempts_nonnegative",
+        ),
+        Index(
+            "idx_commands_dispatch_ready",
+            "organization_id",
+            "next_dispatch_at",
+            "issued_at",
+            postgresql_where=text("status = 'pending'"),
+        ),
+        Index(
+            "idx_commands_ack_deadline",
+            "organization_id",
+            "deadline_at",
+            postgresql_where=text(
+                "status = 'executing' AND deadline_at IS NOT NULL"
+            ),
+        ),
+    )
 
     id = UUIDColumn()
     asset_id = UUIDForeignKey("assets.id")
@@ -570,15 +659,21 @@ class Command(Base):
     parameters = Column(JSON, default=dict)
     status = Column(String(50), default="pending")  # pending, executing, completed, failed, cancelled
     priority = Column(String(20), default="normal")  # low, normal, high, critical
+    timeout_seconds = Column(Integer, nullable=False, default=60)
+    dispatch_attempts = Column(Integer, nullable=False, default=0)
+    next_dispatch_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    dispatched_at = Column(DateTime(timezone=True))
+    deadline_at = Column(DateTime(timezone=True))
+    last_dispatch_error = Column(Text)
     issued_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    issued_by = UUIDForeignKey("users.id")
+    issued_by = UUIDForeignKey("users.id", nullable=True)
     executed_at = Column(DateTime(timezone=True))
     completed_at = Column(DateTime(timezone=True))
     result = Column(JSON, default=dict)
     error_message = Column(Text)
     organization_id = UUIDForeignKey("organizations.id")
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 # ==================== Kanban Task Management Models ====================
@@ -1177,35 +1272,18 @@ class APIKey(Base):
     meta_data = Column(JSON, default={})
 
 
-class Permission(Base):
-    """Permissions for RBAC"""
-    __tablename__ = "permissions"
-
-    id = UUIDColumn()
-    name = Column(String(100), nullable=False, unique=True)
-    description = Column(Text, nullable=True)
-    resource = Column(String(50), nullable=False)
-    action = Column(String(50), nullable=False)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-
-
-class RolePermission(Base):
-    """Role to permission mapping"""
-    __tablename__ = "role_permissions"
-
-    id = UUIDColumn()
-    role = Column(String(50), nullable=False)
-    permission_id = UUIDForeignKey("permissions.id", nullable=False)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-
-
 class UserSession(Base):
     """User session management"""
     __tablename__ = "user_sessions"
+    __table_args__ = (
+        Index("uq_user_sessions_jti", "jti", unique=True),
+    )
 
     id = UUIDColumn()
     user_id = UUIDForeignKey("users.id", nullable=False)
     token_hash = Column(String(64), nullable=False, unique=True)
+    jti = Column(UUID(as_uuid=True), nullable=False)
+    token_type = Column(String(20), nullable=False, default="refresh")
     ip_address = Column(String(45), nullable=True)
     user_agent = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
@@ -1213,7 +1291,33 @@ class UserSession(Base):
     expires_at = Column(DateTime(timezone=True), nullable=False)
     is_active = Column(Boolean, nullable=False, default=True)
     revoked_at = Column(DateTime(timezone=True), nullable=True)
-    meta_data = Column(JSON, default={})
+    revoked_reason = Column(String(100), nullable=True)
+    replaced_by_jti = Column(UUID(as_uuid=True), nullable=True)
+    meta_data = Column("metadata", JSONB, default=dict)
+
+
+class RevokedToken(Base):
+    """Durable local-JWT denylist shared by every backend replica."""
+
+    __tablename__ = "revoked_tokens"
+    __table_args__ = (
+        Index("idx_revoked_tokens_expires_at", "expires_at"),
+        Index("idx_revoked_tokens_user_id", "user_id"),
+    )
+
+    id = UUIDColumn()
+    jti = Column(UUID(as_uuid=True), nullable=False, unique=True)
+    user_id = UUIDForeignKey("users.id", nullable=False)
+    session_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("user_sessions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    token_type = Column(String(20), nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    revoked_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    reason = Column(String(100), nullable=True)
+    meta_data = Column("metadata", JSONB, default=dict)
 
 
 class ConsentRecord(Base):
@@ -1435,6 +1539,10 @@ class AgentRelease(Base):
             "status IN ('draft', 'published', 'yanked')",
             name="ck_agent_releases_status",
         ),
+        CheckConstraint(
+            "artifact_type IN ('config', 'model')",
+            name="ck_agent_releases_artifact_type",
+        ),
         UniqueConstraint(
             "organization_id", "version", "channel",
             name="uq_agent_releases_org_version_channel",
@@ -1449,7 +1557,9 @@ class AgentRelease(Base):
     )
     version = Column(String(100), nullable=False)
     channel = Column(String(50), nullable=False, default="stable", server_default="stable")
-    image_tag = Column(String(255), nullable=False)
+    image_tag = Column(String(255), nullable=True)
+    artifact_type = Column(String(20), nullable=False, default="config", server_default="config")
+    model_name = Column(String(100), nullable=True)
     bundle_storage_key = Column(Text, nullable=False)
     checksum_sha256 = Column(String(64), nullable=False)
     signature_ed25519 = Column(Text, nullable=False)

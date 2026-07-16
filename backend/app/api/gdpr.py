@@ -242,9 +242,9 @@ async def delete_user_data(
     "/admin/users/{user_id}/data-export",
     summary="Export a tenant user's data",
     description="Admin-assisted GDPR export for a user in the administrator's organization.",
+    dependencies=[Depends(require_admin)],
 )
 @rate_limit("10/hour")
-@require_admin()
 async def admin_export_user_data(
     request: Request,
     user_id: UUID,
@@ -266,9 +266,9 @@ async def admin_export_user_data(
     "/admin/users/{user_id}/data-delete",
     summary="Delete a tenant user's data",
     description="Admin-assisted GDPR erasure for a user in the administrator's organization.",
+    dependencies=[Depends(require_admin)],
 )
 @rate_limit("10/hour")
-@require_admin()
 async def admin_delete_user_data(
     request: Request,
     user_id: UUID,
@@ -330,9 +330,8 @@ async def get_processing_records(
     return {"items": record_list, "total": len(record_list)}
 
 
-@router.post("/processing-records", summary="Create data processing record", description="Create a new data processing record.")
+@router.post("/processing-records", summary="Create data processing record", description="Create a new data processing record.", dependencies=[Depends(require_admin)])
 @rate_limit("10/minute")
-@require_admin()
 async def create_processing_record(
     request: Request,
     processing_activity: str,

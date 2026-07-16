@@ -29,6 +29,7 @@ logger = structlog.get_logger()
 COMMAND_SUCCESS_STATUSES = {"completed", "success", "succeeded"}
 COMMAND_FAILURE_STATUSES = {"failed", "error", "rejected", "cancelled", "timeout"}
 TERMINAL_TARGET_STATUSES = {"success", "failed", "rolled_back", "cancelled", "skipped"}
+ACTIVE_ROLLOUT_STATUSES = frozenset({"pending", "running"})
 
 
 def _utcnow() -> datetime:
@@ -101,7 +102,7 @@ class RolloutOrchestrator:
                         select(AgentRollout.id)
                         .where(
                             AgentRollout.organization_id == org_id,
-                            AgentRollout.status.in_(["pending", "running"]),
+                            AgentRollout.status.in_(ACTIVE_ROLLOUT_STATUSES),
                         )
                         .order_by(AgentRollout.created_at)
                     )
@@ -123,7 +124,7 @@ class RolloutOrchestrator:
                     .where(
                         AgentRollout.id == rollout_id,
                         AgentRollout.organization_id == org_id,
-                        AgentRollout.status.in_(["pending", "running"]),
+                        AgentRollout.status.in_(ACTIVE_ROLLOUT_STATUSES),
                     )
                     .with_for_update(skip_locked=True)
                 )
@@ -135,6 +136,9 @@ class RolloutOrchestrator:
             await session.commit()
 
     async def _process_rollout(self, session, rollout: AgentRollout) -> None:
+        if rollout.status not in ACTIVE_ROLLOUT_STATUSES:
+            return
+
         if rollout.release is None or rollout.release.status != "published":
             await self._fail_rollout(
                 session,
@@ -232,6 +236,9 @@ class RolloutOrchestrator:
                 )
 
     async def _dispatch_wave(self, session, rollout: AgentRollout, wave_index: int) -> None:
+        if rollout.status not in ACTIVE_ROLLOUT_STATUSES:
+            return
+
         wave_targets = [
             target
             for target in self._sorted_targets(rollout)
@@ -248,6 +255,8 @@ class RolloutOrchestrator:
         )
 
         for target in wave_targets:
+            if rollout.status not in ACTIVE_ROLLOUT_STATUSES or target.status != "pending":
+                continue
             command_id = await self._submit_update_command(
                 session,
                 rollout,
@@ -285,17 +294,21 @@ class RolloutOrchestrator:
         bundle_url, _ = issue_release_bundle_url(release.id, rollout.organization_id)
         if capture_current_version:
             target.current_version = await self._current_asset_version(session, target.asset_id)
+        action_id = "model_update" if release.artifact_type == "model" else "agent_update"
+        parameters = {
+            "release_id": str(release.id),
+            "bundle_url": bundle_url,
+            "checksum_sha256": release.checksum_sha256,
+            "signature_ed25519": release.signature_ed25519,
+            "target_version": release.version,
+        }
+        if release.artifact_type == "model":
+            parameters["model_name"] = release.model_name
         return await self.command_client.submit_command(
             asset_id=str(target.asset_id),
             command_type="system",
-            action_id="agent_update",
-            parameters={
-                "release_id": str(release.id),
-                "bundle_url": bundle_url,
-                "checksum_sha256": release.checksum_sha256,
-                "signature_ed25519": release.signature_ed25519,
-                "target_version": release.version,
-            },
+            action_id=action_id,
+            parameters=parameters,
             issued_by=str(rollout.created_by) if rollout.created_by else None,
             organization_id=str(rollout.organization_id),
             timeout_seconds=self._strategy_int(
