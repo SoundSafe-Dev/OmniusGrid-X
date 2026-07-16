@@ -1,6 +1,6 @@
 """Error Triage admin API (read + status workflow over aggregated errors).
 
-Every endpoint is admin-only (`@require_admin()`) and rate-limited. The feature
+Every endpoint uses the shared admin dependency and is rate-limited. The feature
 is a platform-level triage view: rows carry `organization_id` for context but
 the API is not tenant-filtered (open question flagged to the manager). All
 queries hit only the two error-tracking tables, so there is zero impact on any
@@ -116,10 +116,9 @@ def _range_start(range_key: str) -> Optional[datetime]:
 
 # ==================== Endpoints ====================
 
-@router.get("", summary="List aggregated errors", response_model=ErrorListResponse)
-@router.get("/", include_in_schema=False, response_model=ErrorListResponse)
+@router.get("", summary="List aggregated errors", response_model=ErrorListResponse, dependencies=[Depends(require_admin)])
+@router.get("/", include_in_schema=False, response_model=ErrorListResponse, dependencies=[Depends(require_admin)])
 @rate_limit("100/minute")
-@require_admin()
 async def list_errors(
     request: Request,
     status_filter: Literal["open", "acknowledged", "resolved", "active", "all"] = Query(
@@ -200,9 +199,8 @@ async def list_errors(
     return ErrorListResponse(items=items, total=total)
 
 
-@router.get("/summary", summary="Error triage summary cards", response_model=ErrorSummaryResponse)
+@router.get("/summary", summary="Error triage summary cards", response_model=ErrorSummaryResponse, dependencies=[Depends(require_admin)])
 @rate_limit("100/minute")
-@require_admin()
 async def error_summary(
     request: Request,
     range: Literal["24h", "7d", "30d", "all"] = "7d",
@@ -324,9 +322,8 @@ async def _build_detail(fingerprint: str, db: AsyncSession) -> ErrorEventDetail:
     )
 
 
-@router.get("/{fingerprint}", summary="Error detail", response_model=ErrorEventDetail)
+@router.get("/{fingerprint}", summary="Error detail", response_model=ErrorEventDetail, dependencies=[Depends(require_admin)])
 @rate_limit("100/minute")
-@require_admin()
 async def error_detail(
     fingerprint: str,
     request: Request,
@@ -337,9 +334,8 @@ async def error_detail(
     return await _build_detail(fingerprint, db)
 
 
-@router.patch("/{fingerprint}", summary="Change error status", response_model=ErrorEventDetail)
+@router.patch("/{fingerprint}", summary="Change error status", response_model=ErrorEventDetail, dependencies=[Depends(require_admin)])
 @rate_limit("30/minute")
-@require_admin()
 async def update_error_status(
     fingerprint: str,
     payload: StatusUpdateRequest,

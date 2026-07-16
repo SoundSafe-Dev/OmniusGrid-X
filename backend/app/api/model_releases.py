@@ -59,9 +59,9 @@ class ModelReleaseResponse(BaseModel):
     "/model-releases",
     response_model=ModelReleaseResponse,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_admin)],
 )
 @rate_limit("30/hour")
-@require_admin()
 async def create_model_release(
     request: Request,
     payload: ModelReleaseCreate,

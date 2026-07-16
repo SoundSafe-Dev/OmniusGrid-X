@@ -221,7 +221,10 @@ async def startup_probe():
 
 
 @router.get("/health/detailed")
-async def detailed_health(db: AsyncSession = Depends(get_db)):
+async def detailed_health(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
     """Engineer-facing health report with per-component detail (not cached)."""
     return await _run_health_checks(db)
 
@@ -323,8 +326,7 @@ async def _vacuum_telemetry() -> None:
 
 
 # Manual override endpoints for on-site engineers
-@router.post("/admin/collectors/{collector_id}/restart")
-@require_admin()
+@router.post("/admin/collectors/{collector_id}/restart", dependencies=[Depends(require_admin)])
 async def restart_collector(
     collector_id: str,
     current_user: User = Depends(get_current_active_user),
@@ -337,8 +339,7 @@ async def restart_collector(
     }
 
 
-@router.post("/admin/assets/{asset_id}/maintenance")
-@require_admin()
+@router.post("/admin/assets/{asset_id}/maintenance", dependencies=[Depends(require_admin)])
 async def set_maintenance_mode(
     asset_id: UUID,
     enabled: bool = True,
@@ -367,8 +368,7 @@ async def set_maintenance_mode(
     }
 
 
-@router.post("/admin/database/vacuum")
-@require_admin()
+@router.post("/admin/database/vacuum", dependencies=[Depends(require_admin)])
 async def trigger_database_vacuum(
     current_user: User = Depends(get_current_active_user),
 ):
@@ -382,8 +382,7 @@ async def trigger_database_vacuum(
     }
 
 
-@router.get("/admin/system/status")
-@require_admin()
+@router.get("/admin/system/status", dependencies=[Depends(require_admin)])
 async def get_system_status(
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),

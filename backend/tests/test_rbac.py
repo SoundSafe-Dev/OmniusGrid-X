@@ -1,72 +1,76 @@
-"""Focused unit tests for role decorators."""
+"""Focused tests for the shared role dependencies."""
 
+import ast
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
 
-from app.api.commands import CommandSubmitRequest, emergency_stop, submit_command
-from app.middleware.rbac import require_admin, require_roles
+from app.api import auth as auth_api
+from app.db.models import APIKey, Base
+from app.middleware.rbac import (
+    require_admin,
+    require_operator_or_admin,
+    require_roles,
+)
 
 
-def _user(role: str):
-    return SimpleNamespace(id=uuid4(), role=role)
+def _user(role: str, *, is_active: bool = True):
+    return SimpleNamespace(
+        id=uuid4(),
+        organization_id=uuid4(),
+        role=role,
+        is_active=is_active,
+    )
 
 
 @pytest.mark.asyncio
 async def test_require_admin_allows_admin():
-    @require_admin()
-    async def endpoint(*, current_user):
-        return current_user.role
-
-    assert await endpoint(current_user=_user("admin")) == "admin"
+    user = _user("admin")
+    assert await require_admin(current_user=user) is user
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("role", ["operator", "viewer"])
 async def test_require_admin_rejects_non_admin(role):
-    @require_admin()
-    async def endpoint(*, current_user):
-        return current_user.role
-
     with pytest.raises(HTTPException) as exc_info:
-        await endpoint(current_user=_user(role))
+        await require_admin(current_user=_user(role))
 
     assert exc_info.value.status_code == 403
     assert exc_info.value.detail == "Admin role required"
 
 
 @pytest.mark.asyncio
-async def test_require_admin_rejects_missing_user():
-    @require_admin()
-    async def endpoint():
-        return "unreachable"
+@pytest.mark.parametrize("role", ["admin", "operator"])
+async def test_operator_dependency_allows_mutating_roles(role):
+    user = _user(role)
+    assert await require_operator_or_admin(current_user=user) is user
 
+
+@pytest.mark.asyncio
+async def test_operator_dependency_rejects_viewer():
     with pytest.raises(HTTPException) as exc_info:
-        await endpoint()
+        await require_operator_or_admin(current_user=_user("viewer"))
 
-    assert exc_info.value.status_code == 401
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == "Operator or admin role required"
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("role", ["admin", "viewer"])
 async def test_require_roles_allows_explicit_roles(role):
-    @require_roles("admin", "viewer")
-    async def endpoint(*, current_user):
-        return current_user.role
-
-    assert await endpoint(current_user=_user(role)) == role
+    dependency = require_roles("admin", "viewer")
+    user = _user(role)
+    assert await dependency(current_user=user) is user
 
 
 @pytest.mark.asyncio
 async def test_require_roles_rejects_unlisted_role():
-    @require_roles("admin", "viewer")
-    async def endpoint(*, current_user):
-        return current_user.role
-
+    dependency = require_roles("admin", "viewer")
     with pytest.raises(HTTPException) as exc_info:
-        await endpoint(current_user=_user("operator"))
+        await dependency(current_user=_user("operator"))
 
     assert exc_info.value.status_code == 403
 
@@ -77,24 +81,85 @@ def test_require_roles_requires_at_least_one_role():
 
 
 @pytest.mark.asyncio
-async def test_command_submit_route_rejects_viewer_role():
-    request = CommandSubmitRequest(
-        asset_id=str(uuid4()),
-        action_id="set_speed",
-        parameters={"speed_percent": 80},
-    )
-
+async def test_missing_user_is_rejected_by_auth_dependency():
     with pytest.raises(HTTPException) as exc_info:
-        await submit_command(request=request, current_user=_user("viewer"))
+        await auth_api.get_current_active_user(
+            token=None,
+            header_token=None,
+            db=None,
+        )
 
-    assert exc_info.value.status_code == 403
-    assert exc_info.value.detail == "Operator or admin role required"
+    assert exc_info.value.status_code == 401
 
 
 @pytest.mark.asyncio
-async def test_command_emergency_stop_route_requires_admin_role():
-    with pytest.raises(HTTPException) as exc_info:
-        await emergency_stop(asset_id=str(uuid4()), current_user=_user("operator"))
+async def test_inactive_user_is_rejected_before_role_dependency(monkeypatch):
+    async def _inactive_user(_token, _db):
+        return _user("admin", is_active=False)
 
-    assert exc_info.value.status_code == 403
-    assert exc_info.value.detail == "Admin role required"
+    monkeypatch.setattr(auth_api, "get_current_user", _inactive_user)
+    monkeypatch.setattr(auth_api.settings, "KEYCLOAK_ENABLED", False)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await auth_api.get_current_active_user(
+            token="test-token",
+            header_token=None,
+            db=None,
+        )
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "Inactive user"
+
+
+def test_rbac_has_one_admin_dependency_and_no_dead_permission_runtime():
+    app_root = Path(__file__).resolve().parents[1] / "app"
+    definitions = []
+    admin_helper_names = {
+        "require_admin",
+        "require_admin_user",
+        "require_export_admin",
+    }
+    dead_names = {
+        "Permission",
+        "RolePermission",
+        "RBACMiddleware",
+        "require_permission",
+        "require_any_permission",
+    }
+    referenced_dead_names = set()
+
+    for path in app_root.rglob("*.py"):
+        tree = ast.parse(path.read_text())
+        definitions.extend(
+            (path.relative_to(app_root), node.name)
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name in admin_helper_names
+        )
+        referenced_dead_names.update(
+            node.id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Name) and node.id in dead_names
+        )
+
+    assert definitions == [(Path("middleware/rbac.py"), "require_admin")]
+    assert not referenced_dead_names
+
+
+def test_permission_models_are_removed_but_api_key_scopes_remain():
+    assert "permissions" not in Base.metadata.tables
+    assert "role_permissions" not in Base.metadata.tables
+    assert "scopes" in APIKey.__table__.c
+
+
+def test_permission_cleanup_migration_drops_children_before_parent():
+    migration = (
+        Path(__file__).resolve().parents[2]
+        / "database"
+        / "migrations"
+        / "029_remove_unused_permission_rbac.sql"
+    ).read_text()
+
+    child_drop = migration.index("DROP TABLE IF EXISTS role_permissions")
+    parent_drop = migration.index("DROP TABLE IF EXISTS permissions")
+    assert child_drop < parent_drop

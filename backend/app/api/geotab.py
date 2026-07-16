@@ -9,13 +9,17 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import get_current_active_user
 from app.db.database import get_db
 from app.services.geotab_service import geotab_service
 
 router = APIRouter(prefix="/geotab", tags=["geotab"])
 
 
-@router.get("/exceptions")
+@router.get(
+    "/exceptions",
+    dependencies=[Depends(get_current_active_user)],
+)
 async def get_geotab_exceptions(
     organization_id: UUID,
     driver_id: Optional[UUID] = None,
@@ -42,7 +46,10 @@ async def get_geotab_exceptions(
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@router.get("/devices/{device_id}/diagnostics")
+@router.get(
+    "/devices/{device_id}/diagnostics",
+    dependencies=[Depends(get_current_active_user)],
+)
 async def get_device_diagnostics(
     device_id: str,
     organization_id: UUID,
@@ -80,7 +87,10 @@ async def geotab_webhook(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.get("/drivers/{driver_id}/hos")
+@router.get(
+    "/drivers/{driver_id}/hos",
+    dependencies=[Depends(get_current_active_user)],
+)
 async def get_driver_hos_geotab(
     driver_id: UUID,
     organization_id: UUID,
@@ -98,7 +108,10 @@ async def get_driver_hos_geotab(
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@router.get("/fleet/summary")
+@router.get(
+    "/fleet/summary",
+    dependencies=[Depends(get_current_active_user)],
+)
 async def get_fleet_summary(
     organization_id: UUID,
     db: AsyncSession = Depends(get_db)

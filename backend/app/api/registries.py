@@ -88,8 +88,7 @@ async def get_registry(
     return registry
 
 
-@router.post("", response_model=ActionableRegistryResponse, status_code=201)
-@require_admin()
+@router.post("", response_model=ActionableRegistryResponse, status_code=201, dependencies=[Depends(require_admin)])
 async def create_registry(
     registry: ActionableRegistryCreate,
     current_user: User = Depends(get_current_active_user),
@@ -109,8 +108,7 @@ async def create_registry(
     return new_registry
 
 
-@router.put("/{registry_id}", response_model=ActionableRegistryResponse)
-@require_admin()
+@router.put("/{registry_id}", response_model=ActionableRegistryResponse, dependencies=[Depends(require_admin)])
 async def update_registry(
     registry_id: uuid.UUID,
     registry: ActionableRegistryUpdate,
@@ -141,8 +139,7 @@ async def update_registry(
     return existing_registry
 
 
-@router.delete("/{registry_id}", status_code=204)
-@require_admin()
+@router.delete("/{registry_id}", status_code=204, dependencies=[Depends(require_admin)])
 async def delete_registry(
     registry_id: uuid.UUID,
     current_user: User = Depends(get_current_active_user),
@@ -206,8 +203,7 @@ async def get_registry_items(
     return items
 
 
-@router.post("/{registry_id}/items", response_model=ActionableRegistryItemResponse, status_code=201)
-@require_admin()
+@router.post("/{registry_id}/items", response_model=ActionableRegistryItemResponse, status_code=201, dependencies=[Depends(require_admin)])
 async def create_registry_item(
     registry_id: uuid.UUID,
     item: ActionableRegistryItemCreate,
@@ -241,8 +237,7 @@ async def create_registry_item(
     return new_item
 
 
-@router.put("/items/{item_id}", response_model=ActionableRegistryItemResponse)
-@require_admin()
+@router.put("/items/{item_id}", response_model=ActionableRegistryItemResponse, dependencies=[Depends(require_admin)])
 async def update_registry_item(
     item_id: uuid.UUID,
     item: ActionableRegistryItemUpdate,
@@ -273,8 +268,7 @@ async def update_registry_item(
     return existing_item
 
 
-@router.delete("/items/{item_id}", status_code=204)
-@require_admin()
+@router.delete("/items/{item_id}", status_code=204, dependencies=[Depends(require_admin)])
 async def delete_registry_item(
     item_id: uuid.UUID,
     current_user: User = Depends(get_current_active_user),
@@ -332,8 +326,7 @@ async def get_correlations(
     return correlations
 
 
-@router.post("/correlations", response_model=DataCorrelationResponse, status_code=201)
-@require_admin()
+@router.post("/correlations", response_model=DataCorrelationResponse, status_code=201, dependencies=[Depends(require_admin)])
 async def create_correlation(
     correlation: DataCorrelationCreate,
     current_user: User = Depends(get_current_active_user),
@@ -353,8 +346,7 @@ async def create_correlation(
     return new_correlation
 
 
-@router.put("/correlations/{correlation_id}", response_model=DataCorrelationResponse)
-@require_admin()
+@router.put("/correlations/{correlation_id}", response_model=DataCorrelationResponse, dependencies=[Depends(require_admin)])
 async def update_correlation(
     correlation_id: uuid.UUID,
     correlation_strength: Optional[int] = None,
@@ -390,8 +382,7 @@ async def update_correlation(
     return existing_correlation
 
 
-@router.delete("/correlations/{correlation_id}", status_code=204)
-@require_admin()
+@router.delete("/correlations/{correlation_id}", status_code=204, dependencies=[Depends(require_admin)])
 async def delete_correlation(
     correlation_id: uuid.UUID,
     current_user: User = Depends(get_current_active_user),
@@ -417,8 +408,7 @@ async def delete_correlation(
 
 # ============ Scoring and Analytics ============
 
-@router.get("/{registry_id}/score", response_model=dict)
-@require_admin()
+@router.get("/{registry_id}/score", response_model=dict, dependencies=[Depends(require_admin)])
 async def get_registry_score(
     registry_id: uuid.UUID,
     current_user: User = Depends(get_current_active_user),
@@ -491,8 +481,7 @@ async def get_registry_score(
     }
 
 
-@router.post("/items/{item_id}/score", response_model=dict)
-@require_admin()
+@router.post("/items/{item_id}/score", response_model=dict, dependencies=[Depends(require_admin)])
 async def calculate_item_risk_score(
     item_id: uuid.UUID,
     current_user: User = Depends(get_current_active_user),

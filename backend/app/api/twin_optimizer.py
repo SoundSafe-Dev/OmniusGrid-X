@@ -192,8 +192,7 @@ async def _fleet_oee(asset_ids: list[str]) -> list[dict[str, Any]]:
     return rows
 
 
-@router.post("/optimize", response_model=OptimizeResponse)
-@require_operator_or_admin()
+@router.post("/optimize", response_model=OptimizeResponse, dependencies=[Depends(require_operator_or_admin)])
 async def optimize_twin(
     payload: OptimizeRequest,
     current_user: User = Depends(get_current_active_user),

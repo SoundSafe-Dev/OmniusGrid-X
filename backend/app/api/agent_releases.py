@@ -124,9 +124,9 @@ async def _get_release(
     "/releases",
     response_model=AgentReleaseResponse,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_admin)],
 )
 @rate_limit("30/hour")
-@require_admin()
 async def create_release(
     request: Request,
     payload: AgentReleaseCreate,
@@ -205,9 +205,8 @@ async def get_release(
     return _release_response(release, include_url=True)
 
 
-@router.post("/releases/{release_id}/publish", response_model=AgentReleaseResponse)
+@router.post("/releases/{release_id}/publish", response_model=AgentReleaseResponse, dependencies=[Depends(require_admin)])
 @rate_limit("30/hour")
-@require_admin()
 async def publish_release(
     request: Request,
     release_id: UUID,
@@ -224,9 +223,8 @@ async def publish_release(
     return _release_response(release, include_url=True)
 
 
-@router.post("/releases/{release_id}/yank", response_model=AgentReleaseResponse)
+@router.post("/releases/{release_id}/yank", response_model=AgentReleaseResponse, dependencies=[Depends(require_admin)])
 @rate_limit("30/hour")
-@require_admin()
 async def yank_release(
     request: Request,
     release_id: UUID,

@@ -64,9 +64,8 @@ async def list_vendor_assessments(
     return {"items": assessment_list, "total": len(assessment_list)}
 
 
-@router.post("/vendor-assessments", summary="Create vendor risk assessment", description="Create a new vendor risk assessment for SOC 2 compliance.")
+@router.post("/vendor-assessments", summary="Create vendor risk assessment", description="Create a new vendor risk assessment for SOC 2 compliance.", dependencies=[Depends(require_admin)])
 @rate_limit("10/minute")
-@require_admin()
 async def create_vendor_assessment(
     request: Request,
     vendor_name: str,
@@ -112,9 +111,8 @@ async def create_vendor_assessment(
     }
 
 
-@router.put("/vendor-assessments/{assessment_id}", summary="Update vendor risk assessment", description="Update an existing vendor risk assessment.")
+@router.put("/vendor-assessments/{assessment_id}", summary="Update vendor risk assessment", description="Update an existing vendor risk assessment.", dependencies=[Depends(require_admin)])
 @rate_limit("10/minute")
-@require_admin()
 async def update_vendor_assessment(
     request: Request,
     assessment_id: str,
@@ -206,9 +204,8 @@ async def list_security_assets(
     return {"items": asset_list, "total": len(asset_list)}
 
 
-@router.post("/security-assets", summary="Create security asset", description="Create a new security asset for ISO 27001 compliance.")
+@router.post("/security-assets", summary="Create security asset", description="Create a new security asset for ISO 27001 compliance.", dependencies=[Depends(require_admin)])
 @rate_limit("10/minute")
-@require_admin()
 async def create_security_asset(
     request: Request,
     asset_type: str,
@@ -250,9 +247,8 @@ async def create_security_asset(
     }
 
 
-@router.put("/security-assets/{asset_id}", summary="Update security asset", description="Update an existing security asset.")
+@router.put("/security-assets/{asset_id}", summary="Update security asset", description="Update an existing security asset.", dependencies=[Depends(require_admin)])
 @rate_limit("10/minute")
-@require_admin()
 async def update_security_asset(
     request: Request,
     asset_id: str,
@@ -297,9 +293,8 @@ async def update_security_asset(
     return {"message": "Security asset updated successfully"}
 
 
-@router.delete("/security-assets/{asset_id}", summary="Delete security asset", description="Delete a security asset.")
+@router.delete("/security-assets/{asset_id}", summary="Delete security asset", description="Delete a security asset.", dependencies=[Depends(require_admin)])
 @rate_limit("10/minute")
-@require_admin()
 async def delete_security_asset(
     request: Request,
     asset_id: str,

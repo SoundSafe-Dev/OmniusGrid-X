@@ -47,8 +47,7 @@ class CommandSubmitResponse(BaseModel):
     message: str
 
 
-@router.post("/submit", response_model=CommandSubmitResponse, summary="Submit command to asset", description="Submit a new command for execution on an industrial asset. Commands are queued and executed asynchronously with automatic retries.\n\n**Common actions:**\n- `set_speed`: Adjust print/processing speed (params: speed_percent)\n- `pause_job`: Pause current operation\n- `resume_job`: Resume paused operation\n- `emergency_stop`: Immediate stop (safety critical, admin only)\n- `set_temperature`: Adjust nozzle/bed temp (params: target_temp, component)")
-@require_operator_or_admin()
+@router.post("/submit", response_model=CommandSubmitResponse, summary="Submit command to asset", description="Submit a new command for execution on an industrial asset. Commands are queued and executed asynchronously with automatic retries.\n\n**Common actions:**\n- `set_speed`: Adjust print/processing speed (params: speed_percent)\n- `pause_job`: Pause current operation\n- `resume_job`: Resume paused operation\n- `emergency_stop`: Immediate stop (safety critical, admin only)\n- `set_temperature`: Adjust nozzle/bed temp (params: target_temp, component)", dependencies=[Depends(require_operator_or_admin)])
 async def submit_command(
     request: CommandSubmitRequest,
     current_user: User = Depends(get_current_active_user)
@@ -118,8 +117,7 @@ async def get_command_status(
     return status
 
 
-@router.post("/cancel/{command_id}")
-@require_operator_or_admin()
+@router.post("/cancel/{command_id}", dependencies=[Depends(require_operator_or_admin)])
 async def cancel_command(
     command_id: str,
     current_user: User = Depends(get_current_active_user)
@@ -197,8 +195,7 @@ async def get_queue_status(
     }
 
 
-@router.post("/asset/{asset_id}/emergency-stop")
-@require_admin()
+@router.post("/asset/{asset_id}/emergency-stop", dependencies=[Depends(require_admin)])
 async def emergency_stop(
     asset_id: str,
     current_user: User = Depends(get_current_active_user)

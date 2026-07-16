@@ -46,6 +46,8 @@ from app.services.bulk_processor import (
 
 logger = structlog.get_logger()
 
+from app.middleware.rbac import require_admin, require_operator_or_admin
+
 router = APIRouter()
 
 MAX_CSV_BYTES = 5 * 1024 * 1024  # 5 MB upload cap
@@ -113,6 +115,7 @@ class RegistryItemsBulkRequest(BaseModel):
     "/assets/import",
     status_code=status.HTTP_202_ACCEPTED,
     summary="Bulk create/update assets from a CSV upload",
+    dependencies=[Depends(require_admin)],
 )
 async def bulk_import_assets(
     background_tasks: BackgroundTasks,
@@ -158,6 +161,7 @@ async def bulk_import_assets(
     "/kanban/tasks/{operation}",
     status_code=status.HTTP_202_ACCEPTED,
     summary="Bulk Kanban task operations (move / delete / assign)",
+    dependencies=[Depends(require_operator_or_admin)],
 )
 async def bulk_kanban_tasks(
     operation: str,
@@ -207,6 +211,7 @@ async def bulk_kanban_tasks(
     "/alarms/acknowledge",
     status_code=status.HTTP_202_ACCEPTED,
     summary="Bulk acknowledge alarms",
+    dependencies=[Depends(require_operator_or_admin)],
 )
 async def bulk_acknowledge_alarms(
     payload: AlarmBulkAckRequest,
@@ -239,6 +244,7 @@ async def bulk_acknowledge_alarms(
     "/registries/{registry_id}/items",
     status_code=status.HTTP_202_ACCEPTED,
     summary="Bulk create registry items",
+    dependencies=[Depends(require_admin)],
 )
 async def bulk_create_registry_items(
     registry_id: UUID,
@@ -309,7 +315,7 @@ async def get_bulk_job(
     return job
 
 
-@router.post("/jobs/{job_id}/cancel", summary="Cancel a pending or running bulk job")
+@router.post("/jobs/{job_id}/cancel", summary="Cancel a pending or running bulk job", dependencies=[Depends(require_admin)])
 async def cancel_bulk_job(
     job_id: str,
     current_user: User = Depends(get_current_active_user),

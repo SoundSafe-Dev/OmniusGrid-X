@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import get_current_active_user
 from app.db.database import get_db
 from app.models.schemas import (
     LogisticsCorrelationResponse,
@@ -26,7 +27,13 @@ from app.services.logistics_correlation_engine import (
     LoadQualityCorrelator
 )
 
-router = APIRouter(prefix="/logistics", tags=["logistics_correlation"])
+from app.middleware.rbac import require_operator_or_admin
+
+router = APIRouter(
+    prefix="/logistics",
+    tags=["logistics_correlation"],
+    dependencies=[Depends(get_current_active_user)],
+)
 
 
 # ==================== Dashboard Endpoints ====================
@@ -64,7 +71,7 @@ async def get_dock_production_sync(
     return sync_data
 
 
-@router.post("/dock-appointments/{appointment_id}/sync")
+@router.post("/dock-appointments/{appointment_id}/sync", dependencies=[Depends(require_operator_or_admin)])
 async def sync_dock_appointment(
     appointment_id: UUID,
     db: AsyncSession = Depends(get_db)
@@ -115,7 +122,7 @@ async def get_truck_asset_readiness(
 
 # ==================== Load Quality Correlation Endpoints ====================
 
-@router.post("/load-quality", response_model=LoadQualityLogResponse)
+@router.post("/load-quality", response_model=LoadQualityLogResponse, dependencies=[Depends(require_operator_or_admin)])
 async def log_load_quality_issue(
     data: LoadQualityLogCreate,
     db: AsyncSession = Depends(get_db)
@@ -207,7 +214,7 @@ async def get_delivery_efficiency(
 
 # ==================== Detention Risk Prediction Endpoints ====================
 
-@router.post("/predict-detention", response_model=DetentionRiskPrediction)
+@router.post("/predict-detention", response_model=DetentionRiskPrediction, dependencies=[Depends(require_operator_or_admin)])
 async def predict_detention(
     appointment_id: UUID,
     db: AsyncSession = Depends(get_db)
@@ -345,7 +352,7 @@ async def get_compliance_summary(
 
 # ==================== Optimize Assignment Endpoints ====================
 
-@router.post("/optimize-assignment")
+@router.post("/optimize-assignment", dependencies=[Depends(require_operator_or_admin)])
 async def optimize_assignment(
     organization_id: UUID,
     shipment_id: UUID,

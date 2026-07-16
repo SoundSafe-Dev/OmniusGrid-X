@@ -53,6 +53,7 @@ from app.db.models import (
     User,
 )
 from app.middleware.rate_limit import rate_limit
+from app.middleware.rbac import require_admin
 from app.services.report_download_audit import audit_export_delivery_download
 from app.utils.signed_urls import (
     PURPOSE_EXPORT,
@@ -76,18 +77,7 @@ from app.services.oee_calculator import oee_calculator
 
 logger = structlog.get_logger()
 
-async def require_export_admin(
-    current_user: User = Depends(get_current_active_user),
-) -> User:
-    if current_user.role != "admin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Data exports require admin role",
-        )
-    return current_user
-
-
-router = APIRouter(dependencies=[Depends(require_export_admin)])
+router = APIRouter(dependencies=[Depends(require_admin)])
 
 # Signature-authorized routes: the time-limited signed link IS the credential, so
 # these endpoints carry no bearer/admin dependency and work directly from an email
