@@ -24,6 +24,13 @@ COPY backend/ .
 # (k8s migration Job); compose prod keeps using its bind mount.
 COPY database/migrations /app/db-migrations
 
+# Non-root: the app never needs root at runtime. All root-only steps
+# (apt/pip installs, COPYs) are above; create the user and hand it the app dir.
+RUN groupadd --system --gid 1000 omnius \
+    && useradd --system --uid 1000 --gid omnius --home-dir /app --shell /usr/sbin/nologin omnius \
+    && chown -R omnius:omnius /app
+USER omnius
+
 # Expose port
 EXPOSE 8000
 

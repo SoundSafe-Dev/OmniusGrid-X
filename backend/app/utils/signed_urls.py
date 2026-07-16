@@ -8,7 +8,8 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import structlog
-from jose import JWTError, jwt
+import jwt
+from jwt import PyJWTError as JWTError
 
 from app.core.config import settings
 

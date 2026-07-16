@@ -121,10 +121,9 @@ jobs:
         with:
           python-version: '3.11'
       - name: pip-audit (backend)
-        # --ignore-vuln PYSEC-2026-1325: ecdsa Minerva timing side-channel via
-        # python-jose; NO fixed release exists. Follow-up filed: swap
-        # python-jose -> PyJWT (~10 call sites), which drops ecdsa entirely.
-        run: pip install pip-audit==2.7.3 && pip-audit -r backend/requirements.txt --ignore-vuln PYSEC-2026-1325
+        # No ignores: FS-76 swapped python-jose -> PyJWT, dropping ecdsa (and its
+        # Minerva advisory PYSEC-2026-1325) from the dependency tree entirely.
+        run: pip install pip-audit==2.7.3 && pip-audit -r backend/requirements.txt
       - name: pip-audit (edge-agent)
         run: pip-audit -r edge-agent/requirements.txt
       - uses: actions/setup-node@v4
@@ -134,13 +133,10 @@ jobs:
         working-directory: ./frontend
         run: npm audit --audit-level=high
       - name: Trivy filesystem scan (frontend + edge)
-        # ADVISORY: this whole-repo misconfig/secret scan surfaces findings
-        # (exit-code 1 makes them visible) but does NOT gate merges yet — the
-        # repo has a HIGH-severity misconfig backlog (e.g. Dockerfiles run as
-        # root, k8s hardening) that needs its own remediation pass before this
-        # can block. The dependency gates above (pip-audit + npm audit) stay
-        # blocking. Re-flip to blocking after the hardening follow-up lands.
-        continue-on-error: true
+        # BLOCKING since FS-79: the misconfig backlog it was waiting on is
+        # remediated — backend/frontend/rag images run non-root (FS-77), k8s has
+        # egress NetworkPolicies (FS-78), and a curated .trivyignore documents
+        # any residual accepted findings. exit-code 1 now gates the merge.
         uses: aquasecurity/trivy-action@0.24.0
         with:
           scan-type: fs
@@ -148,6 +144,7 @@ jobs:
           scanners: vuln,secret,misconfig
           severity: HIGH,CRITICAL
           exit-code: "1"
+          trivyignores: .trivyignore
 
   # --- task 20: k6 load test (non-blocking) --------------------------------
   load-test:

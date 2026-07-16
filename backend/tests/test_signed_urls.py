@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
-from jose import jwt
+import jwt
 
 from app.services.export_delivery import (
     create_download_signature,

@@ -20,6 +20,15 @@ COPY app ./app
 # Cache model weights here; mount a volume to avoid re-downloading (~5 GB) on
 # every container recreate.
 ENV HF_HOME=/models
+
+# Non-root: all root-only steps (apt/pip installs, COPYs) are above. Create the
+# user and hand it the app dir plus the model cache it writes at runtime.
+RUN groupadd --system --gid 1000 omnius \
+    && useradd --system --uid 1000 --gid omnius --home-dir /app --shell /usr/sbin/nologin omnius \
+    && mkdir -p /models \
+    && chown -R omnius:omnius /app /models
+USER omnius
+
 EXPOSE 8000
 
 # Generous start-period: the first boot downloads BGE-M3 + reranker weights.
