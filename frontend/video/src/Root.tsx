@@ -31,6 +31,18 @@ import {
   InvestorSlide3,
 } from './promo/DeckCards';
 import {
+  BrandPage1,
+  BrandPage2,
+  BrandPage3,
+  BrandPage4,
+  BrandPage5,
+  BrandPage6,
+  BrandPage7,
+  BrandPage8,
+  BrandPage9,
+} from './promo/BrandBook';
+import { OnePager, BannerLinkedIn } from './promo/Collateral';
+import {
   ClientSlide1Light,
   ClientSlide2Light,
   ClientSlide3Light,
@@ -153,5 +165,22 @@ export const RemotionRoot: React.FC = () => (
     <Still id="DeckInvestor1Light" component={InvestorSlide1Light} width={3840} height={2160} />
     <Still id="DeckInvestor2Light" component={InvestorSlide2Light} width={3840} height={2160} />
     <Still id="DeckInvestor3Light" component={InvestorSlide3Light} width={3840} height={2160} />
+    {/* brand guidelines book (16:9 pages, bound to PDF) */}
+    {[
+      BrandPage1,
+      BrandPage2,
+      BrandPage3,
+      BrandPage4,
+      BrandPage5,
+      BrandPage6,
+      BrandPage7,
+      BrandPage8,
+      BrandPage9,
+    ].map((C, i) => (
+      <Still key={`brand-${i + 1}`} id={`BrandBook${i + 1}`} component={C} width={3840} height={2160} />
+    ))}
+    {/* collateral */}
+    <Still id="OnePager" component={OnePager} width={2550} height={3300} />
+    <Still id="BannerLinkedIn" component={BannerLinkedIn} width={3168} height={792} />
   </>
 );
