@@ -604,105 +604,176 @@ export const BrandPage6: React.FC = () => (
 
 // ------------------------------------------- 7 · typography & data language
 
+const SpecCell: React.FC<{ children: React.ReactNode; w: number; head?: boolean }> = ({
+  children,
+  w,
+  head,
+}) => (
+  <div
+    style={{
+      width: w,
+      flexShrink: 0,
+      fontSize: head ? 30 : 34,
+      fontWeight: head ? 800 : 600,
+      letterSpacing: head ? 4 : 0,
+      textTransform: head ? 'uppercase' : 'none',
+      color: head ? theme.darkTextSecondary : 'rgba(250,250,250,0.88)',
+      fontFamily: head ? undefined : MONO,
+    }}
+  >
+    {children}
+  </div>
+);
+
 export const BrandPage7: React.FC = () => (
   <Page>
-    <PageHead no="06" title="Typography & data language" />
-    <div style={{ display: 'flex', gap: 130, marginTop: 90, flex: 1 }}>
-      <div style={{ flex: 1.1, display: 'flex', flexDirection: 'column', gap: 54, justifyContent: 'center' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-          <Label>Typeface — the system stack</Label>
-          <div style={{ fontSize: 44, color: 'rgba(250,250,250,0.85)', lineHeight: 1.45 }}>
-            -apple-system · Segoe UI · Roboto · Helvetica Neue — native, fast,
-            everywhere. No licensed display faces.
-          </div>
+    <PageHead no="06" title="Typography — exact spec" />
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 0, marginTop: 70, flex: 1 }}>
+      {/* table header */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 40,
+          padding: '20px 44px',
+        }}
+      >
+        <SpecCell w={340} head>
+          Role
+        </SpecCell>
+        <div style={{ flex: 1, fontSize: 30, fontWeight: 800, letterSpacing: 4, textTransform: 'uppercase', color: theme.darkTextSecondary }}>
+          Sample — true size at 4K
         </div>
-        {(
-          [
-            ['Display · 800 · −3 tracking', 148, 800, 'Just ask.'],
-            ['Headline · 800 · −2.5', 96, 800, 'One engine, four moats.'],
-            ['Body · 500 · 1.45 line height', 54, 500, 'Enterprise data holds half the story.'],
-          ] as [string, number, number, string][]
-        ).map(([label, size, weight, sample]) => (
-          <div key={label} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <Label>{label}</Label>
-            <div
-              style={{
-                fontSize: size,
-                fontWeight: weight,
-                color: theme.darkText,
-                letterSpacing: size > 90 ? -2.5 : 0,
-                lineHeight: 1.15,
-              }}
-            >
-              {sample}
-            </div>
+        <SpecCell w={330} head>
+          px @4K / @1080
+        </SpecCell>
+        <SpecCell w={200} head>
+          Weight
+        </SpecCell>
+        <SpecCell w={240} head>
+          Tracking
+        </SpecCell>
+        <SpecCell w={230} head>
+          Leading
+        </SpecCell>
+      </div>
+      {(
+        [
+          ['Display', 'Just ask.', 170, 800, -3, '1.12', '170 / 85', '800', '−3 px', '1.12'],
+          ['Title', 'Four moats.', 116, 800, -2.5, '1.1', '116 / 58', '800', '−2.5 px', '1.10'],
+          ['Section head', 'Optimized Operations.', 88, 800, -1.5, '1.12', '88 / 44', '800', '−1.5 px', '1.12'],
+          ['Body large', 'Enterprise data holds half the story.', 62, 500, 0, '1.48', '62–70 / 31–35', '500', '0', '1.48'],
+          ['Body', 'Every answer ships with an action.', 50, 500, 0, '1.45', '46–56 / 23–28', '500', '0', '1.45'],
+          ['Overline', 'WHAT OMNIUSGRID DOES', 42, 700, 8, '1.2', '42 / 21', '700', '+8 px', 'UPPER'],
+          ['Panel label', 'REASONING — FILES × LIVE', 36, 700, 6, '1.2', '36 / 18', '700', '+6 px', 'UPPER'],
+        ] as [string, string, number, number, number, string, string, string, string, string][]
+      ).map(([role, sample, size, weight, tracking, , px, w, tr, lead], i) => (
+        <div
+          key={role}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 40,
+            padding: '26px 44px',
+            borderTop: `3px solid ${i === 0 ? 'transparent' : theme.darkBorder}`,
+          }}
+        >
+          <div style={{ width: 340, flexShrink: 0, fontSize: 38, fontWeight: 700, color: theme.highlightSoft }}>
+            {role}
           </div>
-        ))}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <Label>Overline · 700 · +8 tracking · uppercase</Label>
           <div
             style={{
-              fontSize: 42,
-              fontWeight: 700,
-              letterSpacing: 8,
-              textTransform: 'uppercase',
-              color: theme.darkTextSecondary,
+              flex: 1,
+              fontSize: size,
+              fontWeight: weight,
+              letterSpacing: tracking,
+              lineHeight: 1.1,
+              color: role.includes('label') || role === 'Overline' ? theme.darkTextSecondary : theme.darkText,
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
             }}
           >
-            What OmniusGrid does
+            {sample}
           </div>
+          <SpecCell w={330}>{px}</SpecCell>
+          <SpecCell w={200}>{w}</SpecCell>
+          <SpecCell w={240}>{tr}</SpecCell>
+          <SpecCell w={230}>{lead}</SpecCell>
+        </div>
+      ))}
+      {/* mono + chips rows */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 40,
+          padding: '26px 44px',
+          borderTop: `3px solid ${theme.darkBorder}`,
+        }}
+      >
+        <div style={{ width: 340, flexShrink: 0, fontSize: 38, fontWeight: 700, color: theme.highlightSoft }}>
+          Data / mono
+        </div>
+        <div style={{ flex: 1, fontFamily: MONO, fontSize: 40, fontWeight: 700, color: theme.darkText, whiteSpace: 'nowrap' }}>
+          material-forecast_q3.xlsx · SHP-2214 · Line 3
+        </div>
+        <SpecCell w={330}>40 / 20</SpecCell>
+        <SpecCell w={200}>700</SpecCell>
+        <SpecCell w={240}>0</SpecCell>
+        <SpecCell w={230}>mono</SpecCell>
+      </div>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 40,
+          padding: '26px 44px',
+          borderTop: `3px solid ${theme.darkBorder}`,
+        }}
+      >
+        <div style={{ width: 340, flexShrink: 0, fontSize: 38, fontWeight: 700, color: theme.highlightSoft }}>
+          Chips
+        </div>
+        <div style={{ flex: 1, display: 'flex', gap: 18, alignItems: 'center' }}>
+          <Chip label="XLSX" tone="blue" />
+          <Chip label="● LIVE" tone="green" />
+          <Chip label="GO · 91" tone="green" />
+          <Chip label="OEE" />
+          <Chip label="TMS" size={30} />
+          <Chip label="● LIVE" tone="green" size={28} />
+        </div>
+        <SpecCell w={330}>42 · 30 · 28</SpecCell>
+        <SpecCell w={200}>600/700</SpecCell>
+        <SpecCell w={240}>0</SpecCell>
+        <SpecCell w={230}>nowrap</SpecCell>
+      </div>
+      {/* font stacks */}
+      <div
+        style={{
+          marginTop: 40,
+          borderRadius: 24,
+          border: `3px solid ${theme.darkBorder}`,
+          background: 'rgba(255,255,255,0.03)',
+          padding: '36px 44px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 20,
+        }}
+      >
+        <Label color={theme.highlightSoft}>Exact font stacks — copy verbatim</Label>
+        <div style={{ fontFamily: MONO, fontSize: 33, color: 'rgba(250,250,250,0.88)', lineHeight: 1.6 }}>
+          UI&nbsp;&nbsp;: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+          'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif
+          <br />
+          Data: ui-monospace, 'SF Mono', Menlo, monospace
+        </div>
+        <div style={{ fontSize: 34, color: theme.darkTextSecondary }}>
+          Native system faces only — no licensed display fonts. Wordmark: same UI stack,
+          "Omnius" 800 / "Grid" 400, tracking −2 px (−5 px above 200 px).
         </div>
       </div>
-      <div style={{ flex: 0.9, display: 'flex', flexDirection: 'column', gap: 44, justifyContent: 'center' }}>
-        <Card>
-          <Label color={theme.highlightSoft}>Data speaks monospace</Label>
-          <div style={{ fontSize: 42, color: 'rgba(250,250,250,0.85)', lineHeight: 1.5 }}>
-            Every data artifact — file names, IDs, line names — is set in{' '}
-            <span style={{ fontFamily: MONO, fontWeight: 700, color: theme.darkText }}>
-              ui-monospace
-            </span>
-            :
-          </div>
-          <div style={{ fontFamily: MONO, fontSize: 44, fontWeight: 700, color: theme.darkText, lineHeight: 1.6 }}>
-            material-forecast_q3.xlsx
-            <br />
-            SHP-2214 · WO-4482 · Line 3
-          </div>
-        </Card>
-        <Card>
-          <Label color={theme.highlightSoft}>The chip system</Label>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 30 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
-              <Chip label="XLSX" tone="blue" />
-              <Chip label="PDF" tone="blue" />
-              <Chip label="JPG" tone="blue" />
-              <Chip label="WAV" tone="blue" />
-              <span style={{ fontSize: 38, color: theme.darkTextSecondary }}>
-                blue — ingested file formats
-              </span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
-              <Chip label="● LIVE" tone="green" />
-              <Chip label="GO · 91" tone="green" />
-              <span style={{ fontSize: 38, color: theme.darkTextSecondary }}>
-                green — live streams & GO scores
-              </span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
-              <Chip label="OEE" />
-              <Chip label="Kanban" />
-              <Chip label="TMS" />
-              <Chip label="YMS" />
-              <Chip label="ERP" />
-              <span style={{ fontSize: 38, color: theme.darkTextSecondary }}>
-                neutral — product modules
-              </span>
-            </div>
-          </div>
-        </Card>
-      </div>
     </div>
-    <div style={{ marginTop: 70, display: 'flex', justifyContent: 'flex-end' }}>
+    <div style={{ marginTop: 50, display: 'flex', justifyContent: 'flex-end' }}>
       <BySoundSafe size={64} />
     </div>
   </Page>
@@ -894,11 +965,90 @@ export const BrandPage8: React.FC = () => (
   </Page>
 );
 
-// ------------------------------------------------- 9 · applications & sign-off
+// ------------------------------------------- 9 · layout & formatting spec
+
+const SpecRow: React.FC<{ k: string; v: string }> = ({ k, v }) => (
+  <div style={{ display: 'flex', gap: 30, alignItems: 'baseline' }}>
+    <div style={{ width: 430, flexShrink: 0, fontSize: 38, fontWeight: 700, color: theme.darkText }}>
+      {k}
+    </div>
+    <div style={{ fontFamily: MONO, fontSize: 34, color: 'rgba(250,250,250,0.85)', lineHeight: 1.5 }}>
+      {v}
+    </div>
+  </div>
+);
+
+export const BrandPage10: React.FC = () => (
+  <Page>
+    <PageHead no="08" title="Layout & formatting — exact spec" />
+    <div
+      style={{
+        marginTop: 80,
+        fontSize: 42,
+        color: theme.darkTextSecondary,
+      }}
+    >
+      All values in render px on the 4K canvas — halve for 1080p-design px.
+      Borders are 3 px everywhere; there is no other stroke weight.
+    </div>
+    <div
+      style={{
+        marginTop: 60,
+        flex: 1,
+        display: 'grid',
+        gridTemplateColumns: '1fr 1fr',
+        gap: 56,
+      }}
+    >
+      <Card style={{ gap: 34, justifyContent: 'center' }}>
+        <Label color={theme.highlightSoft}>Canvases & delivery</Label>
+        <SpecRow k="Decks · brand book" v="3840×2160 → deliver 1920×1080 PNG + PDF" />
+        <SpecRow k="Instagram cards" v="2160×2700 → deliver 1080×1350 (4:5)" />
+        <SpecRow k="One-pager" v="2550×3300 — US Letter @300 dpi" />
+        <SpecRow k="LinkedIn banner" v="3168×792 → deliver 1584×396" />
+        <SpecRow k="Demo film" v="3840×2160 & 2160×3840 · 30 fps · H.264 CRF 17" />
+        <SpecRow k="PDF binding" v="from 2x masters · JPEG q95 · 300 dpi" />
+        <SpecRow k="Downscaling" v="Lanczos only (ffmpeg flags=lanczos)" />
+      </Card>
+      <Card style={{ gap: 34, justifyContent: 'center' }}>
+        <Label color={theme.highlightSoft}>Page structure</Label>
+        <SpecRow k="Page padding" v="140 top/bottom × 170 sides (book: 130)" />
+        <SpecRow k="Section gaps" v="90–130 between blocks · 56–110 card gaps" />
+        <SpecRow k="List gaps" v="44 bullets · 16 inside a labelled block" />
+        <SpecRow k="Card radius" v="36 outer · 26–32 inner · 999 chips/pills" />
+        <SpecRow k="Grid texture" v="120 px cells · 1 px lines · 22% opacity, radial mask" />
+        <SpecRow k="Overline pill" v="pad 18×48 · radius 999 · border 3" />
+      </Card>
+      <Card style={{ gap: 34, justifyContent: 'center' }}>
+        <Label color={theme.highlightSoft}>Component metrics</Label>
+        <SpecRow k="Chip (font F)" v="pad 0.33F × 0.8F · border 3 · radius 999" />
+        <SpecRow k="Score badge" v="font 38·800 · pad 10×26 · radius 14" />
+        <SpecRow k="Question bubble" v="radius 28/28/8/28 · pad 26×44 · max-width 80%" />
+        <SpecRow k="Power-up inset" v="border-left 8 blue · pad 34×42 · radius 20" />
+        <SpecRow k="Window header" v="pad 30×50 · dots 20 ø · title 38·600" />
+        <SpecRow k="Payoff strip" v="pad 24×44 · radius 24 · blue border + tint" />
+      </Card>
+      <Card style={{ gap: 34, justifyContent: 'center' }}>
+        <Label color={theme.highlightSoft}>Tints & shadows — copy verbatim</Label>
+        <SpecRow k="Blue chip tint" v="border rgba(59,130,246,.45) · bg .08–.10" />
+        <SpecRow k="Green tint" v="border rgba(74,222,128,.5) · bg .06–.14" />
+        <SpecRow k="Risk tint" v="border rgba(239,68,68,.4–.55) · bg .07–.16" />
+        <SpecRow k="Panel shadow (dark)" v="0 0 140px rgba(59,130,246,.14), 0 60px 160px rgba(0,0,0,.55)" />
+        <SpecRow k="Card shadow (light)" v="0 24px 70px rgba(15,23,42,.07)" />
+        <SpecRow k="Logo glow (dark)" v="0 0 160px rgba(250,250,250,.2)" />
+      </Card>
+    </div>
+    <div style={{ marginTop: 60, display: 'flex', justifyContent: 'flex-end' }}>
+      <BySoundSafe size={64} />
+    </div>
+  </Page>
+);
+
+// ------------------------------------------------- 10 · applications & sign-off
 
 export const BrandPage9: React.FC = () => (
   <Page>
-    <PageHead no="08" title="Applications & sign-off" />
+    <PageHead no="09" title="Applications & sign-off" />
     <div style={{ display: 'flex', gap: 130, marginTop: 90, flex: 1 }}>
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 44, justifyContent: 'center' }}>
         <Card>
@@ -910,7 +1060,7 @@ export const BrandPage9: React.FC = () => (
               ['Client deck ×3 slides', 'dark + light · PNG + bound PDF'],
               ['Investor deck ×3 slides', 'dark + light · PNG + bound PDF'],
               ['Wordmark PNG', 'white on black · 3840×1400'],
-              ['This brand book', 'nine pages · bound PDF'],
+              ['This brand book', 'ten pages · bound PDF'],
             ] as [string, string][]
           ).map(([h, b]) => (
             <div key={h} style={{ display: 'flex', alignItems: 'baseline', gap: 24 }}>
@@ -955,8 +1105,7 @@ export const BrandPage9: React.FC = () => (
           ))}
         </Card>
         <div style={{ fontSize: 40, color: theme.darkTextSecondary }}>
-          Brand owner & final sign-off:{' '}
-          <span style={{ fontFamily: MONO, color: theme.darkText }}>***REMOVED***</span>
+          Final sign-off rests with the brand owner — nothing ships without it.
         </div>
       </div>
     </div>

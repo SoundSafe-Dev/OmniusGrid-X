@@ -3,7 +3,7 @@
 Text source of truth for the rendered book at
 `frontend/out/brand/OmniusGrid-Brand-Guidelines.pdf` (pages generated from
 `frontend/video/src/promo/BrandBook.tsx`). If copy changes here, change it
-there and re-render. Brand owner & final sign-off: `***REMOVED***`.
+there and re-render. Final sign-off rests with the brand owner.
 
 ---
 
@@ -94,16 +94,72 @@ light) · live/GO green `#4ade80` dark / `#16a34a` light · risk red `#ef4444`.
 color, the layout is wrong. Green is reserved for live streams and GO
 scores; red is reserved for risk; neither is ever decoration.
 
-## 6 · Typography & data language
+## 6 · Typography — exact spec
 
-- System stack (`-apple-system … sans-serif`) — no licensed display faces.
-- Scale: display 800/−3 tracking · headline 800/−2.5 · body 500/1.45 line
-  height · overline 700/+8 tracking/uppercase.
-- **Data speaks monospace** (`ui-monospace`): file names, IDs, line names —
+**Font stacks (copy verbatim):**
+
+```
+UI  : -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+      'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif
+Data: ui-monospace, 'SF Mono', Menlo, monospace
+```
+
+Native system faces only — no licensed display fonts. Wordmark: same UI
+stack, "Omnius" 800 / "Grid" 400, tracking −2 px (−5 px above 200 px size).
+
+| Role | px @4K / @1080 design | Weight | Tracking | Leading / case |
+|---|---|---|---|---|
+| Display | 170 / 85 | 800 | −3 px | 1.12 |
+| Title | 116 / 58 | 800 | −2.5 px | 1.10 |
+| Section head | 88 / 44 | 800 | −1.5 px | 1.12 |
+| Body large | 62–70 / 31–35 | 500 | 0 | 1.48 |
+| Body | 46–56 / 23–28 | 500 | 0 | 1.45 |
+| Overline | 42 / 21 | 700 | +8 px | UPPERCASE |
+| Panel label | 36 / 18 | 700 | +6 px | UPPERCASE |
+| Data / mono | 40 / 20 | 700 | 0 | monospace |
+| Chips | 42 std · 30 small · 28 micro | 600 neutral / 700 semantic | 0 | nowrap |
+
+- **Data speaks monospace**: file names, IDs, line names —
   `material-forecast_q3.xlsx`, `SHP-2214`, `Line 3`.
 - **Chip system:** blue = ingested file formats (XLSX PDF JPG WAV) ·
   green = `● LIVE` streams and `GO · nn` scores · neutral = product modules
   (OEE, Kanban, TMS, YMS, ERP).
+
+## 6b · Layout & formatting — exact spec
+
+All values in render px on the 4K canvas — halve for 1080p-design px.
+**Borders are 3 px everywhere; there is no other stroke weight.**
+
+**Canvases & delivery**
+
+| Asset | Canvas → delivery |
+|---|---|
+| Decks · brand book | 3840×2160 → 1920×1080 PNG + PDF |
+| Instagram cards | 2160×2700 → 1080×1350 (4:5) |
+| One-pager | 2550×3300 — US Letter @300 dpi |
+| LinkedIn banner | 3168×792 → 1584×396 |
+| Demo film | 3840×2160 & 2160×3840 · 30 fps · H.264 CRF 17 |
+| PDF binding | from 2x masters · JPEG q95 · 300 dpi |
+| Downscaling | Lanczos only (`ffmpeg flags=lanczos`) |
+
+**Page structure:** page padding 140 top/bottom × 170 sides (book 130) ·
+section gaps 90–130, card gaps 56–110, list gaps 44 (16 inside a labelled
+block) · radii 36 outer / 26–32 inner / 14 badges / 20 insets / 999
+chips+pills · grid texture 120 px cells, 1 px lines, 22% opacity, radial
+mask · overline pill pad 18×48.
+
+**Component metrics:** chip (font F) pad 0.33F×0.8F, border 3, radius 999 ·
+score badge font 38·800, pad 10×26, radius 14 · question bubble radius
+28/28/8/28, pad 26×44, max-width 80% · power-up inset border-left 8 blue,
+pad 34×42, radius 20 · window header pad 30×50, dots 20 ø, title 38·600 ·
+payoff strip pad 24×44, radius 24.
+
+**Tints & shadows (copy verbatim):** blue chip `border rgba(59,130,246,.45)`
+bg `.08–.10` · green `border rgba(74,222,128,.5)` bg `.06–.14` · risk
+`border rgba(239,68,68,.4–.55)` bg `.07–.16` · panel shadow (dark)
+`0 0 140px rgba(59,130,246,.14), 0 60px 160px rgba(0,0,0,.55)` · card
+shadow (light) `0 24px 70px rgba(15,23,42,.07)` · logo glow (dark)
+`0 0 160px rgba(250,250,250,.2)`.
 
 ## 7 · Signature motifs
 
@@ -133,7 +189,7 @@ scores; red is reserved for risk; neither is ever decoration.
 | Instagram cards ×3 | `promo/PromoCards.tsx` | `out/promo/` |
 | Client & investor decks (dark) | `promo/DeckCards.tsx` | `out/decks/` + PDFs |
 | Deck light variants | `promo/DeckCardsLight.tsx` | `out/decks/*Light*` + PDFs |
-| Brand book ×9 pages | `promo/BrandBook.tsx` | `out/brand/` + PDF |
+| Brand book ×10 pages | `promo/BrandBook.tsx` | `out/brand/` + PDF |
 | One-pager, LinkedIn banner | `promo/Collateral.tsx` | `out/brand/` |
 | Wordmark PNG | `components/WordmarkCard.tsx` | `out/` |
 

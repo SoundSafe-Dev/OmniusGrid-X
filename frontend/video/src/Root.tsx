@@ -40,6 +40,7 @@ import {
   BrandPage7,
   BrandPage8,
   BrandPage9,
+  BrandPage10,
 } from './promo/BrandBook';
 import { OnePager, BannerLinkedIn } from './promo/Collateral';
 import {
@@ -175,7 +176,8 @@ export const RemotionRoot: React.FC = () => (
       BrandPage6,
       BrandPage7,
       BrandPage8,
-      BrandPage9,
+      BrandPage10, // layout & formatting spec — page 9 of the bound book
+      BrandPage9, // applications & sign-off — final page
     ].map((C, i) => (
       <Still key={`brand-${i + 1}`} id={`BrandBook${i + 1}`} component={C} width={3840} height={2160} />
     ))}

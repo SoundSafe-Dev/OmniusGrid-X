@@ -11,8 +11,6 @@ import { CorrelationAnswer } from './DeckCards';
  * - BannerLinkedIn: 3168x792 (2x LinkedIn company cover 1584x396)
  */
 
-const MONO = 'ui-monospace, "SF Mono", Menlo, monospace';
-
 // ------------------------------------------------------------- one-pager
 
 export const OnePager: React.FC = () => (
@@ -131,8 +129,8 @@ export const OnePager: React.FC = () => (
         >
           ⚡ See your own data correlated — book a live session
         </div>
-        <div style={{ fontSize: 40, color: theme.darkTextSecondary }}>
-          <span style={{ fontFamily: MONO, color: theme.darkText }}>***REMOVED***</span>
+        <div style={{ fontSize: 44, color: theme.darkText, fontWeight: 700 }}>
+          <Wordmark />
         </div>
       </div>
     </div>
