@@ -36,9 +36,6 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = 7
-    # CSRF protection for cookie-authenticated writes (integration branch). Off by
-    # default — this is a Bearer-JWT API; the middleware ignores bearer requests.
-    CSRF_ENABLED: bool = False
 
     # Rate Limiting
     RATE_LIMIT_ENABLED: bool = False
@@ -223,7 +220,26 @@ class Settings(BaseSettings):
     QDRANT_API_KEY: str = ""  # required for Qdrant Cloud; empty for self-hosted
     QDRANT_COLLECTION: str = "documents"
     QDRANT_PREFETCH_LIMIT: int = 50  # candidates per mode retrieved before fusion
-    
+
+    # Chunking (document -> chunks, before embedding). Sizes are in *approximate
+    # tokens*: the backend carries no BGE tokenizer, so we approximate token
+    # counts with a chars-per-token ratio (BGE-M3 uses an XLM-RoBERTa
+    # sentencepiece tokenizer; ~4 chars/token is a safe English heuristic).
+    # Overlap repeats trailing context into the next chunk so a fact that
+    # straddles a boundary is still retrievable from at least one chunk.
+    RAG_CHUNK_TOKENS: int = 512  # target chunk size (approx tokens)
+    RAG_CHUNK_OVERLAP_TOKENS: int = 64  # overlap between adjacent chunks
+    RAG_CHARS_PER_TOKEN: float = 4.0  # heuristic used to convert tokens<->chars
+    RAG_MIN_CHUNK_CHARS: int = 40  # merge a trailing chunk shorter than this
+    RAG_EMBED_BATCH: int = 32  # chunks embedded per rag-inference request
+
+    # Retrieval (query path). Hybrid search returns RAG_RETRIEVE_LIMIT fused
+    # candidates; the reranker cuts them to RAG_RERANK_TOP_N passages, capped at
+    # RAG_MAX_CONTEXT_CHARS of concatenated text fed to the LLM.
+    RAG_RETRIEVE_LIMIT: int = 20  # fused candidates handed to the reranker
+    RAG_RERANK_TOP_N: int = 5  # passages kept after rerank, sent to the LLM
+    RAG_MAX_CONTEXT_CHARS: int = 12000  # cap on concatenated context
+
     # Application
     ENVIRONMENT: str = "development"   # development | staging | production
     DEBUG: bool = True
