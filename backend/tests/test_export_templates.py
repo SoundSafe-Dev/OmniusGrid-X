@@ -77,7 +77,7 @@ def test_download_signature_is_bound_to_job_and_organization():
 def test_legacy_export_signature_remains_valid(monkeypatch):
     from datetime import timedelta
 
-    from jose import jwt
+    import jwt
 
     from app.core.config import settings
 

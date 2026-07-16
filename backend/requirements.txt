@@ -6,7 +6,7 @@ asyncpg==0.30.0
 sqlalchemy==2.0.51
 pydantic==2.11.10
 pydantic-settings==2.10.1
-python-jose[cryptography]==3.5.0   # 3.4+ fixes CVE-2024-33663/33664
+PyJWT[crypto]==2.10.1   # replaced python-jose (FS-76): drops the ecdsa dep + its Minerva advisory PYSEC-2026-1325
 passlib[bcrypt]==1.7.4
 bcrypt==4.2.1   # NOT 5.x: passlib 1.7.4 can't detect it
 python-multipart==0.0.31

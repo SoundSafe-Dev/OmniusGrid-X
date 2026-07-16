@@ -204,7 +204,9 @@ services:
     environment:
       BACKEND_ORIGIN: http://backend:8000
     ports:
-      - "${FRONTEND_PORT:-80}:80"
+      # Container now serves on 8080 (FS-77 non-root nginx); host port default
+      # stays 80.
+      - "${FRONTEND_PORT:-80}:8080"
     depends_on:
       backend:
         condition: service_healthy

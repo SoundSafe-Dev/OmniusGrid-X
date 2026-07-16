@@ -208,3 +208,73 @@ spec:
       ports:
         - protocol: TCP
           port: 9092
+---
+# FS-78: default-deny-all sets policyTypes: [Ingress, Egress] with no egress
+# rules, which fully denies egress on enforcing CNIs. This policy restores the
+# egress the app workloads actually need: DNS, the datastores, and outbound
+# HTTPS (cloud gateway / external services). Keep the selector value list in
+# sync with the workloads that talk out.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-app-egress
+  namespace: omniusgrid
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values:
+          - backend
+          - ingestion-worker
+          - export-worker
+          - compliance-reports-worker
+          - ota-rollout-worker
+  policyTypes:
+    - Egress
+  egress:
+    # Cluster DNS resolution (kube-dns in kube-system).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # TimescaleDB.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: timescaledb
+      ports:
+        - protocol: TCP
+          port: 5432
+    # Redpanda (Kafka API + mTLS listener).
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redpanda
+      ports:
+        - protocol: TCP
+          port: 9092
+        - protocol: TCP
+          port: 9094
+    # Redis.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+    # Outbound HTTPS to the cloud gateway / external services (no podSelector
+    # restriction; egress to any destination on 443).
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 443

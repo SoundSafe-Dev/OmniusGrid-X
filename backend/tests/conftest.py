@@ -178,7 +178,7 @@ def _hash_password(plain: str) -> str:
 
 def _make_jwt(user_id: UUID, secret: str, algorithm: str = "HS256") -> str:
     """Mint a JWT the auth dependency will accept."""
-    from jose import jwt
+    import jwt
 
     now = datetime.now(timezone.utc)
     payload = {
