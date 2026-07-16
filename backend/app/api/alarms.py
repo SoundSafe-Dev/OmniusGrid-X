@@ -4,10 +4,12 @@ from typing import List, Optional
 from uuid import UUID
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, and_
+from types import SimpleNamespace
+from sqlalchemy import select, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_active_user
+from app.core.pagination import PaginatedResponse, paginate
 from app.db.database import get_db
 from app.db.models import Alarm, Asset
 from app.models.schemas import AlarmCreate, AlarmResponse, AlarmAcknowledge
@@ -16,7 +18,7 @@ from app.middleware.rbac import require_operator_or_admin
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
 
-@router.get("/", response_model=List[AlarmResponse], summary="List alarms", description="Retrieve a paginated list of alarms with optional filtering by asset, severity, acknowledgment status, and time range. Defaults to last 24 hours if no time range specified.")
+@router.get("/", response_model=PaginatedResponse[AlarmResponse], summary="List alarms", description="Retrieve a paginated list of alarms with optional filtering by asset, severity, acknowledgment status, and time range. Defaults to last 24 hours if no time range specified. Returns a {items, meta} envelope with the true total count.")
 async def list_alarms(
     asset_id: Optional[UUID] = None,
     is_active: Optional[bool] = None,
@@ -48,11 +50,12 @@ async def list_alarms(
     if not start_time and not end_time:
         query = query.where(Alarm.occurred_at >= datetime.utcnow() - timedelta(hours=24))
     
+    total = (
+        await db.execute(select(func.count()).select_from(query.subquery()))
+    ).scalar_one()
     query = query.order_by(Alarm.occurred_at.desc()).offset(skip).limit(limit)
     result = await db.execute(query)
-    alarms = result.scalars().all()
-    
-    return alarms
+    return paginate(result.scalars().all(), total, SimpleNamespace(skip=skip, limit=limit))
 
 
 @router.get("/active", summary="List active alarms", description="Retrieve all currently active (unacknowledged) alarms with severity-based ordering. Used for real-time monitoring dashboards.")

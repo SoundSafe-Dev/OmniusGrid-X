@@ -6,16 +6,18 @@ returns 404 (not 403) to avoid leaking existence of resources in other
 organizations.
 """
 
+from types import SimpleNamespace
 from typing import List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.middleware.tenant_isolation import get_tenant_org_id, get_tenant_db
 from app.db.database import get_db
 from app.db.models import Asset, AssetType, Workcell, Organization, User
 from app.api.auth import get_current_active_user
+from app.core.pagination import PaginatedResponse, paginate
 from app.middleware.rbac import require_admin
 from app.middleware.rate_limit import rate_limit
 from app.models.schemas import (
@@ -26,7 +28,7 @@ from app.models.schemas import (
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
 
-@router.get("/", response_model=List[AssetResponse], summary="List all assets", description="Retrieve a paginated list of manufacturing assets in the authenticated user's organization, with optional filtering by workcell, asset type, and active status.")
+@router.get("/", response_model=PaginatedResponse[AssetResponse], summary="List all assets", description="Retrieve a paginated list of manufacturing assets in the authenticated user's organization, with optional filtering by workcell, asset type, and active status. Returns a {items, meta} envelope with the true total count.")
 @rate_limit("100/minute")
 async def list_assets(
     request: Request,
@@ -48,9 +50,11 @@ async def list_assets(
     if is_active is not None:
         query = query.where(Asset.is_active == is_active)
 
-    query = query.offset(skip).limit(limit)
-    result = await db.execute(query)
-    return result.scalars().all()
+    total = (
+        await db.execute(select(func.count()).select_from(query.subquery()))
+    ).scalar_one()
+    result = await db.execute(query.offset(skip).limit(limit))
+    return paginate(result.scalars().all(), total, SimpleNamespace(skip=skip, limit=limit))
 
 
 @router.get("/{asset_id}", response_model=AssetResponse, summary="Get asset details", description="Retrieve detailed information about a specific asset including its configuration, PackML state, and connection settings. Returns 404 if the asset belongs to a different organization.")
