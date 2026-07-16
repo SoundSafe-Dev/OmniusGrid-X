@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
-from jose import JWTError
+from jwt import PyJWTError as JWTError
 
 import app.api.auth as auth_api
 from app.core import sso

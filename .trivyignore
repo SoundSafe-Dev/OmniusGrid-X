@@ -1,0 +1,33 @@
+# .trivyignore — reviewed & accepted findings for the Trivy filesystem scan.
+#
+# Purpose
+#   This file lists vulnerability IDs that have been triaged and consciously
+#   accepted, so the Trivy fs scan can be flipped from advisory to BLOCKING
+#   without unfixable base-image noise failing the gate. Every entry MUST be a
+#   deliberate, reviewed decision — not a way to silence real findings.
+#
+# Policy
+#   - Only add a CVE here after review. Prefer fixing (bump the dependency or
+#     base image) over ignoring.
+#   - Document WHY each entry is accepted and, where possible, an expiry so it
+#     gets revisited. Trivy honors an optional trailing "exp:YYYY-MM-DD".
+#   - Application-dependency CVEs should be FIXED, not ignored. This list is
+#     intended for base-image OS packages with no upstream fix available.
+#
+# Format
+#   One vulnerability ID per line (e.g. CVE-2024-XXXXX). Blank lines and
+#   lines starting with "#" are ignored.
+#
+# ---------------------------------------------------------------------------
+# Accepted: base-image OS CVEs with NO fix available
+# ---------------------------------------------------------------------------
+# The python:3.x-slim (Debian) and nginx:1.27-alpine base images periodically
+# carry OS-package CVEs for which no fixed version has been released upstream.
+# These are unfixable from our side until the distro ships a patched package
+# and we rebuild; they are accepted here and reviewed on each base-image bump.
+#
+# (No specific unfixable CVE IDs pinned at this time — add them below as they
+#  are triaged, one per line, each with a short justification comment.)
+#
+# Example (template — uncomment and adapt when a finding is accepted):
+# CVE-2023-45853   # zlib in base image; no Debian fix; not reachable at runtime  exp:2026-12-31

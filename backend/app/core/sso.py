@@ -14,7 +14,7 @@ from datetime import datetime
 from typing import Any, Optional
 
 import structlog
-from jose import JWTError, jwt
+from jwt import PyJWTError as JWTError
 from passlib.context import CryptContext
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
