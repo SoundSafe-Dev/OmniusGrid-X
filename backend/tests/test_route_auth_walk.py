@@ -245,6 +245,10 @@ AUTHENTICATED_OPERATIONAL_MUTATIONS = {
     ("POST", "/api/v1/maintenance/history"),
     ("POST", "/api/v1/maintenance/repair-orders"),
     ("PUT", "/api/v1/organizations/settings/current"),
+    # RAG compliance-doc pipeline (Hudson): authenticated ingest/query/delete.
+    ("POST", "/api/v1/rag/ingest"),
+    ("POST", "/api/v1/rag/query"),
+    ("DELETE", "/api/v1/rag/documents/{doc_id}"),
 }
 
 

@@ -90,6 +90,14 @@ class VectorStore:
             },
             sparse_vectors_config={"sparse": models.SparseVectorParams()},
         )
+        # Payload indexes for the fields we filter on: org_id (tenant isolation)
+        # and doc_id (delete-by-doc). Keyword indexes keep filtered search fast.
+        for field in ("org_id", "doc_id"):
+            await client.create_payload_index(
+                collection_name=self.collection,
+                field_name=field,
+                field_schema=models.PayloadSchemaType.KEYWORD,
+            )
         logger.info(
             "vector_store.collection_created",
             collection=self.collection,
@@ -127,13 +135,24 @@ class VectorStore:
         sparse_values: List[float],
         limit: int = 10,
         query_filter: Optional["models.Filter"] = None,
+        org_id: Optional[str] = None,
     ) -> List[SearchResult]:
         """Dense + sparse retrieval fused with RRF, server-side.
 
         ``limit`` is the fused result size (feed these to the reranker). The
-        per-mode candidate pool is ``QDRANT_PREFETCH_LIMIT``.
+        per-mode candidate pool is ``QDRANT_PREFETCH_LIMIT``. Pass ``org_id``
+        for tenant isolation - it builds an ``org_id`` payload filter unless an
+        explicit ``query_filter`` is given.
         """
         client = self._get_client()
+        if query_filter is None and org_id is not None:
+            query_filter = models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="org_id", match=models.MatchValue(value=org_id)
+                    )
+                ]
+            )
         response = await client.query_points(
             collection_name=self.collection,
             prefetch=[
