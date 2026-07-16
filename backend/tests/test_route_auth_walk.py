@@ -49,13 +49,10 @@ PUBLIC_REQUIRED_EXACT = {
     "/api/v1/sso/login/callback",  # IdP redirect target; validates its own payload
     "/api/v1/auth/login",
     "/api/v1/auth/register",   # dev-only; gated by ALLOW_OPEN_REGISTRATION
+    "/api/v1/auth/refresh",    # refresh token in body is the credential
 }
 
-PUBLIC_OPTIONAL_EXACT = {
-    # Added by the auth-session lane; this branch may not have converged it yet.
-    "/api/v1/auth/refresh",
-}
-PUBLIC_EXACT = PUBLIC_REQUIRED_EXACT | PUBLIC_OPTIONAL_EXACT
+PUBLIC_EXACT = PUBLIC_REQUIRED_EXACT
 
 # Public-but-otherwise-authenticated: signed URLs, HMAC webhooks, bootstrap
 # tokens. A token-less request must still be REJECTED (non-2xx) — these
@@ -182,6 +179,7 @@ SELF_SERVICE_MUTATIONS = {
     ("DELETE", "/api/v1/nlp/sessions/{session_id}/data/{source_id}"),
     ("DELETE", "/api/v1/user/goals/{goal_id}"),
     ("POST", "/api/v1/gdpr/consent"),
+    ("POST", "/api/v1/auth/logout"),
     ("POST", "/api/v1/kanban/board/view"),
     ("POST", "/api/v1/nlp/correlation/chat"),
     ("POST", "/api/v1/nlp/correlation/intake/analyze"),
@@ -203,6 +201,7 @@ SELF_SERVICE_MUTATIONS = {
 
 CREDENTIAL_MUTATIONS = {
     ("POST", "/api/v1/auth/login"),
+    ("POST", "/api/v1/auth/refresh"),
     ("POST", "/api/v1/auth/register"),
     ("POST", "/api/v1/geotab/webhook"),
     ("POST", "/api/v1/sso/login/callback"),

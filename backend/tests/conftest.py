@@ -76,6 +76,8 @@ def _setup_schema(sync_url: str) -> None:
         "024_agent_rollout_orchestration.sql",
         "025_historian_retention.sql",
         "026_model_registry.sql",
+        "027_model_ota_releases.sql",
+        "030_auth_session_hardening.sql",
     ]
 
     conn = psycopg2.connect(sync_url)
@@ -188,9 +190,13 @@ def _make_jwt(user_id: UUID, secret: str, algorithm: str = "HS256") -> str:
     """Mint a JWT the auth dependency will accept."""
     from jose import jwt
 
+    now = datetime.now(timezone.utc)
     payload = {
         "sub": str(user_id),
-        "exp": datetime.now(timezone.utc) + timedelta(hours=1),
+        "type": "access",
+        "jti": str(uuid4()),
+        "iat": now,
+        "exp": now + timedelta(hours=1),
     }
     return jwt.encode(payload, secret, algorithm=algorithm)
 
@@ -206,7 +212,7 @@ def pg_container():
 
     container = PostgresContainer(
         image="timescale/timescaledb:latest-pg15",
-        username="omniusgrid",
+        user="omniusgrid",
         password="omniusgrid_dev_password",
         dbname="omniusgrid_test",
     )

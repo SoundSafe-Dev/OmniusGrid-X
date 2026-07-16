@@ -150,6 +150,7 @@ class OEEMetrics(BaseModel):
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
+    refresh_token: str
 
 
 class UserLogin(BaseModel):
