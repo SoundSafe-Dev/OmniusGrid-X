@@ -14,3 +14,6 @@ export { maintenanceApi } from './maintenance';
 export { kpiApi } from './kpi';
 export { errorTriageApi } from './errorTriage';
 export { fleetApi } from './fleet';
+export { rulApi } from './rul';
+export { historianApi } from './historian';
+export { twinOptimizerApi, defaultOptimizeRequest } from './twinOptimizer';

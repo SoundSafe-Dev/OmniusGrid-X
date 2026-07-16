@@ -23,6 +23,7 @@ import {
   Database,
   Bug,
   UploadCloud,
+  HeartPulse,
 } from 'lucide-react';
 import { useUIStore, useAuthStore } from '../../stores';
 import { cn } from '../../utils';
@@ -67,6 +68,16 @@ const navItems: NavItem[] = [
       { path: '/analytics/telemetry', label: 'Telemetry', icon: LineChart, description: 'Real-time sensor data charts' },
       { path: '/analytics/health', label: 'Asset Health', icon: LineChart, description: 'Equipment performance metrics' },
       { path: '/analytics/maintenance', label: 'Maintenance', icon: LineChart, description: 'Predictive maintenance analytics' },
+    ],
+  },
+  {
+    path: '/predictive',
+    label: 'Predictive',
+    icon: HeartPulse,
+    description: 'RUL predictive maintenance and time-series historian',
+    children: [
+      { path: '/predictive/rul', label: 'Asset RUL', icon: HeartPulse, description: 'Remaining useful life and failure risk per asset' },
+      { path: '/predictive/historian', label: 'Historian', icon: Database, description: 'Query the tenant time-series historian' },
     ],
   },
   {

@@ -16,7 +16,7 @@ from app.models.schemas import DashboardOverview, OEEMetrics
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
 
-@router.get("/overview")
+@router.get("/overview", response_model=DashboardOverview)
 async def get_dashboard_overview(
     organization_id: Optional[UUID] = None,
     db: AsyncSession = Depends(get_db),

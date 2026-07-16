@@ -20,7 +20,11 @@ from app.api import fleet_health
 from app.api import model_releases, historian, data_retention, rul, twin_optimizer
 # RAG compliance-doc pipeline (Hudson): retrieval + ingestion router.
 from app.api import rag
+# Previously-orphaned routers (present in the tree but never mounted): MLOps
+# model-monitoring/drift (Harsh's lane) and admin query-performance diagnostics.
+from app.api import model_monitoring, query_performance
 from app.core.config import settings
+from app.core.responses import common_responses
 from app.core.logging_filters import install_sensitive_query_access_log_filter
 from app.db.database import init_db
 from app.services.websocket_manager import websocket_manager
@@ -274,29 +278,29 @@ setup_profiling(app)
 
 # Include routers
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])
-app.include_router(assets.router, prefix="/api/v1/assets", tags=["Assets"])
-app.include_router(telemetry.router, prefix="/api/v1/telemetry", tags=["Telemetry"])
-app.include_router(alarms.router, prefix="/api/v1/alarms", tags=["Alarms"])
-app.include_router(operations.router, prefix="/api/v1/operations", tags=["Operations"])
-app.include_router(dashboard.router, prefix="/api/v1/dashboard", tags=["Dashboard"])
-app.include_router(health.router, prefix="", tags=["Health"])
-app.include_router(engines.router, prefix="/api/v1/engines", tags=["AI Engines"])
-app.include_router(yard.router, prefix="/api/v1/yard", tags=["Yard Management"])
-app.include_router(transportation.router, prefix="/api/v1/transportation", tags=["Transportation Management"])
+app.include_router(assets.router, prefix="/api/v1/assets", tags=["Assets"], responses=common_responses)
+app.include_router(telemetry.router, prefix="/api/v1/telemetry", tags=["Telemetry"], responses=common_responses)
+app.include_router(alarms.router, prefix="/api/v1/alarms", tags=["Alarms"], responses=common_responses)
+app.include_router(operations.router, prefix="/api/v1/operations", tags=["Operations"], responses=common_responses)
+app.include_router(dashboard.router, prefix="/api/v1/dashboard", tags=["Dashboard"], responses=common_responses)
+app.include_router(health.router, prefix="", tags=["Health"], responses=common_responses)
+app.include_router(engines.router, prefix="/api/v1/engines", tags=["AI Engines"], responses=common_responses)
+app.include_router(yard.router, prefix="/api/v1/yard", tags=["Yard Management"], responses=common_responses)
+app.include_router(transportation.router, prefix="/api/v1/transportation", tags=["Transportation Management"], responses=common_responses)
 app.include_router(logistics_correlation.router, prefix="/api/v1/logistics", tags=["Logistics Correlation"])
-app.include_router(commands.router, prefix="/api/v1/commands", tags=["Commands"])
-app.include_router(oee.router, prefix="/api/v1/oee", tags=["OEE"])
-app.include_router(health_index.router, prefix="/api/v1/health-index", tags=["Asset Health Index"])
-app.include_router(simulation.router, prefix="/api/v1/simulation", tags=["Simulation / Digital Twin"])
-app.include_router(notifications.router, prefix="/api/v1/notifications", tags=["Notifications"])
-app.include_router(edge_enroll.router, tags=["Edge"])
-app.include_router(edge_ingest.router, tags=["Edge"])
-app.include_router(edge_fleet.router, tags=["Edge"])
+app.include_router(commands.router, prefix="/api/v1/commands", tags=["Commands"], responses=common_responses)
+app.include_router(oee.router, prefix="/api/v1/oee", tags=["OEE"], responses=common_responses)
+app.include_router(health_index.router, prefix="/api/v1/health-index", tags=["Asset Health Index"], responses=common_responses)
+app.include_router(simulation.router, prefix="/api/v1/simulation", tags=["Simulation / Digital Twin"], responses=common_responses)
+app.include_router(notifications.router, prefix="/api/v1/notifications", tags=["Notifications"], responses=common_responses)
+app.include_router(edge_enroll.router, tags=["Edge"], responses=common_responses)
+app.include_router(edge_ingest.router, tags=["Edge"], responses=common_responses)
+app.include_router(edge_fleet.router, tags=["Edge"], responses=common_responses)
 app.include_router(kanban.router, prefix="/api/v1/kanban", tags=["Kanban"])
 app.include_router(registries.router, tags=["Registries"])
 app.include_router(websocket.router, tags=["WebSocket"])
-app.include_router(geotab.router, prefix="/api/v1", tags=["GeoTab"])
-app.include_router(geotab.webhook_router, prefix="/api/v1", tags=["GeoTab"])
+app.include_router(geotab.router, prefix="/api/v1", tags=["GeoTab"], responses=common_responses)
+app.include_router(geotab.webhook_router, prefix="/api/v1", tags=["GeoTab"], responses=common_responses)
 app.include_router(correlation_integration.router, tags=["Correlation Integration"])
 app.include_router(nlp_correlation.router, tags=["NLP Correlation"])
 app.include_router(analysis_sessions.router, tags=["Analysis Sessions"])
@@ -316,13 +320,13 @@ app.include_router(erp_integrations.router, tags=["ERP Integrations"])
 app.include_router(erp_webhooks.router, tags=["ERP Integrations"])
 app.include_router(platform_correlation.router, tags=["NLP Correlation"])
 # Fleet logistics (D20-D21): geofencing, maintenance, and logistics aggregates.
-app.include_router(fleet_logistics.geofencing_router, prefix="/api/v1/geofencing", tags=["Geofencing"])
-app.include_router(fleet_logistics.maintenance_router, prefix="/api/v1/maintenance", tags=["Fleet Maintenance"])
-app.include_router(fleet_logistics.logistics_router, prefix="/api/v1/logistics", tags=["Transportation Management"])
-app.include_router(kpi.router, prefix="/api/v1/kpi", tags=["KPIs"])
-app.include_router(workcells.workcells_router, prefix="/api/v1/workcells", tags=["Workcells"])
-app.include_router(workcells.organizations_router, prefix="/api/v1/organizations", tags=["Organizations"])
-app.include_router(fleet_health.router, prefix="/api/v1/fleet", tags=["Fleet Health"])
+app.include_router(fleet_logistics.geofencing_router, prefix="/api/v1/geofencing", tags=["Geofencing"], responses=common_responses)
+app.include_router(fleet_logistics.maintenance_router, prefix="/api/v1/maintenance", tags=["Fleet Maintenance"], responses=common_responses)
+app.include_router(fleet_logistics.logistics_router, prefix="/api/v1/logistics", tags=["Transportation Management"], responses=common_responses)
+app.include_router(kpi.router, prefix="/api/v1/kpi", tags=["KPIs"], responses=common_responses)
+app.include_router(workcells.workcells_router, prefix="/api/v1/workcells", tags=["Workcells"], responses=common_responses)
+app.include_router(workcells.organizations_router, prefix="/api/v1/organizations", tags=["Organizations"], responses=common_responses)
+app.include_router(fleet_health.router, prefix="/api/v1/fleet", tags=["Fleet Health"], responses=common_responses)
 app.include_router(feature_flags.router, prefix="/api/v1/feature-flags", tags=["Feature Flags"])
 app.include_router(sso.router, prefix="/api/v1/sso", tags=["SSO"])
 app.include_router(bulk_operations.router, prefix="/api/v1/bulk", tags=["Bulk Operations"])
@@ -346,6 +350,9 @@ app.include_router(
     tags=["Data Retention"],
 )
 app.include_router(rag.router, prefix="/api/v1/rag", tags=["RAG"])
+# Newly wired (were unmounted): model-monitoring/drift + admin query diagnostics.
+app.include_router(model_monitoring.router, prefix="/api/v1/model-monitoring", tags=["Model Monitoring"])
+app.include_router(query_performance.router, prefix="/api/v1/admin/query-performance", tags=["Query Performance"])
 
 
 @app.get("/")
