@@ -28,6 +28,8 @@ from app.api.auth import get_current_active_user
 from app.middleware.tenant_isolation import get_tenant_db
 from app.services.websocket_manager import websocket_manager
 
+from app.middleware.rbac import require_admin, require_operator_or_admin
+
 router = APIRouter()
 
 
@@ -303,7 +305,7 @@ async def list_tasks(
     return result.scalars().all()
 
 
-@router.post("/tasks", response_model=TaskResponse)
+@router.post("/tasks", response_model=TaskResponse, dependencies=[Depends(require_operator_or_admin)])
 async def create_task(
     task_data: TaskCreate,
     background_tasks: BackgroundTasks,
@@ -408,7 +410,7 @@ async def get_task(
     )
 
 
-@router.put("/tasks/{task_id}", response_model=TaskResponse)
+@router.put("/tasks/{task_id}", response_model=TaskResponse, dependencies=[Depends(require_operator_or_admin)])
 async def update_task(
     task_id: str,
     task_update: TaskUpdate,
@@ -513,7 +515,7 @@ async def update_task(
     return task
 
 
-@router.delete("/tasks/{task_id}")
+@router.delete("/tasks/{task_id}", dependencies=[Depends(require_operator_or_admin)])
 async def delete_task(
     task_id: str,
     session: AsyncSession = Depends(get_tenant_db),
@@ -543,7 +545,7 @@ async def delete_task(
 
 # ==================== Task Workflow Actions ====================
 
-@router.post("/tasks/{task_id}/move", response_model=TaskResponse)
+@router.post("/tasks/{task_id}/move", response_model=TaskResponse, dependencies=[Depends(require_operator_or_admin)])
 async def move_task(
     task_id: str,
     move_request: TaskMoveRequest,
@@ -627,7 +629,7 @@ async def move_task(
     return task
 
 
-@router.post("/tasks/{task_id}/approve", response_model=TaskResponse)
+@router.post("/tasks/{task_id}/approve", response_model=TaskResponse, dependencies=[Depends(require_operator_or_admin)])
 async def approve_task(
     task_id: str,
     approval: TaskApprovalRequest,
@@ -718,7 +720,7 @@ async def approve_task(
     return task
 
 
-@router.post("/tasks/{task_id}/start", response_model=TaskResponse)
+@router.post("/tasks/{task_id}/start", response_model=TaskResponse, dependencies=[Depends(require_operator_or_admin)])
 async def start_task(
     task_id: str,
     background_tasks: BackgroundTasks,
@@ -780,7 +782,7 @@ async def start_task(
     return task
 
 
-@router.post("/tasks/{task_id}/complete", response_model=TaskResponse)
+@router.post("/tasks/{task_id}/complete", response_model=TaskResponse, dependencies=[Depends(require_operator_or_admin)])
 async def complete_task(
     task_id: str,
     background_tasks: BackgroundTasks,
@@ -954,7 +956,7 @@ async def get_task_comments(
     return result.scalars().all()
 
 
-@router.post("/tasks/{task_id}/comments", response_model=TaskCommentResponse)
+@router.post("/tasks/{task_id}/comments", response_model=TaskCommentResponse, dependencies=[Depends(require_operator_or_admin)])
 async def add_task_comment(
     task_id: str,
     comment: TaskCommentBase,
@@ -989,7 +991,7 @@ async def add_task_comment(
 
 # ==================== Time Tracking ====================
 
-@router.post("/tasks/{task_id}/timer/start", response_model=TaskTimerResponse)
+@router.post("/tasks/{task_id}/timer/start", response_model=TaskTimerResponse, dependencies=[Depends(require_operator_or_admin)])
 async def start_task_timer(
     task_id: str,
     timer_data: TaskTimerStart,
@@ -1035,7 +1037,7 @@ async def start_task_timer(
     return timer
 
 
-@router.post("/tasks/{task_id}/timer/stop", response_model=TaskTimerResponse)
+@router.post("/tasks/{task_id}/timer/stop", response_model=TaskTimerResponse, dependencies=[Depends(require_operator_or_admin)])
 async def stop_task_timer(
     task_id: str,
     timer_data: TaskTimerStop,
@@ -1312,7 +1314,7 @@ async def list_task_rules(
     return result.scalars().all()
 
 
-@router.post("/rules", response_model=TaskRuleResponse)
+@router.post("/rules", response_model=TaskRuleResponse, dependencies=[Depends(require_admin)])
 async def create_task_rule(
     rule_data: TaskRuleCreate,
     session: AsyncSession = Depends(get_db),
@@ -1346,7 +1348,7 @@ async def create_task_rule(
     return rule
 
 
-@router.put("/rules/{rule_id}", response_model=TaskRuleResponse)
+@router.put("/rules/{rule_id}", response_model=TaskRuleResponse, dependencies=[Depends(require_admin)])
 async def update_task_rule(
     rule_id: str,
     rule_update: TaskRuleUpdate,
@@ -1397,7 +1399,7 @@ async def update_task_rule(
     return rule
 
 
-@router.post("/rules/{rule_id}/test", response_model=TaskRuleTestResponse)
+@router.post("/rules/{rule_id}/test", response_model=TaskRuleTestResponse, dependencies=[Depends(require_admin)])
 async def test_task_rule(
     rule_id: str,
     test_data: TaskRuleTestRequest,
@@ -1527,7 +1529,7 @@ async def get_premade_rules(
     return premade_templates
 
 
-@router.delete("/rules/{rule_id}")
+@router.delete("/rules/{rule_id}", dependencies=[Depends(require_admin)])
 async def delete_task_rule(
     rule_id: str,
     session: AsyncSession = Depends(get_db),

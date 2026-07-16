@@ -22,7 +22,7 @@ router = APIRouter()
 DEFAULT_REGION = "USA"
 
 
-@router.post("/tag", summary="Tag record with residency", description="Tag a database record with its data residency region.")
+@router.post("/tag", summary="Tag record with residency", description="Tag a database record with its data residency region.", dependencies=[Depends(require_admin)])
 @rate_limit("100/minute")
 async def tag_record_residency(
     request: Request,
@@ -162,9 +162,8 @@ async def list_residency_tags(
     return {"items": tag_list, "total": len(tag_list)}
 
 
-@router.delete("/tag/{table_name}/{record_id}", summary="Remove residency tag", description="Remove a data residency tag from a record.")
+@router.delete("/tag/{table_name}/{record_id}", summary="Remove residency tag", description="Remove a data residency tag from a record.", dependencies=[Depends(require_admin)])
 @rate_limit("10/minute")
-@require_admin()
 async def remove_residency_tag(
     request: Request,
     table_name: str,
@@ -228,9 +227,8 @@ async def get_residency_summary(
     return summary
 
 
-@router.post("/validate", summary="Validate data residency", description="Validate that all data in specified tables is tagged with correct residency.")
+@router.post("/validate", summary="Validate data residency", description="Validate that all data in specified tables is tagged with correct residency.", dependencies=[Depends(require_admin)])
 @rate_limit("10/minute")
-@require_admin()
 async def validate_data_residency(
     request: Request,
     table_names: List[str],

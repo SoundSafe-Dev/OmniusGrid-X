@@ -9,6 +9,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import get_current_active_user
 from app.db.database import get_db
 from app.db.models import (
     YardTrailer, DockDoor, YardMove, DriverWaitTime, 
@@ -27,12 +28,18 @@ from app.services.yard_management import (
     yard_management_service, dock_scheduler, DetentionCalculator
 )
 
-router = APIRouter(prefix="/yard", tags=["yard_management"])
+from app.middleware.rbac import require_operator_or_admin
+
+router = APIRouter(
+    prefix="/yard",
+    tags=["yard_management"],
+    dependencies=[Depends(get_current_active_user)],
+)
 
 
 # ==================== Yard Trailer Endpoints ====================
 
-@router.post("/trailers/checkin", response_model=YardTrailerResponse)
+@router.post("/trailers/checkin", response_model=YardTrailerResponse, dependencies=[Depends(require_operator_or_admin)])
 async def trailer_check_in(
     data: YardTrailerCreate,
     db: AsyncSession = Depends(get_db)
@@ -52,7 +59,7 @@ async def trailer_check_in(
     return trailer
 
 
-@router.post("/trailers/{trailer_id}/checkout", response_model=dict)
+@router.post("/trailers/{trailer_id}/checkout", response_model=dict, dependencies=[Depends(require_operator_or_admin)])
 async def trailer_check_out(
     trailer_id: UUID,
     db: AsyncSession = Depends(get_db)
@@ -103,7 +110,7 @@ async def get_trailer(
     return trailer
 
 
-@router.put("/trailers/{trailer_id}", response_model=YardTrailerResponse)
+@router.put("/trailers/{trailer_id}", response_model=YardTrailerResponse, dependencies=[Depends(require_operator_or_admin)])
 async def update_trailer(
     trailer_id: UUID,
     data: YardTrailerUpdate,
@@ -129,7 +136,7 @@ async def update_trailer(
 
 # ==================== Dock Door Endpoints ====================
 
-@router.post("/dock/doors", response_model=DockDoorResponse)
+@router.post("/dock/doors", response_model=DockDoorResponse, dependencies=[Depends(require_operator_or_admin)])
 async def create_dock_door(
     data: DockDoorCreate,
     db: AsyncSession = Depends(get_db)
@@ -157,7 +164,7 @@ async def get_dock_doors(
     return result.scalars().all()
 
 
-@router.post("/dock/doors/{door_id}/assign/{trailer_id}", response_model=dict)
+@router.post("/dock/doors/{door_id}/assign/{trailer_id}", response_model=dict, dependencies=[Depends(require_operator_or_admin)])
 async def assign_trailer_to_dock(
     door_id: UUID,
     trailer_id: UUID,
@@ -182,7 +189,7 @@ async def assign_trailer_to_dock(
 
 # ==================== Dock Appointment Endpoints ====================
 
-@router.post("/dock/appointments", response_model=DockAppointmentResponse)
+@router.post("/dock/appointments", response_model=DockAppointmentResponse, dependencies=[Depends(require_operator_or_admin)])
 async def create_dock_appointment(
     data: DockAppointmentCreate,
     db: AsyncSession = Depends(get_db)
@@ -229,7 +236,7 @@ async def get_dock_schedule(
     return appointments
 
 
-@router.post("/dock/appointments/{appointment_id}/start", response_model=DockAppointmentResponse)
+@router.post("/dock/appointments/{appointment_id}/start", response_model=DockAppointmentResponse, dependencies=[Depends(require_operator_or_admin)])
 async def start_appointment(
     appointment_id: UUID,
     db: AsyncSession = Depends(get_db)
@@ -245,7 +252,7 @@ async def start_appointment(
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@router.post("/dock/appointments/{appointment_id}/complete", response_model=DockAppointmentResponse)
+@router.post("/dock/appointments/{appointment_id}/complete", response_model=DockAppointmentResponse, dependencies=[Depends(require_operator_or_admin)])
 async def complete_appointment(
     appointment_id: UUID,
     db: AsyncSession = Depends(get_db)
@@ -263,7 +270,7 @@ async def complete_appointment(
 
 # ==================== Yard Move Endpoints ====================
 
-@router.post("/moves", response_model=YardMoveResponse)
+@router.post("/moves", response_model=YardMoveResponse, dependencies=[Depends(require_operator_or_admin)])
 async def record_yard_move(
     data: YardMoveCreate,
     db: AsyncSession = Depends(get_db)
@@ -281,7 +288,7 @@ async def record_yard_move(
     return move
 
 
-@router.post("/moves/{move_id}/complete", response_model=YardMoveResponse)
+@router.post("/moves/{move_id}/complete", response_model=YardMoveResponse, dependencies=[Depends(require_operator_or_admin)])
 async def complete_yard_move(
     move_id: UUID,
     db: AsyncSession = Depends(get_db)
@@ -319,7 +326,7 @@ async def get_dwell_time_analytics(
     return analytics
 
 
-@router.post("/driver-wait-times", response_model=DriverWaitTimeResponse)
+@router.post("/driver-wait-times", response_model=DriverWaitTimeResponse, dependencies=[Depends(require_operator_or_admin)])
 async def create_driver_wait_time(
     data: DriverWaitTimeCreate,
     db: AsyncSession = Depends(get_db)
@@ -339,7 +346,7 @@ async def create_driver_wait_time(
 
 # ==================== Checkpoint Endpoints ====================
 
-@router.post("/checkpoints", response_model=YardCheckPointResponse)
+@router.post("/checkpoints", response_model=YardCheckPointResponse, dependencies=[Depends(require_operator_or_admin)])
 async def record_checkpoint(
     data: YardCheckPointCreate,
     db: AsyncSession = Depends(get_db)

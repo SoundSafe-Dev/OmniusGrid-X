@@ -8,36 +8,19 @@ decision.
 
 from typing import Optional
 
-import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from app.api.auth import get_current_active_user
 from app.db.models import User
+from app.middleware.rbac import require_admin
 from app.services.feature_flags import (
     FeatureFlagError,
     FeatureFlagNotFound,
     feature_flag_service,
 )
 
-logger = structlog.get_logger()
-
 router = APIRouter()
-
-
-async def require_admin(current_user: User = Depends(get_current_active_user)) -> User:
-    """Allow only admin users (matches User.role convention in auth.py)."""
-    if current_user.role != "admin":
-        logger.warning(
-            "feature_flag_admin_denied",
-            user_id=str(current_user.id),
-            user_role=current_user.role,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin role required",
-        )
-    return current_user
 
 
 class FeatureFlagCreate(BaseModel):

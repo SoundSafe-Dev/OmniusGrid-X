@@ -124,8 +124,7 @@ async def get_historian_retention_policy(
     return _historian_policy_payload(row)
 
 
-@tenant_router.post("/policies", status_code=status.HTTP_201_CREATED)
-@require_admin()
+@tenant_router.post("/policies", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_admin)])
 async def create_historian_retention_policy(
     policy: HistorianRetentionCreate,
     current_user: User = Depends(get_current_active_user),
@@ -168,8 +167,7 @@ async def create_historian_retention_policy(
     return _historian_policy_payload(result.fetchone())
 
 
-@tenant_router.put("/policies/{metric_name}")
-@require_admin()
+@tenant_router.put("/policies/{metric_name}", dependencies=[Depends(require_admin)])
 async def update_historian_retention_policy(
     metric_name: str,
     policy: HistorianRetentionSettings,
@@ -206,8 +204,7 @@ async def update_historian_retention_policy(
     return _historian_policy_payload(row)
 
 
-@tenant_router.delete("/policies/{metric_name}", status_code=status.HTTP_204_NO_CONTENT)
-@require_admin()
+@tenant_router.delete("/policies/{metric_name}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_admin)])
 async def delete_historian_retention_policy(
     metric_name: str,
     current_user: User = Depends(get_current_active_user),
@@ -229,8 +226,7 @@ async def delete_historian_retention_policy(
         raise HTTPException(status_code=404, detail="Retention policy not found")
 
 
-@tenant_router.post("/enforce")
-@require_admin()
+@tenant_router.post("/enforce", dependencies=[Depends(require_admin)])
 async def enforce_historian_retention(
     current_user: User = Depends(get_current_active_user),
     organization_id: UUID = Depends(get_tenant_org_id),
@@ -337,8 +333,7 @@ async def get_retention_config(
         )
 
 
-@router.post("/config")
-@require_admin()
+@router.post("/config", dependencies=[Depends(require_admin)])
 async def create_retention_config(
     config: RetentionConfig,
     current_user: User = Depends(get_current_active_user),
@@ -400,8 +395,7 @@ async def create_retention_config(
         )
 
 
-@router.put("/policy/{table_name}")
-@require_admin()
+@router.put("/policy/{table_name}", dependencies=[Depends(require_admin)])
 async def update_retention_policy(
     table_name: str,
     policy: RetentionPolicyUpdate,
@@ -430,8 +424,7 @@ async def update_retention_policy(
         )
 
 
-@router.post("/archive")
-@require_admin()
+@router.post("/archive", dependencies=[Depends(require_admin)])
 async def archive_to_cold_storage(
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
@@ -463,8 +456,7 @@ async def archive_to_cold_storage(
         )
 
 
-@router.post("/purge")
-@require_admin()
+@router.post("/purge", dependencies=[Depends(require_admin)])
 async def purge_old_data(
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)

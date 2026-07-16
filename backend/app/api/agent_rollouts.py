@@ -241,9 +241,8 @@ def _wave_for_position(position: int, total: int, strategy: dict) -> int:
     return 0
 
 
-@router.post("/rollouts", response_model=AgentRolloutResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/rollouts", response_model=AgentRolloutResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_admin)])
 @rate_limit("30/hour")
-@require_admin()
 async def create_rollout(
     request: Request,
     payload: AgentRolloutCreate,
@@ -330,9 +329,8 @@ async def get_rollout(
     return _rollout_response(await _get_rollout(rollout_id, org_id, db))
 
 
-@router.post("/rollouts/{rollout_id}/pause", response_model=AgentRolloutResponse)
+@router.post("/rollouts/{rollout_id}/pause", response_model=AgentRolloutResponse, dependencies=[Depends(require_admin)])
 @rate_limit("30/hour")
-@require_admin()
 async def pause_rollout(
     request: Request,
     rollout_id: UUID,
@@ -357,9 +355,8 @@ async def pause_rollout(
     return _rollout_response(await _get_rollout(rollout_id, org_id, db))
 
 
-@router.post("/rollouts/{rollout_id}/resume", response_model=AgentRolloutResponse)
+@router.post("/rollouts/{rollout_id}/resume", response_model=AgentRolloutResponse, dependencies=[Depends(require_admin)])
 @rate_limit("30/hour")
-@require_admin()
 async def resume_rollout(
     request: Request,
     rollout_id: UUID,
@@ -384,9 +381,8 @@ async def resume_rollout(
     return _rollout_response(await _get_rollout(rollout_id, org_id, db))
 
 
-@router.post("/rollouts/{rollout_id}/cancel", response_model=AgentRolloutResponse)
+@router.post("/rollouts/{rollout_id}/cancel", response_model=AgentRolloutResponse, dependencies=[Depends(require_admin)])
 @rate_limit("30/hour")
-@require_admin()
 async def cancel_rollout(
     request: Request,
     rollout_id: UUID,

@@ -20,6 +20,8 @@ import structlog
 
 logger = structlog.get_logger()
 
+from app.middleware.rbac import require_admin, require_operator_or_admin
+
 router = APIRouter(prefix="/api/v1/engines/correlation/integration", tags=["correlation-integration"])
 
 
@@ -60,7 +62,7 @@ class RegistryInitializationResponse(BaseModel):
 
 # ==================== Endpoints ====================
 
-@router.post("/analyze", response_model=CorrelationAnalysisResponse)
+@router.post("/analyze", response_model=CorrelationAnalysisResponse, dependencies=[Depends(require_operator_or_admin)])
 async def analyze_and_integrate(
     request: CorrelationAnalysisRequest,
     background_tasks: BackgroundTasks,
@@ -175,7 +177,7 @@ async def process_integration_background(
             logger.error("background_integration_failed", error=str(e))
 
 
-@router.post("/initialize-registries", response_model=RegistryInitializationResponse)
+@router.post("/initialize-registries", response_model=RegistryInitializationResponse, dependencies=[Depends(require_admin)])
 async def initialize_registries(
     request: RegistryInitializationRequest,
     db: AsyncSession = Depends(get_db),
@@ -251,7 +253,7 @@ async def get_task_type_mapping(
     }
 
 
-@router.post("/test-integration")
+@router.post("/test-integration", dependencies=[Depends(require_admin)])
 async def test_integration(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user)

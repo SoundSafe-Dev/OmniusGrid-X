@@ -15,7 +15,9 @@ try:
 except ImportError:
     SecurityHeadersMiddleware = None
 
-router = APIRouter()
+from app.middleware.rbac import require_admin
+
+router = APIRouter(dependencies=[Depends(require_admin)])
 
 @router.get("/slow-queries")
 async def get_slow_queries(

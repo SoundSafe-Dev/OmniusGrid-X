@@ -9,7 +9,9 @@ try:
 except ImportError:
     model_monitoring_service = None
 
-router = APIRouter()
+from app.api.auth import get_current_active_user
+
+router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
 
 class DriftDetectionRequest(BaseModel):

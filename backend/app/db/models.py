@@ -1209,28 +1209,6 @@ class APIKey(Base):
     meta_data = Column(JSON, default={})
 
 
-class Permission(Base):
-    """Permissions for RBAC"""
-    __tablename__ = "permissions"
-
-    id = UUIDColumn()
-    name = Column(String(100), nullable=False, unique=True)
-    description = Column(Text, nullable=True)
-    resource = Column(String(50), nullable=False)
-    action = Column(String(50), nullable=False)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-
-
-class RolePermission(Base):
-    """Role to permission mapping"""
-    __tablename__ = "role_permissions"
-
-    id = UUIDColumn()
-    role = Column(String(50), nullable=False)
-    permission_id = UUIDForeignKey("permissions.id", nullable=False)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-
-
 class UserSession(Base):
     """User session management"""
     __tablename__ = "user_sessions"
