@@ -241,11 +241,13 @@ export const Sidebar: FC<SidebarProps> = ({ mobile = false, onClose }) => {
               alt="OmniusGrid"
               className="w-9 h-9 rounded-lg bg-white shrink-0"
             />
-            <div>
-              <h1 className="text-xl text-opsgrid-primary">
+            <div className="min-w-0">
+              <h1 className="text-xl text-opsgrid-primary whitespace-nowrap leading-none">
                 <Wordmark />
               </h1>
-              <p className="text-xs text-opsgrid-text-secondary">Data Correlation for Industry 4.0</p>
+              <p className="text-[11px] leading-tight tracking-tight text-opsgrid-text-secondary whitespace-nowrap">
+                Data Correlation for Industry 4.0
+              </p>
             </div>
           </div>
         ) : (
