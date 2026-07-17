@@ -232,7 +232,15 @@ class StoreForwardBuffer:
             ts_str = str(raw_ts).replace("Z", "+00:00")
             timestamp_edge = datetime.fromisoformat(ts_str)
             if timestamp_edge.tzinfo:
-                timestamp_edge = timestamp_edge.replace(tzinfo=None)
+                # Convert to UTC *before* dropping the tzinfo. A bare
+                # replace(tzinfo=None) on a non-UTC aware time (e.g. +05:00)
+                # keeps the local wall-clock reading, which _age_seconds then
+                # re-interprets as UTC — corrupting stored edge-time and
+                # backfill-lag by the offset. astimezone() moves the instant to
+                # UTC first so the naive value it stores is genuinely UTC.
+                timestamp_edge = timestamp_edge.astimezone(timezone.utc).replace(
+                    tzinfo=None
+                )
 
         asset_id = message.get("asset_id", "unknown")
         payload = message.get("payload", {})
@@ -340,12 +348,22 @@ class StoreForwardBuffer:
     async def cleanup_old_messages(self) -> int:
         """Remove messages older than retention policy"""
         cutoff = datetime.now(timezone.utc) - timedelta(hours=self.retention_hours)
-        
+
         async with self._lock:
             try:
                 with sqlite3.connect(self.buffer_path) as conn:
+                    # created_at is written by SQLite's CURRENT_TIMESTAMP as
+                    # "YYYY-MM-DD HH:MM:SS" (space separator, no offset), while
+                    # cutoff.isoformat() is "YYYY-MM-DDTHH:MM:SS+00:00" (T +
+                    # offset). A raw string "<" compares the space (0x20)
+                    # against the "T" (0x54), so every row sharing the cutoff's
+                    # calendar date sorted as older and got deleted regardless
+                    # of its time-of-day — silently wiping fresh telemetry under
+                    # short retentions. datetime() normalizes both operands to
+                    # UTC "YYYY-MM-DD HH:MM:SS" so the comparison is by instant.
                     cursor = conn.execute(
-                        "DELETE FROM messages WHERE created_at < ?",
+                        "DELETE FROM messages "
+                        "WHERE datetime(created_at) < datetime(?)",
                         (cutoff.isoformat(),)
                     )
                     conn.commit()
