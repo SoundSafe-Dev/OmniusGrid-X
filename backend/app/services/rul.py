@@ -325,6 +325,16 @@ class RULService:
                 organization_id=str(organization_id),
                 error=str(exc),
             )
+            # FS-110: surface the swallowed failure in error-triage — a warning
+            # log alone doesn't show up on the error dashboard.
+            from app.services.error_tracker import error_tracker
+
+            await error_tracker.report_subsystem_error(
+                exc,
+                subsystem="rul",
+                operation="notify",
+                organization_id=str(organization_id),
+            )
             return assessment
 
         if assessment.risk_level in ("high", "critical"):
