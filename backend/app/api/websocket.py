@@ -7,6 +7,7 @@ import structlog
 
 from app.services.websocket_manager import websocket_manager
 from app.api.auth import resolve_websocket_user
+from app.middleware.request_context import correlation_id_from_headers
 
 logger = structlog.get_logger()
 router = APIRouter()
@@ -49,6 +50,29 @@ async def websocket_endpoint(
         # Echo the marker protocol back or browsers abort the handshake.
         negotiated_subprotocol = "bearer.v1"
 
+    # FS-108: bind a connection-scoped correlation id so EVERY log line in this
+    # WebSocket session carries it. BaseHTTPMiddleware (which binds request_id on
+    # the HTTP path) never runs for the WebSocket scope, so WS logs were
+    # previously uncorrelatable. Honour an inbound X-Request-ID / traceparent
+    # from the handshake so a WS session lines up with the HTTP trace that opened
+    # it. Unbound in the finally, mirroring the HTTP middleware.
+    connection_id = correlation_id_from_headers(websocket.headers)
+    structlog.contextvars.bind_contextvars(request_id=connection_id)
+    try:
+        await _serve_websocket(
+            websocket, token, organization_id, asset_ids, negotiated_subprotocol
+        )
+    finally:
+        structlog.contextvars.unbind_contextvars("request_id")
+
+
+async def _serve_websocket(
+    websocket: WebSocket,
+    token: Optional[str],
+    organization_id: Optional[str],
+    asset_ids: Optional[str],
+    negotiated_subprotocol: Optional[str],
+):
     # Validate authentication via the shared resolver (handles JWTs and the
     # dev-token bypass under ALLOW_DEV_TOKEN — one ws auth path, not two).
     user = None
