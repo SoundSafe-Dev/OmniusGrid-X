@@ -9,14 +9,32 @@ complements the Correlation AI engine rather than duplicating it.
 Rule matching and dispatch are pure/injectable and testable without a database.
 """
 
+import time
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
 import structlog
+from prometheus_client import Counter, Histogram
 
 from app.core.config import settings
 
 logger = structlog.get_logger()
+
+# Prometheus metrics (scraped via /metrics in app/api/health.py). Channels are
+# a small closed set (unknown ones collapse to "unknown"); status is
+# success/failure — attempts are the sum of both. Never label by target/id.
+NOTIFICATION_DISPATCHES_TOTAL = Counter(
+    "opsgrid_notification_dispatches_total",
+    "Notification delivery attempts by channel and outcome",
+    ["channel", "status"],
+)
+
+NOTIFICATION_DELIVERY_DURATION = Histogram(
+    "opsgrid_notification_delivery_duration_seconds",
+    "Notification delivery latency per channel",
+    ["channel"],
+    buckets=[0.005, 0.025, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 15.0],
+)
 
 SEVERITY_ORDER = {"info": 0, "warning": 1, "error": 2, "critical": 3}
 
@@ -53,12 +71,35 @@ class NotificationService:
 
     def deliver(self, channel: str, target: str, event: Dict[str, Any]) -> tuple:
         fn = self.channels.get(channel)
+        channel_label = channel if fn is not None else "unknown"
         if fn is None:
+            self._record_dispatch(channel_label, False, None)
             return False, f"unknown channel '{channel}'"
+        started = time.perf_counter()
         try:
-            return fn(target, event)
+            result = fn(target, event)
         except Exception as e:
+            self._record_dispatch(channel_label, False, time.perf_counter() - started)
             return False, str(e)
+        try:
+            delivered = bool(result[0])
+        except Exception:  # malformed adapter result; count as failure only
+            delivered = False
+        self._record_dispatch(channel_label, delivered, time.perf_counter() - started)
+        return result
+
+    @staticmethod
+    def _record_dispatch(channel: str, delivered: bool, duration: Optional[float]) -> None:
+        """Record delivery metrics; a metrics failure never breaks delivery."""
+        try:
+            NOTIFICATION_DISPATCHES_TOTAL.labels(
+                channel=channel,
+                status="success" if delivered else "failure",
+            ).inc()
+            if duration is not None:
+                NOTIFICATION_DELIVERY_DURATION.labels(channel=channel).observe(duration)
+        except Exception:  # pragma: no cover - defensive
+            pass
 
     def dispatch_rules(
         self, event: Dict[str, Any], rules: List[Dict[str, Any]]

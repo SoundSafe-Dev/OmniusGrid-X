@@ -8,6 +8,7 @@ the model registry later.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from math import exp, isfinite, log
@@ -15,11 +16,32 @@ from typing import Any
 from uuid import UUID
 
 import structlog
+from prometheus_client import Counter, Histogram
 
 from app.services.health_index import HealthResult, health_index_calculator
 from app.services.notifications import notification_service
 
 logger = structlog.get_logger()
+
+# Prometheus metrics (scraped via /metrics in app/api/health.py). Labels are
+# deliberately low-cardinality (risk level only — never asset ids).
+RUL_ASSESSMENTS_TOTAL = Counter(
+    "opsgrid_rul_assessments_total",
+    "RUL assessments computed",
+    ["risk_level"],
+)
+
+RUL_ASSESSMENT_DURATION = Histogram(
+    "opsgrid_rul_assessment_duration_seconds",
+    "End-to-end RUL assessment latency (health fetch + estimate)",
+    buckets=[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0],
+)
+
+RUL_LOW_RUL_ALERTS_TOTAL = Counter(
+    "opsgrid_rul_low_rul_alerts_total",
+    "Low-RUL alert notifications raised for high/critical risk assessments",
+    ["risk_level"],
+)
 
 
 @dataclass(frozen=True)
@@ -278,10 +300,16 @@ class RULService:
         dispatch_notification: bool = False,
         now: datetime | None = None,
     ) -> RULAssessment:
+        started = time.perf_counter()
         health = await self.health_calculator.get_asset_health(
             asset_id, hours=health_window_hours
         )
         assessment = self.calculate(health, now=now)
+        try:  # metrics must never break the assessment path
+            RUL_ASSESSMENTS_TOTAL.labels(risk_level=assessment.risk_level).inc()
+            RUL_ASSESSMENT_DURATION.observe(time.perf_counter() - started)
+        except Exception:  # pragma: no cover - defensive
+            pass
         if not dispatch_notification:
             return assessment
 
@@ -298,6 +326,14 @@ class RULService:
                 error=str(exc),
             )
             return assessment
+
+        if assessment.risk_level in ("high", "critical"):
+            try:  # metrics must never break the assessment path
+                RUL_LOW_RUL_ALERTS_TOTAL.labels(
+                    risk_level=assessment.risk_level
+                ).inc()
+            except Exception:  # pragma: no cover - defensive
+                pass
 
         return replace(
             assessment,

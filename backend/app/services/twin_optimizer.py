@@ -9,6 +9,7 @@ recommendations to the existing strategic engine.
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from math import sqrt
@@ -16,11 +17,30 @@ from typing import Any, Mapping, Sequence
 from uuid import uuid4
 
 import structlog
+from prometheus_client import Counter, Histogram
 
 from app.services.simulation import simulation_engine
 from app.services.strategic_engine import strategic_engine
 
 logger = structlog.get_logger()
+
+# Prometheus metrics (scraped via /metrics in app/api/health.py). No labels —
+# runs are org-scoped and org ids would be unbounded cardinality.
+TWIN_OPTIMIZE_RUNS_TOTAL = Counter(
+    "opsgrid_twin_optimize_runs_total",
+    "Digital-twin optimization runs evaluated",
+)
+
+TWIN_OPTIMIZE_RUN_DURATION = Histogram(
+    "opsgrid_twin_optimize_run_duration_seconds",
+    "Digital-twin optimization run latency (baseline + candidate sweeps)",
+    buckets=[0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0],
+)
+
+TWIN_RECOMMENDATIONS_TOTAL = Counter(
+    "opsgrid_twin_recommendations_total",
+    "Digital-twin recommendations emitted by optimization runs",
+)
 
 _OVERRIDABLE_FIELDS = frozenset(
     {
@@ -304,6 +324,7 @@ class TwinOptimizer:
         if len(action_ids) != len(set(action_ids)):
             raise ValueError("Candidate action_id values must be unique")
 
+        started = time.perf_counter()
         generated_at = now or datetime.now(timezone.utc)
         if generated_at.tzinfo is None:
             generated_at = generated_at.replace(tzinfo=timezone.utc)
@@ -373,6 +394,13 @@ class TwinOptimizer:
                 recommendations[:max_recommendations], start=1
             )
         ]
+        try:  # metrics must never break the optimization path
+            TWIN_OPTIMIZE_RUNS_TOTAL.inc()
+            TWIN_OPTIMIZE_RUN_DURATION.observe(time.perf_counter() - started)
+            if ranked:
+                TWIN_RECOMMENDATIONS_TOTAL.inc(len(ranked))
+        except Exception:  # pragma: no cover - defensive
+            pass
         return OptimizationResult(
             organization_id=str(organization_id),
             objective=self.OBJECTIVE,
