@@ -2,7 +2,7 @@
 
 import secrets
 import hashlib
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, Header, Request
@@ -13,6 +13,7 @@ from app.db.database import get_db
 from app.db.models import User, APIKey
 from app.api.auth import get_current_active_user
 from app.middleware.rate_limit import rate_limit
+from app.middleware.rbac import require_admin
 import structlog
 
 logger = structlog.get_logger()
@@ -57,17 +58,17 @@ async def verify_api_key(
     
     if api_key_obj:
         # Check expiration
-        if api_key_obj.expires_at and api_key_obj.expires_at < datetime.utcnow():
+        if api_key_obj.expires_at and api_key_obj.expires_at < datetime.now(timezone.utc):
             return None
         
         # Update last used
-        api_key_obj.last_used_at = datetime.utcnow()
+        api_key_obj.last_used_at = datetime.now(timezone.utc)
         await db.commit()
     
     return api_key_obj
 
 
-@router.post("/generate", summary="Generate API key", description="Generate a new API key for external integrations. Returns the full key (only shown once).")
+@router.post("/generate", summary="Generate API key", description="Generate a new API key for external integrations. Returns the full key (only shown once).", dependencies=[Depends(require_admin)])
 @rate_limit("10/hour")
 async def generate_api_key_endpoint(
     request: Request,
@@ -86,6 +87,11 @@ async def generate_api_key_endpoint(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid scope: {scope}. Valid scopes: {valid_scopes}"
             )
+    if "admin" in scopes and current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin scope requires admin role"
+        )
     
     # Generate API key
     api_key = generate_api_key()
@@ -95,7 +101,7 @@ async def generate_api_key_endpoint(
     # Calculate expiration
     expires_at = None
     if expires_in_days:
-        expires_at = datetime.utcnow() + timedelta(days=expires_in_days)
+        expires_at = datetime.now(timezone.utc) + timedelta(days=expires_in_days)
     
     # Create API key record
     api_key_obj = APIKey(
@@ -168,7 +174,7 @@ async def list_api_keys(
     return {"items": key_list, "total": len(key_list)}
 
 
-@router.delete("/{key_id}", summary="Revoke API key", description="Revoke an API key by ID.")
+@router.delete("/{key_id}", summary="Revoke API key", description="Revoke an API key by ID.", dependencies=[Depends(require_admin)])
 @rate_limit("10/minute")
 async def revoke_api_key(
     request: Request,
@@ -194,7 +200,7 @@ async def revoke_api_key(
         )
     
     api_key_obj.is_active = False
-    api_key_obj.revoked_at = datetime.utcnow()
+    api_key_obj.revoked_at = datetime.now(timezone.utc)
     api_key_obj.revoked_by = current_user.id
     
     await db.commit()
@@ -206,4 +212,3 @@ async def revoke_api_key(
     )
     
     return {"message": "API key revoked successfully"}
-

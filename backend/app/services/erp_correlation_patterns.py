@@ -12,7 +12,7 @@ Correlation patterns for ERP-specific scenarios:
 """
 
 from typing import Dict, Any, List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_
@@ -79,7 +79,7 @@ class ERPCorrelationPatterns:
         # Check for PO delays
         if po_data.get("delivery_date"):
             delivery_date = datetime.fromisoformat(po_data["delivery_date"])
-            if delivery_date < datetime.utcnow():
+            if delivery_date < datetime.now(timezone.utc):
                 anomalies.append({
                     "type": "delivery_delay",
                     "severity": "high",
@@ -181,7 +181,7 @@ class ERPCorrelationPatterns:
             # Check if MO should be in production based on dates
             if mo_data.get("start_date"):
                 start_date = datetime.fromisoformat(mo_data["start_date"])
-                if start_date <= datetime.utcnow() <= datetime.fromisoformat(mo_data["end_date"]):
+                if start_date <= datetime.now(timezone.utc) <= datetime.fromisoformat(mo_data["end_date"]):
                     correlations.append({
                         "type": "production_gap",
                         "severity": "high",
@@ -492,7 +492,7 @@ class ERPCorrelationPatterns:
             correlation_type=correlation_type,
             correlation_score=correlation_score,
             correlation_metadata=metadata,
-            created_at=datetime.utcnow()
+            created_at=datetime.now(timezone.utc)
         )
         
         db.add(correlation)
@@ -562,14 +562,14 @@ class ERPCorrelationPatterns:
         supplier_id: str
     ) -> int:
         """Count delayed POs from supplier in last 30 days."""
-        thirty_days_ago = datetime.utcnow() - timedelta(days=30)
+        thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
         
         result = await db.execute(
             select(ERPEntity).where(
                 and_(
                     ERPEntity.entity_type == "PurchaseOrder",
                     ERPEntity.entity_data["supplier_id"].astext == supplier_id,
-                    ERPEntity.entity_data["delivery_date"].astext < datetime.utcnow().isoformat(),
+                    ERPEntity.entity_data["delivery_date"].astext < datetime.now(timezone.utc).isoformat(),
                     ERPEntity.created_at >= thirty_days_ago,
                     ERPEntity.is_active == True
                 )

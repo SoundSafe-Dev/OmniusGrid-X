@@ -21,6 +21,7 @@ export const IntakeInbox: React.FC = () => {
 
   useEffect(() => {
     loadIntakeItems();
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- pre-existing; adding deps changes retrigger behavior (FS-54)
   }, []);
 
   const loadIntakeItems = async () => {

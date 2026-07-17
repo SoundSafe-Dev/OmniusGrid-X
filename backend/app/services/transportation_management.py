@@ -3,7 +3,7 @@ Transportation Management System (TMS)
 Carrier management, shipment tracking, route optimization, HOS compliance
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any
 from uuid import UUID
 import structlog
@@ -32,43 +32,49 @@ class HOSComplianceMonitor:
         """Check driver's current HOS compliance status"""
         violations = []
         warnings = []
-        
+
+        # Numeric columns come back as Decimal; coerce once so the float
+        # arithmetic below never mixes Decimal and float (TypeError).
+        drive_hours = float(driver.hos_drive_hours_today or 0)
+        on_duty_hours = float(driver.hos_on_duty_hours_today or 0)
+        cycle_hours = float(driver.hos_cycle_hours or 0)
+
         # Check drive time
-        if driver.hos_drive_hours_today >= self.MAX_DRIVE_HOURS_DAY:
-            violations.append(f"Drive hours exceeded: {driver.hos_drive_hours_today}h > {self.MAX_DRIVE_HOURS_DAY}h")
-        elif driver.hos_drive_hours_today >= self.MAX_DRIVE_HOURS_DAY - 1:
-            warnings.append(f"Drive time nearing limit: {driver.hos_drive_hours_today}h")
-        
+        if drive_hours >= self.MAX_DRIVE_HOURS_DAY:
+            violations.append(f"Drive hours exceeded: {drive_hours}h > {self.MAX_DRIVE_HOURS_DAY}h")
+        elif drive_hours >= self.MAX_DRIVE_HOURS_DAY - 1:
+            warnings.append(f"Drive time nearing limit: {drive_hours}h")
+
         # Check on-duty time
-        if driver.hos_on_duty_hours_today >= self.MAX_ON_DUTY_HOURS_DAY:
-            violations.append(f"On-duty hours exceeded: {driver.hos_on_duty_hours_today}h > {self.MAX_ON_DUTY_HOURS_DAY}h")
-        elif driver.hos_on_duty_hours_today >= self.MAX_ON_DUTY_HOURS_DAY - 1:
-            warnings.append(f"On-duty time nearing limit: {driver.hos_on_duty_hours_today}h")
-        
+        if on_duty_hours >= self.MAX_ON_DUTY_HOURS_DAY:
+            violations.append(f"On-duty hours exceeded: {on_duty_hours}h > {self.MAX_ON_DUTY_HOURS_DAY}h")
+        elif on_duty_hours >= self.MAX_ON_DUTY_HOURS_DAY - 1:
+            warnings.append(f"On-duty time nearing limit: {on_duty_hours}h")
+
         # Check cycle hours
-        if driver.hos_cycle_hours >= self.MAX_CYCLE_HOURS:
-            violations.append(f"Cycle hours exceeded: {driver.hos_cycle_hours}h > {self.MAX_CYCLE_HOURS}h")
-        elif driver.hos_cycle_hours >= self.MAX_CYCLE_HOURS - 10:
-            warnings.append(f"Cycle time nearing limit: {driver.hos_cycle_hours}h")
-        
+        if cycle_hours >= self.MAX_CYCLE_HOURS:
+            violations.append(f"Cycle hours exceeded: {cycle_hours}h > {self.MAX_CYCLE_HOURS}h")
+        elif cycle_hours >= self.MAX_CYCLE_HOURS - 10:
+            warnings.append(f"Cycle time nearing limit: {cycle_hours}h")
+
         # Check medical cert
-        if driver.medical_cert_expires and driver.medical_cert_expires < datetime.utcnow():
+        if driver.medical_cert_expires and driver.medical_cert_expires < datetime.now(timezone.utc):
             violations.append("Medical certificate expired")
-        elif driver.medical_cert_expires and driver.medical_cert_expires < datetime.utcnow() + timedelta(days=30):
+        elif driver.medical_cert_expires and driver.medical_cert_expires < datetime.now(timezone.utc) + timedelta(days=30):
             warnings.append("Medical certificate expiring soon")
-        
+
         return {
             'driver_id': str(driver.id),
             'is_compliant': len(violations) == 0,
             'violations': violations,
             'warnings': warnings,
             'hours_summary': {
-                'drive_hours_today': driver.hos_drive_hours_today,
-                'on_duty_hours_today': driver.hos_on_duty_hours_today,
-                'cycle_hours': driver.hos_cycle_hours,
-                'drive_hours_remaining': max(0, self.MAX_DRIVE_HOURS_DAY - driver.hos_drive_hours_today),
-                'on_duty_hours_remaining': max(0, self.MAX_ON_DUTY_HOURS_DAY - driver.hos_on_duty_hours_today),
-                'cycle_hours_remaining': max(0, self.MAX_CYCLE_HOURS - driver.hos_cycle_hours)
+                'drive_hours_today': drive_hours,
+                'on_duty_hours_today': on_duty_hours,
+                'cycle_hours': cycle_hours,
+                'drive_hours_remaining': max(0, self.MAX_DRIVE_HOURS_DAY - drive_hours),
+                'on_duty_hours_remaining': max(0, self.MAX_ON_DUTY_HOURS_DAY - on_duty_hours),
+                'cycle_hours_remaining': max(0, self.MAX_CYCLE_HOURS - cycle_hours)
             }
         }
     
@@ -270,35 +276,13 @@ class RouteOptimizer:
         destination: Dict[str, Any],
         waypoints: List[Dict]
     ) -> float:
-        """Estimate distance (placeholder - would use actual geocoding)"""
-        # This is a simplified placeholder
-        # In production, use actual routing service
-        
-        # If lat/lng available, use haversine as rough estimate
-        origin_lat = origin.get('lat', 0)
-        origin_lng = origin.get('lng', 0)
-        dest_lat = destination.get('lat', 0)
-        dest_lng = destination.get('lng', 0)
-        
-        if origin_lat and dest_lat:
-            # Very rough straight-line distance
-            import math
-            R = 3959  # Earth radius in miles
-            
-            lat1 = math.radians(origin_lat)
-            lat2 = math.radians(dest_lat)
-            dlat = math.radians(dest_lat - origin_lat)
-            dlng = math.radians(dest_lng - origin_lng)
-            
-            a = (math.sin(dlat/2) ** 2 + 
-                 math.cos(lat1) * math.cos(lat2) * math.sin(dlng/2) ** 2)
-            c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
-            distance = R * c
-            
-            # Add 20% for road routing
-            return distance * 1.2
-        
-        return 500.0  # Default placeholder
+        """Distance in miles via the routing provider seam (app.services.routing).
+
+        Real great-circle distance summed through waypoints (OSRM road distance
+        when configured), accepting both {lat,lng} and {latitude,longitude}.
+        """
+        from app.services.routing import estimate_distance_miles
+        return estimate_distance_miles(origin, destination, waypoints)
 
 
 class TransportationManagementService:
@@ -535,12 +519,15 @@ class TransportationManagementService:
     ) -> Route:
         """Create optimized route"""
         async with (db or AsyncSessionLocal()) as session:
-            # Optimize route
-            optimization = self.route_optimizer.optimize_route(
+            # optimize_route is sync and may do blocking HTTP (OSRM provider,
+            # 10s timeout) — run it off the event loop.
+            import asyncio
+            optimization = await asyncio.to_thread(
+                self.route_optimizer.optimize_route,
                 origin=origin,
                 destination=destination,
                 waypoints=waypoints,
-                optimization_criteria=optimization_criteria
+                optimization_criteria=optimization_criteria,
             )
             
             route = Route(
@@ -647,7 +634,7 @@ class TransportationManagementService:
                 compliance = self.hos_monitor.check_compliance(driver)
                 if not compliance['is_compliant']:
                     hos_violations += 1
-                if driver.medical_cert_expires and driver.medical_cert_expires < datetime.utcnow():
+                if driver.medical_cert_expires and driver.medical_cert_expires < datetime.now(timezone.utc):
                     expired_medical_certs += 1
             
             return {
@@ -659,7 +646,7 @@ class TransportationManagementService:
                     'is_valid': (
                         carrier.ctpat_certified and 
                         carrier.ctpat_expires_at and 
-                        carrier.ctpat_expires_at > datetime.utcnow()
+                        carrier.ctpat_expires_at > datetime.now(timezone.utc)
                     )
                 },
                 'insurance_status': {
@@ -668,7 +655,7 @@ class TransportationManagementService:
                     'is_valid': (
                         carrier.insurance_on_file and
                         carrier.insurance_expires_at and
-                        carrier.insurance_expires_at > datetime.utcnow()
+                        carrier.insurance_expires_at > datetime.now(timezone.utc)
                     )
                 },
                 'safety_rating': carrier.safety_rating,

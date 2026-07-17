@@ -7,18 +7,24 @@ resources:
   - namespace.yaml
   - backend-deployment.yaml
   - backend-service.yaml
+  - ota-rollout-worker-deployment.yaml
   - frontend-deployment.yaml
+  - edge-agent-deployment.yaml
+  - edge-agent-service.yaml
+  - ingestion-worker-deployment.yaml
+  - export-worker-deployment.yaml
+  - compliance-reports-worker-deployment.yaml
+  - migration-job.yaml
   - timescaledb-statefulset.yaml
   - redpanda-statefulset.yaml
   - ingress.yaml
+  - otel-collector.yaml
 
-configMapGenerator:
-  - name: timescaledb-init-scripts
-    files:
-      - 001_init.sql
-
-generatorOptions:
-  disableNameSuffixHash: true
+# NOTE: the old timescaledb-init-scripts configMapGenerator (001_init.sql via
+# docker-entrypoint-initdb.d) is gone — it referenced a file that never lived
+# in base/, initdb only ever ran migration 001, and migrate.py refuses to run
+# against an initdb-built schema. The db-migrate Job owns the schema now
+# (same model as docker-compose.prod.yml).
 
 commonLabels:
   app.kubernetes.io/part-of: omniusgrid

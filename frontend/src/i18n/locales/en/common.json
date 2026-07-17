@@ -1,0 +1,20 @@
+{
+  "app": {
+    "name": "OmniusGrid"
+  },
+  "common": {
+    "loading": "Loading…",
+    "retry": "Try again",
+    "error": "Something went wrong",
+    "notFound": "Page not found",
+    "goHome": "Go back home"
+  },
+  "nav": {
+    "dashboard": "Dashboard",
+    "assets": "Assets",
+    "alarms": "Alarms",
+    "oee": "OEE",
+    "fleet": "Fleet",
+    "admin": "Admin"
+  }
+}

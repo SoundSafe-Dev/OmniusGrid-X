@@ -6,11 +6,11 @@ API endpoints for managing user context, priorities, and goals.
 
 from typing import List, Dict, Any, Optional
 from uuid import UUID
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 import structlog
 
 from app.db.database import get_db
@@ -38,7 +38,8 @@ class UserContextResponse(BaseModel):
 
 class UpdateUserContextRequest(BaseModel):
     """Request for updating user context"""
-    role: Optional[str] = Field(None, description="User role")
+    model_config = ConfigDict(extra="forbid")
+
     department: Optional[str] = Field(None, description="User department")
     priorities: Optional[List[str]] = Field(None, description="User priorities")
 
@@ -97,7 +98,7 @@ async def update_user_context(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Update user context (role, department, priorities).
+    Update user context (department and priorities).
     """
     logger.info("update_user_context", user_id=str(current_user.id))
     
@@ -110,14 +111,12 @@ async def update_user_context(
         raise HTTPException(status_code=404, detail="User not found")
     
     # Update fields
-    if request.role is not None:
-        user.role = request.role
     if request.department is not None:
         user.department = request.department
     if request.priorities is not None:
         user.priorities = request.priorities
     
-    user.updated_at = datetime.utcnow()
+    user.updated_at = datetime.now(timezone.utc)
     
     await db.commit()
     await db.refresh(user)
@@ -161,7 +160,7 @@ async def add_user_goal(
         "title": request.title,
         "progress": request.progress,
         "deadline": request.deadline,
-        "created_at": datetime.utcnow().isoformat()
+        "created_at": datetime.now(timezone.utc).isoformat()
     }
     
     # Add to user goals
@@ -169,7 +168,7 @@ async def add_user_goal(
         user.user_goals = []
     user.user_goals.append(new_goal)
     
-    user.updated_at = datetime.utcnow()
+    user.updated_at = datetime.now(timezone.utc)
     
     await db.commit()
     await db.refresh(user)
@@ -216,14 +215,14 @@ async def update_user_goal(
             goal["title"] = request.title
             goal["progress"] = request.progress
             goal["deadline"] = request.deadline
-            goal["updated_at"] = datetime.utcnow().isoformat()
+            goal["updated_at"] = datetime.now(timezone.utc).isoformat()
             goal_found = True
             break
     
     if not goal_found:
         raise HTTPException(status_code=404, detail="Goal not found")
     
-    user.updated_at = datetime.utcnow()
+    user.updated_at = datetime.now(timezone.utc)
     
     await db.commit()
     await db.refresh(user)
@@ -269,7 +268,7 @@ async def delete_user_goal(
     if len(user.user_goals) == original_length:
         raise HTTPException(status_code=404, detail="Goal not found")
     
-    user.updated_at = datetime.utcnow()
+    user.updated_at = datetime.now(timezone.utc)
     
     await db.commit()
     await db.refresh(user)

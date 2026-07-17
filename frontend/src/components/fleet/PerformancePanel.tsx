@@ -1,13 +1,14 @@
 import { FC, useState, useEffect } from 'react';
-import { 
-  Fuel, Clock, Calendar, Activity, DollarSign, 
-  Wrench, TrendingUp, TrendingDown, Truck 
+import {
+  Fuel, Clock, Calendar, Activity, DollarSign,
+  Wrench, TrendingUp, Truck
 } from 'lucide-react';
 import { kpiApi } from '../../api';
-import type { 
-  FuelEfficiencyData, IdleTimeData, OnTimePerformanceData, 
-  VehicleHealthScoreData, CostPerMileData, DTCCountData, TimeRange 
+import type {
+  FuelEfficiencyData, IdleTimeData, OnTimePerformanceData,
+  VehicleHealthScoreData, CostPerMileData, DTCCountData
 } from '../../types';
+import type { TimeRange } from '../../types';
 
 const TimeRangeSelector: FC<{ value: TimeRange; onChange: (r: TimeRange) => void }> = ({ value, onChange }) => (
   <select 
@@ -36,18 +37,6 @@ const Widget: FC<{ title: string; icon: React.ReactNode; children: React.ReactNo
   </div>
 );
 
-const TrendIndicator: FC<{ value: number; prevValue?: number }> = ({ value, prevValue }) => {
-  if (!prevValue) return null;
-  const diff = value - prevValue;
-  const isUp = diff > 0;
-  return (
-    <span className={`flex items-center gap-1 text-sm ${isUp ? 'text-green-500' : 'text-red-500'}`}>
-      {isUp ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
-      {Math.abs(diff).toFixed(1)}%
-    </span>
-  );
-};
-
 export const PerformancePanel: FC = () => {
   const [timeRange, setTimeRange] = useState<TimeRange>('month');
   const [fuelData, setFuelData] = useState<FuelEfficiencyData | null>(null);
@@ -59,15 +48,17 @@ export const PerformancePanel: FC = () => {
 
   useEffect(() => {
     loadData();
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- pre-existing; adding deps changes retrigger behavior (FS-54)
   }, [timeRange]);
 
   const loadData = async () => {
+    const range = timeRange;
     const [fuel, idle, performance, health, cost, dtc] = await Promise.all([
-      kpiApi.getFuelEfficiency(timeRange),
-      kpiApi.getIdleTime(timeRange),
-      kpiApi.getOnTimePerformance(timeRange),
+      kpiApi.getFuelEfficiency(range),
+      kpiApi.getIdleTime(range),
+      kpiApi.getOnTimePerformance(range),
       kpiApi.getVehicleHealthScore(),
-      kpiApi.getCostPerMile(timeRange),
+      kpiApi.getCostPerMile(range),
       kpiApi.getDTCCount(),
     ]);
     setFuelData(fuel);

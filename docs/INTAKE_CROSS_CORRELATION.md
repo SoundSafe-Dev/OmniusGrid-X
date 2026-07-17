@@ -148,7 +148,7 @@ Set environment variables:
 
 ## Database Migration
 
-Run migration `012_intake_cross_correlation.sql` to add:
+Run migration `021_intake_cross_correlation.sql` to add:
 - `shared_keys` JSON column to `intake_items` and `session_data_sources`
 - `structure_metadata` JSON column for document structure info
 - `processing_time_seconds` INTEGER for actual processing time

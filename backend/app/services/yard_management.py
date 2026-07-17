@@ -3,11 +3,11 @@ Yard Management System (YMS)
 Trailer tracking, dock scheduling, detention calculation, and yard optimization
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any
 from uuid import UUID
 import structlog
-from sqlalchemy import text, select, and_, or_
+from sqlalchemy import text, select, and_, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import AsyncSessionLocal
@@ -42,7 +42,7 @@ class DetentionCalculator:
                 'is_detention': False
             }
         
-        end_time = check_out_at or datetime.utcnow()
+        end_time = check_out_at or datetime.now(timezone.utc)
         total_minutes = (end_time - check_in_at).total_seconds() / 60
         
         if total_minutes <= free_minutes:
@@ -131,7 +131,7 @@ class YardManagementService:
                 seal_number=seal_number,
                 weight_lbs=weight_lbs,
                 status='checked_in',
-                check_in_at=datetime.utcnow()
+                check_in_at=datetime.now(timezone.utc)
             )
             session.add(trailer)
             await session.commit()
@@ -177,7 +177,7 @@ class YardManagementService:
             
             door.status = 'occupied'
             door.current_trailer_id = trailer_id
-            door.last_occupied_at = datetime.utcnow()
+            door.last_occupied_at = datetime.now(timezone.utc)
             
             # Create yard move record
             move = YardMove(
@@ -186,7 +186,7 @@ class YardManagementService:
                 from_location='yard',
                 to_location=f"DOCK_{door.door_number}",
                 move_type='dock',
-                started_at=datetime.utcnow()
+                started_at=datetime.now(timezone.utc)
             )
             session.add(move)
             
@@ -201,7 +201,7 @@ class YardManagementService:
             )
             wait_time = wait_time_result.scalar_one_or_none()
             if wait_time:
-                wait_time.docked_at = datetime.utcnow()
+                wait_time.docked_at = datetime.now(timezone.utc)
             
             await session.commit()
             
@@ -237,7 +237,7 @@ class YardManagementService:
                 to_location=to_location,
                 move_type=move_type,
                 jockey_driver_id=jockey_driver_id,
-                started_at=datetime.utcnow()
+                started_at=datetime.now(timezone.utc)
             )
             session.add(move)
             await session.commit()
@@ -276,7 +276,7 @@ class YardManagementService:
             if not move:
                 raise ValueError("Yard move not found")
             
-            move.completed_at = datetime.utcnow()
+            move.completed_at = datetime.now(timezone.utc)
             move.duration_seconds = (
                 move.completed_at - move.started_at
             ).total_seconds()
@@ -312,7 +312,7 @@ class YardManagementService:
             
             # Update trailer status
             trailer.status = 'checked_out'
-            trailer.check_out_at = datetime.utcnow()
+            trailer.check_out_at = datetime.now(timezone.utc)
             trailer.dock_door_id = None
             
             # Create check-out move
@@ -322,8 +322,8 @@ class YardManagementService:
                 from_location=trailer.yard_location or 'yard',
                 to_location='gate_out',
                 move_type='check_out',
-                started_at=datetime.utcnow(),
-                completed_at=datetime.utcnow()
+                started_at=datetime.now(timezone.utc),
+                completed_at=datetime.now(timezone.utc)
             )
             session.add(move)
             
@@ -357,7 +357,7 @@ class YardManagementService:
         wait_time = result.scalar_one_or_none()
         
         if wait_time and trailer.driver_id:
-            wait_time.check_out_at = datetime.utcnow()
+            wait_time.check_out_at = datetime.now(timezone.utc)
             
             # Calculate detention
             detention = self.detention_calculator.calculate_detention(
@@ -384,16 +384,18 @@ class YardManagementService:
     
     def _calculate_dwell_hours(self, trailer: YardTrailer) -> float:
         """Calculate total dwell time in hours"""
-        end_time = trailer.check_out_at or datetime.utcnow()
+        end_time = trailer.check_out_at or datetime.now(timezone.utc)
         return round((end_time - trailer.check_in_at).total_seconds() / 3600, 2)
     
     async def get_yard_inventory(
         self,
         organization_id: UUID,
         status: Optional[str] = None,
+        skip: int = 0,
+        limit: Optional[int] = None,
         db: Optional[AsyncSession] = None
-    ) -> List[YardTrailer]:
-        """Get current yard inventory"""
+    ) -> tuple[List[YardTrailer], int]:
+        """Get current yard inventory as (page of trailers, total count)"""
         async with (db or AsyncSessionLocal()) as session:
             query = select(YardTrailer).where(
                 and_(
@@ -401,12 +403,19 @@ class YardManagementService:
                     YardTrailer.status != 'checked_out'
                 )
             )
-            
+
             if status:
                 query = query.where(YardTrailer.status == status)
-            
+
+            total = (await session.execute(
+                select(func.count()).select_from(query.subquery())
+            )).scalar_one()
+
+            query = query.offset(skip)
+            if limit is not None:
+                query = query.limit(limit)
             result = await session.execute(query)
-            return result.scalars().all()
+            return result.scalars().all(), total
     
     async def get_dwell_time_analytics(
         self,
@@ -479,7 +488,7 @@ class YardManagementService:
                 organization_id=organization_id,
                 driver_id=driver_id,
                 trailer_id=trailer_id,
-                check_in_at=check_in_at or datetime.utcnow(),
+                check_in_at=check_in_at or datetime.now(timezone.utc),
                 detention_rate=detention_rate or DetentionCalculator.DEFAULT_DETENTION_RATE,
                 demurrage_rate=demurrage_rate or DetentionCalculator.DEFAULT_DEMURRAGE_RATE
             )
@@ -507,7 +516,7 @@ class YardManagementService:
                 checkpoint_name=checkpoint_name,
                 weight_lbs=weight_lbs,
                 inspection_status=inspection_status,
-                passed_at=datetime.utcnow()
+                passed_at=datetime.now(timezone.utc)
             )
             session.add(checkpoint)
             await session.commit()
@@ -654,7 +663,7 @@ class DockScheduler:
                 raise ValueError("Appointment not found")
             
             appointment.status = 'in_progress'
-            appointment.actual_start = datetime.utcnow()
+            appointment.actual_start = datetime.now(timezone.utc)
             
             await session.commit()
             await session.refresh(appointment)
@@ -676,7 +685,7 @@ class DockScheduler:
                 raise ValueError("Appointment not found")
             
             appointment.status = 'completed'
-            appointment.actual_end = datetime.utcnow()
+            appointment.actual_end = datetime.now(timezone.utc)
             
             await session.commit()
             await session.refresh(appointment)

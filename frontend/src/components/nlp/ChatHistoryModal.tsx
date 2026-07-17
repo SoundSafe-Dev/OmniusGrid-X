@@ -25,6 +25,7 @@ export const ChatHistoryModal: React.FC<ChatHistoryModalProps> = ({
       loadSessions();
       loadChatHistory();
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- pre-existing; adding deps changes retrigger behavior (FS-54)
   }, [isOpen, sessionIdFilter]);
 
   const loadSessions = async () => {

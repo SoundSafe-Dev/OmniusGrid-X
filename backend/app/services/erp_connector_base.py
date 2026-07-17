@@ -12,11 +12,11 @@ Abstract base class for all ERP connectors providing common functionality:
 
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, List
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import asyncio
 import time
 import structlog
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 logger = structlog.get_logger()
@@ -63,6 +63,9 @@ class ERPConfig:
     timeout: int = 30
     retry_config: Optional[Dict[str, Any]] = None
     circuit_breaker: Optional[Dict[str, Any]] = None
+    # Connector-specific settings bag (company_id, account_id, realm, tenant_id,
+    # service_path, ...). Each concrete connector reads the keys it needs.
+    configuration: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -297,7 +300,7 @@ class ERPConnectorBase(ABC):
             # Check if recovery timeout has passed
             if self.circuit_breaker.last_failure_time:
                 time_since_failure = (
-                    datetime.utcnow() - self.circuit_breaker.last_failure_time
+                    datetime.now(timezone.utc) - self.circuit_breaker.last_failure_time
                 ).total_seconds()
                 
                 if time_since_failure > self.circuit_breaker_config["recovery_timeout"]:
@@ -316,7 +319,7 @@ class ERPConnectorBase(ABC):
     def _circuit_breaker_record_failure(self):
         """Record a failure in circuit breaker"""
         self.circuit_breaker.failure_count += 1
-        self.circuit_breaker.last_failure_time = datetime.utcnow()
+        self.circuit_breaker.last_failure_time = datetime.now(timezone.utc)
         
         threshold = self.circuit_breaker_config["failure_threshold"]
         
@@ -448,14 +451,14 @@ class ERPConnectorBase(ABC):
         """
         # Check if token is still valid
         if self._auth_token and self._token_expiry:
-            if datetime.utcnow() < self._token_expiry:
+            if datetime.now(timezone.utc) < self._token_expiry:
                 return self._auth_token
         
         # Authenticate to get new token
         self._auth_token = await self.authenticate()
         
         # Set expiry (default 1 hour from now)
-        self._token_expiry = datetime.utcnow() + timedelta(hours=1)
+        self._token_expiry = datetime.now(timezone.utc) + timedelta(hours=1)
         
         return self._auth_token
     

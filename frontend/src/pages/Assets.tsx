@@ -1,15 +1,19 @@
-import { FC } from 'react'
+import { FC, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useQuery } from 'react-query'
 import { Box, ChevronRight } from 'lucide-react'
-import { assetsApi } from '../api'
+import { useAssets } from '../hooks'
 import { Tooltip, TooltipTrigger, TooltipContent } from '../components/ui'
 
 const Assets: FC = () => {
-  const { data: assetsData, isLoading } = useQuery('assets', () =>
-    assetsApi.list()
-  )
+  // FS-127: page through the FS-82 envelope. Page size comes from the limit the
+  // backend echoes back; skip is part of the queryKey via the hook's params.
+  const [skip, setSkip] = useState(0)
+  const { data: assetsData, isLoading } = useAssets({ skip })
   const assets = assetsData?.items || []
+  const total = assetsData?.total ?? 0
+  const limit = assetsData?.limit || assets.length || 1
+  const rangeStart = total === 0 ? 0 : (assetsData?.skip ?? skip) + 1
+  const rangeEnd = (assetsData?.skip ?? skip) + assets.length
 
   const getStatusColor = (state: string) => {
     switch (state) {
@@ -61,7 +65,7 @@ const Assets: FC = () => {
         <Tooltip>
           <TooltipTrigger asChild>
             <div className="text-sm text-opsgrid-text-secondary">
-              {assets?.length || 0} total
+              {total} total
             </div>
           </TooltipTrigger>
           <TooltipContent>Total number of registered assets in the system</TooltipContent>
@@ -143,6 +147,31 @@ const Assets: FC = () => {
           </Tooltip>
         ))}
       </div>
+
+      {/* Pagination (FS-127) */}
+      {total > 0 && (
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-opsgrid-text-secondary">
+            {rangeStart}&ndash;{rangeEnd} of {total}
+          </span>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setSkip(Math.max(0, skip - limit))}
+              disabled={skip === 0}
+              className="px-3 py-1 text-sm rounded border border-opsgrid-border text-opsgrid-text-secondary hover:border-opsgrid-primary disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-opsgrid-border"
+            >
+              Previous
+            </button>
+            <button
+              onClick={() => setSkip(skip + limit)}
+              disabled={!assetsData?.hasMore}
+              className="px-3 py-1 text-sm rounded border border-opsgrid-border text-opsgrid-text-secondary hover:border-opsgrid-primary disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-opsgrid-border"
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

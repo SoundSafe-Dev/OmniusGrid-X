@@ -1,9 +1,9 @@
 import { FC, useEffect, useState, useRef, useCallback } from 'react';
-import { MapContainer, TileLayer, useMap, Marker, Popup, Polyline, Circle, Polygon } from 'react-leaflet';
+import { MapContainer, TileLayer, useMap, Marker, Popup, Polyline, Circle } from 'react-leaflet';
 import { Map as MapIcon, Truck, Navigation, AlertTriangle, Shield, X } from 'lucide-react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { fleetTrackerApi, simulateVehicleMovement } from '../../api/fleetTracker';
+import { fleetTrackerApi } from '../../api/fleetTracker';
 import type { 
   FleetVehiclePosition, 
   ShipmentRoute, 
@@ -16,7 +16,7 @@ import type {
 import icon from 'leaflet/dist/images/marker-icon.png';
 import iconShadow from 'leaflet/dist/images/marker-shadow.png';
 
-let DefaultIcon = L.icon({
+const DefaultIcon = L.icon({
   iconUrl: icon,
   shadowUrl: iconShadow,
   iconSize: [25, 41],
@@ -168,9 +168,10 @@ export const FleetTrackerMap: FC<FleetTrackerMapProps> = ({
     switch (filter) {
       case 'fleet':
         return vehicles;
-      case 'shipments':
+      case 'shipments': {
         const activeVehicleIds = new Set(shipments.map(s => s.vehicleId));
         return vehicles.filter(v => activeVehicleIds.has(v.vehicleId));
+      }
       case 'carriers':
         return vehicles; // Would filter by carrier in real implementation
       case 'compliance':

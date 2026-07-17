@@ -4,7 +4,7 @@ Cross-references YMS/TMS data with manufacturing operations for compliance,
 liability reduction, safety enhancement, and operational efficiency.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any, Tuple
 from uuid import UUID
 import structlog
@@ -107,7 +107,7 @@ class DockProductionSynchronizer:
                 )
                 
                 if appointment.scheduled_start:
-                    time_to_appointment = (appointment.scheduled_start - datetime.utcnow()).total_seconds() / 60
+                    time_to_appointment = (appointment.scheduled_start - datetime.now(timezone.utc)).total_seconds() / 60
                     if time_to_appointment < 60:
                         risk_score = 80  # High risk - appointment soon but not started
                     else:
@@ -147,7 +147,7 @@ class DockProductionSynchronizer:
                 return operation.started_at + timedelta(seconds=float(operation.planned_duration))
             else:
                 # Not started yet - add to current time
-                return datetime.utcnow() + timedelta(seconds=float(operation.planned_duration))
+                return datetime.now(timezone.utc) + timedelta(seconds=float(operation.planned_duration))
         
         # Default estimate: check asset performance
         result = await session.execute(
@@ -155,7 +155,7 @@ class DockProductionSynchronizer:
                 and_(
                     Operation.asset_id == operation.asset_id,
                     Operation.status == 'completed',
-                    Operation.completed_at > datetime.utcnow() - timedelta(days=30)
+                    Operation.completed_at > datetime.now(timezone.utc) - timedelta(days=30)
                 )
             )
         )
@@ -164,7 +164,7 @@ class DockProductionSynchronizer:
         if operation.started_at:
             return operation.started_at + timedelta(seconds=float(avg_duration))
         else:
-            return datetime.utcnow() + timedelta(seconds=float(avg_duration))
+            return datetime.now(timezone.utc) + timedelta(seconds=float(avg_duration))
     
     async def _update_correlation_record(
         self,
@@ -225,7 +225,7 @@ class DockProductionSynchronizer:
     ) -> Dict[str, Any]:
         """Get dock-production sync dashboard for date"""
         async with (db or AsyncSessionLocal()) as session:
-            date = date or datetime.utcnow()
+            date = date or datetime.now(timezone.utc)
             start_of_day = date.replace(hour=0, minute=0, second=0, microsecond=0)
             end_of_day = start_of_day + timedelta(days=1)
             
@@ -527,7 +527,7 @@ class LoadQualityCorrelator:
             
             if operation and operation.started_at:
                 time_window_start = operation.started_at
-                time_window_end = operation.completed_at or datetime.utcnow()
+                time_window_end = operation.completed_at or datetime.now(timezone.utc)
                 
                 # Count critical alarms during operation
                 alarm_result = await session.execute(
@@ -682,7 +682,7 @@ class LogisticsCorrelationEngine:
             CorrelationScenario ready for AI analysis
         """
         async with (db or AsyncSessionLocal()) as session:
-            scenario_id = f"SCENARIO_LIVE_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
+            scenario_id = f"SCENARIO_LIVE_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
             active_domains = []
             domain_links = []
             ingested_metrics = []
@@ -803,7 +803,7 @@ class LogisticsCorrelationEngine:
     ) -> Dict[str, Any]:
         """Get comprehensive correlation dashboard"""
         async with (db or AsyncSessionLocal()) as session:
-            date = date or datetime.utcnow()
+            date = date or datetime.now(timezone.utc)
             start_of_day = date.replace(hour=0, minute=0, second=0, microsecond=0)
             end_of_day = start_of_day + timedelta(days=1)
             
@@ -963,11 +963,11 @@ class LogisticsCorrelationEngine:
         # Check current state
         if asset.current_packml_state == 'Idle':
             score += 30
-            estimated_ready = datetime.utcnow()
+            estimated_ready = datetime.now(timezone.utc)
             factors.append("Asset idle and ready")
         elif asset.current_packml_state == 'Complete':
             score += 20
-            estimated_ready = datetime.utcnow()
+            estimated_ready = datetime.now(timezone.utc)
             factors.append("Previous job complete")
         else:
             # Get current operation
@@ -985,7 +985,7 @@ class LogisticsCorrelationEngine:
                 estimated_ready = await self.dock_sync._estimate_completion(
                     session, current_op
                 )
-                minutes_to_ready = (estimated_ready - datetime.utcnow()).total_seconds() / 60
+                minutes_to_ready = (estimated_ready - datetime.now(timezone.utc)).total_seconds() / 60
                 
                 if minutes_to_ready < 30:
                     score += 10
@@ -997,14 +997,14 @@ class LogisticsCorrelationEngine:
                     score -= 20
                     factors.append(f"Busy for {minutes_to_ready:.0f} min")
             else:
-                estimated_ready = datetime.utcnow()
+                estimated_ready = datetime.now(timezone.utc)
         
         # Check historical quality issues
         quality_result = await session.execute(
             select(func.count(LoadQualityLog.id)).where(
                 and_(
                     LoadQualityLog.root_cause_asset == asset.id,
-                    LoadQualityLog.created_at > datetime.utcnow() - timedelta(days=30)
+                    LoadQualityLog.created_at > datetime.now(timezone.utc) - timedelta(days=30)
                 )
             )
         )

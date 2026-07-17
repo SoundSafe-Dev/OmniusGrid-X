@@ -18,7 +18,12 @@ import {
   getMockKPIDataByRange,
 } from './mocks/kpiMocks';
 
-const USE_MOCK = true;
+import { USE_MOCK } from './mockMode';
+import { registerTransform } from './transformRegistry';
+
+// FS-61: casing handled by the axios seam — no per-call toCamel/toSnake.
+registerTransform('/api/v1/kpi');
+
 const MOCK_DELAY = 300;
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -82,7 +87,7 @@ export const kpiApi = {
       await delay(MOCK_DELAY);
       return getMockKPIDataByRange(timeRange);
     }
-    const response = await api.get(`/api/v1/kpi/dashboard?range=${timeRange}`);
+    const response = await api.get<any>(`/api/v1/kpi/dashboard?range=${timeRange}`);
     return response.data;
   },
 };

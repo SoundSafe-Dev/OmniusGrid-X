@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { User, AuthResponse, LoginCredentials, hasPermission, Permission } from '../types';
+import { User, LoginCredentials, hasPermission, Permission } from '../types';
 import { authApi } from '../api';
 
 interface AuthState {
@@ -35,14 +35,16 @@ export const useAuthStore = create<AuthState>()(
         set({ isLoading: true, error: null });
         try {
           const response = await authApi.login(credentials);
-          const { accessToken, user } = response;
+          const { accessToken, refreshToken, user } = response;
 
           localStorage.setItem('accessToken', accessToken);
+          if (refreshToken) localStorage.setItem('refreshToken', refreshToken);
           localStorage.setItem('user', JSON.stringify(user));
 
           set({
             user,
             accessToken,
+            refreshToken: refreshToken ?? null,
             isAuthenticated: true,
             isLoading: false,
           });
@@ -59,12 +61,13 @@ export const useAuthStore = create<AuthState>()(
       logout: async () => {
         try {
           await authApi.logout();
-        } catch (error) {
+        } catch {
           // Ignore logout errors
         }
 
         localStorage.removeItem('accessToken');
         localStorage.removeItem('refreshToken');
+        localStorage.removeItem('devToken');
         localStorage.removeItem('user');
 
         set({
@@ -88,7 +91,7 @@ export const useAuthStore = create<AuthState>()(
           localStorage.setItem('accessToken', response.accessToken);
           set({ accessToken: response.accessToken });
           return true;
-        } catch (error) {
+        } catch {
           // Refresh failed, logout
           get().logout();
           return false;
@@ -101,7 +104,6 @@ export const useAuthStore = create<AuthState>()(
       },
 
       devLogin: (user: User, token: string) => {
-        console.log('DEV LOGIN CALLED', user, token);
         localStorage.setItem('accessToken', token);
         localStorage.setItem('devToken', token);
         localStorage.setItem('user', JSON.stringify(user));
@@ -111,7 +113,6 @@ export const useAuthStore = create<AuthState>()(
           isAuthenticated: true,
           isLoading: false,
         });
-        console.log('DEV LOGIN STATE SET');
       },
 
       clearError: () => set({ error: null }),

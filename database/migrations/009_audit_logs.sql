@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     organization_id UUID REFERENCES organizations(id) ON DELETE SET NULL,
     action VARCHAR(100) NOT NULL,
     resource_type VARCHAR(50),
-    resource_id UUID,
+    resource_id VARCHAR(36),  -- polymorphic: route names/config keys, not always a UUID
     details JSONB NOT NULL DEFAULT '{}',
     ip_address INET,
     user_agent TEXT,
@@ -18,15 +18,15 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 );
 
 -- Create indexes for common queries
-CREATE INDEX idx_audit_logs_user_id ON audit_logs(user_id);
-CREATE INDEX idx_audit_logs_organization_id ON audit_logs(organization_id);
-CREATE INDEX idx_audit_logs_timestamp ON audit_logs(timestamp DESC);
-CREATE INDEX idx_audit_logs_action ON audit_logs(action);
-CREATE INDEX idx_audit_logs_resource ON audit_logs(resource_type, resource_id);
-CREATE INDEX idx_audit_logs_hash_chain ON audit_logs(hash_chain);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON audit_logs(user_id);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_organization_id ON audit_logs(organization_id);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_resource ON audit_logs(resource_type, resource_id);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_hash_chain ON audit_logs(hash_chain);
 
 -- Create composite index for filtering
-CREATE INDEX idx_audit_logs_org_timestamp ON audit_logs(organization_id, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_org_timestamp ON audit_logs(organization_id, timestamp DESC);
 
 -- Add comment to table
 COMMENT ON TABLE audit_logs IS 'Security audit log for tracking sensitive operations with tamper-evident hash chaining';
@@ -79,8 +79,20 @@ CREATE TRIGGER audit_log_hash_chain_trigger
     EXECUTE FUNCTION audit_log_hash_chain_trigger();
 
 -- Grant permissions (adjust based on your security model)
-GRANT SELECT, INSERT ON audit_logs TO omniusgrid_app;
-GRANT SELECT ON audit_logs TO omniusgrid_readonly;
+DO $$
+BEGIN
+    -- omniusgrid_app is an optional least-privilege role some deployments
+    -- create; the default deployments run as the omniusgrid superuser role.
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'omniusgrid_app') THEN
+        GRANT SELECT, INSERT ON audit_logs TO omniusgrid_app;
+    END IF;
+END $$;
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'omniusgrid_readonly') THEN
+        GRANT SELECT ON audit_logs TO omniusgrid_readonly;
+    END IF;
+END $$;
 
 -- Create view for audit log summary
 CREATE OR REPLACE VIEW audit_log_summary AS

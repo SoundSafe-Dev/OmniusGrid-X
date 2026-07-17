@@ -1,49 +1,63 @@
 -- Query Optimization Foundation
 -- Enable pg_stat_statements for query performance monitoring
 
--- Enable pg_stat_statements extension
-CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+-- Enable pg_stat_statements extension (works without preload; stats
+-- collection additionally needs shared_preload_libraries=pg_stat_statements
+-- on the server command line — compose/k8s set this).
+DO $$
+BEGIN
+    CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'pg_stat_statements unavailable (needs shared_preload_libraries): %', SQLERRM;
+END $$;
 
--- Configure pg_stat_statements
--- Track all queries (not just normalized)
-ALTER SYSTEM SET pg_stat_statements.track = all;
+-- FS-56: the ALTER SYSTEM tuning that lived here
+-- (pg_stat_statements.track='all', track_utility=on, max=10000) moved to
+-- server configuration where it belongs: ALTER SYSTEM fails outright when
+-- the extension isn't preloaded, which made this file unappliable on any
+-- postgres not launched with the exact compose command line. Set those via
+-- the server command line/postgresql.conf per environment.
 
--- Track utility commands (not just SELECT/INSERT/UPDATE/DELETE)
-ALTER SYSTEM SET pg_stat_statements.track_utility = on;
+-- guarded: requires pg_stat_statements (preload-dependent)
+DO $$
+BEGIN
+  IF to_regclass('public.pg_stat_statements') IS NOT NULL THEN
+    -- Create view for slow queries (>1 second execution time)
+    CREATE OR REPLACE VIEW slow_queries AS
+    SELECT 
+        pg_stat_statements.queryid,
+        pg_stat_statements.userid,
+        pg_stat_statements.dbid,
+        pg_stat_statements.query,
+        pg_stat_statements.calls,
+        pg_stat_statements.total_exec_time,
+        pg_stat_statements.mean_exec_time,
+        pg_stat_statements.max_exec_time,
+        pg_stat_statements.min_exec_time,
+        pg_stat_statements.stddev_exec_time,
+        pg_stat_statements.rows,
+        pg_stat_statements.total_plan_time,
+        pg_stat_statements.mean_plan_time,
+        pg_stat_statements.max_plan_time,
+        pg_stat_statements.min_plan_time,
+        pg_stat_statements.stddev_plan_time
+    FROM pg_stat_statements
+    WHERE mean_exec_time > 1000  -- 1 second in milliseconds
+    ORDER BY mean_exec_time DESC;
+  END IF;
+END $$;
 
--- Increase shared memory for pg_stat_statements
--- Default is typically too small for production workloads
-ALTER SYSTEM SET pg_stat_statements.max = 10000;
-
--- Reload configuration to apply changes
-SELECT pg_reload_conf();
-
--- Create view for slow queries (>1 second execution time)
-CREATE OR REPLACE VIEW slow_queries AS
-SELECT 
-    pg_stat_statements.queryid,
-    pg_stat_statements.userid,
-    pg_stat_statements.dbid,
-    pg_stat_statements.query,
-    pg_stat_statements.calls,
-    pg_stat_statements.total_exec_time,
-    pg_stat_statements.mean_exec_time,
-    pg_stat_statements.max_exec_time,
-    pg_stat_statements.min_exec_time,
-    pg_stat_statements.stddev_exec_time,
-    pg_stat_statements.rows,
-    pg_stat_statements.total_plan_time,
-    pg_stat_statements.mean_plan_time,
-    pg_stat_statements.max_plan_time,
-    pg_stat_statements.min_plan_time,
-    pg_stat_statements.stddev_plan_time
-FROM pg_stat_statements
-WHERE mean_exec_time > 1000  -- 1 second in milliseconds
-ORDER BY mean_exec_time DESC;
-
--- Grant access to monitoring role
-GRANT SELECT ON pg_stat_statements TO omniusgrid;
-GRANT SELECT ON slow_queries TO omniusgrid;
+-- Grant access to monitoring role (guarded: objects exist only when the
+-- pg_stat_statements extension installed)
+DO $$
+BEGIN
+  IF to_regclass('public.pg_stat_statements') IS NOT NULL THEN
+    GRANT SELECT ON pg_stat_statements TO omniusgrid;
+  END IF;
+  IF to_regclass('public.slow_queries') IS NOT NULL THEN
+    GRANT SELECT ON slow_queries TO omniusgrid;
+  END IF;
+END $$;
 
 -- Create function to reset query statistics
 CREATE OR REPLACE FUNCTION reset_query_stats()
@@ -60,7 +74,7 @@ GRANT EXECUTE ON FUNCTION reset_query_stats() TO omniusgrid;
 CREATE OR REPLACE VIEW query_performance_by_table AS
 SELECT 
     schemaname,
-    tablename,
+    relname AS tablename,
     seq_scan,
     seq_tup_read,
     idx_scan,
@@ -90,8 +104,8 @@ GRANT SELECT ON query_performance_by_table TO omniusgrid;
 CREATE OR REPLACE VIEW index_usage_stats AS
 SELECT 
     schemaname,
-    tablename,
-    indexname,
+    relname AS tablename,
+    indexrelname AS indexname,
     idx_scan,
     idx_tup_read,
     idx_tup_fetch,
@@ -106,7 +120,7 @@ GRANT SELECT ON index_usage_stats TO omniusgrid;
 CREATE OR REPLACE VIEW missing_index_candidates AS
 SELECT 
     schemaname,
-    tablename,
+    relname AS tablename,
     seq_scan,
     seq_tup_read,
     idx_scan,
@@ -121,22 +135,32 @@ ORDER BY seq_tup_read DESC;
 -- Grant access to monitoring role
 GRANT SELECT ON missing_index_candidates TO omniusgrid;
 
--- Create view for query performance trends
-CREATE OR REPLACE VIEW query_performance_trends AS
-SELECT 
-    query,
-    calls,
-    total_exec_time,
-    mean_exec_time,
-    stddev_exec_time,
-    rows,
-    100.0 * shared_blks_hit / nullif(shared_blks_hit + shared_blks_read, 0) AS hit_percent
-FROM pg_stat_statements
-WHERE calls > 10
-ORDER BY mean_exec_time DESC;
+-- guarded: requires pg_stat_statements (preload-dependent)
+DO $$
+BEGIN
+  IF to_regclass('public.pg_stat_statements') IS NOT NULL THEN
+    -- Create view for query performance trends
+    CREATE OR REPLACE VIEW query_performance_trends AS
+    SELECT 
+        query,
+        calls,
+        total_exec_time,
+        mean_exec_time,
+        stddev_exec_time,
+        rows,
+        100.0 * shared_blks_hit / nullif(shared_blks_hit + shared_blks_read, 0) AS hit_percent
+    FROM pg_stat_statements
+    WHERE calls > 10
+    ORDER BY mean_exec_time DESC;
+  END IF;
+END $$;
 
--- Grant access to monitoring role
-GRANT SELECT ON query_performance_trends TO omniusgrid;
+DO $$
+BEGIN
+  IF to_regclass('public.query_performance_trends') IS NOT NULL THEN
+    GRANT SELECT ON query_performance_trends TO omniusgrid;
+  END IF;
+END $$;
 
 -- Create function to analyze query performance
 CREATE OR REPLACE FUNCTION analyze_query_performance()
@@ -175,6 +199,7 @@ BEGIN
     ORDER BY qs.mean_exec_time DESC;
 END;
 $$ LANGUAGE plpgsql;
+
 
 -- Grant execute on analysis function
 GRANT EXECUTE ON FUNCTION analyze_query_performance() TO omniusgrid;
@@ -218,24 +243,29 @@ $$ LANGUAGE plpgsql;
 -- Grant execute on snapshot function
 GRANT EXECUTE ON FUNCTION record_query_performance_snapshot() TO omniusgrid;
 
--- Create materialized view for frequently used queries
-CREATE MATERIALIZED VIEW IF NOT EXISTS frequent_queries AS
-SELECT 
-    queryid,
-    query,
-    calls,
-    total_exec_time,
-    mean_exec_time,
-    rows
-FROM pg_stat_statements
-WHERE calls > 100
-ORDER BY calls DESC;
+-- guarded: requires pg_stat_statements (preload-dependent). WITH NO DATA:
+-- a matview populates at creation, which needs the extension PRELOADED, not
+-- just installed — refresh_frequent_queries() populates it at runtime.
+DO $$
+BEGIN
+  IF to_regclass('public.pg_stat_statements') IS NOT NULL THEN
+    CREATE MATERIALIZED VIEW IF NOT EXISTS frequent_queries AS
+    SELECT
+        queryid,
+        query,
+        calls,
+        total_exec_time,
+        mean_exec_time,
+        rows
+    FROM pg_stat_statements
+    WHERE calls > 100
+    ORDER BY calls DESC
+    WITH NO DATA;
 
--- Create unique index for refresh
-CREATE UNIQUE INDEX idx_frequent_queries_queryid ON frequent_queries(queryid);
-
--- Grant access to monitoring role
-GRANT SELECT ON frequent_queries TO omniusgrid;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_frequent_queries_queryid ON frequent_queries(queryid);
+    GRANT SELECT ON frequent_queries TO omniusgrid;
+  END IF;
+END $$;
 
 -- Create function to refresh materialized view
 CREATE OR REPLACE FUNCTION refresh_frequent_queries()
@@ -252,15 +282,15 @@ GRANT EXECUTE ON FUNCTION refresh_frequent_queries() TO omniusgrid;
 CREATE OR REPLACE VIEW table_bloat AS
 SELECT 
     schemaname,
-    tablename,
-    pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename)) AS total_size,
-    pg_size_pretty(pg_relation_size(schemaname||'.'||tablename)) AS table_size,
-    pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename) - pg_relation_size(schemaname||'.'||tablename)) AS index_size,
+    relname AS tablename,
+    pg_size_pretty(pg_total_relation_size(schemaname||'.'||relname)) AS total_size,
+    pg_size_pretty(pg_relation_size(schemaname||'.'||relname)) AS table_size,
+    pg_size_pretty(pg_total_relation_size(schemaname||'.'||relname) - pg_relation_size(schemaname||'.'||relname)) AS index_size,
     n_live_tup,
     n_dead_tup,
     ROUND(100.0 * n_dead_tup / NULLIF(n_live_tup + n_dead_tup, 0), 2) AS dead_tup_ratio
 FROM pg_stat_user_tables
-ORDER BY pg_total_relation_size(schemaname||'.'||tablename) DESC;
+ORDER BY pg_total_relation_size(schemaname||'.'||relname) DESC;
 
 -- Grant access to monitoring role
 GRANT SELECT ON table_bloat TO omniusgrid;
@@ -286,7 +316,12 @@ COMMENT ON VIEW query_performance_trends IS 'Query performance with cache hit ra
 COMMENT ON FUNCTION analyze_query_performance() IS 'Analyze query performance with ratings';
 COMMENT ON TABLE query_performance_history IS 'Historical query performance data for trend analysis';
 COMMENT ON FUNCTION record_query_performance_snapshot() IS 'Record current query performance to history table';
-COMMENT ON MATERIALIZED VIEW frequent_queries IS 'Most frequently executed queries';
+DO $$
+BEGIN
+  IF to_regclass('public.frequent_queries') IS NOT NULL THEN
+    COMMENT ON MATERIALIZED VIEW frequent_queries IS 'Most frequently executed queries';
+  END IF;
+END $$;
 COMMENT ON FUNCTION refresh_frequent_queries() IS 'Refresh frequent queries materialized view';
 COMMENT ON VIEW table_bloat IS 'Table size and bloat statistics';
 COMMENT ON VIEW cache_hit_ratio IS 'Overall cache hit ratio';

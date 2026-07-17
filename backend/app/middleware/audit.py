@@ -17,31 +17,43 @@ from app.db.database import AsyncSessionLocal
 
 logger = structlog.get_logger()
 
-# Sensitive operations that require audit logging
+# Sensitive operations that require audit logging.
+# Keys use "{id}" for every path parameter because _normalize_path collapses all
+# UUIDs to "{id}" before lookup — the templates must match that normalized form.
 SENSITIVE_OPERATIONS = {
     # User operations
     "POST:/api/v1/auth/register": "user_created",
     "DELETE:/api/v1/auth/users/{id}": "user_deleted",
     "PUT:/api/v1/auth/users/{id}": "user_updated",
-    
+
     # Asset operations
     "POST:/api/v1/assets/": "asset_created",
-    "PUT:/api/v1/assets/{asset_id}": "asset_updated",
-    "DELETE:/api/v1/assets/{asset_id}": "asset_deleted",
-    
+    "PUT:/api/v1/assets/{id}": "asset_updated",
+    "DELETE:/api/v1/assets/{id}": "asset_deleted",
+
     # Command operations
     "POST:/api/v1/commands/submit": "command_executed",
-    "POST:/api/v1/commands/{command_id}/cancel": "command_cancelled",
-    
+    "POST:/api/v1/commands/{id}/cancel": "command_cancelled",
+
     # Registry operations
     "POST:/api/v1/registries/": "registry_item_created",
     "PUT:/api/v1/registries/{id}": "registry_item_updated",
     "DELETE:/api/v1/registries/{id}": "registry_item_deleted",
-    
+
     # Kanban operations
-    "POST:/api/v1/kanban/tasks/{task_id}/approve": "task_approved",
-    "POST:/api/v1/kanban/tasks/{task_id}/reject": "task_rejected",
-    "POST:/api/v1/kanban/tasks/{task_id}/assign": "task_assigned",
+    "POST:/api/v1/kanban/tasks/{id}/approve": "task_approved",
+    "POST:/api/v1/kanban/tasks/{id}/reject": "task_rejected",
+    "POST:/api/v1/kanban/tasks/{id}/assign": "task_assigned",
+
+    # FS-111: newly-mounted subsystem control-plane mutations. Only the
+    # destructive / admin control actions are audited — the high-frequency
+    # compute endpoints (drift/detect, performance/prediction) are deliberately
+    # NOT here, or they'd flood the trail. Historian and RUL expose no mutations.
+    "POST:/api/v1/twin/optimize": "twin_optimization_run",
+    "POST:/api/v1/model-monitoring/reset/{id}": "model_monitoring_reset",
+    "POST:/api/v1/admin/query-performance/record-snapshot": "query_performance_snapshot_recorded",
+    "POST:/api/v1/admin/query-performance/refresh-frequent-queries": "query_performance_refreshed",
+    "POST:/api/v1/admin/query-performance/reset-stats": "query_performance_stats_reset",
 }
 
 
@@ -110,14 +122,20 @@ class AuditLoggingMiddleware(BaseHTTPMiddleware):
         return response
     
     def _normalize_path(self, path: str) -> str:
-        """Normalize path by replacing UUIDs with {id}"""
+        """Normalize path by replacing resource identifiers with {id}"""
         import re
         # Replace UUID patterns with {id}
-        return re.sub(
+        path = re.sub(
             r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}',
             '{id}',
             path
         )
+        # FS-111: some resource ids are free-form strings, not UUIDs (e.g. the
+        # model_id on /model-monitoring/reset/{model_id}), so the UUID rule alone
+        # wouldn't collapse them. Collapse the single segment following a known
+        # single-resource action verb so those keys match their template.
+        path = re.sub(r'(/reset)/[^/]+$', r'\1/{id}', path)
+        return path
     
     def _extract_resource(self, path: str, request: Request) -> tuple:
         """Extract resource type and ID from path and request"""

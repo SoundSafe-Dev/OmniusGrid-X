@@ -1,7 +1,7 @@
 import { api } from './client';
 import type { FleetVehiclePosition, ShipmentRoute, GeofenceZone, FleetUpdate } from '../types';
 
-const USE_MOCK = import.meta.env.VITE_USE_MOCK === 'true' || !import.meta.env.VITE_API_URL;
+import { USE_MOCK } from './mockMode';
 const MOCK_DELAY = 500;
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -232,23 +232,25 @@ export const fleetTrackerApi = {
       return () => clearInterval(interval);
     }
 
-    // Real WebSocket implementation
-    const wsUrl = `${import.meta.env.VITE_WS_URL || 'ws://localhost:8000'}/ws/fleet-tracking`;
-    const ws = new WebSocket(wsUrl);
-
-    ws.onmessage = (event) => {
+    // Real mode: poll positions. The previous code opened a raw WebSocket to
+    // /ws/fleet-tracking — a route that does not exist on the backend (only
+    // /ws is registered), so the live map silently froze with no updates.
+    // Polling delivers until fleet positions are published through the
+    // authenticated /ws stream.
+    const interval = setInterval(async () => {
       try {
-        const update: FleetUpdate = JSON.parse(event.data);
-        onUpdate(update);
+        const positions = await fleetTrackerApi.getAllVehiclePositions();
+        positions.forEach(position => {
+          onUpdate({
+            type: 'vehicle_position',
+            timestamp: new Date().toISOString(),
+            data: position,
+          });
+        });
       } catch (error) {
-        console.error('Failed to parse WebSocket message:', error);
+        console.error('Fleet position poll failed:', error);
       }
-    };
-
-    ws.onerror = (error) => {
-      console.error('WebSocket error:', error);
-    };
-
-    return () => ws.close();
+    }, 30000);
+    return () => clearInterval(interval);
   },
 };

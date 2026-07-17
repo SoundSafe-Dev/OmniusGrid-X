@@ -1,25 +1,31 @@
 -- Migration: Create Kanban Task Management Tables
 -- Description: Adds tables for the actionable decision-making kanban system
 
--- Commands table (for command executor)
-CREATE TABLE IF NOT EXISTS commands (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    asset_id UUID NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
-    command_type VARCHAR(50) NOT NULL,
-    action_id VARCHAR(255) NOT NULL,
-    parameters JSONB DEFAULT '{}'::jsonb,
-    status VARCHAR(50) DEFAULT 'pending',
-    priority VARCHAR(20) DEFAULT 'normal',
-    issued_at TIMESTAMPTZ DEFAULT NOW(),
-    issued_by UUID REFERENCES users(id) ON DELETE SET NULL,
-    executed_at TIMESTAMPTZ,
-    completed_at TIMESTAMPTZ,
-    result JSONB DEFAULT '{}'::jsonb,
-    error_message TEXT,
-    organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
+-- The `commands` table is created in 001_init.sql (which now includes
+-- organization_id). The duplicate CREATE TABLE that previously lived
+-- here was a no-op on a real database (001 runs first, so
+-- CREATE TABLE IF NOT EXISTS was skipped) and left idx_commands_org
+-- referencing a column that didn't exist. Indexes are kept below.
+
+-- If the `commands` table already existed (from older init scripts), `CREATE TABLE IF NOT EXISTS`
+-- won't backfill new columns. Ensure required columns exist before creating indexes.
+ALTER TABLE commands
+    ADD COLUMN IF NOT EXISTS organization_id UUID,
+    ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW(),
+    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'commands_organization_id_fkey'
+    ) THEN
+        ALTER TABLE commands
+            ADD CONSTRAINT commands_organization_id_fkey
+            FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE;
+    END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_commands_asset ON commands(asset_id);
 CREATE INDEX IF NOT EXISTS idx_commands_status ON commands(status);
@@ -81,11 +87,13 @@ CREATE TABLE IF NOT EXISTS tasks (
     -- Relationships to OmniusGrid entities
     asset_id UUID REFERENCES assets(id) ON DELETE SET NULL,
     operation_id UUID REFERENCES operations(id) ON DELETE SET NULL,
-    alarm_id UUID REFERENCES alarms(id) ON DELETE SET NULL,
+    -- alarms has a composite primary key (id, occurred_at) in the base schema, so we cannot
+    -- create a FK to alarms(id) alone. Keep the reference as an unvalidated id pointer.
+    alarm_id UUID,
     command_id VARCHAR(255),
     work_order_id UUID,
     parent_task_id UUID REFERENCES tasks(id) ON DELETE SET NULL,
-    related_shipment_id UUID REFERENCES shipments(id) ON DELETE SET NULL,
+    -- Optional logistics link; no FK — `shipments` may not exist in minimal DB init
     rule_id UUID, -- Will add FK after task_rules table created
     
     -- Progress tracking
@@ -179,9 +187,16 @@ CREATE TABLE IF NOT EXISTS task_rules (
 );
 
 -- Add FK from tasks to task_rules (now that task_rules exists)
-ALTER TABLE tasks 
-ADD CONSTRAINT fk_task_rule 
-FOREIGN KEY (rule_id) REFERENCES task_rules(id) ON DELETE SET NULL;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'fk_task_rule'
+    ) THEN
+        ALTER TABLE tasks
+            ADD CONSTRAINT fk_task_rule
+            FOREIGN KEY (rule_id) REFERENCES task_rules(id) ON DELETE SET NULL;
+    END IF;
+END $$;
 
 -- Task Escalations (escalation log)
 CREATE TABLE IF NOT EXISTS task_escalations (
@@ -230,16 +245,20 @@ BEGIN
 END;
 $$ language 'plpgsql';
 
-CREATE TRIGGER update_task_boards_updated_at BEFORE UPDATE ON task_boards 
+DROP TRIGGER IF EXISTS update_task_boards_updated_at ON task_boards;
+CREATE TRIGGER update_task_boards_updated_at BEFORE UPDATE ON task_boards
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
-CREATE TRIGGER update_task_columns_updated_at BEFORE UPDATE ON task_columns 
+DROP TRIGGER IF EXISTS update_task_columns_updated_at ON task_columns;
+CREATE TRIGGER update_task_columns_updated_at BEFORE UPDATE ON task_columns
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
-CREATE TRIGGER update_tasks_updated_at BEFORE UPDATE ON tasks 
+DROP TRIGGER IF EXISTS update_tasks_updated_at ON tasks;
+CREATE TRIGGER update_tasks_updated_at BEFORE UPDATE ON tasks
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
-CREATE TRIGGER update_task_rules_updated_at BEFORE UPDATE ON task_rules 
+DROP TRIGGER IF EXISTS update_task_rules_updated_at ON task_rules;
+CREATE TRIGGER update_task_rules_updated_at BEFORE UPDATE ON task_rules
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- Comment on tables for documentation

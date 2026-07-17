@@ -1,6 +1,6 @@
 import { FC } from 'react';
-import { useQuery, useMutation, useQueryClient } from 'react-query';
-import { Cloud, Upload, Wifi, WifiOff, Shield, Clock } from 'lucide-react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Cloud, Upload, Wifi, Shield, Clock } from 'lucide-react';
 import { Card, Badge, Button, SkeletonCard } from '../../components';
 import { enginesApi } from '../../api';
 import { formatBytes, formatDateTime, formatDuration } from '../../utils';
@@ -9,18 +9,16 @@ import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
 export const CloudGateway: FC = () => {
   const queryClient = useQueryClient();
 
-  const { data: status, isLoading } = useQuery(
-    'cloud-gateway-status',
-    () => enginesApi.getCloudGatewayStatus(),
-    { refetchInterval: 10000 }
-  );
+  const { data: status, isLoading } = useQuery({
+    queryKey: ['cloud-gateway-status'],
+    queryFn: () => enginesApi.getCloudGatewayStatus(),
+    refetchInterval: 10000,
+  });
 
-  const flushMutation = useMutation(
-    () => enginesApi.forceCloudFlush(),
-    {
-      onSuccess: () => queryClient.invalidateQueries('cloud-gateway-status'),
-    }
-  );
+  const flushMutation = useMutation({
+    mutationFn: () => enginesApi.forceCloudFlush(),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['cloud-gateway-status'] }),
+  });
 
   if (isLoading) {
     return (
@@ -154,8 +152,8 @@ export const CloudGateway: FC = () => {
               </div>
               <Button
                 variant="primary"
-                disabled={!isConnected || flushMutation.isLoading}
-                loading={flushMutation.isLoading}
+                disabled={!isConnected || flushMutation.isPending}
+                loading={flushMutation.isPending}
                 onClick={() => flushMutation.mutate()}
               >
                 <Upload size={16} className="mr-1" />

@@ -1,8 +1,11 @@
 import { api } from './client';
 import { mockApi } from './mockApi';
+import { USE_MOCK } from './mockMode';
+import { registerTransform } from './transformRegistry';
 import { Alarm, AlarmFilters, ActiveAlarmsResponse, AlarmAcknowledge, PaginatedResponse } from '../types';
 
-const USE_MOCK = true;
+// FS-61: casing handled by the axios seam — no per-call toCamel/toSnake.
+registerTransform('/api/v1/alarms');
 
 export const alarmsApi = {
   list: async (filters?: AlarmFilters): Promise<PaginatedResponse<Alarm>> => {
@@ -23,14 +26,22 @@ export const alarmsApi = {
     if (filters?.acknowledged !== undefined) params.acknowledged = filters.acknowledged;
     if (filters?.startTime) params.start_time = filters.startTime;
     if (filters?.endTime) params.end_time = filters.endTime;
+    if (filters?.skip !== undefined) params.skip = filters.skip;
+    if (filters?.limit !== undefined) params.limit = filters.limit;
 
-    const response = await api.get<Alarm[]>('/api/v1/alarms/', { params });
+    // Backend returns a {items, meta} envelope (FS-82) with a real total; alarms
+    // is on the transform seam so has_more arrives camelCased as hasMore.
+    const response = await api.get<{
+      items: Alarm[];
+      meta: { total: number; skip: number; limit: number; has_more?: boolean; hasMore?: boolean };
+    }>('/api/v1/alarms/', { params });
+    const { items, meta } = response.data;
     return {
-      items: response.data,
-      total: response.data.length,
-      skip: 0,
-      limit: response.data.length,
-      hasMore: false,
+      items,
+      total: meta.total,
+      skip: meta.skip,
+      limit: meta.limit,
+      hasMore: meta.hasMore ?? meta.has_more ?? meta.skip + items.length < meta.total,
     };
   },
 
@@ -62,7 +73,13 @@ export const alarmsApi = {
   },
 
   acknowledgeAll: async (params?: { assetId?: string; severity?: string }): Promise<{ acknowledgedCount: number }> => {
-    const response = await api.post<{ acknowledged_count: number }>('/api/v1/alarms/acknowledge-all', params || {});
-    return { acknowledgedCount: response.data.acknowledged_count };
+    // The backend reads these as QUERY params, not a body — sending them in the
+    // body silently drops the filters and acknowledges every active alarm.
+    const query: Record<string, string> = {};
+    if (params?.assetId) query.asset_id = params.assetId;
+    if (params?.severity) query.severity = params.severity;
+    // Response is camelized by the transform seam (acknowledged_count -> acknowledgedCount).
+    const response = await api.post<{ acknowledgedCount: number }>('/api/v1/alarms/acknowledge-all', null, { params: query });
+    return response.data;
   },
 };

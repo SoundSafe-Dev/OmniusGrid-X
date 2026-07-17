@@ -1,12 +1,9 @@
 import { FC } from 'react';
 import { Outlet } from 'react-router-dom';
-import { useUIStore } from '../../stores';
 import { Sidebar } from './Sidebar';
 import { Header } from './Header';
 
 export const Layout: FC = () => {
-  const { sidebarCollapsed } = useUIStore();
-
   return (
     <div className="min-h-screen bg-opsgrid-bg flex">
       {/* Desktop Sidebar */}

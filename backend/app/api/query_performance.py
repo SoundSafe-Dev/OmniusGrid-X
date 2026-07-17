@@ -15,7 +15,11 @@ try:
 except ImportError:
     SecurityHeadersMiddleware = None
 
-router = APIRouter()
+from app.middleware.rbac import require_admin
+
+# Currently unmounted. Admin-gated defensively so it is safe if ever wired up
+# (exposes DB introspection + POST /reset-stats).
+router = APIRouter(dependencies=[Depends(require_admin)])
 
 @router.get("/slow-queries")
 async def get_slow_queries(
@@ -51,7 +55,7 @@ async def get_slow_queries(
         }
     except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Failed to retrieve slow queries: {str(e)}"
         )
 
@@ -93,7 +97,7 @@ async def get_table_performance(
         }
     except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Failed to retrieve table performance: {str(e)}"
         )
 
@@ -129,7 +133,7 @@ async def get_index_usage(
         }
     except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Failed to retrieve index usage: {str(e)}"
         )
 
@@ -165,7 +169,7 @@ async def get_missing_indexes(
         }
     except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Failed to retrieve missing index candidates: {str(e)}"
         )
 
@@ -204,7 +208,7 @@ async def get_query_analysis(
         }
     except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Failed to analyze query performance: {str(e)}"
         )
 
@@ -222,7 +226,7 @@ async def record_performance_snapshot(
     except Exception as e:
         await db.rollback()
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Failed to record performance snapshot: {str(e)}"
         )
 
@@ -261,7 +265,7 @@ async def get_performance_history(
         }
     except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Failed to retrieve performance history: {str(e)}"
         )
 
@@ -296,7 +300,7 @@ async def get_frequent_queries(
         }
     except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Failed to retrieve frequent queries: {str(e)}"
         )
 
@@ -314,7 +318,7 @@ async def refresh_frequent_queries_view(
     except Exception as e:
         await db.rollback()
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Failed to refresh frequent queries: {str(e)}"
         )
 
@@ -351,7 +355,7 @@ async def get_table_bloat(
         }
     except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Failed to retrieve table bloat: {str(e)}"
         )
 
@@ -375,7 +379,7 @@ async def get_cache_hit_ratio(
         }
     except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Failed to retrieve cache hit ratio: {str(e)}"
         )
 
@@ -393,6 +397,6 @@ async def reset_query_stats(
     except Exception as e:
         await db.rollback()
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Failed to reset query statistics: {str(e)}"
         )

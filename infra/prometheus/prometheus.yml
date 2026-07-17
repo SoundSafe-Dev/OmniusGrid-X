@@ -13,6 +13,7 @@ alerting:
 
 rule_files:
   - /etc/prometheus/alerts.yml
+  - /etc/prometheus/slo_rules.yml
 
 scrape_configs:
   # Prometheus self-monitoring
@@ -26,18 +27,22 @@ scrape_configs:
       - targets: ['backend:8000']
     metrics_path: '/metrics'
 
+  # Edge agent collector metrics (opt-in: set METRICS_PORT on the agent)
+  - job_name: 'edge-agent'
+    static_configs:
+      - targets: ['edge-agent:9108']
+  # Edge agent metrics (edge-agent-sim service, simulator profile)
+  - job_name: 'opsgrid-edge-agent'
+    static_configs:
+      - targets: ['edge-agent-sim:9108']
+    metrics_path: '/metrics'
+
   # Redpanda metrics
   - job_name: 'redpanda'
     static_configs:
       - targets: ['redpanda:9644']
 
-  # TimescaleDB metrics (via postgres_exporter if available)
-  - job_name: 'timescaledb'
-    static_configs:
-      - targets: ['timescaledb:5432']
-
-  # Node/Container metrics (cadvisor)
-  - job_name: 'cadvisor'
-    static_configs:
-      - targets: ['cadvisor:8080']
-    metrics_path: '/metrics'
+  # TimescaleDB / container metrics: add postgres_exporter and cadvisor
+  # services before scraping them — the previous raw targets (timescaledb:5432
+  # speaks the postgres wire protocol, cadvisor never existed in compose) sat
+  # permanently DOWN and masked real target failures.

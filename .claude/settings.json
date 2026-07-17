@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git fetch *)",
+      "Read(//Users/hamaddada/Downloads/frontend/src/components/**)",
+      "Read(//Users/hamaddada/Downloads/**)",
+      "Bash(set -e)",
+      "Bash(git push *)",
+      "Bash(sed -n '/backend:/,/ingestion-worker:/p' /Users/hamaddada/Downloads/OmniusGrid/docker-compose.yml | grep -E \"ports:|container_name:\")",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(python3 -m py_compile opsgrid_agent/collectors/snmp.py opsgrid_agent/collectors/dnp3.py opsgrid_agent/collectors/sparkplug_b.py opsgrid_agent/collectors/coordinator.py)",
+      "Bash(python3 -m venv /tmp/og_venv)",
+      "Bash(/tmp/og_venv/bin/pip -q install -r requirements-dev.txt)",
+      "Bash(/tmp/og_venv/bin/python -c \"import yaml; from opsgrid_agent.config_schema import validate_entries; d=yaml.safe_load\\(open\\('config/poc_collectors.yml'\\)\\); n=validate_entries\\(d['collectors']\\); print\\(len\\(n\\),'collectors:', [e['type'] for e in n][-3:]\\)\")",
+      "Bash(/tmp/og_venv/bin/python -m pytest tests/test_new_collectors.py -q -p no:cacheprovider)",
+      "Bash(/tmp/og_venv/bin/python -m pytest -q -p no:cacheprovider)",
+      "Bash(git rev-list *)"
+    ],
+    "additionalDirectories": [
+      "/Users/hamaddada/Downloads/OmniusGrid"
+    ]
+  }
+}

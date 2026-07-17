@@ -9,7 +9,7 @@ Service for extracting and storing Oracle Cloud ERP data:
 """
 
 from typing import Dict, Any, Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
 import structlog
@@ -63,7 +63,7 @@ class OracleDataExtractionService:
         Returns:
             Dict with extraction results
         """
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
         
         try:
             # Fetch data from Oracle
@@ -90,20 +90,20 @@ class OracleDataExtractionService:
                 "completed",
                 stored_count,
                 0,
-                (datetime.utcnow() - start_time).total_seconds()
+                (datetime.now(timezone.utc) - start_time).total_seconds()
             )
             
             logger.info(
                 "oracle_invoices_extracted",
                 count=stored_count,
-                duration_seconds=(datetime.utcnow() - start_time).total_seconds()
+                duration_seconds=(datetime.now(timezone.utc) - start_time).total_seconds()
             )
             
             return {
                 "status": "success",
                 "entity_type": "Invoice",
                 "records_extracted": stored_count,
-                "duration_seconds": (datetime.utcnow() - start_time).total_seconds()
+                "duration_seconds": (datetime.now(timezone.utc) - start_time).total_seconds()
             }
             
         except Exception as e:
@@ -118,7 +118,7 @@ class OracleDataExtractionService:
                 "failed",
                 0,
                 1,
-                (datetime.utcnow() - start_time).total_seconds()
+                (datetime.now(timezone.utc) - start_time).total_seconds()
             )
             
             raise
@@ -140,7 +140,7 @@ class OracleDataExtractionService:
         Returns:
             Dict with extraction results
         """
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
         
         try:
             # Fetch data from Oracle
@@ -167,20 +167,20 @@ class OracleDataExtractionService:
                 "completed",
                 stored_count,
                 0,
-                (datetime.utcnow() - start_time).total_seconds()
+                (datetime.now(timezone.utc) - start_time).total_seconds()
             )
             
             logger.info(
                 "oracle_shipments_extracted",
                 count=stored_count,
-                duration_seconds=(datetime.utcnow() - start_time).total_seconds()
+                duration_seconds=(datetime.now(timezone.utc) - start_time).total_seconds()
             )
             
             return {
                 "status": "success",
                 "entity_type": "Shipment",
                 "records_extracted": stored_count,
-                "duration_seconds": (datetime.utcnow() - start_time).total_seconds()
+                "duration_seconds": (datetime.now(timezone.utc) - start_time).total_seconds()
             }
             
         except Exception as e:
@@ -195,7 +195,7 @@ class OracleDataExtractionService:
                 "failed",
                 0,
                 1,
-                (datetime.utcnow() - start_time).total_seconds()
+                (datetime.now(timezone.utc) - start_time).total_seconds()
             )
             
             raise
@@ -217,7 +217,7 @@ class OracleDataExtractionService:
         Returns:
             Dict with extraction results
         """
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
         
         try:
             # Fetch data from Oracle
@@ -244,20 +244,20 @@ class OracleDataExtractionService:
                 "completed",
                 stored_count,
                 0,
-                (datetime.utcnow() - start_time).total_seconds()
+                (datetime.now(timezone.utc) - start_time).total_seconds()
             )
             
             logger.info(
                 "oracle_employees_extracted",
                 count=stored_count,
-                duration_seconds=(datetime.utcnow() - start_time).total_seconds()
+                duration_seconds=(datetime.now(timezone.utc) - start_time).total_seconds()
             )
             
             return {
                 "status": "success",
                 "entity_type": "Employee",
                 "records_extracted": stored_count,
-                "duration_seconds": (datetime.utcnow() - start_time).total_seconds()
+                "duration_seconds": (datetime.now(timezone.utc) - start_time).total_seconds()
             }
             
         except Exception as e:
@@ -272,7 +272,7 @@ class OracleDataExtractionService:
                 "failed",
                 0,
                 1,
-                (datetime.utcnow() - start_time).total_seconds()
+                (datetime.now(timezone.utc) - start_time).total_seconds()
             )
             
             raise
@@ -294,7 +294,7 @@ class OracleDataExtractionService:
         Returns:
             Dict with extraction results
         """
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
         
         try:
             # Fetch data from Oracle
@@ -321,20 +321,20 @@ class OracleDataExtractionService:
                 "completed",
                 stored_count,
                 0,
-                (datetime.utcnow() - start_time).total_seconds()
+                (datetime.now(timezone.utc) - start_time).total_seconds()
             )
             
             logger.info(
                 "oracle_projects_extracted",
                 count=stored_count,
-                duration_seconds=(datetime.utcnow() - start_time).total_seconds()
+                duration_seconds=(datetime.now(timezone.utc) - start_time).total_seconds()
             )
             
             return {
                 "status": "success",
                 "entity_type": "Project",
                 "records_extracted": stored_count,
-                "duration_seconds": (datetime.utcnow() - start_time).total_seconds()
+                "duration_seconds": (datetime.now(timezone.utc) - start_time).total_seconds()
             }
             
         except Exception as e:
@@ -349,7 +349,7 @@ class OracleDataExtractionService:
                 "failed",
                 0,
                 1,
-                (datetime.utcnow() - start_time).total_seconds()
+                (datetime.now(timezone.utc) - start_time).total_seconds()
             )
             
             raise
@@ -462,7 +462,7 @@ class OracleDataExtractionService:
         
         if existing:
             # Update existing record
-            existing.valid_to = datetime.utcnow()
+            existing.valid_to = datetime.now(timezone.utc)
             existing.is_active = False
             
             # Create new version
@@ -474,7 +474,7 @@ class OracleDataExtractionService:
                 entity_data=entity_data,
                 source_system=source_system,
                 is_active=True,
-                valid_from=datetime.utcnow()
+                valid_from=datetime.now(timezone.utc)
             )
             db.add(new_entity)
             
@@ -488,7 +488,7 @@ class OracleDataExtractionService:
                 entity_data=entity_data,
                 source_system=source_system,
                 is_active=True,
-                valid_from=datetime.utcnow()
+                valid_from=datetime.now(timezone.utc)
             )
             db.add(entity)
         
@@ -524,7 +524,7 @@ class OracleDataExtractionService:
         )
         sync_status = result.scalar_one_or_none()
         
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         
         if sync_status:
             sync_status.last_sync_at = now

@@ -10,13 +10,17 @@ Security and audit logging framework for ERP integrations:
 """
 
 from typing import Dict, Any, Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from cryptography.fernet import Fernet
+import base64
+import hashlib
 import os
+
+from app.core.config import settings
 
 from app.db.models import AuditLog
 from app.db.database import get_db
@@ -78,23 +82,25 @@ class ERPSecurityManager:
         Returns:
             bytes: Encryption key
         """
-        # In production, this should come from a secure key management system
-        # For now, use environment variable or generate a key
-        key = os.getenv(f"ERP_ENCRYPTION_KEY_{self.organization_id}")
-        
-        if not key:
-            # Generate a key (in production, this should be stored securely)
-            from cryptography.fernet import Fernet
-            key = Fernet.generate_key()
+        # Derive a STABLE per-org key from the master key. Deterministic, so it
+        # survives restarts (a random runtime key would make previously-
+        # encrypted credentials undecryptable — the bug this replaces). The old
+        # per-org ERP_ENCRYPTION_KEY_<uuid> env override was removed: it was
+        # referenced nowhere, and before this change an unset override meant a
+        # random key, so no working deployment could have depended on it.
+        master = settings.ERP_ENCRYPTION_KEY
+        if not master:
+            # Dev-only fallback: still deterministic (not random), so local data
+            # round-trips. Production startup fails via validate_settings when
+            # ERP_ENCRYPTION_KEY is unset, so this path is dev-only.
+            master = "dev-insecure-erp-master-key"
             logger.warning(
-                "generated_encryption_key",
+                "erp_encryption_key_dev_fallback",
                 organization_id=self.organization_id,
-                message="In production, store this key securely"
+                message="ERP_ENCRYPTION_KEY unset; using an insecure dev-only derived key",
             )
-        else:
-            key = key.encode()
-        
-        return key
+        digest = hashlib.sha256(f"{master}:{self.organization_id}".encode()).digest()
+        return base64.urlsafe_b64encode(digest)
     
     def encrypt_field(self, value: str) -> str:
         """
@@ -228,7 +234,7 @@ class ERPSecurityManager:
             organization_id=self.organization_id,
             details=masked_details,
             ip_address=ip_address,
-            created_at=datetime.utcnow()
+            created_at=datetime.now(timezone.utc)
         )
         
         db.add(audit_log)

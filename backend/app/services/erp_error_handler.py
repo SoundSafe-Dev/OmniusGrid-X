@@ -10,7 +10,7 @@ Error handling and retry mechanisms for ERP integrations:
 """
 
 from typing import Dict, Any, Optional, List
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 import asyncio
 import structlog
@@ -275,7 +275,7 @@ class ERPErrorHandler:
             # Move to dead letter queue
             event.processing_status = "failed"
             event.error_message = str(error)
-            event.processed_at = datetime.utcnow()
+            event.processed_at = datetime.now(timezone.utc)
             
             logger.error(
                 "event_moved_to_dead_letter_queue",
@@ -328,7 +328,7 @@ class ERPErrorHandler:
             db: Database session
         """
         # Count permanent failures in last hour
-        one_hour_ago = datetime.utcnow() - timedelta(hours=1)
+        one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
         
         result = await db.execute(
             select(ERPIntegrationEvent).where(
@@ -354,20 +354,56 @@ class ERPErrorHandler:
     
     async def _send_alert(self, failure_count: int):
         """
-        Send alert for permanent failures.
-        
+        Send alert for permanent failures via the configured channels.
+
+        Delivers through the shared notification service (real SMTP + Slack +
+        webhook adapters), driven by the ERP_ALERT_* settings. Always logs;
+        actual delivery is gated on ERP_ALERTS_ENABLED so it's a no-op until an
+        operator configures recipients.
+
         Args:
             failure_count: Number of failures
         """
-        # TODO: Implement actual alert sending
-        # This could integrate with existing alerting system
+        message = f"ERP integration has {failure_count} permanent failures in the last hour"
         logger.critical(
             "erp_integration_alert",
             integration_id=self.integration_id,
             organization_id=self.organization_id,
             failure_count=failure_count,
-            message=f"ERP integration has {failure_count} permanent failures in the last hour"
+            message=message,
         )
+
+        from app.core.config import settings
+        if not settings.ERP_ALERTS_ENABLED:
+            return
+
+        from app.services.notifications import notification_service
+
+        event = {
+            "title": f"ERP integration {self.integration_id} failing",
+            "message": message,
+            "severity": "critical",
+            "organization_id": str(self.organization_id),
+        }
+
+        targets = []
+        for recipient in (r.strip() for r in settings.ERP_ALERT_EMAIL_RECIPIENTS.split(",")):
+            if recipient:
+                targets.append(("email", recipient))
+        if settings.ERP_ALERT_SLACK_WEBHOOK_URL:
+            targets.append(("slack", settings.ERP_ALERT_SLACK_WEBHOOK_URL))
+        if settings.ERP_ALERT_PAGERDUTY_WEBHOOK_URL:
+            targets.append(("webhook", settings.ERP_ALERT_PAGERDUTY_WEBHOOK_URL))
+
+        for channel, target in targets:
+            # deliver() is sync and may block (SMTP); run off the event loop.
+            ok, detail = await asyncio.to_thread(
+                notification_service.deliver, channel, target, event
+            )
+            if not ok:
+                logger.error("erp_alert_delivery_failed",
+                             channel=channel, detail=detail,
+                             integration_id=self.integration_id)
     
     async def get_dead_letter_queue(
         self,
@@ -472,7 +508,7 @@ class ERPErrorHandler:
         """
         from sqlalchemy import delete
         
-        cutoff_time = datetime.utcnow() - timedelta(hours=older_than_hours)
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=older_than_hours)
         
         result = await db.execute(
             delete(ERPIntegrationEvent).where(

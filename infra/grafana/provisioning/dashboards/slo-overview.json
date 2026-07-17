@@ -1,0 +1,76 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "schemaVersion": 39,
+  "title": "SLO Overview",
+  "uid": "slo-overview",
+  "tags": ["opsgrid", "slo", "platform"],
+  "time": { "from": "now-6h", "to": "now" },
+  "refresh": "30s",
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Data source",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": { "text": "Prometheus", "value": "Prometheus" },
+        "hide": 0
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Availability (5m SLI)",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "job:slo_availability:ratio5m", "legendFormat": "availability" }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Error ratio (5m vs 1h)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 6, "w": 16, "x": 8, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "job:http_errors:ratio5m", "legendFormat": "5m" },
+        { "refId": "B", "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "job:http_errors:ratio1h", "legendFormat": "1h" },
+        { "refId": "C", "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "vector(0.001)", "legendFormat": "budget (0.1%)" }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Request rate",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "job:http_requests:rate5m", "legendFormat": "req/s" }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "p99 latency",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "job:http_latency:p99_5m", "legendFormat": "p99" }
+      ]
+    }
+  ]
+}

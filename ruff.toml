@@ -1,0 +1,16 @@
+# Ruff config (task 19). Intentionally lenient to start: format + a focused set
+# of correctness lints, so the pre-commit/CI gate is adoptable on the existing
+# codebase without a flag-day cleanup. Tighten the rule set over time.
+line-length = 100
+target-version = "py311"
+
+exclude = [
+  "**/venv",
+  "**/__pycache__",
+  "**/node_modules",
+  "backend/state_space",
+]
+
+[lint]
+select = ["E9", "F63", "F7", "F82", "F401", "F811"]  # syntax errors, undefined names, unused imports/redefs
+ignore = ["E501"]  # line length handled by the formatter

@@ -1,9 +1,15 @@
 -- Migration: Fix Kanban Task Management Tables
 -- Description: Fixes foreign key constraints to work with existing schema
 
--- Drop existing kanban tables to recreate with correct constraints
+-- Drop existing kanban tables to recreate with correct constraints.
+-- (tasks/task_comments/task_timers created by 003 must be dropped too, else the
+--  CREATE TABLE below collides — initdb silently ignored this; the migration
+--  runner does not, so 003's schema would otherwise win over this "fix".)
 DROP TABLE IF EXISTS task_escalations CASCADE;
+DROP TABLE IF EXISTS task_timers CASCADE;
+DROP TABLE IF EXISTS task_comments CASCADE;
 DROP TABLE IF EXISTS task_rules CASCADE;
+DROP TABLE IF EXISTS tasks CASCADE;
 DROP TABLE IF EXISTS task_columns CASCADE;
 DROP TABLE IF EXISTS task_boards CASCADE;
 

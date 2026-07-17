@@ -4,7 +4,7 @@ Handles strategic decisions like scheduling, long-term optimization
 """
 
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
 import structlog
@@ -81,12 +81,16 @@ class CloudStrategicEngine:
                 expected_impact=recommendation.get('expected_impact', {}),
                 confidence=recommendation['confidence'],
                 simulation_basis=recommendation.get('simulation_basis', ''),
-                valid_until=datetime.fromisoformat(recommendation['valid_until']),
+                # fromisoformat on a tz-less ISO string yields a NAIVE datetime;
+                # the expiry check below is aware (FS-96), so coerce naive->UTC.
+                valid_until=(
+                    lambda v: v if v.tzinfo else v.replace(tzinfo=timezone.utc)
+                )(datetime.fromisoformat(recommendation['valid_until'])),
                 requires_approval=recommendation.get('requires_approval', True)
             )
             
             # Filter expired recommendations
-            if rec.valid_until < datetime.utcnow():
+            if rec.valid_until < datetime.now(timezone.utc):
                 logger.info("recommendation_expired", 
                            rec_id=rec.recommendation_id)
                 return
@@ -131,7 +135,7 @@ class CloudStrategicEngine:
             {
                 'recommendation_id': rec_id,
                 'operator_id': operator_id,
-                'approved_at': datetime.utcnow().isoformat(),
+                'approved_at': datetime.now(timezone.utc).isoformat(),
                 'notes': notes,
             }
         )
@@ -158,7 +162,7 @@ class CloudStrategicEngine:
             {
                 'recommendation_id': rec_id,
                 'operator_id': operator_id,
-                'rejected_at': datetime.utcnow().isoformat(),
+                'rejected_at': datetime.now(timezone.utc).isoformat(),
                 'reason': reason,
             }
         )
@@ -182,7 +186,7 @@ class CloudStrategicEngine:
         recs = self.pending_recommendations
         
         # Filter expired
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         recs = [r for r in recs if r.valid_until > now]
         
         if min_priority:

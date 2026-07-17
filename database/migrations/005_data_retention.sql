@@ -1,8 +1,16 @@
 -- Data Retention Policies Foundation
 -- Implement tiered storage (hot/warm/cold), automated archival, and compliance-based retention
 
--- Enable TimescaleDB toolkit for retention policies
-CREATE EXTENSION IF NOT EXISTS timescaledb_toolkit;
+-- timescaledb_toolkit is OPTIONAL: nothing below uses toolkit features
+-- (retention policies are core timescaledb), and the standard
+-- timescale/timescaledb image doesn't ship the extension — only -ha images
+-- do. Enable it when available, continue when not.
+DO $$
+BEGIN
+    CREATE EXTENSION IF NOT EXISTS timescaledb_toolkit;
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'timescaledb_toolkit unavailable, continuing without it: %', SQLERRM;
+END $$;
 
 -- Define retention periods (in days)
 -- Hot storage: 7 days (high performance SSD)
@@ -11,16 +19,21 @@ CREATE EXTENSION IF NOT EXISTS timescaledb_toolkit;
 -- Purge: >365 days
 
 -- Telemetry retention policy
-SELECT add_retention_policy('telemetry', INTERVAL '7 days');
+SELECT add_retention_policy('telemetry', INTERVAL '7 days', if_not_exists => TRUE);
 
 -- PackML states retention policy
-SELECT add_retention_policy('packml_states', INTERVAL '30 days');
+SELECT add_retention_policy('packml_states', INTERVAL '30 days', if_not_exists => TRUE);
+
+-- Enable compression on the hypertables BEFORE adding policies — a policy on
+-- an uncompressed hypertable errors ("columnstore not enabled"). SET is
+-- idempotent.
+ALTER TABLE packml_states SET (timescaledb.compress, timescaledb.compress_segmentby = 'asset_id');
 
 -- Compression policy for telemetry (compress after 7 days)
-SELECT add_compression_policy('telemetry', INTERVAL '7 days');
+SELECT add_compression_policy('telemetry', INTERVAL '7 days', if_not_exists => TRUE);
 
 -- Compression policy for packml states (compress after 1 day)
-SELECT add_compression_policy('packml_states', INTERVAL '1 day');
+SELECT add_compression_policy('packml_states', INTERVAL '1 day', if_not_exists => TRUE);
 
 -- Create data retention configuration table
 CREATE TABLE IF NOT EXISTS data_retention_config (
@@ -149,7 +162,7 @@ SELECT
     t.archival_enabled,
     t.archival_destination,
     pg_size_pretty(pg_total_relation_size(t.table_name::regclass)) AS current_size,
-    (SELECT COUNT(*) FROM pg_stat_user_tables WHERE schemaname || '.' || tablename = t.table_name) AS has_stats
+    (SELECT COUNT(*) FROM pg_stat_user_tables WHERE schemaname || '.' || relname = t.table_name) AS has_stats
 FROM data_retention_config t;
 
 -- Grant access to monitoring role
@@ -175,7 +188,7 @@ ON CONFLICT (table_name) DO NOTHING;
 -- This allows querying aggregated data while keeping raw data for shorter periods
 
 -- Hourly OEE aggregates (keep for 1 year)
-CREATE MATERIALIZED VIEW oee_hourly WITH (timescaledb.continuous) AS
+CREATE MATERIALIZED VIEW IF NOT EXISTS oee_hourly WITH (timescaledb.continuous) AS
 SELECT 
     time_bucket('1 hour', state_entered_at) AS hour,
     asset_id,
@@ -187,10 +200,10 @@ WHERE state_exited_at IS NOT NULL
 GROUP BY hour, asset_id;
 
 -- Set retention for hourly aggregates (1 year)
-SELECT add_retention_policy('oee_hourly', INTERVAL '365 days');
+SELECT add_retention_policy('oee_hourly', INTERVAL '365 days', if_not_exists => TRUE);
 
 -- Daily OEE aggregates (keep for 5 years)
-CREATE MATERIALIZED VIEW oee_daily WITH (timescaledb.continuous) AS
+CREATE MATERIALIZED VIEW IF NOT EXISTS oee_daily WITH (timescaledb.continuous) AS
 SELECT 
     time_bucket('1 day', state_entered_at) AS day,
     asset_id,
@@ -202,18 +215,21 @@ WHERE state_exited_at IS NOT NULL
 GROUP BY day, asset_id;
 
 -- Set retention for daily aggregates (5 years)
-SELECT add_retention_policy('oee_daily', INTERVAL '1825 days');
+SELECT add_retention_policy('oee_daily', INTERVAL '1825 days', if_not_exists => TRUE);
 
 -- Refresh policy for continuous aggregates
 SELECT add_continuous_aggregate_policy('oee_hourly', 
-    start_offset => INTERVAL '1 hour',
+    -- window must span >= 2 bucket widths; 1h..1h was zero-width and errored
+    start_offset => INTERVAL '3 hours',
     end_offset => INTERVAL '1 hour',
-    schedule_interval => INTERVAL '1 hour');
+    schedule_interval => INTERVAL '1 hour',
+    if_not_exists => TRUE);
 
 SELECT add_continuous_aggregate_policy('oee_daily',
-    start_offset => INTERVAL '1 day',
+    start_offset => INTERVAL '3 days',
     end_offset => INTERVAL '1 day',
-    schedule_interval => INTERVAL '1 day');
+    schedule_interval => INTERVAL '1 day',
+    if_not_exists => TRUE);
 
 -- Create function to check compliance retention requirements
 CREATE OR REPLACE FUNCTION check_compliance_retention()
@@ -252,6 +268,6 @@ COMMENT ON FUNCTION update_retention_policy(VARCHAR, INTEGER) IS 'Update retenti
 COMMENT ON FUNCTION archive_to_cold_storage() IS 'Archive data to cold storage (S3)';
 COMMENT ON FUNCTION purge_old_data() IS 'Purge data exceeding retention period';
 COMMENT ON VIEW retention_status IS 'Current status of data retention policies';
-COMMENT ON MATERIALIZED VIEW oee_hourly IS 'Hourly OEE aggregates for long-term retention';
-COMMENT ON MATERIALIZED VIEW oee_daily IS 'Daily OEE aggregates for long-term retention';
+COMMENT ON VIEW oee_hourly IS 'Hourly OEE aggregates for long-term retention';
+COMMENT ON VIEW oee_daily IS 'Daily OEE aggregates for long-term retention';
 COMMENT ON FUNCTION check_compliance_retention() IS 'Check if retention policies meet compliance requirements';

@@ -6,9 +6,9 @@ and Intake Inbox for data upload and analysis.
 """
 
 import json
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Set
 from uuid import UUID
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, Field
@@ -64,6 +64,216 @@ def _find_column(columns: List[str], keywords: List[str]) -> Optional[str]:
             if keyword in lower_name:
                 return original_name
     return None
+
+
+_METRIC_NAME_EXCLUDES = (
+    "type", "category", "code", "description", "reason", "status", "mode",
+    "class", "label", "comment", "text", "note", "name",
+)
+
+_DEFECT_QUANTITY_KEYWORDS = [
+    "defect_count", "defects_count", "num_defects", "defect_qty", "defects", "defect",
+]
+
+
+def _find_metric_column(columns: List[str], keywords: List[str]) -> Optional[str]:
+    """Match a column by keyword but skip categorical fields (e.g. defect_type)."""
+    lower_lookup = {str(column).lower(): column for column in columns}
+    for keyword in keywords:
+        for lower_name, original_name in lower_lookup.items():
+            if keyword not in lower_name:
+                continue
+            if any(excluded in lower_name for excluded in _METRIC_NAME_EXCLUDES):
+                continue
+            return original_name
+    return None
+
+
+_GROUPING_COLUMN_EXCLUDES = (
+    "payment", "invoice", "paid", "billing", "order_status", "po_status",
+    "transaction", "receipt", "payable", "receivable", "settlement",
+)
+
+_INVALID_GROUP_VALUES = {
+    "paid", "unpaid", "pending", "complete", "completed", "open", "closed",
+    "yes", "no", "n/a", "na", "unknown", "none", "null", "active", "inactive",
+}
+
+
+def _find_grouping_column(columns: List[str], keywords: List[str]) -> Optional[str]:
+    """Operational grouping columns only — skip payment/status/finance noise."""
+    lower_lookup = {str(column).lower(): column for column in columns}
+    for keyword in keywords:
+        for lower_name, original_name in lower_lookup.items():
+            if keyword not in lower_name:
+                continue
+            if any(excluded in lower_name for excluded in _GROUPING_COLUMN_EXCLUDES):
+                continue
+            if lower_name in {"status", "state"}:
+                continue
+            return original_name
+    return None
+
+
+def _is_valid_operational_group_value(value: Any) -> bool:
+    if value is None:
+        return False
+    text = str(value).strip().lower()
+    if not text or text in _INVALID_GROUP_VALUES:
+        return False
+    if len(text) <= 2 and text.isalpha():
+        return False
+    return True
+
+
+def _find_defect_quantity_column(columns: List[str]) -> Optional[str]:
+    return _find_metric_column(columns, _DEFECT_QUANTITY_KEYWORDS)
+
+
+def _find_issue_group_column(columns: List[str]) -> Optional[str]:
+    return _find_grouping_column(
+        columns,
+        ["delay_reason", "delay_code", "issue_type", "failure_mode", "root_cause", "delay"],
+    )
+
+
+def _coerce_numeric_series(df: Any, column: Optional[str]) -> Any:
+    if not column or column not in df.columns:
+        return None
+    import pandas as pd
+
+    series = pd.to_numeric(df[column], errors="coerce")
+    if series.notna().sum() == 0:
+        return None
+    return series
+
+
+def _safe_numeric_sum(df: Any, column: Optional[str]) -> Optional[float]:
+    series = _coerce_numeric_series(df, column)
+    if series is None:
+        return None
+    return _round_metric(series.sum())
+
+
+def _safe_numeric_mean(df: Any, column: Optional[str]) -> Optional[float]:
+    series = _coerce_numeric_series(df, column)
+    if series is None:
+        return None
+    return _round_metric(series.mean())
+
+
+def _safe_numeric_min(df: Any, column: Optional[str]) -> Optional[float]:
+    series = _coerce_numeric_series(df, column)
+    if series is None:
+        return None
+    return _round_metric(series.min())
+
+
+def _safe_numeric_max(df: Any, column: Optional[str]) -> Optional[float]:
+    series = _coerce_numeric_series(df, column)
+    if series is None:
+        return None
+    return _round_metric(series.max())
+
+
+def _safe_numeric_first_last(df: Any, column: Optional[str]) -> tuple:
+    series = _coerce_numeric_series(df, column)
+    if series is None:
+        return None, None
+    cleaned = series.dropna()
+    if cleaned.empty:
+        return None, None
+    first_value = cleaned.iloc[0]
+    last_value = cleaned.iloc[-1]
+    return _round_metric(first_value), _round_metric(last_value)
+
+
+def _numeric_describe(df: Any) -> Dict[str, Any]:
+    if df.empty:
+        return {}
+    import pandas as pd
+
+    numeric_df = df.select_dtypes(include="number")
+    if numeric_df.empty:
+        coerced_frames = []
+        for column in df.columns[:40]:
+            series = pd.to_numeric(df[column], errors="coerce")
+            if series.notna().sum() > 0:
+                coerced_frames.append(series.rename(column))
+        if coerced_frames:
+            numeric_df = pd.concat(coerced_frames, axis=1)
+    if numeric_df.empty:
+        return {}
+    return _json_safe(numeric_df.describe().to_dict())
+
+
+def _build_linking_metadata(df: Any) -> Dict[str, Any]:
+    """Distinct assets/lines and date range for cross-file correlation (full column scan)."""
+    if df.empty:
+        return {"row_count": 0, "date_range": None, "year_labels": [], "distinct_assets": [], "distinct_lines": []}
+
+    import pandas as pd
+
+    columns = [str(c) for c in df.columns]
+    date_col = _find_column(columns, ["date", "time", "timestamp", "posting_date", "order_date"])
+    asset_col = _find_column(columns, ["asset_id", "asset", "equipment_id", "machine_id"])
+    line_col = _find_column(columns, ["production_line", "line"])
+
+    metadata: Dict[str, Any] = {"row_count": int(len(df)), "date_range": None, "year_labels": [], "distinct_assets": [], "distinct_lines": []}
+
+    if date_col:
+        dates = pd.to_datetime(df[date_col], errors="coerce").dropna()
+        if not dates.empty:
+            metadata["date_range"] = {
+                "min": str(dates.min().date()),
+                "max": str(dates.max().date()),
+            }
+            metadata["year_labels"] = sorted({int(y) for y in dates.dt.year.dropna().unique()})
+
+    if asset_col:
+        metadata["distinct_assets"] = (
+            df[asset_col].dropna().astype(str).str.strip().unique().tolist()[:500]
+        )
+    if line_col:
+        metadata["distinct_lines"] = (
+            df[line_col].dropna().astype(str).str.strip().unique().tolist()[:100]
+        )
+
+    return metadata
+
+
+def _merge_workbook_linking(tab_metas: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Merge per-tab linking metadata into workbook-level linking_metadata."""
+    if not tab_metas:
+        return {"row_count": 0, "date_range": None, "year_labels": [], "distinct_assets": [], "distinct_lines": []}
+
+    assets: List[str] = []
+    lines: List[str] = []
+    years: Set[int] = set()
+    ranges = []
+    rows = 0
+    for m in tab_metas:
+        rows += int(m.get("row_count") or 0)
+        assets.extend(m.get("distinct_assets") or [])
+        lines.extend(m.get("distinct_lines") or [])
+        years.update(m.get("year_labels") or [])
+        if m.get("date_range"):
+            ranges.append(m["date_range"])
+
+    merged_range = None
+    if ranges:
+        merged_range = {
+            "min": min(r["min"] for r in ranges),
+            "max": max(r["max"] for r in ranges),
+        }
+
+    return {
+        "row_count": rows,
+        "date_range": merged_range,
+        "year_labels": sorted(years),
+        "distinct_assets": list(dict.fromkeys(assets))[:500],
+        "distinct_lines": list(dict.fromkeys(lines))[:100],
+    }
 
 
 def _records_for_model(df: Any, limit: int = 5) -> List[Dict[str, Any]]:
@@ -123,10 +333,10 @@ def _operational_profile(df: Any) -> Dict[str, Any]:
     columns = [str(column) for column in df.columns]
     planned_col = _find_column(columns, ["planned_units", "planned", "target"])
     actual_col = _find_column(columns, ["actual_units", "actual", "produced"])
-    downtime_col = _find_column(columns, ["downtime"])
-    defect_col = _find_column(columns, ["defect"])
-    vibration_col = _find_column(columns, ["vibration"])
-    loss_col = _find_column(columns, ["estimated_loss", "loss", "cost"])
+    downtime_col = _find_metric_column(columns, ["downtime"])
+    defect_col = _find_defect_quantity_column(columns)
+    vibration_col = _find_metric_column(columns, ["vibration"])
+    loss_col = _find_metric_column(columns, ["estimated_loss", "loss", "cost"])
     delay_col = _find_column(columns, ["delay_reason", "delay"])
     maintenance_col = _find_column(columns, ["maintenance"])
     priority_col = _find_column(columns, ["priority"])
@@ -135,17 +345,18 @@ def _operational_profile(df: Any) -> Dict[str, Any]:
     working_df = df.copy()
 
     if planned_col and actual_col:
-        planned = working_df[planned_col]
-        actual = working_df[actual_col]
-        working_df["_actual_gap"] = planned - actual
-        working_df["_attainment_pct"] = (actual / planned.replace(0, math.nan)) * 100
-        metrics["planned_vs_actual"] = {
-            "planned_total": _round_metric(planned.sum()),
-            "actual_total": _round_metric(actual.sum()),
-            "shortfall_total": _round_metric((planned - actual).sum()),
-            "average_attainment_pct": _round_metric(working_df["_attainment_pct"].mean()),
-            "worst_shortfall": _round_metric(working_df["_actual_gap"].max()),
-        }
+        planned = _coerce_numeric_series(working_df, planned_col)
+        actual = _coerce_numeric_series(working_df, actual_col)
+        if planned is not None and actual is not None:
+            working_df["_actual_gap"] = planned - actual
+            working_df["_attainment_pct"] = (actual / planned.replace(0, math.nan)) * 100
+            metrics["planned_vs_actual"] = {
+                "planned_total": _round_metric(planned.sum()),
+                "actual_total": _round_metric(actual.sum()),
+                "shortfall_total": _round_metric((planned - actual).sum()),
+                "average_attainment_pct": _round_metric(working_df["_attainment_pct"].mean()),
+                "worst_shortfall": _round_metric(working_df["_actual_gap"].max()),
+            }
 
     for source_col, label in [
         (downtime_col, "downtime"),
@@ -155,17 +366,18 @@ def _operational_profile(df: Any) -> Dict[str, Any]:
     ]:
         if not source_col:
             continue
-        series = working_df[source_col].dropna()
-        if series.empty:
+        series = _coerce_numeric_series(working_df, source_col)
+        if series is None:
             continue
+        first_value, last_value = _safe_numeric_first_last(working_df, source_col)
         metrics[label] = {
             "total": _round_metric(series.sum()),
             "average": _round_metric(series.mean()),
             "min": _round_metric(series.min()),
             "max": _round_metric(series.max()),
-            "first": _round_metric(series.iloc[0]),
-            "last": _round_metric(series.iloc[-1]),
-            "first_to_last_delta": _round_metric(series.iloc[-1] - series.iloc[0]),
+            "first": first_value,
+            "last": last_value,
+            "first_to_last_delta": _round_metric(last_value - first_value) if first_value is not None and last_value is not None else None,
         }
 
     for source_col, label in [
@@ -199,23 +411,34 @@ def _top_rows_by_signal(df: Any) -> Dict[str, List[Dict[str, Any]]]:
     columns = [str(column) for column in df.columns]
     context_columns = _row_context_columns(df)
     signals = {
-        "highest_downtime_rows": _find_column(columns, ["downtime"]),
-        "highest_defect_rows": _find_column(columns, ["defect"]),
-        "highest_vibration_rows": _find_column(columns, ["vibration"]),
-        "highest_loss_rows": _find_column(columns, ["estimated_loss", "loss", "cost"]),
+        "highest_downtime_rows": _find_metric_column(columns, ["downtime"]),
+        "highest_defect_rows": _find_defect_quantity_column(columns),
+        "highest_vibration_rows": _find_metric_column(columns, ["vibration"]),
+        "highest_loss_rows": _find_metric_column(columns, ["estimated_loss", "loss", "cost"]),
     }
 
     planned_col = _find_column(columns, ["planned_units", "planned", "target"])
     actual_col = _find_column(columns, ["actual_units", "actual", "produced"])
     working_df = df.copy()
     if planned_col and actual_col:
-        working_df["_actual_gap"] = working_df[planned_col] - working_df[actual_col]
-        signals["largest_actual_vs_planned_shortfall_rows"] = "_actual_gap"
+        planned = _coerce_numeric_series(working_df, planned_col)
+        actual = _coerce_numeric_series(working_df, actual_col)
+        if planned is not None and actual is not None:
+            working_df["_actual_gap"] = planned - actual
+            signals["largest_actual_vs_planned_shortfall_rows"] = "_actual_gap"
 
     for label, column in signals.items():
-        if not column or column not in working_df:
+        if not column or column not in working_df.columns:
             continue
-        ranked = working_df.sort_values(column, ascending=False).head(5).copy()
+        sort_column = column
+        if not column.startswith("_"):
+            coerced = _coerce_numeric_series(working_df, column)
+            if coerced is None:
+                continue
+            sort_column = f"_sort_{column}"
+            working_df = working_df.copy()
+            working_df[sort_column] = coerced
+        ranked = working_df.sort_values(sort_column, ascending=False).head(5).copy()
         display_columns = context_columns.copy()
         if column.startswith("_"):
             display_columns.append(column)
@@ -234,17 +457,20 @@ def _group_profile(df: Any) -> Dict[str, Any]:
     ]
     group_columns = [column for column in group_columns if column]
 
-    downtime_col = _find_column(columns, ["downtime"])
-    defect_col = _find_column(columns, ["defect"])
-    vibration_col = _find_column(columns, ["vibration"])
-    loss_col = _find_column(columns, ["estimated_loss", "loss", "cost"])
+    downtime_col = _find_metric_column(columns, ["downtime"])
+    defect_col = _find_defect_quantity_column(columns)
+    vibration_col = _find_metric_column(columns, ["vibration"])
+    loss_col = _find_metric_column(columns, ["estimated_loss", "loss", "cost"])
     planned_col = _find_column(columns, ["planned_units", "planned", "target"])
     actual_col = _find_column(columns, ["actual_units", "actual", "produced"])
 
     working_df = df.copy()
     if planned_col and actual_col:
-        working_df["_actual_gap"] = working_df[planned_col] - working_df[actual_col]
-        working_df["_attainment_pct"] = (working_df[actual_col] / working_df[planned_col].replace(0, math.nan)) * 100
+        planned = _coerce_numeric_series(working_df, planned_col)
+        actual = _coerce_numeric_series(working_df, actual_col)
+        if planned is not None and actual is not None:
+            working_df["_actual_gap"] = planned - actual
+            working_df["_attainment_pct"] = (actual / planned.replace(0, math.nan)) * 100
 
     value_columns = [
         (downtime_col, "downtime_total", "sum"),
@@ -261,10 +487,10 @@ def _group_profile(df: Any) -> Dict[str, Any]:
         for value, group in working_df.groupby(group_col, dropna=True):
             row: Dict[str, Any] = {"value": _json_safe(value), "rows": int(len(group))}
             for source_col, label, agg in value_columns:
-                if not source_col or source_col not in group:
+                if not source_col or source_col not in group.columns:
                     continue
-                series = group[source_col].dropna()
-                if series.empty:
+                series = _coerce_numeric_series(group, source_col)
+                if series is None:
                     continue
                 metric_value = series.sum() if agg == "sum" else series.mean()
                 row[label] = _round_metric(metric_value)
@@ -304,10 +530,10 @@ def _build_numeric_comparison_findings(df: Any) -> List[str]:
     columns = [str(column) for column in df.columns]
     planned_col = _find_column(columns, ["planned_units", "planned", "target"])
     actual_col = _find_column(columns, ["actual_units", "actual", "produced"])
-    defect_col = _find_column(columns, ["defect_count", "defect"])
-    downtime_col = _find_column(columns, ["downtime_minutes", "downtime"])
-    loss_col = _find_column(columns, ["estimated_cost", "estimated_loss", "loss", "cost"])
-    vibration_col = _find_column(columns, ["vibration_level", "vibration"])
+    defect_col = _find_defect_quantity_column(columns)
+    downtime_col = _find_metric_column(columns, ["downtime_minutes", "downtime"])
+    loss_col = _find_metric_column(columns, ["estimated_cost", "estimated_loss", "loss", "cost"])
+    vibration_col = _find_metric_column(columns, ["vibration_level", "vibration"])
     asset_col = _find_column(columns, ["asset_id", "asset"])
     line_col = _find_column(columns, ["production_line", "line"])
     shift_col = _find_column(columns, ["shift"])
@@ -315,82 +541,92 @@ def _build_numeric_comparison_findings(df: Any) -> List[str]:
     findings: List[str] = []
 
     if defect_col and planned_col:
-        total_defects = df[defect_col].sum()
-        total_planned = df[planned_col].sum()
-        defects_per_1000_planned = (total_defects / total_planned * 1000) if total_planned else None
-        working_df = df.copy()
-        working_df["_defects_per_1000_planned"] = (
-            working_df[defect_col] / working_df[planned_col].replace(0, math.nan) * 1000
-        )
-        worst_row = working_df.sort_values("_defects_per_1000_planned", ascending=False).head(1)
-
-        findings.append(
-            "Numeric comparison: defect_count vs planned_units | "
-            f"total_defect_count={_format_finding_value(total_defects)} | "
-            f"total_planned_units={_format_finding_value(total_planned)} | "
-            f"defects_per_1000_planned_units={_format_finding_value(_round_metric(defects_per_1000_planned))} | "
-            f"worst_row={_row_label(_records_for_model(worst_row, limit=1)[0])}."
-        )
-
-        for group_col in [line_col, asset_col, shift_col]:
-            if not group_col:
-                continue
-            rows = []
-            for group_value, group in working_df.groupby(group_col, dropna=True):
-                planned_sum = group[planned_col].sum()
-                defect_sum = group[defect_col].sum()
-                rows.append({
-                    "group": group_value,
-                    "planned_units": _round_metric(planned_sum),
-                    "defect_count": _round_metric(defect_sum),
-                    "defects_per_1000_planned_units": _round_metric(
-                        defect_sum / planned_sum * 1000 if planned_sum else None
-                    ),
-                })
-            rows.sort(key=lambda row: row.get("defects_per_1000_planned_units") or 0, reverse=True)
-            top_groups = "; ".join(
-                f"{group_col}={row['group']} defect_count={_format_finding_value(row['defect_count'])} "
-                f"planned_units={_format_finding_value(row['planned_units'])} "
-                f"defects_per_1000={_format_finding_value(row['defects_per_1000_planned_units'])}"
-                for row in rows[:3]
+        defect_series = _coerce_numeric_series(df, defect_col)
+        planned_series = _coerce_numeric_series(df, planned_col)
+        if defect_series is not None and planned_series is not None:
+            total_defects = defect_series.sum()
+            total_planned = planned_series.sum()
+            defects_per_1000_planned = (total_defects / total_planned * 1000) if total_planned else None
+            working_df = df.copy()
+            working_df["_defects_per_1000_planned"] = (
+                defect_series / planned_series.replace(0, math.nan) * 1000
             )
-            findings.append(f"Numeric comparison by {group_col}: defect_count vs planned_units | {top_groups}.")
+            worst_row = working_df.sort_values("_defects_per_1000_planned", ascending=False).head(1)
+
+            findings.append(
+                "Numeric comparison: defect_count vs planned_units | "
+                f"total_defect_count={_format_finding_value(total_defects)} | "
+                f"total_planned_units={_format_finding_value(total_planned)} | "
+                f"defects_per_1000_planned_units={_format_finding_value(_round_metric(defects_per_1000_planned))} | "
+                f"worst_row={_row_label(_records_for_model(worst_row, limit=1)[0])}."
+            )
+
+            for group_col in [line_col, asset_col, shift_col]:
+                if not group_col:
+                    continue
+                rows = []
+                for group_value, group in working_df.groupby(group_col, dropna=True):
+                    planned_sum = _safe_numeric_sum(group, planned_col)
+                    defect_sum = _safe_numeric_sum(group, defect_col)
+                    rows.append({
+                        "group": group_value,
+                        "planned_units": planned_sum,
+                        "defect_count": defect_sum,
+                        "defects_per_1000_planned_units": _round_metric(
+                            defect_sum / planned_sum * 1000 if planned_sum else None
+                        ),
+                    })
+                rows.sort(key=lambda row: row.get("defects_per_1000_planned_units") or 0, reverse=True)
+                top_groups = "; ".join(
+                    f"{group_col}={row['group']} defect_count={_format_finding_value(row['defect_count'])} "
+                    f"planned_units={_format_finding_value(row['planned_units'])} "
+                    f"defects_per_1000={_format_finding_value(row['defects_per_1000_planned_units'])}"
+                    for row in rows[:3]
+                )
+                findings.append(f"Numeric comparison by {group_col}: defect_count vs planned_units | {top_groups}.")
 
     if actual_col and planned_col:
-        actual_total = df[actual_col].sum()
-        planned_total = df[planned_col].sum()
-        shortfall_total = planned_total - actual_total
-        attainment = (actual_total / planned_total * 100) if planned_total else None
-        findings.append(
-            "Numeric comparison: actual_units vs planned_units | "
-            f"total_actual_units={_format_finding_value(actual_total)} | "
-            f"total_planned_units={_format_finding_value(planned_total)} | "
-            f"shortfall_units={_format_finding_value(shortfall_total)} | "
-            f"attainment_pct={_format_finding_value(_round_metric(attainment))}."
-        )
+        actual_total = _safe_numeric_sum(df, actual_col)
+        planned_total = _safe_numeric_sum(df, planned_col)
+        if actual_total is not None and planned_total is not None:
+            shortfall_total = planned_total - actual_total
+            attainment = (actual_total / planned_total * 100) if planned_total else None
+            findings.append(
+                "Numeric comparison: actual_units vs planned_units | "
+                f"total_actual_units={_format_finding_value(actual_total)} | "
+                f"total_planned_units={_format_finding_value(planned_total)} | "
+                f"shortfall_units={_format_finding_value(shortfall_total)} | "
+                f"attainment_pct={_format_finding_value(_round_metric(attainment))}."
+            )
 
     if loss_col and downtime_col:
-        loss_total = df[loss_col].sum()
-        downtime_total = df[downtime_col].sum()
-        loss_per_downtime_minute = loss_total / downtime_total if downtime_total else None
-        findings.append(
-            "Numeric comparison: estimated cost impact vs downtime | "
-            f"total_estimated_cost={_format_finding_value(loss_total)} | "
-            f"total_downtime={_format_finding_value(downtime_total)} | "
-            f"cost_per_downtime_minute={_format_finding_value(_round_metric(loss_per_downtime_minute))}."
-        )
+        loss_total = _safe_numeric_sum(df, loss_col)
+        downtime_total = _safe_numeric_sum(df, downtime_col)
+        if loss_total is not None and downtime_total is not None:
+            loss_per_downtime_minute = loss_total / downtime_total if downtime_total else None
+            findings.append(
+                "Numeric comparison: estimated cost impact vs downtime | "
+                f"total_estimated_cost={_format_finding_value(loss_total)} | "
+                f"total_downtime={_format_finding_value(downtime_total)} | "
+                f"cost_per_downtime_minute={_format_finding_value(_round_metric(loss_per_downtime_minute))}."
+            )
 
     if vibration_col and defect_col:
-        working_df = df.copy()
-        high_vibration_threshold = working_df[vibration_col].quantile(0.75)
-        high_vibration = working_df[working_df[vibration_col] >= high_vibration_threshold]
-        low_vibration = working_df[working_df[vibration_col] < high_vibration_threshold]
-        findings.append(
-            "Numeric comparison: vibration vs defects | "
-            f"high_vibration_threshold={_format_finding_value(_round_metric(high_vibration_threshold))} | "
-            f"avg_defects_high_vibration={_format_finding_value(_round_metric(high_vibration[defect_col].mean()))} | "
-            f"avg_defects_lower_vibration={_format_finding_value(_round_metric(low_vibration[defect_col].mean()))}."
-        )
+        vibration_series = _coerce_numeric_series(df, vibration_col)
+        defect_series = _coerce_numeric_series(df, defect_col)
+        if vibration_series is not None and defect_series is not None:
+            working_df = df.copy()
+            working_df["_vibration"] = vibration_series
+            working_df["_defect_metric"] = defect_series
+            high_vibration_threshold = working_df["_vibration"].quantile(0.75)
+            high_vibration = working_df[working_df["_vibration"] >= high_vibration_threshold]
+            low_vibration = working_df[working_df["_vibration"] < high_vibration_threshold]
+            findings.append(
+                "Numeric comparison: vibration vs defects | "
+                f"high_vibration_threshold={_format_finding_value(_round_metric(high_vibration_threshold))} | "
+                f"avg_defects_high_vibration={_format_finding_value(_round_metric(high_vibration['_defect_metric'].mean()))} | "
+                f"avg_defects_lower_vibration={_format_finding_value(_round_metric(low_vibration['_defect_metric'].mean()))}."
+            )
 
     return findings[:8]
 
@@ -490,16 +726,27 @@ def _build_action_plan_for_group(
         return None
 
     working_group = group.copy()
-    if rank_col and rank_col in working_group:
-        worst_row_df = working_group.sort_values(rank_col, ascending=False).head(1)
+    if rank_col and rank_col in working_group.columns:
+        sort_col = rank_col
+        if not rank_col.startswith("_"):
+            coerced = _coerce_numeric_series(working_group, rank_col)
+            if coerced is not None:
+                sort_col = f"_rank_{rank_col}"
+                working_group[sort_col] = coerced
+            else:
+                sort_col = None
+        if sort_col:
+            worst_row_df = working_group.sort_values(sort_col, ascending=False).head(1)
+        else:
+            worst_row_df = working_group.head(1)
     else:
         worst_row_df = working_group.head(1)
     worst_row = _records_for_model(worst_row_df, limit=1)[0]
 
-    loss_col = _find_column(columns, ["estimated_cost", "estimated_loss", "loss", "cost"])
-    downtime_col = _find_column(columns, ["downtime"])
-    defect_col = _find_column(columns, ["defect"])
-    vibration_col = _find_column(columns, ["vibration"])
+    loss_col = _find_metric_column(columns, ["estimated_cost", "estimated_loss", "loss", "cost"])
+    downtime_col = _find_metric_column(columns, ["downtime"])
+    defect_col = _find_defect_quantity_column(columns)
+    vibration_col = _find_metric_column(columns, ["vibration"])
     maintenance_col = _find_column(columns, ["maintenance"])
     asset_col = _find_column(columns, ["asset_id", "asset"])
     asset_name_col = _find_column(columns, ["asset_name"])
@@ -512,10 +759,10 @@ def _build_action_plan_for_group(
 
     facts = {
         "rows": int(len(group)),
-        "total_estimated_cost": _round_metric(group[loss_col].sum()) if loss_col else None,
-        "total_downtime": _round_metric(group[downtime_col].sum()) if downtime_col else None,
-        "total_defects": _round_metric(group[defect_col].sum()) if defect_col else None,
-        "average_vibration": _round_metric(group[vibration_col].mean()) if vibration_col else None,
+        "total_estimated_cost": _safe_numeric_sum(group, loss_col),
+        "total_downtime": _safe_numeric_sum(group, downtime_col),
+        "total_defects": _safe_numeric_sum(group, defect_col),
+        "average_vibration": _safe_numeric_mean(group, vibration_col),
     }
 
     check_fields = {
@@ -576,13 +823,13 @@ def _build_concrete_action_plan(df: Any) -> List[Dict[str, Any]]:
         return []
 
     columns = [str(column) for column in df.columns]
-    loss_col = _find_column(columns, ["estimated_cost", "estimated_loss", "loss", "cost"])
-    downtime_col = _find_column(columns, ["downtime"])
-    defect_col = _find_column(columns, ["defect"])
-    vibration_col = _find_column(columns, ["vibration"])
-    delay_col = _find_column(columns, ["delay_reason", "delay", "issue", "reason", "status"])
-    maintenance_col = _find_column(columns, ["maintenance"])
-    priority_col = _find_column(columns, ["priority", "severity"])
+    loss_col = _find_metric_column(columns, ["estimated_cost", "estimated_loss", "loss", "cost"])
+    downtime_col = _find_metric_column(columns, ["downtime"])
+    defect_col = _find_defect_quantity_column(columns)
+    vibration_col = _find_metric_column(columns, ["vibration"])
+    delay_col = _find_issue_group_column(columns)
+    maintenance_col = _find_grouping_column(columns, ["maintenance_status", "maintenance"])
+    priority_col = _find_grouping_column(columns, ["priority", "severity"])
     asset_col = _find_column(columns, ["asset_id", "asset"])
     line_col = _find_column(columns, ["production_line", "line"])
     shift_col = _find_column(columns, ["shift"])
@@ -590,9 +837,18 @@ def _build_concrete_action_plan(df: Any) -> List[Dict[str, Any]]:
     rank_col = loss_col or downtime_col or defect_col or vibration_col
     action_items: List[Dict[str, Any]] = []
 
-    primary_group_col = delay_col or maintenance_col or priority_col or asset_col or line_col or shift_col
+    primary_group_col = (
+        delay_col
+        or maintenance_col
+        or priority_col
+        or asset_col
+        or line_col
+        or shift_col
+    )
     if primary_group_col:
         for group_value, group in df.groupby(primary_group_col, dropna=True):
+            if not _is_valid_operational_group_value(group_value):
+                continue
             action = _build_action_plan_for_group(
                 primary_group_col,
                 group_value,
@@ -640,9 +896,9 @@ def _build_cost_delay_findings(df: Any) -> List[str]:
     """Deterministic cost-vs-delay facts for spreadsheet chat grounding."""
     columns = [str(column) for column in df.columns]
     delay_col = _find_column(columns, ["delay_reason", "delay"])
-    loss_col = _find_column(columns, ["estimated_loss", "loss", "cost"])
-    downtime_col = _find_column(columns, ["downtime"])
-    defect_col = _find_column(columns, ["defect"])
+    loss_col = _find_metric_column(columns, ["estimated_loss", "loss", "cost"])
+    downtime_col = _find_metric_column(columns, ["downtime"])
+    defect_col = _find_defect_quantity_column(columns)
     asset_col = _find_column(columns, ["asset_id", "asset"])
     line_col = _find_column(columns, ["production_line", "line"])
     shift_col = _find_column(columns, ["shift"])
@@ -661,14 +917,14 @@ def _build_cost_delay_findings(df: Any) -> List[str]:
         row = {
             "delay_reason": delay_reason,
             "rows": int(len(group)),
-            "estimated_loss_total": _round_metric(group[loss_col].sum()),
+            "estimated_loss_total": _safe_numeric_sum(group, loss_col),
         }
         if downtime_col:
-            row["downtime_total"] = _round_metric(group[downtime_col].sum())
-            row["downtime_avg"] = _round_metric(group[downtime_col].mean())
+            row["downtime_total"] = _safe_numeric_sum(group, downtime_col)
+            row["downtime_avg"] = _safe_numeric_mean(group, downtime_col)
         if defect_col:
-            row["defect_total"] = _round_metric(group[defect_col].sum())
-            row["defect_avg"] = _round_metric(group[defect_col].mean())
+            row["defect_total"] = _safe_numeric_sum(group, defect_col)
+            row["defect_avg"] = _safe_numeric_mean(group, defect_col)
         delay_totals.append(row)
 
     delay_totals.sort(
@@ -877,7 +1133,7 @@ async def nlp_query(
     operational_metrics = _extract_metrics_from_query(request.query, request.context)
     
     scenario = CorrelationScenario(
-        scenario_id=f"nlp-{current_user.id}-{int(datetime.utcnow().timestamp())}",
+        scenario_id=f"nlp-{current_user.id}-{int(datetime.now(timezone.utc).timestamp())}",
         active_domains=domain_types,
         ingested_metrics=operational_metrics,
         domain_links=[]
@@ -951,7 +1207,7 @@ async def nlp_chat(
         "risk_score": response.risk_score,
         "domains": response.domains_analyzed,
         "actions": response.recommended_actions,
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": datetime.now(timezone.utc).isoformat()
     }
     
     return chat_response
@@ -1129,7 +1385,7 @@ async def analyze_intake(
     # Persist results on the intake item
     item.analysis_result = analysis_result
     item.status = "analyzed"
-    item.analyzed_at = datetime.utcnow()
+    item.analyzed_at = datetime.now(timezone.utc)
     await db.commit()
 
     analysis_result["analyzed_at"] = item.analyzed_at.isoformat()
@@ -1450,12 +1706,14 @@ def build_source_descriptor(
 
     if data_type == "spreadsheet":
         from app.services.spreadsheet_domain_mapper import map_workbook_domains
+        from app.services.multi_spreadsheet_correlator import keys_from_processed_spreadsheet
         tabs = processed.get("tabs") or []
         tab_columns = {t.get("name", f"tab{i}"): t.get("column_names", [])
                        for i, t in enumerate(tabs)}
         if tab_columns:
             mapping = map_workbook_domains(tab_columns)
             domains = [d.value for d in mapping.active_domains]
+        keys.extend(keys_from_processed_spreadsheet(processed))
         for t in tabs:
             keys.extend(extract_keys_from_records(t.get("sample_data") or []))
     elif data_type in ("report", "document"):
@@ -1700,7 +1958,7 @@ def _extract_metrics_from_query(query: str, context: Dict[str, Any]) -> List:
     from datetime import datetime
 
     metrics = []
-    timestamp = datetime.utcnow().isoformat()
+    timestamp = datetime.now(timezone.utc).isoformat()
 
     # Extract numeric values from query into a single metric payload
     import re
@@ -1727,6 +1985,138 @@ def _extract_metrics_from_query(query: str, context: Dict[str, Any]) -> List:
     return metrics
 
 
+def _profile_single_sheet(sheet_name: str, df: Any) -> Dict[str, Any]:
+    """Build a full tab profile. Profiling errors are captured per sheet, not fatal."""
+    tab: Dict[str, Any] = {
+        "name": str(sheet_name),
+        "rows": len(df),
+        "columns": len(df.columns),
+        "column_names": [str(c) for c in df.columns.tolist()],
+        "dtypes": {str(c): str(t) for c, t in df.dtypes.items()},
+    }
+    if df.empty:
+        tab.update({
+            "sample_data": [],
+            "tail_sample_data": [],
+            "summary": {},
+            "linking_metadata": _build_linking_metadata(df),
+            "full_sheet_profile": {},
+            "concrete_action_plan": [],
+            "numeric_comparisons": [],
+            "distilled_findings": [],
+        })
+        return tab
+
+    try:
+        linking = _build_linking_metadata(df)
+        full_sheet_profile = _build_spreadsheet_profile(df)
+        concrete_action_plan = _build_concrete_action_plan(df)
+        numeric_comparisons = _build_numeric_comparison_findings(df)
+        distilled_findings = (
+            _build_spreadsheet_findings(df, full_sheet_profile)
+            if full_sheet_profile else []
+        )
+        tab.update({
+            "sample_data": _records_for_model(df, limit=5),
+            "tail_sample_data": _records_for_model(df.tail(5), limit=5),
+            "summary": _numeric_describe(df),
+            "linking_metadata": linking,
+            "full_sheet_profile": full_sheet_profile,
+            "concrete_action_plan": concrete_action_plan,
+            "numeric_comparisons": numeric_comparisons,
+            "distilled_findings": distilled_findings,
+        })
+    except Exception as exc:
+        logger.warning("sheet_profile_failed", sheet=str(sheet_name), error=str(exc))
+        tab.update({
+            "parse_error": str(exc),
+            "sample_data": _records_for_model(df, limit=5),
+            "tail_sample_data": [],
+            "summary": _numeric_describe(df),
+            "linking_metadata": _build_linking_metadata(df),
+            "full_sheet_profile": {},
+            "concrete_action_plan": [],
+            "numeric_comparisons": [],
+            "distilled_findings": [
+                f"Sheet '{sheet_name}' uploaded; detailed profiling skipped: {exc}"
+            ],
+        })
+    return tab
+
+
+def _merge_workbook_tab_outputs(tabs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Aggregate per-tab analysis into workbook-level fields used by chat."""
+    if not tabs:
+        return {
+            "columns": 0,
+            "column_names": [],
+            "sample_data": [],
+            "tail_sample_data": [],
+            "summary": {},
+            "full_sheet_profile": {},
+            "concrete_action_plan": [],
+            "numeric_comparisons": [],
+            "distilled_findings": [],
+        }
+
+    ok_tabs = [tab for tab in tabs if not tab.get("parse_error")]
+    primary = ok_tabs[0] if ok_tabs else tabs[0]
+    richest = max(ok_tabs or tabs, key=lambda tab: tab.get("rows") or 0)
+
+    all_findings: List[str] = []
+    for tab in tabs:
+        prefix = f"[{tab['name']}] " if len(tabs) > 1 else ""
+        if tab.get("parse_error"):
+            all_findings.append(f"{prefix}profiling skipped: {tab['parse_error']}")
+        for finding in tab.get("distilled_findings") or []:
+            all_findings.append(f"{prefix}{finding}")
+
+    all_actions: List[Dict[str, Any]] = []
+    for tab in ok_tabs:
+        for action in tab.get("concrete_action_plan") or []:
+            tagged = dict(action)
+            tagged["sheet"] = tab["name"]
+            all_actions.append(tagged)
+
+    def action_sort_key(action: Dict[str, Any]) -> tuple:
+        facts = action.get("why_it_matters") or {}
+        return (
+            facts.get("total_estimated_cost") or 0,
+            facts.get("total_downtime") or 0,
+            facts.get("total_defects") or 0,
+            facts.get("average_vibration") or 0,
+        )
+
+    all_actions.sort(key=action_sort_key, reverse=True)
+
+    merged_profile = dict(primary.get("full_sheet_profile") or {})
+    if len(tabs) > 1:
+        merged_profile["workbook_tab_count"] = len(tabs)
+        merged_profile["per_tab_summaries"] = [
+            {
+                "name": tab["name"],
+                "rows": tab.get("rows", 0),
+                "columns": tab.get("columns", 0),
+                "parse_error": tab.get("parse_error"),
+                "operational_summary": (tab.get("full_sheet_profile") or {}).get("operational_summary") or {},
+            }
+            for tab in tabs
+        ]
+
+    return {
+        "primary_tab": primary.get("name"),
+        "columns": richest.get("columns", 0),
+        "column_names": richest.get("column_names", []),
+        "sample_data": richest.get("sample_data", []),
+        "tail_sample_data": richest.get("tail_sample_data", []),
+        "summary": richest.get("summary", {}),
+        "full_sheet_profile": merged_profile,
+        "concrete_action_plan": all_actions[:6],
+        "numeric_comparisons": sum((tab.get("numeric_comparisons") or [] for tab in ok_tabs), [])[:12],
+        "distilled_findings": all_findings[:24],
+    }
+
+
 async def _process_uploaded_file(content: bytes, data_type: str, filename: str) -> Dict[str, Any]:
     """Process uploaded file content based on type"""
     
@@ -1749,48 +2139,34 @@ async def _process_uploaded_file(content: bytes, data_type: str, filename: str) 
 
             tabs = []
             total_rows = 0
+            tab_linking: List[Dict[str, Any]] = []
             for sheet_name, df in sheets.items():
                 total_rows += len(df)
-                # Per-tab rich profiling (from Gemma correlation buildout).
-                full_sheet_profile = _build_spreadsheet_profile(df) if not df.empty else {}
-                concrete_action_plan = _build_concrete_action_plan(df) if not df.empty else []
-                numeric_comparisons = _build_numeric_comparison_findings(df) if not df.empty else []
-                distilled_findings = (
-                    _build_spreadsheet_findings(df, full_sheet_profile)
-                    if full_sheet_profile else []
-                )
-                tabs.append({
-                    "name": str(sheet_name),
-                    "rows": len(df),
-                    "columns": len(df.columns),
-                    "column_names": [str(c) for c in df.columns.tolist()],
-                    "dtypes": {str(c): str(t) for c, t in df.dtypes.items()},
-                    "sample_data": _records_for_model(df, limit=5),
-                    "tail_sample_data": _records_for_model(df.tail(5), limit=5),
-                    "summary": _json_safe(df.describe().to_dict()) if not df.empty else {},
-                    "full_sheet_profile": full_sheet_profile,
-                    "concrete_action_plan": concrete_action_plan,
-                    "numeric_comparisons": numeric_comparisons,
-                    "distilled_findings": distilled_findings,
-                })
+                tab = _profile_single_sheet(str(sheet_name), df)
+                tabs.append(tab)
+                tab_linking.append(tab.get("linking_metadata") or {})
 
-            first = tabs[0] if tabs else {}
+            workbook = _merge_workbook_tab_outputs(tabs)
+            workbook_linking = _merge_workbook_linking(tab_linking)
             return {
                 "type": "spreadsheet",
                 "tab_count": len(tabs),
                 "rows": total_rows,
                 "tab_names": [t["name"] for t in tabs],
                 "tabs": tabs,
-                # Backward-compatible top-level fields (first tab)
-                "columns": first.get("columns", 0),
-                "column_names": first.get("column_names", []),
-                "sample_data": first.get("sample_data", []),
-                "tail_sample_data": first.get("tail_sample_data", []),
-                "summary": first.get("summary", {}),
-                "full_sheet_profile": first.get("full_sheet_profile", {}),
-                "concrete_action_plan": first.get("concrete_action_plan", []),
-                "numeric_comparisons": first.get("numeric_comparisons", []),
-                "distilled_findings": first.get("distilled_findings", []),
+                "linking_metadata": workbook_linking,
+                "filename": filename,
+                "primary_tab": workbook.get("primary_tab"),
+                # Workbook-level fields aggregate every sheet.
+                "columns": workbook.get("columns", 0),
+                "column_names": workbook.get("column_names", []),
+                "sample_data": workbook.get("sample_data", []),
+                "tail_sample_data": workbook.get("tail_sample_data", []),
+                "summary": workbook.get("summary", {}),
+                "full_sheet_profile": workbook.get("full_sheet_profile", {}),
+                "concrete_action_plan": workbook.get("concrete_action_plan", []),
+                "numeric_comparisons": workbook.get("numeric_comparisons", []),
+                "distilled_findings": workbook.get("distilled_findings", []),
             }
         
         elif data_type == "image":

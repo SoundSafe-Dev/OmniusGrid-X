@@ -1,10 +1,12 @@
 import { FC, useState, useCallback } from 'react';
 import { Send, AlertTriangle, Pause, Play, Thermometer, Gauge } from 'lucide-react';
-import { useMutation, useQueryClient } from 'react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api';
 import { Button, Card, Badge, Input } from '../ui';
 
 interface CommandPanelProps {
+  /** backend gates emergency-stop (and submit of emergency_stop) to admins */
+  canEmergencyStop?: boolean;
   assetId: string;
   assetName: string;
   currentState?: string;
@@ -75,6 +77,7 @@ export const CommandPanel: FC<CommandPanelProps> = ({
   assetId,
   assetName,
   currentState,
+  canEmergencyStop = false,
 }) => {
   const [selectedCommand, setSelectedCommand] = useState<CommandOption | null>(null);
   const [paramValue, setParamValue] = useState<string>('');
@@ -87,7 +90,9 @@ export const CommandPanel: FC<CommandPanelProps> = ({
       action: CommandAction;
       parameters: Record<string, any>;
     }) => {
-      const response = await api.post('/commands/submit', {
+      // Backend router is mounted at /api/v1/commands (backend/app/main.py);
+      // the shared api client's baseURL does not add the /api/v1 prefix.
+      const response = await api.post('/api/v1/commands/submit', {
         asset_id: assetId,
         command_type: 'operator',
         action_id: data.action,
@@ -113,7 +118,7 @@ export const CommandPanel: FC<CommandPanelProps> = ({
 
   const emergencyStop = useMutation({
     mutationFn: async () => {
-      const response = await api.post(`/commands/asset/${assetId}/emergency-stop`);
+      const response = await api.post(`/api/v1/commands/asset/${assetId}/emergency-stop`);
       return response.data;
     },
     onSuccess: () => {
@@ -179,7 +184,9 @@ export const CommandPanel: FC<CommandPanelProps> = ({
           )}
         </div>
 
-        {/* Emergency Stop */}
+        {/* Emergency Stop — backend routes are @require_admin; rendering it
+            for operators would show a safety control that always 403s. */}
+        {canEmergencyStop && (
         <div className="mb-4 p-3 bg-red-500/10 border border-red-500/30 rounded-lg">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -190,7 +197,7 @@ export const CommandPanel: FC<CommandPanelProps> = ({
               variant="danger"
               size="sm"
               onClick={() => emergencyStop.mutate()}
-              loading={emergencyStop.isLoading}
+              loading={emergencyStop.isPending}
             >
               STOP NOW
             </Button>
@@ -199,6 +206,7 @@ export const CommandPanel: FC<CommandPanelProps> = ({
             Immediately halts all operations. Use with caution.
           </p>
         </div>
+        )}
 
         {/* Command Selection */}
         <div className="grid grid-cols-2 gap-2 mb-4">
@@ -256,9 +264,9 @@ export const CommandPanel: FC<CommandPanelProps> = ({
               variant={selectedCommand.variant}
               className="flex-1"
               onClick={handleCommandSubmit}
-              loading={submitCommand.isLoading}
+              loading={submitCommand.isPending}
             >
-              {!submitCommand.isLoading && <Send className="w-4 h-4 mr-2" />}
+              {!submitCommand.isPending && <Send className="w-4 h-4 mr-2" />}
               Send Command
             </Button>
             <Button

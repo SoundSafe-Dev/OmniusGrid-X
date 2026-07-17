@@ -3,13 +3,17 @@ Transportation Management API Endpoints (TMS)
 Carrier management, shipment tracking, routing, HOS compliance
 """
 
-from datetime import datetime, timedelta
-from typing import List, Optional
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 
+from app.api.auth import get_current_active_user
+from app.core.pagination import PaginatedResponse, paginate
 from app.db.database import get_db
 from app.db.models import Carrier, Driver, Shipment, Route, LoadPlan, FreightCharge
 from app.models.schemas import (
@@ -22,12 +26,38 @@ from app.models.schemas import (
 )
 from app.services.transportation_management import transportation_management_service
 
-router = APIRouter(prefix="/transportation", tags=["transportation_management"])
+# No router-level prefix: main.py already includes this router at its /api/v1/...
+# path. (The old prefix double-prefixed every route — e.g. /api/v1/yard/yard/* —
+# never noticed because the frontend ran on mocks.)
+from app.middleware.rbac import require_operator_or_admin
+
+router = APIRouter(tags=["transportation_management"], dependencies=[Depends(get_current_active_user)])
+
+
+# ---- Small response schemas for stable dict-shaped endpoints (FS-100). ----
+# Shapes are unchanged; these only document/type what the handlers already return.
+
+class ShipmentDispatchResponse(BaseModel):
+    message: str
+    shipment_id: str
+    driver_id: str
+    status: str
+
+
+class ShipmentStatusUpdateResponse(BaseModel):
+    message: str
+    shipment_id: str
+    status: str
+
+
+class VehicleCreatedResponse(BaseModel):
+    id: str
+    vehicleNumber: str  # noqa: N815 — vehicles endpoints are legacy-camelCase
 
 
 # ==================== Carrier Endpoints ====================
 
-@router.post("/carriers", response_model=CarrierResponse)
+@router.post("/carriers", response_model=CarrierResponse, dependencies=[Depends(require_operator_or_admin)])
 async def create_carrier(
     data: CarrierCreate,
     db: AsyncSession = Depends(get_db)
@@ -81,7 +111,7 @@ async def get_carrier(
     return carrier
 
 
-@router.put("/carriers/{carrier_id}", response_model=CarrierResponse)
+@router.put("/carriers/{carrier_id}", response_model=CarrierResponse, dependencies=[Depends(require_operator_or_admin)])
 async def update_carrier(
     carrier_id: UUID,
     data: CarrierUpdate,
@@ -98,7 +128,7 @@ async def update_carrier(
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(carrier, field, value)
     
-    carrier.updated_at = datetime.utcnow()
+    carrier.updated_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(carrier)
     return carrier
@@ -122,7 +152,7 @@ async def get_carrier_compliance(
 
 # ==================== Driver Endpoints ====================
 
-@router.post("/drivers", response_model=DriverResponse)
+@router.post("/drivers", response_model=DriverResponse, dependencies=[Depends(require_operator_or_admin)])
 async def create_driver(
     data: DriverCreate,
     db: AsyncSession = Depends(get_db)
@@ -181,7 +211,7 @@ async def get_driver(
     return driver
 
 
-@router.put("/drivers/{driver_id}", response_model=DriverResponse)
+@router.put("/drivers/{driver_id}", response_model=DriverResponse, dependencies=[Depends(require_operator_or_admin)])
 async def update_driver(
     driver_id: UUID,
     data: DriverUpdate,
@@ -198,7 +228,7 @@ async def update_driver(
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(driver, field, value)
     
-    driver.updated_at = datetime.utcnow()
+    driver.updated_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(driver)
     return driver
@@ -222,7 +252,7 @@ async def get_driver_hos(
 
 # ==================== Shipment Endpoints ====================
 
-@router.post("/shipments", response_model=ShipmentResponse)
+@router.post("/shipments", response_model=ShipmentResponse, dependencies=[Depends(require_operator_or_admin)])
 async def create_shipment(
     data: ShipmentCreate,
     db: AsyncSession = Depends(get_db)
@@ -250,14 +280,16 @@ async def create_shipment(
     return shipment
 
 
-@router.get("/shipments", response_model=List[ShipmentResponse])
+@router.get("/shipments", response_model=PaginatedResponse[ShipmentResponse])
 async def get_shipments(
     organization_id: UUID,
     status: Optional[str] = Query(None),
     carrier_id: Optional[UUID] = None,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=1000),
     db: AsyncSession = Depends(get_db)
 ):
-    """Get shipments for organization"""
+    """Get shipments for organization (FS-99: {items, meta} envelope with a real total)."""
     query = select(Shipment).where(
         Shipment.organization_id == organization_id
     )
@@ -265,9 +297,14 @@ async def get_shipments(
         query = query.where(Shipment.status == status)
     if carrier_id:
         query = query.where(Shipment.carrier_id == carrier_id)
-    
-    result = await db.execute(query.order_by(Shipment.created_at.desc()))
-    return result.scalars().all()
+
+    total = (await db.execute(
+        select(func.count()).select_from(query.subquery())
+    )).scalar_one()
+    result = await db.execute(
+        query.order_by(Shipment.created_at.desc()).offset(skip).limit(limit)
+    )
+    return paginate(result.scalars().all(), total, SimpleNamespace(skip=skip, limit=limit))
 
 
 @router.get("/shipments/{shipment_id}", response_model=ShipmentResponse)
@@ -285,7 +322,7 @@ async def get_shipment(
     return shipment
 
 
-@router.put("/shipments/{shipment_id}", response_model=ShipmentResponse)
+@router.put("/shipments/{shipment_id}", response_model=ShipmentResponse, dependencies=[Depends(require_operator_or_admin)])
 async def update_shipment(
     shipment_id: UUID,
     data: ShipmentUpdate,
@@ -302,13 +339,13 @@ async def update_shipment(
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(shipment, field, value)
     
-    shipment.updated_at = datetime.utcnow()
+    shipment.updated_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(shipment)
     return shipment
 
 
-@router.post("/shipments/{shipment_id}/dispatch")
+@router.post("/shipments/{shipment_id}/dispatch", response_model=ShipmentDispatchResponse, dependencies=[Depends(require_operator_or_admin)])
 async def dispatch_shipment(
     shipment_id: UUID,
     driver_id: UUID,
@@ -333,7 +370,7 @@ async def dispatch_shipment(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.post("/shipments/{shipment_id}/status")
+@router.post("/shipments/{shipment_id}/status", response_model=ShipmentStatusUpdateResponse, dependencies=[Depends(require_operator_or_admin)])
 async def update_shipment_status(
     shipment_id: UUID,
     status: str,
@@ -377,7 +414,7 @@ async def get_shipment_costs(
 
 # ==================== Route Endpoints ====================
 
-@router.post("/routes", response_model=RouteResponse)
+@router.post("/routes", response_model=RouteResponse, dependencies=[Depends(require_operator_or_admin)])
 async def create_route(
     data: RouteCreate,
     db: AsyncSession = Depends(get_db)
@@ -414,7 +451,7 @@ async def get_routes(
 
 # ==================== Load Plan Endpoints ====================
 
-@router.post("/load-plans", response_model=LoadPlanResponse)
+@router.post("/load-plans", response_model=LoadPlanResponse, dependencies=[Depends(require_operator_or_admin)])
 async def create_load_plan(
     data: LoadPlanCreate,
     db: AsyncSession = Depends(get_db)
@@ -451,7 +488,7 @@ async def get_load_plan(
 
 # ==================== Freight Charge Endpoints ====================
 
-@router.post("/freight-charges", response_model=FreightChargeResponse)
+@router.post("/freight-charges", response_model=FreightChargeResponse, dependencies=[Depends(require_operator_or_admin)])
 async def create_freight_charge(
     data: FreightChargeCreate,
     db: AsyncSession = Depends(get_db)
@@ -485,3 +522,96 @@ async def get_shipment_charges(
         select(FreightCharge).where(FreightCharge.shipment_id == shipment_id)
     )
     return result.scalars().all()
+
+
+# ==================== Vehicles (task D20; backed by migration 025) ====================
+
+@router.get("/vehicles", response_model=PaginatedResponse[Dict[str, Any]])
+async def get_vehicles(
+    carrier_id: Optional[UUID] = None,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=1000),
+    db: AsyncSession = Depends(get_db)
+):
+    """List fleet vehicles (FS-99: {items, meta} envelope; items stay legacy-camelCase)."""
+    from app.db.logistics_models import Vehicle
+
+    query = select(Vehicle).where(Vehicle.is_active == True)  # noqa: E712
+    if carrier_id:
+        query = query.where(Vehicle.carrier_id == str(carrier_id))
+
+    total = (await db.execute(
+        select(func.count()).select_from(query.subquery())
+    )).scalar_one()
+    vehicles = (await db.execute(query.offset(skip).limit(limit))).scalars().all()
+    items = [
+        {
+            "id": str(v.id),
+            "vehicleNumber": v.vehicle_number,
+            "vin": v.vin,
+            "make": v.make,
+            "model": v.model,
+            "year": v.year,
+            "status": v.status,
+            "fuelLevel": v.fuel_level_percent,
+            "odometer": v.odometer_miles,
+            "geotabDeviceId": v.geotab_device_id,
+            "currentDriverId": v.current_driver_id,
+            "lastLocation": v.last_location or {},
+        }
+        for v in vehicles
+    ]
+    return paginate(items, total, SimpleNamespace(skip=skip, limit=limit))
+
+
+@router.post("/vehicles", response_model=VehicleCreatedResponse)
+async def create_vehicle(
+    payload: dict,
+    db: AsyncSession = Depends(get_db)
+):
+    """Register a fleet vehicle."""
+    from app.db.logistics_models import Vehicle
+
+    vehicle = Vehicle(
+        organization_id=payload.get("organization_id"),
+        carrier_id=payload.get("carrier_id"),
+        vehicle_number=payload.get("vehicle_number") or payload.get("vehicleNumber"),
+        vin=payload.get("vin"),
+        make=payload.get("make"),
+        model=payload.get("model"),
+        year=payload.get("year"),
+        status=payload.get("status", "idle"),
+        geotab_device_id=payload.get("geotab_device_id"),
+    )
+    if not vehicle.vehicle_number:
+        raise HTTPException(status_code=400, detail="vehicle_number is required")
+    db.add(vehicle)
+    await db.commit()
+    await db.refresh(vehicle)
+    return {"id": str(vehicle.id), "vehicleNumber": vehicle.vehicle_number}
+
+
+def compute_delivery_efficiency(shipments: list) -> dict:
+    """Pure aggregate for the delivery-efficiency panel (task D20).
+
+    on-time = delivered with actual_delivery <= scheduled_delivery.
+    """
+    delivered = [s for s in shipments if getattr(s, "status", None) == "delivered"]
+    on_time = [
+        s for s in delivered
+        if s.actual_delivery and s.scheduled_delivery and s.actual_delivery <= s.scheduled_delivery
+    ]
+    transit_hours = [
+        (s.actual_delivery - s.actual_pickup).total_seconds() / 3600
+        for s in delivered
+        if s.actual_delivery and s.actual_pickup
+    ]
+    today = datetime.now(timezone.utc).date()
+    return {
+        "onTimeRate": round(len(on_time) / len(delivered), 4) if delivered else 1.0,
+        "avgTransitHours": round(sum(transit_hours) / len(transit_hours), 1) if transit_hours else 0.0,
+        "deliveredToday": sum(
+            1 for s in delivered if s.actual_delivery and s.actual_delivery.date() == today
+        ),
+        "totalDelivered": len(delivered),
+    }

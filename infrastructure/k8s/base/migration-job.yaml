@@ -1,0 +1,74 @@
+# One-shot schema migration Job (runs backend/scripts/migrate.py).
+#
+# The migrations are BAKED into the backend image at /app/db-migrations
+# (backend/Dockerfile COPYs repo-root database/migrations — compose prod
+# bind-mounts them instead, but k8s cannot bind-mount the repo checkout).
+#
+# Jobs are immutable: re-running a completed/failed Job requires deleting it
+# first (`kubectl -n <ns> delete job <name> && kubectl apply -k ...`) or
+# cloning it (`kubectl create job --from=job/<name> <new-name>`). See the
+# README for the exact commands.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-migrate
+  namespace: omniusgrid
+  labels:
+    app.kubernetes.io/name: db-migrate
+    app.kubernetes.io/component: migration
+    app.kubernetes.io/part-of: omniusgrid
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: db-migrate
+        app.kubernetes.io/component: migration
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: migrate
+          image: omniusgrid/backend:latest
+          imagePullPolicy: Always
+          command:
+            - python
+            - scripts/migrate.py
+            - --dir
+            - /app/db-migrations
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: database-credentials
+                  key: url
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+            - name: PYTHONUNBUFFERED
+              value: "1"
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+      volumes:
+        - name: tmp
+          emptyDir: {}

@@ -8,7 +8,6 @@ import type {
 import {
   mockMaintenanceSchedules,
   mockRepairOrders,
-  mockServiceHistory,
   mockMaintenanceCosts,
   getMockScheduleById,
   getMockScheduleByVehicle,
@@ -21,7 +20,7 @@ import {
   getMaintenanceStatistics,
 } from './mocks/maintenanceMocks';
 
-const USE_MOCK = true;
+import { USE_MOCK } from './mockMode';
 const MOCK_DELAY = 300;
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 

@@ -1,5 +1,5 @@
-import { useQuery, useMutation, useQueryClient, UseQueryOptions } from 'react-query';
-import { assetsApi, dashboardApi } from '../api';
+import { useQuery, useMutation, useQueryClient, UseQueryOptions, keepPreviousData } from '@tanstack/react-query';
+import { assetsApi, dashboardApi, workcellsApi, organizationsApi } from '../api';
 import {
   Asset,
   AssetCreate,
@@ -21,29 +21,31 @@ export function useAssets(
   params?: Parameters<typeof assetsApi.list>[0],
   options?: UseQueryOptions<PaginatedResponse<Asset>, Error>
 ) {
-  return useQuery<PaginatedResponse<Asset>, Error>(
-    [ASSETS_QUERY_KEY, 'list', params],
-    () => assetsApi.list(params),
-    options
-  );
+  return useQuery<PaginatedResponse<Asset>, Error>({
+    queryKey: [ASSETS_QUERY_KEY, 'list', params],
+    queryFn: () => assetsApi.list(params),
+    // FS-127: params (skip/limit) are part of the key; keep the previous page
+    // rendered while the next one loads so paging doesn't blank the list.
+    placeholderData: keepPreviousData,
+    ...options,
+  });
 }
 
 export function useAsset(assetId: string) {
-  return useQuery<Asset, Error>(
-    [ASSETS_QUERY_KEY, 'detail', assetId],
-    () => assetsApi.get(assetId),
-    {
-      enabled: !!assetId,
-    }
-  );
+  return useQuery<Asset, Error>({
+    queryKey: [ASSETS_QUERY_KEY, 'detail', assetId],
+    queryFn: () => assetsApi.get(assetId),
+    enabled: !!assetId,
+  });
 }
 
 export function useCreateAsset() {
   const queryClient = useQueryClient();
 
-  return useMutation((data: AssetCreate) => assetsApi.create(data), {
+  return useMutation({
+    mutationFn: (data: AssetCreate) => assetsApi.create(data),
     onSuccess: () => {
-      queryClient.invalidateQueries([ASSETS_QUERY_KEY]);
+      queryClient.invalidateQueries({ queryKey: [ASSETS_QUERY_KEY] });
     },
   });
 }
@@ -51,76 +53,69 @@ export function useCreateAsset() {
 export function useUpdateAsset() {
   const queryClient = useQueryClient();
 
-  return useMutation(
-    ({ assetId, data }: { assetId: string; data: AssetUpdate }) =>
+  return useMutation({
+    mutationFn: ({ assetId, data }: { assetId: string; data: AssetUpdate }) =>
       assetsApi.update(assetId, data),
-    {
-      onSuccess: (_, variables) => {
-        queryClient.invalidateQueries([ASSETS_QUERY_KEY]);
-        queryClient.invalidateQueries([ASSETS_QUERY_KEY, 'detail', variables.assetId]);
-      },
-    }
-  );
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: [ASSETS_QUERY_KEY] });
+      queryClient.invalidateQueries({ queryKey: [ASSETS_QUERY_KEY, 'detail', variables.assetId] });
+    },
+  });
 }
 
 export function useDeleteAsset() {
   const queryClient = useQueryClient();
 
-  return useMutation((assetId: string) => assetsApi.delete(assetId), {
+  return useMutation({
+    mutationFn: (assetId: string) => assetsApi.delete(assetId),
     onSuccess: () => {
-      queryClient.invalidateQueries([ASSETS_QUERY_KEY]);
+      queryClient.invalidateQueries({ queryKey: [ASSETS_QUERY_KEY] });
     },
   });
 }
 
 export function useAssetTypes(category?: string) {
-  return useQuery<AssetType[], Error>(
-    [ASSETS_QUERY_KEY, 'types', category],
-    () => assetsApi.getTypes(category)
-  );
+  return useQuery<AssetType[], Error>({
+    queryKey: [ASSETS_QUERY_KEY, 'types', category],
+    queryFn: () => assetsApi.getTypes(category),
+  });
 }
 
 export function useWorkcells(organizationId?: string) {
-  return useQuery<Workcell[], Error>(
-    [ASSETS_QUERY_KEY, 'workcells', organizationId],
-    () => assetsApi.workcellsApi.list(organizationId)
-  );
+  return useQuery<Workcell[], Error>({
+    queryKey: [ASSETS_QUERY_KEY, 'workcells', organizationId],
+    queryFn: () => workcellsApi.list(organizationId),
+  });
 }
 
 export function useOrganizations() {
-  return useQuery<Organization[], Error>(
-    [ASSETS_QUERY_KEY, 'organizations'],
-    () => assetsApi.organizationsApi.list()
-  );
+  return useQuery<Organization[], Error>({
+    queryKey: [ASSETS_QUERY_KEY, 'organizations'],
+    queryFn: () => organizationsApi.list(),
+  });
 }
 
 // Dashboard
 export function useDashboardOverview(organizationId?: string) {
-  return useQuery<DashboardOverview, Error>(
-    [DASHBOARD_QUERY_KEY, 'overview', organizationId],
-    () => dashboardApi.getOverview(organizationId),
-    {
-      refetchInterval: 30000, // Refresh every 30 seconds
-    }
-  );
+  return useQuery<DashboardOverview, Error>({
+    queryKey: [DASHBOARD_QUERY_KEY, 'overview', organizationId],
+    queryFn: () => dashboardApi.getOverview(organizationId),
+    refetchInterval: 30000, // Refresh every 30 seconds
+  });
 }
 
 export function useFleetOEE(organizationId?: string, hours: number = 24) {
-  return useQuery<FleetOEE, Error>(
-    [DASHBOARD_QUERY_KEY, 'fleet-oee', organizationId, hours],
-    () => dashboardApi.getFleetOEE(organizationId, hours),
-    {
-      refetchInterval: 60000, // Refresh every minute
-    }
-  );
+  return useQuery<FleetOEE, Error>({
+    queryKey: [DASHBOARD_QUERY_KEY, 'fleet-oee', organizationId, hours],
+    queryFn: () => dashboardApi.getFleetOEE(organizationId, hours),
+    refetchInterval: 60000, // Refresh every minute
+  });
 }
 
 export function useAssetOEE(assetId: string, hours: number = 24) {
-  return useQuery<OEEMetrics, Error>(
-    [DASHBOARD_QUERY_KEY, 'asset-oee', assetId, hours],
-    () => dashboardApi.getAssetOEE(assetId, hours),
-    {
-      enabled: !!assetId,
-    }
-  );
+  return useQuery<OEEMetrics, Error>({
+    queryKey: [DASHBOARD_QUERY_KEY, 'asset-oee', assetId, hours],
+    queryFn: () => dashboardApi.getAssetOEE(assetId, hours),
+    enabled: !!assetId,
+  });
 }

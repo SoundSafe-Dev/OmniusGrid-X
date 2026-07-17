@@ -3,15 +3,19 @@
 import asyncio
 import json
 import os
-from datetime import datetime
+import re
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional
+from uuid import UUID
 import structlog
 from aiokafka import AIOKafkaConsumer
+from sqlalchemy import text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import sys
 sys.path.insert(0, '/app')
 
+from app.core.config import settings
 from app.db.database import AsyncSessionLocal
 from app.db.models import Telemetry, PackMLState, Asset, Alarm
 from app.services.data_shedding import data_shedder
@@ -50,6 +54,10 @@ class IngestionWorker:
         self.consumer: Optional[AIOKafkaConsumer] = None
         self._running = False
         self._topics = ['telemetry', 'state', 'alarms']
+        self.agent_status_topic = os.getenv(
+            'AGENT_STATUS_TOPIC',
+            settings.AGENT_STATUS_TOPIC,
+        )
     
     async def start(self):
         """Start the ingestion worker"""
@@ -69,6 +77,7 @@ class IngestionWorker:
         
         # Subscribe to topic patterns
         topic_patterns = [f'^{t}\\..*' for t in self._topics]
+        topic_patterns.append(f'^{re.escape(self.agent_status_topic)}$')
         self.consumer.subscribe(pattern='|'.join(topic_patterns))
         
         logger.info("consumer_started", topics=self._topics)
@@ -97,6 +106,16 @@ class IngestionWorker:
         """Process a single message"""
         topic = msg.topic
         data = msg.value
+
+        if topic == self.agent_status_topic:
+            async with AsyncSessionLocal() as session:
+                try:
+                    await self._process_agent_heartbeat(session, data)
+                    await session.commit()
+                except Exception:
+                    await session.rollback()
+                    raise
+            return
         
         # Parse topic structure: telemetry.{org}.{asset_id}
         topic_parts = topic.split('.')
@@ -107,9 +126,17 @@ class IngestionWorker:
         msg_type = topic_parts[0]
         organization_id = topic_parts[1]
         asset_id = topic_parts[2]
+
+        # Validate both identifiers before using the tenant value as an RLS GUC.
+        organization_id = str(UUID(organization_id))
+        asset_id = str(UUID(asset_id))
         
         async with AsyncSessionLocal() as session:
             try:
+                await session.execute(
+                    text("SELECT set_config('app.current_org_id', :org_id, true)"),
+                    {"org_id": organization_id},
+                )
                 if msg_type == 'telemetry':
                     await self._process_telemetry(session, asset_id, data, organization_id)
                 elif msg_type == 'state':
@@ -125,12 +152,15 @@ class IngestionWorker:
     
     async def _process_telemetry(self, session: AsyncSession, asset_id: str, data: Dict, organization_id: str):
         """Process telemetry data with intelligent shedding"""
+        asset_uuid = UUID(asset_id)
+        await data_shedder.refresh_tenant_policies(session, organization_id)
+
         # Parse timestamp
         timestamp_str = data.get('timestamp_edge') or data.get('timestamp')
         if timestamp_str:
             timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
         else:
-            timestamp = datetime.utcnow()
+            timestamp = datetime.now(timezone.utc)
         
         packml_state = data.get('packml_state')
         payload = data.get('payload', {})
@@ -142,7 +172,11 @@ class IngestionWorker:
             for metric_name, value in telemetry_data.items():
                 if value is not None:
                     # Check data shedding - drop low priority data if system overloaded
-                    if data_shedder.should_shed(metric_name, timestamp):
+                    if data_shedder.should_shed(
+                        metric_name,
+                        timestamp,
+                        organization_id=organization_id,
+                    ):
                         logger.debug(
                             "data_shedded",
                             metric=metric_name,
@@ -153,24 +187,24 @@ class IngestionWorker:
                     
                     telemetry = Telemetry(
                         time=timestamp,
-                        asset_id=asset_id,
+                        asset_id=asset_uuid,
                         metric_name=metric_name,
                         value=float(value) if isinstance(value, (int, float)) else 0,
                         unit=self._infer_unit(metric_name),
                         packml_state=packml_state,
-                        metadata=payload,
+                        meta_data=payload,
                         sequence_num=data.get('sequence_num', 0)
                     )
                     session.add(telemetry)
         
         # Update asset last_seen
         await session.execute(
-            f"""
-            UPDATE assets 
-            SET last_seen = '{timestamp.isoformat()}', 
-                current_packml_state = '{packml_state or 'Idle'}'
-            WHERE id = '{asset_id}'
-            """
+            update(Asset)
+            .where(Asset.id == asset_uuid)
+            .values(
+                last_seen=timestamp,
+                current_packml_state=packml_state or 'Idle',
+            )
         )
         
         logger.debug(
@@ -207,6 +241,56 @@ class IngestionWorker:
             )
         except Exception as e:
             logger.warning("oee_telemetry_tracking_failed", error=str(e), asset_id=asset_id)
+
+    async def _process_agent_heartbeat(self, session: AsyncSession, data: Dict):
+        """Update asset fleet-version fields from an edge-agent heartbeat."""
+        if data.get('message_type') != 'agent_heartbeat':
+            logger.warning("invalid_agent_heartbeat_type", message_type=data.get('message_type'))
+            return
+
+        organization_id = data.get('organization_id')
+        raw_asset_ids = data.get('asset_ids') or []
+        if not organization_id or not raw_asset_ids:
+            logger.warning(
+                "invalid_agent_heartbeat",
+                organization_id=organization_id,
+                asset_count=len(raw_asset_ids),
+            )
+            return
+
+        try:
+            org_uuid = UUID(str(organization_id))
+            asset_ids = [UUID(str(asset_id)) for asset_id in raw_asset_ids]
+        except (TypeError, ValueError) as exc:
+            logger.warning("invalid_agent_heartbeat_uuid", error=str(exc))
+            return
+
+        timestamp_str = data.get('timestamp')
+        if timestamp_str:
+            timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+        else:
+            timestamp = datetime.now(timezone.utc)
+
+        result = await session.execute(
+            update(Asset)
+            .where(Asset.organization_id == org_uuid, Asset.id.in_(asset_ids))
+            .values(
+                agent_id=data.get('agent_id'),
+                agent_version=data.get('agent_version'),
+                agent_config_hash=data.get('config_hash'),
+                agent_build_id=data.get('build_id'),
+                agent_last_heartbeat=timestamp,
+                last_seen=timestamp,
+            )
+        )
+
+        logger.info(
+            "agent_heartbeat_ingested",
+            agent_id=data.get('agent_id'),
+            organization_id=str(org_uuid),
+            asset_count=len(asset_ids),
+            updated_assets=result.rowcount,
+        )
     
     async def _process_state(self, session: AsyncSession, asset_id: str, data: Dict, organization_id: str):
         """Process PackML state transitions"""
@@ -217,7 +301,7 @@ class IngestionWorker:
         if timestamp_str:
             timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
         else:
-            timestamp = datetime.utcnow()
+            timestamp = datetime.now(timezone.utc)
         
         if not new_state:
             return
@@ -241,7 +325,7 @@ class IngestionWorker:
             state=new_state,
             previous_state=previous_state,
             state_entered_at=timestamp,
-            metadata=data.get('metadata', {})
+            meta_data=data.get('metadata', {})
         )
         session.add(state_record)
         
@@ -294,8 +378,8 @@ class IngestionWorker:
             severity=data.get('severity', 'medium'),
             message=data.get('message', 'Unknown alarm'),
             description=data.get('description'),
-            metadata=data.get('metadata', {}),
-            occurred_at=datetime.utcnow()
+            meta_data=data.get('metadata', {}),
+            occurred_at=datetime.now(timezone.utc)
         )
         session.add(alarm)
         

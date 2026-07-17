@@ -201,11 +201,18 @@ psql -U omniusgrid -d omniusgrid -c "SELECT version();"
    SELECT now() - pg_last_xact_replay_timestamp() AS lag;
    ```
 
+> **Auth note:** `$OPS_TOKEN` is a real operator JWT — obtain one with
+> `curl -sf $API/api/v1/auth/login -d 'username=<ops-user>&password=...'`
+> and export the `access_token`. Production **rejects** the old `dev-token`
+> bypass (`ALLOW_DEV_TOKEN` must be false there), so runbook steps must use a
+> real credential.
+
+
 ### Smoke Tests
 1. Create test asset:
    ```bash
    curl -X POST http://localhost:8000/api/v1/assets/ \
-     -H "Authorization: Bearer dev-token" \
+     -H "Authorization: Bearer $OPS_TOKEN" \
      -H "Content-Type: application/json" \
      -d '{"name":"test-asset","asset_type_id":"uuid","organization_id":"uuid"}'
    ```
@@ -213,13 +220,13 @@ psql -U omniusgrid -d omniusgrid -c "SELECT version();"
 2. Query telemetry:
    ```bash
    curl http://localhost:8000/api/v1/telemetry/{asset_id}/latest \
-     -H "Authorization: Bearer dev-token"
+     -H "Authorization: Bearer $OPS_TOKEN"
    ```
 
 3. Check Kanban board:
    ```bash
    curl http://localhost:8000/api/v1/kanban/board \
-     -H "Authorization: Bearer dev-token"
+     -H "Authorization: Bearer $OPS_TOKEN"
    ```
 
 ## Post-Incident Actions

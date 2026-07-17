@@ -13,13 +13,12 @@ import { TaskDetailModal } from '../components/kanban/TaskDetailModal';
 import { KanbanProvider, useKanban, Task } from '../stores/kanbanStore';
 import { Button } from '../components/ui/Button';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../components/ui';
+import { ExportButton } from '../components/common';
 import { Plus, Filter, LayoutGrid, List, AlertCircle, RefreshCw } from 'lucide-react';
 
 // Inner component that uses kanban context
 const KanbanContent: React.FC = () => {
-  const { user } = useAuth();
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const _currentUser = user; // Available for future user-specific filtering
+  const { isAdmin } = useAuth();
   const { 
     board, 
     columns, 
@@ -85,6 +84,14 @@ const KanbanContent: React.FC = () => {
           </Tooltip>
 
           <div className="flex items-center gap-3">
+            {isAdmin && (
+              <ExportButton
+                endpoint="/api/v1/exports/kanban/tasks"
+                format="xlsx"
+                label="Export"
+                filename="kanban_tasks.xlsx"
+              />
+            )}
             {/* View Toggle */}
             <div className="flex items-center bg-gray-100 dark:bg-gray-700 rounded-lg p-1">
               <Tooltip>

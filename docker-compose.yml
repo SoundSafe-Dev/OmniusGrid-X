@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # Message Broker - Redpanda (Kafka API compatible)
   redpanda:
@@ -39,15 +37,21 @@ services:
     image: timescale/timescaledb:latest-pg15
     container_name: omniusgrid-timescaledb
     restart: unless-stopped
+    command: postgres -c shared_preload_libraries=timescaledb,pg_stat_statements
     environment:
       POSTGRES_USER: omniusgrid
-      POSTGRES_PASSWORD: omniusgrid_dev_password
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-omniusgrid_dev_password}
       POSTGRES_DB: omniusgrid
     ports:
       - "5432:5432"
     volumes:
       - timescaledb-data:/var/lib/postgresql/data
-      - ./database/migrations:/docker-entrypoint-initdb.d
+      # NOTE: the ./database/migrations initdb mount is GONE (Hudson's schema
+      # bug): raw psql ran the whole chain with ON_ERROR_STOP (timescale files
+      # need migrate.py's per-statement autocommit), never recorded
+      # schema_migrations, and then the backend's create_all built a SECOND
+      # source of truth on top. The one-shot `migrate` service below is now the
+      # only schema builder; create_all no-ops against it.
     networks:
       - omniusgrid-network
     healthcheck:
@@ -57,44 +61,114 @@ services:
       retries: 5
 
   # Backend API - FastAPI
+  # One-shot schema builder: the SAME migration runner prod uses. Everything
+  # DB-dependent waits for it to complete successfully.
+  migrate:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      DATABASE_URL: postgresql://omniusgrid:${POSTGRES_PASSWORD:-omniusgrid_dev_password}@timescaledb:5432/omniusgrid
+    volumes:
+      - ./database/migrations:/migrations:ro
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    command: python scripts/migrate.py --dir /migrations
+    restart: "no"
+
   backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      # Repo-root context: backend/Dockerfile bakes in database/migrations
+      # for the k8s migration Job (see backend/Dockerfile header).
+      context: .
+      dockerfile: backend/Dockerfile
     container_name: omniusgrid-backend
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://omniusgrid:omniusgrid_dev_password@timescaledb:5432/omniusgrid
+      DATABASE_URL: postgresql://omniusgrid:${POSTGRES_PASSWORD:-omniusgrid_dev_password}@timescaledb:5432/omniusgrid
       REDPANDA_URL: redpanda:29092
-      JWT_SECRET_KEY: dev_secret_key_change_in_production
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev_secret_key_change_in_production}
       JWT_ALGORITHM: HS256
       JWT_ACCESS_TOKEN_EXPIRE_MINUTES: 30
+      SIGNED_URL_SECRET_KEY: ${SIGNED_URL_SECRET_KEY:-dev_signed_link_secret_change_in_production}
+      SIGNED_URL_ALGORITHM: HS256
+      SIGNED_URL_ISSUER: omniusgrid-signed-links
+      SIGNED_URL_AUDIENCE: omniusgrid-report-download
+      SIGNED_URL_ACCEPT_LEGACY_EXPORT_TOKENS: ${SIGNED_URL_ACCEPT_LEGACY_EXPORT_TOKENS:-true}
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+      # Dedicated workers (export-worker, compliance-reports-worker,
+      # ota-rollout-worker) own scheduler dispatch in compose, so the API must
+      # NOT also run them (avoids two pollers racing the same queues).
+      SCHEDULERS_IN_API: ${SCHEDULERS_IN_API:-false}
+      REDIS_URL: redis://redis:6379/0
+      EXPORT_STORAGE_PATH: /var/lib/omniusgrid/exports
+      EXPORT_PUBLIC_BASE_URL: http://localhost:8002
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-reports@omniusgrid.local}
+      SMTP_USE_TLS: ${SMTP_USE_TLS:-false}
+      SMTP_START_TLS: ${SMTP_START_TLS:-true}
+      COMPLIANCE_REPORT_EMAIL_ENABLED: ${COMPLIANCE_REPORT_EMAIL_ENABLED:-false}
+      COMPLIANCE_REPORT_SCHEDULER_ENABLED: ${COMPLIANCE_REPORT_SCHEDULER_ENABLED:-true}
+      COMPLIANCE_REPORT_SCHEDULER_INTERVAL_SECONDS: ${COMPLIANCE_REPORT_SCHEDULER_INTERVAL_SECONDS:-30}
+      OTA_ROLLOUT_DISPATCH_ENABLED: ${OTA_ROLLOUT_DISPATCH_ENABLED:-true}
+      OTA_ROLLOUT_DISPATCH_INTERVAL_SECONDS: ${OTA_ROLLOUT_DISPATCH_INTERVAL_SECONDS:-30}
+      # --- RAG pipeline wiring (service names resolve on omniusgrid-network) ---
+      QDRANT_URL: http://qdrant:6333
+      S3_ENDPOINT_URL: http://seaweedfs:8333
+      RAG_INFERENCE_URL: http://rag-inference:8000
+      # LLM runs NATIVELY on the host (Ollama w/ Metal on Mac, ROCm on Linux) and
+      # is reached via host.docker.internal - Docker can't GPU-accelerate a
+      # container on Mac, so the LLM stays outside the container by design.
+      LLM_BASE_URL: http://host.docker.internal:11434/v1
+      LLM_MODEL: gemma2:2b
+      VISION_MODEL_ENABLED: "false"
     ports:
       - "8000:8000"
     volumes:
       - ./backend:/app
+      - export-data:/var/lib/omniusgrid/exports
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       timescaledb:
         condition: service_healthy
+      # service_started, NOT service_healthy (Hudson's startup bug): `rpk
+      # cluster health` can lag minutes on cold boots, and with
+      # SCHEDULERS_IN_API=false the API touches no Kafka at startup (workers own
+      # dispatch/ingest) — so a slow Redpanda must not block the whole API (and
+      # with it the RAG endpoints). The ingestion/OTA workers, which DO talk to
+      # Kafka at boot, keep their service_healthy gates.
       redpanda:
+        condition: service_started
+      redis:
         condition: service_healthy
     networks:
       - omniusgrid-network
+    # host-gateway makes host.docker.internal resolve on Linux/WSL2 too (it is
+    # automatic on Docker Desktop for Mac, harmless to declare).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
   # Ingestion Workers - Process data from Redpanda to TimescaleDB
   ingestion-worker:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: backend/Dockerfile
     container_name: omniusgrid-ingestion
     environment:
-      DATABASE_URL: postgresql://omniusgrid:omniusgrid_dev_password@timescaledb:5432/omniusgrid
+      DATABASE_URL: postgresql://omniusgrid:${POSTGRES_PASSWORD:-omniusgrid_dev_password}@timescaledb:5432/omniusgrid
       REDPANDA_URL: redpanda:29092
       WORKER_MODE: ingestion
     volumes:
       - ./backend:/app
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       timescaledb:
         condition: service_healthy
       redpanda:
@@ -102,6 +176,126 @@ services:
     networks:
       - omniusgrid-network
     command: python -m app.workers.ingestion
+
+  # Durable scheduled export generation and company SMTP delivery
+  export-worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: omniusgrid-export-worker
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://omniusgrid:${POSTGRES_PASSWORD:-omniusgrid_dev_password}@timescaledb:5432/omniusgrid
+      REDPANDA_URL: redpanda:29092
+      REDPANDA_EXPORT_TOPIC: opsgrid.exports
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev_secret_key_change_in_production}
+      SIGNED_URL_SECRET_KEY: ${SIGNED_URL_SECRET_KEY:-dev_signed_link_secret_change_in_production}
+      SIGNED_URL_ALGORITHM: HS256
+      SIGNED_URL_ISSUER: omniusgrid-signed-links
+      SIGNED_URL_AUDIENCE: omniusgrid-report-download
+      SIGNED_URL_ACCEPT_LEGACY_EXPORT_TOKENS: ${SIGNED_URL_ACCEPT_LEGACY_EXPORT_TOKENS:-true}
+      EXPORT_STORAGE_PATH: /var/lib/omniusgrid/exports
+      EXPORT_PUBLIC_BASE_URL: http://localhost:8002
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-reports@omniusgrid.local}
+      SMTP_USE_TLS: ${SMTP_USE_TLS:-false}
+      SMTP_START_TLS: ${SMTP_START_TLS:-true}
+    volumes:
+      - ./backend:/app
+      - export-data:/var/lib/omniusgrid/exports
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      timescaledb:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+    networks:
+      - omniusgrid-network
+    command: python -m app.workers.export_delivery
+
+  # Async compliance report generation and email delivery
+  compliance-reports-worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: omniusgrid-compliance-reports-worker
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://omniusgrid:${POSTGRES_PASSWORD:-omniusgrid_dev_password}@timescaledb:5432/omniusgrid
+      REDPANDA_URL: redpanda:29092
+      REDPANDA_COMPLIANCE_REPORTS_TOPIC: opsgrid.compliance-reports
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev_secret_key_change_in_production}
+      SIGNED_URL_SECRET_KEY: ${SIGNED_URL_SECRET_KEY:-dev_signed_link_secret_change_in_production}
+      SIGNED_URL_ALGORITHM: HS256
+      SIGNED_URL_ISSUER: omniusgrid-signed-links
+      SIGNED_URL_AUDIENCE: omniusgrid-report-download
+      SIGNED_URL_ACCEPT_LEGACY_EXPORT_TOKENS: ${SIGNED_URL_ACCEPT_LEGACY_EXPORT_TOKENS:-true}
+      EXPORT_STORAGE_PATH: /var/lib/omniusgrid/exports
+      EXPORT_PUBLIC_BASE_URL: http://localhost:8002
+      COMPLIANCE_REPORT_EMAIL_ENABLED: ${COMPLIANCE_REPORT_EMAIL_ENABLED:-false}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-reports@omniusgrid.local}
+      SMTP_USE_TLS: ${SMTP_USE_TLS:-false}
+      SMTP_START_TLS: ${SMTP_START_TLS:-true}
+    volumes:
+      - ./backend:/app
+      - export-data:/var/lib/omniusgrid/exports
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      timescaledb:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+    networks:
+      - omniusgrid-network
+    command: python -m app.workers.compliance_reports
+
+  # OTA staged rollout orchestration and health-gated rollback
+  ota-rollout-worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: omniusgrid-ota-rollout-worker
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://omniusgrid:${POSTGRES_PASSWORD:-omniusgrid_dev_password}@timescaledb:5432/omniusgrid
+      REDPANDA_URL: redpanda:29092
+      REDPANDA_COMMAND_TOPIC: ${REDPANDA_COMMAND_TOPIC:-opsgrid.commands}
+      REDPANDA_COMMAND_ACK_TOPIC: ${REDPANDA_COMMAND_ACK_TOPIC:-opsgrid.commands.acks}
+      REDPANDA_COMMAND_DLQ_TOPIC: ${REDPANDA_COMMAND_DLQ_TOPIC:-opsgrid.commands.dlq}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev_secret_key_change_in_production}
+      SIGNED_URL_SECRET_KEY: ${SIGNED_URL_SECRET_KEY:-dev_signed_link_secret_change_in_production}
+      SIGNED_URL_ALGORITHM: HS256
+      SIGNED_URL_ISSUER: omniusgrid-signed-links
+      SIGNED_URL_AUDIENCE: omniusgrid-report-download
+      EXPORT_PUBLIC_BASE_URL: ${EXPORT_PUBLIC_BASE_URL:-http://backend:8000}
+      SCHEDULERS_IN_API: "false"
+      OTA_ROLLOUT_DISPATCH_ENABLED: ${OTA_ROLLOUT_DISPATCH_ENABLED:-true}
+      OTA_ROLLOUT_DISPATCH_INTERVAL_SECONDS: ${OTA_ROLLOUT_DISPATCH_INTERVAL_SECONDS:-30}
+      OTA_ROLLOUT_DEFAULT_COMMAND_TIMEOUT_SECONDS: ${OTA_ROLLOUT_DEFAULT_COMMAND_TIMEOUT_SECONDS:-120}
+      OTA_ROLLOUT_DEFAULT_HEALTH_TIMEOUT_SECONDS: ${OTA_ROLLOUT_DEFAULT_HEALTH_TIMEOUT_SECONDS:-300}
+      OTA_ROLLOUT_DEFAULT_MIN_SUCCESS_RATIO: ${OTA_ROLLOUT_DEFAULT_MIN_SUCCESS_RATIO:-1.0}
+    volumes:
+      - ./backend:/app
+      - export-data:/var/lib/omniusgrid/exports
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      timescaledb:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+    networks:
+      - omniusgrid-network
+    command: python -m app.workers.ota_rollouts
 
   # Frontend - React Dashboard
   frontend:
@@ -146,6 +340,7 @@ services:
     volumes:
       - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
       - ./infra/prometheus/alerts.yml:/etc/prometheus/alerts.yml
+      - ./infra/prometheus/slo_rules.yml:/etc/prometheus/slo_rules.yml
       - prometheus-data:/prometheus
     ports:
       - "9090:9090"
@@ -174,7 +369,7 @@ services:
     container_name: omniusgrid-grafana
     environment:
       - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=omniusgrid_admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-omniusgrid_admin}
       - GF_INSTALL_PLUGINS=grafana-lokiexplore-app
     volumes:
       - grafana-data:/var/lib/grafana
@@ -217,8 +412,82 @@ services:
       - "6379:6379"
     volumes:
       - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
     networks:
       - omniusgrid-network
+
+  # ======================================================================
+  # RAG pipeline services (profile: "rag" - opt-in, not started by default)
+  #   Lean RAG stack:  docker compose up qdrant seaweedfs rag-inference backend
+  #   Full stack+RAG:  docker compose --profile rag up
+  # ======================================================================
+
+  # Vector store - Qdrant (hybrid dense + sparse). Prod uses Qdrant Hybrid
+  # Cloud; locally we self-host the identical engine (same code, only QDRANT_URL
+  # differs). No GPU needed.
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    container_name: omniusgrid-qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"   # REST/HTTP API
+      - "6334:6334"   # gRPC
+    volumes:
+      - qdrant-data:/qdrant/storage
+    networks:
+      - omniusgrid-network
+    profiles: ["rag"]
+
+  # Document/blob store - SeaweedFS S3 gateway (S3-compatible). All-in-one
+  # server (master+volume+filer+s3) for local dev. Identity comes from the same
+  # s3config.json used in prod. No GPU needed.
+  seaweedfs:
+    image: chrislusf/seaweedfs:3.68
+    container_name: omniusgrid-seaweedfs
+    restart: unless-stopped
+    ports:
+      - "8333:8333"   # S3 API
+      - "9333:9333"   # master UI (optional)
+      - "8888:8888"   # filer (optional)
+    command: "server -dir=/data -s3 -s3.config=/etc/seaweedfs/s3config.json -s3.port=8333 -ip.bind=0.0.0.0"
+    volumes:
+      - seaweedfs-data:/data
+      - ./infra/seaweedfs/s3config.json:/etc/seaweedfs/s3config.json:ro
+    networks:
+      - omniusgrid-network
+    profiles: ["rag"]
+
+  # Embeddings + reranker - BGE-M3 + BGE-Reranker-v2-m3 (FlagEmbedding).
+  # CPU-first: fp16 auto-disabled without CUDA. First boot downloads ~5GB of
+  # weights into the rag-models volume (cached across restarts). Host port 8001
+  # avoids clashing with the backend on 8000; internal port stays 8000.
+  rag-inference:
+    build:
+      context: ./rag-inference
+      dockerfile: Dockerfile
+    container_name: omniusgrid-rag-inference
+    restart: unless-stopped
+    ports:
+      - "8001:8000"
+    environment:
+      EMBEDDING_MODEL: BAAI/bge-m3
+      RERANKER_MODEL: BAAI/bge-reranker-v2-m3
+      USE_FP16: "false"   # CPU in Docker on Mac; set true only on CUDA
+    volumes:
+      - rag-models:/models
+    networks:
+      - omniusgrid-network
+    profiles: ["rag"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 600s   # first boot downloads model weights
+      retries: 5
 
   # Edge Agent Simulator (for testing)
   edge-agent-sim:
@@ -231,26 +500,66 @@ services:
       ORGANIZATION_ID: dev-org
       AGENT_ID: simulator-001
       BUFFER_RETENTION_HOURS: 24
+      METRICS_PORT: 9108
+    ports:
+      - "9108:9108"   # Prometheus /metrics
     volumes:
-      - edge-agent-data:/var/lib/omniusgrid-agent
+      - edge-agent-data:/var/lib/opsgrid-agent
       - ./edge-agent:/app
     depends_on:
       redpanda:
         condition: service_healthy
     networks:
-      - omniusgrid-network
+      omniusgrid-network:
+        # Alias so the prometheus 'edge-agent' scrape target resolves to this service.
+        aliases:
+          - edge-agent
     profiles:
       - simulator
+
+  # --- Distributed tracing (task 14) --------------------------------------
+  # OTel Collector receives OTLP spans from the backend and forwards to Jaeger.
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.109.0
+    container_name: omniusgrid-otel-collector
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./infra/otel/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+    depends_on:
+      - jaeger
+    networks:
+      - omniusgrid-network
+    profiles:
+      - tracing
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.60
+    container_name: omniusgrid-jaeger
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"  # Jaeger UI
+    networks:
+      - omniusgrid-network
+    profiles:
+      - tracing
 
 volumes:
   redpanda-data:
   timescaledb-data:
   redis-data:
+  export-data:
   edge-agent-data:
   prometheus-data:
   alertmanager-data:
   grafana-data:
   loki-data:
+  qdrant-data:
+  seaweedfs-data:
+  rag-models:      # HF weight cache - avoids re-downloading BGE (~5GB) on recreate
 
 networks:
   omniusgrid-network:

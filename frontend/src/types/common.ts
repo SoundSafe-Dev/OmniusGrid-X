@@ -58,7 +58,12 @@ export const TIME_RANGES: TimeRange[] = [
 ];
 
 export interface WebSocketMessage {
-  type: 'telemetry' | 'alarm' | 'state_change' | 'system_status' | 'engine_decision' | 'connection_status';
+  type:
+    // server -> client data events
+    | 'telemetry' | 'alarm' | 'state_change' | 'system_status' | 'engine_decision'
+    | 'connection_status' | 'command_status'
+    // control / heartbeat / subscription protocol (see api/websocket.ts, backend/app/api/websocket.py)
+    | 'ping' | 'pong' | 'subscribe' | 'unsubscribe' | 'subscription_updated' | 'unsubscribed' | 'error';
   timestamp: string;
   payload: any;
 }

@@ -1,22 +1,50 @@
-import { FC } from 'react'
+import { FC, useMemo } from 'react'
 import { useParams } from 'react-router-dom'
-import { useQuery } from 'react-query'
+import { useQuery } from '@tanstack/react-query'
 import { ArrowLeft, Activity, Clock, Box } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { assetsApi, telemetryApi } from '../api'
 import { Tooltip, TooltipTrigger, TooltipContent } from '../components/ui'
+import { RealtimeTelemetryChart, TelemetryHistoryChart } from '../components/charts'
+import { SensorPanels } from '../components/assets/SensorPanels'
+import { CommandPanel } from '../components/commands'
+import { TrendingUp } from 'lucide-react'
+import { ExportButton } from '../components/common'
+import { useAuth } from '../hooks/useAuth'
 
 const AssetDetail: FC = () => {
   const { id } = useParams<{ id: string }>()
-  
-  const { data: asset, isLoading } = useQuery(['asset', id], () =>
-    assetsApi.get(id!)
-  )
+  const { isAdmin, isOperator } = useAuth()
 
-  const { data: telemetry } = useQuery(
-    ['telemetry', id],
-    () => telemetryApi.getLatest(id!),
-    { refetchInterval: 5000 }
+  const { data: asset, isLoading } = useQuery({
+    queryKey: ['asset', id],
+    queryFn: () => assetsApi.get(id!),
+  })
+
+  const { data: telemetry } = useQuery({
+    queryKey: ['telemetry', id],
+    queryFn: () => telemetryApi.getLatest(id!),
+    refetchInterval: 5000,
+  })
+
+  // Metrics for the live chart, derived from whatever the asset actually
+  // reports. Keyed by the metric NAMES (a string), not the telemetry object
+  // identity — the query refetches every 5s and the chart resubscribes to the
+  // websocket whenever the metrics array changes.
+  const liveMetricsKey = !telemetry
+    ? ''
+    : 'metricName' in (telemetry as any)
+      ? ((telemetry as any).metricName ?? '')
+      : Object.entries(telemetry as Record<string, unknown>)
+          // record form maps metric name -> point object; the backend's
+          // no-data envelope ({message: '...'}) must not become a "metric"
+          .filter(([, v]) => v !== null && typeof v === 'object')
+          .map(([k]) => k)
+          .slice(0, 6)
+          .join(',')
+  const liveMetrics = useMemo(
+    () => (liveMetricsKey ? liveMetricsKey.split(',') : undefined),
+    [liveMetricsKey]
   )
 
   if (isLoading) {
@@ -92,9 +120,14 @@ const AssetDetail: FC = () => {
                 <TooltipTrigger asChild>
                   <p className="text-opsgrid-text-secondary">
                     {asset.vendor} {asset.model} • {asset.serialNumber}
+                    {asset.sensorClass && (
+                      <span className="ml-2 inline-block px-2 py-0.5 text-xs rounded bg-opsgrid-bg border border-opsgrid-border text-opsgrid-accent uppercase">
+                        {asset.sensorClass}
+                      </span>
+                    )}
                   </p>
                 </TooltipTrigger>
-                <TooltipContent>Asset vendor, model, and serial number</TooltipContent>
+                <TooltipContent>Asset vendor, model, serial number, and sensor class</TooltipContent>
               </Tooltip>
             </div>
           </div>
@@ -113,6 +146,17 @@ const AssetDetail: FC = () => {
           </Tooltip>
         </div>
       </div>
+
+      {isAdmin && (
+        <div className="flex justify-end">
+          <ExportButton
+            endpoint={`/api/v1/exports/telemetry/${id}`}
+            format="csv"
+            label="Export telemetry CSV"
+            filename={`telemetry_${asset.name}.csv`}
+          />
+        </div>
+      )}
 
       {/* Telemetry */}
       {telemetry && (
@@ -167,6 +211,49 @@ const AssetDetail: FC = () => {
             }
           </div>
         </div>
+      )}
+
+      {/* Type-aware sensor pane (sensor taxonomy): machinery gauges / audio /
+          camera feed depending on the asset's sensor class. */}
+      <SensorPanels
+        asset={asset}
+        telemetry={telemetry && !('metricName' in (telemetry as any)) ? (telemetry as any) : null}
+      />
+
+      {/* Live telemetry (FS-62): websocket-driven stream of the asset's own
+          metrics, complements the polled latest-values grid above. Rendered
+          once we know which metrics the asset reports. */}
+      {id && liveMetrics && liveMetrics.length > 0 && (
+        <RealtimeTelemetryChart
+          assetId={id}
+          assetName={asset.name}
+          metrics={liveMetrics}
+          height={340}
+          title={`Live Telemetry — ${asset.name}`}
+        />
+      )}
+
+      {/* Telemetry History (task B8): stored history + aggregation, complements
+          the latest-values grid above. */}
+      {id && (
+        <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-6">
+          <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+            <TrendingUp size={20} />
+            Telemetry History
+          </h2>
+          <TelemetryHistoryChart assetId={id} />
+        </div>
+      )}
+
+      {/* Command Control (FS-62): operator/admin actions area. Backend enforces
+          RBAC (@require_operator_or_admin on /api/v1/commands/submit). */}
+      {id && isOperator && (
+        <CommandPanel
+          canEmergencyStop={isAdmin}
+          assetId={id}
+          assetName={asset.name}
+          currentState={asset.currentPackmlState}
+        />
       )}
 
       {/* Connection Info */}

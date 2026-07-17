@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 from uuid import UUID
-from pydantic import BaseModel, Field
+from pydantic import ConfigDict, AliasChoices, BaseModel, Field
 
 
 # Asset Schemas
@@ -13,12 +13,18 @@ class AssetBase(BaseModel):
     vendor: Optional[str] = None
     model: Optional[str] = None
     connection_config: Dict[str, Any] = {}
+    # Sensor taxonomy (migration 024): machinery | audio | video | environmental | generic.
+    sensor_class: Optional[str] = None
+    media_config: Dict[str, Any] = {}
     is_active: bool = True
 
 
 class AssetCreate(AssetBase):
     organization_id: UUID
-    workcell_id: Optional[UUID] = None
+    # Required: migration 013 made assets.workcell_id NOT NULL. Optional here
+    # meant POST /assets without a workcell 500'd (NotNullViolation) instead of
+    # returning a clean 422. (FS-90 write-path alignment.)
+    workcell_id: UUID
     asset_type_id: UUID
 
 
@@ -28,6 +34,8 @@ class AssetUpdate(BaseModel):
     vendor: Optional[str] = None
     model: Optional[str] = None
     connection_config: Optional[Dict[str, Any]] = None
+    sensor_class: Optional[str] = None
+    media_config: Optional[Dict[str, Any]] = None
     is_active: Optional[bool] = None
     current_packml_state: Optional[str] = None
 
@@ -42,14 +50,14 @@ class AssetResponse(AssetBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Asset Type Schemas
 class AssetTypeCreate(BaseModel):
     name: str
     category: str
+    sensor_class: Optional[str] = "generic"
     packml_config: Dict[str, Any] = {}
     telemetry_schema: Dict[str, Any] = {}
     action_space: Dict[str, Any] = {}
@@ -59,8 +67,7 @@ class AssetTypeResponse(AssetTypeCreate):
     id: UUID
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Alarm Schemas
@@ -70,7 +77,7 @@ class AlarmCreate(BaseModel):
     severity: str  # critical, high, medium, low, info
     message: str
     description: Optional[str] = None
-    metadata: Dict[str, Any] = {}
+    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class AlarmResponse(AlarmCreate):
@@ -83,8 +90,7 @@ class AlarmResponse(AlarmCreate):
     occurred_at: datetime
     cleared_at: Optional[datetime]
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AlarmAcknowledge(BaseModel):
@@ -97,7 +103,7 @@ class OperationCreate(BaseModel):
     operation_name: str
     job_id: Optional[str] = None
     planned_duration: Optional[int] = None  # seconds
-    metadata: Dict[str, Any] = {}
+    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class OperationResponse(OperationCreate):
@@ -109,8 +115,7 @@ class OperationResponse(OperationCreate):
     actual_duration: Optional[int]
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Telemetry Schemas
@@ -120,7 +125,7 @@ class TelemetryPoint(BaseModel):
     value: float
     unit: Optional[str] = None
     packml_state: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = Field(default=None, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class TelemetryBatch(BaseModel):
@@ -150,6 +155,7 @@ class OEEMetrics(BaseModel):
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
+    refresh_token: Optional[str] = None
 
 
 class UserLogin(BaseModel):
@@ -177,7 +183,7 @@ class YardTrailerBase(BaseModel):
     weight_lbs: Optional[float] = None
     temperature_setpoint: Optional[float] = None
     temperature_actual: Optional[float] = None
-    metadata: Dict[str, Any] = {}
+    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class YardTrailerCreate(YardTrailerBase):
@@ -196,7 +202,7 @@ class YardTrailerUpdate(BaseModel):
     driver_id: Optional[UUID] = None
     temperature_actual: Optional[float] = None
     check_out_at: Optional[datetime] = None
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = Field(default=None, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class YardTrailerResponse(YardTrailerBase):
@@ -211,8 +217,7 @@ class YardTrailerResponse(YardTrailerBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class DockDoorBase(BaseModel):
@@ -242,8 +247,7 @@ class DockDoorResponse(DockDoorBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class YardMoveBase(BaseModel):
@@ -251,7 +255,7 @@ class YardMoveBase(BaseModel):
     to_location: str
     move_type: Optional[str] = None  # check_in, dock, yard_relocate, check_out
     duration_seconds: Optional[float] = None
-    metadata: Dict[str, Any] = {}
+    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class YardMoveCreate(YardMoveBase):
@@ -269,8 +273,7 @@ class YardMoveResponse(YardMoveBase):
     completed_at: Optional[datetime]
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class DriverWaitTimeBase(BaseModel):
@@ -286,7 +289,7 @@ class DriverWaitTimeBase(BaseModel):
     detention_charge: Optional[float] = None
     demurrage_charge: Optional[float] = None
     is_billed: bool = False
-    metadata: Dict[str, Any] = {}
+    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class DriverWaitTimeCreate(DriverWaitTimeBase):
@@ -303,8 +306,7 @@ class DriverWaitTimeResponse(DriverWaitTimeBase):
     updated_at: datetime
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class YardCheckPointBase(BaseModel):
@@ -313,7 +315,7 @@ class YardCheckPointBase(BaseModel):
     weight_lbs: Optional[float] = None
     inspection_status: Optional[str] = None  # passed, failed, pending
     inspector_id: Optional[UUID] = None
-    metadata: Dict[str, Any] = {}
+    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class YardCheckPointCreate(YardCheckPointBase):
@@ -328,8 +330,7 @@ class YardCheckPointResponse(YardCheckPointBase):
     passed_at: datetime
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ==================== TMS Schemas ====================
@@ -374,8 +375,7 @@ class CarrierResponse(CarrierBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class DriverBase(BaseModel):
@@ -425,8 +425,7 @@ class DriverResponse(DriverBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ShipmentBase(BaseModel):
@@ -448,7 +447,7 @@ class ShipmentBase(BaseModel):
     temperature_required: bool = False
     temperature_min: Optional[float] = None
     temperature_max: Optional[float] = None
-    metadata: Dict[str, Any] = {}
+    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class ShipmentCreate(ShipmentBase):
@@ -466,7 +465,7 @@ class ShipmentUpdate(BaseModel):
     actual_pickup: Optional[datetime] = None
     actual_delivery: Optional[datetime] = None
     priority: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = Field(default=None, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class ShipmentResponse(ShipmentBase):
@@ -479,8 +478,7 @@ class ShipmentResponse(ShipmentBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class RouteBase(BaseModel):
@@ -514,8 +512,7 @@ class RouteResponse(RouteBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class LoadPlanBase(BaseModel):
@@ -526,7 +523,7 @@ class LoadPlanBase(BaseModel):
     special_instructions: Optional[str] = None
     is_executed: bool = False
     executed_at: Optional[datetime] = None
-    metadata: Dict[str, Any] = {}
+    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class LoadPlanCreate(LoadPlanBase):
@@ -546,8 +543,7 @@ class LoadPlanResponse(LoadPlanBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class FreightChargeBase(BaseModel):
@@ -562,7 +558,7 @@ class FreightChargeBase(BaseModel):
     billed_at: Optional[datetime] = None
     invoice_number: Optional[str] = None
     approved_at: Optional[datetime] = None
-    metadata: Dict[str, Any] = {}
+    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class FreightChargeCreate(FreightChargeBase):
@@ -581,8 +577,7 @@ class FreightChargeResponse(FreightChargeBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ==================== Correlation Schemas ====================
@@ -596,7 +591,7 @@ class DockAppointmentBase(BaseModel):
     status: str = "scheduled"  # scheduled, in_progress, completed, cancelled, no_show
     priority: str = "normal"
     compliance_required: bool = False
-    metadata: Dict[str, Any] = {}
+    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class DockAppointmentCreate(DockAppointmentBase):
@@ -614,7 +609,7 @@ class DockAppointmentUpdate(BaseModel):
     actual_start: Optional[datetime] = None
     actual_end: Optional[datetime] = None
     priority: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = Field(default=None, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class DockAppointmentResponse(DockAppointmentBase):
@@ -629,8 +624,7 @@ class DockAppointmentResponse(DockAppointmentBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TruckAssetCorrelationBase(BaseModel):
@@ -643,7 +637,7 @@ class TruckAssetCorrelationBase(BaseModel):
     detention_incurred: bool = False
     detention_charge: Optional[float] = None
     efficiency_score: Optional[float] = None
-    metadata: Dict[str, Any] = {}
+    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class TruckAssetCorrelationCreate(TruckAssetCorrelationBase):
@@ -663,8 +657,7 @@ class TruckAssetCorrelationResponse(TruckAssetCorrelationBase):
     operation_id: Optional[UUID]
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class LoadQualityLogBase(BaseModel):
@@ -676,7 +669,7 @@ class LoadQualityLogBase(BaseModel):
     claim_filed: bool = False
     claim_amount: Optional[float] = None
     resolved_at: Optional[datetime] = None
-    metadata: Dict[str, Any] = {}
+    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class LoadQualityLogCreate(LoadQualityLogBase):
@@ -701,8 +694,7 @@ class LoadQualityLogResponse(LoadQualityLogBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ==================== Analytics Schemas ====================
@@ -769,8 +761,7 @@ class TaskBoardResponse(TaskBoardBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TaskColumnBase(BaseModel):
@@ -794,8 +785,7 @@ class TaskColumnResponse(TaskColumnBase):
     updated_at: datetime
     task_count: Optional[int] = 0  # Computed field
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TaskChecklistItem(BaseModel):
@@ -847,39 +837,38 @@ class TaskUpdate(BaseModel):
 
 
 class TaskResponse(TaskBase):
-    id: str
-    board_id: str
-    column_id: str
+    id: UUID
+    board_id: UUID
+    column_id: UUID
     position: int
-    assigned_to: Optional[str]
-    assigned_by: Optional[str]
+    assigned_to: Optional[UUID]
+    assigned_by: Optional[UUID]
     assigned_at: Optional[datetime]
     actual_start: Optional[datetime]
     actual_end: Optional[datetime]
-    asset_id: Optional[str]
-    operation_id: Optional[str]
+    asset_id: Optional[UUID]
+    operation_id: Optional[UUID]
     alarm_id: Optional[str]
     command_id: Optional[str]
     work_order_id: Optional[str]
-    parent_task_id: Optional[str]
-    rule_id: Optional[str]
+    parent_task_id: Optional[UUID]
+    rule_id: Optional[UUID]
     progress_percent: int
     time_logged_minutes: int
     custom_fields: Dict[str, Any]
     approval_status: str
-    approved_by: Optional[str]
+    approved_by: Optional[UUID]
     approved_at: Optional[datetime]
     rejection_reason: Optional[str]
     completion_actions: Dict[str, Any]
     completion_result: Dict[str, Any]
-    created_by: Optional[str]
+    created_by: Optional[UUID]
     created_at: datetime
     updated_at: datetime
     completed_at: Optional[datetime]
-    completed_by: Optional[str]
+    completed_by: Optional[UUID]
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TaskMoveRequest(BaseModel):
@@ -908,8 +897,7 @@ class TaskCommentResponse(TaskCommentBase):
     extra_data: Dict[str, Any]
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TaskTimerStart(BaseModel):
@@ -931,8 +919,7 @@ class TaskTimerResponse(BaseModel):
     description: Optional[str]
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TaskRuleBase(BaseModel):
@@ -981,8 +968,7 @@ class TaskRuleResponse(TaskRuleBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TaskRuleTestRequest(BaseModel):
@@ -1049,8 +1035,7 @@ class TaskEscalationResponse(BaseModel):
     actions_taken: List[str]
     notification_channels: List[str]
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ============ Actionable Registries Schemas ============
@@ -1104,8 +1089,7 @@ class ActionableRegistryResponse(ActionableRegistryBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ActionableRegistryItemBase(BaseModel):
@@ -1156,8 +1140,7 @@ class ActionableRegistryItemResponse(ActionableRegistryItemBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class DataCorrelationBase(BaseModel):
@@ -1191,5 +1174,4 @@ class DataCorrelationResponse(DataCorrelationBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

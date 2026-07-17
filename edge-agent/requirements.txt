@@ -1,24 +1,39 @@
 paho-mqtt==1.6.1
-aiokafka==0.9.0
+aiokafka==0.14.0
 aiosqlite==0.19.0
-pydantic==2.5.0
-pydantic-settings==2.1.0
-structlog==23.2.0
-opencv-python==4.8.1.80
+pydantic==2.11.10
+pydantic-settings==2.10.1
+structlog==25.4.0
+numpy<2
+opencv-python==4.8.1.78
 pytesseract==0.3.10
-Pillow==10.1.0
+Pillow==12.3.0
 watchdog==3.0.0
+PyYAML==6.0.1
 pyserial==3.5
-opcua-client==0.8.1
-pymodbus==3.6.0
-httpx==0.25.2
-python-dotenv==1.0.0
-prometheus-client==0.19.0
+asyncua==1.1.5
+pymodbus==3.6.9   # aligned with backend; 3.7+ has API breaks
+httpx==0.28.1
+python-dotenv==1.2.2
+prometheus-client==0.21.1
+cryptography==48.0.1   # matched with backend pin (edge_ca chain)
 
 # Optional industrial-protocol driver libraries.
 # Each backs one collector; install only those needed for the deployed hardware.
 # The collectors import these lazily and degrade gracefully if absent.
 pylogix==1.0.5          # EtherNet/IP (Rockwell / Allen-Bradley)
 python-snap7==1.3       # PROFINET / S7 (Siemens)
-BAC0==2023.6.9          # BACnet (building automation) — wraps bacpypes
-python-can==4.3.1       # CAN bus (vehicle / machine controllers)
+BAC0==23.7.3   # old pin 2023.6.9 never existed on PyPI (BAC0 is YY.M.D CalVer)          # BACnet (building automation) — wraps bacpypes
+python-can==4.6.1       # CAN bus; 4.3 hard-pinned the advisory-affected msgpack 1.0
+pysnmp==4.4.12          # SNMP (network devices / gateways / UPS)
+# Sparkplug B: the collector lazy-imports a GENERATED `sparkplug_b_pb2` module
+# (from the Eclipse Tahu project) placed on PYTHONPATH — the PyPI package
+# 'tahu' is unrelated and the old tahu==1.0.9 pin never existed, so this
+# requirements file was never fully installable. protobuf itself suffices:
+protobuf>=5.29
+dnp3-python==0.2.3b3; sys_platform == "linux" and python_version < "3.11"    # DNP3 driver ships only cp38-cp310 linux wheels; the collector lazy-imports and degrades elsewhere. Follow-up: replace with a maintained py3.11 DNP3 driver
+sounddevice==0.5.1      # audio capture for the audio collector ("device" source;
+                        # "simulate" demo mode needs only numpy, provided by opencv)
+
+# transitive floor (via BAC0/asyncua): older msgpack has a deserialization advisory
+msgpack>=1.2.1

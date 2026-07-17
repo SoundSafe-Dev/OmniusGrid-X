@@ -4,6 +4,7 @@
 
 import React, { createContext, useContext, useState, useCallback, useEffect, ReactNode } from 'react';
 import { api } from '../api/client';
+import { USE_MOCK } from '../api/mockMode';
 
 // Types
 export interface TaskChecklistItem {
@@ -144,6 +145,18 @@ export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     setIsLoading(true);
     setError(null);
     try {
+      if (USE_MOCK) {
+        const mocks = await import('../api/mocks/kanbanMocks');
+        setBoard(mocks.mockKanbanBoard);
+        setColumns(mocks.mockKanbanColumns);
+        let mockTasks = mocks.mockKanbanTasks;
+        if (filters.asset_id) mockTasks = mockTasks.filter(t => t.asset_id === filters.asset_id);
+        if (filters.task_type) mockTasks = mockTasks.filter(t => t.task_type === filters.task_type);
+        if (filters.priority) mockTasks = mockTasks.filter(t => t.priority === filters.priority);
+        if (filters.status) mockTasks = mockTasks.filter(t => t.status === filters.status);
+        setTasks(mockTasks);
+        return;
+      }
       const params: any = {};
       if (filters.asset_id) params.asset_id = filters.asset_id;
       if (filters.task_type) params.task_type = filters.task_type;
@@ -165,6 +178,11 @@ export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   // Fetch metrics
   const refreshMetrics = useCallback(async () => {
     try {
+      if (USE_MOCK) {
+        const mocks = await import('../api/mocks/kanbanMocks');
+        setMetrics(mocks.mockKanbanMetrics);
+        return;
+      }
       const response = await api.get<KanbanMetrics>('/api/v1/kanban/metrics');
       setMetrics(response.data);
     } catch (err) {
@@ -176,6 +194,9 @@ export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   useEffect(() => {
     refreshBoard();
     refreshMetrics();
+
+    // Mock data never changes, so skip the polling loop entirely
+    if (USE_MOCK) return;
 
     // Set up polling for real-time updates
     const interval = setInterval(() => {
@@ -192,59 +213,78 @@ export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) 
 
   // Move task
   const moveTask = useCallback(async (taskId: string, targetColumnId: string, position?: number) => {
-    try {
-      await api.post(`/api/v1/kanban/tasks/${taskId}/move`, { target_column_id: targetColumnId, position });
-
-      // Update local state optimistically
+    // Mock mode: local-state move only (demo boards have no backend to POST
+    // to — the read path is mocked, so mutations must be too or every drag
+    // rejects and snaps back).
+    if (USE_MOCK) {
       setTasks(prev => prev.map(t =>
         t.id === taskId
           ? { ...t, column_id: targetColumnId, position: position ?? t.position }
           : t
       ));
-
-      // Refresh to get server state
-      await refreshBoard();
-      await refreshMetrics();
-    } catch (err) {
-      throw err;
+      return;
     }
+    await api.post(`/api/v1/kanban/tasks/${taskId}/move`, { target_column_id: targetColumnId, position });
+
+    // Update local state optimistically
+    setTasks(prev => prev.map(t =>
+      t.id === taskId
+        ? { ...t, column_id: targetColumnId, position: position ?? t.position }
+        : t
+    ));
+
+    // Refresh to get server state
+    await refreshBoard();
+    await refreshMetrics();
   }, [refreshBoard, refreshMetrics]);
 
   // Approve/reject task
   const approveTask = useCallback(async (taskId: string, action: 'approve' | 'reject', reason?: string) => {
-    try {
-      await api.post(`/api/v1/kanban/tasks/${taskId}/approve`, { action, reason });
-      await refreshBoard();
-      await refreshMetrics();
-    } catch (err) {
-      throw err;
+    if (USE_MOCK) {
+      setTasks(prev => prev.map(t =>
+        t.id === taskId ? { ...t, approval_status: action === 'approve' ? 'approved' : 'rejected' } : t
+      ));
+      return;
     }
+    await api.post(`/api/v1/kanban/tasks/${taskId}/approve`, { action, reason });
+    await refreshBoard();
+    await refreshMetrics();
   }, [refreshBoard, refreshMetrics]);
 
   // Start task
   const startTask = useCallback(async (taskId: string) => {
-    try {
-      await api.post(`/api/v1/kanban/tasks/${taskId}/start`);
-      await refreshBoard();
-      await refreshMetrics();
-    } catch (err) {
-      throw err;
+    if (USE_MOCK) {
+      setTasks(prev => prev.map(t => (t.id === taskId ? { ...t, status: 'in_progress' } : t)));
+      return;
     }
+    await api.post(`/api/v1/kanban/tasks/${taskId}/start`);
+    await refreshBoard();
+    await refreshMetrics();
   }, [refreshBoard, refreshMetrics]);
 
   // Complete task
   const completeTask = useCallback(async (taskId: string) => {
-    try {
-      await api.post(`/api/v1/kanban/tasks/${taskId}/complete`);
-      await refreshBoard();
-      await refreshMetrics();
-    } catch (err) {
-      throw err;
+    if (USE_MOCK) {
+      setTasks(prev => prev.map(t => (t.id === taskId ? { ...t, status: 'completed' } : t)));
+      return;
     }
+    await api.post(`/api/v1/kanban/tasks/${taskId}/complete`);
+    await refreshBoard();
+    await refreshMetrics();
   }, [refreshBoard, refreshMetrics]);
 
   // Create task
   const createTask = useCallback(async (taskData: Partial<Task>): Promise<Task | null> => {
+    if (USE_MOCK) {
+      const newTask = {
+        id: `task-demo-${Date.now()}`,
+        position: 0,
+        status: 'pending',
+        ...taskData,
+      } as Task;
+      setTasks(prev => [newTask, ...prev]);
+      return newTask;
+    }
     try {
       const response = await api.post<Task>('/api/v1/kanban/tasks', taskData);
       await refreshBoard();
@@ -258,6 +298,10 @@ export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) 
 
   // Update task
   const updateTask = useCallback(async (taskId: string, updates: Partial<Task>) => {
+    if (USE_MOCK) {
+      setTasks(prev => prev.map(t => (t.id === taskId ? { ...t, ...updates } : t)));
+      return;
+    }
     try {
       await api.put(`/api/v1/kanban/tasks/${taskId}`, updates);
       await refreshBoard();
@@ -270,6 +314,10 @@ export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) 
 
   // Delete task
   const deleteTask = useCallback(async (taskId: string) => {
+    if (USE_MOCK) {
+      setTasks(prev => prev.filter(t => t.id !== taskId));
+      return;
+    }
     try {
       await api.delete(`/api/v1/kanban/tasks/${taskId}`);
       await refreshBoard();

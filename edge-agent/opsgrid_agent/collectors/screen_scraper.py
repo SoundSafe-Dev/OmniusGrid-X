@@ -5,7 +5,7 @@ Uses OpenCV and Tesseract OCR to extract data from printer display screens
 
 import asyncio
 import io
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional, Callable, Tuple
 import structlog
 import numpy as np
@@ -14,7 +14,7 @@ import pytesseract
 from PIL import Image
 import httpx
 
-from omniusgrid_agent.packml import PackMLStateMapper, create_mapper_for_asset_type
+from opsgrid_agent.packml import PackMLStateMapper, create_mapper_for_asset_type
 
 logger = structlog.get_logger()
 
@@ -125,7 +125,7 @@ class ScreenScraperCollector:
         if self._has_changed(telemetry, state):
             # Create message
             message = {
-                'timestamp_edge': datetime.utcnow().isoformat(),
+                'timestamp_edge': datetime.now(timezone.utc).isoformat(),
                 'asset_id': self.asset_id,
                 'payload': {
                     'raw_text': raw_text,

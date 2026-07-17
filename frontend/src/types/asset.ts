@@ -42,6 +42,9 @@ export interface Asset {
   isInMaintenance: boolean;
   lastSeen?: string;
   connectionConfig?: Record<string, any>;
+  // Sensor taxonomy (migration 024): drives type-aware AssetDetail panes.
+  sensorClass?: 'machinery' | 'audio' | 'video' | 'environmental' | 'generic';
+  mediaConfig?: Record<string, any>;
   metadata?: Record<string, any>;
   createdAt: string;
   updatedAt: string;

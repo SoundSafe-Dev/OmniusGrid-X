@@ -62,6 +62,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
   }, [isOpen]);
 
   const handleAssign = async (userId: string) => {
+    if (!task) return;
     setIsSubmitting(true);
     try {
       await updateTask(task.id, { assigned_to: userId });
@@ -72,9 +73,12 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
   };
 
   const handleUnassign = async () => {
+    if (!task) return;
     setIsSubmitting(true);
     try {
-      await updateTask(task.id, { assigned_to: null });
+      // The API expects an explicit null to unassign; the store's Task type only
+      // declares `assigned_to?: string`, so bridge the payload type here.
+      await updateTask(task.id, { assigned_to: null as unknown as string });
       setShowAssignDropdown(false);
     } finally {
       setIsSubmitting(false);
@@ -92,11 +96,9 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
   };
 
   // Get assigned user
-  const assignedUser = task.assigned_to ? users.find((u) => u.id === task.assigned_to) : null;
+  const assignedUser = task?.assigned_to ? users.find((u) => u.id === task.assigned_to) : null;
 
   if (!isOpen || !task) return null;
-
-  const currentColumn = columns.find((c: TaskColumn) => c.id === task.column_id);
 
   const handleApprove = async () => {
     setIsSubmitting(true);

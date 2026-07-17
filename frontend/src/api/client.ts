@@ -1,19 +1,21 @@
 import axios, { AxiosError, AxiosResponse } from 'axios'
+import { requestTransform, responseTransform } from './transformRegistry'
 import { ApiError } from '../types'
 
-// Use window.location.hostname to dynamically determine API URL
+// API base resolution:
+//  - VITE_API_URL wins when set
+//  - dev builds (vite dev server) talk to the backend on :8000 directly
+//  - production builds use SAME-ORIGIN ('' base): nginx serves the SPA and
+//    proxies /api and /ws to the backend (frontend/nginx.conf) — the old
+//    http://<hostname>:8000 guess pointed at an unpublished port in prod.
 const getApiUrl = () => {
-  // @ts-ignore
   const envUrl = import.meta.env?.VITE_API_URL
   if (envUrl) return envUrl
-  
-  // If accessing from IP, use IP for API calls too
-  const hostname = window.location.hostname
-  if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
-    return `http://${hostname}:8000`
+
+  if (import.meta.env.DEV) {
+    return `http://${window.location.hostname || 'localhost'}:8000`
   }
-  
-  return 'http://localhost:8000'
+  return ''
 }
 
 const API_URL = getApiUrl()
@@ -26,18 +28,14 @@ export const api = axios.create({
   timeout: 30000,
 })
 
-// Request interceptor - add auth token
+// Request interceptor - attach the real auth token (or none, letting the
+// backend 401). The dev-token bypass is only ever present when devLogin stored
+// it, which is gated to non-production builds.
+api.interceptors.request.use(requestTransform)
+
 api.interceptors.request.use(
   (config) => {
-    const url = config.url || ''
-    const useDevToken =
-      url.includes('/api/v1/nlp/sessions') ||
-      url.includes('/api/v1/nlp/correlation')
-
-    const token = useDevToken
-      ? 'dev-token'
-      : localStorage.getItem('accessToken') || localStorage.getItem('devToken') || 'dev-token'
-
+    const token = localStorage.getItem('accessToken') || localStorage.getItem('devToken')
     if (token) {
       config.headers.Authorization = `Bearer ${token}`
     }
@@ -47,6 +45,8 @@ api.interceptors.request.use(
 )
 
 // Response interceptor - handle errors and token refresh
+api.interceptors.response.use(responseTransform)
+
 api.interceptors.response.use(
   (response: AxiosResponse) => response,
   async (error: AxiosError) => {
@@ -57,17 +57,25 @@ api.interceptors.response.use(
       const refreshToken = localStorage.getItem('refreshToken')
       if (refreshToken) {
         try {
+          // Raw axios on purpose: must not recurse through this interceptor.
+          // Request body is camelCase (matches backend RefreshRequest);
+          // the RESPONSE is the snake_case Token schema — reading
+          // `accessToken` here stored undefined and broke every refresh.
           const response = await axios.post(`${API_URL}/api/v1/auth/refresh`, {
             refreshToken,
           })
-          const { accessToken } = response.data
+          const { access_token: accessToken, refresh_token: newRefreshToken } = response.data
           localStorage.setItem('accessToken', accessToken)
+          if (newRefreshToken) {
+            localStorage.setItem('refreshToken', newRefreshToken)
+          }
           originalRequest.headers.Authorization = `Bearer ${accessToken}`
           return api(originalRequest)
         } catch (refreshError) {
           // Refresh failed, logout user
           localStorage.removeItem('accessToken')
           localStorage.removeItem('refreshToken')
+          localStorage.removeItem('devToken')
           localStorage.removeItem('user')
           window.location.href = '/login'
           return Promise.reject(refreshError)
@@ -76,6 +84,7 @@ api.interceptors.response.use(
         // No refresh token, logout user
         localStorage.removeItem('accessToken')
         localStorage.removeItem('refreshToken')
+        localStorage.removeItem('devToken')
         localStorage.removeItem('user')
         window.location.href = '/login'
       }

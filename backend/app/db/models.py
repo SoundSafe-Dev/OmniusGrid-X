@@ -3,12 +3,47 @@
 import uuid
 from datetime import datetime
 from typing import Optional, List
-from sqlalchemy import Column, String, DateTime, Boolean, Numeric, JSON, ForeignKey, Text, BigInteger, Integer, ARRAY, Date, UUID
+from sqlalchemy import Column, String, DateTime, Boolean, Numeric, JSON, ForeignKey, Text, BigInteger, Integer, ARRAY, Date, UUID, UniqueConstraint, CheckConstraint, Index, func, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import declarative_base, relationship
+from sqlalchemy.types import TypeDecorator
 
 from app.core.config import settings
 
 Base = declarative_base()
+
+
+class UUIDString(TypeDecorator):
+    """Dialect-aware UUID column: native ``uuid`` on Postgres, VARCHAR(36)
+    elsewhere — reads and binds are ``str`` everywhere.
+
+    History (FS-55): this used to be plain VARCHAR(36) on every dialect while
+    ~13 newer tables hand-wrote native ``UUID(as_uuid=True)`` FK columns
+    pointing at the VARCHAR PKs — cross-type FKs that Postgres rejects. The
+    SQL migrations (001 etc.) always used native UUID, so the ORM now matches
+    prod instead of fighting it.
+
+    - binds: uuid.UUID or str accepted (FastAPI UUID params pass straight in;
+      SQLite would otherwise raise "type 'UUID' is not supported").
+    - reads: coerced to canonical dashed str on every dialect, so JSON
+      serialization / dict keys keep their long-standing str assumption.
+    """
+
+    impl = String(36)
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        if dialect.name == "postgresql":
+            from sqlalchemy.dialects.postgresql import UUID as PGUUID
+            return dialect.type_descriptor(PGUUID(as_uuid=False))
+        return dialect.type_descriptor(String(36))
+
+    def process_bind_param(self, value, dialect):
+        return str(value) if value is not None else None
+
+    def process_result_value(self, value, dialect):
+        # asyncpg's uuid codec can hand back uuid.UUID; normalize to str.
+        return str(value) if value is not None else None
 
 
 def StringListColumn(nullable: bool = False, default=None):
@@ -23,12 +58,17 @@ def StringListColumn(nullable: bool = False, default=None):
         kwargs["default"] = default
     return Column(ARRAY(String), **kwargs)
 
-# SQLite-compatible UUID column type
+# Dialect-aware UUID column type (UUIDString: native uuid on PG, str reads).
 def UUIDColumn():
-    return Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    return Column(UUIDString(), primary_key=True, default=lambda: str(uuid.uuid4()))
 
-def UUIDForeignKey(foreign_key, nullable=False):
-    return Column(String(36), ForeignKey(foreign_key), nullable=nullable)
+def UUIDForeignKey(foreign_key, nullable=False, ondelete=None, index=False):
+    return Column(
+        UUIDString(),
+        ForeignKey(foreign_key, ondelete=ondelete),
+        nullable=nullable,
+        index=index,
+    )
 
 
 class Organization(Base):
@@ -46,10 +86,14 @@ class Organization(Base):
 
 class AssetType(Base):
     __tablename__ = "asset_types"
-    
+
     id = UUIDColumn()
     name = Column(String(100), nullable=False)
     category = Column(String(100), nullable=False)
+    # Sensor taxonomy (migration 024): machinery | audio | video | environmental | generic.
+    # Drives type-aware rendering (gauges vs waveform vs camera feed) and lets
+    # downstream analytics filter by sensor modality.
+    sensor_class = Column(String(50), default="generic")
     packml_config = Column(JSON, default={})
     telemetry_schema = Column(JSON, default={})
     action_space = Column(JSON, default={})
@@ -63,7 +107,7 @@ class Asset(Base):
 
     id = UUIDColumn()
     organization_id = UUIDForeignKey("organizations.id")
-    workcell_id = UUIDForeignKey("workcells.id")
+    workcell_id = UUIDForeignKey("workcells.id", nullable=False)  # NOT NULL since migration 013
     asset_type_id = UUIDForeignKey("asset_types.id")
     name = Column(String(255), nullable=False)
     serial_number = Column(String(255))
@@ -71,11 +115,20 @@ class Asset(Base):
     model = Column(String(100))
     current_packml_state = Column(String(50), default="Idle")
     connection_config = Column(JSON, default={})
+    # Sensor taxonomy (migration 024): per-asset override of the type's class,
+    # plus media config for audio/video assets (e.g. {"stream_url": ..., "sample_rate": ...}).
+    sensor_class = Column(String(50), nullable=True)
+    media_config = Column(JSON, default={})
     is_active = Column(Boolean, default=True)
     last_seen = Column(DateTime(timezone=True))
+    agent_id = Column(String(255))
+    agent_version = Column(String(100))
+    agent_config_hash = Column(String(64))
+    agent_build_id = Column(String(255))
+    agent_last_heartbeat = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    
+
     organization = relationship("Organization", back_populates="assets")
     asset_type = relationship("AssetType", back_populates="assets")
 
@@ -98,13 +151,79 @@ class Telemetry(Base):
     __tablename__ = "telemetry"
 
     time = Column(DateTime(timezone=True), primary_key=True)
-    asset_id = Column(String(36), ForeignKey("assets.id"), primary_key=True)
+    asset_id = Column(UUIDString(), ForeignKey("assets.id"), primary_key=True)
     metric_name = Column(String(100), primary_key=True)
     value = Column(Numeric, nullable=False)
     unit = Column(String(50))
     packml_state = Column(String(50))
-    meta_data = Column(JSON, default={})
+    meta_data = Column("metadata", JSON, default={})
     sequence_num = Column(BigInteger)
+
+
+class HistorianRetentionPolicy(Base):
+    """Tenant and metric-specific historian retention and ingestion settings."""
+
+    __tablename__ = "historian_retention_policies"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "metric_name",
+            name="uq_historian_retention_org_metric",
+        ),
+        CheckConstraint(
+            # trim() (not btrim) — identical semantics on Postgres AND SQLite, so
+            # dev/offline-demo create_all works; migration 034 keeps btrim on PG.
+            "length(trim(metric_name)) > 0",
+            name="ck_historian_retention_metric",
+        ),
+        CheckConstraint(
+            "hot_retention_days BETWEEN 1 AND 1825 "
+            "AND warm_retention_days BETWEEN hot_retention_days AND 1825 "
+            "AND cold_retention_days BETWEEN warm_retention_days AND 3650",
+            name="ck_historian_retention_days",
+        ),
+        CheckConstraint(
+            "ingestion_priority BETWEEN 1 AND 5",
+            name="ck_historian_retention_priority",
+        ),
+        CheckConstraint(
+            "ingestion_sample_rate > 0 AND ingestion_sample_rate <= 1",
+            name="ck_historian_retention_sample_rate",
+        ),
+        CheckConstraint(
+            "max_ingest_age_seconds BETWEEN 1 AND 86400",
+            name="ck_historian_retention_max_age",
+        ),
+    )
+
+    id = UUIDColumn()
+    organization_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    metric_name = Column(String(100), nullable=False, default="*", server_default="*")
+    hot_retention_days = Column(Integer, nullable=False, default=30, server_default="30")
+    warm_retention_days = Column(Integer, nullable=False, default=365, server_default="365")
+    cold_retention_days = Column(Integer, nullable=False, default=1825, server_default="1825")
+    ingestion_priority = Column(Integer, nullable=False, default=3, server_default="3")
+    ingestion_sample_rate = Column(Numeric(5, 4), nullable=False, default=1.0, server_default="1.0")
+    max_ingest_age_seconds = Column(Integer, nullable=False, default=30, server_default="30")
+    archival_enabled = Column(Boolean, nullable=False, default=True, server_default="true")
+    created_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at = Column(
+        DateTime(timezone=True), default=datetime.utcnow, server_default=func.now()
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        server_default=func.now(),
+    )
 
 
 class Alarm(Base):
@@ -164,7 +283,7 @@ class YardTrailer(Base):
     id = UUIDColumn()
     organization_id = UUIDForeignKey("organizations.id")
     trailer_number = Column(String(50), nullable=False)
-    carrier_id = UUIDForeignKey("carriers.id")
+    carrier_id = UUIDForeignKey("carriers.id", nullable=True)
     trailer_type = Column(String(50))  # dry_van, reefer, flatbed, etc.
     status = Column(String(50), default="checked_in")  # checked_in, docked, yard, checked_out
     yard_location = Column(String(100))  # grid position or zone
@@ -173,9 +292,9 @@ class YardTrailer(Base):
     weight_lbs = Column(Numeric)
     check_in_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     check_out_at = Column(DateTime(timezone=True))
-    dock_door_id = UUIDForeignKey("dock_doors.id")
-    driver_id = UUIDForeignKey("drivers.id")
-    shipment_id = UUIDForeignKey("shipments.id")
+    dock_door_id = UUIDForeignKey("dock_doors.id", nullable=True)
+    driver_id = UUIDForeignKey("drivers.id", nullable=True)
+    shipment_id = UUIDForeignKey("shipments.id", nullable=True)
     temperature_setpoint = Column(Numeric)  # for reefers
     temperature_actual = Column(Numeric)
     meta_data = Column(JSON, default={})
@@ -193,7 +312,7 @@ class DockDoor(Base):
     door_type = Column(String(50))  # inbound, outbound, cross_dock
     status = Column(String(50), default="available")  # available, occupied, maintenance
     equipment_capabilities = Column(JSON, default={})  # forklift, pallet_jack, etc.
-    current_trailer_id = UUIDForeignKey("yard_trailers.id")
+    current_trailer_id = UUIDForeignKey("yard_trailers.id", nullable=True)
     last_occupied_at = Column(DateTime(timezone=True))
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
@@ -206,11 +325,11 @@ class YardMove(Base):
     
     id = UUIDColumn()
     organization_id = UUIDForeignKey("organizations.id")
-    trailer_id = UUIDForeignKey("yard_trailers.id")
+    trailer_id = UUIDForeignKey("yard_trailers.id", nullable=True)
     from_location = Column(String(100), nullable=False)
     to_location = Column(String(100), nullable=False)
     move_type = Column(String(50))  # check_in, dock, yard_relocate, check_out
-    jockey_driver_id = UUIDForeignKey("drivers.id")
+    jockey_driver_id = UUIDForeignKey("drivers.id", nullable=True)
     started_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     completed_at = Column(DateTime(timezone=True))
     duration_seconds = Column(Numeric)
@@ -224,8 +343,8 @@ class DriverWaitTime(Base):
     
     id = UUIDColumn()
     organization_id = UUIDForeignKey("organizations.id")
-    driver_id = UUIDForeignKey("drivers.id")
-    trailer_id = UUIDForeignKey("yard_trailers.id")
+    driver_id = UUIDForeignKey("drivers.id", nullable=True)
+    trailer_id = UUIDForeignKey("yard_trailers.id", nullable=True)
     check_in_at = Column(DateTime(timezone=True), nullable=False)
     docked_at = Column(DateTime(timezone=True))
     unloaded_at = Column(DateTime(timezone=True))
@@ -249,7 +368,7 @@ class YardCheckPoint(Base):
     
     id = UUIDColumn()
     organization_id = UUIDForeignKey("organizations.id")
-    trailer_id = UUIDForeignKey("yard_trailers.id")
+    trailer_id = UUIDForeignKey("yard_trailers.id", nullable=True)
     checkpoint_type = Column(String(50), nullable=False)  # gate_in, guard_shack, weigh_station, gate_out
     checkpoint_name = Column(String(100))
     passed_at = Column(DateTime(timezone=True), default=datetime.utcnow)
@@ -290,7 +409,7 @@ class Driver(Base):
     
     id = UUIDColumn()
     organization_id = UUIDForeignKey("organizations.id")
-    carrier_id = UUIDForeignKey("carriers.id")
+    carrier_id = UUIDForeignKey("carriers.id", nullable=True)
     first_name = Column(String(100), nullable=False)
     last_name = Column(String(100), nullable=False)
     license_number = Column(String(100))
@@ -317,9 +436,9 @@ class Shipment(Base):
     
     id = UUIDColumn()
     organization_id = UUIDForeignKey("organizations.id")
-    carrier_id = UUIDForeignKey("carriers.id")
-    driver_id = UUIDForeignKey("drivers.id")
-    trailer_id = UUIDForeignKey("yard_trailers.id")
+    carrier_id = UUIDForeignKey("carriers.id", nullable=True)
+    driver_id = UUIDForeignKey("drivers.id", nullable=True)
+    trailer_id = UUIDForeignKey("yard_trailers.id", nullable=True)
     shipment_number = Column(String(100), nullable=False)
     pro_number = Column(String(100))  # Progressive Rotating Order
     bol_number = Column(String(100))  # Bill of Lading
@@ -338,7 +457,7 @@ class Shipment(Base):
     temperature_required = Column(Boolean, default=False)
     temperature_min = Column(Numeric)
     temperature_max = Column(Numeric)
-    route_id = UUIDForeignKey("routes.id")
+    route_id = UUIDForeignKey("routes.id", nullable=True)
     meta_data = Column(JSON, default={})
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
@@ -370,8 +489,8 @@ class LoadPlan(Base):
     
     id = UUIDColumn()
     organization_id = UUIDForeignKey("organizations.id")
-    shipment_id = UUIDForeignKey("shipments.id")
-    trailer_id = UUIDForeignKey("yard_trailers.id")
+    shipment_id = UUIDForeignKey("shipments.id", nullable=True)
+    trailer_id = UUIDForeignKey("yard_trailers.id", nullable=True)
     planned_by = Column(String(36))
     planned_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     load_sequence = Column(JSON, default=[])  # order of loading
@@ -392,8 +511,8 @@ class FreightCharge(Base):
     
     id = UUIDColumn()
     organization_id = UUIDForeignKey("organizations.id")
-    shipment_id = UUIDForeignKey("shipments.id")
-    carrier_id = UUIDForeignKey("carriers.id")
+    shipment_id = UUIDForeignKey("shipments.id", nullable=True)
+    carrier_id = UUIDForeignKey("carriers.id", nullable=True)
     charge_type = Column(String(50), nullable=False)  # linehaul, fuel, detention, demurrage, accessorial
     charge_description = Column(String(255))
     rate_basis = Column(String(50))  # per_mile, per_pound, flat, hourly
@@ -419,18 +538,18 @@ class DockAppointment(Base):
     
     id = UUIDColumn()
     organization_id = UUIDForeignKey("organizations.id")
-    dock_door_id = UUIDForeignKey("dock_doors.id")
-    trailer_id = UUIDForeignKey("yard_trailers.id")
-    shipment_id = UUIDForeignKey("shipments.id")
-    operation_id = UUIDForeignKey("operations.id")  # linked production job
+    dock_door_id = UUIDForeignKey("dock_doors.id", nullable=True)
+    trailer_id = UUIDForeignKey("yard_trailers.id", nullable=True)
+    shipment_id = UUIDForeignKey("shipments.id", nullable=True)
+    operation_id = UUIDForeignKey("operations.id", nullable=True)  # linked production job
     appointment_type = Column(String(50))  # pickup, delivery, transfer
     scheduled_start = Column(DateTime(timezone=True), nullable=False)
     scheduled_end = Column(DateTime(timezone=True), nullable=False)
     actual_start = Column(DateTime(timezone=True))
     actual_end = Column(DateTime(timezone=True))
     status = Column(String(50), default="scheduled")  # scheduled, in_progress, completed, cancelled, no_show
-    carrier_id = UUIDForeignKey("carriers.id")
-    driver_id = UUIDForeignKey("drivers.id")
+    carrier_id = UUIDForeignKey("carriers.id", nullable=True)
+    driver_id = UUIDForeignKey("drivers.id", nullable=True)
     priority = Column(String(20), default="normal")
     compliance_required = Column(Boolean, default=False)  # FDA, etc.
     meta_data = Column(JSON, default={})
@@ -444,10 +563,10 @@ class TruckAssetCorrelation(Base):
     
     id = UUIDColumn()
     organization_id = UUIDForeignKey("organizations.id")
-    shipment_id = UUIDForeignKey("shipments.id")
-    trailer_id = UUIDForeignKey("yard_trailers.id")
+    shipment_id = UUIDForeignKey("shipments.id", nullable=True)
+    trailer_id = UUIDForeignKey("yard_trailers.id", nullable=True)
     asset_id = UUIDForeignKey("assets.id")
-    operation_id = UUIDForeignKey("operations.id")
+    operation_id = UUIDForeignKey("operations.id", nullable=True)
     truck_arrived_at = Column(DateTime(timezone=True))
     asset_ready_at = Column(DateTime(timezone=True))
     asset_completion_forecast = Column(DateTime(timezone=True))
@@ -467,15 +586,15 @@ class LoadQualityLog(Base):
     
     id = UUIDColumn()
     organization_id = UUIDForeignKey("organizations.id")
-    shipment_id = UUIDForeignKey("shipments.id")
-    trailer_id = UUIDForeignKey("yard_trailers.id")
+    shipment_id = UUIDForeignKey("shipments.id", nullable=True)
+    trailer_id = UUIDForeignKey("yard_trailers.id", nullable=True)
     asset_id = UUIDForeignKey("assets.id")  # source asset
-    operation_id = UUIDForeignKey("operations.id")
+    operation_id = UUIDForeignKey("operations.id", nullable=True)
     defect_type = Column(String(100))  # wrong_product, damaged, short, over, temp_excursion
     severity = Column(String(20))  # minor, major, critical
     quantity_affected = Column(Numeric)
     root_cause_asset = UUIDForeignKey("assets.id")
-    root_cause_operation = UUIDForeignKey("operations.id")
+    root_cause_operation = UUIDForeignKey("operations.id", nullable=True)
     manufacturing_correlation_score = Column(Numeric)  # confidence of manufacturing root cause
     carrier_liable = Column(Boolean, default=False)
     claim_filed = Column(Boolean, default=False)
@@ -509,6 +628,31 @@ class User(Base):
 class Command(Base):
     """Command execution log for actionable decisions"""
     __tablename__ = "commands"
+    __table_args__ = (
+        CheckConstraint(
+            "timeout_seconds > 0",
+            name="ck_commands_timeout_seconds_positive",
+        ),
+        CheckConstraint(
+            "dispatch_attempts >= 0",
+            name="ck_commands_dispatch_attempts_nonnegative",
+        ),
+        Index(
+            "idx_commands_dispatch_ready",
+            "organization_id",
+            "next_dispatch_at",
+            "issued_at",
+            postgresql_where=text("status = 'pending'"),
+        ),
+        Index(
+            "idx_commands_ack_deadline",
+            "organization_id",
+            "deadline_at",
+            postgresql_where=text(
+                "status = 'executing' AND deadline_at IS NOT NULL"
+            ),
+        ),
+    )
 
     id = UUIDColumn()
     asset_id = UUIDForeignKey("assets.id")
@@ -517,15 +661,21 @@ class Command(Base):
     parameters = Column(JSON, default=dict)
     status = Column(String(50), default="pending")  # pending, executing, completed, failed, cancelled
     priority = Column(String(20), default="normal")  # low, normal, high, critical
+    timeout_seconds = Column(Integer, nullable=False, default=60)
+    dispatch_attempts = Column(Integer, nullable=False, default=0)
+    next_dispatch_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    dispatched_at = Column(DateTime(timezone=True))
+    deadline_at = Column(DateTime(timezone=True))
+    last_dispatch_error = Column(Text)
     issued_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    issued_by = UUIDForeignKey("users.id")
+    issued_by = UUIDForeignKey("users.id", nullable=True)
     executed_at = Column(DateTime(timezone=True))
     completed_at = Column(DateTime(timezone=True))
     result = Column(JSON, default=dict)
     error_message = Column(Text)
     organization_id = UUIDForeignKey("organizations.id")
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 # ==================== Kanban Task Management Models ====================
@@ -733,7 +883,7 @@ class ActionableRegistry(Base):
     compliance_score = Column(Integer, default=0)  # 0-100
     priority_level = Column(String(20), default="medium")  # low, medium, high, critical
     assigned_owner_id = UUIDForeignKey("users.id")
-    assigned_team_id = Column(String(36))  # team reference if applicable
+    assigned_team_id = Column(UUIDString())  # team reference if applicable
     reference_url = Column(String(500))  # link to official documentation
     checklist_requirements = Column(JSON, default=list)  # [{id, requirement, completed, notes}]
     meta_data = Column(JSON, default=dict)
@@ -776,9 +926,9 @@ class DataCorrelation(Base):
     organization_id = UUIDForeignKey("organizations.id")
     correlation_type = Column(String(50), nullable=False)  # task_to_registry, task_to_asset, task_to_alarm, registry_to_asset
     source_type = Column(String(50), nullable=False)  # task, registry_item, asset, alarm, operation
-    source_id = Column(String(36))
+    source_id = Column(UUIDString())
     target_type = Column(String(50), nullable=False)  # task, registry_item, asset, alarm, operation
-    target_id = Column(String(36))
+    target_id = Column(UUIDString())
     correlation_strength = Column(Integer, default=50)  # 0-100, strength of correlation
     correlation_method = Column(String(50), default="manual")  # manual, automated, ai_suggested
     confidence_score = Column(Integer, default=0)  # 0-100, confidence in correlation
@@ -868,6 +1018,10 @@ class IntakeItem(Base):
 class GeoTabTrip(Base):
     """GeoTab trip data for fleet tracking"""
     __tablename__ = "geotab_trips"
+    # Latest-trip-per-device is the hot lookup (location webhook + fleet map).
+    __table_args__ = (
+        Index("ix_geotab_trips_device_start", "device_id", "start_time"),
+    )
 
     id = UUIDColumn()
     device_id = Column(String(100), nullable=False, index=True)
@@ -975,6 +1129,131 @@ class AuditLog(Base):
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
 
+class ExportTemplate(Base):
+    """Reusable, tenant-owned export configuration."""
+    __tablename__ = "export_templates"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "name", name="uq_export_templates_org_name"),
+    )
+
+    id = UUIDColumn()
+    organization_id = Column(
+        UUIDString(),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    name = Column(String(255), nullable=False)
+    description = Column(Text)
+    export_type = Column(String(50), nullable=False)
+    export_format = Column(String(10), nullable=False)
+    columns = Column(
+        JSON().with_variant(JSONB, "postgresql"),
+        default=list,
+        server_default="[]",
+        nullable=False,
+    )
+    filters = Column(
+        JSON().with_variant(JSONB, "postgresql"),
+        default=dict,
+        server_default="{}",
+        nullable=False,
+    )
+    created_by = Column(
+        UUIDString(),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class ScheduledExport(Base):
+    """Persisted schedule definition for durable report delivery."""
+    __tablename__ = "scheduled_exports"
+    __table_args__ = (
+        CheckConstraint(
+            "frequency IN ('daily', 'weekly', 'monthly')",
+            name="ck_scheduled_exports_frequency",
+        ),
+    )
+
+    id = UUIDColumn()
+    organization_id = Column(
+        UUIDString(),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    template_id = Column(
+        UUIDString(),
+        ForeignKey("export_templates.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    name = Column(String(255), nullable=False)
+    frequency = Column(String(20), nullable=False)
+    timezone = Column(String(100), nullable=False, default="UTC")
+    next_run_at = Column(DateTime(timezone=True), nullable=False)
+    recipients = Column(
+        JSON().with_variant(JSONB, "postgresql"),
+        default=list,
+        server_default="[]",
+        nullable=False,
+    )
+    is_active = Column(Boolean, nullable=False, default=False)
+    last_run_at = Column(DateTime(timezone=True))
+    last_status = Column(String(50), default="never_run")
+    created_by = Column(
+        UUIDString(),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class ExportDeliveryJob(Base):
+    """Transactional outbox record consumed by the Redpanda export worker."""
+    __tablename__ = "export_delivery_jobs"
+    __table_args__ = (
+        UniqueConstraint(
+            "schedule_id", "scheduled_for",
+            name="uq_export_delivery_jobs_schedule_run",
+        ),
+    )
+
+    id = UUIDColumn()
+    organization_id = Column(
+        UUIDString(),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    schedule_id = Column(
+        UUIDString(),
+        ForeignKey("scheduled_exports.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    template_id = Column(
+        UUIDString(),
+        ForeignKey("export_templates.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    requested_by = Column(
+        UUIDString(),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    scheduled_for = Column(DateTime(timezone=True), nullable=False)
+    status = Column(String(30), nullable=False, default="queued")
+    attempts = Column(Integer, nullable=False, default=0)
+    file_path = Column(Text)
+    filename = Column(String(255))
+    error = Column(Text)
+    published_at = Column(DateTime(timezone=True))
+    started_at = Column(DateTime(timezone=True))
+    completed_at = Column(DateTime(timezone=True))
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
 class APIKey(Base):
     """API keys for external integrations"""
     __tablename__ = "api_keys"
@@ -995,35 +1274,18 @@ class APIKey(Base):
     meta_data = Column(JSON, default={})
 
 
-class Permission(Base):
-    """Permissions for RBAC"""
-    __tablename__ = "permissions"
-
-    id = UUIDColumn()
-    name = Column(String(100), nullable=False, unique=True)
-    description = Column(Text, nullable=True)
-    resource = Column(String(50), nullable=False)
-    action = Column(String(50), nullable=False)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-
-
-class RolePermission(Base):
-    """Role to permission mapping"""
-    __tablename__ = "role_permissions"
-
-    id = UUIDColumn()
-    role = Column(String(50), nullable=False)
-    permission_id = UUIDForeignKey("permissions.id", nullable=False)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-
-
 class UserSession(Base):
     """User session management"""
     __tablename__ = "user_sessions"
+    __table_args__ = (
+        Index("uq_user_sessions_jti", "jti", unique=True),
+    )
 
     id = UUIDColumn()
     user_id = UUIDForeignKey("users.id", nullable=False)
     token_hash = Column(String(64), nullable=False, unique=True)
+    jti = Column(UUID(as_uuid=True), nullable=False)
+    token_type = Column(String(20), nullable=False, default="refresh")
     ip_address = Column(String(45), nullable=True)
     user_agent = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
@@ -1031,7 +1293,33 @@ class UserSession(Base):
     expires_at = Column(DateTime(timezone=True), nullable=False)
     is_active = Column(Boolean, nullable=False, default=True)
     revoked_at = Column(DateTime(timezone=True), nullable=True)
-    meta_data = Column(JSON, default={})
+    revoked_reason = Column(String(100), nullable=True)
+    replaced_by_jti = Column(UUID(as_uuid=True), nullable=True)
+    meta_data = Column("metadata", JSON().with_variant(JSONB, "postgresql"), default=dict)
+
+
+class RevokedToken(Base):
+    """Durable local-JWT denylist shared by every backend replica."""
+
+    __tablename__ = "revoked_tokens"
+    __table_args__ = (
+        Index("idx_revoked_tokens_expires_at", "expires_at"),
+        Index("idx_revoked_tokens_user_id", "user_id"),
+    )
+
+    id = UUIDColumn()
+    jti = Column(UUID(as_uuid=True), nullable=False, unique=True)
+    user_id = UUIDForeignKey("users.id", nullable=False)
+    session_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("user_sessions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    token_type = Column(String(20), nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    revoked_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    reason = Column(String(100), nullable=True)
+    meta_data = Column("metadata", JSON().with_variant(JSONB, "postgresql"), default=dict)
 
 
 class ConsentRecord(Base):
@@ -1076,6 +1364,7 @@ class SecurityAsset(Base):
     asset_name = Column(String(255), nullable=False)
     asset_id = Column(String(255), nullable=True)
     owner_id = UUIDForeignKey("users.id", nullable=True)
+    organization_id = UUIDForeignKey("organizations.id")
     classification = Column(String(50), nullable=True)
     location = Column(String(255), nullable=True)
     status = Column(String(50), default="active")
@@ -1095,11 +1384,326 @@ class VendorRiskAssessment(Base):
     assessment_date = Column(Date, nullable=True)
     next_review_date = Column(Date, nullable=True)
     assessor_id = UUIDForeignKey("users.id", nullable=True)
+    organization_id = UUIDForeignKey("organizations.id")
     findings = StringListColumn(nullable=True)
     controls = StringListColumn(nullable=True)
     status = Column(String(50), default="pending")
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ScheduledComplianceReport(Base):
+    """Persisted schedule for automated compliance report generation."""
+    __tablename__ = "scheduled_compliance_reports"
+    __table_args__ = (
+        CheckConstraint(
+            "framework IN ('all', 'gdpr', 'soc2', 'iso27001')",
+            name="ck_scheduled_compliance_reports_framework",
+        ),
+        CheckConstraint(
+            "format IN ('json', 'pdf')",
+            name="ck_scheduled_compliance_reports_format",
+        ),
+        CheckConstraint(
+            "frequency IN ('daily', 'weekly', 'monthly', 'quarterly', 'annually')",
+            name="ck_scheduled_compliance_reports_frequency",
+        ),
+    )
+
+    id = UUIDColumn()
+    organization_id = Column(
+        UUIDString(),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    name = Column(String(255), nullable=False)
+    framework = Column(String(20), nullable=False)
+    format = Column(String(10), nullable=False)
+    frequency = Column(String(20), nullable=False)
+    timezone = Column(String(100), nullable=False, default="UTC", server_default="UTC")
+    next_run_at = Column(DateTime(timezone=True), nullable=False)
+    recipients = Column(
+        JSON().with_variant(JSONB, "postgresql"),
+        default=list,
+        server_default="[]",
+        nullable=False,
+    )
+    is_active = Column(Boolean, nullable=False, default=False, server_default="false")
+    last_run_at = Column(DateTime(timezone=True))
+    last_status = Column(
+        String(50), nullable=False, default="never_run", server_default="never_run"
+    )
+    created_by = Column(
+        UUIDString(),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at = Column(
+        DateTime(timezone=True), default=datetime.utcnow, server_default=func.now()
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        server_default=func.now(),
+    )
+
+
+class ComplianceReportJob(Base):
+    """Durable outbox for async compliance report generation and delivery."""
+    __tablename__ = "compliance_report_jobs"
+    __table_args__ = (
+        CheckConstraint(
+            "framework IN ('all', 'gdpr', 'soc2', 'iso27001')",
+            name="ck_compliance_report_jobs_framework",
+        ),
+        CheckConstraint(
+            "format IN ('json', 'pdf')",
+            name="ck_compliance_report_jobs_format",
+        ),
+        CheckConstraint(
+            "report_status IN "
+            "('queued', 'publishing', 'published', 'running', 'completed', 'failed')",
+            name="ck_compliance_report_jobs_report_status",
+        ),
+        CheckConstraint(
+            "delivery_status IN ('pending', 'sending', 'sent', 'failed', 'skipped')",
+            name="ck_compliance_report_jobs_delivery_status",
+        ),
+        UniqueConstraint(
+            "schedule_id",
+            "scheduled_for",
+            name="uq_compliance_report_jobs_schedule_run",
+        ),
+    )
+
+    id = UUIDColumn()
+    organization_id = Column(
+        UUIDString(),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    requested_by = Column(
+        UUIDString(),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    schedule_id = Column(
+        UUIDString(),
+        ForeignKey("scheduled_compliance_reports.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    scheduled_for = Column(DateTime(timezone=True), nullable=True)
+    framework = Column(String(20), nullable=False)
+    format = Column(String(10), nullable=False)
+    recipients = Column(
+        JSON().with_variant(JSONB, "postgresql"),
+        default=list,
+        server_default="[]",
+        nullable=False,
+    )
+    report_status = Column(
+        String(20), nullable=False, default="queued", server_default="queued"
+    )
+    delivery_status = Column(
+        String(20), nullable=False, default="pending", server_default="pending"
+    )
+    publication_attempts = Column(Integer, nullable=False, default=0, server_default="0")
+    generation_attempts = Column(Integer, nullable=False, default=0, server_default="0")
+    email_attempts = Column(Integer, nullable=False, default=0, server_default="0")
+    error_report = Column(Text)
+    error_delivery = Column(Text)
+    file_path = Column(Text)
+    filename = Column(String(255))
+    media_type = Column(String(100))
+    file_size = Column(BigInteger)
+    file_sha256 = Column(String(64))
+    created_at = Column(
+        DateTime(timezone=True), default=datetime.utcnow, server_default=func.now()
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        server_default=func.now(),
+    )
+    published_at = Column(DateTime(timezone=True))
+    started_at = Column(DateTime(timezone=True))
+    completed_at = Column(DateTime(timezone=True))
+    email_sent_at = Column(DateTime(timezone=True))
+
+
+class AgentRelease(Base):
+    """Signed edge-agent release metadata and config-bundle pointer."""
+    __tablename__ = "agent_releases"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('draft', 'published', 'yanked')",
+            name="ck_agent_releases_status",
+        ),
+        CheckConstraint(
+            "artifact_type IN ('config', 'model')",
+            name="ck_agent_releases_artifact_type",
+        ),
+        UniqueConstraint(
+            "organization_id", "version", "channel",
+            name="uq_agent_releases_org_version_channel",
+        ),
+    )
+
+    id = UUIDColumn()
+    organization_id = Column(
+        UUIDString(),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    version = Column(String(100), nullable=False)
+    channel = Column(String(50), nullable=False, default="stable", server_default="stable")
+    image_tag = Column(String(255), nullable=True)
+    artifact_type = Column(String(20), nullable=False, default="config", server_default="config")
+    model_name = Column(String(100), nullable=True)
+    bundle_storage_key = Column(Text, nullable=False)
+    checksum_sha256 = Column(String(64), nullable=False)
+    signature_ed25519 = Column(Text, nullable=False)
+    signing_key_id = Column(String(255), nullable=False)
+    release_notes = Column(Text)
+    status = Column(String(30), nullable=False, default="draft", server_default="draft")
+    created_by = Column(
+        UUIDString(),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        server_default=func.now(),
+    )
+
+    rollouts = relationship("AgentRollout", back_populates="release")
+
+
+class AgentRollout(Base):
+    """Tenant-scoped OTA rollout definition."""
+    __tablename__ = "agent_rollouts"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'paused', 'running', 'completed', 'cancelled', 'rolled_back', 'failed')",
+            name="ck_agent_rollouts_status",
+        ),
+    )
+
+    id = UUIDColumn()
+    organization_id = Column(
+        UUIDString(),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    release_id = Column(
+        UUIDString(),
+        ForeignKey("agent_releases.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    name = Column(String(255), nullable=False)
+    target_selector = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False, default=dict)
+    strategy = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False, default=dict)
+    status = Column(String(30), nullable=False, default="pending", server_default="pending")
+    created_by = Column(
+        UUIDString(),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        server_default=func.now(),
+    )
+
+    release = relationship("AgentRelease", back_populates="rollouts")
+    targets = relationship(
+        "AgentRolloutTarget",
+        back_populates="rollout",
+        cascade="all, delete-orphan",
+    )
+    events = relationship(
+        "AgentRolloutEvent",
+        back_populates="rollout",
+        cascade="all, delete-orphan",
+    )
+
+
+class AgentRolloutTarget(Base):
+    """Per-asset OTA rollout state."""
+    __tablename__ = "agent_rollout_targets"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'updating', 'success', 'failed', 'rolled_back', 'cancelled', 'skipped')",
+            name="ck_agent_rollout_targets_status",
+        ),
+        UniqueConstraint(
+            "rollout_id", "asset_id",
+            name="uq_agent_rollout_targets_rollout_asset",
+        ),
+    )
+
+    id = UUIDColumn()
+    rollout_id = Column(
+        UUIDString(),
+        ForeignKey("agent_rollouts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    organization_id = Column(
+        UUIDString(),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    asset_id = Column(
+        UUIDString(),
+        ForeignKey("assets.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    wave_index = Column(Integer, nullable=False, default=0, server_default="0")
+    status = Column(String(30), nullable=False, default="pending", server_default="pending")
+    current_version = Column(String(100))
+    attempts = Column(Integer, nullable=False, default=0, server_default="0")
+    command_id = Column(String(255))
+    rollback_command_id = Column(String(255))
+    failure_reason = Column(Text)
+    dispatched_at = Column(DateTime(timezone=True))
+    completed_at = Column(DateTime(timezone=True))
+    last_event_at = Column(DateTime(timezone=True))
+
+    rollout = relationship("AgentRollout", back_populates="targets")
+
+
+class AgentRolloutEvent(Base):
+    """Append-only rollout event stream."""
+    __tablename__ = "agent_rollout_events"
+
+    id = UUIDColumn()
+    rollout_id = Column(
+        UUIDString(),
+        ForeignKey("agent_rollouts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    organization_id = Column(
+        UUIDString(),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    event_type = Column(String(100), nullable=False)
+    asset_id = Column(
+        UUIDString(),
+        ForeignKey("assets.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    detail = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False, default=dict)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, server_default=func.now())
+
+    rollout = relationship("AgentRollout", back_populates="events")
 
 
 class IntegrationConfiguration(Base):
@@ -1227,8 +1831,155 @@ class ERPCorrelation(Base):
     organization_id = UUIDForeignKey("organizations.id", nullable=False)
     correlation_type = Column(String(100), nullable=False)
     erp_event_id = UUIDForeignKey("erp_integration_events.id", nullable=True)
-    sensor_event_id = Column(String(36), nullable=True)
+    sensor_event_id = Column(UUIDString(), nullable=True)
     correlation_score = Column(Numeric, nullable=True)
     correlation_metadata = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
+
+
+class ErrorEvent(Base):
+    """Aggregated unhandled-exception fingerprint (Error Triage).
+
+    One row per unique (exception type + route template + crash location). Only
+    metadata and scrubbed samples are stored — never request bodies, headers, or
+    user identity. Mirrors database/migrations/018_error_events.sql.
+    """
+    __tablename__ = "error_events"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('open', 'acknowledged', 'resolved')",
+            name="ck_error_events_status",
+        ),
+    )
+
+    fingerprint = Column(String(16), primary_key=True)
+    exception_type = Column(String(255), nullable=False)
+    route = Column(String(512), nullable=False)
+    method = Column(String(10), nullable=False)
+    status_code = Column(Integer, nullable=False, default=500, server_default="500")
+    message_sample = Column(String(500))
+    traceback_sample = Column(Text)
+    total_count = Column(BigInteger, nullable=False, default=0, server_default="0")
+    regression_count = Column(Integer, nullable=False, default=0, server_default="0")
+    status = Column(String(20), nullable=False, default="open", server_default="open")
+    status_changed_by = Column(
+        UUIDString(),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    status_changed_at = Column(DateTime(timezone=True))
+    first_seen = Column(DateTime(timezone=True), nullable=False)
+    last_seen = Column(DateTime(timezone=True), nullable=False)
+    organization_id = Column(UUIDString(), nullable=True)
+
+    buckets = relationship(
+        "ErrorEventBucket",
+        back_populates="error_event",
+        cascade="all, delete-orphan",
+    )
+
+
+class ErrorEventBucket(Base):
+    """Hourly occurrence rollup for an error fingerprint (Error Triage trends)."""
+    __tablename__ = "error_event_buckets"
+
+    fingerprint = Column(
+        String(16),
+        ForeignKey("error_events.fingerprint", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    bucket_hour = Column(DateTime(timezone=True), primary_key=True)
+    count = Column(BigInteger, nullable=False, default=0, server_default="0")
+
+    error_event = relationship("ErrorEvent", back_populates="buckets")
+
+
+class ModelRegistryEntry(Base):
+    """Tenant-scoped cloud-trained model artifact metadata (MLOps registry).
+
+    Serves the ``{version, download_url, sha256_hash}`` contract that the edge
+    MLOps client (``services/mlops_pipeline.py``) already polls. ``name`` keys
+    the model family (``anomaly``, ``oee_forecast``, ``tactical-engine``);
+    ``feature_contract`` pins the ordered input feature names + normalization so
+    a served ``.pt`` matches what the edge feeds at inference.
+    """
+    __tablename__ = "model_registry"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('draft', 'published', 'yanked')",
+            name="ck_model_registry_status",
+        ),
+        UniqueConstraint(
+            "organization_id", "name", "version",
+            name="uq_model_registry_org_name_version",
+        ),
+    )
+
+    id = UUIDColumn()
+    organization_id = Column(
+        UUIDString(),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    name = Column(String(100), nullable=False)
+    version = Column(String(100), nullable=False)
+    framework = Column(String(50), nullable=False, default="torchscript", server_default="torchscript")
+    artifact_storage_key = Column(Text, nullable=False)
+    checksum_sha256 = Column(String(64), nullable=False)
+    feature_contract = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False, default=dict)
+    metrics = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False, default=dict)
+    training_run_id = Column(UUIDString(), nullable=True)
+    release_notes = Column(Text)
+    status = Column(String(30), nullable=False, default="draft", server_default="draft")
+    created_by = Column(
+        UUIDString(),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        server_default=func.now(),
+    )
+
+
+class ModelTrainingRun(Base):
+    """Provenance + metrics for a cloud training run that produces a registry model."""
+    __tablename__ = "model_training_runs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'running', 'succeeded', 'failed', 'cancelled')",
+            name="ck_model_training_runs_status",
+        ),
+    )
+
+    id = UUIDColumn()
+    organization_id = Column(
+        UUIDString(),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    model_name = Column(String(100), nullable=False)
+    status = Column(String(30), nullable=False, default="pending", server_default="pending")
+    params = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False, default=dict)
+    metrics = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False, default=dict)
+    dataset_window_start = Column(DateTime(timezone=True))
+    dataset_window_end = Column(DateTime(timezone=True))
+    sample_count = Column(Integer)
+    produced_model_id = Column(
+        UUIDString(),
+        ForeignKey("model_registry.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    error = Column(Text)
+    created_by = Column(
+        UUIDString(),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, server_default=func.now())
+    started_at = Column(DateTime(timezone=True))
+    completed_at = Column(DateTime(timezone=True))
