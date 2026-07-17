@@ -274,8 +274,10 @@ def main() -> int:
                               "vehicle_number": "TRK-SMOKE-9"})
         check("vehicle create (new D20 endpoint)", r.status_code == 200, r.text[:300])
         r = client.get("/api/v1/transportation/vehicles", headers=AUTH)
+        # FS-99: vehicles list returns the {items, meta} pagination envelope now.
+        vehicle_items = (r.json() or {}).get("items", []) if r.status_code == 200 else []
         check("vehicle list", r.status_code == 200
-              and any(v["vehicleNumber"] == "TRK-SMOKE-9" for v in r.json()), r.text[:200])
+              and any(v["vehicleNumber"] == "TRK-SMOKE-9" for v in vehicle_items), r.text[:200])
 
         r = client.post("/api/v1/transportation/shipments", headers=AUTH,
                         json={"organization_id": DEV_ORG, "carrier_id": carrier_id,

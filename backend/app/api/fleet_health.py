@@ -13,10 +13,11 @@ convention.
 
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,6 +27,72 @@ from app.db.models import GeoTabDiagnostic, GeoTabException, GeoTabTrip, Driver,
 from app.db.logistics_models import GeofenceZone
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
+
+
+# ---- Response schemas (FS-100). Field names stay camelCase — this router's
+# responses match the frontend client types directly (no transform adapter).
+# Shapes are unchanged; these only document/type what the handlers already return.
+
+class FleetHealthStatsResponse(BaseModel):
+    totalVehicles: int
+    activeDtcs: int
+    criticalDtcs: int
+    vehiclesWithIssues: int
+
+
+class DtcItem(BaseModel):
+    code: Optional[str] = None
+    description: Optional[str] = None
+    severity: str
+    system: str
+    timestamp: Optional[str] = None
+    cleared: bool
+    vehicleId: Optional[str] = None
+    vehicleNumber: Optional[str] = None
+
+
+class GeoPosition(BaseModel):
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    timestamp: Optional[str] = None
+
+
+class VehicleLocationItem(BaseModel):
+    deviceId: Optional[str] = None
+    vehicleId: Optional[str] = None
+    driverId: Optional[str] = None
+    position: GeoPosition
+    status: str
+    speed: float
+    heading: float
+    lastUpdate: Optional[str] = None
+
+
+class LatLng(BaseModel):
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+
+
+class ActiveRouteItem(BaseModel):
+    shipmentId: str
+    shipmentNumber: Optional[str] = None
+    origin: LatLng
+    destination: LatLng
+    waypoints: List[Any]
+    status: str
+    vehicleId: Optional[str] = None
+    color: str
+
+
+class GeofenceItem(BaseModel):
+    id: str
+    name: str
+    type: str
+    center: Optional[LatLng] = None
+    radius: Optional[float] = None
+    coordinates: List[Any]
+    color: str
+    description: Optional[str] = None
 
 # OBD-II DTC prefix -> health system bucket used by the frontend type.
 _SYSTEM = {"P": "engine", "C": "other", "B": "safety", "U": "other"}
@@ -103,7 +170,7 @@ async def fleet_health(org_id: UUID = Depends(get_tenant_org_id), db: AsyncSessi
     return out
 
 
-@router.get("/health/statistics")
+@router.get("/health/statistics", response_model=FleetHealthStatsResponse)
 async def fleet_health_stats(org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
     diags = await _active_diagnostics(db, org_id)
     vehicles = {d.vehicle_id for d in diags if d.vehicle_id}
@@ -128,12 +195,12 @@ async def vehicle_health(vehicle_id: str, org_id: UUID = Depends(get_tenant_org_
     }
 
 
-@router.get("/dtcs")
+@router.get("/dtcs", response_model=List[DtcItem])
 async def all_dtcs(org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
     return [_dtc_out(d) for d in await _active_diagnostics(db, org_id)]
 
 
-@router.get("/vehicles/{vehicle_id}/dtcs")
+@router.get("/vehicles/{vehicle_id}/dtcs", response_model=List[DtcItem])
 async def vehicle_dtcs(vehicle_id: str, org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
     diags = await _active_diagnostics(db, org_id)
     return [_dtc_out(d) for d in diags if d.vehicle_id == vehicle_id]
@@ -215,7 +282,7 @@ async def one_driver_safety(driver_id: str, org_id: UUID = Depends(get_tenant_or
 
 # ------------------------------------------------------------- live tracking
 
-@router.get("/vehicles/locations")
+@router.get("/vehicles/locations", response_model=List[VehicleLocationItem])
 async def vehicle_locations(org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
     trips = (await db.execute(
         select(GeoTabTrip).where(GeoTabTrip.organization_id == org_id).order_by(GeoTabTrip.start_time.desc())
@@ -236,7 +303,7 @@ async def vehicle_locations(org_id: UUID = Depends(get_tenant_org_id), db: Async
     return list(seen.values())
 
 
-@router.get("/vehicles/{device_id}/location")
+@router.get("/vehicles/{device_id}/location", response_model=VehicleLocationItem)
 async def vehicle_location(device_id: str, org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
     from fastapi import HTTPException
     all_locs = await vehicle_locations(org_id, db)
@@ -246,7 +313,7 @@ async def vehicle_location(device_id: str, org_id: UUID = Depends(get_tenant_org
     raise HTTPException(status_code=404, detail="no location for device")
 
 
-@router.get("/shipments/active-routes")
+@router.get("/shipments/active-routes", response_model=List[ActiveRouteItem])
 async def active_routes(org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
     ships = (await db.execute(
         select(Shipment).where(
@@ -270,7 +337,7 @@ async def active_routes(org_id: UUID = Depends(get_tenant_org_id), db: AsyncSess
     return out
 
 
-@router.get("/geofences")
+@router.get("/geofences", response_model=List[GeofenceItem])
 async def fleet_geofences(org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
     zones = (await db.execute(
         select(GeofenceZone).where(

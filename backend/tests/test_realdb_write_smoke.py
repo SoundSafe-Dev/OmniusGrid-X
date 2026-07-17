@@ -116,7 +116,11 @@ async def test_yard_trailer_create_then_read(client_a, seeded_orgs):
         "/api/v1/yard/trailers", params={"organization_id": org}
     )
     assert inventory.status_code == 200, inventory.text[:200]
-    assert any(t["trailer_number"] == number for t in inventory.json())
+    # FS-99: yard inventory returns the {items, meta} pagination envelope now.
+    page = inventory.json()
+    assert set(page) == {"items", "meta"}
+    assert page["meta"]["total"] >= 1
+    assert any(t["trailer_number"] == number for t in page["items"])
 
 
 @pytest.mark.asyncio

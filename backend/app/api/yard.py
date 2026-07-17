@@ -4,12 +4,14 @@ Trailer tracking, dock scheduling, yard operations
 """
 
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_active_user
+from app.core.pagination import PaginatedResponse, paginate
 from app.db.database import get_db
 from app.db.models import (
     YardTrailer, DockDoor, YardMove, DriverWaitTime, 
@@ -78,19 +80,23 @@ async def trailer_check_out(
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@router.get("/trailers", response_model=List[YardTrailerResponse])
+@router.get("/trailers", response_model=PaginatedResponse[YardTrailerResponse])
 async def get_yard_inventory(
     organization_id: UUID,
     status: Optional[str] = Query(None, description="Filter by status: checked_in, docked, yard"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=1000),
     db: AsyncSession = Depends(get_db)
 ):
-    """Get current yard inventory"""
-    trailers = await yard_management_service.get_yard_inventory(
+    """Get current yard inventory (FS-99: {items, meta} envelope with a real total)."""
+    trailers, total = await yard_management_service.get_yard_inventory(
         organization_id=organization_id,
         status=status,
+        skip=skip,
+        limit=limit,
         db=db
     )
-    return trailers
+    return paginate(trailers, total, SimpleNamespace(skip=skip, limit=limit))
 
 
 @router.get("/trailers/{trailer_id}", response_model=YardTrailerResponse)

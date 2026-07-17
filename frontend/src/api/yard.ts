@@ -263,8 +263,21 @@ export const yardApi = {
         hasMore: false,
       };
     }
-    const response = await api.get<YardTrailer[]>('/api/v1/yard/trailers', { params: filters ?? {} });
-    return { items: response.data, total: (response.data as any[]).length } as any;
+    // FS-99: backend returns the {items, meta} pagination envelope with a real
+    // total now. Map it to the flat PaginatedResponse; tolerate either casing
+    // of has_more from the transform seam.
+    const response = await api.get<{
+      items: YardTrailer[];
+      meta: { total: number; skip: number; limit: number; has_more?: boolean; hasMore?: boolean };
+    }>('/api/v1/yard/trailers', { params: filters ?? {} });
+    const { items, meta } = response.data;
+    return {
+      items,
+      total: meta.total,
+      skip: meta.skip,
+      limit: meta.limit,
+      hasMore: meta.hasMore ?? meta.has_more ?? meta.skip + items.length < meta.total,
+    };
   },
 
   getTrailer: async (id: string): Promise<YardTrailer> => {
