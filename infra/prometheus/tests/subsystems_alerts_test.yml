@@ -1,0 +1,151 @@
+# promtool unit tests for the FS-107 opsgrid_subsystems alert group.
+# Run from infra/prometheus/:  promtool test rules tests/subsystems_alerts_test.yml
+#
+# Scope: the deterministic counter/gauge/ratio alerts, where the expected firing
+# is exactly reasoned. The three histogram_quantile alerts (NotificationDelivery
+# Slow, DigitalTwinOptimizeSlow, HistorianQueriesSlow) are covered by
+# `promtool check rules` for syntax + by the reachable-threshold comments in
+# alerts.yml (their thresholds sit below the largest finite bucket on purpose);
+# they are intentionally not unit-tested here to keep these fixtures obvious.
+rule_files:
+  - ../alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ---------------------------------------------------------------------------
+  # 50% of notification dispatches fail -> NotificationDeliveryFailing fires
+  # after its 10m window (threshold is 20%).
+  # ---------------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'opsgrid_notification_dispatches_total{channel="webhook",status="failure"}'
+        values: '0+50x20'
+      - series: 'opsgrid_notification_dispatches_total{channel="webhook",status="success"}'
+        values: '0+50x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: NotificationDeliveryFailing
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              team: backend
+            exp_annotations:
+              summary: "Notification delivery failure rate above 20%"
+              description: "More than 20% of notification dispatches have failed over 10 minutes. Downstream alerts (webhook/email/SMS) may not be reaching operators. Check the notification channel config and target reachability."
+              runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/subsystems.md#notifications"
+
+  # ---------------------------------------------------------------------------
+  # All-success dispatches -> no failure alert (numerator has no series).
+  # ---------------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'opsgrid_notification_dispatches_total{channel="webhook",status="success"}'
+        values: '0+100x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: NotificationDeliveryFailing
+        exp_alerts: []
+
+  # ---------------------------------------------------------------------------
+  # The error tracker drops occurrences -> ErrorTrackerDropping fires (critical).
+  # ---------------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'opsgrid_error_tracker_dropped_total{}'
+        values: '0+1x20'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: ErrorTrackerDropping
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              team: backend
+            exp_annotations:
+              summary: "Error tracker is dropping occurrences"
+              description: "The error-tracking aggregator has dropped events at capacity in the last 15 minutes — Error Triage is now under-counting. Investigate the flush pipeline before trusting error dashboards."
+              runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/subsystems.md#error-tracker"
+
+  # ---------------------------------------------------------------------------
+  # Steady-state error tracker (no drops) -> ErrorTrackerDropping stays quiet.
+  # ---------------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'opsgrid_error_tracker_dropped_total{}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: ErrorTrackerDropping
+        exp_alerts: []
+
+  # ---------------------------------------------------------------------------
+  # Pending-fingerprint backlog held above 500 -> ErrorTrackerBacklog fires.
+  # ---------------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'opsgrid_error_tracker_pending_fingerprints{}'
+        values: '800x20'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: ErrorTrackerBacklog
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              team: backend
+            exp_annotations:
+              summary: "Error tracker backlog above 500 fingerprints"
+              description: "The error-tracker has held more than 500 distinct pending fingerprints for 10 minutes — flush is not keeping up with intake. Check ErrorTrackerFlushFailing and the errors sink."
+              runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/subsystems.md#error-tracker"
+
+  # ---------------------------------------------------------------------------
+  # >5 high/critical low-RUL alerts within an hour -> PredictiveMaintenance
+  # LowRULSurge fires (1/min for 70m gives ~60 over the trailing hour).
+  # ---------------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'opsgrid_rul_low_rul_alerts_total{risk_level="critical"}'
+        values: '0+1x70'
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: PredictiveMaintenanceLowRULSurge
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              team: backend
+            exp_annotations:
+              summary: "Surge in high/critical low-RUL predictions"
+              description: "More than 5 high/critical low-RUL alerts were raised in the last hour. Review the Predictive Maintenance board — this is either a genuine cluster of aging assets or a bad health-index/telemetry feed skewing the estimator."
+              runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/subsystems.md#predictive-maintenance"
+
+  # ---------------------------------------------------------------------------
+  # Low-RUL alerts only at 'low' risk -> the surge alert (high|critical) stays
+  # quiet: proves the risk_level matcher is doing its job.
+  # ---------------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'opsgrid_rul_low_rul_alerts_total{risk_level="low"}'
+        values: '0+1x70'
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: PredictiveMaintenanceLowRULSurge
+        exp_alerts: []
+
+  # ---------------------------------------------------------------------------
+  # Ingestion lag pinned at 200s on a topic -> IngestionLagHighApp fires.
+  # ---------------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'opsgrid_ingestion_lag_seconds{topic="telemetry"}'
+        values: '200x20'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: IngestionLagHighApp
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              team: backend
+              topic: telemetry
+            exp_annotations:
+              summary: "Ingestion lag above 2 minutes"
+              description: "Topic telemetry has an event-to-write lag above 120s for 10 minutes. Telemetry is landing late; check the ingestion worker throughput and TimescaleDB write path."
+              runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/subsystems.md#ingestion"
