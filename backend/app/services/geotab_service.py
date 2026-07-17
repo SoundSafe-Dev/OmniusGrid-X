@@ -43,22 +43,22 @@ class GeoTabService:
         # In production, this would connect to actual GeoTab API
         # For now, providing mock implementation
         self.mock_devices = {
-            "DEV-001": {"driver_id": None, "status": "active", "last_seen": datetime.utcnow()},
-            "DEV-002": {"driver_id": None, "status": "active", "last_seen": datetime.utcnow()},
-            "DEV-003": {"driver_id": None, "status": "active", "last_seen": datetime.utcnow()},
-            "DEV-004": {"driver_id": None, "status": "active", "last_seen": datetime.utcnow()},
-            "DEV-005": {"driver_id": None, "status": "active", "last_seen": datetime.utcnow()},
-            "DEV-006": {"driver_id": None, "status": "active", "last_seen": datetime.utcnow()},
-            "DEV-007": {"driver_id": None, "status": "active", "last_seen": datetime.utcnow()},
-            "DEV-008": {"driver_id": None, "status": "active", "last_seen": datetime.utcnow()},
-            "DEV-009": {"driver_id": None, "status": "active", "last_seen": datetime.utcnow()},
-            "DEV-010": {"driver_id": None, "status": "active", "last_seen": datetime.utcnow()},
-            "DEV-011": {"driver_id": None, "status": "active", "last_seen": datetime.utcnow()},
-            "DEV-012": {"driver_id": None, "status": "active", "last_seen": datetime.utcnow()},
-            "DEV-013": {"driver_id": None, "status": "active", "last_seen": datetime.utcnow()},
-            "DEV-014": {"driver_id": None, "status": "active", "last_seen": datetime.utcnow()},
-            "DEV-015": {"driver_id": None, "status": "active", "last_seen": datetime.utcnow()},
-            "DEV-088": {"driver_id": None, "status": "active", "last_seen": datetime.utcnow()},
+            "DEV-001": {"driver_id": None, "status": "active", "last_seen": datetime.now(timezone.utc)},
+            "DEV-002": {"driver_id": None, "status": "active", "last_seen": datetime.now(timezone.utc)},
+            "DEV-003": {"driver_id": None, "status": "active", "last_seen": datetime.now(timezone.utc)},
+            "DEV-004": {"driver_id": None, "status": "active", "last_seen": datetime.now(timezone.utc)},
+            "DEV-005": {"driver_id": None, "status": "active", "last_seen": datetime.now(timezone.utc)},
+            "DEV-006": {"driver_id": None, "status": "active", "last_seen": datetime.now(timezone.utc)},
+            "DEV-007": {"driver_id": None, "status": "active", "last_seen": datetime.now(timezone.utc)},
+            "DEV-008": {"driver_id": None, "status": "active", "last_seen": datetime.now(timezone.utc)},
+            "DEV-009": {"driver_id": None, "status": "active", "last_seen": datetime.now(timezone.utc)},
+            "DEV-010": {"driver_id": None, "status": "active", "last_seen": datetime.now(timezone.utc)},
+            "DEV-011": {"driver_id": None, "status": "active", "last_seen": datetime.now(timezone.utc)},
+            "DEV-012": {"driver_id": None, "status": "active", "last_seen": datetime.now(timezone.utc)},
+            "DEV-013": {"driver_id": None, "status": "active", "last_seen": datetime.now(timezone.utc)},
+            "DEV-014": {"driver_id": None, "status": "active", "last_seen": datetime.now(timezone.utc)},
+            "DEV-015": {"driver_id": None, "status": "active", "last_seen": datetime.now(timezone.utc)},
+            "DEV-088": {"driver_id": None, "status": "active", "last_seen": datetime.now(timezone.utc)},
         }
     
     async def get_exceptions(
@@ -84,7 +84,7 @@ class GeoTabService:
                 "exception_type": exc_type,
                 "device_id": random.choice(list(self.mock_devices.keys())),
                 "driver_id": str(driver_id) if driver_id else f"DRV-{random.randint(1, 100)}",
-                "timestamp": (datetime.utcnow() - timedelta(hours=random.randint(0, hours_back))).isoformat(),
+                "timestamp": (datetime.now(timezone.utc) - timedelta(hours=random.randint(0, hours_back))).isoformat(),
                 "severity": random.choice(["low", "medium", "high", "critical"]),
                 "location": {
                     "latitude": round(random.uniform(40.0, 42.0), 6),
@@ -115,7 +115,7 @@ class GeoTabService:
         return {
             "device_id": device_id,
             "status": "active",
-            "last_seen": datetime.utcnow().isoformat(),
+            "last_seen": datetime.now(timezone.utc).isoformat(),
             "diagnostics": {
                 "dtc_codes": random.sample(dtc_codes, random.randint(0, 3)),
                 "check_engine_light": random.choice([True, False]),
@@ -185,7 +185,7 @@ class GeoTabService:
                 organization_id=webhook_data.get("organization_id"),
                 exception_type=webhook_data.get("exception_type"),
                 severity=webhook_data.get("severity", "medium"),
-                timestamp=datetime.fromisoformat(webhook_data.get("timestamp", datetime.utcnow().isoformat())),
+                timestamp=datetime.fromisoformat(webhook_data.get("timestamp", datetime.now(timezone.utc).isoformat())),
                 location=webhook_data.get("location"),
                 details=webhook_data.get("details", {})
             )
@@ -242,10 +242,10 @@ class GeoTabService:
         ts_raw = webhook_data.get("timestamp")
         try:
             ts = (datetime.fromisoformat(str(ts_raw).replace("Z", "+00:00"))
-                  if ts_raw else datetime.utcnow())
+                  if ts_raw else datetime.now(timezone.utc))
         except (ValueError, TypeError):
             logger.warning("geotab_location_bad_timestamp", device_id=device_id, raw=ts_raw)
-            ts = datetime.utcnow()
+            ts = datetime.now(timezone.utc)
         # Store naive-UTC uniformly (matches the models' utcnow defaults) so
         # rows never mix naive and aware values in one column.
         if ts.tzinfo is not None:
@@ -345,7 +345,7 @@ class GeoTabService:
             "drive_hours_remaining": round(random.uniform(0, 11), 2),
             "cycle_hours_remaining": round(random.uniform(0, 70), 2),
             "violations_today": 1 if driver.hos_drive_hours_today > 11 else 0,
-            "next_break_required": (datetime.utcnow() + timedelta(hours=random.randint(0, 8))).isoformat()
+            "next_break_required": (datetime.now(timezone.utc) + timedelta(hours=random.randint(0, 8))).isoformat()
         }
     
     async def get_devices(
@@ -461,14 +461,14 @@ class GeoTabService:
                 "latitude": round(random.uniform(40.0, 42.0), 6),
                 "longitude": round(random.uniform(-88.0, -86.0), 6),
             }
-            timestamp = datetime.utcnow()
+            timestamp = datetime.now(timezone.utc)
 
         return {
             "latitude": location.get("latitude"),
             "longitude": location.get("longitude"),
             "speed": location.get("speed"),
             "heading": location.get("heading"),
-            "timestamp": (timestamp or datetime.utcnow()).isoformat(),
+            "timestamp": (timestamp or datetime.now(timezone.utc)).isoformat(),
             "address": location.get("address"),
         }
 

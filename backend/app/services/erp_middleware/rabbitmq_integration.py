@@ -8,7 +8,7 @@ Service for integrating with RabbitMQ for ERP messaging:
 """
 
 from typing import Dict, Any, Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 import structlog
 import aiohttp
 import json
@@ -250,7 +250,7 @@ class RabbitMQIntegrationService:
             "headers": {
                 "organization_id": self.organization_id,
                 "integration_id": self.integration_id,
-                "timestamp": datetime.utcnow().isoformat()
+                "timestamp": datetime.now(timezone.utc).isoformat()
             }
         }
         
@@ -454,7 +454,7 @@ class RabbitMQIntegrationService:
                             "status": "healthy",
                             "message": "RabbitMQ connection successful",
                             "vhost": self.vhost,
-                            "checked_at": datetime.utcnow().isoformat()
+                            "checked_at": datetime.now(timezone.utc).isoformat()
                         }
                     else:
                         raise Exception(f"RabbitMQ health check failed: {response.status}")
@@ -463,5 +463,5 @@ class RabbitMQIntegrationService:
                 "status": "unhealthy",
                 "message": str(e),
                 "vhost": self.vhost,
-                "checked_at": datetime.utcnow().isoformat()
+                "checked_at": datetime.now(timezone.utc).isoformat()
             }

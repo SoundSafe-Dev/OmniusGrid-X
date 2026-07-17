@@ -365,7 +365,7 @@ class BulkProcessor:
             asset.asset_type_id = await self._resolve_asset_type(session, row)
         if row.get("workcell") or row.get("workcell_id"):
             asset.workcell_id = await self._resolve_workcell(session, row, organization_id)
-        asset.updated_at = datetime.utcnow()
+        asset.updated_at = datetime.now(timezone.utc)
 
     async def _resolve_asset_type(self, session, row: dict) -> uuid.UUID:
         """Resolve asset_type by id (wins) or name. AssetType is global (no org)."""
@@ -494,7 +494,7 @@ class BulkProcessor:
         task = result.scalar_one_or_none()
         if task is None:
             raise _RowError("task not found in your organization")
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         if operation == "move":
             target_column_id = params.get("target_column_id")
@@ -628,7 +628,7 @@ class BulkProcessor:
             raise _RowError("alarm already acknowledged")
         alarm.is_acknowledged = True
         alarm.acknowledged_by = str(actor_id)  # acknowledged_by is String(36)
-        alarm.acknowledged_at = datetime.utcnow()
+        alarm.acknowledged_at = datetime.now(timezone.utc)
         if comment:
             alarm.acknowledged_comment = comment
 

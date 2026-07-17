@@ -7,7 +7,7 @@ field mappings, and sync operations.
 
 from typing import List, Dict, Any, Optional
 from uuid import UUID
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, Field
@@ -343,7 +343,7 @@ async def update_integration(
         config["ip_whitelist"] = request.ip_whitelist
     
     integration.configuration = config
-    integration.updated_at = datetime.utcnow()
+    integration.updated_at = datetime.now(timezone.utc)
     
     await db.commit()
     await db.refresh(integration)
@@ -427,7 +427,7 @@ async def test_connection(
         raise HTTPException(status_code=404, detail="Integration not found")
 
     # Build the concrete connector and run its real health check.
-    tested_at = datetime.utcnow()
+    tested_at = datetime.now(timezone.utc)
     try:
         connector = ERPConnectorFactory.create(integration)
     except UnsupportedERPType as exc:
@@ -512,7 +512,7 @@ async def trigger_sync(
         "message": f"Sync triggered for {len(entity_types)} entity type(s)",
         "integration_id": str(integration_id),
         "entity_types": entity_types,
-        "triggered_at": datetime.utcnow().isoformat(),
+        "triggered_at": datetime.now(timezone.utc).isoformat(),
     }
 
 
@@ -563,7 +563,7 @@ async def run_erp_sync(integration_id: str, organization_id: str, entity_types: 
         source_system = str(integration.erp_type or "erp")
         any_success = False
         for etype in entity_types:
-            started = datetime.utcnow()
+            started = datetime.now(timezone.utc)
             synced = failed = 0
             status = "success"
             try:
@@ -587,14 +587,14 @@ async def run_erp_sync(integration_id: str, organization_id: str, entity_types: 
                         ))
                     else:
                         existing.entity_data = record
-                        existing.updated_at = datetime.utcnow()
+                        existing.updated_at = datetime.now(timezone.utc)
                     synced += 1
                 any_success = True
             except Exception as exc:
                 status, failed = "failed", 1
                 logger.error("erp_sync_entity_failed", entity_type=etype, error=str(exc))
 
-            duration = (datetime.utcnow() - started).total_seconds()
+            duration = (datetime.now(timezone.utc) - started).total_seconds()
             sync_row = (
                 await db.execute(
                     _select(ERPSyncStatus).where(
@@ -616,7 +616,7 @@ async def run_erp_sync(integration_id: str, organization_id: str, entity_types: 
             summary[etype] = {"status": status, "records_synced": synced, "records_failed": failed}
 
         if any_success:
-            integration.last_successful_sync = datetime.utcnow()
+            integration.last_successful_sync = datetime.now(timezone.utc)
         await db.commit()
         try:
             await connector.close()
@@ -794,7 +794,7 @@ async def update_field_mapping(
     if request.is_required is not None:
         mapping.is_required = request.is_required
     
-    mapping.updated_at = datetime.utcnow()
+    mapping.updated_at = datetime.now(timezone.utc)
     
     await db.commit()
     await db.refresh(mapping)

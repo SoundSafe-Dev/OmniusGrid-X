@@ -4,7 +4,7 @@ Automated from telemetry data using PackML state machine
 """
 
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional, Any, List
 from dataclasses import dataclass, field
 from enum import Enum
@@ -54,15 +54,25 @@ class StateTransition:
     duration_seconds: Optional[float] = None
 
 
+def _aware_utc(dt: datetime) -> datetime:
+    """Coerce a possibly-naive datetime to aware UTC (naive is assumed UTC).
+
+    Transition history can carry naive datetimes (SQLite reads, shim tests,
+    older callers); internal now/cutoff values are aware since the FS-96 sweep,
+    and mixing the two raises TypeError on every comparison/subtraction.
+    """
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
+
 class OEECalculator:
     """
     Automated OEE calculation from telemetry and PackML states.
-    
+
     Monitors asset state transitions to calculate:
     - Availability: Production time vs planned time
     - Performance: Actual vs ideal cycle time
     - Quality: Good parts vs total parts
-    
+
     Uses telemetry counters for automatic part counting.
     """
     
@@ -142,8 +152,14 @@ class OEECalculator:
         Called by ingestion worker on state transitions.
         """
         if timestamp is None:
-            timestamp = datetime.utcnow()
-        
+            timestamp = datetime.now(timezone.utc)
+        elif timestamp.tzinfo is None:
+            # Boundary coercion: callers (edge ingest payloads, SQLite-loaded
+            # values, tests) may pass naive datetimes; internal comparisons are
+            # timezone-aware since the FS-96 sweep, so treat naive as UTC here
+            # instead of exploding at every downstream `>` / `-`.
+            timestamp = timestamp.replace(tzinfo=timezone.utc)
+
         # Initialize asset tracking if needed
         if asset_id not in self._asset_states:
             self._asset_states[asset_id] = {
@@ -157,7 +173,7 @@ class OEECalculator:
         asset_state = self._asset_states[asset_id]
         
         # Calculate duration of previous state
-        duration = (timestamp - asset_state['state_start_time']).total_seconds()
+        duration = (timestamp - _aware_utc(asset_state['state_start_time'])).total_seconds()
         
         # Record transition
         transition = StateTransition(
@@ -173,7 +189,7 @@ class OEECalculator:
         cutoff = timestamp - timedelta(hours=24)
         self._state_history[asset_id] = [
             t for t in self._state_history[asset_id]
-            if t.timestamp > cutoff
+            if _aware_utc(t.timestamp) > cutoff
         ]
         
         # Update current state
@@ -275,13 +291,13 @@ class OEECalculator:
         if asset_id not in self._state_history:
             return OEEMetrics()
         
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         cutoff = now - timedelta(hours=time_window_hours)
         
         # Get relevant state transitions
         transitions = [
             t for t in self._state_history[asset_id]
-            if t.timestamp > cutoff
+            if _aware_utc(t.timestamp) > cutoff
         ]
         
         # Include current state
@@ -453,7 +469,7 @@ class OEECalculator:
                 await session.execute(
                     insert("oee_metrics").values(
                         asset_id=asset_id,
-                        timestamp=datetime.utcnow(),
+                        timestamp=datetime.now(timezone.utc),
                         availability=oee.availability,
                         performance=oee.performance,
                         quality=oee.quality,

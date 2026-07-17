@@ -9,7 +9,7 @@ Service for replicating ERP database changes using CDC:
 """
 
 from typing import Dict, Any, Optional, List
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_
@@ -85,7 +85,7 @@ class ERPDatabaseReplicationService:
             "status": "replication_started",
             "tables": tables,
             "erp_type": self.erp_type,
-            "started_at": datetime.utcnow().isoformat()
+            "started_at": datetime.now(timezone.utc).isoformat()
         }
     
     async def _initialize_cdc_for_table(
@@ -273,7 +273,7 @@ class ERPDatabaseReplicationService:
             "entity_type": table,
             "entity_data": data,
             "source_system": self.erp_type,
-            "created_at": datetime.utcnow().isoformat()
+            "created_at": datetime.now(timezone.utc).isoformat()
         }
     
     async def _upsert_entity(
@@ -314,7 +314,7 @@ class ERPDatabaseReplicationService:
         
         if existing:
             # Update existing record
-            existing.valid_to = datetime.utcnow()
+            existing.valid_to = datetime.now(timezone.utc)
             existing.is_active = False
             
             # Create new version
@@ -326,7 +326,7 @@ class ERPDatabaseReplicationService:
                 entity_data=normalized_data,
                 source_system=self.erp_type,
                 is_active=True,
-                valid_from=datetime.utcnow()
+                valid_from=datetime.now(timezone.utc)
             )
             db.add(new_entity)
         else:
@@ -339,7 +339,7 @@ class ERPDatabaseReplicationService:
                 entity_data=normalized_data,
                 source_system=self.erp_type,
                 is_active=True,
-                valid_from=datetime.utcnow()
+                valid_from=datetime.now(timezone.utc)
             )
             db.add(entity)
     
@@ -375,7 +375,7 @@ class ERPDatabaseReplicationService:
         entity = result.scalar_one_or_none()
         
         if entity:
-            entity.valid_to = datetime.utcnow()
+            entity.valid_to = datetime.now(timezone.utc)
             entity.is_active = False
     
     async def _update_last_lsn(
@@ -473,5 +473,5 @@ class ERPDatabaseReplicationService:
             "status": "replication_stopped",
             "erp_type": self.erp_type,
             "integration_id": self.integration_id,
-            "stopped_at": datetime.utcnow().isoformat()
+            "stopped_at": datetime.now(timezone.utc).isoformat()
         }

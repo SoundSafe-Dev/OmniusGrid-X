@@ -2,7 +2,7 @@
 
 from typing import List, Optional
 from uuid import UUID
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 from types import SimpleNamespace
 from sqlalchemy import select, and_, func
@@ -48,7 +48,7 @@ async def list_alarms(
     
     # Default to last 24 hours if no time range
     if not start_time and not end_time:
-        query = query.where(Alarm.occurred_at >= datetime.utcnow() - timedelta(hours=24))
+        query = query.where(Alarm.occurred_at >= datetime.now(timezone.utc) - timedelta(hours=24))
     
     total = (
         await db.execute(select(func.count()).select_from(query.subquery()))
@@ -136,7 +136,7 @@ async def acknowledge_alarm(
     
     alarm.is_acknowledged = True
     alarm.acknowledged_by = user_id
-    alarm.acknowledged_at = datetime.utcnow()
+    alarm.acknowledged_at = datetime.now(timezone.utc)
     alarm.acknowledged_comment = ack_data.comment
     
     await db.commit()
@@ -160,7 +160,7 @@ async def clear_alarm(
         raise HTTPException(status_code=404, detail="Alarm not found")
     
     alarm.is_active = False
-    alarm.cleared_at = datetime.utcnow()
+    alarm.cleared_at = datetime.now(timezone.utc)
     
     await db.commit()
     await db.refresh(alarm)
@@ -191,7 +191,7 @@ async def acknowledge_all_alarms(
     result = await db.execute(query)
     alarms = result.scalars().all()
     
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     for alarm in alarms:
         alarm.is_acknowledged = True
         alarm.acknowledged_by = user_id

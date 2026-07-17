@@ -10,7 +10,7 @@ organizations.
 
 from typing import List, Optional
 from uuid import UUID
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -152,7 +152,7 @@ async def get_telemetry_history(
 ):
     """Get telemetry history for an asset in the user's organization."""
     if not end_time:
-        end_time = datetime.utcnow()
+        end_time = datetime.now(timezone.utc)
     if not start_time:
         start_time = end_time - timedelta(hours=24)
 

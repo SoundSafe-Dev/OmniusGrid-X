@@ -462,7 +462,7 @@ async def update_export_template(
     template.export_format = export_format
     template.columns = columns
     template.filters = filters
-    template.updated_at = datetime.utcnow()
+    template.updated_at = datetime.now(timezone.utc)
     try:
         await db.commit()
     except IntegrityError:
@@ -641,7 +641,7 @@ async def update_scheduled_export(
     schedule.next_run_at = next_run_at
     schedule.recipients = recipients
     schedule.is_active = is_active
-    schedule.updated_at = datetime.utcnow()
+    schedule.updated_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(schedule)
     return _schedule_dict(schedule)
@@ -749,7 +749,7 @@ async def export_kanban_tasks(
     )
     return Response(
         content=content, media_type=XLSX_MEDIA_TYPE,
-        headers=_disposition(f"kanban_tasks_{_stamp(datetime.utcnow())}.xlsx"),
+        headers=_disposition(f"kanban_tasks_{_stamp(datetime.now(timezone.utc))}.xlsx"),
     )
 
 
@@ -770,7 +770,7 @@ async def export_registries(
     )
     return Response(
         content=content, media_type=XLSX_MEDIA_TYPE,
-        headers=_disposition(f"registries_{_stamp(datetime.utcnow())}.xlsx"),
+        headers=_disposition(f"registries_{_stamp(datetime.now(timezone.utc))}.xlsx"),
     )
 
 
@@ -841,7 +841,7 @@ async def export_oee_summary(
     )
     return Response(
         content=content, media_type="application/pdf",
-        headers=_disposition(f"oee_summary_{_stamp(datetime.utcnow())}.pdf"),
+        headers=_disposition(f"oee_summary_{_stamp(datetime.now(timezone.utc))}.pdf"),
     )
 
 

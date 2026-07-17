@@ -6,7 +6,7 @@ from typing import Dict, Set, Optional, Any
 from fastapi import WebSocket, WebSocketDisconnect
 import structlog
 from aiokafka import AIOKafkaConsumer
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.core.config import settings
 
@@ -26,7 +26,7 @@ class WebSocketMessage:
         self.payload = payload
         self.organization_id = organization_id
         self.asset_id = asset_id
-        self.timestamp = datetime.utcnow().isoformat()
+        self.timestamp = datetime.now(timezone.utc).isoformat()
     
     def to_dict(self) -> dict:
         return {

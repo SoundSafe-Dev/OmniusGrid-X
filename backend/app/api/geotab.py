@@ -4,7 +4,7 @@ Fleet telematics, HOS compliance, vehicle diagnostics
 """
 
 import hmac
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
@@ -70,7 +70,7 @@ async def get_device_trips(
     db: AsyncSession = Depends(get_db)
 ):
     """Trips for a GeoTab device within a time window (default: last 24h)"""
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     return await geotab_service.get_device_trips(
         device_id=device_id,
         from_time=from_time or (now - timedelta(hours=24)),
@@ -148,7 +148,7 @@ async def geotab_webhook(
         return {
             "status": "processed",
             "event_type": webhook_data.get("type"),
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

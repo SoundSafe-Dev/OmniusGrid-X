@@ -11,7 +11,7 @@ Service for extracting and storing Dynamics 365 data:
 """
 
 from typing import Dict, Any, Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
 import structlog
@@ -65,7 +65,7 @@ class DynamicsDataExtractionService:
         Returns:
             Dict with extraction results
         """
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
         
         try:
             # Fetch data from Dynamics
@@ -92,20 +92,20 @@ class DynamicsDataExtractionService:
                 "completed",
                 stored_count,
                 0,
-                (datetime.utcnow() - start_time).total_seconds()
+                (datetime.now(timezone.utc) - start_time).total_seconds()
             )
             
             logger.info(
                 "dynamics_invoices_extracted",
                 count=stored_count,
-                duration_seconds=(datetime.utcnow() - start_time).total_seconds()
+                duration_seconds=(datetime.now(timezone.utc) - start_time).total_seconds()
             )
             
             return {
                 "status": "success",
                 "entity_type": "Invoice",
                 "records_extracted": stored_count,
-                "duration_seconds": (datetime.utcnow() - start_time).total_seconds()
+                "duration_seconds": (datetime.now(timezone.utc) - start_time).total_seconds()
             }
             
         except Exception as e:
@@ -120,7 +120,7 @@ class DynamicsDataExtractionService:
                 "failed",
                 0,
                 1,
-                (datetime.utcnow() - start_time).total_seconds()
+                (datetime.now(timezone.utc) - start_time).total_seconds()
             )
             
             raise
@@ -142,7 +142,7 @@ class DynamicsDataExtractionService:
         Returns:
             Dict with extraction results
         """
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
         
         try:
             # Fetch data from Dynamics
@@ -169,20 +169,20 @@ class DynamicsDataExtractionService:
                 "completed",
                 stored_count,
                 0,
-                (datetime.utcnow() - start_time).total_seconds()
+                (datetime.now(timezone.utc) - start_time).total_seconds()
             )
             
             logger.info(
                 "dynamics_payments_extracted",
                 count=stored_count,
-                duration_seconds=(datetime.utcnow() - start_time).total_seconds()
+                duration_seconds=(datetime.now(timezone.utc) - start_time).total_seconds()
             )
             
             return {
                 "status": "success",
                 "entity_type": "Payment",
                 "records_extracted": stored_count,
-                "duration_seconds": (datetime.utcnow() - start_time).total_seconds()
+                "duration_seconds": (datetime.now(timezone.utc) - start_time).total_seconds()
             }
             
         except Exception as e:
@@ -197,7 +197,7 @@ class DynamicsDataExtractionService:
                 "failed",
                 0,
                 1,
-                (datetime.utcnow() - start_time).total_seconds()
+                (datetime.now(timezone.utc) - start_time).total_seconds()
             )
             
             raise
@@ -219,7 +219,7 @@ class DynamicsDataExtractionService:
         Returns:
             Dict with extraction results
         """
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
         
         try:
             # Fetch data from Dynamics
@@ -246,20 +246,20 @@ class DynamicsDataExtractionService:
                 "completed",
                 stored_count,
                 0,
-                (datetime.utcnow() - start_time).total_seconds()
+                (datetime.now(timezone.utc) - start_time).total_seconds()
             )
             
             logger.info(
                 "dynamics_products_extracted",
                 count=stored_count,
-                duration_seconds=(datetime.utcnow() - start_time).total_seconds()
+                duration_seconds=(datetime.now(timezone.utc) - start_time).total_seconds()
             )
             
             return {
                 "status": "success",
                 "entity_type": "Product",
                 "records_extracted": stored_count,
-                "duration_seconds": (datetime.utcnow() - start_time).total_seconds()
+                "duration_seconds": (datetime.now(timezone.utc) - start_time).total_seconds()
             }
             
         except Exception as e:
@@ -274,7 +274,7 @@ class DynamicsDataExtractionService:
                 "failed",
                 0,
                 1,
-                (datetime.utcnow() - start_time).total_seconds()
+                (datetime.now(timezone.utc) - start_time).total_seconds()
             )
             
             raise
@@ -296,7 +296,7 @@ class DynamicsDataExtractionService:
         Returns:
             Dict with extraction results
         """
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
         
         try:
             # Fetch data from Dynamics
@@ -323,20 +323,20 @@ class DynamicsDataExtractionService:
                 "completed",
                 stored_count,
                 0,
-                (datetime.utcnow() - start_time).total_seconds()
+                (datetime.now(timezone.utc) - start_time).total_seconds()
             )
             
             logger.info(
                 "dynamics_sales_orders_extracted",
                 count=stored_count,
-                duration_seconds=(datetime.utcnow() - start_time).total_seconds()
+                duration_seconds=(datetime.now(timezone.utc) - start_time).total_seconds()
             )
             
             return {
                 "status": "success",
                 "entity_type": "SalesOrder",
                 "records_extracted": stored_count,
-                "duration_seconds": (datetime.utcnow() - start_time).total_seconds()
+                "duration_seconds": (datetime.now(timezone.utc) - start_time).total_seconds()
             }
             
         except Exception as e:
@@ -351,7 +351,7 @@ class DynamicsDataExtractionService:
                 "failed",
                 0,
                 1,
-                (datetime.utcnow() - start_time).total_seconds()
+                (datetime.now(timezone.utc) - start_time).total_seconds()
             )
             
             raise
@@ -373,7 +373,7 @@ class DynamicsDataExtractionService:
         Returns:
             Dict with extraction results
         """
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
         
         try:
             # Fetch data from Dynamics
@@ -400,20 +400,20 @@ class DynamicsDataExtractionService:
                 "completed",
                 stored_count,
                 0,
-                (datetime.utcnow() - start_time).total_seconds()
+                (datetime.now(timezone.utc) - start_time).total_seconds()
             )
             
             logger.info(
                 "dynamics_accounts_extracted",
                 count=stored_count,
-                duration_seconds=(datetime.utcnow() - start_time).total_seconds()
+                duration_seconds=(datetime.now(timezone.utc) - start_time).total_seconds()
             )
             
             return {
                 "status": "success",
                 "entity_type": "Account",
                 "records_extracted": stored_count,
-                "duration_seconds": (datetime.utcnow() - start_time).total_seconds()
+                "duration_seconds": (datetime.now(timezone.utc) - start_time).total_seconds()
             }
             
         except Exception as e:
@@ -428,7 +428,7 @@ class DynamicsDataExtractionService:
                 "failed",
                 0,
                 1,
-                (datetime.utcnow() - start_time).total_seconds()
+                (datetime.now(timezone.utc) - start_time).total_seconds()
             )
             
             raise
@@ -450,7 +450,7 @@ class DynamicsDataExtractionService:
         Returns:
             Dict with extraction results
         """
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
         
         try:
             # Fetch data from Dynamics
@@ -477,20 +477,20 @@ class DynamicsDataExtractionService:
                 "completed",
                 stored_count,
                 0,
-                (datetime.utcnow() - start_time).total_seconds()
+                (datetime.now(timezone.utc) - start_time).total_seconds()
             )
             
             logger.info(
                 "dynamics_projects_extracted",
                 count=stored_count,
-                duration_seconds=(datetime.utcnow() - start_time).total_seconds()
+                duration_seconds=(datetime.now(timezone.utc) - start_time).total_seconds()
             )
             
             return {
                 "status": "success",
                 "entity_type": "Project",
                 "records_extracted": stored_count,
-                "duration_seconds": (datetime.utcnow() - start_time).total_seconds()
+                "duration_seconds": (datetime.now(timezone.utc) - start_time).total_seconds()
             }
             
         except Exception as e:
@@ -505,7 +505,7 @@ class DynamicsDataExtractionService:
                 "failed",
                 0,
                 1,
-                (datetime.utcnow() - start_time).total_seconds()
+                (datetime.now(timezone.utc) - start_time).total_seconds()
             )
             
             raise
@@ -624,7 +624,7 @@ class DynamicsDataExtractionService:
         
         if existing:
             # Update existing record
-            existing.valid_to = datetime.utcnow()
+            existing.valid_to = datetime.now(timezone.utc)
             existing.is_active = False
             
             # Create new version
@@ -636,7 +636,7 @@ class DynamicsDataExtractionService:
                 entity_data=entity_data,
                 source_system=source_system,
                 is_active=True,
-                valid_from=datetime.utcnow()
+                valid_from=datetime.now(timezone.utc)
             )
             db.add(new_entity)
             
@@ -650,7 +650,7 @@ class DynamicsDataExtractionService:
                 entity_data=entity_data,
                 source_system=source_system,
                 is_active=True,
-                valid_from=datetime.utcnow()
+                valid_from=datetime.now(timezone.utc)
             )
             db.add(entity)
         
@@ -686,7 +686,7 @@ class DynamicsDataExtractionService:
         )
         sync_status = result.scalar_one_or_none()
         
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         
         if sync_status:
             sync_status.last_sync_at = now

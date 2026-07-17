@@ -5,7 +5,7 @@ Implements data thinning - sends aggregated features instead of raw telemetry
 
 import asyncio
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
 import structlog
@@ -46,7 +46,7 @@ class FeatureExtractor:
     
     async def extract_features(self, asset_id: str) -> Optional[FeatureVector]:
         """Extract feature vector for an asset over the time window"""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         window_start = now - timedelta(seconds=self.window_seconds)
         
         async with AsyncSessionLocal() as session:

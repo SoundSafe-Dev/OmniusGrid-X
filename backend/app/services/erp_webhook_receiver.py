@@ -10,7 +10,7 @@ Generic webhook receiver infrastructure for ERP systems with:
 """
 
 from typing import Dict, Any, Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 import hmac
 import hashlib
 import ipaddress
@@ -324,7 +324,7 @@ class ERPWebhookReceiver:
         try:
             # Parse timestamp (ISO format)
             event_time = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-            current_time = datetime.utcnow()
+            current_time = datetime.now(timezone.utc)
             
             # Check if timestamp is within 5 minutes
             time_diff = abs((current_time - event_time).total_seconds())
@@ -437,7 +437,7 @@ class ERPWebhookReceiver:
         
         if event:
             event.processing_status = status
-            event.processed_at = datetime.utcnow()
+            event.processed_at = datetime.now(timezone.utc)
             if error_message:
                 event.error_message = error_message
             

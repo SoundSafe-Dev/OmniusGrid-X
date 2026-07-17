@@ -6,7 +6,7 @@ Handles model artifact download, validation, and hot-swapping
 import asyncio
 import hashlib
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Optional, Any
 import structlog
@@ -270,7 +270,7 @@ class MLOpsPipeline:
         report = {
             'type': 'model_deployment',
             'model_version': model_info['version'],
-            'timestamp': datetime.utcnow().isoformat(),
+            'timestamp': datetime.now(timezone.utc).isoformat(),
             'success': success,
             'edge_node_id': settings.EDGE_NODE_ID or 'edge-001',
             'error': error,

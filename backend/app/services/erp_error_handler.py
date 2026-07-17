@@ -10,7 +10,7 @@ Error handling and retry mechanisms for ERP integrations:
 """
 
 from typing import Dict, Any, Optional, List
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 import asyncio
 import structlog
@@ -275,7 +275,7 @@ class ERPErrorHandler:
             # Move to dead letter queue
             event.processing_status = "failed"
             event.error_message = str(error)
-            event.processed_at = datetime.utcnow()
+            event.processed_at = datetime.now(timezone.utc)
             
             logger.error(
                 "event_moved_to_dead_letter_queue",
@@ -328,7 +328,7 @@ class ERPErrorHandler:
             db: Database session
         """
         # Count permanent failures in last hour
-        one_hour_ago = datetime.utcnow() - timedelta(hours=1)
+        one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
         
         result = await db.execute(
             select(ERPIntegrationEvent).where(
@@ -508,7 +508,7 @@ class ERPErrorHandler:
         """
         from sqlalchemy import delete
         
-        cutoff_time = datetime.utcnow() - timedelta(hours=older_than_hours)
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=older_than_hours)
         
         result = await db.execute(
             delete(ERPIntegrationEvent).where(

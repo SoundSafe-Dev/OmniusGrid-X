@@ -11,7 +11,7 @@ Modes:
 """
 
 from typing import Dict, List, Iterator, Optional, Any
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.models.domain_interaction import (
     DomainType,
@@ -77,7 +77,7 @@ def _build_image_mode(extractions, mapping: ImageDomainMapping,
             ingested_metrics=[OperationalMetric(
                 endpoint=_endpoint(domain, source_id, image_id),
                 payload_snapshot=_payload(ext, domain),
-                timestamp=datetime.utcnow().isoformat(),
+                timestamp=datetime.now(timezone.utc).isoformat(),
             )],
         )
         count += 1
@@ -100,7 +100,7 @@ def _build_batch_mode(extractions, mapping: ImageDomainMapping,
         metrics.append(OperationalMetric(
             endpoint=_endpoint(domain, source_id, image_id),
             payload_snapshot=_payload(ext, domain),
-            timestamp=datetime.utcnow().isoformat(),
+            timestamp=datetime.now(timezone.utc).isoformat(),
         ))
         for key in (ext.get("shared_keys") or []):
             key_to_domains.setdefault(key, [])

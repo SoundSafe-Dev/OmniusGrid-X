@@ -10,7 +10,7 @@ Data transformation and normalization service for ERP integrations:
 """
 
 from typing import Dict, Any, Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -90,7 +90,7 @@ class ERPDataTransformer:
             "currency": sap_po.get("Currency"),
             "status": self._map_po_status(sap_po.get("PurchaseOrderStatus")),
             "items": self._transform_po_items(sap_po.get("to_PurchaseOrderItem", [])),
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
             "source_system": "SAP"
         }
         
@@ -118,7 +118,7 @@ class ERPDataTransformer:
             "quantity": self._parse_number(sap_mo.get("TotalQuantity")),
             "unit": sap_po.get("BaseUnit"),
             "status": self._map_mo_status(sap_mo.get("OrderStatus")),
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
             "source_system": "SAP"
         }
         
@@ -146,7 +146,7 @@ class ERPDataTransformer:
             "valuation_price": self._parse_currency(sap_inventory.get("ValuationPrice")),
             "currency": sap_inventory.get("Currency"),
             "last_updated": self._parse_date(sap_inventory.get("LastChangeDateTime")),
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
             "source_system": "SAP"
         }
         
@@ -176,7 +176,7 @@ class ERPDataTransformer:
             "payment_terms": sap_vendor.get("PaymentTerms"),
             "currency": sap_vendor.get("Currency"),
             "is_active": sap_vendor.get("SupplierIsBlocked", "X") != "X",
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
             "source_system": "SAP"
         }
         
@@ -205,7 +205,7 @@ class ERPDataTransformer:
             "priority": self._map_priority(sap_wo.get("Priority")),
             "status": self._map_wo_status(sap_wo.get("SystemStatus")),
             "created_by": sap_wo.get("EnteredBy"),
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
             "source_system": "SAP"
         }
         
@@ -232,7 +232,7 @@ class ERPDataTransformer:
             "currency": oracle_invoice.get("CurrencyCode"),
             "status": self._map_invoice_status(oracle_invoice.get("InvoiceStatus")),
             "payment_status": oracle_invoice.get("PaymentStatus"),
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
             "source_system": "Oracle"
         }
         
@@ -258,7 +258,7 @@ class ERPDataTransformer:
             "carrier": oracle_shipment.get("CarrierName"),
             "tracking_number": oracle_shipment.get("TrackingNumber"),
             "status": self._map_shipment_status(oracle_shipment.get("ShipmentStatus")),
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
             "source_system": "Oracle"
         }
         
@@ -284,7 +284,7 @@ class ERPDataTransformer:
             "job_title": oracle_employee.get("JobTitle"),
             "hire_date": self._parse_date(oracle_employee.get("HireDate")),
             "is_active": oracle_employee.get("PersonStatus") == "A",
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
             "source_system": "Oracle"
         }
         
@@ -312,7 +312,7 @@ class ERPDataTransformer:
             "budget": self._parse_currency(oracle_project.get("BudgetAmount")),
             "currency": oracle_project.get("CurrencyCode"),
             "manager": oracle_project.get("ProjectManagerName"),
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
             "source_system": "Oracle"
         }
         
@@ -599,7 +599,7 @@ class ERPDataTransformer:
             "total_amount": self._parse_currency(dynamics_invoice.get("totalamount")),
             "currency": dynamics_invoice.get("transactioncurrencyid"),
             "status": self._map_dynamics_invoice_status(dynamics_invoice.get("statecode")),
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
             "source_system": "Dynamics"
         }
         
@@ -623,7 +623,7 @@ class ERPDataTransformer:
             "currency": dynamics_payment.get("transactioncurrencyid"),
             "payment_method": dynamics_payment.get("paymentmethodcode"),
             "status": self._map_dynamics_payment_status(dynamics_payment.get("statecode")),
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
             "source_system": "Dynamics"
         }
         
@@ -649,7 +649,7 @@ class ERPDataTransformer:
             "currency": dynamics_product.get("transactioncurrencyid"),
             "stock": dynamics_product.get("quantityonhand"),
             "is_active": dynamics_product.get("statecode") == 0,
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
             "source_system": "Dynamics"
         }
         
@@ -675,7 +675,7 @@ class ERPDataTransformer:
             "total_amount": self._parse_currency(dynamics_order.get("totalamount")),
             "currency": dynamics_order.get("transactioncurrencyid"),
             "status": self._map_dynamics_order_status(dynamics_order.get("statecode")),
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
             "source_system": "Dynamics"
         }
         
@@ -709,7 +709,7 @@ class ERPDataTransformer:
                 "postal_code": dynamics_account.get("address1_postalcode")
             },
             "is_active": dynamics_account.get("statecode") == 0,
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
             "source_system": "Dynamics"
         }
         
@@ -735,7 +735,7 @@ class ERPDataTransformer:
             "status": self._map_dynamics_project_status(dynamics_project.get("statecode")),
             "budget": self._parse_currency(dynamics_project.get("msdyn_budgetamount")),
             "currency": dynamics_project.get("msdyn_transactioncurrencyid"),
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
             "source_system": "Dynamics"
         }
         

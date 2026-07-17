@@ -6,7 +6,7 @@ API endpoints for integrating correlation AI analysis with registries and Kanban
 
 from typing import List, Dict, Any, Optional
 from uuid import UUID
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, Field
@@ -103,7 +103,7 @@ async def analyze_and_integrate(
     
     # Create scenario
     scenario = CorrelationScenario(
-        scenario_id=f"scenario-{current_user.id}-{int(datetime.utcnow().timestamp())}",
+        scenario_id=f"scenario-{current_user.id}-{int(datetime.now(timezone.utc).timestamp())}",
         active_domains=domain_types,
         ingested_metrics=operational_metrics,
         domain_links=[]  # Will be populated by AI
@@ -302,12 +302,12 @@ async def test_integration(
                 "unit": "%",
                 **(sample_metrics if isinstance(sample_metrics, dict) else {}),
             },
-            timestamp=datetime.utcnow().isoformat(),
+            timestamp=datetime.now(timezone.utc).isoformat(),
         )
     ]
     
     scenario = CorrelationScenario(
-        scenario_id=f"test-{current_user.id}-{int(datetime.utcnow().timestamp())}",
+        scenario_id=f"test-{current_user.id}-{int(datetime.now(timezone.utc).timestamp())}",
         active_domains=domain_types,
         ingested_metrics=operational_metrics,
         domain_links=[]
