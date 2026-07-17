@@ -14,10 +14,11 @@ client camel-cases them via transform.ts.
 
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,6 +27,86 @@ from app.middleware.tenant_isolation import get_tenant_org_id, get_tenant_db
 from app.db.models import Shipment, GeoTabTrip, GeoTabDiagnostic
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
+
+
+# ---- Response schemas (FS-100). Shapes match what the handlers already return;
+# snake_case on the wire, camel-cased by the web client's transform seam.
+
+class FuelEfficiencyResponse(BaseModel):
+    fleet_average: float
+    unit: str
+    best_performers: List[Any]
+    worst_performers: List[Any]
+    trend: List[Any]
+    by_vehicle: Dict[str, Any]
+    total_fuel_consumed: float
+    total_distance: float
+
+
+class IdleVehicleStats(BaseModel):
+    hours: float
+    percentage: float
+    cost: float
+
+
+class IdleTimeResponse(BaseModel):
+    total_hours: float
+    percentage_of_runtime: float
+    cost_impact: float
+    by_vehicle: Dict[str, IdleVehicleStats]
+    trend: List[Any]
+
+
+class OnTimePerformanceResponse(BaseModel):
+    overall_percentage: float
+    on_time_count: int
+    late_count: int
+    by_carrier: Dict[str, float]
+    by_route: Dict[str, Any]
+    trend: List[Any]
+
+
+class VehicleHealthResponse(BaseModel):
+    fleet_average: float
+    by_vehicle: Dict[str, int]
+    critical_count: int
+    warning_count: int
+    healthy_count: int
+    factors: Dict[str, int]
+
+
+class CostPerMileResponse(BaseModel):
+    total_cost: float
+    total_miles: float
+    average_cost_per_mile: float
+    breakdown: Dict[str, float]
+    trend: List[Any]
+
+
+class DtcRecentItem(BaseModel):
+    code: Optional[str] = None
+    description: Optional[str] = None
+    severity: Optional[str] = None
+    vehicle_id: Optional[str] = None
+    timestamp: Optional[str] = None
+
+
+class DtcCountResponse(BaseModel):
+    total_active: int
+    critical_count: int
+    by_vehicle: Dict[str, int]
+    by_system: Dict[str, int]
+    recent: List[DtcRecentItem]
+    trend: List[Any]
+
+
+class KpiDashboardResponse(BaseModel):
+    fuel_efficiency: FuelEfficiencyResponse
+    idle_time: IdleTimeResponse
+    on_time_performance: OnTimePerformanceResponse
+    vehicle_health: VehicleHealthResponse
+    cost_per_mile: CostPerMileResponse
+    dtc_count: DtcCountResponse
 
 # Assumption constant for cost-per-mile until a costing source exists (FS-26).
 _COST_PER_MILE_USD = 1.38  # industry-typical all-in operating cost; documented, not fabricated per-row
@@ -43,7 +124,7 @@ def _dtc_system(dtc_code: str) -> str:
     return {"P": "powertrain", "C": "chassis", "B": "body", "U": "network"}.get(prefix, "other")
 
 
-@router.get("/fuel-efficiency")
+@router.get("/fuel-efficiency", response_model=FuelEfficiencyResponse)
 async def get_fuel_efficiency(
     range: str = Query("month"),
     org_id: UUID = Depends(get_tenant_org_id),
@@ -78,7 +159,7 @@ async def get_fuel_efficiency(
     }
 
 
-@router.get("/idle-time")
+@router.get("/idle-time", response_model=IdleTimeResponse)
 async def get_idle_time(
     range: str = Query("month"),
     org_id: UUID = Depends(get_tenant_org_id),
@@ -127,7 +208,7 @@ async def get_idle_time(
     }
 
 
-@router.get("/on-time-performance")
+@router.get("/on-time-performance", response_model=OnTimePerformanceResponse)
 async def get_on_time_performance(
     range: str = Query("month"),
     org_id: UUID = Depends(get_tenant_org_id),
@@ -175,7 +256,7 @@ async def get_on_time_performance(
     }
 
 
-@router.get("/vehicle-health")
+@router.get("/vehicle-health", response_model=VehicleHealthResponse)
 async def get_vehicle_health(
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),
@@ -211,7 +292,7 @@ async def get_vehicle_health(
     }
 
 
-@router.get("/cost-per-mile")
+@router.get("/cost-per-mile", response_model=CostPerMileResponse)
 async def get_cost_per_mile(
     range: str = Query("month"),
     org_id: UUID = Depends(get_tenant_org_id),
@@ -235,7 +316,7 @@ async def get_cost_per_mile(
     }
 
 
-@router.get("/dtc-count")
+@router.get("/dtc-count", response_model=DtcCountResponse)
 async def get_dtc_count(
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),
@@ -278,7 +359,7 @@ async def get_dtc_count(
     }
 
 
-@router.get("/dashboard")
+@router.get("/dashboard", response_model=KpiDashboardResponse)
 async def get_dashboard(
     range: str = Query("month"),
     org_id: UUID = Depends(get_tenant_org_id),

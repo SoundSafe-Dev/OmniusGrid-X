@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any
 from uuid import UUID
 import structlog
-from sqlalchemy import text, select, and_, or_
+from sqlalchemy import text, select, and_, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import AsyncSessionLocal
@@ -391,9 +391,11 @@ class YardManagementService:
         self,
         organization_id: UUID,
         status: Optional[str] = None,
+        skip: int = 0,
+        limit: Optional[int] = None,
         db: Optional[AsyncSession] = None
-    ) -> List[YardTrailer]:
-        """Get current yard inventory"""
+    ) -> tuple[List[YardTrailer], int]:
+        """Get current yard inventory as (page of trailers, total count)"""
         async with (db or AsyncSessionLocal()) as session:
             query = select(YardTrailer).where(
                 and_(
@@ -401,12 +403,19 @@ class YardManagementService:
                     YardTrailer.status != 'checked_out'
                 )
             )
-            
+
             if status:
                 query = query.where(YardTrailer.status == status)
-            
+
+            total = (await session.execute(
+                select(func.count()).select_from(query.subquery())
+            )).scalar_one()
+
+            query = query.offset(skip)
+            if limit is not None:
+                query = query.limit(limit)
             result = await session.execute(query)
-            return result.scalars().all()
+            return result.scalars().all(), total
     
     async def get_dwell_time_analytics(
         self,

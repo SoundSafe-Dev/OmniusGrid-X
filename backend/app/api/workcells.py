@@ -6,20 +6,44 @@ the read paths those clients need, tenant-scoped to the caller's organization.
 Responses are snake_case; the client camel-cases them via transform.ts.
 """
 
-from typing import Any, Dict
+from types import SimpleNamespace
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_active_user
+from app.core.pagination import PaginatedResponse, paginate
 from app.middleware.rbac import require_admin
 from app.middleware.tenant_isolation import get_tenant_org_id, get_tenant_db
 from app.db.models import Workcell, Organization
 
 workcells_router = APIRouter(dependencies=[Depends(get_current_active_user)])
 organizations_router = APIRouter(dependencies=[Depends(get_current_active_user)])
+
+
+# ---- Response schemas (FS-100). Same shapes _workcell_out/_org_out already emit.
+
+class WorkcellOut(BaseModel):
+    id: str
+    organization_id: Optional[str] = None
+    name: str
+    description: Optional[str] = None
+    location: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class OrganizationOut(BaseModel):
+    id: str
+    name: str
+    slug: Optional[str] = None
+    settings: Dict[str, Any]
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
 
 
 def _workcell_out(w: Workcell) -> dict:
@@ -45,20 +69,28 @@ def _org_out(o: Organization) -> dict:
     }
 
 
-@workcells_router.get("/")
+@workcells_router.get("/", response_model=PaginatedResponse[WorkcellOut])
 async def list_workcells(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=1000),
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),
 ):
     # Always scoped to the caller's organization (any client-sent organization_id
     # is ignored — a user can only see their own org's workcells).
+    # FS-99: returns the {items, meta} pagination envelope with a real total.
+    base = select(Workcell).where(Workcell.organization_id == org_id)
+    total = (await db.execute(
+        select(func.count()).select_from(base.subquery())
+    )).scalar_one()
     rows = (await db.execute(
-        select(Workcell).where(Workcell.organization_id == org_id).order_by(Workcell.name.asc())
+        base.order_by(Workcell.name.asc()).offset(skip).limit(limit)
     )).scalars().all()
-    return [_workcell_out(w) for w in rows]
+    return paginate([_workcell_out(w) for w in rows], total,
+                    SimpleNamespace(skip=skip, limit=limit))
 
 
-@workcells_router.get("/{workcell_id}")
+@workcells_router.get("/{workcell_id}", response_model=WorkcellOut)
 async def get_workcell(
     workcell_id: UUID,
     org_id: UUID = Depends(get_tenant_org_id),
@@ -72,7 +104,7 @@ async def get_workcell(
     return _workcell_out(w)
 
 
-@organizations_router.get("/")
+@organizations_router.get("/", response_model=List[OrganizationOut])
 async def list_organizations(
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),
@@ -82,7 +114,7 @@ async def list_organizations(
     return [_org_out(o)] if o else []
 
 
-@organizations_router.get("/{organization_id}")
+@organizations_router.get("/{organization_id}", response_model=OrganizationOut)
 async def get_organization(
     organization_id: UUID,
     org_id: UUID = Depends(get_tenant_org_id),
