@@ -107,7 +107,7 @@ class Asset(Base):
 
     id = UUIDColumn()
     organization_id = UUIDForeignKey("organizations.id")
-    workcell_id = UUIDForeignKey("workcells.id", nullable=True)
+    workcell_id = UUIDForeignKey("workcells.id", nullable=False)  # NOT NULL since migration 013
     asset_type_id = UUIDForeignKey("asset_types.id")
     name = Column(String(255), nullable=False)
     serial_number = Column(String(255))

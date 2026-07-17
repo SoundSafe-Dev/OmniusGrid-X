@@ -120,4 +120,6 @@ async def delete_feature_flag(key: str, current_user: User = Depends(require_adm
         )
     except FeatureFlagNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+    except Exception as exc:  # store (redis) unreachable — match GET/list (503)
+        raise HTTPException(status_code=503, detail=f"Feature flag store unavailable: {exc}")
     return {"deleted": key}

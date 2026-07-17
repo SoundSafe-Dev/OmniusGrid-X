@@ -21,7 +21,10 @@ class AssetBase(BaseModel):
 
 class AssetCreate(AssetBase):
     organization_id: UUID
-    workcell_id: Optional[UUID] = None
+    # Required: migration 013 made assets.workcell_id NOT NULL. Optional here
+    # meant POST /assets without a workcell 500'd (NotNullViolation) instead of
+    # returning a clean 422. (FS-90 write-path alignment.)
+    workcell_id: UUID
     asset_type_id: UUID
 
 
