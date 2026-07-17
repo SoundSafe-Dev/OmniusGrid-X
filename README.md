@@ -123,39 +123,53 @@ code-reviewed). ~185 commits ahead of `main`. Highlights:
   ts-eslint 8). The `supply-chain` CI job is now **blocking** (`pip-audit` +
   `npm audit --audit-level=high` + Trivy fs scan).
 
-Deferred/flagged on this branch: k8s NetworkPolicies have no egress rules
-(only correct on non-enforcing CNIs); 3 intake-lane tests fail pre-existing
-(owner: Harsh). The filed follow-ups — `python-jose` → PyJWT (removes the last
-audit ignore), non-root container images, k8s egress rules, `react-query` v3 →
-`@tanstack` v5 — are now scheduled into the **FS-71..82 program** below; the
-py3.11 DNP3 driver stays deferred (upstream ships no compatible wheel yet).
+### Delivered since the 70-task program — FS-71..90 (Sprints L–P + real-DB pass)
 
-### Next: hardening & product buildout — FS-71..82 (planned, not yet started)
+The next batch is **done** and on this branch. (The original FS-71..82 plan was
+re-scoped once a re-scan showed Hridyansh's branch had already built the
+predictive-maintenance RUL and digital-twin optimizer — so those merged rather
+than being rebuilt, preventing duplicate work.)
 
-The next batch of fixed sprints, scoped against the current tree so nothing
-already built is re-done (the notifications center, the SNMP/Sparkplug B/DNP3
-collectors, the Monte-Carlo simulation service, and k8s pod `securityContext`
-already exist). All in Hamad's lane; cross-lane touches are coordinated.
+- **Integration merges landed.** `hridyansh/integration` — predictive-maintenance
+  RUL (`/api/v1/rul`), digital-twin optimizer (`/api/v1/twin`), auth-session
+  hardening + token rotation, RBAC route-roles across every router, durable
+  command dispatch, tenant historian/retention (`/api/v1/historian`); its
+  colliding migrations were renumbered to `034–038`. Plus the RAG compliance-doc
+  pipeline (`/api/v1/rag`). Two previously-orphaned routers (model-monitoring,
+  admin query-performance) are now mounted.
+- **Supply-chain & runtime hardening.** `python-jose` → **PyJWT** (drops the
+  `ecdsa` advisory and the last `pip-audit --ignore-vuln`); backend/frontend/RAG
+  images run **non-root**; k8s **egress** allow-lists added; the Trivy filesystem
+  scan is now **blocking** (with a curated `.trivyignore`).
+- **API contract.** Every router mount documents its `401/403/404/422/429/500`
+  responses (`app/core/responses.py`); a `Page[T]` pagination envelope on the
+  assets + alarms lists; wider `response_model` coverage. The schemathesis
+  contract gate is wired + green-capable but stays **advisory** pending one CI run.
+- **Frontend.** `react-query` v3 → **`@tanstack/react-query` v5** (33 files); the
+  digital-twin, RUL, and historian backends are wired into the UI.
+- **Real-DB correctness.** The app was silently broken against a *migrations-built*
+  Postgres (SQLite `create_all` hid it): ORM↔migration drift fixed — migrations
+  `039/040` add missing `users.*` columns and rename 8 tables' `metadata` →
+  `meta_data`, and `assets.workcell_id` is now required — plus a batch of
+  endpoints that 500'd only on real Postgres repaired (nlp sessions, telemetry
+  `meta_data`, yard/transportation naive-`utcnow()` vs `TIMESTAMPTZ`, graceful
+  `503`s for redis/pg_stat-backed diagnostics).
 
-- **Sprint L — API contract hardening (FS-71..74).** Document error responses
-  (`responses=` at the router mount + per-route on core routers); flip the
-  schemathesis contract gate from advisory to **blocking**; introduce one
-  `Page[T]` pagination envelope (migrated backend + frontend client together,
-  per endpoint); raise `response_model` coverage.
-- **Sprint M — Supply-chain & runtime hardening (FS-75..78).** Swap
-  `python-jose` → PyJWT and drop the last `pip-audit` ignore; run the backend,
-  frontend, and RAG images as a non-root `USER` (frontend/nginx port move
-  cascades to k8s + compose); add k8s egress allow-lists; then re-block the
-  Trivy filesystem scan.
-- **Sprint N — Predictive & strategic intelligence (FS-79..81).** A new
-  Predictive Maintenance subsystem (health/RUL from OEE + telemetry + anomaly
-  trends, migration `034`); a **local** strategic generator that feeds the
-  existing cloud-relay approve/reject queue (fleet OEE rollup + Monte-Carlo
-  what-if + maintenance-window scheduler) without displacing the cloud path;
-  plus the frontend wiring.
-- **Sprint O — Frontend dependency currency (FS-82).** `react-query` v3 →
-  `@tanstack/react-query` v5 codemod (~28 sites), coordinated with Harsh on the
-  correlation/kanban components.
+Still deferred/flagged: the schemathesis gate flip (needs a green CI run); a
+codebase-wide `datetime.utcnow()` → timezone-aware sweep (~72 files; the
+yard/transport lane is fixed); the py3.11 DNP3 driver (upstream ships no
+compatible wheel); schema-parity + real-DB endpoint-smoke guard tests (planned
+FS-91/92). The 3 intake-lane test failures remain Harsh's.
+
+### Offline demo — `backend/scripts/seed_demo_data.py`
+
+The whole platform demos with **no live edge, cloud, or external services**.
+`seed_demo_data.py` seeds every page — assets, 14 days of correlated telemetry,
+alarms, OEE, a fully-synced ERP integration, yard, transportation, geofencing,
+kanban, operations, fleet OTA, MLOps model registry, compliance/registries,
+notifications, error-triage, exports, and historian — idempotently. The only
+thing that still needs its model is the Correlation-AI **inference** (a ready
+`AnalysisSession` is seeded). See [`docs/DEMO.md`](docs/DEMO.md).
 
 ### Subsystem ownership — check here before starting work
 

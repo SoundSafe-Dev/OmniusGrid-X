@@ -138,9 +138,15 @@
 | **Inference Queue** | Async queue for feature vectors awaiting tactical engine processing | Backend |
 | **Recommendation** | Strategic engine proposal requiring operator approval before implementation | Both |
 | **Expected Impact** | Predicted outcomes of strategic recommendation (OEE improvement, cost savings) | Both |
-| **Model Registry** | Cloud repository storing trained model versions and metadata | Backend |
+| **Model Registry** | Cloud repository storing trained model versions and metadata; OTA release + rollout orchestration to the fleet (`/api/v1/models`, `/api/v1/fleet/releases`) | Backend |
 | **Digital Twin** | Simulation model of physical assets for what-if analysis | Backend |
-| **Monte Carlo Simulation** | Probabilistic modeling technique for strategic optimization scenarios | Backend |
+| **Monte Carlo Simulation** | Probabilistic modeling technique for strategic optimization scenarios (`/api/v1/simulation`) | Backend |
+| **Health Index** | 0–100 per-asset health score derived from telemetry + anomaly signals; the input to RUL (`/api/v1/health-index`) | Both |
+| **Remaining Useful Life (RUL)** | Predictive-maintenance estimate of time-to-failure per asset — the health index mapped onto a Weibull curve; raises a maintenance task when low (`/api/v1/rul`) | Both |
+| **Digital-Twin Optimizer** | Generates **approval-gated** strategic recommendations by running the simulation over candidate parameter changes and ranking expected throughput impact; feeds the existing cloud-relay approve/reject queue rather than replacing it (`/api/v1/twin`) | Backend |
+| **Historian** | Tenant-scoped time-series query + retention over stored telemetry, independent of live agents (`/api/v1/historian`) | Both |
+| **Notifications Center** | Subscribable notification rules (org / severity / channel) with multi-channel delivery (webhook / email / slack) and a delivery log (`/api/v1/notifications`) | Both |
+| **Model Monitoring** | Drift / data-drift / prediction-performance tracking for deployed models (`/api/v1/model-monitoring`) | Backend |
 
 ---
 
@@ -513,6 +519,8 @@
 
 | Term | Definition | Backend/Frontend |
 |------|------------|------------------|
+| **Offline Demo Seeder** | `backend/scripts/seed_demo_data.py` — populates every page with correlated demo data so the whole platform runs with no live edge/cloud/services (idempotent). Only Correlation-AI *inference* still needs its model. See `docs/DEMO.md` | Backend |
+| **Schema-parity check** | Guard that ORM `Base.metadata` matches the migrated Postgres schema (columns, nullability, types) — prevents the ORM↔migration drift that only surfaces on a real DB (SQLite `create_all` hides it) | Backend |
 | **k6** | Modern load testing tool for performance testing | Backend |
 | **Load Test** | Performance test simulating high user load (1000 concurrent users, 10k req/sec) | Backend |
 | **Concurrent Users** | Number of simultaneous users during load test | Backend |
