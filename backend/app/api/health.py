@@ -131,6 +131,108 @@ async def _check_ingestion(db: AsyncSession) -> tuple[str, dict[str, Any]]:
         return f"error: {exc}", {}
 
 
+async def _check_notifications(db: AsyncSession) -> tuple[str, dict[str, Any]]:
+    """Verify the notification subscription store is reachable/queryable."""
+    try:
+        result = await db.execute(
+            text("SELECT COUNT(*) FROM notification_subscriptions")
+        )
+        count = result.scalar() or 0
+        return "ok", {"subscriptions": int(count)}
+    except Exception as exc:
+        await _rollback_quietly(db)
+        return f"error: {exc}", {}
+
+
+async def _check_historian(db: AsyncSession) -> tuple[str, dict[str, Any]]:
+    """Verify the historian's backing table accepts queries."""
+    try:
+        result = await db.execute(text("SELECT 1 FROM telemetry LIMIT 1"))
+        result.scalar()
+        return "ok", {"table": "telemetry"}
+    except Exception as exc:
+        await _rollback_quietly(db)
+        return f"error: {exc}", {"table": "telemetry"}
+
+
+async def _rollback_quietly(db: AsyncSession) -> None:
+    """Reset a failed transaction so later checks on the shared session run."""
+    try:
+        await db.rollback()
+    except Exception:  # pragma: no cover - defensive
+        pass
+
+
+def _check_model_registry_storage() -> tuple[str, dict[str, Any]]:
+    """Verify the model-registry artifact root exists (or can be created)."""
+    import os
+
+    try:
+        from app.services.model_registry_store import model_storage_root
+
+        root = model_storage_root()
+        if root.is_dir():
+            if os.access(root, os.W_OK):
+                return "ok", {"path": str(root)}
+            return "error: storage root not writable", {"path": str(root)}
+
+        # save_model_artifact() mkdirs on demand, so a missing root is fine as
+        # long as the nearest existing ancestor is writable.
+        ancestor = root
+        while not ancestor.exists() and ancestor.parent != ancestor:
+            ancestor = ancestor.parent
+        if ancestor.exists() and os.access(ancestor, os.W_OK):
+            return "ok", {"path": str(root), "note": "created_on_first_save"}
+        return (
+            "error: storage root missing and not creatable",
+            {"path": str(root), "nearest_existing": str(ancestor)},
+        )
+    except Exception as exc:
+        return f"error: {exc}", {}
+
+
+def _check_command_dispatch() -> tuple[str, dict[str, Any]]:
+    """Verify the durable command-dispatch loop is running."""
+    try:
+        from app.services.command_executor import command_executor
+
+        running = bool(command_executor._running)
+        details: dict[str, Any] = {"running": running}
+        if not running:
+            return "not_running", details
+        dispatch_task = command_executor._dispatch_task
+        if dispatch_task is not None and dispatch_task.done():
+            return "error: dispatch loop exited", details
+        return "ok", details
+    except Exception as exc:
+        return f"error: {exc}", {}
+
+
+async def _run_extended_checks(
+    db: AsyncSession,
+) -> tuple[dict[str, str], dict[str, dict[str, Any]]]:
+    """Per-subsystem checks for /health/detailed; each is isolated and the
+    caller never raises on a failing component."""
+    notifications_status, notifications_details = await _check_notifications(db)
+    historian_status, historian_details = await _check_historian(db)
+    registry_status, registry_details = _check_model_registry_storage()
+    command_status, command_details = _check_command_dispatch()
+
+    checks = {
+        "notifications": notifications_status,
+        "historian": historian_status,
+        "model_registry_storage": registry_status,
+        "command_dispatch": command_status,
+    }
+    details = {
+        "notifications": notifications_details,
+        "historian": historian_details,
+        "model_registry_storage": registry_details,
+        "command_dispatch": command_details,
+    }
+    return checks, details
+
+
 def _component_is_healthy(status: str) -> bool:
     return status == "ok" or status == "skipped"
 
@@ -230,8 +332,21 @@ async def detailed_health(
     Auth-gated for the same reason as /health/system: the per-component report
     (broker/redis/ingestion state, connection error strings) is recon-useful.
     Probes use /health/live|ready, which stay public.
+
+    Extends the core checks with per-subsystem coverage (notifications,
+    historian, model-registry storage, command dispatch). Supporting-subsystem
+    failures degrade the report but never raise, and they are deliberately NOT
+    part of /health/ready so readiness probes keep their existing semantics.
     """
-    return await _run_health_checks(db)
+    report = await _run_health_checks(db)
+    extended_checks, extended_details = await _run_extended_checks(db)
+    report["checks"].update(extended_checks)
+    report["details"].update(extended_details)
+    if report["status"] == "ready" and not all(
+        _component_is_healthy(status) for status in extended_checks.values()
+    ):
+        report["status"] = "degraded"
+    return report
 
 
 @router.get("/health/system")
