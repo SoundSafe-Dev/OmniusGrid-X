@@ -1,11 +1,13 @@
 """Tenant-scoped time-series historian queries."""
 
+import time
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from prometheus_client import Counter, Histogram
 from pydantic import BaseModel
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +17,27 @@ from app.middleware.tenant_isolation import get_tenant_db, get_tenant_org_id
 
 
 router = APIRouter()
+
+# Prometheus metrics (scraped via /metrics in app/api/health.py). Granularity
+# is a closed 4-value enum, so it is safe as a label; ids/metric names are not.
+HISTORIAN_QUERIES_TOTAL = Counter(
+    "opsgrid_historian_queries_total",
+    "Historian queries served",
+    ["granularity"],
+)
+
+HISTORIAN_QUERY_DURATION = Histogram(
+    "opsgrid_historian_query_duration_seconds",
+    "Historian query latency",
+    ["granularity"],
+    buckets=[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0],
+)
+
+HISTORIAN_ROWS_RETURNED = Histogram(
+    "opsgrid_historian_rows_returned",
+    "Rows returned per historian query",
+    buckets=[0, 1, 10, 50, 100, 500, 1000, 2500, 5000],
+)
 
 
 class HistorianGranularity(str, Enum):
@@ -67,7 +90,7 @@ _RAW_QUERY = text(
         telemetry.value AS average,
         telemetry.value AS minimum,
         telemetry.value AS maximum,
-        1::bigint AS sample_count
+        CAST(1 AS BIGINT) AS sample_count
     FROM telemetry
     JOIN assets ON assets.id = telemetry.asset_id
     WHERE assets.organization_id = :organization_id
@@ -76,8 +99,8 @@ _RAW_QUERY = text(
       AND telemetry.time >= :start_time
       AND telemetry.time < :end_time
     ORDER BY telemetry.time ASC
-    OFFSET :offset_rows
     LIMIT :fetch_limit
+    OFFSET :offset_rows
     """
 )
 
@@ -99,8 +122,8 @@ def _rollup_query(view_name: str):
           AND rollup.time >= :start_time
           AND rollup.time < :end_time
         ORDER BY rollup.time ASC
-        OFFSET :offset_rows
         LIMIT :fetch_limit
+        OFFSET :offset_rows
         """
     )
 
@@ -181,6 +204,7 @@ async def query_historian(
     db: AsyncSession = Depends(get_tenant_db),
 ) -> HistorianQueryResponse:
     """Return a tenant-owned metric series at the requested resolution."""
+    started = time.perf_counter()
     start_utc = _utc(start)
     end_utc = _utc(end)
     if start_utc >= end_utc:
@@ -212,6 +236,14 @@ async def query_historian(
 
     has_more = len(rows) > limit
     points = [_point(row) for row in rows[:limit]]
+    try:  # metrics must never break the query path
+        HISTORIAN_QUERIES_TOTAL.labels(granularity=granularity.value).inc()
+        HISTORIAN_QUERY_DURATION.labels(granularity=granularity.value).observe(
+            time.perf_counter() - started
+        )
+        HISTORIAN_ROWS_RETURNED.observe(len(points))
+    except Exception:  # pragma: no cover - defensive
+        pass
     return HistorianQueryResponse(
         asset_id=asset_id,
         metric=metric,
