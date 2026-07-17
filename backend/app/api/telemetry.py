@@ -55,6 +55,31 @@ def bucket_records(records: list, seconds: int, aggregation: str) -> list:
     return out
 
 
+def _history_page(items: list, start_time, end_time, skip: int, limit: int) -> dict:
+    """Time-series pagination envelope (FS-89).
+
+    A row COUNT over a telemetry window is expensive and rarely useful, so this
+    deliberately does NOT carry a `total`. Instead it signals whether the window
+    was truncated (`has_more` = a full page came back) and returns the newest /
+    oldest timestamps as cursors: fetch the next (older) page with
+    `end_time = meta.oldest`. Rows are ordered newest-first, so items[0] is the
+    newest and items[-1] the oldest.
+    """
+    return {
+        "items": items,
+        "meta": {
+            "count": len(items),
+            "skip": skip,
+            "limit": limit,
+            "has_more": len(items) == limit,
+            "start_time": start_time.isoformat(),
+            "end_time": end_time.isoformat(),
+            "newest": items[0]["timestamp"] if items else None,
+            "oldest": items[-1]["timestamp"] if items else None,
+        },
+    }
+
+
 async def _verify_asset_in_org(
     db: AsyncSession,
     asset_id: UUID,
@@ -161,19 +186,22 @@ async def get_telemetry_history(
             if metric_name:
                 query = query.where(Telemetry.metric_name == metric_name)
             rows = (await db.execute(query)).all()
-            return [
-                {
-                    "timestamp": r.bucket.isoformat(),
-                    "metric_name": r.metric_name,
-                    "value": float(r.avg),
-                    "min": float(r.min),
-                    "max": float(r.max),
-                    "count": int(r.count),
-                    "unit": r.unit,
-                    "aggregation": aggregation,
-                }
-                for r in rows
-            ]
+            return _history_page(
+                [
+                    {
+                        "timestamp": r.bucket.isoformat(),
+                        "metric_name": r.metric_name,
+                        "value": float(r.avg),
+                        "min": float(r.min),
+                        "max": float(r.max),
+                        "count": int(r.count),
+                        "unit": r.unit,
+                        "aggregation": aggregation,
+                    }
+                    for r in rows
+                ],
+                start_time, end_time, skip, limit,
+            )
         # Non-Postgres dialects (tests/dev SQLite): bucket in Python.
         query = select(Telemetry).where(
             Telemetry.asset_id == asset_id,
@@ -188,7 +216,10 @@ async def get_telemetry_history(
              "value": float(t.value), "unit": t.unit}
             for t in raw
         ]
-        return bucket_records(records, seconds, aggregation)[skip:skip + limit]
+        return _history_page(
+            bucket_records(records, seconds, aggregation)[skip:skip + limit],
+            start_time, end_time, skip, limit,
+        )
 
     # Raw data query
     query = select(Telemetry).where(
@@ -204,17 +235,22 @@ async def get_telemetry_history(
     result = await db.execute(query)
     telemetry_data = result.scalars().all()
 
-    return [
-        {
-            "timestamp": t.time.isoformat(),
-            "metric_name": t.metric_name,
-            "value": float(t.value),
-            "unit": t.unit,
-            "packml_state": t.packml_state,
-            "metadata": t.metadata
-        }
-        for t in telemetry_data
-    ]
+    return _history_page(
+        [
+            {
+                "timestamp": t.time.isoformat(),
+                "metric_name": t.metric_name,
+                "value": float(t.value),
+                "unit": t.unit,
+                "packml_state": t.packml_state,
+                # ORM maps this as meta_data = Column("metadata", ...); `t.metadata`
+                # is the SQLAlchemy MetaData object, not the row value (latent 500).
+                "metadata": t.meta_data,
+            }
+            for t in telemetry_data
+        ],
+        start_time, end_time, skip, limit,
+    )
 
 
 @router.get("/{asset_id}/metrics", summary="List available metrics", description="Retrieve a list of all metric names that have been recorded for a specific asset. Returns 404 if the asset belongs to a different organization.")
