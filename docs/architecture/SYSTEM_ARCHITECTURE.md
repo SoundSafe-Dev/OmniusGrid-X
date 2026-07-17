@@ -2,63 +2,107 @@
 
 ## Overview
 
-OmniusGrid is a production-grade IIoT platform implementing a two-speed brain architecture: edge inference for tactical decisions (<100ms latency) and cloud training for strategic optimization (seconds to minutes latency).
+OmniusGrid is a production-grade IIoT platform whose differentiator is
+correlating the **document / ERP** world with the **machine** world. The textual
+/ business surface is the lead: documents and ERP records are parsed, correlated,
+and scored by the Correlation AI. The machine surface is the second: an edge
+agent implements a two-speed brain — edge inference for tactical decisions
+(<100ms latency) and cloud training for strategic optimization (seconds to
+minutes). Both surfaces converge on one FastAPI backend.
 
 ## High-Level Architecture
 
 ```mermaid
 graph TB
-    subgraph "Edge Layer"
-        A[Edge Agent] --> B[Collectors]
-        B --> C[MQTT]
-        B --> D[OPC-UA]
-        B --> E[Modbus]
-        B --> F[Screen Scraper]
-        B --> G[File Watcher]
-        A --> H[Local Buffer]
-        A --> I[Local Analytics]
-        A --> J[Tactical AI Engine]
+    subgraph "Business Data — lead surface"
+        DOC["Documents: PDF / DOCX / XLSX / images"]
+        ERPS["ERP systems (13 connectors)"]
+        INTK["Parsers + Intake"]
+        CORR["Correlation AI (Gemma) + RAG"]
+        DOC --> INTK
+        ERPS --> INTK
+        INTK --> CORR
     end
-    
+
+    subgraph "Edge Layer — machine surface"
+        A["Edge Agent"] --> B["Collectors"]
+        B --> C["MQTT / OPC-UA / Modbus / EtherNet-IP"]
+        B --> D["PROFINET / BACnet / CAN / SNMP"]
+        B --> E["Sparkplug B / DNP3 / HTTP / OCR / File"]
+        A --> H["24h Store-and-Forward Buffer"]
+        A --> I["Local Analytics + PackML"]
+        A --> J["Tactical AI Engine"]
+    end
+
     subgraph "Cloud Gateway"
-        K[Secure Gateway]
-        K --> L[mTLS Connection]
+        K["Secure Gateway"]
+        K --> L["Outbound-only mTLS"]
     end
-    
-    subgraph "Cloud Layer"
-        M[Redpanda/Kafka]
-        N[TimescaleDB]
-        O[Backend API]
-        P[Frontend Dashboard]
-        Q[Strategic AI Engine]
-        R[Correlation AI Engine]
-        S[Model Registry]
+
+    subgraph "Backend / Data Layer"
+        M["Redpanda/Kafka"]
+        IW["Ingestion Workers"]
+        N["TimescaleDB"]
+        PG["Postgres tables"]
+        O["FastAPI — REST + WebSocket"]
+        RED["Redis"]
     end
-    
+
+    subgraph "Predictive & Optimization"
+        HIX["Health Index"]
+        RULE["RUL"]
+        TWIN["Digital-Twin Optimizer"]
+        SIMU["Simulation Engine"]
+    end
+
+    subgraph "Fleet / MLOps"
+        MR["Model Registry"]
+        OTA["OTA Releases + Rollouts"]
+        MM["Model Monitoring / Drift"]
+        STRAT["Strategic AI Engine"]
+    end
+
+    subgraph "Operations"
+        HIST["Historian"]
+        NOTIF["Notifications"]
+        KAN["Kanban + Registries"]
+        LOGI["Yard / Transportation / GeoTab"]
+    end
+
     subgraph "Observability"
-        T[Prometheus]
-        U[Grafana]
-        V[Loki]
-        W[Alertmanager]
+        T["Prometheus"]
+        U["Grafana"]
+        V["Loki"]
+        W["Alertmanager"]
     end
-    
+
     H --> K
     I --> K
     J --> K
     K --> M
-    M --> N
-    M --> O
-    O --> P
-    O --> Q
-    O --> R
-    S --> J
-    S --> Q
-    S --> R
-    
+    M --> IW
+    IW --> N
+    CORR --> PG
+    N --> O
+    PG --> O
+    O --> RED
+    N --> HIX
+    HIX --> RULE
+    RULE --> TWIN
+    SIMU --> TWIN
+    MR --> J
+    MR --> OTA
+    MR --> MM
+    MR --> STRAT
+    OTA --> K
+    STRAT --> O
+    TWIN --> O
+    HIST --> O
+    NOTIF --> O
+    KAN --> O
+    LOGI --> O
     A --> T
     O --> T
-    M --> T
-    N --> T
     T --> U
     T --> W
     O --> V
@@ -82,14 +126,17 @@ graph TB
 #### Collectors
 - **MQTT**: Bambu 3D printers, generic IoT devices
 - **OPC-UA**: Industrial PLCs, SCADA systems
-- **Modbus**: Industrial sensors, actuators
-- **Screen Scraper**: Legacy systems without APIs
+- **Modbus**: Industrial sensors, actuators (TCP/RTU)
+- **EtherNet/IP**: Rockwell Automation
+- **PROFINET**: Siemens automation
+- **BACnet**: Building automation
+- **CAN Bus**: Vehicle telematics
+- **SNMP**: Network gear and infrastructure devices
+- **Sparkplug B**: MQTT-based unified namespace
+- **DNP3**: Utility / SCADA telemetry (py3.11 driver pending an upstream wheel)
+- **HTTP/REST**: Modern APIs
+- **Screen Scraper / OCR**: Legacy systems without APIs
 - **File Watcher**: Log files, CSV exports
-- **HTTP/REST**: Modern APIs (planned)
-- **EtherNet/IP**: Rockwell Automation (planned)
-- **Profinet**: Siemens automation (planned)
-- **BACnet**: Building automation (planned)
-- **CAN Bus**: Vehicle telematics (planned)
 
 #### Local Analytics
 - **OEE Calculation**: Real-time Overall Equipment Effectiveness
@@ -118,24 +165,55 @@ graph TB
 - **Retention**: Hot (7 days), Warm (30 days), Cold (1 year)
 
 #### Backend API (FastAPI)
-- **Purpose**: RESTful API for all operations
-- **Features**: JWT auth, WebSocket, rate limiting, audit logging
-- **Endpoints**: Assets, telemetry, alarms, commands, OEE, Kanban, AI engines
+- **Purpose**: RESTful + WebSocket API for all operations (60+ routers behind one
+  error envelope and pagination envelope)
+- **Auth**: JWT via **PyJWT** (migrated off python-jose); RBAC route-roles on
+  every router; websocket auth over `Sec-WebSocket-Protocol`. A dev-token bypass
+  exists only when `ALLOW_DEV_TOKEN=true` and is rejected in production.
+- **Features**: rate limiting, audit logging, idempotency keys, structured
+  request-context logging
+- **Endpoints**: Assets, telemetry, alarms, commands, OEE, Kanban, registries,
+  AI engines, plus the subsystems below
 
 #### Frontend Dashboard (React)
 - **Purpose**: User interface for monitoring and control
-- **Technologies**: React 18, TypeScript, Zustand, React Query, TailwindCSS
-- **Features**: Real-time charts, asset management, Kanban boards, AI insights
+- **Technologies**: React 18, TypeScript, Zustand, `@tanstack/react-query` v5,
+  TailwindCSS
+- **Features**: Real-time charts, asset management, Kanban boards, AI insights.
+  Real backend by default; an opt-in mock layer (`VITE_USE_MOCK=true`) can drive
+  the UI without a backend.
 
 #### AI Engines
-- **Tactical Engine**: Edge deployment, real-time control
-- **Strategic Engine**: Cloud deployment, optimization
-- **Correlation AI Engine**: Cross-domain root cause analysis (Gemma 4)
+- **Tactical Engine** (`/api/v1/engines`): Edge deployment, real-time control
+- **Strategic Engine** (`/api/v1/engines`): Cloud deployment, optimization
+- **Correlation AI Engine** (`/api/v1/nlp`, `/api/v1/platform-correlation`):
+  Cross-domain root cause analysis over documents/ERP + machine data (Gemma;
+  inference needs the model)
 
-#### Model Registry
-- **Purpose**: Model versioning and deployment
-- **Features**: Model validation, A/B testing, rollback
-- **MLOps**: Automated training, deployment, monitoring
+#### Predictive Maintenance & Digital Twin
+- **Health Index** (`/api/v1/health-index`): asset health scoring from telemetry
+- **RUL** (`/api/v1/rul`): remaining-useful-life / failure-risk estimation
+- **Simulation Engine** (`/api/v1/simulation`): digital-twin simulation
+- **Digital-Twin Optimizer** (`/api/v1/twin`): approval-gated optimization
+  recommendations run over the simulation engine
+
+#### Historian & Notifications
+- **Historian** (`/api/v1/historian`): tenant-scoped time-series history with
+  per-tenant retention policies (`/api/v1/data-retention`)
+- **Notifications** (`/api/v1/notifications`): severity/domain-matched dispatch
+  over webhook / email / Slack with a persisted delivery log
+
+#### RAG Compliance-Doc Pipeline
+- **RAG** (`/api/v1/rag`): retrieval + ingestion over compliance documents,
+  backed by a vector store (SeaweedFS/S3); bootstrapped best-effort at startup
+
+#### Model Registry, OTA & Monitoring
+- **Model Registry** (`/api/v1/models`, `/api/v1/fleet/model-releases`): model
+  versioning, feature contracts, signed artifacts
+- **OTA** (`/api/v1/fleet/agents`, `/releases`, `/rollouts`): agent + model
+  release rollout orchestration with waves and soak windows
+- **Model Monitoring** (`/api/v1/model-monitoring`): drift detection
+- **MLOps**: automated training runs, deployment, rollback
 
 ### Observability Stack
 
@@ -161,7 +239,33 @@ graph TB
 
 ## Data Flow
 
-### Telemetry Flow
+Consistent with the platform's differentiator, the flows are ordered
+textual/business first, then machine. See
+[DATA_FLOW.md](DATA_FLOW.md) for the full set of flow diagrams (intake →
+correlation, predictive maintenance, historian, notifications, plus telemetry,
+command, alarm, OEE, and retention).
+
+### Document / ERP Correlation Flow (lead surface)
+
+```mermaid
+sequenceDiagram
+    participant SRC as Documents / ERP
+    participant INTK as Parsers / Intake
+    participant SK as Shared-key Detector
+    participant CAI as Correlation AI (Gemma)
+    participant OUT as Registries / Kanban / Notifications
+    participant API as Backend API
+    participant UI as Frontend
+
+    SRC->>INTK: Upload / sync (PDF, DOCX, XLSX, ERP records)
+    INTK->>SK: Parsed structures + per-tab metadata
+    SK->>CAI: Cross-file / cross-tab scenarios
+    CAI->>OUT: Risk scores + recommended actions
+    OUT->>API: Persist registry items / tasks
+    API->>UI: Correlation results
+```
+
+### Telemetry Flow (machine surface)
 
 ```mermaid
 sequenceDiagram
@@ -440,7 +544,7 @@ graph TB
 | Backend | FastAPI, SQLAlchemy | REST API |
 | Frontend | React, TypeScript, Zustand | User interface |
 | Charts | Recharts, Plotly.js | Data visualization |
-| Auth | Keycloak, JWT | Identity management |
+| Auth | PyJWT (JWT), optional SSO/Keycloak | Identity management |
 | Monitoring | Prometheus, Grafana, Loki | Observability |
 | Infrastructure | Kubernetes, Docker | Container orchestration |
 | CI/CD | GitHub Actions | Automation |
@@ -449,6 +553,6 @@ graph TB
 
 ---
 
-**Document Version:** 1.0  
-**Last Updated:** 2026-05-25  
+**Document Version:** 1.1  
+**Last Updated:** 2026-07-17  
 **Component:** System Architecture

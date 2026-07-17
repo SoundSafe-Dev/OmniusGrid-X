@@ -97,26 +97,37 @@ docker-compose up -d
 
 ### 6. Initialize Database
 
+Apply the full, checksum-tracked SQL migration chain with the migration runner
+(idempotent — safe to re-run). This replaces the older habit of manually piping
+individual `.sql` files.
+
 ```bash
-# Wait for TimescaleDB to be ready
-docker-compose exec timescaledb psql -U omniusgrid -d omniusgrid -f /docker-entrypoint-initdb.d/001_init.sql
-docker-compose exec timescaledb psql -U omniusgrid -d omniusgrid -f /docker-entrypoint-initdb.d/002_continuous_aggregates.sql
-docker-compose exec timescaledb psql -U omniusgrid -d omniusgrid -f /docker-entrypoint-initdb.d/003_kanban_tables.sql
+# Wait for TimescaleDB to be ready, then apply all migrations
+python backend/scripts/migrate.py
+
+# Inspect state / adopt an existing database
+python backend/scripts/migrate.py --status
+python backend/scripts/migrate.py --baseline           # mark applied without running
+python backend/scripts/migrate.py --rebaseline-drifted # re-baseline drifted checksums
 ```
 
-### 7. Seed Demo Data (Optional)
+### 7. Seed the Offline Demo (Recommended)
+
+The whole platform demos with **no live edge, cloud, or external services**.
+`seed_demo_data.py` seeds every page — assets, 14 days of correlated telemetry,
+alarms, OEE, a fully-synced ERP integration, yard, transportation, geofencing,
+kanban, operations, fleet OTA, MLOps model registry, compliance/registries,
+notifications, error-triage, exports, and historian — idempotently. The only
+thing that still needs its model is the Correlation-AI **inference** (a ready
+analysis session is seeded). See [`DEMO.md`](DEMO.md).
 
 ```bash
+# From the project root (defaults DATABASE_URL to backend/dev.db SQLite)
+make seed-demo
+
+# Or run it directly
 cd backend
-
-# Seed demo assets
-python scripts/seed_demo_assets.py
-
-# Seed demo Kanban tasks
-python scripts/seed_demo_kanban.py
-
-# Initialize correlation registries
-python scripts/initialize_correlation_registries.py dev-org
+python scripts/seed_demo_data.py            # add --verify to sanity-check row counts
 ```
 
 ## Backend Development
@@ -194,11 +205,21 @@ python -m pdb app/main.py
 ```bash
 cd frontend
 
-# Start development server
-npm run dev
-
-# This starts Vite dev server on http://localhost:3000
+# Start development server (Vite) on http://localhost:9999
+npm run dev -- --port 9999
 ```
+
+The frontend talks to a real backend by default. To drive the UI without a
+backend (demos, isolated frontend work), enable the opt-in mock layer:
+
+```bash
+# Mock mode — every API client serves in-memory data, no backend required
+VITE_USE_MOCK=true npm run dev -- --port 9999
+```
+
+Dev-mode login: username `dev` with any password uses the auth bypass, but only
+in a dev build **and** with `VITE_DEV_MODE=true` (see `frontend/.env.example`).
+Production bundles can never enable it.
 
 ### Frontend Testing
 
@@ -275,7 +296,8 @@ Each entry is envelope-validated at startup (`opsgrid_agent/config_schema.py`);
 invalid entries are logged and skipped. Both `collector_type` (YAML style) and
 `type` (env-JSON style) are accepted. Supported types: `bambu_mqtt`, `mqtt`,
 `qidi_screen`, `sovol_screen`, `orca_file`, `opcua`, `modbus`, `ethernet_ip`,
-`profinet`, `bacnet`, `can_bus`, `http_rest`.
+`profinet`, `bacnet`, `can_bus`, `snmp`, `sparkplug_b`, `dnp3`, `http_rest`
+(keep in sync with `SUPPORTED_COLLECTOR_TYPES` in `config_schema.py`).
 
 ```yaml
 collectors:
@@ -329,14 +351,27 @@ docker-compose exec timescaledb psql -U omniusgrid -d omniusgrid
 
 ### Running Migrations
 
-```bash
-# Using Alembic (if configured)
-cd backend
-alembic upgrade head
+The canonical runner is `backend/scripts/migrate.py` — a checksum-tracked,
+idempotent SQL migration runner that applies the full chain on a clean Postgres
+and supports baseline/rebaseline flows for adopting existing databases. Tests
+build their schema through the same runner. (Alembic is not used.)
 
-# Manual SQL migration
-docker-compose exec timescaledb psql -U omniusgrid -d omniusgrid -f database/migrations/004_new_feature.sql
+```bash
+cd backend
+
+# Apply all pending migrations
+python scripts/migrate.py
+
+# Show current status (applied vs pending, checksum drift)
+python scripts/migrate.py --status
+
+# Adopt an existing database without re-running historical migrations
+python scripts/migrate.py --baseline
+python scripts/migrate.py --rebaseline-drifted
 ```
+
+To add a migration, drop a new numbered `.sql` file into the migrations
+directory; the runner tracks and applies it on the next run.
 
 ### Database Queries
 
@@ -669,7 +704,7 @@ Create `.vscode/launch.json`:
       "name": "Chrome: Frontend",
       "type": "chrome",
       "request": "launch",
-      "url": "http://localhost:3000",
+      "url": "http://localhost:9999",
       "webRoot": "${workspaceFolder}/frontend/src"
     }
   ]
@@ -751,6 +786,6 @@ Create `.vscode/launch.json`:
 
 ---
 
-**Document Version:** 1.0  
-**Last Updated:** 2026-05-25  
+**Document Version:** 1.1  
+**Last Updated:** 2026-07-17  
 **Component:** Developer Setup Guide
