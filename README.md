@@ -189,70 +189,177 @@ thing that still needs its model is the Correlation-AI **inference** (a ready
 
 ## Architecture
 
+### 1. End-to-end data flow
+
+OmniusGrid's differentiator is correlating the **document / ERP** world with the
+**machine** world. Textual/business data is the *lead* surface; machine telemetry
+is the second. Both converge into one API that the frontend renders.
+
+```mermaid
+flowchart LR
+    subgraph SOURCES["Data sources"]
+        DOC["Documents<br/>PDF · DOCX · XLSX"]
+        ERPSRC["ERP / business systems<br/>SAP · NetSuite · ..."]
+        MACH["Machines & sensors<br/>MQTT · OPC-UA · Modbus · ..."]
+    end
+
+    subgraph TEXTUAL["Textual / business surface (lead)"]
+        PARSE["Parsers + Intake<br/>pdf/docx/xlsx · OCR"]
+        XC["Cross-file / cross-tab<br/>correlation"]
+        CAI["Correlation AI (Gemma)*<br/>+ Actionable Registries"]
+    end
+
+    subgraph MACHINE["Machine surface"]
+        EA["Edge Agent<br/>10+ collectors · 24h buffer · PackML"]
+        RP["Redpanda (Kafka)"]
+        IW["Ingestion workers"]
+    end
+
+    subgraph STORE["Storage"]
+        TS[("TimescaleDB<br/>telemetry")]
+        PG[("Postgres tables<br/>assets · ERP · yard · kanban · fleet · ...")]
+    end
+
+    API["FastAPI — REST + WebSocket<br/>one error envelope · paginated lists"]
+    FE["React frontend<br/>dashboards · live charts"]
+
+    DOC --> PARSE --> XC
+    ERPSRC --> XC
+    XC --> CAI --> PG
+    MACH --> EA
+    EA -. "outbound-only mTLS" .-> RP --> IW --> TS
+    TS --> API
+    PG --> API
+    API -->|"REST"| FE
+    API -.->|"WebSocket (live)"| FE
+```
+
+\* Correlation-AI **inference** needs the Gemma model. Everything else runs fully
+offline — see [Offline demo](#offline-demo--backendscriptsseed_demo_datapy).
+
+### 2. Component & subsystem map — how it's wired
+
+Every frontend page talks to `app/main.py` (60+ routers behind one error envelope
++ JWT auth), which delegates to the services below, which read/write the stores.
+
 ```mermaid
 flowchart TB
-    subgraph CLOUD["☁️ Cloud Environment"]
+    subgraph FEP["Frontend — React pages"]
+        P1["Dashboard · Assets · AssetDetail · Alarms · OEE"]
+        P2["Analytics · Predictive Maintenance (RUL) · Historian"]
+        P3["Engines: Tactical · Strategic · Cloud Gateway · MLOps"]
+        P4["Fleet (OTA) · Yard · Transportation · Kanban"]
+        P5["ERP · Intake · Correlation · Admin (Errors · Audit · Settings)"]
+    end
+
+    API{{"FastAPI · app/main.py<br/>auth/RBAC · error envelope · pagination"}}
+
+    subgraph SVC["Backend services / subsystems"]
+        A["Assets · Telemetry · Alarms · OEE · KPI · Operations · Commands"]
+        B["Predictive: Health-Index · RUL · Digital-Twin Optimizer · Simulation"]
+        C["Engines: Tactical · Strategic · Cloud Gateway · MLOps"]
+        D["Fleet/OTA: agents · releases · rollouts · model-registry · monitoring"]
+        E["Logistics: Yard (YMS) · Transportation (TMS) · GeoTab · geofencing"]
+        F["ERP integrations + webhooks · Historian · Notifications"]
+        G["Correlation AI · RAG · Intake/NLP · Registries · Compliance · Kanban"]
+        H["Edge: enroll · ingest · fleet · Exports · Audit · GDPR"]
+    end
+
+    subgraph INFRA["Data + infra"]
+        TS[("TimescaleDB")]
+        RP2["Redpanda"]
+        RED["Redis"]
+        OBS["Prometheus · Grafana · Loki"]
+    end
+
+    FEP -->|"HTTPS / WS · JWT"| API
+    API --> A & B & C & D & E & F & G & H
+    A --> TS
+    A --> RP2
+    F --> RED
+    B --> TS
+    D -.-> RP2
+    SVC -.-> OBS
+```
+
+### 3. Physical / deployment topology (offline-capable edge + cloud)
+
+```mermaid
+flowchart TB
+    subgraph CLOUD["Cloud Environment"]
         direction TB
         MT["Model Training<br/>PyTorch/GPU"]
-        MC["Monte Carlo<br/>Simulations"]
-        DT["Digital Twin<br/>Simulations"]
-        MR["Model Registry"]
+        MC["Monte-Carlo / Digital-Twin<br/>simulation"]
+        MR["Model Registry + OTA<br/>releases · rollouts"]
         CG["Secure Cloud Gateway"]
         MT --> MR
         MC --> MR
-        DT --> MR
     end
 
-    MR -. "Updated weights<br/>mTLS" .-> CG
+    MR -. "signed model/agent bundles<br/>mTLS" .-> CG
 
-    subgraph EDGE["🏭 Factory Floor - Edge Rack (K3s/Patroni)"]
+    subgraph EDGE["Factory Floor — Edge Rack (K3s / Patroni HA)"]
         direction TB
-        subgraph OBS["Observability Stack"]
+        subgraph OBS["Observability"]
             PROM["Prometheus"]
             GRAF["Grafana"]
             LOKI["Loki"]
-            ALERT["Alertmanager"]
             TSDB["TimescaleDB (HA)"]
         end
-
-        subgraph AI["AI Engine"]
+        subgraph AI["AI / Predictive"]
             TACT["Tactical Engine"]
             STRAT["Strategic Engine"]
-            MLOPS["MLOps Pipeline"]
+            RUL["Health-Index / RUL"]
+            TWIN["Digital-Twin Optimizer"]
             FEAT["Feature Extraction"]
         end
-
-        subgraph AGENTS["Edge Agents - 10 Protocol Collectors"]
-            MQTT["MQTT (Bambu Labs)"]
-            SCRAPER["Screen Scraper (OCR)"]
-            FILE["File Watcher"]
-            OPC["OPC-UA (PLCs)"]
-            MODBUS["Modbus TCP/RTU"]
-            HTTP["HTTP/REST"]
-            EIP["EtherNet/IP"]
-            PROFI["PROFINET"]
-            BACNET["BACnet"]
-            CANBUS["CAN bus"]
+        subgraph AGENTS["Edge Agents — collectors"]
+            COL["MQTT · OPC-UA · Modbus · EtherNet/IP<br/>PROFINET · BACnet · CAN · SNMP<br/>Sparkplug B · DNP3 · HTTP · OCR · file"]
         end
-
-        subgraph OPS["Operations Management"]
-            KANBAN["Kanban Board<br/>Task Management"]
-            REG["Actionable Registries<br/>Compliance & Operations"]
-            CORR["Data Correlation<br/>Mapping & Scoring"]
+        subgraph OPS["Operations & Correlation"]
+            KANBAN["Kanban · Registries"]
+            NOTIF["Notifications"]
+            HIST["Historian"]
+            ERP2["ERP · Yard · Transportation"]
+            CORR["Correlation AI · RAG · Intake"]
         end
     end
 
-    CG -. "Outbound-only mTLS<br/>Cloud never initiates" .-> EDGE
-    AGENTS --> TACT
-    AGENTS --> TSDB
-    AGENTS --> KANBAN
+    CG -. "outbound-only mTLS<br/>cloud never initiates" .-> EDGE
+    COL --> TACT
+    COL --> TSDB
+    TSDB --> RUL --> TWIN
     TACT --> STRAT
     TACT --> FEAT
     FEAT -.-> CG
-    KANBAN --> REG
-    REG --> CORR
-    TSDB --> REG
+    TSDB --> KANBAN --> CORR
+    KANBAN --> NOTIF
+    TSDB --> HIST
 ```
+
+### 4. Page → API wiring
+
+How each frontend page is wired to the backend (primary endpoints; all under
+`/api/v1`, JWT-gated, live updates over `/ws`):
+
+| Frontend page | Backend endpoints / routers | Key services |
+|---------------|-----------------------------|--------------|
+| Dashboard | `dashboard`, `assets`, `alarms`, `oee`, `kpi` | oee_calculator, aggregators |
+| Assets / AssetDetail | `assets`, `telemetry`, `commands`, `health-index` | telemetry, command_executor |
+| Alarms | `alarms` | alarm rules |
+| OEE / Analytics | `oee`, `kpi`, `telemetry`, `operations` | oee_calculator |
+| Predictive Maintenance | `rul`, `health-index` | rul, health_index |
+| Historian | `historian` | historian / data_retention |
+| Engines (Strategic/Tactical/Cloud/MLOps) | `engines`, `twin`, `simulation`, `models`, `model-monitoring` | strategic_engine, tactical_engine, twin_optimizer, simulation, mlops_pipeline |
+| Fleet (OTA) | `fleet/agents`, `fleet/releases`, `fleet/rollouts`, `model-releases` | rollout_orchestrator, agent_signing |
+| Yard (YMS) | `yard` | yard_management |
+| Transportation (TMS) | `transportation`, `geotab`, `geofencing`, `maintenance`, `fleet` (health) | transportation_management, geotab_service, routing |
+| Kanban | `kanban` | kanban / correlation task creation |
+| ERP | `erp/integrations`, `erp/webhooks` | erp_connector_factory, erp_webhook_receiver |
+| Intake / Correlation | `nlp`, `analysis-sessions`, `platform-correlation`, `rag` | correlation_ai_engine, rag_retriever, intake parsers |
+| Notifications | `notifications` | notification_service |
+| Admin — Error Triage | `admin/errors` | error_tracker |
+| Admin — Audit / Settings | `audit`, `organizations`, `feature-flags`, `admin/query-performance` | audit_trail, feature_flags |
 
 ---
 
