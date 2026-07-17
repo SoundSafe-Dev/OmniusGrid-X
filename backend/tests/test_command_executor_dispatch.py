@@ -168,8 +168,10 @@ async def test_submit_uses_unique_uuid_and_persists_tenant(command_db):
 
     assert UUID(first_id) != UUID(second_id)
     first = await _load_command(command_db, first_id)
-    assert first.organization_id == command_db["organization_id"]
-    assert first.asset_id == command_db["asset_id"]
+    # Converged UUIDString (FS-55) reads id columns back as canonical dashed
+    # strings on every dialect — compare as strings, not uuid.UUID objects.
+    assert str(first.organization_id) == str(command_db["organization_id"])
+    assert str(first.asset_id) == str(command_db["asset_id"])
     assert first.status == CommandStatus.PENDING.value
     assert first.timeout_seconds == 30
     assert first.dispatch_attempts == 0

@@ -107,8 +107,13 @@ async def test_inactive_user_is_rejected_before_role_dependency(monkeypatch):
             db=None,
         )
 
-    assert exc_info.value.status_code == 400
-    assert exc_info.value.detail == "Inactive user"
+    # Converged behavior: an inactive/unresolvable user folds into a generic
+    # 401 (non-leaky — doesn't reveal the account exists but is disabled),
+    # matching the login endpoint's "Incorrect email or password" stance.
+    # The point of this test stands: rejection happens before any role
+    # dependency ever runs.
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.detail == "Could not validate credentials"
 
 
 def test_rbac_has_one_admin_dependency_and_no_dead_permission_runtime():

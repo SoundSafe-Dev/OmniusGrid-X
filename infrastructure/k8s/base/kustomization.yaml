@@ -14,7 +14,6 @@ resources:
   - ingestion-worker-deployment.yaml
   - export-worker-deployment.yaml
   - compliance-reports-worker-deployment.yaml
-  - ota-rollout-worker-deployment.yaml
   - migration-job.yaml
   - timescaledb-statefulset.yaml
   - redpanda-statefulset.yaml
