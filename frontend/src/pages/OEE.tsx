@@ -1,6 +1,6 @@
-import { FC } from 'react'
+import { FC, Fragment, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { BarChart3, TrendingUp, Clock } from 'lucide-react'
+import { BarChart3, TrendingUp, Clock, ChevronDown, ChevronRight } from 'lucide-react'
 import { dashboardApi } from '../api'
 import { Tooltip, TooltipTrigger, TooltipContent } from '../components/ui'
 import { ExportButton } from '../components/common'
@@ -8,6 +8,9 @@ import { useAuth } from '../hooks/useAuth'
 
 const OEE: FC = () => {
   const { isAdmin } = useAuth()
+  // Clicking a row expands an inline OEE breakdown for that asset (the row
+  // tooltip has always promised this; the handler was never wired).
+  const [expandedId, setExpandedId] = useState<string | null>(null)
   const { data: fleetOEE, isLoading } = useQuery({
     queryKey: ['fleet-oee'],
     queryFn: () => dashboardApi.getFleetOEE(),
@@ -160,13 +163,38 @@ const OEE: FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-opsgrid-border">
-              {fleetOEE?.assets?.map((asset: any) => (
-                <tr key={asset.assetId} className="hover:bg-opsgrid-bg/50">
+              {fleetOEE?.assets?.map((asset: any) => {
+                const isExpanded = expandedId === asset.assetId
+                const toggle = () => setExpandedId(isExpanded ? null : asset.assetId)
+                return (
+                <Fragment key={asset.assetId}>
+                <tr
+                  className="hover:bg-opsgrid-bg/50 cursor-pointer"
+                  role="button"
+                  tabIndex={0}
+                  aria-expanded={isExpanded}
+                  onClick={toggle}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      toggle()
+                    }
+                  }}
+                >
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <td className="p-4">
-                        <p className="font-medium">{asset.assetName}</p>
-                        <p className="text-sm text-opsgrid-text-secondary">{asset.assetId}</p>
+                        <div className="flex items-center gap-2">
+                          {isExpanded ? (
+                            <ChevronDown size={16} className="text-opsgrid-text-secondary shrink-0" />
+                          ) : (
+                            <ChevronRight size={16} className="text-opsgrid-text-secondary shrink-0" />
+                          )}
+                          <div>
+                            <p className="font-medium">{asset.assetName}</p>
+                            <p className="text-sm text-opsgrid-text-secondary">{asset.assetId}</p>
+                          </div>
+                        </div>
                       </td>
                     </TooltipTrigger>
                     <TooltipContent>Click to view detailed OEE metrics for {asset.assetName}</TooltipContent>
@@ -226,7 +254,16 @@ const OEE: FC = () => {
                     </TooltipContent>
                   </Tooltip>
                 </tr>
-              ))}
+                {isExpanded && (
+                  <tr className="bg-opsgrid-bg/30">
+                    <td colSpan={4} className="p-4">
+                      <OEEDetailPanel assetId={asset.assetId} assetName={asset.assetName} />
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
+                )
+              })}
             </tbody>
           </table>
         </div>
@@ -234,6 +271,81 @@ const OEE: FC = () => {
         {fleetOEE?.assets?.length === 0 && (
           <div className="p-8 text-center text-opsgrid-text-secondary">
             No OEE data available
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// Inline per-asset OEE breakdown, fetched on expand via the existing
+// /dashboard/assets/:id/oee endpoint (dashboardApi.getAssetOEE).
+const OEEDetailPanel: FC<{ assetId: string; assetName: string }> = ({ assetId, assetName }) => {
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['asset-oee', assetId],
+    queryFn: () => dashboardApi.getAssetOEE(assetId),
+  })
+
+  if (isLoading) {
+    return <div className="text-sm text-opsgrid-text-secondary">Loading OEE detail for {assetName}…</div>
+  }
+  if (isError || !data) {
+    return <div className="text-sm text-status-alarm">Couldn’t load OEE detail for {assetName}.</div>
+  }
+
+  const pct = (v: number) => `${((v ?? 0) * 100).toFixed(1)}%`
+  const factors: Array<{ label: string; value: number; hint: string }> = [
+    { label: 'Availability', value: data.availability, hint: 'Uptime vs planned time' },
+    { label: 'Performance', value: data.performance, hint: 'Speed vs ideal cycle time' },
+    { label: 'Quality', value: data.quality, hint: 'Good units vs total' },
+    { label: 'OEE', value: data.oee, hint: 'Availability × Performance × Quality' },
+  ]
+
+  const states = Object.entries(data.stateDurations ?? {})
+    .filter(([, seconds]) => seconds > 0)
+    .sort((a, b) => b[1] - a[1])
+  const fmtDuration = (seconds: number) => {
+    const h = Math.floor(seconds / 3600)
+    const m = Math.round((seconds % 3600) / 60)
+    return h > 0 ? `${h}h ${m}m` : `${m}m`
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {factors.map((f) => (
+          <div key={f.label} className="rounded-lg border border-opsgrid-border p-3">
+            <p className="text-xs text-opsgrid-text-secondary">{f.label}</p>
+            <p className="text-2xl font-semibold">{pct(f.value)}</p>
+            <p className="text-xs text-opsgrid-text-secondary mt-1">{f.hint}</p>
+          </div>
+        ))}
+      </div>
+
+      <div>
+        <p className="text-sm font-medium mb-2">
+          State breakdown{data.timeRange ? ` · ${data.timeRange}` : ''}
+        </p>
+        {states.length === 0 ? (
+          <p className="text-sm text-opsgrid-text-secondary">
+            No recorded state time in this window (expected offline — PackML state comes from a live edge agent).
+          </p>
+        ) : (
+          <div className="space-y-1.5">
+            {states.map(([state, seconds]) => {
+              const share = data.totalPlannedTimeSeconds
+                ? (seconds / data.totalPlannedTimeSeconds) * 100
+                : 0
+              return (
+                <div key={state} className="flex items-center gap-3 text-sm">
+                  <span className="w-28 shrink-0 capitalize">{state.replace(/_/g, ' ')}</span>
+                  <div className="flex-1 h-2 bg-opsgrid-bg rounded-full overflow-hidden">
+                    <div className="h-full bg-opsgrid-primary" style={{ width: `${Math.min(share, 100)}%` }} />
+                  </div>
+                  <span className="w-16 text-right text-opsgrid-text-secondary">{fmtDuration(seconds)}</span>
+                </div>
+              )
+            })}
           </div>
         )}
       </div>
