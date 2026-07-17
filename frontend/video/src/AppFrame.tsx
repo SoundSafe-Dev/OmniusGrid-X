@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { AbsoluteFill, continueRender, delayRender } from 'remotion';
-import { QueryClient, QueryClientProvider, useIsFetching } from 'react-query';
+import { QueryClient, QueryClientProvider, useIsFetching } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { TooltipProvider } from '../../src/components/ui';
 import { theme, STAGE_W, STAGE_H, STAGE_SCALE, CHROME_H } from './theme';

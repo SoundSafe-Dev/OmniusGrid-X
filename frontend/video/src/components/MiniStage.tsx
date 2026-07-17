@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { QueryClient, QueryClientProvider } from 'react-query';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { TooltipProvider } from '../../../src/components/ui';
 import { theme, STAGE_W, STAGE_H, CHROME_H } from '../theme';
