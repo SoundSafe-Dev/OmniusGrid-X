@@ -1,6 +1,6 @@
 import { api } from './client';
 import { mockApi } from './mockApi';
-import { TelemetryPoint, LatestTelemetry, AvailableMetrics, TelemetryFilters } from '../types';
+import { TelemetryPoint, TelemetryHistoryPage, LatestTelemetry, AvailableMetrics, TelemetryFilters } from '../types';
 
 import { USE_MOCK } from './mockMode';
 import { registerTransform } from './transformRegistry';
@@ -79,7 +79,40 @@ export const telemetryApi = {
     if (filters?.endTime) params.end_time = filters.endTime;
     if (filters?.aggregation) params.aggregation = filters.aggregation;
 
-    const response = await api.get<TelemetryPoint[]>(`/api/v1/telemetry/${assetId}/history`, { params });
+    // Backend now returns a {items, meta} time-series envelope (FS-89). getHistory
+    // stays a plain point array for existing chart consumers; use getHistoryPage
+    // when you need the has_more / cursor metadata to page through a large range.
+    const response = await api.get<{ items: TelemetryPoint[] }>(`/api/v1/telemetry/${assetId}/history`, { params });
+    return response.data.items;
+  },
+
+  getHistoryPage: async (
+    assetId: string,
+    filters?: TelemetryFilters,
+  ): Promise<TelemetryHistoryPage> => {
+    if (USE_MOCK) {
+      const items = await telemetryApi.getHistory(assetId, filters);
+      return {
+        items,
+        meta: {
+          count: items.length,
+          skip: 0,
+          limit: items.length,
+          hasMore: false,
+          newest: items[0]?.timestamp ?? null,
+          oldest: items[items.length - 1]?.timestamp ?? null,
+        },
+      };
+    }
+    const params: Record<string, any> = {};
+    if (filters?.metricName) params.metric_name = filters.metricName;
+    if (filters?.startTime) params.start_time = filters.startTime;
+    if (filters?.endTime) params.end_time = filters.endTime;
+    if (filters?.aggregation) params.aggregation = filters.aggregation;
+    const response = await api.get<TelemetryHistoryPage>(
+      `/api/v1/telemetry/${assetId}/history`,
+      { params },
+    );
     return response.data;
   },
 
