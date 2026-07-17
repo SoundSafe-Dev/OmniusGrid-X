@@ -72,9 +72,14 @@ OmniusGrid is a resilient manufacturing operations platform designed for Industr
 
 ## Active Development & Team Progress
 
-> **Snapshot: July 12, 2026.** Both remotes (`origin` = SoundSafe-ai, `backup` = SoundSafe-Dev)
-> are in sync. This maps in-flight work to owners so contributors can coordinate and avoid
-> overlap. Branch tips move — treat this as a directory, not a record of exact commits.
+> **Snapshot: July 17, 2026.** Both remotes (`origin` = SoundSafe-ai, `backup` = SoundSafe-Dev)
+> are in sync. **`main` was promoted from `hamad/converged-pre-main` on 2026-07-17** — it now
+> carries the full converged backend + the refreshed frontend/UI and brand system, so start new
+> work from an up-to-date `main` (`git fetch origin && git merge origin/main`, then reinstall
+> deps — `pip install -r backend/requirements.txt` for the python-jose→PyJWT swap, and
+> `npm install` in `frontend/`). This maps in-flight work to owners so contributors can
+> coordinate and avoid overlap. Branch tips move — treat this as a directory, not a record of
+> exact commits.
 
 ### Convergence branch — `hamad/converged-pre-main` (merge candidate)
 
@@ -82,7 +87,9 @@ The integration branch for the next `main`: it merges every workstream
 (Hridyansh's OTA + tenant/RBAC hardening, Harsh's correlation-AI + MLOps +
 mobile/kanban, Hudson's RAG compliance-doc pipeline) and carries the
 **70-task hardening program** (fixed sprints FS-01..70, each sprint
-code-reviewed). ~185 commits ahead of `main`. Highlights:
+code-reviewed) plus the FS-71..140 fixed-sprint batches. It was **promoted to
+`main` on 2026-07-17** (main's tree now equals this branch); new work continues
+to land here and is promoted to `main` periodically. Highlights:
 
 - **Real mode is the default** — the frontend mock layer is opt-in
   (`VITE_USE_MOCK=true`); every API client has a real backend path, bridged by
@@ -155,11 +162,51 @@ than being rebuilt, preventing duplicate work.)
   `meta_data`, yard/transportation naive-`utcnow()` vs `TIMESTAMPTZ`, graceful
   `503`s for redis/pg_stat-backed diagnostics).
 
-Still deferred/flagged: the schemathesis gate flip (needs a green CI run); a
-codebase-wide `datetime.utcnow()` → timezone-aware sweep (~72 files; the
-yard/transport lane is fixed); the py3.11 DNP3 driver (upstream ships no
-compatible wheel); schema-parity + real-DB endpoint-smoke guard tests (planned
-FS-91/92). The 3 intake-lane test failures remain Harsh's.
+### Delivered since — FS-91..140 (real-DB lock-in, observability, edge, contract, deploy)
+
+The next batches are **done** and on this branch (and now on `main`). Theme of
+the slice: eliminating *silent* failures — tests that skip, alerts that can't
+fire, data quietly dropped, errors that only reach a log. Every fix ships with a
+guard so the gap can't silently reopen.
+
+- **Real-DB correctness, locked in (FS-91/92/93/96/97/114).** Schema-parity +
+  endpoint/write smoke guards run against an ephemeral **testcontainers**
+  TimescaleDB, and a new **blocking backend-realdb CI job** runs them on every
+  `hamad/**` push (they had been silently skipping — `testcontainers` was never
+  pinned). A backend+edge timezone-aware sweep fixed naive-`utcnow()`-vs-
+  `TIMESTAMPTZ` data-loss bugs (incl. an edge age-lag that read 0 forever and a
+  coordinator that dropped readings).
+- **Observability for the converged subsystems (FS-105/107/108/110).**
+  `opsgrid_*` metrics for rul / twin / historian / notifications; a new
+  `opsgrid_subsystems` **alert group gated by a promtool CI job** (nothing
+  validated the alert rules before); correlation-id propagation onto the
+  **WebSocket** path (it bypassed the HTTP middleware); and subsystem failures
+  (rul notify, twin emit, notification delivery) wired into **error-triage**.
+- **API contract (FS-102/103).** RFC-9457 **`application/problem+json`** on error
+  responses (additive over the legacy envelope) + wider **Idempotency-Key**
+  coverage across mutation surfaces.
+- **Edge telemetry chain (FS-120/121/123).** Five silent data-loss bugs fixed:
+  Sparkplug B aliased-DATA drop + rebirth/seq handling, SNMP Counter64 precision,
+  and an edge-buffer retention bug that string-compared timestamps and wiped
+  fresh rows. Edge suite 175 → 186 tests.
+- **Audit & runtime security (FS-111/116).** Audit-log coverage for the new
+  control-plane mutations (twin optimize, model reset, query-perf admin); and
+  per-workload **k8s egress allow-lists** finishing the default-deny posture.
+- **Offline demo depth (FS-135/137).** `make demo` one-shot (seed → serve the API
+  against SQLite `dev.db`, dev-token auth) plus a **CI smoke** that seeds and
+  hits the gap-area endpoints so the seeder can't silently rot.
+- **Frontend real-mode depth (FS-126/127/130/131/132) + brand system.** Telemetry
+  paging + range/zoom, pagination controls on every `Page[T]` list, WebSocket
+  reconnect/backoff, the RUL / historian / digital-twin pages and notifications
+  center, and the logo/wordmark brand system (sidebar + login headers).
+
+Still deferred/flagged: the schemathesis gate flip (needs a green CI run); the
+py3.11 DNP3 driver (upstream ships no compatible wheel); and the remaining
+FS-91..140 backlog — SDK regen (FS-101/104), HPA/PDB + secrets/canary
+(FS-113/115/117), edge enrollment/hot-reload/e2e harness (FS-122/124/125),
+real-mode audit + loading states (FS-128/129), seeder profiles + continuous
+aggregates + offline export (FS-133/134/136), and the signed-URL/geotab/ERP
+security passes (FS-138/139/140). The 3 intake-lane test failures remain Harsh's.
 
 ### Offline demo — `backend/scripts/seed_demo_data.py`
 
@@ -173,19 +220,23 @@ thing that still needs its model is the Correlation-AI **inference** (a ready
 
 ### Subsystem ownership — check here before starting work
 
-| Area | Active owner(s) | Notes |
+| Area | Active owner(s) | Branches / notes |
 |------|-----------------|-------|
-| Correlation AI / NLP / intake / spreadsheet parsing | **Harsh** | Coordinate before touching `correlation_ai_engine.py`, `nlp_correlation.py`, intake services. Also owns the 3 failing intake tests + scenario-builder import drift. |
-| Mobile app / Kanban / demo API | **Harsh** | Merged into the convergence branch; kanban/nlp files received mechanical-only fixes there (flagged in commit messages). |
-| MLOps (model registry + training) | **Harsh** | `model_registry` / `model_training_runs`. |
-| RAG / compliance doc store (SeaweedFS/S3) | **Hudson** | `feature/RAG-Compliance-Doc-Pipeline` (merged into convergence); containerization seam documented in `docs/RAG_CONTAINERIZATION.md`. |
-| Tenant isolation / RBAC / security hardening | **Hridyansh** | Merged; RLS now enforced through the canonical `app.current_org_id` GUC everywhere (incl. ERP tables). |
-| OTA / edge command dispatch / agent releases | **Hridyansh** | Rollout orchestrator + agent-side executor merged; `ota-rollout-worker` runs in compose + k8s. |
-| Everything else (edge platform, backend platform, frontend, deploy/CI, schema, docs) | **Hamad** | The convergence branch program above. |
+| Correlation AI / NLP / intake / spreadsheet parsing | **Harsh** | `feature/gemma-correlation-ai`, `HARSH-CONTRIBUTION`. Coordinate before touching `correlation_ai_engine.py`, `nlp_correlation.py`, intake services. Owns the 3 failing intake tests + scenario-builder import drift, and the Gemma correlation model. |
+| Mobile app / Kanban / demo API | **Harsh** | Merged; kanban/nlp files received mechanical-only fixes on the convergence branch (flagged in commit messages). |
+| MLOps (model registry + training + monitoring) | **Harsh** | `model_registry` / `model_training_runs`; model-monitoring drift + performance tracking. |
+| RAG / compliance doc pipeline (SeaweedFS/S3 + Gemma inference) | **Hudson** (htreinen) | `htreinen`, `feature/RAG-Compliance-Doc-Pipeline`. `/api/v1/rag`; containerization seam in `docs/RAG_CONTAINERIZATION.md`. His `origin` is the SoundSafe-Dev mirror. |
+| Tenant isolation / RBAC / security hardening | **Hridyansh** | `hridyansh/tenant-isolation-middleware`. RLS enforced through the canonical `app.current_org_id` GUC everywhere (incl. ERP tables). |
+| OTA / edge command dispatch / agent releases | **Hridyansh** | `hridyansh/edge-command-dispatch`, `hridyansh/edge-agent-retry-logic`. Rollout orchestrator + agent-side executor; `ota-rollout-worker` runs in compose + k8s. |
+| ERP connector + integration / package layout | **Hridyansh** | `hridyansh/integration`, `hridyansh/integration-erp`, `hridyansh/package-renaming-fix`. |
+| Edge platform, backend platform, frontend/UI, deploy/CI, schema, observability, docs | **Hamad** | `hamad/converged-pre-main` (integration → `main`). The convergence program + the FS fixed-sprints above. |
+| *(ramp-up)* — under Harsh's lane | **Alex** | New contributor (joining the correlation/MLOps area under Harsh); not yet assigned a branch or task. |
 
-> ⚠️ The pre-convergence feature branches listed in older revisions of this
-> README are merged into `hamad/converged-pre-main`. Start new work from the
-> convergence branch (or `main` after it merges), not from those branches.
+> ⚠️ The pre-convergence feature branches are all merged into
+> `hamad/converged-pre-main` and now into **`main`**. **Start new work from
+> `main`** (or from your own active branch after merging `origin/main` into it),
+> not from stale feature branches. A one-time `TEAM_UPDATE.md` heads-up was
+> pushed onto each active dev branch (safe to delete once read).
 
 ## Architecture
 
