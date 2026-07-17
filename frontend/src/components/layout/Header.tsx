@@ -10,7 +10,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from '../ui';
 export const Header: FC = () => {
   const location = useLocation();
   const { mobileSidebarOpen, setMobileSidebarOpen } = useUIStore();
-  const { connected } = useWebSocket();
+  const { connected, connectionState, pollingFallback } = useWebSocket();
   const { data: activeAlarms } = useActiveAlarms();
 
   // Get page title from current route
@@ -89,7 +89,11 @@ export const Header: FC = () => {
             <Tooltip>
               <TooltipTrigger asChild>
                 <div>
-                  <ConnectionStatus connected={connected} />
+                  <ConnectionStatus
+                    connected={connected}
+                    state={connectionState}
+                    pollingFallback={pollingFallback}
+                  />
                 </div>
               </TooltipTrigger>
               <TooltipContent>Real-time WebSocket connection status</TooltipContent>

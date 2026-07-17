@@ -41,4 +41,7 @@ export interface AlarmFilters {
   acknowledged?: boolean;
   startTime?: string;
   endTime?: string;
+  // FS-127: page through the FS-82 envelope.
+  skip?: number;
+  limit?: number;
 }
