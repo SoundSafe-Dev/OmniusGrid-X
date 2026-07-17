@@ -86,6 +86,23 @@ ADMIN_ROUTE_INVENTORY = {
     ("DELETE", "/api/v1/registries/items/{item_id}"),
     ("DELETE", "/api/v1/registries/{registry_id}"),
     ("GET", "/admin/system/status"),
+    ("GET", "/api/v1/admin/query-performance/cache-hit-ratio"),
+    ("GET", "/api/v1/admin/query-performance/frequent-queries"),
+    ("GET", "/api/v1/admin/query-performance/history"),
+    ("GET", "/api/v1/admin/query-performance/index-usage"),
+    ("GET", "/api/v1/admin/query-performance/missing-indexes"),
+    ("GET", "/api/v1/admin/query-performance/query-analysis"),
+    ("GET", "/api/v1/admin/query-performance/slow-queries"),
+    ("GET", "/api/v1/admin/query-performance/table-bloat"),
+    ("GET", "/api/v1/admin/query-performance/table-performance"),
+    ("POST", "/api/v1/admin/query-performance/record-snapshot"),
+    ("POST", "/api/v1/admin/query-performance/refresh-frequent-queries"),
+    ("POST", "/api/v1/admin/query-performance/reset-stats"),
+    ("GET", "/api/v1/registries"),
+    ("GET", "/api/v1/registries/correlations"),
+    ("GET", "/api/v1/registries/{registry_id}"),
+    ("GET", "/api/v1/registries/{registry_id}/items"),
+    ("PUT", "/api/v1/organizations/settings/current"),
     ("GET", "/api/v1/admin/errors"),
     ("GET", "/api/v1/admin/errors/"),
     ("GET", "/api/v1/admin/errors/summary"),
@@ -244,21 +261,18 @@ AUTHENTICATED_OPERATIONAL_MUTATIONS = {
     ("PATCH", "/api/v1/maintenance/repair-orders/{order_id}"),
     ("POST", "/api/v1/maintenance/history"),
     ("POST", "/api/v1/maintenance/repair-orders"),
-    ("PUT", "/api/v1/organizations/settings/current"),
     # RAG compliance-doc pipeline (Hudson): authenticated ingest/query/delete.
     ("POST", "/api/v1/rag/ingest"),
     ("POST", "/api/v1/rag/query"),
     ("DELETE", "/api/v1/rag/documents/{doc_id}"),
-    # Newly-wired orphan routers. model-monitoring (Harsh, MLOps drift) is
-    # authenticated; admin query-performance diagnostics are admin-gated via
-    # auth.require_admin_user (not the rbac helper the graph-walk recognizes).
+    # model-monitoring (Harsh, MLOps drift) is authenticated. The admin
+    # query-performance mutations + org-settings PUT moved to the
+    # ADMIN_ROUTE_INVENTORY when their gate was consolidated onto the canonical
+    # rbac.require_admin (graph-walk discovers them now).
     ("POST", "/api/v1/model-monitoring/drift/detect"),
     ("POST", "/api/v1/model-monitoring/data-drift/detect"),
     ("POST", "/api/v1/model-monitoring/performance/prediction"),
     ("POST", "/api/v1/model-monitoring/reset/{model_id}"),
-    ("POST", "/api/v1/admin/query-performance/record-snapshot"),
-    ("POST", "/api/v1/admin/query-performance/refresh-frequent-queries"),
-    ("POST", "/api/v1/admin/query-performance/reset-stats"),
 }
 
 

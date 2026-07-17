@@ -548,17 +548,5 @@ async def resolve_websocket_user(token: Optional[str]) -> Optional[User]:
         return user if user and user.is_active else None
 
 
-# Roles allowed into the admin console (ported with require_admin_user).
-ADMIN_CONSOLE_ROLES = frozenset({"admin"})
-
-
-async def require_admin_user(
-    current_user: User = Depends(get_current_active_user),
-) -> User:
-    """All current OmniusGrid console features require admin (includes dev-token user)."""
-    if current_user.role not in ADMIN_CONSOLE_ROLES:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Administrator access required for this resource.",
-        )
-    return current_user
+# The admin-console dependency was consolidated into the single canonical
+# app.middleware.rbac.require_admin (one admin gate, one graph-walkable symbol).

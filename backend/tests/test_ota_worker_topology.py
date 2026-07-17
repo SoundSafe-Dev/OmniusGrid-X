@@ -149,8 +149,17 @@ def test_compose_and_k8s_use_one_dedicated_ota_owner():
     compose_backend = compose["services"]["backend"]
     compose_worker = compose["services"]["ota-rollout-worker"]
 
-    assert compose_backend["environment"]["SCHEDULERS_IN_API"] == "false"
-    assert compose_worker["environment"]["SCHEDULERS_IN_API"] == "false"
+    def _effective(value: str) -> str:
+        # Converged compose uses the env-overridable form
+        # "${SCHEDULERS_IN_API:-false}" — same default, still operator-tunable.
+        # Normalize "${VAR:-default}" to its default before asserting.
+        value = str(value)
+        if value.startswith("${") and ":-" in value and value.endswith("}"):
+            return value[value.index(":-") + 2 : -1]
+        return value
+
+    assert _effective(compose_backend["environment"]["SCHEDULERS_IN_API"]) == "false"
+    assert _effective(compose_worker["environment"]["SCHEDULERS_IN_API"]) == "false"
     assert compose_worker["command"] == "python -m app.workers.ota_rollouts"
     assert compose_worker["depends_on"] == {
         "timescaledb": {"condition": "service_healthy"},

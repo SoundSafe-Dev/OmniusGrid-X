@@ -15,11 +15,11 @@ try:
 except ImportError:
     SecurityHeadersMiddleware = None
 
-from app.api.auth import require_admin_user
+from app.middleware.rbac import require_admin
 
 # Currently unmounted. Admin-gated defensively so it is safe if ever wired up
 # (exposes DB introspection + POST /reset-stats).
-router = APIRouter(dependencies=[Depends(require_admin_user)])
+router = APIRouter(dependencies=[Depends(require_admin)])
 
 @router.get("/slow-queries")
 async def get_slow_queries(
