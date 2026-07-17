@@ -8,7 +8,7 @@ Connector for Epicor Kinetic using REST API:
 """
 
 from typing import Dict, Any, Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 import structlog
 import aiohttp
 
@@ -200,14 +200,14 @@ class EpicorConnector(ERPConnectorBase):
                 "status": "healthy",
                 "message": "Epicor connection successful",
                 "company_id": self.company_id,
-                "checked_at": datetime.utcnow().isoformat()
+                "checked_at": datetime.now(timezone.utc).isoformat()
             }
         except Exception as e:
             return {
                 "status": "unhealthy",
                 "message": str(e),
                 "company_id": self.company_id,
-                "checked_at": datetime.utcnow().isoformat()
+                "checked_at": datetime.now(timezone.utc).isoformat()
             }
     
     def _build_filter_string(self, filters: Dict[str, Any]) -> str:

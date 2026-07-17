@@ -120,7 +120,10 @@ async def test_optimizer_emits_real_approval_gated_strategic_recommendation():
     assert queued.requires_approval is True
     assert queued.expected_impact["organization_id"] == "org-1"
     assert queued.expected_impact["action_id"] == "double-line-speed"
-    assert queued.valid_until > now.replace(tzinfo=None)
+    # Since the FS-96 aware-datetime sweep, the strategic engine stores
+    # valid_until timezone-AWARE (naive ISO inputs are coerced to UTC) — compare
+    # aware-to-aware instead of stripping tzinfo.
+    assert queued.valid_until > now
 
 
 def test_plan_rejects_non_scenario_overrides():

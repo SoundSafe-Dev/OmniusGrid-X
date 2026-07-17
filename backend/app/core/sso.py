@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import secrets
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 import structlog
@@ -203,7 +203,7 @@ def map_sso_role(roles: list[str], groups: list[str]) -> str:
 async def upsert_user_from_sso_claims(claims: SSOClaims, db: AsyncSession) -> User:
     """Create or update a local User matched by verified email."""
     mapped_role = map_sso_role(claims.roles, claims.groups)
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     result = await db.execute(select(User).where(User.email == claims.email))
     user = result.scalar_one_or_none()

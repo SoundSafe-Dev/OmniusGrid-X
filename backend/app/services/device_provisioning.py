@@ -6,7 +6,7 @@ Manages mTLS certificates for edge devices with cryptographic identity
 import os
 import uuid
 import hashlib
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Set
 from dataclasses import dataclass, field
 from enum import Enum
@@ -104,9 +104,9 @@ class CertificateAuthority:
         ).serial_number(
             x509.random_serial_number()
         ).not_valid_before(
-            datetime.utcnow()
+            datetime.now(timezone.utc)
         ).not_valid_after(
-            datetime.utcnow() + timedelta(days=3650)  # 10 years
+            datetime.now(timezone.utc) + timedelta(days=3650)  # 10 years
         ).add_extension(
             x509.BasicConstraints(ca=True, path_length=None),
             critical=True,
@@ -159,9 +159,9 @@ class CertificateAuthority:
         ).serial_number(
             x509.random_serial_number()
         ).not_valid_before(
-            datetime.utcnow()
+            datetime.now(timezone.utc)
         ).not_valid_after(
-            datetime.utcnow() + timedelta(days=365)  # 1 year validity
+            datetime.now(timezone.utc) + timedelta(days=365)  # 1 year validity
         ).add_extension(
             x509.SubjectAlternativeName([
                 x509.DNSName(f"{device_id}.opsgrid.local"),
@@ -203,7 +203,7 @@ class CertificateAuthority:
             certificate_pem=cert_pem,
             private_key_pem=key_pem,
             fingerprint=fingerprint,
-            issued_at=datetime.utcnow(),
+            issued_at=datetime.now(timezone.utc),
             expires_at=cert.not_valid_after,
             status=DeviceStatus.PENDING,
             metadata=device_metadata or {}
@@ -257,7 +257,7 @@ class CertificateAuthority:
                     UPDATE device_identities
                     SET status = 'approved',
                         approved_by = '{approver}',
-                        approved_at = '{datetime.utcnow().isoformat()}'
+                        approved_at = '{datetime.now(timezone.utc).isoformat()}'
                     WHERE device_id = '{device_id}'
                       AND status = 'pending'
                     RETURNING device_id
@@ -286,7 +286,7 @@ class CertificateAuthority:
                 text(f"""
                     UPDATE device_identities
                     SET status = 'revoked',
-                        revoked_at = '{datetime.utcnow().isoformat()}',
+                        revoked_at = '{datetime.now(timezone.utc).isoformat()}',
                         revoked_reason = '{reason}'
                     WHERE device_id = '{device_id}'
                       AND status != 'revoked'
@@ -343,7 +343,7 @@ class CertificateAuthority:
             
             # Check expiration
             expires_at = row[6]
-            if expires_at < datetime.utcnow():
+            if expires_at < datetime.now(timezone.utc):
                 logger.warning("certificate_expired", 
                               fingerprint=fingerprint[:16])
                 return None

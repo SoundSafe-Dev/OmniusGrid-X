@@ -64,7 +64,7 @@ class DataSheddingManager:
         self._shedding_level = 0  # 0 = none, 1 = light, 2 = medium, 3 = heavy
         self._message_count = 0
         self._dropped_count = 0
-        self._last_reset = datetime.utcnow()
+        self._last_reset = datetime.now(timezone.utc)
         self._tenant_priorities: Dict[Tuple[str, str], PriorityConfig] = {}
         self._tenant_policy_refresh: Dict[str, float] = {}
         self._policy_cache_seconds = 60.0
@@ -152,7 +152,7 @@ class DataSheddingManager:
             return False
         
         # Check if data is too old
-        now = datetime.now(timezone.utc) if timestamp.tzinfo else datetime.utcnow()
+        now = datetime.now(timezone.utc) if timestamp.tzinfo else datetime.now(timezone.utc)
         age = (now - timestamp).total_seconds()
         if age > config.max_age_seconds:
             logger.debug("shedding_stale_data", metric=metric_name, age_seconds=age)
@@ -245,7 +245,7 @@ class DataSheddingManager:
     
     def get_stats(self) -> Dict:
         """Get shedding statistics"""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         window_seconds = (now - self._last_reset).total_seconds()
         
         return {
@@ -263,7 +263,7 @@ class DataSheddingManager:
         """Reset counters"""
         self._message_count = 0
         self._dropped_count = 0
-        self._last_reset = datetime.utcnow()
+        self._last_reset = datetime.now(timezone.utc)
 
 
 # Global instance for ingestion workers

@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_
 from typing import List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import uuid
 
 from app.db.models import (
@@ -453,7 +453,7 @@ async def get_registry_score(
     
     total_items = len(items)
     completed_items = sum(1 for item in items if item.last_completed_at)
-    overdue_items = sum(1 for item in items if item.next_due_at and item.next_due_at < datetime.utcnow())
+    overdue_items = sum(1 for item in items if item.next_due_at and item.next_due_at < datetime.now(timezone.utc))
     at_risk_items = sum(1 for item in items if item.risk_score >= 70)
     
     # Calculate compliance score
@@ -514,8 +514,8 @@ async def calculate_item_risk_score(
     risk_score += severity_scores.get(item.severity_level, 20)
     
     # Overdue contribution (0-30 points)
-    if item.next_due_at and item.next_due_at < datetime.utcnow():
-        days_overdue = (datetime.utcnow() - item.next_due_at).days
+    if item.next_due_at and item.next_due_at < datetime.now(timezone.utc):
+        days_overdue = (datetime.now(timezone.utc) - item.next_due_at).days
         risk_score += min(30, days_overdue * 5)
     
     # Required status contribution (0-15 points)
@@ -537,7 +537,7 @@ async def calculate_item_risk_score(
         "risk_score": risk_score,
         "factors": {
             "severity": severity_scores.get(item.severity_level, 20),
-            "overdue": 30 if (item.next_due_at and item.next_due_at < datetime.utcnow()) else 0,
+            "overdue": 30 if (item.next_due_at and item.next_due_at < datetime.now(timezone.utc)) else 0,
             "required": 15 if (item.is_required and not item.last_completed_at) else 0,
             "compliance": max(0, 15 - (item.compliance_score / 100 * 15))
         }

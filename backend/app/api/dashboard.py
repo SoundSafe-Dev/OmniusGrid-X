@@ -2,7 +2,7 @@
 
 from typing import List, Optional
 from uuid import UUID
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -122,7 +122,7 @@ async def get_asset_oee(
         raise HTTPException(status_code=404, detail="Asset not found")
     
     # Calculate time range
-    end_time = datetime.utcnow()
+    end_time = datetime.now(timezone.utc)
     start_time = end_time - timedelta(hours=hours)
     
     # Query PackML state durations
@@ -183,7 +183,7 @@ async def get_fleet_oee(
     result = await db.execute(query)
     assets = result.scalars().all()
     
-    end_time = datetime.utcnow()
+    end_time = datetime.now(timezone.utc)
     start_time = end_time - timedelta(hours=hours)
     
     oee_results = []

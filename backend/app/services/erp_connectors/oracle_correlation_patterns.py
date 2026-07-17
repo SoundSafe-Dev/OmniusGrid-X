@@ -9,7 +9,7 @@ Correlation patterns for Oracle Cloud ERP-specific scenarios:
 """
 
 from typing import Dict, Any, List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_
@@ -70,7 +70,7 @@ class OracleCorrelationPatterns:
         # Check for overdue invoices
         if invoice_data.get("due_date"):
             due_date = datetime.fromisoformat(invoice_data["due_date"])
-            if due_date < datetime.utcnow() and invoice_data.get("status") != "paid":
+            if due_date < datetime.now(timezone.utc) and invoice_data.get("status") != "paid":
                 anomalies.append({
                     "type": "overdue_invoice",
                     "severity": "high",
@@ -153,7 +153,7 @@ class OracleCorrelationPatterns:
         # Check for delayed shipments
         if shipment_data.get("expected_delivery"):
             expected_delivery = datetime.fromisoformat(shipment_data["expected_delivery"])
-            if expected_delivery < datetime.utcnow() and shipment_data.get("status") != "delivered":
+            if expected_delivery < datetime.now(timezone.utc) and shipment_data.get("status") != "delivered":
                 correlations.append({
                     "type": "shipment_delay",
                     "severity": "high",
@@ -166,7 +166,7 @@ class OracleCorrelationPatterns:
             ship_date = shipment_data.get("ship_date")
             if ship_date:
                 ship_datetime = datetime.fromisoformat(ship_date)
-                days_in_transit = (datetime.utcnow() - ship_datetime).days
+                days_in_transit = (datetime.now(timezone.utc) - ship_datetime).days
                 
                 if days_in_transit > 14:  # 2 weeks threshold
                     correlations.append({
@@ -281,7 +281,7 @@ class OracleCorrelationPatterns:
             # For now, just flag if project is near end date
             if project_data.get("end_date"):
                 end_date = datetime.fromisoformat(project_data["end_date"])
-                days_remaining = (end_date - datetime.utcnow()).days
+                days_remaining = (end_date - datetime.now(timezone.utc)).days
                 
                 if days_remaining < 30 and project_data.get("status") == "executing":
                     correlations.append({
@@ -326,7 +326,7 @@ class OracleCorrelationPatterns:
         """
         # Calculate time period
         days = int(time_period.replace("d", ""))
-        start_date = datetime.utcnow() - timedelta(days=days)
+        start_date = datetime.now(timezone.utc) - timedelta(days=days)
         
         # Get invoices in period
         result = await db.execute(
@@ -415,7 +415,7 @@ class OracleCorrelationPatterns:
             correlation_type=correlation_type,
             correlation_score=correlation_score,
             correlation_metadata=metadata,
-            created_at=datetime.utcnow()
+            created_at=datetime.now(timezone.utc)
         )
         
         db.add(correlation)

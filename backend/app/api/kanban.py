@@ -4,7 +4,7 @@ Actionable decision-making kanban system for OmniusGrid
 """
 
 from typing import List, Optional, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from sqlalchemy import select, update, delete, func, and_, or_
@@ -154,7 +154,7 @@ async def broadcast_task_update(
         message={
             "type": f"kanban_{event_type}",
             "data": task_data,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
     )
 
@@ -355,7 +355,7 @@ async def create_task(
         status="ready" if task_data.column_id != column.id else "draft",
         assigned_to=task_data.assigned_to,
         assigned_by=current_user.id if task_data.assigned_to else None,
-        assigned_at=datetime.utcnow() if task_data.assigned_to else None,
+        assigned_at=datetime.now(timezone.utc) if task_data.assigned_to else None,
         planned_start=task_data.planned_start,
         planned_duration=task_data.planned_duration,
         due_date=task_data.due_date,
@@ -449,7 +449,7 @@ async def update_task(
             changes.append(f"Reassigned from {task.assigned_to} to {task_update.assigned_to}")
         task.assigned_to = task_update.assigned_to
         task.assigned_by = current_user.id
-        task.assigned_at = datetime.utcnow()
+        task.assigned_at = datetime.now(timezone.utc)
     
     if task_update.column_id is not None and task_update.column_id != task.column_id:
         # Get old and new column names
@@ -490,7 +490,7 @@ async def update_task(
     if task_update.color_code is not None:
         task.color_code = task_update.color_code
     
-    task.updated_at = datetime.utcnow()
+    task.updated_at = datetime.now(timezone.utc)
     
     await session.commit()
     await session.refresh(task)
@@ -531,7 +531,7 @@ async def delete_task(
     if done_column:
         task.column_id = done_column.id
         task.status = "cancelled"
-        task.updated_at = datetime.utcnow()
+        task.updated_at = datetime.now(timezone.utc)
         
         await log_task_comment(
             session, task.id, current_user.id,
@@ -589,17 +589,17 @@ async def move_task(
     
     # Update column
     task.column_id = move_request.target_column_id
-    task.updated_at = datetime.utcnow()
+    task.updated_at = datetime.now(timezone.utc)
     
     # Update status based on column type
     if target_column.column_type == "in_progress" and task.status != "in_progress":
         task.status = "in_progress"
-        task.actual_start = datetime.utcnow()
+        task.actual_start = datetime.now(timezone.utc)
     elif target_column.column_type == "done":
         task.status = "completed"
         task.progress_percent = 100
-        task.actual_end = datetime.utcnow()
-        task.completed_at = datetime.utcnow()
+        task.actual_end = datetime.now(timezone.utc)
+        task.completed_at = datetime.now(timezone.utc)
         task.completed_by = current_user.id
     
     await session.commit()
@@ -657,7 +657,7 @@ async def approve_task(
         task.column_id = triage_column.id
         task.approval_status = "approved"
         task.approved_by = current_user.id
-        task.approved_at = datetime.utcnow()
+        task.approved_at = datetime.now(timezone.utc)
         task.status = "ready"
         
         # Get max position in triage
@@ -696,7 +696,7 @@ async def approve_task(
     else:
         raise HTTPException(status_code=400, detail="Invalid action. Use 'approve' or 'reject'")
     
-    task.updated_at = datetime.utcnow()
+    task.updated_at = datetime.now(timezone.utc)
     await session.commit()
     await session.refresh(task)
     
@@ -740,8 +740,8 @@ async def start_task(
     # Update task
     task.column_id = in_progress_column.id
     task.status = "in_progress"
-    task.actual_start = datetime.utcnow()
-    task.updated_at = datetime.utcnow()
+    task.actual_start = datetime.now(timezone.utc)
+    task.updated_at = datetime.now(timezone.utc)
     
     # Get max position
     result = await session.execute(
@@ -757,7 +757,7 @@ async def start_task(
     timer = TaskTimer(
         task_id=task.id,
         user_id=current_user.id,
-        started_at=datetime.utcnow(),
+        started_at=datetime.now(timezone.utc),
         is_running=True,
         description="Work started"
     )
@@ -811,7 +811,7 @@ async def complete_task(
     running_timer = result.scalar_one_or_none()
     if running_timer:
         running_timer.is_running = False
-        running_timer.ended_at = datetime.utcnow()
+        running_timer.ended_at = datetime.now(timezone.utc)
         duration = (running_timer.ended_at - running_timer.started_at).total_seconds() / 60
         running_timer.duration_minutes = int(duration)
         task.time_logged_minutes += int(duration)
@@ -820,10 +820,10 @@ async def complete_task(
     task.column_id = done_column.id
     task.status = "completed"
     task.progress_percent = 100
-    task.actual_end = datetime.utcnow()
-    task.completed_at = datetime.utcnow()
+    task.actual_end = datetime.now(timezone.utc)
+    task.completed_at = datetime.now(timezone.utc)
     task.completed_by = current_user.id
-    task.updated_at = datetime.utcnow()
+    task.updated_at = datetime.now(timezone.utc)
     
     # Get max position
     result = await session.execute(
@@ -892,7 +892,7 @@ async def execute_completion_actions(task_id: str, actions: Dict[str, Any], orga
                 alarm = result.scalar_one_or_none()
                 if alarm and alarm.is_active:
                     alarm.is_active = False
-                    alarm.cleared_at = datetime.utcnow()
+                    alarm.cleared_at = datetime.now(timezone.utc)
                     results["alarm_cleared"] = True
                     
                     # Log
@@ -1018,7 +1018,7 @@ async def start_task_timer(
     timer = TaskTimer(
         task_id=task_id,
         user_id=current_user.id,
-        started_at=datetime.utcnow(),
+        started_at=datetime.now(timezone.utc),
         is_running=True,
         description=timer_data.description
     )
@@ -1063,7 +1063,7 @@ async def stop_task_timer(
         raise HTTPException(status_code=404, detail="No running timer found")
     
     timer.is_running = False
-    timer.ended_at = datetime.utcnow()
+    timer.ended_at = datetime.now(timezone.utc)
     duration = (timer.ended_at - timer.started_at).total_seconds() / 60
     timer.duration_minutes = int(duration)
     
@@ -1158,7 +1158,7 @@ async def get_kanban_metrics(
         select(func.count(Task.id)).where(
             and_(
                 Task.board_id == board.id,
-                Task.due_date < datetime.utcnow(),
+                Task.due_date < datetime.now(timezone.utc),
                 Task.status != "completed"
             )
         )
@@ -1166,7 +1166,7 @@ async def get_kanban_metrics(
     overdue_tasks = result.scalar() or 0
     
     # Tasks completed today
-    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     result = await session.execute(
         select(func.count(Task.id)).where(
             and_(
@@ -1260,7 +1260,7 @@ async def get_workload_distribution(
                 and_(
                     Task.board_id == board.id,
                     Task.assigned_to == user_id,
-                    Task.due_date < datetime.utcnow(),
+                    Task.due_date < datetime.now(timezone.utc),
                     Task.status != "completed"
                 )
             )
@@ -1392,7 +1392,7 @@ async def update_task_rule(
     if rule_update.escalation_config is not None:
         rule.escalation_config = rule_update.escalation_config
     
-    rule.updated_at = datetime.utcnow()
+    rule.updated_at = datetime.now(timezone.utc)
     await session.commit()
     await session.refresh(rule)
     

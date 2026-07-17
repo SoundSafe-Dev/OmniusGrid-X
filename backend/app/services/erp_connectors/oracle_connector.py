@@ -9,7 +9,7 @@ Connector for Oracle Cloud ERP using REST API:
 """
 
 from typing import Dict, Any, Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 import structlog
 import aiohttp
 from requests_oauthlib import OAuth2Session
@@ -261,14 +261,14 @@ class OracleConnector(ERPConnectorBase):
                 "status": "healthy",
                 "message": "Oracle connection successful",
                 "instance_name": self.instance_name,
-                "checked_at": datetime.utcnow().isoformat()
+                "checked_at": datetime.now(timezone.utc).isoformat()
             }
         except Exception as e:
             return {
                 "status": "unhealthy",
                 "message": str(e),
                 "instance_name": self.instance_name,
-                "checked_at": datetime.utcnow().isoformat()
+                "checked_at": datetime.now(timezone.utc).isoformat()
             }
     
     def _build_filter_string(self, filters: Dict[str, Any]) -> str:

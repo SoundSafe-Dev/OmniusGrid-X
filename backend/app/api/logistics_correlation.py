@@ -3,7 +3,7 @@ Logistics Correlation API Endpoints
 Cross-domain data correlation between YMS/TMS and manufacturing
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -145,13 +145,13 @@ async def log_load_quality_issue(
 @router.get("/load-quality-correlation")
 async def get_load_quality_correlation(
     organization_id: UUID,
-    start_date: datetime = Query(default_factory=lambda: datetime.utcnow() - timedelta(days=30)),
+    start_date: datetime = Query(default_factory=lambda: datetime.now(timezone.utc) - timedelta(days=30)),
     end_date: Optional[datetime] = Query(None),
     db: AsyncSession = Depends(get_db)
 ):
     """Get load quality correlation analytics"""
     if not end_date:
-        end_date = datetime.utcnow()
+        end_date = datetime.now(timezone.utc)
     
     correlator = LoadQualityCorrelator()
     analytics = await correlator.get_quality_analytics(
@@ -175,7 +175,7 @@ async def get_delivery_efficiency(
     from sqlalchemy import select, func
     from app.db.models import Shipment
     
-    start_date = datetime.utcnow() - timedelta(days=days)
+    start_date = datetime.now(timezone.utc) - timedelta(days=days)
     
     # Get shipment delivery stats
     result = await db.execute(
@@ -240,12 +240,12 @@ async def get_upcoming_detention_risks(
     from sqlalchemy import select
     from app.db.models import DockAppointment
     
-    cutoff = datetime.utcnow() + timedelta(hours=hours_ahead)
+    cutoff = datetime.now(timezone.utc) + timedelta(hours=hours_ahead)
     
     result = await db.execute(
         select(DockAppointment).where(
             DockAppointment.organization_id == organization_id,
-            DockAppointment.scheduled_start >= datetime.utcnow(),
+            DockAppointment.scheduled_start >= datetime.now(timezone.utc),
             DockAppointment.scheduled_start <= cutoff,
             DockAppointment.status.in_(['scheduled', 'in_progress'])
         )
@@ -298,7 +298,7 @@ async def get_compliance_summary(
             func.sum(func.case([(Carrier.ctpat_certified == True, 1)], else_=0)).label('ctpat_count'),
             func.sum(func.case([
                 (Carrier.insurance_on_file == True, 1),
-                (Carrier.insurance_expires_at > datetime.utcnow(), 1)
+                (Carrier.insurance_expires_at > datetime.now(timezone.utc), 1)
             ], else_=0)).label('valid_insurance')
         ).where(
             Carrier.organization_id == organization_id,
@@ -314,7 +314,7 @@ async def get_compliance_summary(
             or_(
                 Driver.hos_drive_hours_today > 11,
                 Driver.hos_on_duty_hours_today > 14,
-                Driver.medical_cert_expires < datetime.utcnow()
+                Driver.medical_cert_expires < datetime.now(timezone.utc)
             )
         )
     )
@@ -325,8 +325,8 @@ async def get_compliance_summary(
         select(func.count(Driver.id)).where(
             Driver.organization_id == organization_id,
             Driver.medical_cert_expires.between(
-                datetime.utcnow(),
-                datetime.utcnow() + timedelta(days=30)
+                datetime.now(timezone.utc),
+                datetime.now(timezone.utc) + timedelta(days=30)
             )
         )
     )
@@ -378,7 +378,7 @@ async def get_liability_costs(
     from sqlalchemy import select, func
     from app.db.models import DriverWaitTime, LoadQualityLog
     
-    start_date = datetime.utcnow() - timedelta(days=days)
+    start_date = datetime.now(timezone.utc) - timedelta(days=days)
     
     # Detention/Demurrage costs
     detention_result = await db.execute(

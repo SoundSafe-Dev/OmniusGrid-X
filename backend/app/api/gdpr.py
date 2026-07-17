@@ -1,6 +1,6 @@
 """GDPR Compliance API Endpoints"""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, Request
@@ -58,7 +58,7 @@ async def _build_user_export(user: User, db: AsyncSession) -> dict:
             "last_login": user.last_login.isoformat() if user.last_login else None,
         },
         "consents": [],
-        "export_timestamp": datetime.utcnow().isoformat(),
+        "export_timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
     result = await db.execute(
@@ -183,7 +183,7 @@ async def withdraw_consent(
         )
     
     consent.consent_given = False
-    consent.withdrawn_at = datetime.utcnow()
+    consent.withdrawn_at = datetime.now(timezone.utc)
     
     await db.commit()
     

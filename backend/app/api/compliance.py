@@ -1,6 +1,6 @@
 """SOC 2 and ISO 27001 Compliance API Endpoints"""
 
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from typing import Optional, List
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -151,7 +151,7 @@ async def update_vendor_assessment(
     if status:
         assessment.status = status
 
-    assessment.updated_at = datetime.utcnow()
+    assessment.updated_at = datetime.now(timezone.utc)
     await db.commit()
 
     logger.info(
@@ -281,7 +281,7 @@ async def update_security_asset(
     if status:
         asset.status = status
 
-    asset.updated_at = datetime.utcnow()
+    asset.updated_at = datetime.now(timezone.utc)
     await db.commit()
 
     logger.info(

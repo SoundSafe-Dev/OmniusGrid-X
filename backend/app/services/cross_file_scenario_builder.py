@@ -22,7 +22,7 @@ supports manual key overrides.
 """
 
 from typing import Dict, List, Iterator, Optional, Any
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.models.domain_interaction import (
     DomainType,
@@ -57,7 +57,7 @@ def _source_metric(source: Dict[str, Any], domain: DomainType,
             "matched_keys": shared_keys,
             "summary": source.get("summary", {}),
         },
-        timestamp=datetime.utcnow().isoformat(),
+        timestamp=datetime.now(timezone.utc).isoformat(),
     )
 
 

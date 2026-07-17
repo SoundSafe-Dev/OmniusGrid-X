@@ -3,7 +3,7 @@ Transportation Management API Endpoints (TMS)
 Carrier management, shipment tracking, routing, HOS compliance
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -104,7 +104,7 @@ async def update_carrier(
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(carrier, field, value)
     
-    carrier.updated_at = datetime.utcnow()
+    carrier.updated_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(carrier)
     return carrier
@@ -204,7 +204,7 @@ async def update_driver(
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(driver, field, value)
     
-    driver.updated_at = datetime.utcnow()
+    driver.updated_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(driver)
     return driver
@@ -308,7 +308,7 @@ async def update_shipment(
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(shipment, field, value)
     
-    shipment.updated_at = datetime.utcnow()
+    shipment.updated_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(shipment)
     return shipment
@@ -569,7 +569,7 @@ def compute_delivery_efficiency(shipments: list) -> dict:
         for s in delivered
         if s.actual_delivery and s.actual_pickup
     ]
-    today = datetime.utcnow().date()
+    today = datetime.now(timezone.utc).date()
     return {
         "onTimeRate": round(len(on_time) / len(delivered), 4) if delivered else 1.0,
         "avgTransitHours": round(sum(transit_hours) / len(transit_hours), 1) if transit_hours else 0.0,

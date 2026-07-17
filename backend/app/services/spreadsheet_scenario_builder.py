@@ -16,7 +16,7 @@ Modes:
 """
 
 from typing import Dict, List, Iterator, Optional, Any, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 import math
 
 from app.models.domain_interaction import (
@@ -284,7 +284,7 @@ def _build_tab_mode(tabs, mapping: WorkbookDomainMapping,
         metrics.append(OperationalMetric(
             endpoint=_endpoint_for_domain(domain, tab_name),
             payload_snapshot=payload,
-            timestamp=datetime.utcnow().isoformat(),
+            timestamp=datetime.now(timezone.utc).isoformat(),
         ))
     links = _build_links(domains, source_id, max_sev)
     yield CorrelationScenario(
@@ -308,7 +308,7 @@ def _build_row_mode(tabs, mapping: WorkbookDomainMapping, source_id: str,
             metric = OperationalMetric(
                 endpoint=_endpoint_for_domain(domain, tab_name),
                 payload_snapshot=_row_to_payload(record),
-                timestamp=datetime.utcnow().isoformat(),
+                timestamp=datetime.now(timezone.utc).isoformat(),
             )
             yield CorrelationScenario(
                 scenario_id=f"{source_id}-row-{count:06d}",

@@ -4,7 +4,7 @@ Prevents silent data corruption from firmware updates
 """
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List, Set
 from dataclasses import dataclass, field
 from enum import Enum
@@ -236,7 +236,7 @@ class SchemaRegistry:
                 'severity': violation.severity.value,
                 'timestamp': violation.timestamp.isoformat(),
             },
-            '_quarantined_at': datetime.utcnow().isoformat(),
+            '_quarantined_at': datetime.now(timezone.utc).isoformat(),
         }
         
         self._quarantine_queue.append(quarantine_record)

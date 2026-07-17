@@ -8,7 +8,7 @@ Service for integrating with Dell Boomi AtomSphere:
 """
 
 from typing import Dict, Any, Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 import structlog
 import aiohttp
 import json
@@ -382,7 +382,7 @@ class BoomiIntegrationService:
                 "account_id": self.account_id,
                 "environment": self.environment,
                 "process_count": len(processes),
-                "checked_at": datetime.utcnow().isoformat()
+                "checked_at": datetime.now(timezone.utc).isoformat()
             }
         except Exception as e:
             return {
@@ -390,5 +390,5 @@ class BoomiIntegrationService:
                 "message": str(e),
                 "account_id": self.account_id,
                 "environment": self.environment,
-                "checked_at": datetime.utcnow().isoformat()
+                "checked_at": datetime.now(timezone.utc).isoformat()
             }

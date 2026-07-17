@@ -8,7 +8,7 @@ Service for integrating with Kafka Connect for ERP data streaming:
 """
 
 from typing import Dict, Any, Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 import structlog
 import aiohttp
 import json
@@ -405,11 +405,11 @@ class KafkaConnectIntegrationService:
                 "message": "Kafka Connect connection successful",
                 "connector_count": len(connectors),
                 "connectors": connectors,
-                "checked_at": datetime.utcnow().isoformat()
+                "checked_at": datetime.now(timezone.utc).isoformat()
             }
         except Exception as e:
             return {
                 "status": "unhealthy",
                 "message": str(e),
-                "checked_at": datetime.utcnow().isoformat()
+                "checked_at": datetime.now(timezone.utc).isoformat()
             }

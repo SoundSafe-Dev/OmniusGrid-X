@@ -2,7 +2,7 @@
 
 import secrets
 import hashlib
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, Header, Request
@@ -58,11 +58,11 @@ async def verify_api_key(
     
     if api_key_obj:
         # Check expiration
-        if api_key_obj.expires_at and api_key_obj.expires_at < datetime.utcnow():
+        if api_key_obj.expires_at and api_key_obj.expires_at < datetime.now(timezone.utc):
             return None
         
         # Update last used
-        api_key_obj.last_used_at = datetime.utcnow()
+        api_key_obj.last_used_at = datetime.now(timezone.utc)
         await db.commit()
     
     return api_key_obj
@@ -101,7 +101,7 @@ async def generate_api_key_endpoint(
     # Calculate expiration
     expires_at = None
     if expires_in_days:
-        expires_at = datetime.utcnow() + timedelta(days=expires_in_days)
+        expires_at = datetime.now(timezone.utc) + timedelta(days=expires_in_days)
     
     # Create API key record
     api_key_obj = APIKey(
@@ -200,7 +200,7 @@ async def revoke_api_key(
         )
     
     api_key_obj.is_active = False
-    api_key_obj.revoked_at = datetime.utcnow()
+    api_key_obj.revoked_at = datetime.now(timezone.utc)
     api_key_obj.revoked_by = current_user.id
     
     await db.commit()

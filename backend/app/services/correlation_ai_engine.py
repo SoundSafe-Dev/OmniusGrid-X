@@ -7,7 +7,7 @@ This service handles both training-time scenario generation and runtime inferenc
 
 from typing import List, Dict, Any, Optional, Tuple, Set
 from uuid import UUID
-from datetime import datetime
+from datetime import datetime, timezone
 import asyncio
 import ast
 import json
@@ -199,7 +199,7 @@ class CorrelationAIEngine:
         """Fallback analysis used when the Gemma adapter is unavailable."""
         return {
             "scenario_id": scenario.scenario_id,
-            "analysis_timestamp": datetime.utcnow().isoformat(),
+            "analysis_timestamp": datetime.now(timezone.utc).isoformat(),
             "predicted_root_cause": self._simulate_root_cause(domain_names, scenario.domain_links),
             "risk_score": self._calculate_risk_score(scenario.domain_links),
             "target_kanban_tasks": self._generate_kanban_tasks(domain_names),
@@ -229,7 +229,7 @@ class CorrelationAIEngine:
         parsed = self._parse_model_output(generated_text)
         parsed.update({
             "scenario_id": scenario.scenario_id,
-            "analysis_timestamp": datetime.utcnow().isoformat(),
+            "analysis_timestamp": datetime.now(timezone.utc).isoformat(),
             "model_version": f"{settings.CORRELATION_BASE_MODEL}+{settings.CORRELATION_ADAPTER_PATH}",
             "confidence": 0.85,
             "response_text": generated_text.strip(),

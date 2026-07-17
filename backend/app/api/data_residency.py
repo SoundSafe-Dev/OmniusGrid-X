@@ -1,6 +1,6 @@
 """Data Residency Controls (USA) API Endpoints"""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, Request
@@ -55,7 +55,7 @@ async def tag_record_residency(
         # Update existing tag
         existing_tag.region = region
         existing_tag.tagged_by = current_user.id
-        existing_tag.tagged_at = datetime.utcnow()
+        existing_tag.tagged_at = datetime.now(timezone.utc)
         await db.commit()
         
         logger.info(
