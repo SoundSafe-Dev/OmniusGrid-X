@@ -3,6 +3,7 @@ import { analysisSessionsApi, DataSource } from '../../api/analysisSessions';
 import { Upload, FileText, Trash2, Loader2 } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
+import { PlatformDataSourcePicker } from './PlatformDataSourcePicker';
 
 interface DataSourcesPanelProps {
   sessionId: string;
@@ -28,6 +29,7 @@ export const DataSourcesPanel = React.forwardRef<DataSourcesPanelHandle, DataSou
   const [dataSources, setDataSources] = useState<DataSource[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [isCorrelating, setIsCorrelating] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -41,6 +43,7 @@ export const DataSourcesPanel = React.forwardRef<DataSourcesPanelHandle, DataSou
     if (sessionId) {
       loadDataSources();
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- pre-existing; adding deps changes retrigger behavior (FS-54)
   }, [sessionId]);
 
   const isSessionNotFound = (error: any) =>
@@ -141,6 +144,29 @@ export const DataSourcesPanel = React.forwardRef<DataSourcesPanelHandle, DataSou
     setIsDragging(false);
   };
 
+  const handleCorrelate = async () => {
+    if (!sessionId || dataSources.length < 2 || isCorrelating) return;
+    setIsCorrelating(true);
+    setUploadError(null);
+    setUploadStatus('Correlating files across shared assets and date ranges...');
+    try {
+      const result = await analysisSessionsApi.correlateSession(sessionId);
+      const multi = result.multi_spreadsheet_analysis;
+      const shared = multi?.shared_assets ? Object.keys(multi.shared_assets).length : 0;
+      setUploadStatus(
+        shared > 0
+          ? `Linked ${dataSources.length} files. ${shared} shared asset(s) found. Ask: "What trends do you see across all files?"`
+          : result.analysis || 'Correlation complete. Re-upload files if assets use different ID formats.'
+      );
+    } catch (error: any) {
+      const detail = error?.response?.data?.detail || error?.message || 'Correlation failed';
+      setUploadError(String(detail));
+      setUploadStatus(null);
+    } finally {
+      setIsCorrelating(false);
+    }
+  };
+
   const handleRemove = async (sourceId: string) => {
     try {
       await analysisSessionsApi.removeDataSource(sessionId, sourceId);
@@ -220,6 +246,25 @@ export const DataSourcesPanel = React.forwardRef<DataSourcesPanelHandle, DataSou
             </Button>
           </div>
 
+          {dataSources.length >= 2 && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full bg-white text-gray-900 border-gray-300 hover:bg-gray-100"
+              disabled={isCorrelating || isUploading}
+              onClick={handleCorrelate}
+            >
+              {isCorrelating ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Correlating...
+                </>
+              ) : (
+                <>Correlate {dataSources.length} files</>
+              )}
+            </Button>
+          )}
+
           {uploadStatus && (
             <p className="text-xs text-opsgrid-text-secondary">
               {uploadStatus}
@@ -244,6 +289,13 @@ export const DataSourcesPanel = React.forwardRef<DataSourcesPanelHandle, DataSou
           )}
         </div>
       </div>
+
+      {/* Attach live platform data (sensor/asset telemetry, yard, transportation)
+          as correlation sources — flows through the existing correlate engine. */}
+      <PlatformDataSourcePicker
+        sessionId={sessionId}
+        onAttached={() => { loadDataSources(); onDataSourceAdded?.(); }}
+      />
 
       <div className="flex-1 overflow-y-auto p-2">
         {isLoading ? (

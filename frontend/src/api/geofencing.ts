@@ -1,20 +1,18 @@
 import { api } from './client';
-import type { 
-  GeofenceZoneExtended, 
-  GeofenceAlertExtended,
-  GeoLocation 
+import type {
+  GeofenceZoneExtended,
+  GeofenceAlertExtended
 } from '../types';
 import {
   mockGeofenceZones,
   mockGeofenceAlerts,
   getMockZoneById,
   getMockAlertsByVehicle,
-  getMockAlertsByZone,
   getMockUnacknowledgedAlerts,
   getMockCriticalAlerts,
 } from './mocks/geofencingMocks';
 
-const USE_MOCK = true;
+import { USE_MOCK } from './mockMode';
 const MOCK_DELAY = 300;
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -61,7 +59,7 @@ export const geofencingApi = {
       if (!zone) throw new Error('Zone not found');
       return { ...zone, ...updates, updatedAt: new Date().toISOString() };
     }
-    const response = await api.patch<GeofenceZoneExtended>(`/api/v1/geofencing/zones/${id}`, updates);
+    const response = await api.put<GeofenceZoneExtended>(`/api/v1/geofencing/zones/${id}`, updates);
     return response.data;
   },
 
@@ -87,7 +85,7 @@ export const geofencingApi = {
       await delay(MOCK_DELAY);
       return getMockAlertsByVehicle(vehicleId);
     }
-    const response = await api.get<GeofenceAlertExtended[]>(`/api/v1/geofencing/alerts?vehicleId=${vehicleId}`);
+    const response = await api.get<GeofenceAlertExtended[]>(`/api/v1/geofencing/alerts?vehicle_id=${vehicleId}`);
     return response.data;
   },
 
@@ -114,7 +112,7 @@ export const geofencingApi = {
       await delay(MOCK_DELAY);
       return;
     }
-    await api.patch(`/api/v1/geofencing/alerts/${alertId}`, { acknowledged: true });
+    await api.post(`/api/v1/geofencing/alerts/${alertId}/acknowledge`, {});
   },
 
   subscribeToAlerts: (onAlert: (alert: GeofenceAlertExtended) => void): (() => void) => {
@@ -132,17 +130,27 @@ export const geofencingApi = {
       }, 15000);
       return () => clearInterval(interval);
     }
-    const wsUrl = `${import.meta.env.VITE_WS_URL || 'ws://localhost:8000'}/ws/geofencing`;
-    const ws = new WebSocket(wsUrl);
-    ws.onmessage = (event) => {
+    // Real mode: poll unacknowledged alerts. The previous code opened a raw
+    // WebSocket to /ws/geofencing — a route that does not exist on the backend
+    // (only /ws is registered), so the panel silently never received alerts
+    // while the console error-looped. Polling delivers until geofence events
+    // are published through the authenticated /ws stream.
+    const seen = new Set<string>();
+    let first = true;
+    const interval = setInterval(async () => {
       try {
-        const alert: GeofenceAlertExtended = JSON.parse(event.data);
-        onAlert(alert);
+        const alerts = await geofencingApi.getUnacknowledgedAlerts();
+        for (const alert of alerts) {
+          if (!seen.has(alert.id)) {
+            seen.add(alert.id);
+            if (!first) onAlert(alert); // don't replay the backlog as "new"
+          }
+        }
+        first = false;
       } catch (error) {
-        console.error('Failed to parse WebSocket message:', error);
+        console.error('Geofencing alert poll failed:', error);
       }
-    };
-    ws.onerror = (error) => console.error('Geofencing WebSocket error:', error);
-    return () => ws.close();
+    }, 15000);
+    return () => clearInterval(interval);
   },
 };

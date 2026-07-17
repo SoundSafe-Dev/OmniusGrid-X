@@ -25,6 +25,7 @@ export const IntakeSelectorDialog: React.FC<IntakeSelectorDialogProps> = ({
     if (isOpen) {
       loadIntakeItems();
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- pre-existing; adding deps changes retrigger behavior (FS-54)
   }, [isOpen, statusFilter]);
 
   const loadIntakeItems = async () => {

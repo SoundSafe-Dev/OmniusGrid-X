@@ -1,7 +1,7 @@
 import { FC, useState, useEffect } from 'react';
-import { 
-  Activity, AlertTriangle, Shield, User, Truck, 
-  Wrench, CheckCircle, XCircle, Clock, ChevronRight 
+import {
+  Activity, AlertTriangle, Shield, User, Truck,
+  Wrench, CheckCircle
 } from 'lucide-react';
 import { fleetHealthApi } from '../../api';
 import type { VehicleHealthStatus, DiagnosticTroubleCode, SecurityEvent, DriverSafetyMetrics } from '../../types';

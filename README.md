@@ -123,10 +123,53 @@ code-reviewed). ~185 commits ahead of `main`. Highlights:
   ts-eslint 8). The `supply-chain` CI job is now **blocking** (`pip-audit` +
   `npm audit --audit-level=high` + Trivy fs scan).
 
-Deferred/flagged on this branch: k8s NetworkPolicies have no egress rules
-(only correct on non-enforcing CNIs); 3 intake-lane tests fail pre-existing
-(owner: Harsh). Filed follow-ups: swap `python-jose` → PyJWT (removes the last
-audit ignore), a py3.11 DNP3 driver, and `react-query` v3 → `@tanstack` v5.
+### Delivered since the 70-task program — FS-71..90 (Sprints L–P + real-DB pass)
+
+The next batch is **done** and on this branch. (The original FS-71..82 plan was
+re-scoped once a re-scan showed Hridyansh's branch had already built the
+predictive-maintenance RUL and digital-twin optimizer — so those merged rather
+than being rebuilt, preventing duplicate work.)
+
+- **Integration merges landed.** `hridyansh/integration` — predictive-maintenance
+  RUL (`/api/v1/rul`), digital-twin optimizer (`/api/v1/twin`), auth-session
+  hardening + token rotation, RBAC route-roles across every router, durable
+  command dispatch, tenant historian/retention (`/api/v1/historian`); its
+  colliding migrations were renumbered to `034–038`. Plus the RAG compliance-doc
+  pipeline (`/api/v1/rag`). Two previously-orphaned routers (model-monitoring,
+  admin query-performance) are now mounted.
+- **Supply-chain & runtime hardening.** `python-jose` → **PyJWT** (drops the
+  `ecdsa` advisory and the last `pip-audit --ignore-vuln`); backend/frontend/RAG
+  images run **non-root**; k8s **egress** allow-lists added; the Trivy filesystem
+  scan is now **blocking** (with a curated `.trivyignore`).
+- **API contract.** Every router mount documents its `401/403/404/422/429/500`
+  responses (`app/core/responses.py`); a `Page[T]` pagination envelope on the
+  assets + alarms lists; wider `response_model` coverage. The schemathesis
+  contract gate is wired + green-capable but stays **advisory** pending one CI run.
+- **Frontend.** `react-query` v3 → **`@tanstack/react-query` v5** (33 files); the
+  digital-twin, RUL, and historian backends are wired into the UI.
+- **Real-DB correctness.** The app was silently broken against a *migrations-built*
+  Postgres (SQLite `create_all` hid it): ORM↔migration drift fixed — migrations
+  `039/040` add missing `users.*` columns and rename 8 tables' `metadata` →
+  `meta_data`, and `assets.workcell_id` is now required — plus a batch of
+  endpoints that 500'd only on real Postgres repaired (nlp sessions, telemetry
+  `meta_data`, yard/transportation naive-`utcnow()` vs `TIMESTAMPTZ`, graceful
+  `503`s for redis/pg_stat-backed diagnostics).
+
+Still deferred/flagged: the schemathesis gate flip (needs a green CI run); a
+codebase-wide `datetime.utcnow()` → timezone-aware sweep (~72 files; the
+yard/transport lane is fixed); the py3.11 DNP3 driver (upstream ships no
+compatible wheel); schema-parity + real-DB endpoint-smoke guard tests (planned
+FS-91/92). The 3 intake-lane test failures remain Harsh's.
+
+### Offline demo — `backend/scripts/seed_demo_data.py`
+
+The whole platform demos with **no live edge, cloud, or external services**.
+`seed_demo_data.py` seeds every page — assets, 14 days of correlated telemetry,
+alarms, OEE, a fully-synced ERP integration, yard, transportation, geofencing,
+kanban, operations, fleet OTA, MLOps model registry, compliance/registries,
+notifications, error-triage, exports, and historian — idempotently. The only
+thing that still needs its model is the Correlation-AI **inference** (a ready
+`AnalysisSession` is seeded). See [`docs/DEMO.md`](docs/DEMO.md).
 
 ### Subsystem ownership — check here before starting work
 
@@ -146,70 +189,177 @@ audit ignore), a py3.11 DNP3 driver, and `react-query` v3 → `@tanstack` v5.
 
 ## Architecture
 
+### 1. End-to-end data flow
+
+OmniusGrid's differentiator is correlating the **document / ERP** world with the
+**machine** world. Textual/business data is the *lead* surface; machine telemetry
+is the second. Both converge into one API that the frontend renders.
+
+```mermaid
+flowchart LR
+    subgraph SOURCES["Data sources"]
+        DOC["Documents<br/>PDF · DOCX · XLSX"]
+        ERPSRC["ERP / business systems<br/>SAP · NetSuite · ..."]
+        MACH["Machines & sensors<br/>MQTT · OPC-UA · Modbus · ..."]
+    end
+
+    subgraph TEXTUAL["Textual / business surface (lead)"]
+        PARSE["Parsers + Intake<br/>pdf/docx/xlsx · OCR"]
+        XC["Cross-file / cross-tab<br/>correlation"]
+        CAI["Correlation AI (Gemma)*<br/>+ Actionable Registries"]
+    end
+
+    subgraph MACHINE["Machine surface"]
+        EA["Edge Agent<br/>10+ collectors · 24h buffer · PackML"]
+        RP["Redpanda (Kafka)"]
+        IW["Ingestion workers"]
+    end
+
+    subgraph STORE["Storage"]
+        TS[("TimescaleDB<br/>telemetry")]
+        PG[("Postgres tables<br/>assets · ERP · yard · kanban · fleet · ...")]
+    end
+
+    API["FastAPI — REST + WebSocket<br/>one error envelope · paginated lists"]
+    FE["React frontend<br/>dashboards · live charts"]
+
+    DOC --> PARSE --> XC
+    ERPSRC --> XC
+    XC --> CAI --> PG
+    MACH --> EA
+    EA -. "outbound-only mTLS" .-> RP --> IW --> TS
+    TS --> API
+    PG --> API
+    API -->|"REST"| FE
+    API -.->|"WebSocket (live)"| FE
+```
+
+\* Correlation-AI **inference** needs the Gemma model. Everything else runs fully
+offline — see [Offline demo](#offline-demo--backendscriptsseed_demo_datapy).
+
+### 2. Component & subsystem map — how it's wired
+
+Every frontend page talks to `app/main.py` (60+ routers behind one error envelope
++ JWT auth), which delegates to the services below, which read/write the stores.
+
 ```mermaid
 flowchart TB
-    subgraph CLOUD["☁️ Cloud Environment"]
+    subgraph FEP["Frontend — React pages"]
+        P1["Dashboard · Assets · AssetDetail · Alarms · OEE"]
+        P2["Analytics · Predictive Maintenance (RUL) · Historian"]
+        P3["Engines: Tactical · Strategic · Cloud Gateway · MLOps"]
+        P4["Fleet (OTA) · Yard · Transportation · Kanban"]
+        P5["ERP · Intake · Correlation · Admin (Errors · Audit · Settings)"]
+    end
+
+    API{{"FastAPI · app/main.py<br/>auth/RBAC · error envelope · pagination"}}
+
+    subgraph SVC["Backend services / subsystems"]
+        A["Assets · Telemetry · Alarms · OEE · KPI · Operations · Commands"]
+        B["Predictive: Health-Index · RUL · Digital-Twin Optimizer · Simulation"]
+        C["Engines: Tactical · Strategic · Cloud Gateway · MLOps"]
+        D["Fleet/OTA: agents · releases · rollouts · model-registry · monitoring"]
+        E["Logistics: Yard (YMS) · Transportation (TMS) · GeoTab · geofencing"]
+        F["ERP integrations + webhooks · Historian · Notifications"]
+        G["Correlation AI · RAG · Intake/NLP · Registries · Compliance · Kanban"]
+        H["Edge: enroll · ingest · fleet · Exports · Audit · GDPR"]
+    end
+
+    subgraph INFRA["Data + infra"]
+        TS[("TimescaleDB")]
+        RP2["Redpanda"]
+        RED["Redis"]
+        OBS["Prometheus · Grafana · Loki"]
+    end
+
+    FEP -->|"HTTPS / WS · JWT"| API
+    API --> A & B & C & D & E & F & G & H
+    A --> TS
+    A --> RP2
+    F --> RED
+    B --> TS
+    D -.-> RP2
+    SVC -.-> OBS
+```
+
+### 3. Physical / deployment topology (offline-capable edge + cloud)
+
+```mermaid
+flowchart TB
+    subgraph CLOUD["Cloud Environment"]
         direction TB
         MT["Model Training<br/>PyTorch/GPU"]
-        MC["Monte Carlo<br/>Simulations"]
-        DT["Digital Twin<br/>Simulations"]
-        MR["Model Registry"]
+        MC["Monte-Carlo / Digital-Twin<br/>simulation"]
+        MR["Model Registry + OTA<br/>releases · rollouts"]
         CG["Secure Cloud Gateway"]
         MT --> MR
         MC --> MR
-        DT --> MR
     end
 
-    MR -. "Updated weights<br/>mTLS" .-> CG
+    MR -. "signed model/agent bundles<br/>mTLS" .-> CG
 
-    subgraph EDGE["🏭 Factory Floor - Edge Rack (K3s/Patroni)"]
+    subgraph EDGE["Factory Floor — Edge Rack (K3s / Patroni HA)"]
         direction TB
-        subgraph OBS["Observability Stack"]
+        subgraph OBS["Observability"]
             PROM["Prometheus"]
             GRAF["Grafana"]
             LOKI["Loki"]
-            ALERT["Alertmanager"]
             TSDB["TimescaleDB (HA)"]
         end
-
-        subgraph AI["AI Engine"]
+        subgraph AI["AI / Predictive"]
             TACT["Tactical Engine"]
             STRAT["Strategic Engine"]
-            MLOPS["MLOps Pipeline"]
+            RUL["Health-Index / RUL"]
+            TWIN["Digital-Twin Optimizer"]
             FEAT["Feature Extraction"]
         end
-
-        subgraph AGENTS["Edge Agents - 10 Protocol Collectors"]
-            MQTT["MQTT (Bambu Labs)"]
-            SCRAPER["Screen Scraper (OCR)"]
-            FILE["File Watcher"]
-            OPC["OPC-UA (PLCs)"]
-            MODBUS["Modbus TCP/RTU"]
-            HTTP["HTTP/REST"]
-            EIP["EtherNet/IP"]
-            PROFI["PROFINET"]
-            BACNET["BACnet"]
-            CANBUS["CAN bus"]
+        subgraph AGENTS["Edge Agents — collectors"]
+            COL["MQTT · OPC-UA · Modbus · EtherNet/IP<br/>PROFINET · BACnet · CAN · SNMP<br/>Sparkplug B · DNP3 · HTTP · OCR · file"]
         end
-
-        subgraph OPS["Operations Management"]
-            KANBAN["Kanban Board<br/>Task Management"]
-            REG["Actionable Registries<br/>Compliance & Operations"]
-            CORR["Data Correlation<br/>Mapping & Scoring"]
+        subgraph OPS["Operations & Correlation"]
+            KANBAN["Kanban · Registries"]
+            NOTIF["Notifications"]
+            HIST["Historian"]
+            ERP2["ERP · Yard · Transportation"]
+            CORR["Correlation AI · RAG · Intake"]
         end
     end
 
-    CG -. "Outbound-only mTLS<br/>Cloud never initiates" .-> EDGE
-    AGENTS --> TACT
-    AGENTS --> TSDB
-    AGENTS --> KANBAN
+    CG -. "outbound-only mTLS<br/>cloud never initiates" .-> EDGE
+    COL --> TACT
+    COL --> TSDB
+    TSDB --> RUL --> TWIN
     TACT --> STRAT
     TACT --> FEAT
     FEAT -.-> CG
-    KANBAN --> REG
-    REG --> CORR
-    TSDB --> REG
+    TSDB --> KANBAN --> CORR
+    KANBAN --> NOTIF
+    TSDB --> HIST
 ```
+
+### 4. Page → API wiring
+
+How each frontend page is wired to the backend (primary endpoints; all under
+`/api/v1`, JWT-gated, live updates over `/ws`):
+
+| Frontend page | Backend endpoints / routers | Key services |
+|---------------|-----------------------------|--------------|
+| Dashboard | `dashboard`, `assets`, `alarms`, `oee`, `kpi` | oee_calculator, aggregators |
+| Assets / AssetDetail | `assets`, `telemetry`, `commands`, `health-index` | telemetry, command_executor |
+| Alarms | `alarms` | alarm rules |
+| OEE / Analytics | `oee`, `kpi`, `telemetry`, `operations` | oee_calculator |
+| Predictive Maintenance | `rul`, `health-index` | rul, health_index |
+| Historian | `historian` | historian / data_retention |
+| Engines (Strategic/Tactical/Cloud/MLOps) | `engines`, `twin`, `simulation`, `models`, `model-monitoring` | strategic_engine, tactical_engine, twin_optimizer, simulation, mlops_pipeline |
+| Fleet (OTA) | `fleet/agents`, `fleet/releases`, `fleet/rollouts`, `model-releases` | rollout_orchestrator, agent_signing |
+| Yard (YMS) | `yard` | yard_management |
+| Transportation (TMS) | `transportation`, `geotab`, `geofencing`, `maintenance`, `fleet` (health) | transportation_management, geotab_service, routing |
+| Kanban | `kanban` | kanban / correlation task creation |
+| ERP | `erp/integrations`, `erp/webhooks` | erp_connector_factory, erp_webhook_receiver |
+| Intake / Correlation | `nlp`, `analysis-sessions`, `platform-correlation`, `rag` | correlation_ai_engine, rag_retriever, intake parsers |
+| Notifications | `notifications` | notification_service |
+| Admin — Error Triage | `admin/errors` | error_tracker |
+| Admin — Audit / Settings | `audit`, `organizations`, `feature-flags`, `admin/query-performance` | audit_trail, feature_flags |
 
 ---
 

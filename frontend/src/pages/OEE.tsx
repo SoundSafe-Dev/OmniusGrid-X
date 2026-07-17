@@ -1,13 +1,26 @@
 import { FC } from 'react'
-import { useQuery } from 'react-query'
+import { useQuery } from '@tanstack/react-query'
 import { BarChart3, TrendingUp, Clock } from 'lucide-react'
 import { dashboardApi } from '../api'
 import { Tooltip, TooltipTrigger, TooltipContent } from '../components/ui'
+import { ExportButton } from '../components/common'
+import { useAuth } from '../hooks/useAuth'
 
 const OEE: FC = () => {
-  const { data: fleetOEE, isLoading } = useQuery('fleet-oee', () =>
-    dashboardApi.getFleetOEE()
-  )
+  const { isAdmin } = useAuth()
+  const { data: fleetOEE, isLoading } = useQuery({
+    queryKey: ['fleet-oee'],
+    queryFn: () => dashboardApi.getFleetOEE(),
+  })
+
+  // The FleetOEE type does not (yet) declare fleetAveragePerformance, but the
+  // API can return it; narrow locally so the 100% fallback below is preserved.
+  const fleetAveragePerformance =
+    fleetOEE &&
+    'fleetAveragePerformance' in fleetOEE &&
+    typeof fleetOEE.fleetAveragePerformance === 'number'
+      ? fleetOEE.fleetAveragePerformance
+      : undefined
 
   if (isLoading) {
     return (
@@ -30,14 +43,25 @@ const OEE: FC = () => {
           </TooltipTrigger>
           <TooltipContent>Measure of manufacturing productivity</TooltipContent>
         </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <div className="text-sm text-opsgrid-text-secondary">
-              {fleetOEE?.time_range || 'Last 24 hours'}
-            </div>
-          </TooltipTrigger>
-          <TooltipContent>Time range for OEE calculation</TooltipContent>
-        </Tooltip>
+        <div className="flex items-center gap-3">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="text-sm text-opsgrid-text-secondary">
+                {fleetOEE?.timeRange || 'Last 24 hours'}
+              </div>
+            </TooltipTrigger>
+            <TooltipContent>Time range for OEE calculation</TooltipContent>
+          </Tooltip>
+          {isAdmin && (
+            <ExportButton
+              endpoint="/api/v1/exports/oee/summary"
+              params={{ time_window_hours: 24 }}
+              format="pdf"
+              label="Export PDF"
+              filename="oee_summary.pdf"
+            />
+          )}
+        </div>
       </div>
 
       {/* Fleet Summary */}
@@ -68,7 +92,7 @@ const OEE: FC = () => {
                 <p className="text-opsgrid-text-secondary">Performance</p>
               </div>
               <p className="text-3xl font-bold">
-                {(fleetOEE?.fleetAveragePerformance * 100 || 100).toFixed(1)}%
+                {((fleetAveragePerformance ?? NaN) * 100 || 100).toFixed(1)}%
               </p>
               <p className="text-sm text-opsgrid-text-secondary mt-1">
                 Speed vs ideal cycle time

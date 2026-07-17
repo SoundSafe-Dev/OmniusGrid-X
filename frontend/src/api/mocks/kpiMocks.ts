@@ -4,7 +4,8 @@ import type {
   OnTimePerformanceData,
   VehicleHealthScoreData,
   CostPerMileData,
-  DTCCountData
+  DTCCountData,
+  TimeRange
 } from '../../types';
 
 // Mock Fuel Efficiency Data
@@ -215,7 +216,7 @@ export const getAllMockKPIData = () => ({
 });
 
 // Helper to get KPI data by time range (simulates filtering)
-export const getMockKPIDataByRange = (range: string) => {
+export const getMockKPIDataByRange = (_range: TimeRange) => {
   // In real implementation, this would filter based on the time range
   return getAllMockKPIData();
 };

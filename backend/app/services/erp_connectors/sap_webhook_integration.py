@@ -10,7 +10,7 @@ SAP Event Mesh webhook integration for real-time events:
 """
 
 from typing import Dict, Any, Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -112,7 +112,7 @@ class SAPWebhookIntegration:
             "source_system": "SAP",
             "entity_type": self._extract_entity_type(event_type),
             "entity_id": self._extract_entity_id(event_data, event_type),
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             **event_data
         }
         
@@ -404,7 +404,7 @@ class SAPWebhookIntegration:
         
         if existing:
             # Update existing
-            existing.valid_to = datetime.utcnow()
+            existing.valid_to = datetime.now(timezone.utc)
             existing.is_active = False
             
             new_entity = ERPEntity(
@@ -415,7 +415,7 @@ class SAPWebhookIntegration:
                 entity_data=entity_data,
                 source_system=source_system,
                 is_active=True,
-                valid_from=datetime.utcnow()
+                valid_from=datetime.now(timezone.utc)
             )
             db.add(new_entity)
         else:
@@ -428,7 +428,7 @@ class SAPWebhookIntegration:
                 entity_data=entity_data,
                 source_system=source_system,
                 is_active=True,
-                valid_from=datetime.utcnow()
+                valid_from=datetime.now(timezone.utc)
             )
             db.add(entity)
         

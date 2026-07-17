@@ -5,17 +5,17 @@ Manages all data source collectors in a single coordinated system
 
 import asyncio
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Any, Optional, Callable
 from dataclasses import dataclass
 import structlog
 
-from omniusgrid_agent.collectors.mqtt import BambuCollector, MQTTCollector
-from omniusgrid_agent.collectors.screen_scraper import QidiCollector, SovolCollector
-from omniusgrid_agent.collectors.file_watcher import OrcaSlicerCollector
-from omniusgrid_agent.collectors.opcua_collector import OPCUACollector
-from omniusgrid_agent.collectors.modbus_collector import ModbusCollector
-from omniusgrid_agent.buffer.store_forward import StoreForwardBuffer
+from opsgrid_agent.collectors.mqtt import BambuCollector, MQTTCollector
+from opsgrid_agent.collectors.screen_scraper import QidiCollector, SovolCollector
+from opsgrid_agent.collectors.file_watcher import OrcaSlicerCollector
+from opsgrid_agent.collectors.opcua_collector import OPCUACollector
+from opsgrid_agent.collectors.modbus_collector import ModbusCollector
+from opsgrid_agent.buffer.store_forward import StoreForwardBuffer
 
 # BaseCollector-style collectors, bridged to the coordinator contract via an
 # adapter. Relative imports keep these independent of the package name so they
@@ -26,6 +26,15 @@ from .profinet import ProfinetCollector
 from .bacnet import BACnetCollector
 from .can_bus import CANBusCollector
 from .http_rest import HTTPRestCollector
+from .snmp import SNMPCollector
+from .sparkplug_b import SparkplugBCollector
+from .dnp3 import DNP3Collector
+from .audio import AudioFeatureCollector
+from .video import VideoFrameCollector
+from .. import metrics
+from ..analytics import pipeline as analytics_pipeline
+# Relative import: rename-agnostic, like the adapter/metrics seam.
+from ..quality import QualityAction, QualityConfig, QualityPipeline
 
 logger = structlog.get_logger()
 
@@ -65,6 +74,11 @@ class UnifiedCollectorCoordinator:
         'bacnet': coordinator_adapter(BACnetCollector),
         'can_bus': coordinator_adapter(CANBusCollector),
         'http_rest': coordinator_adapter(HTTPRestCollector),
+        'snmp': coordinator_adapter(SNMPCollector),
+        'sparkplug_b': coordinator_adapter(SparkplugBCollector),
+        'dnp3': coordinator_adapter(DNP3Collector),
+        'audio': coordinator_adapter(AudioFeatureCollector),
+        'video': coordinator_adapter(VideoFrameCollector),
     }
     
     def __init__(
@@ -83,7 +97,11 @@ class UnifiedCollectorCoordinator:
         
         # Configuration
         self.configs: Dict[str, CollectorConfig] = {}
-        
+
+        # Per-asset data-quality pipelines, built from each collector's optional
+        # `config.quality` block. Absent block -> no pipeline -> passthrough.
+        self._quality: Dict[str, QualityPipeline] = {}
+
         # Status tracking
         self._running = False
         self._health_check_task: Optional[asyncio.Task] = None
@@ -91,6 +109,22 @@ class UnifiedCollectorCoordinator:
     def register_collector(self, config: CollectorConfig):
         """Register a collector configuration"""
         self.configs[config.asset_id] = config
+
+        # Build a data-quality pipeline if this collector opted in. A malformed
+        # block is logged and skipped rather than failing collector startup.
+        raw_quality = (config.config or {}).get("quality")
+        if raw_quality:
+            try:
+                self._quality[config.asset_id] = QualityPipeline(
+                    QualityConfig.model_validate(raw_quality)
+                )
+            except Exception as e:  # pydantic ValidationError or bad shape
+                logger.error(
+                    "quality_config_invalid",
+                    asset_id=config.asset_id,
+                    error=str(e),
+                )
+
         logger.info(
             "collector_registered",
             asset_id=config.asset_id,
@@ -190,7 +224,27 @@ class UnifiedCollectorCoordinator:
         try:
             asset_id = message.get('asset_id', 'unknown')
             collector_type = message.get('collector_type', 'unknown')
-            
+
+            # Data-quality processing: validate -> scale -> normalize units ->
+            # deadband. Passthrough when no pipeline is registered for this asset.
+            #   DROP       -> suppressed by deadband/rate-limit; discard silently
+            #   QUARANTINE -> invalid; buffer under the 'quarantine' topic (kept
+            #                 out of local analytics) so the cloud can dead-letter it
+            #   FORWARD    -> use the cleaned/normalized reading
+            quality_action = None
+            pipe = self._quality.get(asset_id)
+            if pipe is not None:
+                result = pipe.process(message)
+                metrics.record_quality(asset_id, result.action.value, result.flags)
+                if result.action == QualityAction.DROP:
+                    return
+                message = result.reading
+                quality_action = result.action
+
+            topic = message.get('topic', 'telemetry')
+            if quality_action == QualityAction.QUARANTINE:
+                topic = 'quarantine'
+
             # Add metadata
             enriched_message = {
                 **message,
@@ -208,23 +262,45 @@ class UnifiedCollectorCoordinator:
                 elif ts_raw:
                     timestamp_edge = datetime.fromisoformat(ts_raw)
                 else:
-                    timestamp_edge = datetime.utcnow()
+                    timestamp_edge = datetime.now(timezone.utc)
             except ValueError:
-                timestamp_edge = datetime.utcnow()
+                timestamp_edge = datetime.now(timezone.utc)
 
             await self.buffer.store(
                 timestamp_edge=timestamp_edge,
                 asset_id=asset_id,
-                topic=message.get('topic', 'telemetry'),
+                topic=topic,
                 payload=message.get('payload', {}),
                 sequence_num=message.get('sequence_num', 0),
             )
-            
+
+            # Observability: count the reading and its end-to-edge age.
+            # Coerce naive edge timestamps to UTC before the aware-now math
+            # (FS-96): a naive-vs-aware TypeError here was swallowed by the
+            # handler's catch-all and silently DROPPED the reading.
+            ts_aware = (timestamp_edge if timestamp_edge.tzinfo
+                        else timestamp_edge.replace(tzinfo=timezone.utc))
+            metrics.record_message(
+                asset_id, collector_type,
+                age_seconds=max(
+                    0.0,
+                    (datetime.now(timezone.utc) - ts_aware).total_seconds(),
+                ),
+            )
+
+            # Local analytics (OEE from PackML states, anomaly detection, alerting).
+            # Quarantined (invalid) readings are excluded so bad data does not
+            # skew OEE/anomaly baselines.
+            if quality_action != QualityAction.QUARANTINE:
+                analytics_pipeline.record(message)
+
             # Also try to forward immediately if connected
             if self.kafka_producer:
                 try:
                     await self._forward_to_kafka(enriched_message)
+                    metrics.record_kafka_success()
                 except Exception as e:
+                    metrics.record_kafka_error()
                     # Already in buffer, will retry later
                     logger.debug(
                         "immediate_forward_failed",
@@ -239,6 +315,10 @@ class UnifiedCollectorCoordinator:
             )
             
         except Exception as e:
+            metrics.record_error(
+                message.get('asset_id', 'unknown'),
+                message.get('collector_type', 'unknown'),
+            )
             logger.error(
                 "collector_message_handler_error",
                 error=str(e),
@@ -283,12 +363,21 @@ class UnifiedCollectorCoordinator:
                     1 for t in self.collector_tasks.values()
                     if not t.done()
                 )
+                metrics.refresh_collector_stats(active_count, len(self.configs))
                 logger.info(
                     "collector_health_check",
                     active=active_count,
                     total=len(self.configs)
                 )
-                
+
+                # Publish per-collector liveness (1=active task, 0=down).
+                for aid, cfg in self.configs.items():
+                    task = self.collector_tasks.get(aid)
+                    metrics.set_connection_state(
+                        aid, cfg.collector_type,
+                        up=task is not None and not task.done(),
+                    )
+
             except Exception as e:
                 logger.error("health_monitor_error", error=str(e))
     
@@ -325,6 +414,19 @@ class UnifiedCollectorCoordinator:
         
         logger.info("all_collectors_stopped")
     
+    async def stop_collector(self, asset_id: str):
+        """Stop and deregister a single collector (used by config hot-reload)."""
+        logger.info("stopping_collector", asset_id=asset_id)
+        collector = self.collectors.pop(asset_id, None)
+        if collector is not None:
+            try:
+                await collector.stop()
+            except Exception as e:  # best-effort; we are tearing it down anyway
+                logger.error("collector_stop_error", asset_id=asset_id, error=str(e))
+        task = self.collector_tasks.pop(asset_id, None)
+        if task is not None and not task.done():
+            task.cancel()
+
     async def restart_collector(self, asset_id: str):
         """Restart a specific collector"""
         logger.info("restarting_collector", asset_id=asset_id)

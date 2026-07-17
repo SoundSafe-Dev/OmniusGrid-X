@@ -124,11 +124,16 @@ spec:
   ingress:
     - from:
         - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: backend
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: ingestion-worker
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - backend
+                  - ingestion-worker
+                  - export-worker
+                  - compliance-reports-worker
+                  - ota-rollout-worker
+                  - db-migrate
       ports:
         - protocol: TCP
           port: 5432
@@ -147,16 +152,279 @@ spec:
   ingress:
     - from:
         - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: backend
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: ingestion-worker
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: edge-agent
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - backend
+                  - ingestion-worker
+                  - export-worker
+                  - compliance-reports-worker
+                  - ota-rollout-worker
+                  - edge-agent
       ports:
         - protocol: TCP
           port: 9092
         - protocol: TCP
+          port: 9094   # FS-66 mTLS listener
+        - protocol: TCP
           port: 9644
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ota-rollout-worker-egress
+  namespace: omniusgrid
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: ota-rollout-worker
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: timescaledb
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redpanda
+      ports:
+        - protocol: TCP
+          port: 9092
+---
+# FS-116: per-workload egress allow-lists that finish the default-deny egress
+# FS-78 established. default-deny-all sets policyTypes: [Ingress, Egress] with
+# no egress rules, which fully denies egress on enforcing CNIs. Rather than one
+# broad allow-app-egress that grants every workload the same wide egress
+# (including outbound 443), each workload below gets only the destinations it
+# actually dials. ota-rollout-worker keeps its own policy above. Keep each
+# policy's ports in sync with the workload's real dependencies.
+#
+# backend (API): DNS, TimescaleDB, Redpanda (Kafka + mTLS listener), Redis
+# (rate-limit / idempotency / feature-flags / export job store) and outbound
+# HTTPS/443 — Keycloak SSO, model registry, Slack/PagerDuty alert webhooks,
+# live MyGeotab client, and real object storage all go out over 443.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-backend-egress
+  namespace: omniusgrid
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: backend
+  policyTypes:
+    - Egress
+  egress:
+    # Cluster DNS resolution (kube-dns in kube-system).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # TimescaleDB.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: timescaledb
+      ports:
+        - protocol: TCP
+          port: 5432
+    # Redpanda (Kafka API + mTLS listener).
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redpanda
+      ports:
+        - protocol: TCP
+          port: 9092
+        - protocol: TCP
+          port: 9094
+    # Redis (rate limiting, idempotency, feature flags, export job store).
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+    # Outbound HTTPS to the cloud gateway / external services (no podSelector
+    # restriction; egress to any destination on 443).
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 443
+---
+# ingestion-worker: consumes telemetry from Redpanda and writes it to
+# TimescaleDB. No Redis, no outbound 443.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingestion-worker-egress
+  namespace: omniusgrid
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: ingestion-worker
+  policyTypes:
+    - Egress
+  egress:
+    # Cluster DNS resolution (kube-dns in kube-system).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # TimescaleDB.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: timescaledb
+      ports:
+        - protocol: TCP
+          port: 5432
+    # Redpanda (Kafka API + mTLS listener).
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redpanda
+      ports:
+        - protocol: TCP
+          port: 9092
+        - protocol: TCP
+          port: 9094
+---
+# export-worker: consumes export-delivery jobs from Redpanda, reads
+# TimescaleDB, and tracks async export jobs in Redis (export_processor). SMTP
+# email delivery is optional/off by default; when enabled it dials SMTP_PORT
+# (default 587) — add an SMTP egress rule then (see report open question).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-export-worker-egress
+  namespace: omniusgrid
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: export-worker
+  policyTypes:
+    - Egress
+  egress:
+    # Cluster DNS resolution (kube-dns in kube-system).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # TimescaleDB.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: timescaledb
+      ports:
+        - protocol: TCP
+          port: 5432
+    # Redpanda (Kafka API + mTLS listener).
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redpanda
+      ports:
+        - protocol: TCP
+          port: 9092
+        - protocol: TCP
+          port: 9094
+    # Redis (async telemetry export job store, via export_processor).
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+---
+# compliance-reports-worker: consumes report jobs from Redpanda, reads
+# TimescaleDB, and writes generated reports to local storage. SMTP email
+# delivery is optional/off by default; when enabled it dials SMTP_PORT
+# (default 587) — add an SMTP egress rule then (see report open question).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-compliance-reports-worker-egress
+  namespace: omniusgrid
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: compliance-reports-worker
+  policyTypes:
+    - Egress
+  egress:
+    # Cluster DNS resolution (kube-dns in kube-system).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # TimescaleDB.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: timescaledb
+      ports:
+        - protocol: TCP
+          port: 5432
+    # Redpanda (Kafka API + mTLS listener).
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redpanda
+      ports:
+        - protocol: TCP
+          port: 9092
+        - protocol: TCP
+          port: 9094

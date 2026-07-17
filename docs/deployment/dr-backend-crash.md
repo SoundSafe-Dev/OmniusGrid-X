@@ -254,21 +254,28 @@ kubectl logs $POD -n $NAMESPACE | grep -i "redpanda\|kafka" || echo "No Redpanda
      -d "username=admin@omniusgrid.com&password=dev"
    ```
 
+> **Auth note:** `$OPS_TOKEN` is a real operator JWT — obtain one with
+> `curl -sf $API/api/v1/auth/login -d 'username=<ops-user>&password=...'`
+> and export the `access_token`. Production **rejects** the old `dev-token`
+> bypass (`ALLOW_DEV_TOKEN` must be false there), so runbook steps must use a
+> real credential.
+
+
 2. Test assets endpoint:
    ```bash
    curl http://localhost:8000/api/v1/assets/ \
-     -H "Authorization: Bearer dev-token"
+     -H "Authorization: Bearer $OPS_TOKEN"
    ```
 
 3. Test WebSocket:
    ```bash
-   wscat -c ws://localhost:8000/ws -H "Authorization: Bearer dev-token"
+   wscat -c ws://localhost:8000/ws -H "Authorization: Bearer $OPS_TOKEN"
    ```
 
 4. Test Kanban endpoint:
    ```bash
    curl http://localhost:8000/api/v1/kanban/board \
-     -H "Authorization: Bearer dev-token"
+     -H "Authorization: Bearer $OPS_TOKEN"
    ```
 
 ## Post-Incident Actions

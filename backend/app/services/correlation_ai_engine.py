@@ -5,9 +5,9 @@ Integrates the Domain Interaction Component with AI inference capabilities.
 This service handles both training-time scenario generation and runtime inference.
 """
 
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Set
 from uuid import UUID
-from datetime import datetime
+from datetime import datetime, timezone
 import asyncio
 import ast
 import json
@@ -199,7 +199,7 @@ class CorrelationAIEngine:
         """Fallback analysis used when the Gemma adapter is unavailable."""
         return {
             "scenario_id": scenario.scenario_id,
-            "analysis_timestamp": datetime.utcnow().isoformat(),
+            "analysis_timestamp": datetime.now(timezone.utc).isoformat(),
             "predicted_root_cause": self._simulate_root_cause(domain_names, scenario.domain_links),
             "risk_score": self._calculate_risk_score(scenario.domain_links),
             "target_kanban_tasks": self._generate_kanban_tasks(domain_names),
@@ -229,7 +229,7 @@ class CorrelationAIEngine:
         parsed = self._parse_model_output(generated_text)
         parsed.update({
             "scenario_id": scenario.scenario_id,
-            "analysis_timestamp": datetime.utcnow().isoformat(),
+            "analysis_timestamp": datetime.now(timezone.utc).isoformat(),
             "model_version": f"{settings.CORRELATION_BASE_MODEL}+{settings.CORRELATION_ADAPTER_PATH}",
             "confidence": 0.85,
             "response_text": generated_text.strip(),
@@ -302,9 +302,16 @@ class CorrelationAIEngine:
         processed = self._first_spreadsheet_processed(context) or {}
         profile = processed.get("full_sheet_profile") or {}
         action_plan = processed.get("concrete_action_plan") or []
-        columns = processed.get("column_names") or []
+        columns = self._allowed_spreadsheet_columns(context)
+        multi = context.get("multi_spreadsheet_analysis") or {}
         intent_context = {
             "allowed_columns": columns,
+            "session_file_count": len(context.get("data_sources") or []),
+            "multi_file_analysis": {
+                "file_count": multi.get("file_count"),
+                "yoy_trends": multi.get("yoy_trends"),
+                "shared_assets": multi.get("shared_assets"),
+            },
             "available_groupings": list((profile.get("group_summary") or {}).keys()),
             "available_row_sets": list((profile.get("highest_risk_rows") or {}).keys()),
             "top_issues": [
@@ -482,17 +489,40 @@ class CorrelationAIEngine:
         )
 
     def _grounded_fact_packet(self, context: Dict[str, Any], computed_answer: str) -> Dict[str, Any]:
+        columns: List[str] = []
+        for source in context.get("data_sources") or []:
+            processed = source.get("processed_data") or {}
+            if processed.get("type") != "spreadsheet":
+                continue
+            for column in processed.get("column_names") or []:
+                name = str(column)
+                if name not in columns:
+                    columns.append(name)
+
+        multi = context.get("multi_spreadsheet_analysis") or {}
+        packet: Dict[str, Any] = {
+            "allowed_columns": columns or (self._first_spreadsheet_processed(context) or {}).get("column_names") or [],
+            "computed_answer": computed_answer,
+            "multi_file_analysis": {
+                "file_count": multi.get("file_count"),
+                "narrative_summary": multi.get("narrative_summary"),
+                "yoy_trends": multi.get("yoy_trends"),
+                "file_rollups": multi.get("file_rollups"),
+                "shared_assets": multi.get("shared_assets"),
+                "asset_trends": multi.get("asset_trends"),
+            },
+        }
+
         processed = self._first_spreadsheet_processed(context) or {}
         profile = processed.get("full_sheet_profile") or {}
-        return {
-            "allowed_columns": processed.get("column_names") or [],
-            "computed_answer": computed_answer,
+        packet.update({
             "numeric_comparisons": processed.get("numeric_comparisons") or [],
             "concrete_action_plan": processed.get("concrete_action_plan") or [],
             "operational_summary": profile.get("operational_summary") or {},
             "group_summary": profile.get("group_summary") or {},
             "highest_risk_rows": profile.get("highest_risk_rows") or {},
-        }
+        })
+        return packet
 
     def _build_grounded_writer_prompt(
         self,
@@ -508,7 +538,7 @@ class CorrelationAIEngine:
             "User question:\n"
             f"{message}\n\n"
             "Locked spreadsheet fact packet. Use only these facts:\n"
-            f"{json.dumps(packet, default=str)[:18000]}\n\n"
+            f"{json.dumps(packet, default=str)[: settings.CORRELATION_GROUNDED_PACKET_MAX_CHARS]}\n\n"
             "Write the final user-facing answer now. Do not add any metric, percentage, trend, department, or cause "
             "that is not in the packet. If the user asks for a metric that is missing from allowed_columns, state that "
             "the spreadsheet does not include that metric and answer with the closest available fields."
@@ -716,6 +746,365 @@ class CorrelationAIEngine:
                     columns.append(column_name)
         return columns
 
+    def _spreadsheet_sources(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+        return [
+            source for source in context.get("data_sources", [])
+            if (source.get("processed_data") or {}).get("type") == "spreadsheet"
+        ]
+
+    def _is_multi_spreadsheet_question(self, message: str) -> bool:
+        normalized = message.lower()
+        return any(
+            term in normalized
+            for term in (
+                "across files", "across spreadsheets", "multiple files", "all files",
+                "all uploads", "each file", "between files", "compare files",
+                "over time", "over the years", "10 year", "ten year", "multi-year",
+                "multi year", "year over year", "yoy", "long term", "long-term",
+                "historical", "extended period", "time series", "cross-file",
+                "cross file", "correlate", "correlation across",
+            )
+        )
+
+    def _should_use_multi_spreadsheet_analysis(self, message: str, context: Dict[str, Any]) -> bool:
+        analysis = context.get("multi_spreadsheet_analysis") or {}
+        if analysis.get("file_count", 0) < 2:
+            return False
+        if self._is_multi_spreadsheet_question(message):
+            return True
+        if self._is_consultant_advisory_question(message) and analysis.get("file_count", 0) >= 2:
+            return True
+        if len(self._spreadsheet_sources(context)) >= 2 and self._is_operations_overview_question(message):
+            return True
+        return False
+
+    def _format_multi_spreadsheet_response(self, message: str, context: Dict[str, Any]) -> Optional[str]:
+        if not self._should_use_multi_spreadsheet_analysis(message, context):
+            return None
+
+        analysis = context.get("multi_spreadsheet_analysis") or {}
+        findings = analysis.get("cross_file_findings") or []
+        if not findings:
+            return None
+
+        lines = ["### Cross-file operational correlation", "", analysis.get("narrative_summary", "")]
+        lines.append("")
+        lines.append("**File-by-file snapshot**")
+        for rollup in analysis.get("file_rollups") or []:
+            bits = [f"**{rollup.get('file_name')}**", f"{rollup.get('rows')} rows"]
+            if rollup.get("period"):
+                bits.append(str(rollup["period"]))
+            if rollup.get("attainment_pct") is not None:
+                bits.append(f"attainment {self._format_metric_value(rollup['attainment_pct'])}%")
+            if rollup.get("shortfall_total") is not None:
+                bits.append(f"shortfall {self._format_metric_value(rollup['shortfall_total'])} units")
+            if rollup.get("total_loss") is not None:
+                bits.append(f"cost {self._format_metric_value(rollup['total_loss'])}")
+            if rollup.get("total_downtime") is not None:
+                bits.append(f"downtime {self._format_metric_value(rollup['total_downtime'])}")
+            lines.append("- " + " | ".join(bits))
+
+        shared = analysis.get("shared_assets") or {}
+        if shared:
+            lines.append("")
+            lines.append("**Shared assets (anchor comparisons here)**")
+            for asset, files in list(shared.items())[:8]:
+                lines.append(f"- **{asset}** in {len(files)} file(s): {', '.join(files)}")
+
+        trends = analysis.get("asset_trends") or []
+        if trends:
+            lines.append("")
+            lines.append("**Cross-file signals on shared assets**")
+            for trend in trends[:5]:
+                direction_bits = []
+                if trend.get("downtime_direction"):
+                    direction_bits.append(f"downtime {trend['downtime_direction']}")
+                if trend.get("loss_direction"):
+                    direction_bits.append(f"cost {trend['loss_direction']}")
+                header = trend.get("asset") or "Asset"
+                if direction_bits:
+                    lines.append(f"\n**{header}** ({', '.join(direction_bits)})")
+                else:
+                    lines.append(f"\n**{header}**")
+                for pt in trend.get("files") or []:
+                    period = (pt.get("period") or {}).get("min", "")
+                    bits = [pt.get("file_name", "")]
+                    if period:
+                        bits.append(period[:10])
+                    if pt.get("total_loss") is not None:
+                        bits.append(f"cost {self._format_metric_value(pt['total_loss'])}")
+                    if pt.get("total_downtime") is not None:
+                        bits.append(f"downtime {self._format_metric_value(pt['total_downtime'])}")
+                    lines.append(f"  - {' | '.join(bits)}")
+
+        lines.append(
+            "\n**How to use this:** compare the same asset or line across files before changing process "
+            "floor-wide. If an asset shows up in every year/file with rising cost or downtime, that is your "
+            "chronic issue; if it appears once, treat it as a slice-specific spike."
+        )
+        return "\n".join(lines)
+
+    def _multi_analysis(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        return context.get("multi_spreadsheet_analysis") or {}
+
+    def _is_cross_file_trends_question(self, message: str) -> bool:
+        normalized = message.lower()
+        return any(
+            term in normalized
+            for term in (
+                "trend", "trends", "trending", "over time", "over the years",
+                "year over year", "yoy", "year-on-year", "year on year",
+                "across all files", "all files", "all uploads", "each year",
+                "multi-year", "multi year", "historical", "pattern over",
+            )
+        )
+
+    def _format_cross_file_trends_response(self, message: str, context: Dict[str, Any]) -> Optional[str]:
+        if not self._is_cross_file_trends_question(message):
+            return None
+        analysis = self._multi_analysis(context)
+        if analysis.get("file_count", 0) < 2:
+            return None
+
+        yoy = analysis.get("yoy_trends") or {}
+        metrics = yoy.get("metrics") or []
+        if not metrics:
+            return None
+
+        years = yoy.get("years") or []
+        year_span = f"{years[0]}–{years[-1]}" if len(years) >= 2 else "your uploaded period"
+        lines = [
+            f"### Trends across your files ({year_span})",
+            "",
+            f"I compared **{analysis.get('file_count')} files** as time slices — here's what moved:",
+        ]
+
+        for row in metrics:
+            label = row.get("label") or row.get("metric")
+            direction = row.get("direction") or "flat"
+            first = row.get("first")
+            last = row.get("last")
+            delta = row.get("delta")
+            year_bits = []
+            for year, value in zip(row.get("years") or [], row.get("values") or []):
+                if value is None:
+                    continue
+                year_bits.append(f"{year}: {self._format_metric_value(value)}")
+            trend_phrase = {
+                "improving": "**improving**",
+                "worsening": "**worsening**",
+                "flat": "**flat**",
+            }.get(direction, direction)
+            delta_text = ""
+            if delta is not None:
+                delta_text = f" (net change {self._format_metric_value(delta)})"
+            lines.append(
+                f"\n**{label}** — {trend_phrase}{delta_text}\n"
+                + " → ".join(year_bits)
+            )
+
+        shared = analysis.get("shared_assets") or {}
+        if shared:
+            anchor = max(shared.items(), key=lambda kv: len(kv[1]))[0]
+            lines.append(
+                f"\n**Anchor asset:** **{anchor}** shows up in {len(shared[anchor])} files — "
+                "use it to validate whether floor-wide trends hold on one machine or are spread across assets."
+            )
+
+        attainment_row = next((m for m in metrics if m.get("metric") == "attainment_pct"), None)
+        shortfall_row = next((m for m in metrics if m.get("metric") == "shortfall_total"), None)
+        takeaway_bits = []
+        if attainment_row and attainment_row.get("direction"):
+            takeaway_bits.append(f"attainment is **{attainment_row['direction']}**")
+        if shortfall_row and shortfall_row.get("direction"):
+            takeaway_bits.append(f"planned shortfall is **{shortfall_row['direction']}**")
+        if attainment_row and attainment_row.get("last") is not None:
+            gap = max(0.0, 100.0 - float(attainment_row["last"]))
+            takeaway_bits.append(f"you're still ~{self._format_metric_value(gap)} points below plan")
+        if takeaway_bits:
+            lines.append("\n**Takeaway:** " + ", ".join(takeaway_bits) + ".")
+        return "\n".join(lines)
+
+    def _extract_asset_from_message(self, message: str, context: Dict[str, Any]) -> Optional[str]:
+        normalized = message.upper()
+        match = re.search(r"\b([A-Z]{2,5}[-_]\d{2,5}(?:[-_]\d{2,5})?)\b", normalized)
+        if match:
+            return match.group(1).replace("_", "-")
+        shared = self._multi_analysis(context).get("shared_assets") or {}
+        if len(shared) == 1:
+            return next(iter(shared.keys()))
+        return None
+
+    def _is_shared_asset_comparison_question(self, message: str) -> bool:
+        normalized = message.lower()
+        has_compare = any(
+            term in normalized
+            for term in ("compare", "across our uploaded", "across files", "performance improving", "slipping", "where is it")
+        )
+        has_asset = "asset" in normalized or bool(re.search(r"\b[a-z]{2,5}-\d", normalized))
+        return has_compare and has_asset
+
+    def _format_shared_asset_comparison_response(self, message: str, context: Dict[str, Any]) -> Optional[str]:
+        if not self._is_shared_asset_comparison_question(message):
+            return None
+        analysis = self._multi_analysis(context)
+        if analysis.get("file_count", 0) < 2:
+            return None
+
+        asset_key = self._extract_asset_from_message(message, context)
+        trends = analysis.get("asset_trends") or []
+        trend = next((t for t in trends if t.get("asset") == asset_key), None)
+        if not trend and trends:
+            trend = trends[0]
+            asset_key = trend.get("asset")
+        if not trend:
+            return None
+
+        lines = [
+            f"### {asset_key} across your files",
+            "",
+            "File-by-file read (same asset, different year slices):",
+        ]
+        for point in trend.get("files") or []:
+            period = (point.get("period") or {}).get("min", "")[:4]
+            bits = [f"**{period or point.get('file_name')}**"]
+            if point.get("total_loss") is not None:
+                bits.append(f"cost {self._format_metric_value(point['total_loss'])}")
+            if point.get("total_downtime") is not None:
+                bits.append(f"downtime {self._format_metric_value(point['total_downtime'])}")
+            if point.get("total_defects") is not None:
+                bits.append(f"defects {self._format_metric_value(point['total_defects'])}")
+            lines.append("- " + " | ".join(bits))
+
+        verdict_parts = []
+        if trend.get("downtime_direction") == "improving":
+            verdict_parts.append("downtime **improved** from the first to the last file")
+        elif trend.get("downtime_direction") == "worsening":
+            verdict_parts.append("downtime **worsened** across the period")
+        if trend.get("loss_direction") == "improving":
+            verdict_parts.append("cost impact **came down**")
+        elif trend.get("loss_direction") == "worsening":
+            verdict_parts.append("cost impact **rose**")
+        if trend.get("defect_direction") == "improving":
+            verdict_parts.append("defects **eased**")
+        elif trend.get("defect_direction") == "worsening":
+            verdict_parts.append("defects **increased**")
+
+        if verdict_parts:
+            lines.append("\n**Direction:** " + "; ".join(verdict_parts) + ".")
+        else:
+            lines.append("\n**Direction:** metrics are mixed — drill into the worst year before changing floor-wide.")
+
+        lines.append(
+            "\n**What to do:** if the middle year (often peak load) is the worst, target maintenance and changeover "
+            "on this asset before the next high season — don't wait for finance to show the pain a quarter later."
+        )
+        return "\n".join(lines)
+
+    def _is_consultant_advisory_question(self, message: str) -> bool:
+        if self._is_cross_file_trends_question(message) or self._is_shared_asset_comparison_question(message):
+            return False
+        normalized = message.lower()
+        return any(
+            term in normalized
+            for term in (
+                "plan for growth", "prepare for growth", "more orders", "increase production",
+                "ramp up", "ramp production", "scale up", "scale production", "growth plan",
+                "expand capacity", "take more orders", "increase orders",
+                "foresee", "bottleneck", "going smoothly", "looks steady", "no real issue",
+                "high season", "low season", "peak season", "busy season", "seasonal",
+                "prepare better", "prepare for the next",
+                "do better", "do more of", "what's working", "whats working", "going well",
+                "going good", "what is working", "how can we improve", "how do we improve",
+                "cross reference", "cross-reference", "cross reference", "finance tab",
+                "production tab", "three different", "multiple places", "consultant",
+                "big picture", "plan for", "how best do we",
+            )
+        )
+
+    def _format_consultant_advisory_response(self, message: str, context: Dict[str, Any]) -> Optional[str]:
+        if not self._is_consultant_advisory_question(message):
+            return None
+
+        from app.services.session_suggested_questions import _build_session_intelligence
+
+        data_sources = context.get("data_sources") or []
+        if not data_sources:
+            return None
+
+        intel = _build_session_intelligence(data_sources, context.get("multi_spreadsheet_analysis"))
+        if not intel.get("spreadsheet_count") and not intel.get("document_count"):
+            return None
+
+        normalized = message.lower()
+        line = (intel.get("lines") or [None])[0]
+        asset = (intel.get("shared_assets") or intel.get("assets") or [None])[0]
+        multi = intel.get("multi") or {}
+        file_count = intel.get("spreadsheet_count") or 0
+        years = intel.get("years") or []
+        year_label = f"{years[0]}–{years[-1]}" if len(years) >= 2 else None
+        yoy = multi.get("yoy_trends") or {}
+
+        def _trend_hook() -> str:
+            parts = []
+            for key, label in (("attainment_pct", "attainment"), ("shortfall_total", "shortfall")):
+                row = next((m for m in yoy.get("metrics") or [] if m.get("metric") == key), None)
+                if row and row.get("direction"):
+                    parts.append(f"{label} {row['direction']}")
+            return " · ".join(parts)
+
+        hook = _trend_hook()
+        intro = ""
+        if hook and file_count >= 2 and year_label:
+            intro = f"Across **{file_count} files** ({year_label}), {hook}.\n\n"
+
+        if any(term in normalized for term in ("season", "high season", "low season", "peak", "prepare")):
+            return (
+                "### Seasonal preparation\n\n"
+                + intro
+                + (
+                    f"Before the next peak on **{line or 'your busiest lines'}**, pre-stage materials, "
+                    f"pre-book maintenance on **{asset or 'repeat bottleneck assets'}**, and align finance on "
+                    "inventory + temp labor cash — your historical files show shortfall tightening slowly, "
+                    "but still ~20%+ below plan in peak years."
+                )
+            )
+
+        if any(term in normalized for term in ("growth", "orders", "ramp", "scale", "capacity", "plan for")):
+            target = line or asset or "your constrained line"
+            return (
+                "### Growth planning\n\n"
+                + intro
+                + (
+                    f"If orders rise on **{target}**, stress-test finance (margin/cash) and production "
+                    f"(throughput/downtime) together before adding volume. Sequence: (1) find today's cap, "
+                    "(2) model +10–15% load, (3) only then expand orders or marketing."
+                )
+            )
+
+        if any(term in normalized for term in ("foresee", "bottleneck", "smooth", "steady", "no real issue")):
+            watch = line or asset or "changeovers and maintenance backlog"
+            return (
+                "### Bottlenecks you may not feel yet\n\n"
+                + intro
+                + (
+                    f"Even flat KPIs hide queueing on **{watch}**. Watch downtime, defects per 1k units, "
+                    "and shortfall vs plan weekly — not just monthly P&L."
+                )
+            )
+
+        if any(term in normalized for term in ("working", "going well", "do more", "do better", "improve")):
+            return (
+                "### Double down on what's working\n\n"
+                + intro
+                + (
+                    "Find lines/shifts with the smallest shortfall and lowest defect cost — that's where "
+                    "extra volume is cheapest. Scale crew/setup/material flow there before fixing weaker areas."
+                )
+            )
+
+        return None
+
     def _is_data_analysis_question(self, message: str) -> bool:
         normalized = message.lower()
         data_terms = (
@@ -785,8 +1174,12 @@ class CorrelationAIEngine:
             "rundown",
             "what is going on",
             "what's going on",
+            "whats going on",
+            "going on",
             "current operations",
             "operations",
+            "operational data",
+            "operational",
             "more efficient",
             "efficiency",
             "improve",
@@ -847,6 +1240,15 @@ class CorrelationAIEngine:
 
     def _is_projection_question(self, message: str) -> bool:
         normalized = message.lower()
+        outcome_terms = (
+            "goal after", "goal of", "what is the goal", "what's the goal", "whats the goal",
+            "after implementing", "after we implement", "after following", "once we follow",
+            "what should we achieve", "what are we trying to", "expected result", "end goal",
+            "purpose of", "why implement", "what does success look", "what will we accomplish",
+            "what happens after", "point of the checklist", "goal of the checklist",
+        )
+        if any(term in normalized for term in outcome_terms):
+            return True
         return any(
             term in normalized
             for term in (
@@ -872,6 +1274,15 @@ class CorrelationAIEngine:
 
     def _is_checklist_question(self, message: str) -> bool:
         normalized = message.lower()
+        # Meta questions about outcomes/goals after a checklist are not new checklist requests.
+        if "checklist" in normalized and any(
+            term in normalized
+            for term in (
+                "goal", "purpose", "outcome", "achieve", "after implementing", "after following",
+                "success look", "what happens after", "point of",
+            )
+        ):
+            return False
         return any(
             term in normalized
             for term in (
@@ -1706,11 +2117,19 @@ class CorrelationAIEngine:
         )
         owner = action_plan[0].get("owner", "Operations")
         top_issue = self._issue_label(action_plan[0])
-        paragraphs.append(
-            f"**So what does it mean?** Treat the {self._format_metric_value(total_cost)} as the prize, not a promise. Start "
-            f"with {top_issue} under {owner}, measure the actual drop in cost impact, downtime, and defects on that asset, and "
-            "use that real result to project the rest. That way the savings you report are earned from the data, not assumed."
-        )
+        if "checklist" in message.lower():
+            paragraphs.append(
+                f"**So what is the goal?** Run the checklist on one issue with one owner ({owner}), prove the numbers move "
+                f"on that worst record, then scale to the next issue. Success means lower cost impact, downtime, and "
+                f"defects on the targeted asset — not completing paperwork. If those metrics improve by shift end, you "
+                f"earned the right to widen the fix; if not, escalate before spreading effort across the floor."
+            )
+        else:
+            paragraphs.append(
+                f"**So what does it mean?** Treat the {self._format_metric_value(total_cost)} as the prize, not a promise. Start "
+                f"with {top_issue} under {owner}, measure the actual drop in cost impact, downtime, and defects on that asset, and "
+                "use that real result to project the rest. That way the savings you report are earned from the data, not assumed."
+            )
         return "\n\n".join(paragraphs)
 
     def _format_unavailable_metric_response(self, message: str, context: Dict[str, Any]) -> Optional[str]:
@@ -2243,6 +2662,10 @@ class CorrelationAIEngine:
     def _route_deterministic(self, message: str, context: Dict[str, Any]) -> Optional[Tuple[str, str]]:
         routes = [
             (self._format_unavailable_metric_response, "spreadsheet_unavailable_metric"),
+            (self._format_cross_file_trends_response, "spreadsheet_cross_file_trends"),
+            (self._format_shared_asset_comparison_response, "spreadsheet_asset_comparison"),
+            (self._format_consultant_advisory_response, "consultant_advisory"),
+            (self._format_multi_spreadsheet_response, "spreadsheet_multi_file"),
             (self._format_projection_response, "spreadsheet_projection"),
             (self._format_common_pattern_response, "spreadsheet_common_pattern"),
             (self._format_checklist_response, "spreadsheet_checklist"),
@@ -2384,135 +2807,224 @@ class CorrelationAIEngine:
         response_text: str = "",
         response_type: Optional[str] = None,
     ) -> List[str]:
+        from app.services.session_suggested_questions import generate_suggested_questions
+
         data_sources = context.get("data_sources", [])
-        spreadsheets = [
-            source for source in data_sources
-            if (source.get("processed_data") or {}).get("type") == "spreadsheet"
-        ]
-        if not spreadsheets:
+        if not data_sources:
             return []
 
-        processed = spreadsheets[0].get("processed_data") or {}
-        columns = [str(column) for column in processed.get("column_names") or []]
-        lower_columns = " ".join(columns).lower()
-        action_plan = processed.get("concrete_action_plan") or []
-        comparisons = processed.get("numeric_comparisons") or []
-        profile = processed.get("full_sheet_profile") or {}
-        highest_rows = profile.get("highest_risk_rows") or {}
-        group_summary = profile.get("group_summary") or {}
-        operational = profile.get("operational_summary") or {}
+        generated = generate_suggested_questions(
+            data_sources,
+            context.get("multi_spreadsheet_analysis"),
+            exclude=[message.strip()],
+            limit=6,
+        )
+        questions = generated.get("questions") or []
+        if not questions:
+            return []
 
-        has_action_plan = bool(action_plan)
-        has_rows = any(highest_rows.get(key) for key in highest_rows)
-        has_group = bool(group_summary)
-        has_shift_group = "shift" in group_summary
-        has_comparison = bool(comparisons)
-        has_overview = bool(operational) or has_action_plan
-        has_defect = "defect" in lower_columns
-        has_planned = "planned" in lower_columns
-        has_delay = "delay" in lower_columns
-        has_cost = "cost" in lower_columns or "loss" in lower_columns
-
-        # Each candidate maps to a handler we KNOW will answer it (guaranteed, not aspirational).
-        candidates: Dict[str, Tuple[str, bool]] = {
-            "spreadsheet_action_plan": ("Which issue should we tackle first next shift?", has_action_plan),
-            "spreadsheet_checklist": ("Give me a next-shift checklist for the top issue", has_action_plan),
-            "spreadsheet_row_drilldown": ("Show the exact rows behind the top issue", has_rows and has_action_plan),
-            "spreadsheet_common_pattern": ("What do these rows have in common?", has_rows),
-            "spreadsheet_asset_frequency": ("Which asset shows up most often in these rows?", has_rows),
-            "spreadsheet_group_breakdown": ("Which line or asset is hurting us the most?", has_group),
-            "spreadsheet_shift_compare": ("Compare day shift vs night shift impact", has_shift_group),
-            "spreadsheet_delay_ranking": ("Rank delay reasons by total cost impact and explain the top driver", has_action_plan and has_delay and has_cost),
-            "spreadsheet_comparison": ("How do defects compare with planned units?", has_comparison and has_defect and has_planned),
-            "spreadsheet_overview": ("Give me a rundown of where we can improve efficiency", has_overview),
+        # Keep follow-ups adjacent to what was just answered, but still data-driven.
+        legacy_map = {
+            "consultant_advisory": ["cross_file_trends", "hidden_bottleneck", "asset_trend"],
+            "spreadsheet_cross_file_trends": ["asset_trend", "cross_source_growth", "seasonal_prep"],
+            "spreadsheet_asset_comparison": ["cross_file_trends", "hidden_bottleneck", "seasonal_prep"],
+            "spreadsheet_multi_file": ["cross_file_trends", "cross_source_growth", "asset_trend"],
+            "spreadsheet_action_plan": ["next_shift", "production_drilldown", "signal_hunt"],
+            "spreadsheet_overview": ["cross_source_growth", "executive_rundown", "hidden_bottleneck"],
         }
+        preferred = legacy_map.get(response_type or "", [])
+        items = generated.get("items") or []
+        by_category = {item["category"]: item["question"] for item in items}
 
-        # The shift comparison reuses the group handler, so treat them as the same "type" for exclusion.
-        type_alias = {"spreadsheet_shift_compare": "spreadsheet_group_breakdown"}
-
-        order_by_current = {
-            "spreadsheet_overview": ["spreadsheet_action_plan", "spreadsheet_row_drilldown", "spreadsheet_group_breakdown", "spreadsheet_comparison"],
-            "spreadsheet_action_plan": ["spreadsheet_row_drilldown", "spreadsheet_checklist", "spreadsheet_group_breakdown", "spreadsheet_common_pattern"],
-            "spreadsheet_checklist": ["spreadsheet_row_drilldown", "spreadsheet_group_breakdown", "spreadsheet_action_plan", "spreadsheet_common_pattern"],
-            "spreadsheet_row_drilldown": ["spreadsheet_common_pattern", "spreadsheet_asset_frequency", "spreadsheet_checklist", "spreadsheet_action_plan"],
-            "spreadsheet_asset_frequency": ["spreadsheet_row_drilldown", "spreadsheet_action_plan", "spreadsheet_checklist", "spreadsheet_group_breakdown"],
-            "spreadsheet_common_pattern": ["spreadsheet_checklist", "spreadsheet_action_plan", "spreadsheet_row_drilldown", "spreadsheet_group_breakdown"],
-            "spreadsheet_group_breakdown": ["spreadsheet_asset_frequency", "spreadsheet_row_drilldown", "spreadsheet_action_plan", "spreadsheet_comparison"],
-            "spreadsheet_delay_ranking": ["spreadsheet_row_drilldown", "spreadsheet_checklist", "spreadsheet_group_breakdown", "spreadsheet_action_plan"],
-            "spreadsheet_issue_explanation": ["spreadsheet_row_drilldown", "spreadsheet_checklist", "spreadsheet_group_breakdown", "spreadsheet_action_plan"],
-            "spreadsheet_comparison": ["spreadsheet_row_drilldown", "spreadsheet_group_breakdown", "spreadsheet_action_plan", "spreadsheet_common_pattern"],
-        }
-        default_order = [
-            "spreadsheet_action_plan", "spreadsheet_delay_ranking", "spreadsheet_row_drilldown", "spreadsheet_group_breakdown",
-            "spreadsheet_common_pattern", "spreadsheet_checklist", "spreadsheet_comparison", "spreadsheet_overview",
-        ]
-
-        order = list(order_by_current.get(response_type or "", default_order))
-        for key in list(candidates.keys()) + ["spreadsheet_shift_compare"]:
-            if key not in order:
-                order.append(key)
-
-        current_alias = type_alias.get(response_type or "", response_type)
-        selected: List[str] = []
-        used_types = set()
-        for key in order:
-            if key not in candidates:
-                continue
-            question, available = candidates[key]
-            if not available:
-                continue
-            effective_type = type_alias.get(key, key)
-            if effective_type == current_alias:
-                continue
-            if effective_type in used_types:
-                continue
-            selected.append(question)
-            used_types.add(effective_type)
-            if len(selected) >= 3:
+        ordered: List[str] = []
+        for category in preferred:
+            question = by_category.get(category)
+            if question and question not in ordered:
+                ordered.append(question)
+        for question in questions:
+            if question not in ordered:
+                ordered.append(question)
+            if len(ordered) >= 3:
                 break
-        return selected
+        # Final de-dupe preserving order
+        deduped: List[str] = []
+        seen: Set[str] = set()
+        for question in ordered:
+            key = question.strip().lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(question)
+        return deduped[:3]
+
+        return deduped[:3]
+
+    def _build_multi_file_gemma_block(self, context: Dict[str, Any]) -> List[str]:
+        """Compact cross-file summary — always safe to include for 10+ uploads."""
+        multi = context.get("multi_spreadsheet_analysis") or {}
+        if multi.get("file_count", 0) < 2:
+            return []
+
+        lines = [
+            "Cross-file analysis (covers ALL uploaded spreadsheets — prefer this for trends and comparisons):",
+            multi.get("narrative_summary", ""),
+        ]
+        yoy = multi.get("yoy_trends") or {}
+        for row in yoy.get("metrics") or []:
+            year_bits = [
+                f"{year}: {self._format_metric_value(value)}"
+                for year, value in zip(row.get("years") or [], row.get("values") or [])
+                if value is not None
+            ]
+            if year_bits:
+                lines.append(
+                    f"- {row.get('label')}: {row.get('direction')} | " + " → ".join(year_bits)
+                )
+
+        rollups = multi.get("file_rollups") or []
+        if rollups:
+            lines.append("File rollups (all uploaded files):")
+            for rollup in rollups:
+                bits = [rollup.get("file_name", "file")]
+                if rollup.get("period"):
+                    bits.append(str(rollup["period"]))
+                if rollup.get("attainment_pct") is not None:
+                    bits.append(f"attainment {self._format_metric_value(rollup['attainment_pct'])}%")
+                if rollup.get("shortfall_total") is not None:
+                    bits.append(f"shortfall {self._format_metric_value(rollup['shortfall_total'])}")
+                if rollup.get("total_loss") is not None:
+                    bits.append(f"cost {self._format_metric_value(rollup['total_loss'])}")
+                if rollup.get("total_downtime") is not None:
+                    bits.append(f"downtime {self._format_metric_value(rollup['total_downtime'])}")
+                lines.append("  - " + " | ".join(bits))
+
+        shared = multi.get("shared_assets") or {}
+        if shared:
+            top = list(shared.items())[:12]
+            lines.append(
+                "Shared assets: "
+                + "; ".join(f"{asset} ({len(files)} files)" for asset, files in top)
+            )
+
+        asset_trends = multi.get("asset_trends") or []
+        for trend in asset_trends[:8]:
+            dirs = []
+            if trend.get("downtime_direction"):
+                dirs.append(f"downtime {trend['downtime_direction']}")
+            if trend.get("loss_direction"):
+                dirs.append(f"cost {trend['loss_direction']}")
+            suffix = f" ({', '.join(dirs)})" if dirs else ""
+            lines.append(f"- Asset {trend.get('asset')}{suffix}")
+
+        return lines
+
+    def _compact_spreadsheet_source_lines(self, source: Dict[str, Any]) -> List[str]:
+        processed = source.get("processed_data") or {}
+        file_name = source.get("file_name") or "uploaded file"
+        tab_names = processed.get("tab_names") or [
+            t.get("name") for t in (processed.get("tabs") or []) if t.get("name")
+        ]
+        linking = processed.get("linking_metadata") or {}
+        bits = [file_name, f"rows={processed.get('rows')}"]
+        if linking.get("date_range"):
+            dr = linking["date_range"]
+            bits.append(f"{dr.get('min')} → {dr.get('max')}")
+        if tab_names:
+            bits.append("tabs=" + ", ".join(str(n) for n in tab_names[:8]))
+        return ["- " + " | ".join(bits)]
+
+    def _detailed_spreadsheet_source_lines(self, source: Dict[str, Any], profile_char_cap: int) -> List[str]:
+        processed = source.get("processed_data") or {}
+        file_name = source.get("file_name") or "uploaded file"
+        profile = processed.get("full_sheet_profile") or {}
+        findings = processed.get("distilled_findings") or []
+        action_plan = processed.get("concrete_action_plan") or []
+        column_names = processed.get("column_names") or []
+        lines = [
+            f"- {file_name}: rows={processed.get('rows')}, columns={column_names}",
+            "  Allowed spreadsheet columns only: " + ", ".join(map(str, column_names)),
+        ]
+        if findings:
+            lines.append("  Must-use spreadsheet findings:")
+            for finding in findings[:12]:
+                lines.append(f"  - {finding}")
+        if action_plan:
+            lines.append(
+                "  Required concrete action plan: "
+                + json.dumps(action_plan, default=str)[: min(8000, profile_char_cap // 2)]
+            )
+        if profile:
+            lines.append(
+                "  Whole-sheet computed profile: "
+                + json.dumps(profile, default=str)[:profile_char_cap]
+            )
+        else:
+            lines.append(
+                f"  Sample rows only: first={processed.get('sample_data', [])[:5]}, "
+                f"last={processed.get('tail_sample_data', [])[:5]}"
+            )
+        return lines
 
     def _build_chat_prompt(self, message: str, context: Dict[str, Any]) -> str:
         lines = []
 
-        data_sources = context.get("data_sources", [])[:5]
-        if data_sources:
+        multi_block = self._build_multi_file_gemma_block(context)
+        if multi_block:
+            lines.extend(multi_block)
+            lines.append("")
+
+        spreadsheet_sources = self._spreadsheet_sources(context)
+        other_sources = [
+            source for source in context.get("data_sources") or []
+            if (source.get("processed_data") or {}).get("type") != "spreadsheet"
+        ]
+
+        use_compact = len(spreadsheet_sources) >= settings.CORRELATION_CHAT_COMPACT_THRESHOLD
+        max_prompt = settings.CORRELATION_CHAT_MAX_PROMPT_CHARS
+        max_detailed = settings.CORRELATION_CHAT_MAX_DETAILED_SOURCES
+        budget = max_prompt - len("\n".join(lines))
+
+        if spreadsheet_sources or other_sources:
             lines.append("Uploaded data context:")
-            for source in data_sources:
+            detailed_used = 0
+            omitted = 0
+
+            for index, source in enumerate(spreadsheet_sources):
+                if use_compact and index >= max_detailed:
+                    chunk = self._compact_spreadsheet_source_lines(source)
+                else:
+                    per_file_cap = max(2000, budget // max(1, max_detailed))
+                    chunk = self._detailed_spreadsheet_source_lines(source, per_file_cap)
+                    detailed_used += 1
+
+                chunk_text = "\n".join(chunk)
+                if budget > 0 and len(chunk_text) <= budget:
+                    lines.extend(chunk)
+                    budget -= len(chunk_text) + 1
+                elif use_compact:
+                    compact = self._compact_spreadsheet_source_lines(source)
+                    compact_text = "\n".join(compact)
+                    if len(compact_text) <= budget:
+                        lines.extend(compact)
+                        budget -= len(compact_text) + 1
+                    else:
+                        omitted += 1
+                else:
+                    omitted += 1
+
+            for source in other_sources:
                 processed = source.get("processed_data") or {}
                 file_name = source.get("file_name") or "uploaded file"
-                if processed.get("type") == "spreadsheet":
-                    profile = processed.get("full_sheet_profile") or {}
-                    findings = processed.get("distilled_findings") or []
-                    action_plan = processed.get("concrete_action_plan") or []
-                    column_names = processed.get("column_names") or []
-                    profile_text = json.dumps(profile, default=str)[:12000]
-                    action_plan_text = json.dumps(action_plan, default=str)[:8000]
-                    lines.append(
-                        f"- {file_name}: rows={processed.get('rows')}, "
-                        f"columns={column_names}"
-                    )
-                    lines.append(
-                        "  Allowed spreadsheet columns only: "
-                        + ", ".join(map(str, column_names))
-                    )
-                    if findings:
-                        lines.append("  Must-use spreadsheet findings:")
-                        for finding in findings[:24]:
-                            lines.append(f"  - {finding}")
-                    if action_plan:
-                        lines.append("  Required concrete action plan:")
-                        lines.append(f"  {action_plan_text}")
-                    if profile:
-                        lines.append("  Whole-sheet computed profile:")
-                        lines.append(f"  {profile_text}")
-                    else:
-                        lines.append(
-                            f"  Sample rows only: first={processed.get('sample_data', [])[:5]}, "
-                            f"last={processed.get('tail_sample_data', [])[:5]}"
-                        )
-                else:
-                    lines.append(f"- {file_name}: {processed}")
+                doc_line = f"- {file_name}: {json.dumps(processed, default=str)[:4000]}"
+                if len(doc_line) <= budget:
+                    lines.append(doc_line)
+                    budget -= len(doc_line)
+
+            if omitted:
+                lines.append(
+                    f"(Note: {omitted} additional source(s) omitted from detailed context; "
+                    "cross-file analysis above still covers all uploaded spreadsheets.)"
+                )
             lines.append("")
 
             lines.append(
@@ -2538,10 +3050,7 @@ class CorrelationAIEngine:
 
         history = context.get("conversation_history", [])[-6:]
         if history:
-            has_spreadsheet_context = any(
-                (source.get("processed_data") or {}).get("type") == "spreadsheet"
-                for source in data_sources
-            )
+            has_spreadsheet_context = bool(spreadsheet_sources)
             lines.append("Recent conversation:")
             for item in history:
                 role = item.get("role", "user")
@@ -2795,7 +3304,12 @@ class CorrelationAIEngine:
         for metric in scenario.ingested_metrics:
             lines.append(f"{metric.endpoint}: {metric.payload_snapshot}")
 
-        data_sources = context.get("data_sources", [])[:5]
+        data_sources = context.get("data_sources") or []
+        multi = context.get("multi_spreadsheet_analysis") or {}
+        if multi.get("file_rollups"):
+            lines.append("MULTI-FILE ROLLUPS:")
+            for rollup in multi["file_rollups"]:
+                lines.append(json.dumps(rollup, default=str))
         for source in data_sources:
             processed = source.get("processed_data") or {}
             file_name = source.get("file_name") or "uploaded file"

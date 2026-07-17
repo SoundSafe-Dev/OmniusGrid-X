@@ -140,6 +140,9 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
   const [dataSourcesKey, setDataSourcesKey] = useState(0);
   const [sessionListKey, setSessionListKey] = useState(0);
   const [pendingUpload, setPendingUpload] = useState(false);
+  const [suggestedQuestions, setSuggestedQuestions] = useState<string[]>([]);
+  const [suggestionsSummary, setSuggestionsSummary] = useState<string>('');
+  const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const dataSourcesRef = useRef<DataSourcesPanelHandle>(null);
   const progressTimerRef = useRef<number | null>(null);
@@ -160,6 +163,42 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
       if (progressTimerRef.current) window.clearInterval(progressTimerRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadSuggestions = async () => {
+      if (!currentSession?.id) {
+        setSuggestedQuestions([]);
+        setSuggestionsSummary('');
+        return;
+      }
+
+      setIsLoadingSuggestions(true);
+      try {
+        const response = await analysisSessionsApi.getSuggestedQuestions(currentSession.id, 3);
+        if (!cancelled) {
+          setSuggestedQuestions(response.questions || []);
+          setSuggestionsSummary(response.context_summary || '');
+        }
+      } catch (error) {
+        console.error('[CorrelationAIPane] Failed to load suggested questions:', error);
+        if (!cancelled) {
+          setSuggestedQuestions([]);
+          setSuggestionsSummary('');
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingSuggestions(false);
+        }
+      }
+    };
+
+    loadSuggestions();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentSession?.id, currentSession?.data_sources_count, dataSourcesKey]);
 
   useEffect(() => {
     if (!pendingUpload || !currentSession) return;
@@ -223,6 +262,7 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
     return () => {
       cancelled = true;
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- pre-existing; adding deps changes retrigger behavior (FS-54)
   }, []);
 
   const handleCreateNewSession = async () => {
@@ -272,8 +312,41 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
     }
   };
 
-  const handleSendMessage = async () => {
-    if (!input.trim() || isLoading) return;
+  const handleSessionMissingForUpload = async () => {
+    try {
+      const session = await createReplacementSession();
+      setMessages([]);
+      return session.id;
+    } catch (error) {
+      console.error('Error recovering missing session:', error);
+      return null;
+    }
+  };
+
+  const handleKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage();
+    }
+  };
+
+  const handleFollowUpClick = (question: string) => {
+    setInput(question);
+    window.setTimeout(() => {
+      document.getElementById('correlation-chat-input')?.focus();
+    }, 0);
+  };
+
+  const handleSuggestedQuestionClick = (question: string) => {
+    setInput(question);
+    window.setTimeout(() => {
+      handleSendMessageWithText(question);
+    }, 0);
+  };
+
+  const handleSendMessageWithText = async (messageText?: string) => {
+    const userText = (messageText ?? input).trim();
+    if (!userText || isLoading) return;
 
     let activeSession: AnalysisSession;
     try {
@@ -284,7 +357,6 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
       return;
     }
 
-    const userText = input.trim();
     const userMessage: SessionMessage = {
       id: crypto.randomUUID(),
       session_id: activeSession.id,
@@ -351,8 +423,7 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
       }
 
       appendAssistantMessage(response, activeSession.id);
-      
-      // Title generation is cosmetic; never turn a successful assistant reply into a chat error.
+
       if (messages.length === 2) {
         try {
           await analysisSessionsApi.generateSessionTitle(activeSession.id);
@@ -392,29 +463,36 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
     }
   };
 
-  const handleSessionMissingForUpload = async () => {
-    try {
-      const session = await createReplacementSession();
-      setMessages([]);
-      return session.id;
-    } catch (error) {
-      console.error('Error recovering missing session:', error);
+  const handleSendMessage = async () => {
+    await handleSendMessageWithText();
+  };
+
+  const renderSuggestedQuestions = (className = '') => {
+    if (!currentSession || suggestedQuestions.length === 0) {
       return null;
     }
-  };
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSendMessage();
-    }
-  };
-
-  const handleFollowUpClick = (question: string) => {
-    setInput(question);
-    window.setTimeout(() => {
-      document.getElementById('correlation-chat-input')?.focus();
-    }, 0);
+    return (
+      <div className={`space-y-2 ${className}`}>
+        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Suggestions</p>
+        {suggestionsSummary ? (
+          <p className="text-xs text-gray-500">{suggestionsSummary}</p>
+        ) : null}
+        <div className="flex flex-col gap-2">
+          {suggestedQuestions.map((question) => (
+            <button
+              key={question}
+              type="button"
+              onClick={() => handleSuggestedQuestionClick(question)}
+              disabled={isLoading}
+              className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-left text-sm leading-snug text-gray-800 shadow-sm transition hover:border-gray-300 hover:bg-white hover:text-gray-950 focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-60"
+            >
+              {question}
+            </button>
+          ))}
+        </div>
+      </div>
+    );
   };
 
   const getFollowUpQuestions = (message: SessionMessage): string[] => {
@@ -547,11 +625,28 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
               </p>
             </div>
           ) : messages.length === 0 ? (
-            <div className="h-full min-h-0 rounded-xl border border-gray-300 bg-white text-center text-gray-900 flex flex-col items-center justify-center px-8">
-              <p className="text-lg font-medium mb-2">Start the conversation</p>
-              <p className="text-sm max-w-md text-gray-600">
-                Ask me anything about your operations, upload data, and I'll provide actionable insights.
-              </p>
+            <div className="h-full min-h-0 rounded-xl border border-gray-300 bg-white text-gray-900 flex flex-col items-center justify-center px-8 py-8">
+              {isLoadingSuggestions ? (
+                <div className="flex items-center gap-2 text-sm text-gray-500 mb-6">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Reading your uploads for suggestions...
+                </div>
+              ) : suggestedQuestions.length > 0 ? (
+                <div className="w-full max-w-2xl">
+                  <p className="text-lg font-medium mb-2 text-center">Ask anything about your data</p>
+                  <p className="text-sm text-gray-600 mb-6 text-center">
+                    Suggestions are based on the files and tabs you uploaded — not generic prompts.
+                  </p>
+                  {renderSuggestedQuestions()}
+                </div>
+              ) : (
+                <>
+                  <p className="text-lg font-medium mb-2">Start the conversation</p>
+                  <p className="text-sm max-w-md text-gray-600 text-center">
+                    Upload spreadsheets or documents, then Omnius will suggest questions tailored to your data.
+                  </p>
+                </>
+              )}
             </div>
           ) : (
             <div className="space-y-4 overflow-x-hidden">
@@ -692,7 +787,11 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyPress={handleKeyPress}
-              placeholder="Ask about operational issues, correlations, or recommendations..."
+              placeholder={
+                (currentSession?.data_sources_count || 0) > 0
+                  ? 'Ask anything about your uploaded data...'
+                  : 'Ask about operational issues, correlations, or recommendations...'
+              }
               disabled={isLoading}
               className="flex-1 min-w-0"
             />

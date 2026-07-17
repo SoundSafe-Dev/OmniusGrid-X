@@ -22,7 +22,10 @@ class KeycloakService:
     """Service for Keycloak identity provider integration."""
     
     def __init__(self):
-        self.keycloak_url: str = settings.KEYCLOAK_URL
+        if KeycloakOpenID is None or KeycloakAdmin is None:
+            raise RuntimeError("python-keycloak is not installed")
+
+        self.keycloak_url: str = settings.KEYCLOAK_URL.rstrip("/")
         self.realm: str = settings.KEYCLOAK_REALM
         self.client_id: str = settings.KEYCLOAK_CLIENT_ID
         self.client_secret: str = settings.KEYCLOAK_CLIENT_SECRET
@@ -36,15 +39,23 @@ class KeycloakService:
             verify=True
         )
         
-        # Initialize Keycloak Admin client for management
-        self.keycloak_admin = KeycloakAdmin(
-            server_url=self.keycloak_url,
-            username=settings.KEYCLOAK_ADMIN_USERNAME,
-            password=settings.KEYCLOAK_ADMIN_PASSWORD,
-            realm_name=self.realm,
-            verify=True
-        )
-    
+        # Admin client is built lazily: token validation only needs the OpenID
+        # client, so admin credentials are not required just to verify tokens.
+        self._keycloak_admin: Optional["KeycloakAdmin"] = None
+
+    @property
+    def keycloak_admin(self) -> "KeycloakAdmin":
+        """Lazily construct the Keycloak Admin client (requires admin creds)."""
+        if self._keycloak_admin is None:
+            self._keycloak_admin = KeycloakAdmin(
+                server_url=self.keycloak_url,
+                username=settings.KEYCLOAK_ADMIN_USERNAME,
+                password=settings.KEYCLOAK_ADMIN_PASSWORD,
+                realm_name=self.realm,
+                verify=True
+            )
+        return self._keycloak_admin
+
     async def get_token(self, username: str, password: str) -> Dict[str, Any]:
         """
         Get JWT token from Keycloak for user authentication.
@@ -504,5 +515,28 @@ class KeycloakService:
             )
 
 
-# Global Keycloak service instance
-keycloak_service = KeycloakService()
+_keycloak_service: Optional["KeycloakService"] = None
+
+
+def _is_keycloak_configured() -> bool:
+    """True when SSO is enabled and the minimum OpenID settings are present."""
+    if not settings.KEYCLOAK_ENABLED:
+        return False
+    if KeycloakOpenID is None:
+        return False
+    return bool(
+        settings.KEYCLOAK_URL
+        and settings.KEYCLOAK_REALM
+        and settings.KEYCLOAK_CLIENT_ID
+        and settings.KEYCLOAK_CLIENT_SECRET
+    )
+
+
+def get_keycloak_service() -> "KeycloakService":
+    """Return a lazily constructed KeycloakService (never at import time)."""
+    global _keycloak_service
+    if not _is_keycloak_configured():
+        raise RuntimeError("Keycloak is not enabled or not fully configured")
+    if _keycloak_service is None:
+        _keycloak_service = KeycloakService()
+    return _keycloak_service

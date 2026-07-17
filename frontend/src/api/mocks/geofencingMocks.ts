@@ -1,7 +1,6 @@
-import type { 
-  GeofenceZoneExtended, 
-  GeofenceAlertExtended,
-  GeoLocation 
+import type {
+  GeofenceZoneExtended,
+  GeofenceAlertExtended
 } from '../../types';
 
 // Mock geofence zones

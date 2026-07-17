@@ -9,7 +9,7 @@ Connector for Microsoft Dynamics 365 using Dataverse API and Graph API:
 """
 
 from typing import Dict, Any, Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 import structlog
 import aiohttp
 import msal
@@ -229,7 +229,7 @@ class DynamicsConnector(ERPConnectorBase):
                 "message": "Dynamics connection successful",
                 "environment": self.environment,
                 "api_type": self.api_type,
-                "checked_at": datetime.utcnow().isoformat()
+                "checked_at": datetime.now(timezone.utc).isoformat()
             }
         except Exception as e:
             return {
@@ -237,7 +237,7 @@ class DynamicsConnector(ERPConnectorBase):
                 "message": str(e),
                 "environment": self.environment,
                 "api_type": self.api_type,
-                "checked_at": datetime.utcnow().isoformat()
+                "checked_at": datetime.now(timezone.utc).isoformat()
             }
     
     def _build_filter_string(self, filters: Dict[str, Any]) -> str:

@@ -1,5 +1,5 @@
 import { FC, useState, useEffect } from 'react';
-import { useQuery } from 'react-query';
+import { useQuery } from '@tanstack/react-query';
 import {
   Truck,
   Warehouse,
@@ -16,15 +16,14 @@ import {
   Thermometer,
   Package
 } from 'lucide-react';
-import { yardApi, geoTabYardApi } from '../../api';
+import { yardApi } from '../../api';
 import {
   YardTrailer,
   DockDoor,
-  DockAppointment,
-  DetentionAlert,
   TrailerFilters
 } from '../../types';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
+import { YardMapPanel } from '../../components/yard/YardMapPanel';
 
 const YARD_QUERY_KEY = 'yard';
 
@@ -32,34 +31,43 @@ export const YardManagement: FC = () => {
   const [selectedTrailer, setSelectedTrailer] = useState<YardTrailer | null>(null);
   const [selectedDoor, setSelectedDoor] = useState<DockDoor | null>(null);
   const [filters, setFilters] = useState<TrailerFilters>({});
-  const [activeTab, setActiveTab] = useState<'trailers' | 'doors' | 'appointments' | 'detention'>('trailers');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [showCheckIn, setShowCheckIn] = useState(false);
+  const [activeTab, setActiveTab] = useState<'trailers' | 'map' | 'doors' | 'appointments' | 'detention'>('trailers');
 
-  const { data: trailersData, isLoading: trailersLoading, refetch: refetchTrailers } = useQuery(
-    [YARD_QUERY_KEY, 'trailers', filters],
-    () => yardApi.getTrailers(filters)
-  );
+  const { data: trailersData, isLoading: trailersLoading, refetch: refetchTrailers } = useQuery({
+    queryKey: [YARD_QUERY_KEY, 'trailers', filters],
+    queryFn: () => yardApi.getTrailers(filters),
+  });
 
-  const { data: doorsData, isLoading: doorsLoading } = useQuery(
-    [YARD_QUERY_KEY, 'doors'],
-    () => yardApi.getDockDoors()
-  );
+  const { data: doorsData, isLoading: doorsLoading } = useQuery({
+    queryKey: [YARD_QUERY_KEY, 'doors'],
+    queryFn: () => yardApi.getDockDoors(),
+  });
 
-  const { data: appointmentsData, isLoading: appointmentsLoading } = useQuery(
-    [YARD_QUERY_KEY, 'appointments'],
-    () => yardApi.getAppointments()
-  );
+  const { data: appointmentsData, isLoading: appointmentsLoading } = useQuery({
+    queryKey: [YARD_QUERY_KEY, 'appointments'],
+    queryFn: () => yardApi.getAppointments(),
+  });
 
-  const { data: detentionAlerts } = useQuery(
-    [YARD_QUERY_KEY, 'detention'],
-    () => yardApi.getDetentionAlerts()
-  );
+  const { data: detentionAlerts } = useQuery({
+    queryKey: [YARD_QUERY_KEY, 'detention'],
+    queryFn: () => yardApi.getDetentionAlerts(),
+  });
 
-  const { data: dwellTimes } = useQuery(
-    [YARD_QUERY_KEY, 'dwell-times'],
-    () => yardApi.getDwellTimes()
-  );
+  const { data: dwellTimes } = useQuery({
+    queryKey: [YARD_QUERY_KEY, 'dwell-times'],
+    queryFn: () => yardApi.getDwellTimes(),
+  });
 
-  const trailers = trailersData?.items || [];
+  const allTrailers = trailersData?.items || [];
+  const trailers = searchTerm
+    ? allTrailers.filter((t) =>
+        [t.trailerId, t.carrierName, t.licensePlate]
+          .filter(Boolean)
+          .some((v) => String(v).toLowerCase().includes(searchTerm.toLowerCase()))
+      )
+    : allTrailers;
   const doors = doorsData || [];
   const appointments = appointmentsData?.items || [];
   const alerts = detentionAlerts || [];
@@ -144,18 +152,32 @@ export const YardManagement: FC = () => {
           </TooltipTrigger>
           <TooltipContent>Yard management system overview</TooltipContent>
         </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              onClick={() => refetchTrailers()}
-              className="flex items-center gap-2 px-4 py-2 bg-opsgrid-panel border border-opsgrid-border rounded-lg hover:bg-opsgrid-border transition-colors"
-            >
-              <RefreshCw className="w-4 h-4" />
-              Refresh
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>Refresh yard data</TooltipContent>
-        </Tooltip>
+        <div className="flex items-center gap-2">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={() => setShowCheckIn(true)}
+                className="flex items-center gap-2 px-4 py-2 bg-opsgrid-primary text-opsgrid-bg rounded-lg hover:bg-opsgrid-accent transition-colors"
+              >
+                <Truck className="w-4 h-4" />
+                Check In Trailer
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>Check a trailer into the yard</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={() => refetchTrailers()}
+                className="flex items-center gap-2 px-4 py-2 bg-opsgrid-panel border border-opsgrid-border rounded-lg hover:bg-opsgrid-border transition-colors"
+              >
+                <RefreshCw className="w-4 h-4" />
+                Refresh
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>Refresh yard data</TooltipContent>
+          </Tooltip>
+        </div>
       </div>
 
       {/* Stats Cards */}
@@ -271,6 +293,7 @@ export const YardManagement: FC = () => {
         <div className="flex gap-1">
           {[
             { id: 'trailers', label: 'Trailers', icon: Truck, tooltip: 'View all trailers' },
+            { id: 'map', label: 'Yard Map', icon: MapPin, tooltip: 'Dock and zone occupancy map' },
             { id: 'doors', label: 'Dock Doors', icon: Warehouse, tooltip: 'View dock door status' },
             { id: 'appointments', label: 'Appointments', icon: Calendar, tooltip: 'View scheduled appointments' },
             { id: 'detention', label: 'Detention', icon: DollarSign, tooltip: 'View detention alerts and costs' },
@@ -317,6 +340,8 @@ export const YardManagement: FC = () => {
             <input
               type="text"
               placeholder="Search trailer..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
               className="bg-transparent text-sm focus:outline-none w-40"
             />
           </div>
@@ -392,6 +417,12 @@ export const YardManagement: FC = () => {
               </table>
             </div>
           )}
+        </div>
+      )}
+
+      {activeTab === 'map' && (
+        <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-6">
+          <YardMapPanel doors={doors} trailers={allTrailers} onTrailerClick={setSelectedTrailer} />
         </div>
       )}
 
@@ -545,11 +576,106 @@ export const YardManagement: FC = () => {
 
       {/* Trailer Detail Modal */}
       {selectedTrailer && (
-        <TrailerDetailModal 
-          trailer={selectedTrailer} 
-          onClose={() => setSelectedTrailer(null)} 
+        <TrailerDetailModal
+          trailer={selectedTrailer}
+          doors={doors}
+          onClose={() => setSelectedTrailer(null)}
+          onChanged={() => {
+            setSelectedTrailer(null);
+            refetchTrailers();
+          }}
         />
       )}
+
+      {/* Check-In Modal */}
+      {showCheckIn && (
+        <CheckInModal
+          onClose={() => setShowCheckIn(false)}
+          onCheckedIn={() => {
+            setShowCheckIn(false);
+            refetchTrailers();
+          }}
+        />
+      )}
+    </div>
+  );
+};
+
+// Check a new trailer into the yard (task C18).
+const CheckInModal: FC<{ onClose: () => void; onCheckedIn: () => void }> = ({ onClose, onCheckedIn }) => {
+  const [trailerId, setTrailerId] = useState('');
+  const [carrierName, setCarrierName] = useState('');
+  const [trailerType, setTrailerType] = useState<YardTrailer['trailerType']>('dry_van');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async () => {
+    if (!trailerId.trim()) {
+      setError('Trailer ID is required');
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await yardApi.checkInTrailer({
+        trailerId: trailerId.trim(),
+        carrierName: carrierName.trim() || 'Unknown Carrier',
+        trailerType,
+        status: 'yard',
+      } as Partial<YardTrailer>);
+      onCheckedIn();
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || 'Check-in failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" role="dialog" aria-modal="true">
+      <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg max-w-md w-full p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-bold">Check In Trailer</h2>
+          <button onClick={onClose} aria-label="Close" className="text-opsgrid-text-secondary hover:text-opsgrid-text">✕</button>
+        </div>
+        <div>
+          <label className="block text-sm text-opsgrid-text-secondary mb-1">Trailer ID</label>
+          <input
+            className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
+            value={trailerId} onChange={(e) => setTrailerId(e.target.value)} placeholder="TRL-1042"
+          />
+        </div>
+        <div>
+          <label className="block text-sm text-opsgrid-text-secondary mb-1">Carrier</label>
+          <input
+            className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
+            value={carrierName} onChange={(e) => setCarrierName(e.target.value)} placeholder="Carrier name"
+          />
+        </div>
+        <div>
+          <label className="block text-sm text-opsgrid-text-secondary mb-1">Type</label>
+          <select
+            className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
+            value={trailerType} onChange={(e) => setTrailerType(e.target.value as YardTrailer['trailerType'])}
+          >
+            <option value="dry_van">Dry Van</option>
+            <option value="reefer">Reefer</option>
+            <option value="flatbed">Flatbed</option>
+            <option value="container">Container</option>
+          </select>
+        </div>
+        {error && <p className="text-sm text-status-alarm">{error}</p>}
+        <div className="flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 border border-opsgrid-border rounded-lg text-sm">Cancel</button>
+          <button
+            onClick={submit}
+            disabled={busy}
+            className="px-4 py-2 bg-opsgrid-primary text-opsgrid-bg rounded-lg text-sm disabled:opacity-50"
+          >
+            {busy ? 'Checking in…' : 'Check In'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 };
@@ -572,8 +698,30 @@ const StatCard: FC<{ label: string; value: string | number; icon: any; color?: s
   </div>
 );
 
-const TrailerDetailModal: FC<{ trailer: YardTrailer; onClose: () => void }> = ({ trailer, onClose }) => {
+const TrailerDetailModal: FC<{
+  trailer: YardTrailer;
+  doors: DockDoor[];
+  onClose: () => void;
+  onChanged: () => void;
+}> = ({ trailer, doors, onClose, onChanged }) => {
   const [location, setLocation] = useState<any>(null);
+  const [assignDoorId, setAssignDoorId] = useState('');
+  const [busy, setBusy] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const availableDoors = doors.filter((d) => d.status === 'available');
+
+  const runAction = async (name: string, fn: () => Promise<unknown>) => {
+    setBusy(name);
+    setActionError(null);
+    try {
+      await fn();
+      onChanged();
+    } catch (e: any) {
+      setActionError(e?.response?.data?.detail || `${name} failed`);
+    } finally {
+      setBusy(null);
+    }
+  };
 
   useEffect(() => {
     // Fetch real-time location if in transit
@@ -686,6 +834,44 @@ const TrailerDetailModal: FC<{ trailer: YardTrailer; onClose: () => void }> = ({
                 <p className="text-opsgrid-text-secondary">Checked In</p>
                 <p>{trailer.checkedInAt ? new Date(trailer.checkedInAt).toLocaleString() : '-'}</p>
               </div>
+            </div>
+          </div>
+
+          {/* Actions (task C18): assign door + check out, wired to the yard API. */}
+          <div className="border-t border-opsgrid-border pt-4 space-y-3">
+            {actionError && <p className="text-sm text-status-alarm">{actionError}</p>}
+            <div className="flex flex-wrap items-center gap-2">
+              {trailer.status === 'yard' && (
+                <>
+                  <select
+                    aria-label="Assign to door"
+                    className="px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
+                    value={assignDoorId}
+                    onChange={(e) => setAssignDoorId(e.target.value)}
+                  >
+                    <option value="">Select door…</option>
+                    {availableDoors.map((d) => (
+                      <option key={d.id} value={d.id}>Door {d.doorNumber ?? d.id}</option>
+                    ))}
+                  </select>
+                  <button
+                    disabled={!assignDoorId || busy !== null}
+                    onClick={() => runAction('Assign door', () => yardApi.assignToDoor(trailer.id, assignDoorId))}
+                    className="px-4 py-2 bg-opsgrid-primary text-opsgrid-bg rounded-lg text-sm disabled:opacity-50"
+                  >
+                    {busy === 'Assign door' ? 'Assigning…' : 'Assign to Door'}
+                  </button>
+                </>
+              )}
+              {trailer.status !== 'outbound' && (
+                <button
+                  disabled={busy !== null}
+                  onClick={() => runAction('Check out', () => yardApi.checkOutTrailer(trailer.id))}
+                  className="px-4 py-2 border border-status-alarm text-status-alarm rounded-lg text-sm hover:bg-status-alarm/10 disabled:opacity-50"
+                >
+                  {busy === 'Check out' ? 'Checking out…' : 'Check Out Trailer'}
+                </button>
+              )}
             </div>
           </div>
         </div>

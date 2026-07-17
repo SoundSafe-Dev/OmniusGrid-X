@@ -24,7 +24,17 @@
 - Ingestion workers (Redpanda → TimescaleDB)
 - WebSocket manager for real-time updates
 - OEE calculation queries
-- Authentication with JWT
+- Authentication with JWT (PyJWT), session hardening + token rotation
+
+### Platform Subsystems (convergence branch)
+- Predictive Maintenance / RUL, Health Index, Digital-Twin Optimizer, Historian
+- Notifications Center (webhook/email/slack) + delivery log
+- Model Registry + OTA release/rollout; Model Monitoring (drift)
+- ERP integration, Yard (YMS), Transportation (TMS), Kanban, Compliance/Registries
+- RAG compliance-doc pipeline; edge collectors incl. SNMP / Sparkplug B / DNP3
+- One migration chain (`scripts/migrate.py`), documented API error responses,
+  `Page[T]` pagination; non-root images + k8s egress + blocking supply-chain gate
+- **Offline demo seeder** (`scripts/seed_demo_data.py`) — full-platform demo data
 
 ### Frontend (React + TypeScript)
 - Manufacturing-grade dashboard UI

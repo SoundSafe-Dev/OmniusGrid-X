@@ -1,10 +1,16 @@
 import { create } from 'zustand';
 import { Alarm, TelemetryPoint, PackMLState, TacticalDecision } from '../types';
 
+// Task 3: explicit connection lifecycle states for the WebSocket.
+export type ConnectionState = 'connecting' | 'connected' | 'disconnected' | 'reconnecting';
+
 interface RealtimeState {
   // Connection
   connected: boolean;
   connecting: boolean;
+  connectionState: ConnectionState;
+  // True once reconnection attempts are exhausted and the app falls back to polling.
+  pollingFallback: boolean;
   lastConnectedAt: Date | null;
   connectionError: string | null;
 
@@ -17,6 +23,8 @@ interface RealtimeState {
   // Actions
   setConnected: (connected: boolean) => void;
   setConnecting: (connecting: boolean) => void;
+  setConnectionState: (state: ConnectionState) => void;
+  setPollingFallback: (pollingFallback: boolean) => void;
   setConnectionError: (error: string | null) => void;
   updateTelemetry: (assetId: string, data: TelemetryPoint) => void;
   addAlarm: (alarm: Alarm) => void;
@@ -32,6 +40,8 @@ const MAX_RECENT_DECISIONS = 50;
 export const useRealtimeStore = create<RealtimeState>((set, get) => ({
   connected: false,
   connecting: false,
+  connectionState: 'disconnected',
+  pollingFallback: false,
   lastConnectedAt: null,
   connectionError: null,
   telemetry: new Map(),
@@ -47,6 +57,10 @@ export const useRealtimeStore = create<RealtimeState>((set, get) => ({
     }),
 
   setConnecting: (connecting) => set({ connecting }),
+
+  setConnectionState: (connectionState) => set({ connectionState }),
+
+  setPollingFallback: (pollingFallback) => set({ pollingFallback }),
 
   setConnectionError: (error) => set({ connectionError: error }),
 
@@ -96,6 +110,8 @@ export const useRealtimeStore = create<RealtimeState>((set, get) => ({
     set({
       connected: false,
       connecting: false,
+      connectionState: 'disconnected',
+      pollingFallback: false,
       connectionError: null,
       telemetry: new Map(),
       alarms: [],

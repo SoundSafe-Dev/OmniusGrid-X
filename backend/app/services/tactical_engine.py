@@ -5,7 +5,7 @@ Handles immediate adjustments without cloud latency
 
 import asyncio
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Any, Optional, Callable
 from dataclasses import dataclass
 import structlog
@@ -113,7 +113,7 @@ class LocalTacticalEngine:
         """
         import torch
         
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
         
         try:
             # Check safety thresholds first (hard rules)
@@ -156,7 +156,7 @@ class LocalTacticalEngine:
         if features.get('temp_nozzle_mean', 0) > self.safety_thresholds['temp_nozzle_max']:
             return TacticalDecision(
                 asset_id=asset_id,
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
                 action_type='emergency_stop',
                 parameters={'reason': 'nozzle_temperature_critical'},
                 confidence=1.0,
@@ -168,7 +168,7 @@ class LocalTacticalEngine:
         if features.get('vibration_mean', 0) > self.safety_thresholds['vibration_max']:
             return TacticalDecision(
                 asset_id=asset_id,
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
                 action_type='reduce_feed_rate',
                 parameters={'reduction_percent': 50, 'reason': 'excessive_vibration'},
                 confidence=0.95,
@@ -188,7 +188,7 @@ class LocalTacticalEngine:
         asset_id = feature_vector.get('asset_id', 'unknown')
         
         # Calculate latency
-        latency_ms = (datetime.utcnow() - start_time).total_seconds() * 1000
+        latency_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
         
         # Rule-based decision logic
         action_type = 'no_change'
@@ -219,7 +219,7 @@ class LocalTacticalEngine:
         
         return TacticalDecision(
             asset_id=asset_id,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             action_type=action_type,
             parameters=parameters,
             confidence=confidence,
@@ -257,7 +257,7 @@ class LocalTacticalEngine:
         import torch
         
         # Calculate latency
-        latency_ms = (datetime.utcnow() - start_time).total_seconds() * 1000
+        latency_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
         
         # Model output format: [action_probs, parameter_adjustments]
         action_probs = output[0].softmax(dim=-1)
@@ -279,7 +279,7 @@ class LocalTacticalEngine:
         
         return TacticalDecision(
             asset_id=asset_id,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             action_type=action_type,
             parameters=parameters,
             confidence=confidence,

@@ -1,0 +1,57 @@
+{
+  "persona": {
+    "display_name": "Omnius",
+    "full_name": "Omnius K. Patel",
+    "preferred_greeting_name": "Omnius",
+    "job_title": "Yard & Shift Supervisor",
+    "sites": ["North Yard", "Door 12–18"],
+    "phone": "+1 (555) 014-2299",
+    "employee_id": "OG-SUP-1044",
+    "notes": "Demo supervisor for mobile QA. Use the same organization as dev seed data when possible."
+  },
+  "auth": {
+    "email": "omnius@omniusgrid.com",
+    "password_any": "With backend OMNIUS_DEMO_ANY_PASSWORD_LOGIN=true (default), any password works for this email.",
+    "password_hint": "If demo bypass is off, use the password from registration (e.g. OmniusDemo!2026).",
+    "role": "operator",
+    "role_note": "Backend User.role is a string; web app maps operator/viewer/maintenance. For UI copy you may label Omnius as Supervisor regardless of stored role until a dedicated supervisor role exists."
+  },
+  "organization": {
+    "id": "00000000-0000-0000-0000-000000000001",
+    "name": "Dev Organization",
+    "source": "Matches DEV_ORG_ID in backend/app/api/auth.py for local dev."
+  },
+  "register_example": {
+    "email": "omnius@omniusgrid.com",
+    "password": "OmniusDemo!2026",
+    "full_name": "Omnius K. Patel",
+    "organization_id": "00000000-0000-0000-0000-000000000001",
+    "role": "operator"
+  },
+  "login_form_fields": {
+    "username": "omnius@omniusgrid.com",
+    "password": "(any value if OMNIUS_DEMO_ANY_PASSWORD_LOGIN is enabled on the API)",
+    "comment": "POST /api/v1/auth/login expects OAuth2PasswordRequestForm: fields username and password."
+  },
+  "mobile_demo_dataset": {
+    "enable_env": "EXPO_PUBLIC_USE_DEMO_DATA=true",
+    "npm_script": "cd mobile/omnius-mobile && npm run start:demo",
+    "organization_id": "00000000-0000-0000-0000-000000000001",
+    "note": "Rich in-app sample: kanban columns/tasks (approvals, triage, review, done), alarms (active/acked/resolved, severities), machines + yard trailers (reefer, dry van, flatbed, tanker, held). Login still hits the API; other endpoints read from memory with ~4.5s live tick (last_seen, yard trailer, flapping alarm text)."
+  },
+  "web_app_dev_session": {
+    "mobile_username_field": "dev",
+    "mobile_password": "any value",
+    "bearer": "dev-token",
+    "backend": "get_current_active_user in backend/app/api/auth.py accepts Bearer dev-token and resolves to the same dev admin as the web app (admin@omniusgrid.com, DEV_ORG_ID). Mobile stores dev-token after login; all data APIs hit the real backend in parallel with the web dashboard.",
+    "web_reference": "frontend/src/pages/auth/Login.tsx — DEV_MODE username dev + devLogin(..., dev-token)",
+    "web_vs_mobile_data": "The Vite web app used to default to in-browser mocks (USE_MOCK). It now defaults to the same FastAPI as mobile. To bring back browser-only sample data without a backend, set VITE_USE_MOCK=true (see frontend/.env.example and frontend/src/api/mockMode.ts)."
+  },
+  "database_note": {
+    "operator_kanban_visibility": "Kanban GET /board filters role=operator to assigned_to = current user OR NULL. Migration 007_operator_kanban_assignments.sql assigns dev-org tasks to Omnius demo user so omnius@omniusgrid.com sees the same seeded board. Apply by re-running Timescale init or executing that SQL against your dev DB."
+  },
+  "yard_api": {
+    "list_trailers_path": "/api/v1/yard/yard/trailers?organization_id=<uuid>",
+    "note": "organization_id is required. Mobile passes the signed-in user's organization_id from /auth/me."
+  }
+}

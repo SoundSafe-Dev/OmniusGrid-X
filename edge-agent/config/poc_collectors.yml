@@ -106,3 +106,176 @@ collectors:
           type: "input"
           data_type: "float32"
           count: 2
+
+  # 8. Allen-Bradley / Rockwell PLC via EtherNet/IP (requires pylogix)
+  - asset_id: "ab-plc-001"
+    collector_type: "ethernet_ip"
+    enabled: true
+    config:
+      ip_address: "192.168.1.210"
+      port: 44818
+      slot: 0
+      poll_interval: 5
+      tags:
+        - "Program:MainProgram.LineSpeed"
+        - name: "state"          # payload key
+          tag: "Program:MainProgram.MachineState"
+      # Optional: normalize a raw state field to PackML (see adapter).
+      packml:
+        asset_type: "industrial_plc"
+        state_key: "state"
+        mappings:
+          "1": "Execute"
+          "0": "Stopped"
+
+  # 9. Siemens S7 PLC via PROFINET (requires python-snap7)
+  - asset_id: "siemens-plc-001"
+    collector_type: "profinet"
+    enabled: true
+    config:
+      ip_address: "192.168.1.211"
+      rack: 0
+      slot: 1
+      poll_interval: 5
+      db_blocks:
+        - number: 1
+          start: 0
+          size: 12
+          fields:
+            - name: "temperature"
+              offset: 0
+              type: "real"
+            - name: "part_count"
+              offset: 4
+              type: "dint"
+            - name: "running"
+              offset: 8
+              type: "bool"
+              bit: 0
+
+  # 10. Building automation / HVAC via BACnet (requires BAC0)
+  - asset_id: "ahu-001"
+    collector_type: "bacnet"
+    enabled: true
+    config:
+      device_id: 1001
+      ip_address: "192.168.1.212"
+      port: 47808
+      poll_interval: 60
+      objects:
+        - name: "zone_temp"
+          object_type: "analogInput"
+          object_instance: 1
+        - name: "fan_status"
+          object_type: "binaryInput"
+          object_instance: 2
+          property_id: "presentValue"
+
+  # 11. Vehicle / machine controller via CAN bus (requires python-can)
+  - asset_id: "agv-001"
+    collector_type: "can_bus"
+    enabled: true
+    config:
+      interface: "socketcan"
+      channel: "can0"
+      bitrate: 500000
+      can_ids: [0x0A1, 0x0B2]
+      poll_interval: 0.1
+      batch_size: 10
+
+  # 12. REST-based device / gateway via HTTP polling
+  - asset_id: "gateway-001"
+    collector_type: "http_rest"
+    enabled: true
+    config:
+      url: "http://192.168.1.220/api/telemetry"
+      method: "GET"
+      poll_interval: 30
+      headers:
+        Accept: "application/json"
+      # auth:
+      #   username: "operator"
+      #   password: "password123"
+      # Optional local alert rules evaluated against numeric payload fields.
+      # Each triggers edge_alert_triggered_total and logs when its condition holds.
+      alerts:
+        - rule_id: "temp_high"
+          metric_name: "temperature"
+          condition: ">"        # one of > < >= <= == !=
+          threshold: 85
+          severity: "critical"  # info | warning | error | critical
+          message_template: "temperature {value} exceeded {threshold}"
+          cooldown_seconds: 300
+
+  # 13. Network device / UPS / gateway via SNMP (requires pysnmp)
+  - asset_id: "switch-001"
+    collector_type: "snmp"
+    enabled: true
+    config:
+      host: "192.168.1.230"
+      port: 161
+      community: "public"
+      version: "2c"
+      poll_interval: 60
+      oids:
+        - name: "if_in_octets"
+          oid: "1.3.6.1.2.1.2.2.1.10.1"
+        - name: "if_out_octets"
+          oid: "1.3.6.1.2.1.2.2.1.16.1"
+
+  # 14. Industrial line via MQTT Sparkplug B (requires paho-mqtt + tahu)
+  - asset_id: "line-spb-001"
+    collector_type: "sparkplug_b"
+    enabled: true
+    config:
+      host: "192.168.1.240"
+      port: 1883
+      topic: "spBv1.0/#"
+      # username: "operator"
+      # password: "password123"
+
+  # 15. Substation / utility outstation via DNP3 (requires dnp3-python)
+  - asset_id: "outstation-001"
+    collector_type: "dnp3"
+    enabled: true
+    config:
+      host: "192.168.1.250"
+      port: 20000
+      master_addr: 1
+      outstation_addr: 1024
+      poll_interval: 10
+      points:
+        - name: "bus_voltage"
+          group: "analog"
+          index: 0
+        - name: "breaker_status"
+          group: "binary"
+          index: 1
+
+  # 10. Audio features — REAL microphone capture (FS-63)
+  # Requires `pip install sounddevice` on the agent host + microphone access
+  # (macOS: grant mic permission to the python binary; Linux: add the agent
+  # user to the `audio` group). Default source is "simulate" — flip to
+  # "device" for real capture. Emits FEATURE telemetry only (audio_rms,
+  # audio_peak_hz, band energies), never raw audio.
+  - asset_id: "compressor-room-mic-001"
+    collector_type: "audio"
+    enabled: false
+    config:
+      source: "device"          # "simulate" for demo tone
+      sample_rate: 16000
+      frame_seconds: 1.0
+      poll_interval: 10
+
+  # 11. Video frame metrics — REAL camera/stream capture (FS-63)
+  # Requires opencv-python on the agent host. stream_url accepts RTSP, MJPEG
+  # or a local device index ("0"). Emits frame METRICS (brightness, contrast,
+  # motion_score) — raw video is never proxied; the AssetDetail camera pane
+  # connects to the asset's media_config.stream_url directly.
+  - asset_id: "dock-camera-001"
+    collector_type: "video"
+    enabled: false
+    config:
+      source: "stream"          # "simulate" for synthetic frames
+      stream_url: "rtsp://192.168.1.210:554/stream1"
+      poll_interval: 10

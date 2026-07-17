@@ -1,6 +1,6 @@
 """GDPR Compliance API Endpoints"""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, Request
@@ -17,6 +17,74 @@ import structlog
 logger = structlog.get_logger()
 
 router = APIRouter()
+
+
+async def _get_tenant_user(
+    user_id: UUID,
+    current_user: User,
+    db: AsyncSession,
+) -> User:
+    if not current_user.organization_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Organization required",
+        )
+
+    result = await db.execute(
+        select(User).where(
+            User.id == user_id,
+            User.organization_id == current_user.organization_id,
+        )
+    )
+    target_user = result.scalar_one_or_none()
+    if target_user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+    return target_user
+
+
+async def _build_user_export(user: User, db: AsyncSession) -> dict:
+    user_data = {
+        "user": {
+            "id": str(user.id),
+            "email": user.email,
+            "full_name": user.full_name,
+            "role": user.role,
+            "organization_id": str(user.organization_id) if user.organization_id else None,
+            "is_active": user.is_active,
+            "created_at": user.created_at.isoformat() if user.created_at else None,
+            "last_login": user.last_login.isoformat() if user.last_login else None,
+        },
+        "consents": [],
+        "export_timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+    result = await db.execute(
+        select(ConsentRecord).where(ConsentRecord.user_id == user.id)
+    )
+    for consent in result.scalars().all():
+        user_data["consents"].append({
+            "id": str(consent.id),
+            "consent_type": consent.consent_type,
+            "consent_given": consent.consent_given,
+            "consent_date": consent.consent_date.isoformat() if consent.consent_date else None,
+            "withdrawn_at": consent.withdrawn_at.isoformat() if consent.withdrawn_at else None,
+        })
+    return user_data
+
+
+async def _anonymize_user(user: User, db: AsyncSession) -> None:
+    user_id = str(user.id)
+    await db.execute(
+        delete(ConsentRecord).where(ConsentRecord.user_id == user.id)
+    )
+    user.email = f"deleted_{user_id}@deleted.local"
+    user.full_name = "Deleted User"
+    user.is_active = False
+    user.hashed_password = ""
+    await db.commit()
 
 
 @router.post("/consent", summary="Record consent", description="Record user consent for data processing activities.")
@@ -115,7 +183,7 @@ async def withdraw_consent(
         )
     
     consent.consent_given = False
-    consent.withdrawn_at = datetime.utcnow()
+    consent.withdrawn_at = datetime.now(timezone.utc)
     
     await db.commit()
     
@@ -136,36 +204,7 @@ async def export_user_data(
     db: AsyncSession = Depends(get_db)
 ):
     """Export all user data for GDPR data portability"""
-    user_data = {
-        "user": {
-            "id": str(current_user.id),
-            "email": current_user.email,
-            "full_name": current_user.full_name,
-            "role": current_user.role,
-            "organization_id": str(current_user.organization_id) if current_user.organization_id else None,
-            "is_active": current_user.is_active,
-            "created_at": current_user.created_at.isoformat() if current_user.created_at else None,
-            "last_login": current_user.last_login.isoformat() if current_user.last_login else None
-        },
-        "consents": [],
-        "export_timestamp": datetime.utcnow().isoformat()
-    }
-    
-    # Get consent records
-    result = await db.execute(
-        select(ConsentRecord).where(ConsentRecord.user_id == current_user.id)
-    )
-    consents = result.scalars().all()
-    
-    for consent in consents:
-        user_data["consents"].append({
-            "id": str(consent.id),
-            "consent_type": consent.consent_type,
-            "consent_given": consent.consent_given,
-            "consent_date": consent.consent_date.isoformat() if consent.consent_date else None,
-            "withdrawn_at": consent.withdrawn_at.isoformat() if consent.withdrawn_at else None
-        })
-    
+    user_data = await _build_user_export(current_user, db)
     logger.info(
         "user_data_exported",
         user_id=str(current_user.id)
@@ -190,25 +229,68 @@ async def delete_user_data(
         )
     
     user_id = str(current_user.id)
-    
-    # Delete consent records
-    await db.execute(
-        delete(ConsentRecord).where(ConsentRecord.user_id == current_user.id)
-    )
-    
-    # Mark user as deleted (soft delete)
-    current_user.email = f"deleted_{user_id}@deleted.local"
-    current_user.full_name = "Deleted User"
-    current_user.is_active = False
-    current_user.hashed_password = ""  # Remove password
-    
-    await db.commit()
-    
+    await _anonymize_user(current_user, db)
     logger.warning(
         "user_data_deleted",
         user_id=user_id
     )
     
+    return {"message": "User data deleted successfully. This action is irreversible."}
+
+
+@router.get(
+    "/admin/users/{user_id}/data-export",
+    summary="Export a tenant user's data",
+    description="Admin-assisted GDPR export for a user in the administrator's organization.",
+    dependencies=[Depends(require_admin)],
+)
+@rate_limit("10/hour")
+async def admin_export_user_data(
+    request: Request,
+    user_id: UUID,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    target_user = await _get_tenant_user(user_id, current_user, db)
+    user_data = await _build_user_export(target_user, db)
+    logger.info(
+        "admin_user_data_exported",
+        actor_id=str(current_user.id),
+        target_user_id=str(target_user.id),
+        organization_id=str(current_user.organization_id),
+    )
+    return user_data
+
+
+@router.delete(
+    "/admin/users/{user_id}/data-delete",
+    summary="Delete a tenant user's data",
+    description="Admin-assisted GDPR erasure for a user in the administrator's organization.",
+    dependencies=[Depends(require_admin)],
+)
+@rate_limit("10/hour")
+async def admin_delete_user_data(
+    request: Request,
+    user_id: UUID,
+    confirmation: str,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if confirmation != "DELETE":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Confirmation must be 'DELETE' to proceed",
+        )
+
+    target_user = await _get_tenant_user(user_id, current_user, db)
+    target_user_id = str(target_user.id)
+    await _anonymize_user(target_user, db)
+    logger.warning(
+        "admin_user_data_deleted",
+        actor_id=str(current_user.id),
+        target_user_id=target_user_id,
+        organization_id=str(current_user.organization_id),
+    )
     return {"message": "User data deleted successfully. This action is irreversible."}
 
 
@@ -248,9 +330,8 @@ async def get_processing_records(
     return {"items": record_list, "total": len(record_list)}
 
 
-@router.post("/processing-records", summary="Create data processing record", description="Create a new data processing record.")
+@router.post("/processing-records", summary="Create data processing record", description="Create a new data processing record.", dependencies=[Depends(require_admin)])
 @rate_limit("10/minute")
-@require_admin()
 async def create_processing_record(
     request: Request,
     processing_activity: str,

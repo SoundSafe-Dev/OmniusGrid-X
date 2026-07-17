@@ -1,0 +1,230 @@
+# Additive quality gates (kept separate from ci-cd.yml to avoid convergence
+# conflicts). Adds: API contract tests (task 12), frontend tests (tasks 1-2),
+# and supply-chain scanning (task 20). Jobs are appended here as those tasks land.
+name: Quality Gates
+
+on:
+  push:
+    branches: [main, develop, 'hamad/**']
+    # Docs/media-only pushes don't need the gates — skip them so a README or
+    # demo-video commit doesn't run (and fail-email) the whole pipeline.
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'frontend/video/**'
+      - '**/*.png'
+      - '**/*.jpg'
+      - '**/*.jpeg'
+  pull_request:
+    branches: [main, develop]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'frontend/video/**'
+      - '**/*.png'
+      - '**/*.jpg'
+      - '**/*.jpeg'
+
+jobs:
+  # --- task 12: property-based API contract tests ---------------------------
+  api-contract:
+    runs-on: ubuntu-latest
+    # Advisory (ready to flip pending one green CI run). The two known blockers
+    # are now fixed: (1) FS-80 documents 401/403/404/422/429/500 on every router
+    # mount (app/core/responses.py), and (2) migrations 039/040 repaired the
+    # ORM<->schema drift that 500'd reads on a real postgres. Kept advisory only
+    # because schemathesis (a CI-only dev dep) can't be run locally to prove the
+    # full ~400-op property suite is clean; flip to blocking once this job is
+    # observed green in CI.
+    continue-on-error: true
+    services:
+      postgres:
+        image: timescale/timescaledb:latest-pg15
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: omniusgrid_test
+        options: >-
+          --health-cmd pg_isready --health-interval 10s
+          --health-timeout 5s --health-retries 5
+        ports: ['5432:5432']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install dev deps
+        working-directory: ./backend
+        run: pip install -r requirements-dev.txt
+      - name: Run schemathesis contract tests
+        working-directory: ./backend
+        env:
+          DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/omniusgrid_test
+          RUN_CONTRACT_TESTS: "1"
+        run: pytest tests/test_api_contract.py -q
+
+  # --- FS-114: real-DB guard suite (schema parity + endpoint/write smoke) ---
+  backend-realdb:
+    runs-on: ubuntu-latest
+    # BLOCKING. This is the only workflow that runs on hamad/** pushes, and
+    # until now NO job here executed the backend suite — so the FS-91/92/93
+    # real-DB guards (which spin an ephemeral TimescaleDB via testcontainers)
+    # never ran on the convergence branch. They also SILENTLY SKIPPED in
+    # ci-cd.yml because testcontainers wasn't a pinned dev dep. FS-114 fixes
+    # both: the pin lands in requirements-dev.txt and this job runs the guards
+    # against a real Postgres so ORM<->migration drift and naive-datetime bugs
+    # (which SQLite create_all masks) fail the merge instead of prod.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install dev deps (incl. testcontainers)
+        working-directory: ./backend
+        run: pip install -r requirements-dev.txt
+      - name: Verify testcontainers is importable (guards must not skip)
+        working-directory: ./backend
+        # Fail loudly if the pin ever regresses: a skipped guard is a silent
+        # loss of the exact coverage this job exists to provide.
+        run: python -c "import testcontainers.postgres; print('testcontainers OK')"
+      - name: Real-DB guard suite
+        working-directory: ./backend
+        # testcontainers talks to the host Docker daemon (present on
+        # ubuntu-latest); each spun container migrates the schema via
+        # scripts/migrate.py, so this is a true fresh-chain parity check.
+        run: |
+          pytest -q \
+            tests/test_schema_parity.py \
+            tests/test_realdb_endpoint_smoke.py \
+            tests/test_realdb_write_smoke.py \
+            tests/test_no_naive_utcnow.py \
+            tests/test_demo_seeder_smoke.py
+
+  # --- FS-107: Prometheus alert rules — lint + unit test -------------------
+  prometheus-rules:
+    runs-on: ubuntu-latest
+    # BLOCKING. Alert rules are code: a typo'd expr or an unfirable threshold
+    # (e.g. a histogram_quantile compared above its largest finite bucket) is a
+    # silent gap — the alert simply never pages. Until now nothing validated
+    # infra/prometheus/alerts.yml at all. This lints every rule and runs the
+    # promtool unit tests that assert the deterministic alerts actually fire.
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install promtool
+        run: |
+          PROM_VERSION=2.53.1
+          curl -sSL -o /tmp/prom.tar.gz \
+            "https://github.com/prometheus/prometheus/releases/download/v${PROM_VERSION}/prometheus-${PROM_VERSION}.linux-amd64.tar.gz"
+          tar -xzf /tmp/prom.tar.gz -C /tmp
+          sudo mv "/tmp/prometheus-${PROM_VERSION}.linux-amd64/promtool" /usr/local/bin/promtool
+          promtool --version
+      - name: Lint alert rules
+        working-directory: ./infra/prometheus
+        run: promtool check rules alerts.yml
+      - name: Run alert unit tests
+        working-directory: ./infra/prometheus
+        run: promtool test rules tests/error_alerts_test.yml tests/subsystems_alerts_test.yml
+
+  # --- task 1: frontend unit tests (Vitest) --------------------------------
+  frontend-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install
+        working-directory: ./frontend
+        run: npm ci
+      - name: Vitest
+        working-directory: ./frontend
+        run: npm run test
+
+  # --- task 2: frontend E2E smoke (Playwright) -----------------------------
+  frontend-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install
+        working-directory: ./frontend
+        run: npm ci
+      - name: Install Playwright browser
+        working-directory: ./frontend
+        run: npx playwright install --with-deps chromium
+      - name: Playwright smoke
+        working-directory: ./frontend
+        run: npm run e2e
+
+  # --- task 19: pre-commit hooks as a CI gate ------------------------------
+  pre-commit:
+    runs-on: ubuntu-latest
+    # Advisory while the existing tree is brought into compliance.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: pre-commit/action@v3.0.1
+
+  # --- task 20: supply-chain scanning --------------------------------------
+  supply-chain:
+    runs-on: ubuntu-latest
+    # BLOCKING since FS-70: backend/edge pins are pip-audit clean and the npm
+    # lockfile is at 0 vulnerabilities. One documented ignore below.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: pip-audit (backend)
+        # No ignores: FS-76 swapped python-jose -> PyJWT, dropping ecdsa (and its
+        # Minerva advisory PYSEC-2026-1325) from the dependency tree entirely.
+        run: pip install pip-audit==2.7.3 && pip-audit -r backend/requirements.txt
+      - name: pip-audit (edge-agent)
+        run: pip-audit -r edge-agent/requirements.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: npm audit (frontend)
+        working-directory: ./frontend
+        run: npm audit --audit-level=high
+      - name: Trivy filesystem scan (frontend + edge)
+        # BLOCKING since FS-79: the misconfig backlog it was waiting on is
+        # remediated — backend/frontend/rag images run non-root (FS-77), k8s has
+        # egress NetworkPolicies (FS-78), and a curated .trivyignore documents
+        # any residual accepted findings. exit-code 1 now gates the merge.
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          trivyignores: .trivyignore
+
+  # --- task 20: k6 load test (non-blocking) --------------------------------
+  load-test:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run k6 smoke load test
+        uses: grafana/setup-k6-action@v1
+      - name: Execute
+        uses: grafana/run-k6-action@v1
+        with:
+          path: tests/load/k6-load-test.js
+          flags: --vus 5 --duration 30s
+        env:
+          # Points at whatever the CI stands up; harmless smoke run otherwise.
+          BASE_URL: http://localhost:8000

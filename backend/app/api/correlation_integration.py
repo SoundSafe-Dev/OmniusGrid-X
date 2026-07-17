@@ -6,7 +6,7 @@ API endpoints for integrating correlation AI analysis with registries and Kanban
 
 from typing import List, Dict, Any, Optional
 from uuid import UUID
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, Field
@@ -19,6 +19,8 @@ from app.services.correlation_ai_engine import correlation_ai_engine
 import structlog
 
 logger = structlog.get_logger()
+
+from app.middleware.rbac import require_admin, require_operator_or_admin
 
 router = APIRouter(prefix="/api/v1/engines/correlation/integration", tags=["correlation-integration"])
 
@@ -60,7 +62,7 @@ class RegistryInitializationResponse(BaseModel):
 
 # ==================== Endpoints ====================
 
-@router.post("/analyze", response_model=CorrelationAnalysisResponse)
+@router.post("/analyze", response_model=CorrelationAnalysisResponse, dependencies=[Depends(require_operator_or_admin)])
 async def analyze_and_integrate(
     request: CorrelationAnalysisRequest,
     background_tasks: BackgroundTasks,
@@ -101,7 +103,7 @@ async def analyze_and_integrate(
     
     # Create scenario
     scenario = CorrelationScenario(
-        scenario_id=f"scenario-{current_user.id}-{int(datetime.utcnow().timestamp())}",
+        scenario_id=f"scenario-{current_user.id}-{int(datetime.now(timezone.utc).timestamp())}",
         active_domains=domain_types,
         ingested_metrics=operational_metrics,
         domain_links=[]  # Will be populated by AI
@@ -176,7 +178,7 @@ async def process_integration_background(
             logger.error("background_integration_failed", error=str(e))
 
 
-@router.post("/initialize-registries", response_model=RegistryInitializationResponse)
+@router.post("/initialize-registries", response_model=RegistryInitializationResponse, dependencies=[Depends(require_admin)])
 async def initialize_registries(
     request: RegistryInitializationRequest,
     db: AsyncSession = Depends(get_db),
@@ -252,7 +254,7 @@ async def get_task_type_mapping(
     }
 
 
-@router.post("/test-integration")
+@router.post("/test-integration", dependencies=[Depends(require_admin)])
 async def test_integration(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
@@ -300,12 +302,12 @@ async def test_integration(
                 "unit": "%",
                 **(sample_metrics if isinstance(sample_metrics, dict) else {}),
             },
-            timestamp=datetime.utcnow().isoformat(),
+            timestamp=datetime.now(timezone.utc).isoformat(),
         )
     ]
     
     scenario = CorrelationScenario(
-        scenario_id=f"test-{current_user.id}-{int(datetime.utcnow().timestamp())}",
+        scenario_id=f"test-{current_user.id}-{int(datetime.now(timezone.utc).timestamp())}",
         active_domains=domain_types,
         ingested_metrics=operational_metrics,
         domain_links=[]
@@ -347,4 +349,4 @@ async def test_integration(
 
 # Import for background task
 from datetime import datetime
-from sqlalchemy import func
+from sqlalchemy import func, select

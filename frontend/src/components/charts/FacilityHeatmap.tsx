@@ -1,5 +1,6 @@
 import { FC, useMemo } from 'react';
 import Plot from 'react-plotly.js';
+import type { Config, Layout, PlotData } from 'plotly.js';
 import { Card } from '../ui';
 
 interface HeatmapDataPoint {
@@ -45,35 +46,40 @@ export const FacilityHeatmap: FC<FacilityHeatmapProps> = ({
       })
     );
     
-    return [{
-      type: 'heatmap' as const,
+    const trace: Partial<PlotData> = {
+      type: 'heatmap',
       x: xValues,
       y: yValues,
       z: zMatrix,
-      text: textMatrix,
+      // Plotly heatmaps accept a 2D text matrix at runtime, but @types/plotly.js
+      // only declares string | string[] for PlotData.text.
+      text: textMatrix as unknown as string[],
       texttemplate: '%{text}',
       colorscale: colorScale,
       showscale: showColorbar,
-      hoverinfo: 'text+z',
+      // 'text+z' is a valid runtime flag combination (order-insensitive), but the
+      // typed hoverinfo union only enumerates axis-first permutations.
+      hoverinfo: 'text+z' as unknown as PlotData['hoverinfo'],
       colorbar: {
-        title: 'Value',
-        titleside: 'right'
+        title: { text: 'Value', side: 'right' }
       }
-    }];
+    };
+
+    return [trace];
   }, [data, colorScale, showColorbar]);
-  
-  const layout = {
+
+  const layout: Partial<Layout> = {
     title: {
       text: title,
       font: { size: 18, color: '#94a3b8' }
     },
     xaxis: {
-      title: 'X Position',
+      title: { text: 'X Position' },
       color: '#94a3b8',
       gridcolor: '#334155'
     },
     yaxis: {
-      title: 'Y Position',
+      title: { text: 'Y Position' },
       color: '#94a3b8',
       gridcolor: '#334155'
     },
@@ -82,8 +88,8 @@ export const FacilityHeatmap: FC<FacilityHeatmapProps> = ({
     font: { color: '#94a3b8' },
     margin: { l: 60, r: 100, t: 60, b: 60 }
   };
-  
-  const config = {
+
+  const config: Partial<Config> = {
     responsive: true,
     displayModeBar: true,
     modeBarButtonsToRemove: ['lasso2d', 'select2d'],

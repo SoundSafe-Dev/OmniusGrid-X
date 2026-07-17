@@ -1,4 +1,4 @@
-import { FC, InputHTMLAttributes, forwardRef } from 'react';
+import { FC, InputHTMLAttributes, forwardRef, useId } from 'react';
 import { cn } from '../../utils';
 import { Tooltip, TooltipTrigger, TooltipContent } from './Tooltip';
 
@@ -10,10 +10,20 @@ interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
 }
 
 export const Input: FC<InputProps> = forwardRef<HTMLInputElement, InputProps>(
-  ({ label, error, helperText, className, tooltip, ...props }, ref) => {
+  ({ label, error, helperText, className, tooltip, id, ...props }, ref) => {
+    // Associate label/description with the control for screen readers (task 6).
+    const autoId = useId();
+    const inputId = id ?? autoId;
+    const errorId = `${inputId}-error`;
+    const helperId = `${inputId}-helper`;
+    const describedBy = error ? errorId : helperText ? helperId : undefined;
+
     const inputElement = (
       <input
         ref={ref}
+        id={inputId}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={describedBy}
         className={cn(
           'w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg',
           'text-opsgrid-text placeholder:text-opsgrid-text-secondary',
@@ -29,7 +39,7 @@ export const Input: FC<InputProps> = forwardRef<HTMLInputElement, InputProps>(
     return (
       <div className="w-full">
         {label && (
-          <label className="block text-sm font-medium text-opsgrid-text mb-1">
+          <label htmlFor={inputId} className="block text-sm font-medium text-opsgrid-text mb-1">
             {label}
           </label>
         )}
@@ -43,9 +53,9 @@ export const Input: FC<InputProps> = forwardRef<HTMLInputElement, InputProps>(
         ) : (
           inputElement
         )}
-        {error && <p className="mt-1 text-sm text-status-alarm">{error}</p>}
+        {error && <p id={errorId} role="alert" className="mt-1 text-sm text-status-alarm">{error}</p>}
         {helperText && !error && (
-          <p className="mt-1 text-sm text-opsgrid-text-secondary">{helperText}</p>
+          <p id={helperId} className="mt-1 text-sm text-opsgrid-text-secondary">{helperText}</p>
         )}
       </div>
     );

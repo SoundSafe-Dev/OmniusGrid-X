@@ -1,19 +1,23 @@
 import { api } from './client';
+import { YARD_ALIASES, YARD_OUT_ALIASES } from './transform';
+import { registerTransform } from './transformRegistry';
 import { 
   YardTrailer, 
   DockDoor, 
   DockAppointment, 
-  YardMove, 
-  DriverWaitTime,
+  YardMove,
   TrailerFilters,
   AppointmentFilters,
-  LogisticsOverview,
   DetentionAlert,
   PaginatedResponse,
   GeoLocation
 } from '../types';
 
-const USE_MOCK = true;
+import { USE_MOCK } from './mockMode';
+
+// FS-61: casing handled by the axios seam — no per-call toCamel/toSnake.
+// (/api/v1/geotab is registered in transportation.ts alongside geoTabApi.)
+registerTransform('/api/v1/yard', { inAliases: YARD_ALIASES, outAliases: YARD_OUT_ALIASES });
 
 const MOCK_DELAY = 500;
 
@@ -240,39 +244,6 @@ const mockYardMoves: YardMove[] = [
   },
 ];
 
-const mockDriverWaitTimes: DriverWaitTime[] = [
-  {
-    id: 'wait-1',
-    driverId: 'driver-1',
-    driverName: 'John Smith',
-    carrierId: 'carrier-1',
-    carrierName: 'Swift Transportation',
-    trailerId: 'trailer-1',
-    appointmentId: 'appt-1',
-    checkInTime: new Date(Date.now() - 2 * 3600000).toISOString(),
-    dockTime: new Date(Date.now() - 1.8 * 3600000).toISOString(),
-    waitDurationMinutes: 12,
-    dockDurationMinutes: 60,
-    totalDurationMinutes: 72,
-    isDetention: false,
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: 'wait-2',
-    driverId: 'driver-2',
-    driverName: 'Maria Garcia',
-    carrierId: 'carrier-2',
-    carrierName: 'Schneider National',
-    trailerId: 'trailer-2',
-    checkInTime: new Date(Date.now() - 4 * 3600000).toISOString(),
-    waitDurationMinutes: 240,
-    isDetention: true,
-    detentionCost: 75,
-    reason: 'No dock available - waiting for slot',
-    createdAt: new Date().toISOString(),
-  },
-];
-
 // YMS API
 export const yardApi = {
   // Trailers
@@ -292,13 +263,20 @@ export const yardApi = {
         hasMore: false,
       };
     }
-    const response = await api.get<YardTrailer[]>('/api/v1/yard/trailers', { params: filters });
+    // FS-99: backend returns the {items, meta} pagination envelope with a real
+    // total now. Map it to the flat PaginatedResponse; tolerate either casing
+    // of has_more from the transform seam.
+    const response = await api.get<{
+      items: YardTrailer[];
+      meta: { total: number; skip: number; limit: number; has_more?: boolean; hasMore?: boolean };
+    }>('/api/v1/yard/trailers', { params: filters ?? {} });
+    const { items, meta } = response.data;
     return {
-      items: response.data,
-      total: response.data.length,
-      skip: 0,
-      limit: response.data.length,
-      hasMore: false,
+      items,
+      total: meta.total,
+      skip: meta.skip,
+      limit: meta.limit,
+      hasMore: meta.hasMore ?? meta.has_more ?? meta.skip + items.length < meta.total,
     };
   },
 
@@ -398,14 +376,8 @@ export const yardApi = {
         hasMore: false,
       };
     }
-    const response = await api.get<DockAppointment[]>('/api/v1/yard/dock/appointments', { params: filters });
-    return {
-      items: response.data,
-      total: response.data.length,
-      skip: 0,
-      limit: response.data.length,
-      hasMore: false,
-    };
+    const response = await api.get<DockAppointment[]>('/api/v1/yard/dock/appointments', { params: filters ?? {} });
+    return { items: response.data, total: (response.data as any[]).length } as any;
   },
 
   createAppointment: async (data: Partial<DockAppointment>): Promise<DockAppointment> => {

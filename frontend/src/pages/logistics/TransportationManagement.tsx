@@ -1,5 +1,5 @@
 import { FC, useState, useEffect } from 'react';
-import { useQuery } from 'react-query';
+import { useQuery } from '@tanstack/react-query';
 import {
   Truck,
   MapPin,
@@ -11,20 +11,17 @@ import {
   Navigation,
   Fuel,
   Gauge,
-  Route,
   Calendar,
   Filter,
   Search,
   RefreshCw,
-  DollarSign,
   Shield,
   Activity,
   Thermometer,
-  Phone,
   Package,
   Wrench
 } from 'lucide-react';
-import { transportationApi, geoTabApi, fleetTrackerApi } from '../../api';
+import { transportationApi, geoTabApi } from '../../api';
 import {
   FleetTrackerMap,
   GeofencingPanel,
@@ -33,15 +30,12 @@ import {
   PerformancePanel
 } from '../../components';
 import type {
-  Carrier,
   Driver,
   Shipment,
   Vehicle,
   ShipmentFilters,
   GeoLocation,
-  MapFilterType,
-  FleetVehiclePosition,
-  ShipmentRoute
+  MapFilterType
 } from '../../types';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
 
@@ -50,47 +44,47 @@ const TRANSPORT_QUERY_KEY = 'transportation';
 export const TransportationManagement: FC = () => {
   const [selectedShipment, setSelectedShipment] = useState<Shipment | null>(null);
   const [selectedDriver, setSelectedDriver] = useState<Driver | null>(null);
-  const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
+  const [, setSelectedVehicle] = useState<Vehicle | null>(null);
   const [filters, setFilters] = useState<ShipmentFilters>({});
   const [activeTab, setActiveTab] = useState<'shipments' | 'fleet' | 'carriers' | 'compliance' | 'geofencing' | 'health' | 'maintenance' | 'performance'>('shipments');
   const [fleetLocation, setFleetLocation] = useState<GeoLocation | null>(null);
   const [selectedMapVehicle, setSelectedMapVehicle] = useState<string | null>(null);
   const [selectedMapShipment, setSelectedMapShipment] = useState<string | null>(null);
 
-  const { data: shipmentsData, isLoading: shipmentsLoading, refetch: refetchShipments } = useQuery(
-    [TRANSPORT_QUERY_KEY, 'shipments', filters],
-    () => transportationApi.getShipments(filters)
-  );
+  const { data: shipmentsData, isLoading: shipmentsLoading, refetch: refetchShipments } = useQuery({
+    queryKey: [TRANSPORT_QUERY_KEY, 'shipments', filters],
+    queryFn: () => transportationApi.getShipments(filters),
+  });
 
-  const { data: carriersData, isLoading: carriersLoading } = useQuery(
-    [TRANSPORT_QUERY_KEY, 'carriers'],
-    () => transportationApi.getCarriers()
-  );
+  const { data: carriersData, isLoading: carriersLoading } = useQuery({
+    queryKey: [TRANSPORT_QUERY_KEY, 'carriers'],
+    queryFn: () => transportationApi.getCarriers(),
+  });
 
-  const { data: driversData, isLoading: driversLoading } = useQuery(
-    [TRANSPORT_QUERY_KEY, 'drivers'],
-    () => transportationApi.getDrivers()
-  );
+  const { data: driversData, isLoading: driversLoading } = useQuery({
+    queryKey: [TRANSPORT_QUERY_KEY, 'drivers'],
+    queryFn: () => transportationApi.getDrivers(),
+  });
 
-  const { data: vehiclesData, isLoading: vehiclesLoading } = useQuery(
-    [TRANSPORT_QUERY_KEY, 'vehicles'],
-    () => transportationApi.getVehicles()
-  );
+  const { data: vehiclesData, isLoading: vehiclesLoading } = useQuery({
+    queryKey: [TRANSPORT_QUERY_KEY, 'vehicles'],
+    queryFn: () => transportationApi.getVehicles(),
+  });
 
-  const { data: fleetSummary } = useQuery(
-    [TRANSPORT_QUERY_KEY, 'fleet-summary'],
-    () => geoTabApi.getFleetSummary()
-  );
+  const { data: fleetSummary } = useQuery({
+    queryKey: [TRANSPORT_QUERY_KEY, 'fleet-summary'],
+    queryFn: () => geoTabApi.getFleetSummary(),
+  });
 
-  const { data: deliveryEfficiency } = useQuery(
-    [TRANSPORT_QUERY_KEY, 'efficiency'],
-    () => transportationApi.getDeliveryEfficiency()
-  );
+  const { data: deliveryEfficiency } = useQuery({
+    queryKey: [TRANSPORT_QUERY_KEY, 'efficiency'],
+    queryFn: () => transportationApi.getDeliveryEfficiency(),
+  });
 
-  const { data: complianceSummary } = useQuery(
-    [TRANSPORT_QUERY_KEY, 'compliance'],
-    () => transportationApi.getComplianceSummary()
-  );
+  const { data: complianceSummary } = useQuery({
+    queryKey: [TRANSPORT_QUERY_KEY, 'compliance'],
+    queryFn: () => transportationApi.getComplianceSummary(),
+  });
 
   const shipments = shipmentsData?.items || [];
   const carriers = carriersData?.items || [];
@@ -786,9 +780,15 @@ export const TransportationManagement: FC = () => {
 
       {/* Shipment Detail Modal */}
       {selectedShipment && (
-        <ShipmentDetailModal 
-          shipment={selectedShipment} 
-          onClose={() => setSelectedShipment(null)} 
+        <ShipmentDetailModal
+          shipment={selectedShipment}
+          drivers={drivers}
+          vehicles={vehicles}
+          onClose={() => setSelectedShipment(null)}
+          onChanged={() => {
+            setSelectedShipment(null);
+            refetchShipments();
+          }}
         />
       )}
 
@@ -821,8 +821,31 @@ const StatCard: FC<{ label: string; value: string | number; icon: any; color?: s
   </div>
 );
 
-const ShipmentDetailModal: FC<{ shipment: Shipment; onClose: () => void }> = ({ shipment, onClose }) => {
+const ShipmentDetailModal: FC<{
+  shipment: Shipment;
+  drivers: Driver[];
+  vehicles: Vehicle[];
+  onClose: () => void;
+  onChanged: () => void;
+}> = ({ shipment, drivers, vehicles, onClose, onChanged }) => {
   const [costs, setCosts] = useState<any>(null);
+  const [dispatchDriverId, setDispatchDriverId] = useState('');
+  const [dispatchVehicleId, setDispatchVehicleId] = useState('');
+  const [busy, setBusy] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const runAction = async (name: string, fn: () => Promise<unknown>) => {
+    setBusy(name);
+    setActionError(null);
+    try {
+      await fn();
+      onChanged();
+    } catch (e: any) {
+      setActionError(e?.response?.data?.detail || `${name} failed`);
+    } finally {
+      setBusy(null);
+    }
+  };
 
   useEffect(() => {
     transportationApi.getShipmentCosts(shipment.id).then(setCosts);
@@ -960,6 +983,76 @@ const ShipmentDetailModal: FC<{ shipment: Shipment; onClose: () => void }> = ({ 
               </div>
             </div>
           )}
+
+          {/* Lifecycle actions (task D22): dispatch / delivered / cancel. */}
+          <div className="border-t border-opsgrid-border pt-4 space-y-3">
+            {actionError && <p className="text-sm text-status-alarm">{actionError}</p>}
+            {shipment.status === 'planned' && (
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  aria-label="Dispatch driver"
+                  className="px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
+                  value={dispatchDriverId}
+                  onChange={(e) => setDispatchDriverId(e.target.value)}
+                >
+                  <option value="">Select driver…</option>
+                  {drivers.map((d) => (
+                    <option key={d.id} value={d.id}>{d.firstName} {d.lastName}</option>
+                  ))}
+                </select>
+                <select
+                  aria-label="Dispatch vehicle"
+                  className="px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
+                  value={dispatchVehicleId}
+                  onChange={(e) => setDispatchVehicleId(e.target.value)}
+                >
+                  <option value="">Select vehicle…</option>
+                  {vehicles.map((v) => (
+                    <option key={v.id} value={v.id}>{v.vehicleNumber}</option>
+                  ))}
+                </select>
+                <button
+                  disabled={!dispatchDriverId || !dispatchVehicleId || busy !== null}
+                  onClick={() =>
+                    runAction('Dispatch', () =>
+                      transportationApi.dispatchShipment(shipment.id, dispatchDriverId, dispatchVehicleId)
+                    )
+                  }
+                  className="px-4 py-2 bg-opsgrid-primary text-opsgrid-bg rounded-lg text-sm disabled:opacity-50"
+                >
+                  {busy === 'Dispatch' ? 'Dispatching…' : 'Dispatch Shipment'}
+                </button>
+              </div>
+            )}
+            <div className="flex flex-wrap items-center gap-2">
+              {['dispatched', 'picked_up', 'in_transit'].includes(shipment.status) && (
+                <button
+                  disabled={busy !== null}
+                  onClick={() =>
+                    runAction('Mark delivered', () =>
+                      transportationApi.updateShipmentStatus(shipment.id, 'delivered')
+                    )
+                  }
+                  className="px-4 py-2 border border-status-running text-status-running rounded-lg text-sm hover:bg-status-running/10 disabled:opacity-50"
+                >
+                  {busy === 'Mark delivered' ? 'Updating…' : 'Mark Delivered'}
+                </button>
+              )}
+              {['planned', 'dispatched'].includes(shipment.status) && (
+                <button
+                  disabled={busy !== null}
+                  onClick={() =>
+                    runAction('Cancel shipment', () =>
+                      transportationApi.updateShipmentStatus(shipment.id, 'cancelled')
+                    )
+                  }
+                  className="px-4 py-2 border border-status-alarm text-status-alarm rounded-lg text-sm hover:bg-status-alarm/10 disabled:opacity-50"
+                >
+                  {busy === 'Cancel shipment' ? 'Cancelling…' : 'Cancel Shipment'}
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       </div>
     </div>

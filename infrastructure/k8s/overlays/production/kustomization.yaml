@@ -5,6 +5,8 @@ namespace: omniusgrid
 
 resources:
   - ../../base
+  # New objects (two HPAs), not patches — base has no HPA to merge onto.
+  - hpa.yaml
 
 namePrefix: prod-
 
@@ -17,11 +19,6 @@ replicas:
     count: 5
   - name: frontend
     count: 3
-
-patchesStrategicMerge:
-  - backend-resources.yaml
-  - frontend-resources.yaml
-  - hpa.yaml
 
 images:
   - name: omniusgrid/backend
@@ -38,21 +35,18 @@ configMapGenerator:
       - MTLS_ENABLED=true
       - CACHE_ENABLED=true
 
-secretGenerator:
-  - name: database-credentials
-    type: Opaque
-    options:
-      disableNameSuffixHash: true
-    literals:
-      - username=omniusgrid_prod
-      - database=omniusgrid_prod
-  - name: jwt-secret
-    type: Opaque
-    options:
-      disableNameSuffixHash: true
-    behavior: create
 
 patches:
+  # Explicit targets: the base resources carry namespace omniusgrid, so a bare
+  # patchesStrategicMerge id (no namespace) never matches under kustomize v5.
+  - path: backend-resources.yaml
+    target:
+      kind: Deployment
+      name: backend
+  - path: frontend-resources.yaml
+    target:
+      kind: Deployment
+      name: frontend
   - target:
       kind: Ingress
       name: omniusgrid-ingress

@@ -7,7 +7,7 @@ import {
 } from '../types';
 
 export const authApi = {
-  login: async (credentials: LoginCredentials): Promise<{ accessToken: string; user: User }> => {
+  login: async (credentials: LoginCredentials): Promise<{ accessToken: string; refreshToken?: string; user: User }> => {
     const formData = new URLSearchParams();
     formData.append('username', credentials.email);
     formData.append('password', credentials.password);
@@ -27,6 +27,7 @@ export const authApi = {
     
     return {
       accessToken: response.data.access_token,
+      refreshToken: (response.data as any).refresh_token,
       user: userResponse.data,
     };
   },
@@ -36,10 +37,10 @@ export const authApi = {
   },
 
   refreshToken: async (refreshToken: string): Promise<{ accessToken: string }> => {
-    const response = await api.post<{ accessToken: string }>('/api/v1/auth/refresh', {
+    const response = await api.post<{ access_token: string }>('/api/v1/auth/refresh', {
       refreshToken,
     });
-    return response.data;
+    return { accessToken: response.data.access_token };
   },
 
   getMe: async (): Promise<User> => {

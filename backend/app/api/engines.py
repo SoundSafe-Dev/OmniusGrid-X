@@ -3,11 +3,12 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import UUID
 from typing import Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import get_current_active_user
 from app.services.tactical_engine import tactical_engine
 from app.services.strategic_engine import strategic_engine, StrategicRecommendation
 from app.services.mlops_pipeline import mlops_pipeline
@@ -16,7 +17,9 @@ from app.db.database import get_db
 from app.models.domain_interaction import CorrelationScenario
 from app.services.correlation_ai_engine import correlation_ai_engine
 
-router = APIRouter()
+from app.middleware.rbac import require_admin, require_operator_or_admin
+
+router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
 
 # Pydantic models
@@ -59,7 +62,7 @@ async def get_tactical_status():
     }
 
 
-@router.post("/tactical/infer")
+@router.post("/tactical/infer", dependencies=[Depends(require_operator_or_admin)])
 async def run_tactical_inference(asset_id: str, feature_vector: dict):
     """
     Run manual inference on tactical engine.
@@ -68,7 +71,7 @@ async def run_tactical_inference(asset_id: str, feature_vector: dict):
     vector = {
         'asset_id': asset_id,
         'features': feature_vector,
-        'timestamp': datetime.utcnow().isoformat(),
+        'timestamp': datetime.now(timezone.utc).isoformat(),
     }
     
     decision = await tactical_engine.infer(vector)
@@ -109,7 +112,7 @@ async def get_strategic_recommendations(min_priority: Optional[int] = None):
     ]
 
 
-@router.post("/strategic/recommendations/{rec_id}/approve")
+@router.post("/strategic/recommendations/{rec_id}/approve", dependencies=[Depends(require_operator_or_admin)])
 async def approve_recommendation(rec_id: str, operator_id: str, notes: Optional[str] = None):
     """Approve a strategic recommendation for implementation"""
     success = await strategic_engine.approve_recommendation(rec_id, operator_id, notes)
@@ -120,7 +123,7 @@ async def approve_recommendation(rec_id: str, operator_id: str, notes: Optional[
     return {"message": "Recommendation approved", "rec_id": rec_id}
 
 
-@router.post("/strategic/recommendations/{rec_id}/reject")
+@router.post("/strategic/recommendations/{rec_id}/reject", dependencies=[Depends(require_operator_or_admin)])
 async def reject_recommendation(rec_id: str, operator_id: str, reason: str):
     """Reject a strategic recommendation"""
     success = await strategic_engine.reject_recommendation(rec_id, operator_id, reason)
@@ -143,7 +146,7 @@ async def get_mlops_status():
     }
 
 
-@router.post("/mlops/deploy/{version}")
+@router.post("/mlops/deploy/{version}", dependencies=[Depends(require_admin)])
 async def manual_deploy_model(version: str):
     """Manually trigger deployment of specific model version"""
     success = await mlops_pipeline.manual_deploy(version)
@@ -154,7 +157,7 @@ async def manual_deploy_model(version: str):
     return {"message": f"Model {version} deployed", "version": version}
 
 
-@router.post("/mlops/rollback")
+@router.post("/mlops/rollback", dependencies=[Depends(require_admin)])
 async def rollback_model():
     """Rollback to previous model version"""
     success = await mlops_pipeline.rollback()
@@ -172,7 +175,7 @@ async def get_cloud_gateway_status():
     return cloud_gateway.get_stats()
 
 
-@router.post("/cloud/flush")
+@router.post("/cloud/flush", dependencies=[Depends(require_admin)])
 async def force_cloud_flush():
     """Force immediate flush of queued data to cloud"""
     await cloud_gateway._flush_batch()
@@ -180,7 +183,7 @@ async def force_cloud_flush():
 
 
 # Correlation AI Engine Routes
-@router.post("/correlation/analyze")
+@router.post("/correlation/analyze", dependencies=[Depends(require_operator_or_admin)])
 async def analyze_correlation(
     scenario: CorrelationScenario,
     db: AsyncSession = Depends(get_db)
@@ -212,7 +215,7 @@ async def list_scenarios(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/correlation/generate")
+@router.post("/correlation/generate", dependencies=[Depends(require_operator_or_admin)])
 async def generate_synthetic_scenarios(
     count: int = 100,
     db: AsyncSession = Depends(get_db)

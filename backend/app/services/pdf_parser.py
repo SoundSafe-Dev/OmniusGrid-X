@@ -6,7 +6,7 @@ files so multi-page PDFs can be converted into CorrelationScenarios, mirroring
 the multi-tab spreadsheet intake pipeline.
 
 Parsing is deterministic and library-based (pdfplumber for layout/tables,
-PyPDF2 for document metadata). Headers are detected via font-size heuristics;
+pypdf for document metadata). Headers are detected via font-size heuristics;
 tables via pdfplumber's table extraction. The output structure is consumed by
 ``document_domain_mapper`` and ``document_scenario_builder``.
 """
@@ -35,7 +35,7 @@ def estimate_processing_seconds(page_count: int) -> float:
 
 
 def _normalize_meta(raw: Any) -> Dict[str, Any]:
-    """Convert PyPDF2 DocumentInformation into a plain JSON-safe dict."""
+    """Convert pypdf DocumentInformation into a plain JSON-safe dict."""
     meta: Dict[str, Any] = {}
     if not raw:
         return meta
@@ -111,8 +111,10 @@ def parse_pdf_structure(
 
     document_metadata: Dict[str, Any] = {}
     try:
-        import PyPDF2
-        reader = PyPDF2.PdfReader(io.BytesIO(content))
+        # pypdf is PyPDF2's successor (same PdfReader API; PyPDF2 3.0.1 was
+        # the final release and carries an unfixed extraction CVE)
+        import pypdf
+        reader = pypdf.PdfReader(io.BytesIO(content))
         document_metadata = _normalize_meta(reader.metadata)
     except Exception as e:
         logger.warning("pdf_metadata_failed", error=str(e))

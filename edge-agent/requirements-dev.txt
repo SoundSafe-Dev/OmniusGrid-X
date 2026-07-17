@@ -1,0 +1,20 @@
+# Edge-agent test toolchain + the light runtime deps the tests import.
+#
+# The industrial protocol driver libraries (pylogix, python-snap7, BAC0,
+# python-can) are FAKED in the tests via sys.modules, so they are intentionally
+# NOT installed here — this keeps CI fast and avoids native-lib install issues
+# (e.g. snap7's libsnap7, opencv). The collectors import their drivers lazily,
+# so importing them without the drivers is exercised on purpose.
+pytest==9.1.1
+pytest-asyncio==1.4.0
+
+# Light runtime deps needed just to import the modules under test — KEEP
+# THESE MATCHED with requirements.txt (FS-69 review: CI was testing edge code
+# on pydantic 2.5/httpx 0.25 while the image shipped 2.11/0.28).
+structlog==25.4.0
+pydantic==2.11.10
+httpx==0.28.1
+prometheus-client==0.21.1
+pyyaml==6.0.1
+numpy<2
+aiokafka==0.14.0

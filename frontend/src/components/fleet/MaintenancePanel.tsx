@@ -1,7 +1,7 @@
 import { FC, useState, useEffect } from 'react';
-import { 
-  Wrench, Calendar, AlertTriangle, DollarSign, Plus, 
-  CheckCircle, Clock, Truck, ChevronRight
+import {
+  Wrench, Calendar, AlertTriangle, DollarSign, Plus,
+  Clock, Truck
 } from 'lucide-react';
 import { maintenanceApi } from '../../api';
 import type { MaintenanceSchedule, RepairOrder, MaintenanceCosts } from '../../types';

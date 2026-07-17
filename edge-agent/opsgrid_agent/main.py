@@ -3,14 +3,25 @@
 import asyncio
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Dict, Any, List
 import structlog
 
 from opsgrid_agent.buffer.store_forward import StoreForwardBuffer
-from opsgrid_agent.collectors.mqtt import BambuCollector, MQTTCollector
+from opsgrid_agent.commands import CommandConsumer
+from opsgrid_agent.config_bundle import collectors_from_bundle
 from opsgrid_agent.collectors.coordinator import UnifiedCollectorCoordinator, CollectorConfig
 from opsgrid_agent.packml import PackMLStateMapper
+from opsgrid_agent.ota import OTAUpdateExecutor
+from opsgrid_agent import metrics
+from opsgrid_agent.versioning import (
+    asset_ids_from_collectors,
+    build_heartbeat_payload,
+    build_manifest,
+    compute_config_hash,
+    persist_agent_state,
+)
 
 structlog.configure(
     processors=[
@@ -47,13 +58,37 @@ class EdgeAgent:
     
     def __init__(self):
         self.config = self._load_config()
+        metrics.configure(agent_id=self.config['agent_id'])
         self.buffer = StoreForwardBuffer(
             buffer_path=self.config.get('buffer_path', '/var/lib/opsgrid-agent/buffer.db'),
             retention_hours=self.config.get('buffer_retention_hours', 24)
         )
         self.kafka_producer = None
+        self.command_consumer = None
+        self.ota_executor = OTAUpdateExecutor(
+            buffer=self.buffer,
+            signing_public_key=self.config.get('ota_signing_public_key', ''),
+            active_bundle_path=self.config.get(
+                'ota_config_bundle_path',
+                '/var/lib/opsgrid-agent/config_bundle.active',
+            ),
+            staging_dir=self.config.get(
+                'ota_staging_dir',
+                '/var/lib/opsgrid-agent/ota-staging',
+            ),
+            drain_timeout_seconds=self.config.get('ota_drain_timeout_seconds', 60),
+            restart_callback=self._restart_runtime_after_update,
+            bundle_validator=self._validate_config_bundle,
+        )
         self._running = False
         self._tasks: List[asyncio.Task] = []
+        self.config_hash = compute_config_hash(self.config.get('collectors', []))
+        self.manifest = build_manifest(
+            list(UnifiedCollectorCoordinator.SUPPORTED_COLLECTORS)
+        )
+        self.state_path = self.config.get('state_path') or str(
+            Path(self.config['buffer_path']).with_name('agent_state.json')
+        )
         
         # Initialize collector coordinator
         self.coordinator = UnifiedCollectorCoordinator(
@@ -63,35 +98,189 @@ class EdgeAgent:
     
     def _load_config(self) -> Dict[str, Any]:
         """Load configuration from environment"""
-        return {
+        config = {
             'organization_id': os.getenv('ORGANIZATION_ID', 'dev-org'),
             'agent_id': os.getenv('AGENT_ID', 'agent-001'),
             'redpanda_url': os.getenv('REDPANDA_URL', 'localhost:9092'),
+            'agent_status_topic': os.getenv('AGENT_STATUS_TOPIC', 'opsgrid.agent-status'),
+            'heartbeat_interval_seconds': int(os.getenv('HEARTBEAT_INTERVAL_SECONDS', '60')),
+            'command_topic': os.getenv('REDPANDA_COMMAND_TOPIC', 'opsgrid.commands'),
+            'command_ack_topic': os.getenv('REDPANDA_COMMAND_ACK_TOPIC', 'opsgrid.commands.acks'),
+            'command_dlq_topic': os.getenv('REDPANDA_COMMAND_DLQ_TOPIC', 'opsgrid.commands.dlq'),
+            'ota_signing_public_key': os.getenv('OTA_SIGNING_PUBLIC_KEY', ''),
+            'ota_config_bundle_path': os.getenv(
+                'OTA_CONFIG_BUNDLE_PATH',
+                '/var/lib/opsgrid-agent/config_bundle.active',
+            ),
+            'ota_staging_dir': os.getenv(
+                'OTA_STAGING_DIR',
+                '/var/lib/opsgrid-agent/ota-staging',
+            ),
+            'ota_drain_timeout_seconds': int(os.getenv('OTA_DRAIN_TIMEOUT_SECONDS', '60')),
             'buffer_path': os.getenv('BUFFER_PATH', '/var/lib/opsgrid-agent/buffer.db'),
+            'state_path': os.getenv('AGENT_STATE_PATH'),
             'buffer_retention_hours': int(os.getenv('BUFFER_RETENTION_HOURS', '24')),
-            'collectors': json.loads(os.getenv('COLLECTORS', '[]')),
+            'collectors': self._load_collectors(),
         }
+        self._load_active_config_bundle(config)
+        return config
+
+    def _load_collectors(self) -> List[Dict[str, Any]]:
+        """Load and validate collector definitions.
+
+        Source precedence: ``COLLECTORS_FILE`` (YAML path) if set, otherwise the
+        ``COLLECTORS`` env var (JSON). Each entry is envelope-validated; invalid
+        entries are logged and skipped rather than crashing the agent.
+        """
+        collectors_file = os.getenv('COLLECTORS_FILE')
+        try:
+            if collectors_file:
+                import yaml  # lazy: only needed when COLLECTORS_FILE is set
+                with open(collectors_file) as f:
+                    doc = yaml.safe_load(f) or {}
+                raw = doc.get('collectors', []) if isinstance(doc, dict) else (doc or [])
+            else:
+                raw = json.loads(os.getenv('COLLECTORS', '[]'))
+        except (OSError, ValueError) as e:
+            logger.error(
+                "collectors_config_load_failed",
+                source=collectors_file or 'env',
+                error=str(e),
+            )
+            return []
+
+        from opsgrid_agent.config_schema import CollectorEntry
+        normalized: List[Dict[str, Any]] = []
+        for entry in raw:
+            try:
+                normalized.append(
+                    CollectorEntry.model_validate(entry).model_dump(by_alias=True)
+                )
+            except Exception as e:
+                logger.error("invalid_collector_config", entry=entry, error=str(e))
+        return normalized
+
+    def _validate_config_bundle(self, bundle: bytes) -> None:
+        collectors_from_bundle(bundle)
+
+    def _load_active_config_bundle(self, config: Dict[str, Any]) -> None:
+        bundle_path = Path(config['ota_config_bundle_path'])
+        if not bundle_path.exists():
+            return
+
+        collectors = collectors_from_bundle(bundle_path.read_bytes())
+        config['collectors'] = collectors
+        logger.info(
+            "config_bundle_loaded",
+            path=str(bundle_path),
+            collectors=len(collectors),
+        )
+
+    def register_command_handler(self, action_id: str, handler):
+        """Register a remote command handler."""
+        if self.command_consumer is None:
+            self._init_command_consumer()
+        self.command_consumer.register_handler(action_id, handler)
+
+    def _asset_ids(self) -> List[str]:
+        return [
+            str(collector.get('asset_id'))
+            for collector in self.config.get('collectors', [])
+            if collector.get('asset_id')
+        ]
+
+    def _init_command_consumer(self):
+        """Initialize command transport without starting network I/O."""
+        if self.command_consumer is None:
+            self.command_consumer = CommandConsumer(
+                agent_id=self.config['agent_id'],
+                organization_id=self.config['organization_id'],
+                asset_ids=self._asset_ids(),
+                redpanda_url=self.config['redpanda_url'],
+                command_topic=self.config['command_topic'],
+                ack_topic=self.config['command_ack_topic'],
+                dlq_topic=self.config['command_dlq_topic'],
+            )
+            self.ota_executor.register(self.command_consumer)
+
+    async def _restart_runtime_after_update(self):
+        """Restart collectors after an OTA config-bundle swap."""
+        await self.coordinator.stop_all()
+        self.config = self._load_config()
+        self.coordinator.configs.clear()
+        self.coordinator.collectors.clear()
+        self.coordinator.collector_tasks.clear()
+        if self.command_consumer:
+            self.command_consumer.asset_ids = set(self._asset_ids())
+        await self._initialize_collectors()
+        await self.coordinator.start_all()
     
+    def _load_identity(self):
+        """The agent's key/cert identity, loaded once and shared.
+
+        One instance serves both the cloud link (enrollment/heartbeat) and the
+        Kafka TLS context, so rotation updates and the producer always see the
+        same certificate rather than two independently-loaded copies.
+        """
+        if getattr(self, '_identity', None) is None:
+            from opsgrid_agent.security.identity import AgentIdentity
+            self._identity = AgentIdentity(
+                os.getenv('IDENTITY_DIR', '/var/lib/opsgrid-agent/identity')
+            ).load_or_create()
+        return self._identity
+
+    def _uplink_ssl_context(self):
+        """SSL context for the Kafka uplink, honoring the TLS enforcement flag.
+
+        Returns None for plaintext (dev/legacy). With KAFKA_SECURITY_PROTOCOL=SSL
+        the enrolled identity's mTLS context is used; EDGE_REQUIRE_TLS=true
+        additionally makes any failure to produce a context FATAL (fail closed)
+        rather than degrading to plaintext.
+        """
+        require_tls = os.getenv('EDGE_REQUIRE_TLS', 'false').lower() == 'true'
+        protocol = os.getenv('KAFKA_SECURITY_PROTOCOL', 'PLAINTEXT').upper()
+        if not require_tls and protocol != 'SSL':
+            return None
+
+        from opsgrid_agent.security.mtls import build_client_context
+        # Raises MTLSNotReady when unenrolled or (strict) missing CA bundle;
+        # in require_tls mode the caller lets that abort startup.
+        return build_client_context(self._load_identity(), strict=require_tls)
+
     async def _init_kafka_producer(self):
-        """Initialize Kafka/Redpanda producer"""
+        """Initialize Kafka/Redpanda producer (TLS when configured)."""
+        require_tls = os.getenv('EDGE_REQUIRE_TLS', 'false').lower() == 'true'
         try:
             from aiokafka import AIOKafkaProducer
-            
-            self.kafka_producer = AIOKafkaProducer(
+
+            ssl_context = self._uplink_ssl_context()
+            kwargs = dict(
                 bootstrap_servers=self.config['redpanda_url'],
                 value_serializer=lambda v: json.dumps(v).encode('utf-8'),
                 key_serializer=lambda k: k.encode('utf-8') if k else None,
             )
+            if ssl_context is not None:
+                kwargs['security_protocol'] = 'SSL'
+                kwargs['ssl_context'] = ssl_context
+
+            self.kafka_producer = AIOKafkaProducer(**kwargs)
             await self.kafka_producer.start()
-            
+
             # Set coordinator's Kafka producer
             self.coordinator.kafka_producer = self.kafka_producer
-            
+
             logger.info(
                 "kafka_producer_started",
-                brokers=self.config['redpanda_url']
+                brokers=self.config['redpanda_url'],
+                tls=ssl_context is not None,
             )
         except Exception as e:
+            if require_tls:
+                # Fail closed: a required-TLS agent must not run with a broken
+                # or absent secure uplink (store-and-forward would queue data
+                # that could only ever leave in plaintext).
+                logger.critical("kafka_tls_required_but_unavailable", error=str(e))
+                raise
             logger.error("kafka_producer_failed", error=str(e))
             self.kafka_producer = None
     
@@ -100,58 +289,6 @@ class EdgeAgent:
         if self.kafka_producer:
             await self.kafka_producer.stop()
             logger.info("kafka_producer_stopped")
-    
-    async def _handle_message(self, message: Dict[str, Any]):
-        """Handle message from collector"""
-        try:
-            # Add sequence number for ordering
-            message['sequence_num'] = int(datetime.utcnow().timestamp() * 1000)
-            
-            # Try to publish to Kafka
-            if self.kafka_producer:
-                topic = f"telemetry.{self.config['organization_id']}.{message['asset_id']}"
-                
-                try:
-                    await self.kafka_producer.send(
-                        topic,
-                        value=message,
-                        key=message['asset_id']
-                    )
-                    logger.debug(
-                        "message_published",
-                        topic=topic,
-                        asset_id=message['asset_id']
-                    )
-                except Exception as e:
-                    # Publish failed, buffer locally
-                    logger.warning(
-                        "publish_failed_buffering",
-                        topic=topic,
-                        error=str(e)
-                    )
-                    await self._buffer_message(message)
-            else:
-                # No Kafka connection, buffer locally
-                await self._buffer_message(message)
-        
-        except Exception as e:
-            logger.error("message_handler_error", error=str(e))
-    
-    async def _buffer_message(self, message: Dict[str, Any]):
-        """Buffer message locally"""
-        success = await self.buffer.store(
-            timestamp_edge=datetime.fromisoformat(message['timestamp_edge']),
-            asset_id=message['asset_id'],
-            topic=message.get('topic', 'unknown'),
-            payload=message['payload'],
-            sequence_num=message.get('sequence_num', 0)
-        )
-        
-        if success:
-            logger.debug(
-                "message_buffered",
-                asset_id=message['asset_id']
-            )
     
     async def _backfill_worker(self):
         """Background task to backfill buffered messages"""
@@ -175,19 +312,31 @@ class EdgeAgent:
                         for msg in messages:
                             try:
                                 topic = f"telemetry.{self.config['organization_id']}.{msg.asset_id}"
-                                
+
+                                payload = json.loads(msg.payload)
+                                value = {
+                                    'timestamp_edge': msg.timestamp_edge,
+                                    'asset_id': msg.asset_id,
+                                    'payload': payload,
+                                    'sequence_num': msg.sequence_num,
+                                    'backfilled': True
+                                }
+                                # Preserve PackML state through backfill: the
+                                # backend ingestion reads packml_state at the top
+                                # level, and collectors persist it inside payload.
+                                # Without this, backfilled telemetry loses its
+                                # state and breaks backend/historical OEE.
+                                packml_state = payload.get('packml_state') if isinstance(payload, dict) else None
+                                if packml_state is not None:
+                                    value['packml_state'] = packml_state
+
                                 await self.kafka_producer.send(
                                     topic,
-                                    value={
-                                        'timestamp_edge': msg.timestamp_edge,
-                                        'asset_id': msg.asset_id,
-                                        'payload': json.loads(msg.payload),
-                                        'sequence_num': msg.sequence_num,
-                                        'backfilled': True
-                                    },
+                                    value=value,
                                     key=msg.asset_id
                                 )
                                 sent_ids.append(msg.id)
+                                metrics.record_kafka_success()
                             
                             except Exception as e:
                                 logger.error(
@@ -196,6 +345,7 @@ class EdgeAgent:
                                     error=str(e)
                                 )
                                 failed_ids.append(msg.id)
+                                metrics.record_kafka_error()
                         
                         # Mark sent messages as complete
                         if sent_ids:
@@ -216,40 +366,95 @@ class EdgeAgent:
         """Background task for periodic cleanup"""
         while self._running:
             try:
-                # Clean old messages
+                # Clean old messages past the retention window.
                 deleted = await self.buffer.cleanup_old_messages()
                 if deleted > 0:
-                    logger.info(
-                        "cleanup_completed",
-                        deleted_messages=deleted
-                    )
-                
-                # Vacuum database weekly
-                stats = await self.buffer.get_stats()
-                if stats['size_mb'] > 500:
-                    await self.buffer.vacuum()
-                
+                    logger.info("cleanup_completed", deleted_messages=deleted)
+
+                # Dead-letter retry-exhausted messages so they stop accumulating.
+                dead = await self.buffer.move_exhausted_to_dead_letter(max_retry=5)
+                metrics.record_dead_lettered(dead)
+
+                # Enforce the on-disk size cap (drops oldest; also vacuums).
+                dropped = await self.buffer.enforce_size_limit()
+                metrics.record_dropped(dropped)
+
                 # Wait 1 hour before next cleanup
                 await asyncio.sleep(3600)
-            
+
             except Exception as e:
                 logger.error("cleanup_worker_error", error=str(e))
                 await asyncio.sleep(3600)
+
+    async def _heartbeat_payload(self) -> Dict[str, Any]:
+        stats = await self.buffer.get_stats()
+        status = self.coordinator.get_status()
+        return build_heartbeat_payload(
+            agent_id=self.config['agent_id'],
+            organization_id=self.config['organization_id'],
+            asset_ids=asset_ids_from_collectors(self.config.get('collectors', [])),
+            manifest=self.manifest,
+            config_hash=self.config_hash,
+            collector_status=status,
+            buffer_depth=stats['total_messages'],
+        )
+
+    async def _publish_heartbeat(self):
+        """Publish a best-effort fleet status heartbeat."""
+        if not self.kafka_producer:
+            logger.debug("heartbeat_skipped_no_kafka")
+            return
+
+        payload = await self._heartbeat_payload()
+        await self.kafka_producer.send(
+            self.config['agent_status_topic'],
+            value=payload,
+            key=self.config['agent_id'],
+        )
+        logger.debug(
+            "agent_heartbeat_published",
+            topic=self.config['agent_status_topic'],
+            agent_id=self.config['agent_id'],
+            asset_count=len(payload['asset_ids']),
+        )
+
+    async def _heartbeat_worker(self):
+        """Background worker for fleet version/config visibility."""
+        while self._running:
+            try:
+                await self._publish_heartbeat()
+                await asyncio.sleep(self.config['heartbeat_interval_seconds'])
+            except Exception as e:
+                logger.warning("agent_heartbeat_failed", error=str(e))
+                await asyncio.sleep(self.config['heartbeat_interval_seconds'])
     
     async def _stats_reporter(self):
         """Periodic stats reporting"""
         while self._running:
             try:
                 stats = await self.buffer.get_stats()
+                metrics.set_buffer_stats(
+                    pending=stats['total_messages'],
+                    backfill_lag_seconds=stats.get('backfill_lag_seconds', 0.0),
+                )
+                # Converged: also publish integration's agent-level gauges.
+                status = self.coordinator.get_status()
+                metrics.refresh_buffer_stats(stats['total_messages'])
+                metrics.refresh_collector_stats(
+                    status['active_collectors'],
+                    status['total_collectors'],
+                )
                 logger.info(
                     "buffer_stats",
                     total_messages=stats['total_messages'],
                     failed_messages=stats['failed_messages'],
+                    dead_lettered=stats.get('dead_lettered', 0),
                     size_mb=stats['size_mb'],
+                    backfill_lag_seconds=stats.get('backfill_lag_seconds', 0.0),
                     oldest_message=stats['oldest_message'],
                     newest_message=stats['newest_message']
                 )
-                
+
                 await asyncio.sleep(300)  # Report every 5 minutes
             
             except Exception as e:
@@ -267,20 +472,25 @@ class EdgeAgent:
         for collector_conf in collectors_config:
             try:
                 asset_id = collector_conf.get('asset_id')
-                collector_type = collector_conf.get('type')
+                collector_type = collector_conf.get('type') or collector_conf.get('collector_type')
                 
                 if not asset_id or not collector_type:
                     logger.error("invalid_collector_config", config=collector_conf)
                     continue
                 
                 # Create collector config
+                collector_config = collector_conf.get('config', {})
                 config = CollectorConfig(
                     collector_type=collector_type,
                     asset_id=asset_id,
-                    config=collector_conf.get('config', {}),
+                    config=collector_config,
                     enabled=collector_conf.get('enabled', True)
                 )
-                
+
+                # Register any local alert rules declared for this asset.
+                from opsgrid_agent.analytics import alerting_tracker
+                alerting_tracker.configure(asset_id, collector_config.get('alerts'))
+
                 # Register with coordinator
                 self.coordinator.register_collector(config)
                 
@@ -297,6 +507,23 @@ class EdgeAgent:
                     error=str(e)
                 )
     
+    def _health_snapshot(self) -> Dict[str, Any]:
+        """Synchronous health for /healthz (called from the HTTP server thread).
+
+        Uses only sync, thread-safe reads (coordinator.get_status() + the running
+        flag) — no awaiting the async buffer from off the event loop.
+        """
+        try:
+            status = self.coordinator.get_status()
+        except Exception:  # pragma: no cover - defensive
+            status = {}
+        return {
+            "status": "ok" if self._running else "stopping",
+            "running": self._running,
+            "collectors_total": status.get("total_collectors", 0),
+            "collectors_active": status.get("active_collectors", 0),
+        }
+
     async def start(self):
         """Start the edge agent"""
         logger.info(
@@ -306,23 +533,144 @@ class EdgeAgent:
         )
         
         self._running = True
-        
-        # Initialize Kafka producer
+
+        try:
+            persist_agent_state(
+                self.state_path,
+                {
+                    "agent_id": self.config['agent_id'],
+                    "agent_version": self.manifest["agent_version"],
+                    "build_id": self.manifest.get("build_id"),
+                    "git_sha": self.manifest.get("git_sha"),
+                    "config_hash": self.config_hash,
+                    "asset_ids": asset_ids_from_collectors(self.config.get('collectors', [])),
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+        except Exception as e:
+            logger.warning("agent_state_persist_failed", error=str(e), path=self.state_path)
+
+        # Prometheus /metrics + /healthz. Default-on (METRICS_ENABLED=false to
+        # disable); METRICS_PORT overrides the default 9100. The metrics_server
+        # module serves the same registry as opsgrid_agent.metrics plus /healthz.
+        if os.getenv('METRICS_ENABLED', 'true').lower() != 'false':
+            from opsgrid_agent.metrics_server import start_metrics_server
+            start_metrics_server(
+                int(os.getenv('METRICS_PORT', '9100')),
+                health_provider=self._health_snapshot,
+            )
+
+
+        # Cloud enrollment + heartbeat (audit WIRE #10): opt-in via CLOUD_URL.
+        # Enrolls once (bootstrap token -> mTLS cert), keeps the cert rotated,
+        # and reports health every HEARTBEAT_INTERVAL seconds.
+        # MUST run before the Kafka producer: with EDGE_REQUIRE_TLS=true the
+        # producer needs the enrolled certificate, and starting it first would
+        # deadlock a fresh agent (fail-closed abort before it can ever enroll).
+        await self._start_cloud_link()
+
+        # Initialize Kafka producer (TLS from the enrolled identity when required)
         await self._init_kafka_producer()
-        
+
         # Start background workers
         self._tasks.append(asyncio.create_task(self._backfill_worker()))
         self._tasks.append(asyncio.create_task(self._cleanup_worker()))
         self._tasks.append(asyncio.create_task(self._stats_reporter()))
-        
+
         # Initialize collectors from configuration
         await self._initialize_collectors()
         
         # Start all collectors via coordinator
         await self.coordinator.start_all()
+
+        self._tasks.append(asyncio.create_task(self._heartbeat_worker()))
+        self._init_command_consumer()
+        try:
+            await self.command_consumer.start()
+        except Exception as e:
+            logger.error("command_consumer_failed", error=str(e))
         
         logger.info("edge_agent_started")
     
+    async def _start_cloud_link(self):
+        """Enroll with the cloud and start the heartbeat + cert-rotation loops.
+
+        No-op unless CLOUD_URL is set, so offline/air-gapped deployments and
+        tests are unaffected. Failures degrade gracefully: the agent keeps
+        collecting locally (store-and-forward) and retries on the next beat.
+        """
+        cloud_url = os.getenv('CLOUD_URL')
+        if not cloud_url:
+            return
+        try:
+            from opsgrid_agent.security.enrollment import EnrollmentClient
+            from opsgrid_agent.security.rotation import CertificateRotationManager
+            from opsgrid_agent.heartbeat import HeartbeatReporter
+            from opsgrid_agent.timesync import ClockSkewEstimator
+            from opsgrid_agent.security.enrollment import _default_post
+
+            identity = self._load_identity()
+
+            bootstrap = os.getenv('EDGE_BOOTSTRAP_TOKEN', '')
+            enrollment = EnrollmentClient(identity, cloud_url, bootstrap)
+            if not identity.has_certificate() and bootstrap:
+                try:
+                    await asyncio.to_thread(enrollment.enroll)
+                except Exception as exc:
+                    logger.warning("cloud_enrollment_failed", error=str(exc))
+
+            # Cert rotation loop (renews before expiry via re-enrollment).
+            self._rotation = CertificateRotationManager(identity, enrollment)
+            self._tasks.append(asyncio.create_task(self._rotation.start()))
+
+            # Heartbeat loop: health snapshot + cert expiry; the ack's server
+            # time feeds the clock-skew estimator.
+            self._skew = ClockSkewEstimator()
+
+            def _health():
+                snapshot = dict(self._health_snapshot() or {})
+                info = identity.certificate_info()
+                if info is not None:
+                    snapshot['cert_expires_in_seconds'] = int(info.seconds_until_expiry())
+                return snapshot
+
+            def _post(url, body, headers):
+                headers = {**headers, 'X-Client-Cert':
+                           identity.crt_path.read_text().replace('\n', '\\n')
+                           if identity.has_certificate() else ''}
+                # Proof-of-possession: sign the request with the agent's private
+                # key so the (public) certificate header can't be replayed by an
+                # observer — the backend verifies against the cert's public key.
+                # The skew offset keeps drifted clocks inside the server's
+                # freshness window (see ClockSkewEstimator).
+                if identity.has_certificate():
+                    from opsgrid_agent.security.request_signing import sign_request
+                    headers.update(sign_request(
+                        identity, body,
+                        skew_seconds=self._skew.offset_seconds if self._skew else 0.0,
+                    ))
+                return _default_post(url, body, headers)
+
+            reporter = HeartbeatReporter(
+                cloud_url, os.getenv('AGENT_VERSION', 'dev'),
+                _health, post_fn=_post, skew_estimator=self._skew,
+            )
+            interval = float(os.getenv('HEARTBEAT_INTERVAL', '30'))
+
+            async def _heartbeat_loop():
+                while self._running:
+                    try:
+                        await asyncio.to_thread(reporter.send_once)
+                    except Exception as exc:  # never kill the loop
+                        logger.warning("heartbeat_loop_error", error=str(exc))
+                    await asyncio.sleep(interval)
+
+            self._tasks.append(asyncio.create_task(_heartbeat_loop()))
+            logger.info("cloud_link_started", cloud_url=cloud_url,
+                        enrolled=identity.has_certificate(), interval=interval)
+        except Exception as exc:
+            logger.error("cloud_link_setup_failed", error=str(exc))
+
     async def stop(self):
         """Stop the edge agent"""
         logger.info("edge_agent_stopping")
@@ -339,6 +687,9 @@ class EdgeAgent:
         
         # Stop all collectors via coordinator
         await self.coordinator.stop_all()
+
+        if self.command_consumer:
+            await self.command_consumer.stop()
         
         # Stop Kafka producer
         await self._stop_kafka_producer()
@@ -379,5 +730,10 @@ async def main():
     await agent.run()
 
 
-if __name__ == "__main__":
+def run():
+    """Console-script entrypoint (pyproject [project.scripts])."""
     asyncio.run(main())
+
+
+if __name__ == "__main__":
+    run()

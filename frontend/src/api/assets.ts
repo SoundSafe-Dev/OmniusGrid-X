@@ -13,8 +13,15 @@ import {
   Workcell,
   Organization,
 } from '../types';
+import { USE_MOCK } from './mockMode';
+import { registerTransform } from './transformRegistry';
 
-const USE_MOCK = true; // Set to false to use real backend
+// FS-61: casing handled by the axios seam — no per-call toCamel/toSnake.
+registerTransform('/api/v1/assets');
+registerTransform('/api/v1/dashboard');
+registerTransform('/api/v1/workcells');
+registerTransform('/api/v1/organizations');
+registerTransform('/admin/assets'); // setMaintenanceMode body -> snake_case
 
 interface AssetListParams {
   organizationId?: string;
@@ -28,13 +35,20 @@ interface AssetListParams {
 export const assetsApi = {
   list: async (params?: AssetListParams): Promise<PaginatedResponse<Asset>> => {
     if (USE_MOCK) return mockApi.getAssets();
-    const response = await api.get<Asset[]>('/api/v1/assets/', { params });
+    // Backend now returns a {items, meta} envelope (FS-82) with a real total,
+    // instead of a bare array we had to fake a count from. Map it to the flat
+    // PaginatedResponse; tolerate either casing of has_more from the transform seam.
+    const response = await api.get<{
+      items: Asset[];
+      meta: { total: number; skip: number; limit: number; has_more?: boolean; hasMore?: boolean };
+    }>('/api/v1/assets/', { params });
+    const { items, meta } = response.data;
     return {
-      items: response.data,
-      total: response.data.length,
-      skip: params?.skip || 0,
-      limit: params?.limit || 100,
-      hasMore: response.data.length === (params?.limit || 100),
+      items,
+      total: meta.total,
+      skip: meta.skip,
+      limit: meta.limit,
+      hasMore: meta.hasMore ?? meta.has_more ?? meta.skip + items.length < meta.total,
     };
   },
 
@@ -122,10 +136,13 @@ export const dashboardApi = {
 export const workcellsApi = {
   list: async (organizationId?: string): Promise<Workcell[]> => {
     if (USE_MOCK) return mockApi.getWorkcells();
-    const response = await api.get<Workcell[]>('/api/v1/workcells/', {
-      params: organizationId ? { organization_id: organizationId } : undefined,
-    });
-    return response.data;
+    // FS-99: backend returns the {items, meta} pagination envelope now; callers
+    // consume a plain array, so unwrap here.
+    const response = await api.get<{ items: Workcell[]; meta: { total: number } }>(
+      '/api/v1/workcells/',
+      { params: organizationId ? { organization_id: organizationId } : undefined },
+    );
+    return response.data.items;
   },
 
   get: async (workcellId: string): Promise<Workcell> => {

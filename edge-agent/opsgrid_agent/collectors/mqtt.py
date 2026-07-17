@@ -2,12 +2,14 @@
 
 import asyncio
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional, Callable
 import paho.mqtt.client as mqtt
 import structlog
 
-from omniusgrid_agent.packml import PackMLStateMapper, create_mapper_for_asset_type
+from opsgrid_agent.packml import PackMLStateMapper, create_mapper_for_asset_type
+
+from ..resilience import CircuitBreaker, ExponentialBackoff
 
 logger = structlog.get_logger()
 
@@ -18,6 +20,8 @@ class MQTTCollector:
     
     Features:
     - Automatic reconnection with exponential backoff
+    - Circuit breaker that suspends reconnect attempts after repeated failures,
+      preventing the agent from hammering a broker that's down for maintenance
     - PackML state normalization
     - Message buffering during network outages
     - TLS/mTLS support for secure connections
@@ -36,7 +40,9 @@ class MQTTCollector:
         asset_id: Optional[str] = None,
         asset_type: str = "3d_printer",
         packml_mappings: Optional[Dict[str, str]] = None,
-        on_message_callback: Optional[Callable] = None
+        on_message_callback: Optional[Callable] = None,
+        backoff: Optional[ExponentialBackoff] = None,
+        breaker: Optional[CircuitBreaker] = None,
     ):
         self.broker_host = broker_host
         self.broker_port = broker_port
@@ -56,9 +62,28 @@ class MQTTCollector:
         # MQTT client
         self.client = mqtt.Client(client_id=f"opsgrid_{asset_id or 'agent'}")
         self._connected = False
-        self._reconnect_delay = 1
-        self._max_reconnect_delay = 60
         self._stop_event = asyncio.Event()
+
+        # Reconnect resilience. Defaults preserve the previous MQTT behaviour
+        # (1s initial, 60s cap, x2) and add a circuit breaker that opens after
+        # 5 consecutive failures so a broker outage no longer triggers an
+        # endless reconnect storm.
+        #
+        # TODO(tune): These defaults are a first-pass conservative guess.
+        # Adjust the values below once we have production telemetry on real
+        # broker outage patterns, or pass a tuned ExponentialBackoff /
+        # CircuitBreaker instance from the coordinator for per-deployment
+        # overrides without touching this file.
+        self._backoff = backoff or ExponentialBackoff(
+            initial=1.0, cap=60.0, multiplier=2.0
+        )
+        self._breaker = breaker or CircuitBreaker(
+            failure_threshold=5,
+            initial_cooldown=30.0,
+            cooldown_cap=300.0,
+            cooldown_multiplier=2.0,
+            name=f"mqtt:{asset_id or 'agent'}",
+        )
         
         # Setup callbacks
         self.client.on_connect = self._on_connect
@@ -84,7 +109,8 @@ class MQTTCollector:
         """Handle connection established"""
         if rc == 0:
             self._connected = True
-            self._reconnect_delay = 1  # Reset backoff
+            self._backoff.reset()
+            self._breaker.record_success()
             logger.info(
                 "mqtt_connected",
                 broker=self.broker_host,
@@ -122,7 +148,7 @@ class MQTTCollector:
             payload = json.loads(msg.payload.decode('utf-8'))
             
             # Extract timestamp (prefer device timestamp if available)
-            timestamp = datetime.utcnow()
+            timestamp = datetime.now(timezone.utc)
             if 'timestamp' in payload:
                 try:
                     timestamp = datetime.fromisoformat(payload['timestamp'].replace('Z', '+00:00'))
@@ -192,6 +218,20 @@ class MQTTCollector:
         )
         
         while not self._stop_event.is_set():
+            # If the breaker has opened (e.g. broker has been down for a
+            # while) wait for its cooldown before trying again, so we don't
+            # burn CPU and broker connection slots on attempts that will
+            # almost certainly fail.
+            if not self._breaker.allow():
+                wait = self._breaker.time_until_retry()
+                logger.info(
+                    "mqtt_circuit_open",
+                    asset_id=self.asset_id,
+                    wait_seconds=wait,
+                )
+                await self._sleep_or_stop(wait)
+                continue
+
             try:
                 if not self._connected:
                     self.client.connect(self.broker_host, self.broker_port)
@@ -206,7 +246,8 @@ class MQTTCollector:
                     except asyncio.TimeoutError:
                         logger.warning("mqtt_connection_timeout")
                         self.client.loop_stop()
-                        await self._backoff_reconnect()
+                        self._breaker.record_failure()
+                        await self._sleep_or_stop(self._backoff.next_delay())
                         continue
                 
                 # Keep running until stopped
@@ -214,7 +255,8 @@ class MQTTCollector:
                 
             except Exception as e:
                 logger.error("mqtt_collector_error", error=str(e))
-                await self._backoff_reconnect()
+                self._breaker.record_failure()
+                await self._sleep_or_stop(self._backoff.next_delay())
         
         self.client.loop_stop()
         logger.info("mqtt_collector_stopped")
@@ -223,27 +265,23 @@ class MQTTCollector:
         """Wait for MQTT connection to be established"""
         while not self._connected and not self._stop_event.is_set():
             await asyncio.sleep(0.1)
-    
-    async def _backoff_reconnect(self):
-        """Reconnect with exponential backoff"""
+
+    async def _sleep_or_stop(self, seconds: float) -> None:
+        """Sleep for ``seconds`` but wake immediately if stop is requested."""
+        if seconds <= 0:
+            return
         logger.info(
             "mqtt_reconnect_backoff",
-            delay_seconds=self._reconnect_delay
+            asset_id=self.asset_id,
+            delay_seconds=seconds,
         )
-        
         try:
             await asyncio.wait_for(
                 self._stop_event.wait(),
-                timeout=self._reconnect_delay
+                timeout=seconds,
             )
         except asyncio.TimeoutError:
             pass
-        
-        # Exponential backoff
-        self._reconnect_delay = min(
-            self._reconnect_delay * 2,
-            self._max_reconnect_delay
-        )
     
     async def stop(self):
         """Stop the MQTT collector"""
@@ -323,7 +361,7 @@ class BambuCollector(MQTTCollector):
                 
                 # Create normalized message
                 message = {
-                    'timestamp_edge': datetime.utcnow().isoformat(),
+                    'timestamp_edge': datetime.now(timezone.utc).isoformat(),
                     'asset_id': self.asset_id,
                     'topic': msg.topic,
                     'payload': {

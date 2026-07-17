@@ -40,14 +40,17 @@ spec:
                 --reserve-memory 200M \
                 --node-id ${HOSTNAME##*-} \
                 --check=false \
-                --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:29092 \
-                --advertise-kafka-addr internal://redpanda-${HOSTNAME##*-}.redpanda.omniusgrid.svc.cluster.local:9092,external://localhost:29092 \
+                --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:29092,tls://0.0.0.0:9094 \
+                --advertise-kafka-addr internal://redpanda-${HOSTNAME##*-}.redpanda.omniusgrid.svc.cluster.local:9092,external://localhost:29092,tls://redpanda-${HOSTNAME##*-}.redpanda.omniusgrid.svc.cluster.local:9094 \
+                --set 'redpanda.kafka_api_tls=[{"name":"tls","enabled":true,"cert_file":"/etc/redpanda/tls/broker.crt","key_file":"/etc/redpanda/tls/broker.key","truststore_file":"/etc/redpanda/tls/ca.crt","require_client_auth":true}]' \
                 --rpc-addr internal://0.0.0.0:33145 \
                 --advertise-rpc-addr internal://redpanda-${HOSTNAME##*-}.redpanda.omniusgrid.svc.cluster.local:33145
           
           ports:
             - name: kafka
               containerPort: 9092
+            - name: kafka-tls
+              containerPort: 9094
               protocol: TCP
             - name: kafka-external
               containerPort: 29092
@@ -62,6 +65,9 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/lib/redpanda/data
+            - name: broker-tls
+              mountPath: /etc/redpanda/tls
+              readOnly: true
           
           resources:
             requests:
@@ -89,6 +95,14 @@ spec:
             timeoutSeconds: 3
             failureThreshold: 3
   
+      volumes:
+        # Issued by backend/scripts/issue_broker_cert.py; create with:
+        #   kubectl -n omniusgrid create secret generic redpanda-broker-tls \
+        #     --from-file=broker.crt --from-file=broker.key --from-file=ca.crt
+        - name: broker-tls
+          secret:
+            secretName: redpanda-broker-tls
+
   volumeClaimTemplates:
     - metadata:
         name: data

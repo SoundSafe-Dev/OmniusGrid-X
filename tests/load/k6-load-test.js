@@ -37,8 +37,9 @@ function makeRequest(method, endpoint, data = null) {
   if (API_KEY) {
     headers['X-API-Key'] = API_KEY;
   } else {
-    // Use dev-token for testing
-    headers['Authorization'] = 'Bearer dev-token';
+    // Token via env (-e API_TOKEN=...): hardened targets reject dev-token,
+    // which is only valid where ALLOW_DEV_TOKEN=true (dev/CI).
+    headers['Authorization'] = `Bearer ${__ENV.API_TOKEN || 'dev-token'}`;
   }
   
   const params = {

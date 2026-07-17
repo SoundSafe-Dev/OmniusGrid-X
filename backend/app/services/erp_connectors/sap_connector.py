@@ -9,7 +9,7 @@ Connector for SAP S/4HANA systems using OData API:
 """
 
 from typing import Dict, Any, Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 import structlog
 import aiohttp
 from requests_oauthlib import OAuth2Session
@@ -226,7 +226,7 @@ class SAPConnector(ERPConnectorBase):
         token = await self.get_auth_token()
         
         # Build batch request body
-        batch_boundary = "batch_" + datetime.utcnow().strftime("%Y%m%d%H%M%S")
+        batch_boundary = "batch_" + datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
         batch_body = self._build_batch_body(requests, batch_boundary)
         
         batch_url = f"{self.odata_url}/$batch"
@@ -327,7 +327,7 @@ class SAPConnector(ERPConnectorBase):
                 "message": "SAP connection successful",
                 "system_id": self.system_id,
                 "client": self.client,
-                "checked_at": datetime.utcnow().isoformat()
+                "checked_at": datetime.now(timezone.utc).isoformat()
             }
         except Exception as e:
             return {
@@ -335,7 +335,7 @@ class SAPConnector(ERPConnectorBase):
                 "message": str(e),
                 "system_id": self.system_id,
                 "client": self.client,
-                "checked_at": datetime.utcnow().isoformat()
+                "checked_at": datetime.now(timezone.utc).isoformat()
             }
     
     def _build_filter_string(self, filters: Dict[str, Any]) -> str:

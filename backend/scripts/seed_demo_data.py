@@ -1,0 +1,1081 @@
+#!/usr/bin/env python3
+"""Seed realistic, correlated demo data — simulating a FULL ERP integration.
+
+The point: make the platform tell one coherent story out of the box, as if a
+SAP integration had been syncing for two weeks alongside live sensors and yard
+operations. Every domain shares keys with the others, so Correlation AI finds
+real cross-domain links:
+
+  THE STORY (last 14 days, deterministic):
+  - CNC Mill #1's spindle vibration degrades from day -9, crossing the alarm
+    band on day -2. The acoustic monitor's high-band energy rises in the same
+    window (bearing-wear signature).
+  - SAP (simulated fully-synced integration) releases WorkOrder WO-77105
+    ("spindle bearing replacement", asset: CNC Mill #1) on day -2 and a rush
+    PurchaseOrder PO-10021 (bearing kit). WO completes day -1; vibration drops
+    back to baseline. ERP<->sensor correlation recorded.
+  - Material POs reference the trailers arriving in the yard (po_number on
+    trailers + dock appointments); the dock camera's motion spikes line up
+    with appointment windows. One trailer overstays free time -> live
+    detention charges.
+  - Delivered shipments are invoiced in ERP (shipment_number on invoices);
+    a driver is near his HOS limit; a truck has an overdue oil change and an
+    in-progress brake repair.
+  - A ready-made analysis session ("Demo: Spindle failure investigation") has
+    ERP + sensor + yard sources pre-attached — open Correlation AI and hit
+    correlate.
+
+Idempotent: fixed UUIDs; re-running wipes and re-seeds exactly these rows.
+Run:  make seed-demo     (defaults DATABASE_URL to backend/dev.db SQLite)
+      python scripts/seed_demo_data.py [--verify]
+"""
+
+import asyncio
+import math
+import os
+import uuid as _uuid
+import random
+import sys
+from datetime import datetime, timedelta
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+if not os.environ.get("DATABASE_URL"):
+    default_db = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "dev.db")
+    os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{default_db}"
+
+NOW = datetime.utcnow()
+RNG = random.Random(42)
+
+# ---- fixed ids (re-run replaces) ---------------------------------------------
+ORG = "00000000-0000-0000-0000-000000000001"     # dev-token org
+USER = "00000000-0000-0000-0000-000000000001"    # dev-token user
+WC_MACHINING = "11111111-0000-4000-8000-000000000001"
+WC_ASSEMBLY = "11111111-0000-4000-8000-000000000002"
+
+AT_CNC = "22222222-0000-4000-8000-000000000001"
+AT_VIB = "22222222-0000-4000-8000-000000000002"
+AT_AUDIO = "22222222-0000-4000-8000-000000000003"
+AT_VIDEO = "22222222-0000-4000-8000-000000000004"
+AT_CONVEYOR = "22222222-0000-4000-8000-000000000005"
+
+A_CNC = "33333333-0000-4000-8000-000000000001"
+A_VIB = "33333333-0000-4000-8000-000000000002"
+A_AUDIO = "33333333-0000-4000-8000-000000000003"
+A_CAMERA = "33333333-0000-4000-8000-000000000004"
+A_CONVEYOR = "33333333-0000-4000-8000-000000000005"
+
+ERP_INT = "44444444-0000-4000-8000-000000000001"
+
+CARRIER_A = "55555555-0000-4000-8000-000000000001"  # Great Lakes Freight
+CARRIER_B = "55555555-0000-4000-8000-000000000002"  # Prairie Express
+DRIVER_1 = "66666666-0000-4000-8000-000000000001"
+DRIVER_2 = "66666666-0000-4000-8000-000000000002"
+DRIVER_3 = "66666666-0000-4000-8000-000000000003"
+
+SESSION_ID = "77777777-0000-4000-8000-000000000001"
+
+# ---- gap-area fixed ids (kanban / OTA / MLOps / compliance / notifications) ----
+BOARD_ID = "aaaaaaaa-0000-4000-8000-000000000001"
+COL_IDS = {  # column_type -> fixed id
+    "backlog": "aaaaaaaa-0000-4000-8000-000000000010",
+    "triage": "aaaaaaaa-0000-4000-8000-000000000011",
+    "in_progress": "aaaaaaaa-0000-4000-8000-000000000012",
+    "review": "aaaaaaaa-0000-4000-8000-000000000013",
+    "rejected": "aaaaaaaa-0000-4000-8000-000000000014",
+    "done": "aaaaaaaa-0000-4000-8000-000000000015",
+}
+TASK_IDS = [f"aaaaaaaa-0000-4000-8000-00000000002{i}" for i in range(1, 8)]
+TASK_RULE_ID = "aaaaaaaa-0000-4000-8000-000000000031"
+
+AGENT_RELEASE_ID = "bbbbbbbb-0000-4000-8000-000000000001"
+MODEL_RELEASE_ID = "bbbbbbbb-0000-4000-8000-000000000002"
+ROLLOUT_ID = "bbbbbbbb-0000-4000-8000-000000000010"
+MODEL_ANOMALY_ID = "cccccccc-0000-4000-8000-000000000001"
+MODEL_OEE_ID = "cccccccc-0000-4000-8000-000000000002"
+
+REGISTRY_LOTO_ID = "dddddddd-0000-4000-8000-000000000001"
+REGISTRY_ISO_ID = "dddddddd-0000-4000-8000-000000000002"
+COMPLIANCE_SCHEDULE_ID = "dddddddd-0000-4000-8000-000000000010"
+COMPLIANCE_JOB_ID = "dddddddd-0000-4000-8000-000000000011"
+
+NOTIF_SUB_IDS = [f"eeeeeeee-0000-4000-8000-00000000000{i}" for i in range(1, 4)]
+ERROR_FINGERPRINTS = ["demoerr000000001", "demoerr000000002",
+                      "demoerr000000003", "demoerr000000004"]
+EXPORT_TEMPLATE_IDS = ["ffffffff-0000-4000-8000-000000000001",
+                       "ffffffff-0000-4000-8000-000000000002"]
+
+DOOR_IDS = [f"88888888-0000-4000-8000-00000000000{i}" for i in range(1, 9)]
+TRAILER_DWELL = "99999999-0000-4000-8000-000000000001"   # long-dwell -> detention
+TRAILER_DOCKED = "99999999-0000-4000-8000-000000000002"  # at door 3 (camera)
+TRAILER_YARD = "99999999-0000-4000-8000-000000000003"
+TRAILER_OUT1 = "99999999-0000-4000-8000-000000000004"
+TRAILER_OUT2 = "99999999-0000-4000-8000-000000000005"
+
+DEGRADE_START_D, ALARM_D, FIXED_D = 9.0, 2.0, 1.0  # days ago
+
+
+def days_ago(d: float) -> datetime:
+    return NOW - timedelta(days=d)
+
+
+# ---- correlated signal generators --------------------------------------------
+
+def vibration_at(t: datetime) -> float:
+    """Baseline 1.2 mm/s; rises from day -9 to ~8.3 at day -2; fixed at day -1."""
+    age_d = (NOW - t).total_seconds() / 86400
+    base = 1.2 + RNG.uniform(-0.15, 0.15)
+    if age_d < FIXED_D:
+        return round(max(0.4, 1.0 + RNG.uniform(-0.1, 0.1)), 3)  # post-repair
+    if age_d < ALARM_D:
+        return round(8.3 + RNG.uniform(-0.4, 0.4), 3)            # at alarm
+    if age_d < DEGRADE_START_D:
+        frac = (DEGRADE_START_D - age_d) / (DEGRADE_START_D - ALARM_D)
+        return round(base + frac * 7.0 + RNG.uniform(-0.3, 0.3), 3)
+    return round(base, 3)
+
+
+def audio_bands_at(t: datetime):
+    """High-band energy tracks the bearing wear; renormalized to sum 1."""
+    age_d = (NOW - t).total_seconds() / 86400
+    if age_d < FIXED_D:
+        high = 0.10
+    elif age_d < DEGRADE_START_D:
+        frac = min(1.0, (DEGRADE_START_D - age_d) / (DEGRADE_START_D - ALARM_D))
+        high = 0.12 + 0.35 * frac
+    else:
+        high = 0.12
+    high += RNG.uniform(-0.02, 0.02)
+    low = 0.30 + RNG.uniform(-0.03, 0.03)
+    mid = max(0.05, 1.0 - low - high)
+    rms = round(0.15 + high * 0.4 + RNG.uniform(-0.02, 0.02), 4)
+    peak = round(850 + high * 1400 + RNG.uniform(-40, 40), 1)
+    return rms, peak, round(low, 4), round(mid, 4), round(high, 4)
+
+
+def camera_at(t: datetime, appointment_hours) -> tuple:
+    """Brightness follows day/night; motion spikes during appointment windows."""
+    hour = t.hour + t.minute / 60
+    brightness = 95 + 65 * math.sin((hour - 6) / 24 * 2 * math.pi) + RNG.uniform(-8, 8)
+    motion = RNG.uniform(0.0, 0.06)
+    for ah in appointment_hours:
+        if abs(hour - ah) < 1.0:
+            motion = RNG.uniform(0.25, 0.55)
+    return round(max(5.0, brightness), 1), round(motion, 4)
+
+
+async def main(verify: bool = False) -> int:
+    from sqlalchemy import delete, select
+    from app.db.database import AsyncSessionLocal, init_db
+    from app.db.models import (
+        Alarm, AnalysisSession, Asset, AssetType, Carrier, DockAppointment,
+        DockDoor, Driver, DriverWaitTime, ERPCorrelation, ERPDataMapping,
+        ERPEntity, ERPIntegrationEvent, ERPSyncStatus, IntegrationConfiguration,
+        Organization, SessionDataSource, Shipment, Telemetry, User, Workcell,
+        YardTrailer,
+    )
+    from app.db.logistics_models import (
+        GeofenceAlert, GeofenceZone, MaintenanceSchedule, RepairOrder, Vehicle,
+    )
+    from app.db.models import (
+        ActionableRegistry, ActionableRegistryItem, AgentRelease, AgentRollout,
+        AgentRolloutEvent, AgentRolloutTarget, ComplianceReportJob, ErrorEvent,
+        ErrorEventBucket, ExportTemplate, HistorianRetentionPolicy,
+        ModelRegistryEntry, Operation, ScheduledComplianceReport, Task,
+        TaskBoard, TaskColumn, TaskComment, TaskRule,
+    )
+    from app.db.notification_models import (
+        NotificationDelivery, NotificationSubscription,
+    )
+
+    await init_db()
+    print(f"Seeding demo data into {os.environ['DATABASE_URL']}")
+
+    async with AsyncSessionLocal() as db:
+        # Best-effort: relax FK-trigger ordering for this bulk load. autoflush is
+        # off and several tables reference parents via a bare ForeignKey column
+        # with no ORM relationship() (so the unit-of-work can't order the
+        # inserts) — and yard's DockDoor<->YardTrailer is a genuine FK cycle.
+        # On the real (migration-built) schema this either isn't needed or the
+        # role can't set it; failure is harmless, so we swallow it.
+        from sqlalchemy import text as _sql_text
+        _pg = db.bind.dialect.name == "postgresql"
+        if _pg:
+            try:
+                await db.execute(_sql_text("SET session_replication_role = replica"))
+                await db.commit()
+            except Exception:
+                await db.rollback()
+                _pg = False
+
+        # ---- wipe previous demo rows (surgical: fixed ids / org scope) -------
+        asset_ids = [A_CNC, A_VIB, A_AUDIO, A_CAMERA, A_CONVEYOR]
+        await db.execute(delete(Telemetry).where(Telemetry.asset_id.in_(asset_ids)))
+        await db.execute(delete(Alarm).where(Alarm.asset_id.in_(asset_ids)))
+        await db.execute(delete(SessionDataSource).where(SessionDataSource.session_id == SESSION_ID))
+        await db.execute(delete(AnalysisSession).where(AnalysisSession.id == SESSION_ID))
+        for model, col in [
+            (ERPCorrelation, ERPCorrelation.organization_id),
+            (ERPIntegrationEvent, ERPIntegrationEvent.organization_id),
+            (ERPSyncStatus, ERPSyncStatus.organization_id),
+            (ERPDataMapping, ERPDataMapping.organization_id),
+            (ERPEntity, ERPEntity.organization_id),
+            (DriverWaitTime, DriverWaitTime.organization_id),
+            (DockAppointment, DockAppointment.organization_id),
+            (YardTrailer, YardTrailer.organization_id),
+            (DockDoor, DockDoor.organization_id),
+            (Shipment, Shipment.organization_id),
+            (Vehicle, Vehicle.organization_id),
+            (GeofenceAlert, GeofenceAlert.organization_id),
+            (GeofenceZone, GeofenceZone.organization_id),
+            (MaintenanceSchedule, MaintenanceSchedule.organization_id),
+            (RepairOrder, RepairOrder.organization_id),
+            (Driver, Driver.organization_id),
+            (Carrier, Carrier.organization_id),
+        ]:
+            await db.execute(delete(model).where(col == ORG))
+        await db.execute(delete(IntegrationConfiguration).where(IntegrationConfiguration.id == ERP_INT))
+
+        # ---- wipe gap-area demo rows (FK-safe order) -------------------------
+        await db.execute(delete(TaskComment).where(TaskComment.task_id.in_(TASK_IDS)))
+        await db.execute(delete(Task).where(Task.board_id == BOARD_ID))
+        await db.execute(delete(TaskRule).where(TaskRule.organization_id == ORG))
+        await db.execute(delete(TaskColumn).where(TaskColumn.board_id == BOARD_ID))
+        await db.execute(delete(TaskBoard).where(TaskBoard.organization_id == ORG))
+        await db.execute(delete(Operation).where(Operation.asset_id.in_(asset_ids)))
+        await db.execute(delete(AgentRolloutEvent).where(AgentRolloutEvent.organization_id == ORG))
+        await db.execute(delete(AgentRolloutTarget).where(AgentRolloutTarget.organization_id == ORG))
+        await db.execute(delete(AgentRollout).where(AgentRollout.organization_id == ORG))
+        await db.execute(delete(AgentRelease).where(AgentRelease.organization_id == ORG))
+        await db.execute(delete(ModelRegistryEntry).where(ModelRegistryEntry.organization_id == ORG))
+        await db.execute(delete(ActionableRegistryItem).where(
+            ActionableRegistryItem.registry_id.in_([REGISTRY_LOTO_ID, REGISTRY_ISO_ID])))
+        await db.execute(delete(ActionableRegistry).where(ActionableRegistry.organization_id == ORG))
+        await db.execute(delete(ComplianceReportJob).where(ComplianceReportJob.organization_id == ORG))
+        await db.execute(delete(ScheduledComplianceReport).where(ScheduledComplianceReport.organization_id == ORG))
+        await db.execute(delete(NotificationDelivery).where(NotificationDelivery.organization_id == ORG))
+        await db.execute(delete(NotificationSubscription).where(NotificationSubscription.organization_id == ORG))
+        await db.execute(delete(ErrorEventBucket).where(ErrorEventBucket.fingerprint.in_(ERROR_FINGERPRINTS)))
+        await db.execute(delete(ErrorEvent).where(ErrorEvent.fingerprint.in_(ERROR_FINGERPRINTS)))
+        await db.execute(delete(ExportTemplate).where(ExportTemplate.organization_id == ORG))
+        await db.execute(delete(HistorianRetentionPolicy).where(HistorianRetentionPolicy.organization_id == _uuid.UUID(ORG)))
+
+        await db.execute(delete(Asset).where(Asset.id.in_(asset_ids)))
+        await db.execute(delete(AssetType).where(AssetType.id.in_([AT_CNC, AT_VIB, AT_AUDIO, AT_VIDEO, AT_CONVEYOR])))
+        await db.execute(delete(Workcell).where(Workcell.id.in_([WC_MACHINING, WC_ASSEMBLY])))
+        await db.commit()
+
+        # ---- org / user / workcells ------------------------------------------
+        if (await db.execute(select(Organization).where(Organization.id == ORG))).scalar_one_or_none() is None:
+            db.add(Organization(id=ORG, name="OmniusGrid Demo Plant (CHI-01)", slug="demo-chi-01"))
+        if (await db.execute(select(User).where(User.id == USER))).scalar_one_or_none() is None:
+            db.add(User(id=USER, email="admin@omniusgrid.com", full_name="Dev Admin", role="admin",
+                        is_active=True, organization_id=ORG,
+                        hashed_password="$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYHqF5pXa9W"))
+        db.add(Workcell(id=WC_MACHINING, organization_id=ORG, name="Machining Center",
+                        description="CNC mills and lathes", location="Building B, Floor 1"))
+        db.add(Workcell(id=WC_ASSEMBLY, organization_id=ORG, name="Assembly Line B",
+                        description="Conveyor and packaging", location="Building A, Floor 2"))
+
+        # ---- asset types + sensor assets --------------------------------------
+        db.add(AssetType(id=AT_CNC, name="cnc_mill", category="subtractive_manufacturing", sensor_class="machinery"))
+        db.add(AssetType(id=AT_VIB, name="vibration_sensor", category="condition_monitoring", sensor_class="machinery"))
+        db.add(AssetType(id=AT_AUDIO, name="audio_sensor", category="acoustic_monitoring", sensor_class="audio"))
+        db.add(AssetType(id=AT_VIDEO, name="video_camera", category="visual_monitoring", sensor_class="video"))
+        db.add(AssetType(id=AT_CONVEYOR, name="conveyor", category="material_handling", sensor_class="machinery"))
+
+        db.add(Asset(id=A_CNC, organization_id=ORG, workcell_id=WC_MACHINING, asset_type_id=AT_CNC,
+                     name="CNC Mill #1", vendor="Haas", model="VF-2", serial_number="HAAS-VF2-001",
+                     current_packml_state="Execute", sensor_class="machinery", last_seen=NOW))
+        db.add(Asset(id=A_VIB, organization_id=ORG, workcell_id=WC_MACHINING, asset_type_id=AT_VIB,
+                     name="Vibration Sensor — CNC Spindle", vendor="IFM", model="VVB001",
+                     serial_number="IFM-VVB-08", current_packml_state="Execute",
+                     sensor_class="machinery", last_seen=NOW))
+        db.add(Asset(id=A_AUDIO, organization_id=ORG, workcell_id=WC_MACHINING, asset_type_id=AT_AUDIO,
+                     name="Acoustic Monitor — Machining Center", vendor="SoundSafe", model="AM-100",
+                     serial_number="SSAM-100-01", current_packml_state="Execute", sensor_class="audio",
+                     media_config={"sample_rate": 16000, "channels": 1}, last_seen=NOW))
+        db.add(Asset(id=A_CAMERA, organization_id=ORG, workcell_id=WC_ASSEMBLY, asset_type_id=AT_VIDEO,
+                     name="Dock Camera — Door 3", vendor="Axis", model="M2025", serial_number="AXM-2025-03",
+                     current_packml_state="Execute", sensor_class="video",
+                     media_config={"stream_url": "http://192.168.1.203/mjpeg", "snapshot_interval": 30},
+                     last_seen=NOW))
+        db.add(Asset(id=A_CONVEYOR, organization_id=ORG, workcell_id=WC_ASSEMBLY, asset_type_id=AT_CONVEYOR,
+                     name="Conveyor #1", vendor="Dorner", model="2200", serial_number="DRN-2200-11",
+                     current_packml_state="Execute", sensor_class="machinery", last_seen=NOW))
+        # Persist parents before FK children — several child tables reference
+        # assets via a bare ForeignKey column with no ORM relationship(), so the
+        # unit-of-work won't order the inserts on its own.
+        await db.flush()
+
+        # ---- 14 days of correlated telemetry (30-min interval) ----------------
+        appointment_hours = [7.0, 13.0]  # dock activity windows (camera motion)
+        points = 14 * 48
+        seq = 0
+        rows = 0
+        for i in range(points):
+            t = NOW - timedelta(minutes=30 * (points - 1 - i))
+            seq += 1
+            vib = vibration_at(t)
+            db.add(Telemetry(time=t, asset_id=A_VIB, metric_name="vibration_rms", value=vib, unit="mm/s", sequence_num=seq))
+            db.add(Telemetry(time=t, asset_id=A_VIB, metric_name="temperature",
+                             value=round(48 + vib * 1.6 + RNG.uniform(-1.5, 1.5), 2), unit="°C", sequence_num=seq))
+            db.add(Telemetry(time=t, asset_id=A_VIB, metric_name="load_percent",
+                             value=round(62 + RNG.uniform(-6, 6), 2), unit="%", sequence_num=seq))
+            db.add(Telemetry(time=t, asset_id=A_CNC, metric_name="spindle_rpm",
+                             value=round(11800 + RNG.uniform(-350, 350), 1), unit="RPM", sequence_num=seq))
+            db.add(Telemetry(time=t, asset_id=A_CNC, metric_name="spindle_load",
+                             value=round(70 + vib * 1.2 + RNG.uniform(-4, 4), 2), unit="%", sequence_num=seq))
+            db.add(Telemetry(time=t, asset_id=A_CNC, metric_name="tool_temperature",
+                             value=round(36 + vib * 1.9 + RNG.uniform(-1.5, 1.5), 2), unit="°C", sequence_num=seq))
+            rms, peak, lo, mid, hi = audio_bands_at(t)
+            for m, v, u in [("audio_rms", rms, ""), ("audio_peak_hz", peak, "Hz"),
+                            ("audio_band_low", lo, ""), ("audio_band_mid", mid, ""),
+                            ("audio_band_high", hi, "")]:
+                db.add(Telemetry(time=t, asset_id=A_AUDIO, metric_name=m, value=v, unit=u, sequence_num=seq))
+            bright, motion = camera_at(t, appointment_hours)
+            db.add(Telemetry(time=t, asset_id=A_CAMERA, metric_name="frame_brightness", value=bright, sequence_num=seq))
+            db.add(Telemetry(time=t, asset_id=A_CAMERA, metric_name="motion_score", value=motion, sequence_num=seq))
+            db.add(Telemetry(time=t, asset_id=A_CONVEYOR, metric_name="speed",
+                             value=round(2.4 + RNG.uniform(-0.2, 0.2), 3), unit="m/s", sequence_num=seq))
+            db.add(Telemetry(time=t, asset_id=A_CONVEYOR, metric_name="load",
+                             value=round(78 + RNG.uniform(-9, 9), 2), unit="%", sequence_num=seq))
+            rows += 13
+        print(f"  telemetry: {rows} rows across 5 assets")
+
+        # Vibration alarm at the spike; cleared when the WO completed.
+        db.add(Alarm(asset_id=A_VIB, alarm_code="VIB_HIGH", severity="high",
+                     message="Spindle vibration exceeded ISO zone C (7.1 mm/s)",
+                     occurred_at=days_ago(ALARM_D), cleared_at=days_ago(FIXED_D),
+                     is_active=False, is_acknowledged=True, acknowledged_by=USER,
+                     acknowledged_at=days_ago(1.9)))
+        db.add(Alarm(asset_id=A_AUDIO, alarm_code="ACOUSTIC_ANOMALY", severity="medium",
+                     message="High-frequency band energy trending up (bearing-wear signature)",
+                     occurred_at=days_ago(3.5), is_active=False, is_acknowledged=True,
+                     acknowledged_by=USER, acknowledged_at=days_ago(3.4)))
+
+        # ---- SIMULATED FULLY-SYNCED ERP INTEGRATION ---------------------------
+        db.add(IntegrationConfiguration(
+            id=ERP_INT, organization_id=ORG, integration_type="erp",
+            integration_name="SAP S/4HANA — Plant CHI-01",
+            configuration={"erp_type": "sap", "auth_type": "oauth2",
+                           "base_url": "https://sap.demo.omniusgrid.local",
+                           "auth_config": {"client_id": "omnius-demo"},
+                           "rate_limit": {"requests_per_minute": 60, "burst_limit": 10},
+                           "timeout": 30, "webhook_secret": "demo-secret",
+                           "client": "100", "service_path": "/sap/opu/odata/sap"},
+            authentication={"client_id": "omnius-demo"}, is_active=True,
+            health_status="success", last_health_check=NOW - timedelta(minutes=12),
+            erp_type="sap", erp_version="S/4HANA 2023", sync_schedule="0 * * * *",
+            sync_frequency_minutes=60, last_successful_sync=NOW - timedelta(minutes=42),
+        ))
+        for ent, field, target in [("WorkOrder", "OrderNumber", "job_id"),
+                                   ("PurchaseOrder", "PONumber", "po_number"),
+                                   ("Invoice", "ShipmentNumber", "shipment_number")]:
+            db.add(ERPDataMapping(organization_id=ORG, integration_id=ERP_INT,
+                                  source_entity=ent, source_field=field,
+                                  target_entity="platform", target_field=target,
+                                  data_type="string", is_required=True))
+        for ent, n in [("WorkOrder", 14), ("PurchaseOrder", 23), ("Invoice", 9)]:
+            db.add(ERPSyncStatus(organization_id=ORG, integration_id=ERP_INT, entity_type=ent,
+                                 last_sync_at=NOW - timedelta(minutes=42), last_sync_status="success",
+                                 records_synced=n, records_failed=0, sync_duration_seconds=8))
+
+        # ERP entities — the star work order + supporting business objects.
+        def entity(etype, eid, data, updated):
+            db.add(ERPEntity(organization_id=ORG, integration_id=ERP_INT, entity_type=etype,
+                             entity_id=eid, entity_data=data, source_system="sap",
+                             valid_from=updated, updated_at=updated))
+
+        entity("WorkOrder", "WO-77105", {
+            "asset": "CNC Mill #1", "asset_id": A_CNC,
+            "operation": "spindle bearing replacement", "priority": "urgent",
+            "status": "completed", "released_at": days_ago(ALARM_D).isoformat(),
+            "completed_at": days_ago(FIXED_D).isoformat(), "planned_hours": 6,
+            "actual_hours": 5.5, "cause": "vibration alarm VIB_HIGH",
+        }, days_ago(FIXED_D))
+        entity("WorkOrder", "WO-77002", {
+            "asset": "Conveyor #1", "operation": "belt tension check",
+            "priority": "routine", "status": "completed", "planned_hours": 1,
+        }, days_ago(6))
+        entity("PurchaseOrder", "PO-10021", {
+            "vendor": "SKF Bearings", "material": "Spindle bearing kit 7014-CD",
+            "amount": 1840.0, "currency": "USD", "work_order": "WO-77105",
+            "status": "received", "due_date": days_ago(1.5).isoformat(),
+        }, days_ago(1.5))
+        entity("PurchaseOrder", "PO-10018", {
+            "vendor": "ACME Metals", "material": "6061 aluminum billet",
+            "amount": 12450.0, "currency": "USD", "status": "received",
+            "po_number": "PO-10018", "trailer": "TRL-4482",
+            "due_date": days_ago(0.3).isoformat(),
+        }, days_ago(0.3))
+        entity("PurchaseOrder", "PO-10019", {
+            "vendor": "Baxter Polymers", "material": "ABS pellets",
+            "amount": 3980.5, "currency": "USD", "status": "in_transit",
+            "po_number": "PO-10019", "trailer": "TRL-9017",
+            "due_date": (NOW + timedelta(days=1)).isoformat(),
+        }, days_ago(0.1))
+        for i, (ship, amt, d) in enumerate([("SHP-2201", 22150.0, 2.2), ("SHP-2202", 9870.0, 4.1),
+                                            ("SHP-2203", 15400.0, 6.5)]):
+            entity("Invoice", f"INV-558{i}", {
+                "customer": "Northwind Logistics", "amount": amt, "currency": "USD",
+                "status": "open" if i == 0 else "paid", "shipment_number": ship,
+            }, days_ago(d))
+
+        # ERP event stream (webhooks/syncs as they landed).
+        for etype, eid, ent, entid, d in [
+            ("workorder.released", "evt-7001", "WorkOrder", "WO-77105", ALARM_D),
+            ("po.created", "evt-7002", "PurchaseOrder", "PO-10021", ALARM_D - 0.05),
+            ("workorder.completed", "evt-7003", "WorkOrder", "WO-77105", FIXED_D),
+            ("po.received", "evt-7004", "PurchaseOrder", "PO-10018", 0.3),
+            ("invoice.created", "evt-7005", "Invoice", "INV-5580", 2.2),
+        ]:
+            db.add(ERPIntegrationEvent(organization_id=ORG, integration_id=ERP_INT,
+                                       event_type=etype, event_id=eid, source_system="sap",
+                                       entity_type=ent, entity_id=entid,
+                                       event_data={"entity_id": entid, "event_type": etype},
+                                       processing_status="completed", processed_at=days_ago(d),
+                                       created_at=days_ago(d)))
+        db.flush = db.flush  # no-op clarity
+        await db.flush()
+
+        # Recorded ERP<->sensor correlations (what the engine found).
+        wo_event = (await db.execute(select(ERPIntegrationEvent).where(
+            ERPIntegrationEvent.event_id == "evt-7001"))).scalar_one()
+        # sensor_event_id is a UUID column (migration 020 / native uuid); keep the
+        # metric name in the metadata rather than packing it into the id string.
+        db.add(ERPCorrelation(organization_id=ORG, correlation_type="work_order_vibration",
+                              erp_event_id=wo_event.id, sensor_event_id=A_VIB,
+                              correlation_score=0.87,
+                              correlation_metadata={"window_days": 7, "asset": "CNC Mill #1",
+                                                    "metric": "vibration_rms"}))
+        db.add(ERPCorrelation(organization_id=ORG, correlation_type="po_dock_arrival",
+                              sensor_event_id=A_CAMERA, correlation_score=0.74,
+                              correlation_metadata={"po_number": "PO-10018", "door": "D3",
+                                                    "metric": "motion_score"}))
+
+        # ---- yard (correlated to POs + camera) ---------------------------------
+        for i, door_id in enumerate(DOOR_IDS, start=1):
+            db.add(DockDoor(id=door_id, organization_id=ORG, door_number=f"D{i}",
+                            door_type="receiving" if i <= 5 else "shipping",
+                            status="occupied" if i == 3 else "available",
+                            current_trailer_id=TRAILER_DOCKED if i == 3 else None))
+        db.add(Carrier(id=CARRIER_A, organization_id=ORG, carrier_name="Great Lakes Freight",
+                       dot_number="DOT-448821", mc_number="MC-99120", ctpat_certified=True,
+                       insurance_on_file=True, insurance_expires_at=NOW + timedelta(days=21),
+                       safety_rating="satisfactory", csa_score=41.5, is_active=True))
+        db.add(Carrier(id=CARRIER_B, organization_id=ORG, carrier_name="Prairie Express",
+                       dot_number="DOT-102934", mc_number="MC-55431", ctpat_certified=False,
+                       insurance_on_file=True, insurance_expires_at=NOW + timedelta(days=180),
+                       safety_rating="conditional", csa_score=68.0, is_active=True))
+
+        db.add(YardTrailer(id=TRAILER_DWELL, organization_id=ORG, trailer_number="TRL-4482",
+                           carrier_id=CARRIER_A, trailer_type="dry_van", status="yard",
+                           yard_location="Zone A-04", seal_number="SL-88121",
+                           check_in_at=NOW - timedelta(hours=6),  # 4h past free time -> detention
+                           meta_data={"po_number": "PO-10018", "contents": "6061 aluminum billet"}))
+        db.add(YardTrailer(id=TRAILER_DOCKED, organization_id=ORG, trailer_number="TRL-7731",
+                           carrier_id=CARRIER_A, trailer_type="reefer", status="docked",
+                           dock_door_id=DOOR_IDS[2], seal_number="SL-88907",
+                           check_in_at=NOW - timedelta(hours=1.2),
+                           meta_data={"po_number": "PO-10021", "contents": "Spindle bearing kit"}))
+        db.add(YardTrailer(id=TRAILER_YARD, organization_id=ORG, trailer_number="TRL-9017",
+                           carrier_id=CARRIER_B, trailer_type="dry_van", status="yard",
+                           yard_location="Zone B-02", check_in_at=NOW - timedelta(hours=0.8),
+                           meta_data={"po_number": "PO-10019", "contents": "ABS pellets"}))
+        for tid, num, d_in, d_out in [(TRAILER_OUT1, "TRL-3306", 3.4, 3.1),
+                                      (TRAILER_OUT2, "TRL-5540", 1.6, 1.35)]:
+            db.add(YardTrailer(id=tid, organization_id=ORG, trailer_number=num,
+                               carrier_id=CARRIER_B, trailer_type="dry_van", status="checked_out",
+                               check_in_at=days_ago(d_in), check_out_at=days_ago(d_out)))
+            db.add(DriverWaitTime(organization_id=ORG, trailer_id=tid,
+                                  check_in_at=days_ago(d_in), check_out_at=days_ago(d_out),
+                                  total_wait_minutes=int((d_in - d_out) * 1440),
+                                  detention_minutes=max(0, int((d_in - d_out) * 1440 - 120)),
+                                  detention_rate=50.0,
+                                  detention_charge=round(max(0.0, ((d_in - d_out) * 1440 - 120) / 60 * 50), 2)))
+        for d, hour in [(0.0, 7), (0.0, 13), (-1.0, 7)]:  # today's two + tomorrow morning
+            start = (NOW - timedelta(days=d)).replace(hour=hour, minute=0, second=0, microsecond=0)
+            db.add(DockAppointment(organization_id=ORG, dock_door_id=DOOR_IDS[2],
+                                   appointment_type="receiving", scheduled_start=start,
+                                   scheduled_end=start + timedelta(hours=2),
+                                   status="completed" if start < NOW else "scheduled",
+                                   carrier_id=CARRIER_A, priority="high" if hour == 7 else "normal",
+                                   meta_data={"po_number": "PO-10018" if hour == 7 else "PO-10019"}))
+
+        # ---- transportation (correlated to invoices) ---------------------------
+        db.add(Driver(id=DRIVER_1, organization_id=ORG, carrier_id=CARRIER_A, first_name="Maria",
+                      last_name="Santos", license_number="IL-D449-2210", license_state="IL",
+                      cdl_class="A", hos_drive_hours_today=10.6, hos_on_duty_hours_today=12.9,
+                      hos_cycle_hours=61.0, current_hos_status="driving", is_active=True))
+        db.add(Driver(id=DRIVER_2, organization_id=ORG, carrier_id=CARRIER_A, first_name="Dwayne",
+                      last_name="Carter", license_number="IL-D101-8837", license_state="IL",
+                      cdl_class="A", hos_drive_hours_today=3.2, hos_on_duty_hours_today=5.0,
+                      hos_cycle_hours=28.5, current_hos_status="on_duty", is_active=True))
+        db.add(Driver(id=DRIVER_3, organization_id=ORG, carrier_id=CARRIER_B, first_name="Priya",
+                      last_name="Natarajan", license_number="WI-D778-1204", license_state="WI",
+                      cdl_class="A", hos_drive_hours_today=0.0, hos_on_duty_hours_today=1.5,
+                      hos_cycle_hours=44.0, current_hos_status="off_duty", is_active=True,
+                      medical_cert_expires=NOW + timedelta(days=18)))
+        vehicles = [("TRK-081", 0.62, 214880, "gt-device-001", "moving"),
+                    ("TRK-114", 0.35, 158211, "gt-device-002", "idle"),
+                    ("TRK-207", 0.88, 88109, "gt-device-003", "idle")]
+        for num, fuel, odo, gt, status in vehicles:
+            db.add(Vehicle(organization_id=ORG, carrier_id=CARRIER_A, vehicle_number=num,
+                           make="Freightliner", model="Cascadia", year=2023, status=status,
+                           fuel_level_percent=fuel * 100, odometer_miles=odo, geotab_device_id=gt,
+                           last_location={"latitude": 41.87 + RNG.uniform(-0.4, 0.4),
+                                          "longitude": -87.62 + RNG.uniform(-0.5, 0.5),
+                                          "speed": 58 if status == "moving" else 0}))
+        ships = [
+            ("SHP-2201", "delivered", 3.0, 2.2, 2.4, DRIVER_1),   # on time
+            ("SHP-2202", "delivered", 5.0, 4.1, 3.9, DRIVER_2),   # late
+            ("SHP-2203", "delivered", 7.2, 6.5, 6.6, DRIVER_2),   # on time
+            ("SHP-2204", "in_transit", 0.4, None, -0.6, DRIVER_1),
+            ("SHP-2205", "planned", None, None, -2.0, None),
+        ]
+        for num, status, picked_d, delivered_d, sched_d, drv in ships:
+            db.add(Shipment(organization_id=ORG, carrier_id=CARRIER_A, driver_id=drv,
+                            shipment_number=num, shipment_type="outbound", status=status,
+                            origin={"city": "Chicago", "state": "IL"},
+                            destination={"city": "Dallas", "state": "TX"},
+                            actual_pickup=days_ago(picked_d) if picked_d else None,
+                            scheduled_delivery=days_ago(sched_d) if sched_d is not None else None,
+                            actual_delivery=days_ago(delivered_d) if delivered_d else None,
+                            priority="normal", total_weight_lbs=32000, total_pieces=18))
+        db.add(GeofenceZone(organization_id=ORG, name="Plant CHI-01 Perimeter", zone_type="circle",
+                            center_lat=41.8781, center_lng=-87.6298, radius_meters=800,
+                            trigger_on="both", severity="warning"))
+        db.add(GeofenceZone(organization_id=ORG, name="Customer DC — Dallas", zone_type="circle",
+                            center_lat=32.7767, center_lng=-96.7970, radius_meters=1200,
+                            trigger_on="entry", severity="info"))
+        await db.flush()
+        zone = (await db.execute(select(GeofenceZone).where(
+            GeofenceZone.name == "Plant CHI-01 Perimeter",
+            GeofenceZone.organization_id == ORG))).scalars().first()
+        db.add(GeofenceAlert(organization_id=ORG, zone_id=str(zone.id), vehicle_id="TRK-081",
+                             event_type="exit", severity="warning", acknowledged=True,
+                             acknowledged_at=days_ago(0.4), created_at=days_ago(0.42),
+                             location={"latitude": 41.87, "longitude": -87.64}))
+        db.add(GeofenceAlert(organization_id=ORG, zone_id=str(zone.id), vehicle_id="TRK-114",
+                             event_type="exit", severity="critical", acknowledged=False,
+                             created_at=days_ago(0.05),
+                             location={"latitude": 41.88, "longitude": -87.60}))
+        db.add(MaintenanceSchedule(organization_id=ORG, vehicle_id="TRK-114",
+                                   maintenance_type="oil_change", description="15k-mile service",
+                                   due_date=days_ago(2), status="scheduled", estimated_cost=220.0))
+        db.add(MaintenanceSchedule(organization_id=ORG, vehicle_id="TRK-081",
+                                   maintenance_type="dot_inspection", description="Annual DOT inspection",
+                                   due_date=NOW + timedelta(days=12), status="scheduled",
+                                   estimated_cost=350.0))
+        db.add(RepairOrder(organization_id=ORG, vehicle_id="TRK-207", title="Brake pad replacement",
+                           status="in_progress", priority="high", vendor="Windy City Fleet Svc",
+                           cost=980.0, category="brakes", opened_at=days_ago(1.2)))
+        for title, cost, cat, d in [("Alternator replacement", 640.0, "electrical", 34),
+                                    ("Tire rotation + 2 new steer tires", 1240.0, "tires", 61),
+                                    ("Coolant leak repair", 415.0, "engine", 88)]:
+            db.add(RepairOrder(organization_id=ORG, vehicle_id="TRK-081", title=title,
+                               status="completed", priority="medium", cost=cost, category=cat,
+                               opened_at=days_ago(d + 2), completed_at=days_ago(d)))
+
+        # ---- operations (Operations page + PackML history) ---------------------
+        # A cadence of machining jobs; the vibration-fault window shows an idle
+        # gap (day -2 -> -1) while WO-77105 replaces the spindle bearing.
+        op_rows = 0
+        for j in range(10):
+            d = 12 - j * 1.2
+            faulted = ALARM_D <= d <= (ALARM_D + 1.3)
+            status = "idle" if faulted else "completed"
+            planned = 90  # OperationResponse types durations as int minutes
+            actual = int(round(planned + RNG.uniform(-8, 22)))
+            db.add(Operation(
+                asset_id=A_CNC, operation_name=f"Machine bracket lot LOT-{4400 + j}",
+                job_id=f"JOB-{5200 + j}", status=status,
+                started_at=days_ago(d), completed_at=days_ago(max(0.05, d - actual / 1440)),
+                planned_duration=planned, actual_duration=actual,
+                packml_state_durations={"Execute": actual * 60, "Idle": 300, "Held": 120 if faulted else 0},
+                meta_data={"parts": 40, "good": 39 if not faulted else 31}))
+            op_rows += 1
+        # a live one in progress + a conveyor job
+        db.add(Operation(asset_id=A_CNC, operation_name="Machine bracket lot LOT-4410",
+                         job_id="JOB-5210", status="running", started_at=days_ago(0.05),
+                         planned_duration=90,
+                         packml_state_durations={"Execute": 2400}, meta_data={"parts": 12, "good": 12}))
+        db.add(Operation(asset_id=A_CONVEYOR, operation_name="Palletize finished goods",
+                         job_id="JOB-6001", status="running", started_at=days_ago(0.1),
+                         planned_duration=480, packml_state_durations={"Execute": 6000}))
+        op_rows += 2
+
+        # ---- Kanban board (Operations Board) -----------------------------------
+        db.add(TaskBoard(id=BOARD_ID, organization_id=ORG, name="Operations Board",
+                         board_type="unified", is_active=True))
+        col_meta = [("Backlog", "backlog", 0, 50, "#6B7280"),
+                    ("Triage", "triage", 1, 20, "#F59E0B"),
+                    ("In Progress", "in_progress", 2, 10, "#3B82F6"),
+                    ("Review", "review", 3, 15, "#8B5CF6"),
+                    ("Rejected", "rejected", 4, 10, "#EF4444"),
+                    ("Done", "done", 5, 100, "#10B981")]
+        for name, ctype, pos, wip, color in col_meta:
+            db.add(TaskColumn(id=COL_IDS[ctype], board_id=BOARD_ID, name=name,
+                              position=pos, wip_limit=wip, column_type=ctype, color=color))
+        await db.flush()  # board + columns before tasks/rule reference them
+
+        # id, title, type, priority, status, column, asset, extras
+        tasks = [
+            (TASK_IDS[0], "Investigate VIB_HIGH on CNC Spindle vibration sensor",
+             "alarm_response", "high", "in_progress", "in_progress", A_VIB,
+             {"alarm_id": None, "progress_percent": 60, "assigned_to": USER, "assigned_by": USER}),
+            (TASK_IDS[1], "Replace spindle bearing — CNC Mill #1 (WO-77105)",
+             "maintenance_cm", "critical", "completed", "done", A_CNC,
+             {"work_order_id": "WO-77105", "progress_percent": 100,
+              "approval_status": "approved", "approved_by": USER,
+              "completed_by": USER, "completed_at": days_ago(FIXED_D)}),
+            (TASK_IDS[2], "Belt tension check — Conveyor #1",
+             "maintenance_pm", "medium", "completed", "done", A_CONVEYOR,
+             {"progress_percent": 100, "completed_by": USER, "completed_at": days_ago(6)}),
+            (TASK_IDS[3], "Review acoustic anomaly (bearing-wear signature)",
+             "quality_inspection", "medium", "in_progress", "review", A_AUDIO,
+             {"progress_percent": 40, "assigned_to": USER}),
+            (TASK_IDS[4], "Calibrate Dock Camera — Door 3 motion detection",
+             "safety_check", "low", "ready", "backlog", A_CAMERA, {}),
+            (TASK_IDS[5], "Follow up on TRL-4482 detention (aluminum billet)",
+             "material_request", "high", "ready", "triage", None,
+             {"due_date": NOW + timedelta(hours=6)}),
+            (TASK_IDS[6], "Verify SKF bearing kit receipt (PO-10021)",
+             "custom", "medium", "draft", "backlog", None, {}),
+        ]
+        for i, (tid, title, ttype, prio, tstatus, col, asset, extra) in enumerate(tasks):
+            # approved_by/completed_by are NOT NULL under ORM create_all (the
+            # model's UUIDForeignKey defaults to non-null); default them to the
+            # demo user and let per-task extras override. They are nullable in
+            # the migration-built schema, so this is harmless there.
+            kwargs = {"approved_by": USER, "completed_by": USER}
+            kwargs.update(extra)
+            db.add(Task(id=tid, board_id=BOARD_ID, column_id=COL_IDS[col], position=i,
+                        title=title, task_type=ttype, priority=prio, status=tstatus,
+                        asset_id=asset, created_by=USER, **kwargs))
+        await db.flush()  # tasks before comments reference them
+        db.add(TaskComment(task_id=TASK_IDS[0], user_id=USER, comment_type="comment",
+                           content="Vibration hit 8.3 mm/s — pulled acoustic feed, high-band energy confirms bearing wear."))
+        db.add(TaskComment(task_id=TASK_IDS[0], user_id=USER, comment_type="status_change",
+                           content="Moved to In Progress; SAP work order WO-77105 released.",
+                           extra_data={"before_state": "ready", "after_state": "in_progress"}))
+
+        # premade-style automation rule
+        db.add(TaskRule(id=TASK_RULE_ID, organization_id=ORG,
+                        rule_name="Auto-triage critical alarms",
+                        description="Create an alarm-response task when a high/critical alarm is raised.",
+                        is_active=True, is_system_rule=True, trigger_type="alarm_created",
+                        trigger_conditions={"severity": ["high", "critical"]},
+                        target_board_id=BOARD_ID, target_column_id=COL_IDS["triage"],
+                        task_template={"title": "Respond to {alarm_code} on {asset_name}",
+                                       "priority": "high", "task_type": "alarm_response"},
+                        assignee_rule="asset_owner", specific_assignee_id=USER,
+                        created_by=USER))
+
+        # ---- MLOps model registry ---------------------------------------------
+        db.add(ModelRegistryEntry(
+            id=MODEL_ANOMALY_ID, organization_id=ORG, name="anomaly", version="1.4.0",
+            framework="torchscript",
+            artifact_storage_key="s3://omniusgrid-demo/models/anomaly/1.4.0/model.pt",
+            checksum_sha256="a" * 64,
+            feature_contract={"features": ["vibration_rms", "temperature", "spindle_load"],
+                              "normalization": "zscore"},
+            metrics={"auc": 0.972, "precision": 0.94, "recall": 0.89},
+            release_notes="Bearing-wear anomaly detector trained on 14d of CHI-01 telemetry.",
+            status="published", created_by=USER))
+        db.add(ModelRegistryEntry(
+            id=MODEL_OEE_ID, organization_id=ORG, name="oee_forecast", version="0.9.1",
+            framework="torchscript",
+            artifact_storage_key="s3://omniusgrid-demo/models/oee_forecast/0.9.1/model.pt",
+            checksum_sha256="b" * 64,
+            feature_contract={"features": ["spindle_rpm", "spindle_load", "tool_temperature"]},
+            metrics={"mae": 3.1, "mape": 0.041}, status="draft", created_by=USER))
+
+        # ---- Edge fleet / OTA (config release + rollout + model release) -------
+        db.add(AgentRelease(
+            id=AGENT_RELEASE_ID, organization_id=ORG, version="1.4.0", channel="stable",
+            image_tag="omniusgrid/edge-agent:1.4.0", artifact_type="config",
+            bundle_storage_key="s3://omniusgrid-demo/releases/1.4.0/config-bundle.tar.gz",
+            checksum_sha256="c" * 64, signature_ed25519="ed25519:" + "1" * 86,
+            signing_key_id="demo-signing-key-01",
+            release_notes="Adds bearing-wear anomaly thresholds + acoustic band monitoring.",
+            status="published", created_by=USER))
+        db.add(AgentRelease(
+            id=MODEL_RELEASE_ID, organization_id=ORG, version="1.4.0", channel="anomaly",
+            artifact_type="model", model_name="anomaly",
+            bundle_storage_key="s3://omniusgrid-demo/releases/model-anomaly-1.4.0/model.pt",
+            checksum_sha256="d" * 64, signature_ed25519="ed25519:" + "2" * 86,
+            signing_key_id="demo-signing-key-01",
+            release_notes="OTA model rollout of anomaly detector 1.4.0.",
+            status="published", created_by=USER))
+        await db.flush()  # releases before rollout references them
+        db.add(AgentRollout(
+            id=ROLLOUT_ID, organization_id=ORG, release_id=AGENT_RELEASE_ID,
+            name="CHI-01 edge agents → 1.4.0",
+            target_selector={"sensor_class": ["machinery", "audio", "video"]},
+            strategy={"waves": [{"percent": 40}, {"percent": 100}], "soak_minutes": 30},
+            status="running", created_by=USER))
+        await db.flush()  # rollout before targets/events reference it
+        rollout_assets = [(A_CNC, "success", 0), (A_VIB, "success", 0), (A_AUDIO, "success", 0),
+                          (A_CAMERA, "updating", 1), (A_CONVEYOR, "pending", 1)]
+        for aid, tstatus, wave in rollout_assets:
+            db.add(AgentRolloutTarget(
+                rollout_id=ROLLOUT_ID, organization_id=ORG, asset_id=aid, wave_index=wave,
+                status=tstatus, current_version="1.3.2" if tstatus != "success" else "1.4.0",
+                attempts=1 if tstatus != "pending" else 0,
+                dispatched_at=days_ago(0.2) if tstatus != "pending" else None,
+                completed_at=days_ago(0.15) if tstatus == "success" else None,
+                last_event_at=days_ago(0.15) if tstatus != "pending" else None))
+        for etype, aid, d in [("rollout_started", None, 0.25), ("target_dispatched", A_CNC, 0.24),
+                              ("target_succeeded", A_CNC, 0.2), ("target_succeeded", A_VIB, 0.19),
+                              ("target_succeeded", A_AUDIO, 0.18), ("target_dispatched", A_CAMERA, 0.1)]:
+            db.add(AgentRolloutEvent(rollout_id=ROLLOUT_ID, organization_id=ORG,
+                                     event_type=etype, asset_id=aid,
+                                     detail={"version": "1.4.0"}, created_at=days_ago(d)))
+
+        # ---- Compliance + Registries -------------------------------------------
+        db.add(ActionableRegistry(
+            id=REGISTRY_LOTO_ID, organization_id=ORG, registry_name="OSHA 1910.147 (LOTO)",
+            registry_type="safety", registry_category="lockout_tagout",
+            description="Control of hazardous energy during machine servicing.",
+            is_active=True, is_compliance=True, frequency="quarterly",
+            next_due_date=NOW + timedelta(days=30), last_completed_date=days_ago(60),
+            compliance_score=88, priority_level="high", assigned_owner_id=USER,
+            reference_url="https://www.osha.gov/laws-regs/regulations/standardnumber/1910/1910.147",
+            created_by=USER))
+        db.add(ActionableRegistry(
+            id=REGISTRY_ISO_ID, organization_id=ORG, registry_name="ISO 9001:2015 QMS",
+            registry_type="quality", registry_category="qms",
+            description="Quality management system requirements.",
+            is_active=True, is_compliance=True, frequency="annually",
+            next_due_date=NOW + timedelta(days=120), compliance_score=93,
+            priority_level="medium", assigned_owner_id=USER, created_by=USER))
+        await db.flush()  # registries before their items
+        loto_items = [
+            ("1910.147(c)(4)", "Energy control procedures documented", "high", "documentation"),
+            ("1910.147(c)(6)", "Periodic inspection of procedures", "high", "audit"),
+            ("1910.147(c)(7)", "Employee LOTO training current", "medium", "documentation"),
+        ]
+        # related_task_id is NOT NULL under ORM create_all (nullable in the
+        # migration schema); point it at the demo alarm-response task.
+        for code, name, sev, method in loto_items:
+            db.add(ActionableRegistryItem(
+                registry_id=REGISTRY_LOTO_ID, item_code=code, item_name=name,
+                item_description=name, severity_level=sev, is_required=True,
+                verification_method=method, completion_frequency="quarterly",
+                compliance_score=90, next_due_at=NOW + timedelta(days=30),
+                last_completed_at=days_ago(60), related_task_id=TASK_IDS[0]))
+        db.add(ActionableRegistryItem(
+            registry_id=REGISTRY_ISO_ID, item_code="8.5.1", item_name="Control of production",
+            item_description="Production under controlled conditions.", severity_level="medium",
+            verification_method="audit", completion_frequency="annually", compliance_score=95,
+            related_task_id=TASK_IDS[0]))
+
+        db.add(ScheduledComplianceReport(
+            id=COMPLIANCE_SCHEDULE_ID, organization_id=ORG, name="Monthly SOC 2 report",
+            framework="soc2", format="pdf", frequency="monthly", timezone="UTC",
+            next_run_at=NOW + timedelta(days=14),
+            recipients=["admin@omniusgrid.com"], is_active=True,
+            last_run_at=days_ago(16), last_status="completed", created_by=USER))
+        await db.flush()  # schedule before job references it
+        db.add(ComplianceReportJob(
+            id=COMPLIANCE_JOB_ID, organization_id=ORG, requested_by=USER,
+            schedule_id=COMPLIANCE_SCHEDULE_ID, scheduled_for=days_ago(16),
+            framework="soc2", format="pdf", recipients=["admin@omniusgrid.com"],
+            report_status="completed", delivery_status="sent", generation_attempts=1,
+            email_attempts=1, filename="soc2-2026-06.pdf", media_type="application/pdf",
+            file_size=284100, file_sha256="e" * 64,
+            started_at=days_ago(16.02), completed_at=days_ago(16.0),
+            published_at=days_ago(16.0), email_sent_at=days_ago(15.99)))
+
+        # ---- Notifications ------------------------------------------------------
+        db.add(NotificationSubscription(
+            id=NOTIF_SUB_IDS[0], organization_id=ORG, name="Critical alarms → Ops webhook",
+            channel="webhook", target="https://hooks.demo.omniusgrid.local/alarms",
+            min_severity="critical", domain="alarms", enabled=True))
+        db.add(NotificationSubscription(
+            id=NOTIF_SUB_IDS[1], organization_id=ORG, name="Maintenance email digest",
+            channel="email", target="maintenance@omniusgrid.com",
+            min_severity="warning", domain="maintenance", enabled=True))
+        db.add(NotificationSubscription(
+            id=NOTIF_SUB_IDS[2], organization_id=ORG, name="Yard detention Slack alerts",
+            channel="slack", target="https://hooks.slack.com/services/DEMO/YARD/xxxx",
+            min_severity="warning", domain="yard", enabled=True))
+        deliveries = [
+            (NOTIF_SUB_IDS[0], "webhook", "critical", "VIB_HIGH on CNC Spindle", True, "200 OK", 2.0),
+            (NOTIF_SUB_IDS[1], "email", "warning", "Oil change overdue — TRK-114", True, "delivered", 2.0),
+            (NOTIF_SUB_IDS[2], "slack", "warning", "TRL-4482 entering detention", True, "ok", 0.2),
+            (NOTIF_SUB_IDS[0], "webhook", "critical", "Geofence exit — TRK-114", False,
+             "connection timeout", 0.05),
+        ]
+        for sub, ch, sev, title, ok, detail, d in deliveries:
+            db.add(NotificationDelivery(organization_id=ORG, subscription_id=sub, channel=ch,
+                                        severity=sev, title=title, message=title,
+                                        delivered=ok, detail=detail, created_at=days_ago(d)))
+
+        # ---- Error Triage -------------------------------------------------------
+        errors = [
+            (ERROR_FINGERPRINTS[0], "IntegrityError",
+             "POST /api/v1/kanban/tasks", "POST", 500,
+             "duplicate key value violates unique constraint", 7, 12.0, 0.3),
+            (ERROR_FINGERPRINTS[1], "TimeoutError",
+             "GET /api/v1/erp/integrations/{id}/entities", "GET", 504,
+             "SAP OData request timed out after 30s", 3, 9.0, 1.1),
+            (ERROR_FINGERPRINTS[2], "ValidationError",
+             "POST /api/v1/telemetry/ingest", "POST", 422,
+             "metric_name is required", 21, 13.5, 0.05),
+            (ERROR_FINGERPRINTS[3], "KeyError",
+             "GET /api/v1/oee/dashboard/summary", "GET", 500,
+             "'ideal_cycle_time'", 2, 6.0, 4.0),
+        ]
+        for fp, etype, route, method, code, msg, cnt, first_d, last_d in errors:
+            db.add(ErrorEvent(fingerprint=fp, exception_type=etype, route=route, method=method,
+                              status_code=code, message_sample=msg, total_count=cnt,
+                              status="open", first_seen=days_ago(first_d),
+                              last_seen=days_ago(last_d), organization_id=ORG))
+            await db.flush()  # error_event PK before its buckets FK it
+            # hourly buckets within the last 7d so count_in_range is non-zero
+            remaining = cnt
+            for h in range(min(cnt, 6)):
+                per = max(1, remaining // (min(cnt, 6) - h)) if (min(cnt, 6) - h) else remaining
+                db.add(ErrorEventBucket(fingerprint=fp,
+                                        bucket_hour=(NOW - timedelta(days=last_d, hours=h)).replace(
+                                            minute=0, second=0, microsecond=0),
+                                        count=per))
+                remaining -= per
+
+        # ---- Exports ------------------------------------------------------------
+        db.add(ExportTemplate(
+            id=EXPORT_TEMPLATE_IDS[0], organization_id=ORG, name="Weekly OEE summary",
+            description="Fleet OEE rollup for the plant weekly review.",
+            export_type="oee", export_format="pdf",
+            columns=["asset_name", "oee", "availability", "performance", "quality"],
+            filters={"period": "7d"}, created_by=USER))
+        db.add(ExportTemplate(
+            id=EXPORT_TEMPLATE_IDS[1], organization_id=ORG, name="Open Kanban tasks",
+            description="All non-completed operations-board tasks.",
+            export_type="kanban", export_format="xlsx",
+            columns=["title", "task_type", "priority", "status", "assigned_to"],
+            filters={"status": "!completed"}, created_by=USER))
+
+        # ---- Historian retention policy ----------------------------------------
+        db.add(HistorianRetentionPolicy(
+            organization_id=_uuid.UUID(ORG), metric_name="*", hot_retention_days=30,
+            warm_retention_days=365, cold_retention_days=1825, ingestion_priority=3,
+            archival_enabled=True, created_by=_uuid.UUID(USER)))
+        db.add(HistorianRetentionPolicy(
+            organization_id=_uuid.UUID(ORG), metric_name="vibration_rms", hot_retention_days=90,
+            warm_retention_days=730, cold_retention_days=1825, ingestion_priority=1,
+            archival_enabled=True, created_by=_uuid.UUID(USER)))
+        print(f"  operations: {op_rows}, kanban tasks: {len(tasks)}, "
+              f"rollout targets: {len(rollout_assets)}, registries: 2, errors: {len(errors)}")
+
+        await db.commit()
+
+        # ---- ready-made Correlation AI session ---------------------------------
+        from app.services.platform_correlation import (
+            asset_telemetry_provider, erp_provider, yard_provider,
+        )
+        db.add(AnalysisSession(id=SESSION_ID, user_id=USER, organization_id=ORG,
+                               title="Demo: Spindle failure investigation",
+                               description="ERP work orders + vibration telemetry + yard arrivals",
+                               status="active"))
+        await db.flush()
+        for source_type, params in [
+            ("erp", {"integration_id": ERP_INT}),
+            ("asset_telemetry", {"asset_id": A_VIB, "name": "vibration — CNC spindle"}),
+            ("yard", {}),
+        ]:
+            provider = {"erp": erp_provider, "asset_telemetry": asset_telemetry_provider,
+                        "yard": yard_provider}[source_type]
+            result = await provider(db, ORG, params)
+            db.add(SessionDataSource(session_id=SESSION_ID, source_type=source_type,
+                                     source_id=str(params.get("asset_id") or params.get("integration_id") or source_type),
+                                     file_name=result.file_name, data_type="spreadsheet",
+                                     processed_data=result.to_processed_data(),
+                                     meta_data={"platform_source": True, "source_type": source_type}))
+        await db.commit()
+
+        # ---- summary -----------------------------------------------------------
+        from sqlalchemy import func
+        counts = {}
+        for label, model in [("telemetry", Telemetry), ("erp_entities", ERPEntity),
+                             ("erp_events", ERPIntegrationEvent), ("trailers", YardTrailer),
+                             ("shipments", Shipment), ("vehicles", Vehicle),
+                             ("operations", Operation), ("kanban_tasks", Task),
+                             ("agent_releases", AgentRelease), ("rollout_targets", AgentRolloutTarget),
+                             ("models", ModelRegistryEntry), ("registries", ActionableRegistry),
+                             ("notif_subs", NotificationSubscription), ("error_events", ErrorEvent),
+                             ("export_templates", ExportTemplate)]:
+            counts[label] = (await db.execute(select(func.count()).select_from(model))).scalar_one()
+        print("  seeded:", ", ".join(f"{k}={v}" for k, v in counts.items()))
+        print(f"  analysis session ready: 'Demo: Spindle failure investigation' ({SESSION_ID})")
+
+        # restore normal FK-trigger enforcement on this connection
+        if _pg:
+            try:
+                await db.execute(_sql_text("SET session_replication_role = origin"))
+                await db.commit()
+            except Exception:
+                await db.rollback()
+
+    if not verify:
+        print("\nDone. Run the API against this data:")
+        print(f"  DATABASE_URL='{os.environ['DATABASE_URL']}' uvicorn app.main:app --port 8000")
+        print("  (frontend: VITE_USE_MOCK=false npm run dev)")
+    return 0
+
+
+def run_verify() -> int:
+    """Hit the seeded data through the real API (in-process, no deployment).
+
+    Synchronous on purpose: ``TestClient`` drives the app lifespan on its own
+    event loop, so this must run OUTSIDE the seeding ``asyncio.run`` loop. The
+    module-level async engine still holds a pool bound to the (now closed)
+    seeding loop, so dispose it first — fresh connections are then created on
+    ``TestClient``'s loop.
+    """
+    import asyncio as _asyncio
+    from fastapi.testclient import TestClient
+    from app.db.database import engine
+    from app.main import app
+
+    _asyncio.run(engine.dispose())
+
+    AUTH = {"Authorization": "Bearer dev-token"}
+    ok = True
+
+    def check(name, cond, detail=""):
+        nonlocal ok
+        ok = ok and bool(cond)
+        print(f"  {'✓' if cond else '✗'} {name}" + (f" — {detail}" if detail and not cond else ""))
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        r = client.get(f"/api/v1/erp/integrations/{ERP_INT}/entities", headers=AUTH)
+        ents = r.json() if r.status_code == 200 else []
+        check("ERP entities synced (incl. WO-77105)", any(e["entity_id"] == "WO-77105" for e in ents), r.text[:150])
+
+        r = client.get(f"/api/v1/erp/integrations/{ERP_INT}/sync-status", headers=AUTH)
+        check("ERP sync-status green", r.status_code == 200 and
+              all(s["last_sync_status"] == "success" for s in r.json()), r.text[:150])
+
+        r = client.get(f"/api/v1/telemetry/{A_VIB}/history", headers=AUTH,
+                       params={"metric_name": "vibration_rms", "aggregation": "1hour",
+                               "start_time": days_ago(14).isoformat()})
+        payload = r.json() if r.status_code == 200 else {}
+        # FS-89: telemetry history returns a {items, meta} envelope now.
+        rows = payload.get("items", payload) if isinstance(payload, dict) else payload
+        peak = max((x["max"] for x in rows), default=0)
+        check("vibration degradation arc visible (peak > 7 mm/s)", peak > 7, f"peak={peak}")
+
+        r = client.get(f"/api/v1/assets/{A_AUDIO}/sensor-feeds", headers=AUTH)
+        check("audio sensor feeds discoverable", r.status_code == 200 and
+              "audio_band_high" in r.json().get("metrics", []), r.text[:150])
+
+        r = client.get("/api/v1/yard/detention-alerts", headers=AUTH)
+        alerts = r.json() if r.status_code == 200 else []
+        check("TRL-4482 accruing detention", any(a["trailer_number"] == "TRL-4482"
+              and a["status"] == "detention" for a in alerts), r.text[:150])
+
+        r = client.get("/api/v1/logistics/delivery-efficiency", headers=AUTH)
+        check("delivery efficiency computed", r.status_code == 200 and
+              r.json().get("totalDelivered", 0) >= 3, r.text[:150])
+
+        r = client.get("/api/v1/maintenance/statistics", headers=AUTH)
+        check("maintenance stats (overdue oil change + YTD costs)",
+              r.status_code == 200 and r.json().get("overdueCount", 0) >= 1
+              and r.json().get("ytdCosts", 0) > 0, r.text[:150])
+
+        r = client.post(f"/api/v1/nlp/sessions/{SESSION_ID}/correlate", headers=AUTH, json={})
+        check("pre-built session correlates (ERP + sensor + yard)",
+              r.status_code == 200 and "analysis" in r.json(), r.text[:200])
+
+        # ---- gap-area pages (Kanban, Operations, Fleet/OTA, MLOps, etc.) -------
+        r = client.get("/api/v1/kanban/board", headers=AUTH)
+        j = r.json() if r.status_code == 200 else {}
+        check("kanban board has columns + tasks",
+              r.status_code == 200 and len(j.get("columns", [])) == 6 and len(j.get("tasks", [])) >= 5,
+              r.text[:150])
+
+        r = client.get("/api/v1/kanban/tasks", headers=AUTH)
+        check("kanban tasks list non-empty",
+              r.status_code == 200 and len(r.json()) >= 5, r.text[:150])
+
+        r = client.get("/api/v1/operations/", headers=AUTH)
+        check("operations list non-empty",
+              r.status_code == 200 and r.json().get("meta", {}).get("total", 0) >= 10, r.text[:150])
+
+        r = client.get("/api/v1/oee/dashboard/summary", headers=AUTH)
+        check("OEE dashboard summary lists assets",
+              r.status_code == 200 and r.json().get("aggregate", {}).get("asset_count", 0) >= 5,
+              r.text[:150])
+
+        r = client.get("/api/v1/fleet/releases", headers=AUTH)
+        check("fleet agent releases non-empty",
+              r.status_code == 200 and any(x["version"] == "1.4.0" for x in r.json()), r.text[:150])
+
+        r = client.get("/api/v1/fleet/rollouts", headers=AUTH)
+        check("fleet OTA rollout present",
+              r.status_code == 200 and len(r.json()) >= 1, r.text[:150])
+
+        r = client.get("/api/v1/models", headers=AUTH)
+        check("MLOps model registry non-empty",
+              r.status_code == 200 and any(m["name"] == "anomaly" for m in r.json()), r.text[:150])
+
+        r = client.get("/api/v1/notifications/subscriptions", headers=AUTH)
+        check("notification subscriptions non-empty",
+              r.status_code == 200 and len(r.json()) >= 3, r.text[:150])
+
+        r = client.get("/api/v1/notifications/log", headers=AUTH)
+        check("notification delivery log non-empty",
+              r.status_code == 200 and len(r.json()) >= 3, r.text[:150])
+
+        r = client.get("/api/v1/admin/errors", headers=AUTH)
+        check("error triage list non-empty",
+              r.status_code == 200 and r.json().get("total", 0) >= 3, r.text[:150])
+
+        r = client.get("/api/v1/registries", headers=AUTH)
+        check("actionable registries non-empty",
+              r.status_code == 200 and len(r.json()) >= 2, r.text[:150])
+
+        r = client.get(f"/api/v1/registries/{REGISTRY_LOTO_ID}/items", headers=AUTH)
+        check("registry items non-empty",
+              r.status_code == 200 and len(r.json()) >= 3, r.text[:150])
+
+        r = client.get("/api/v1/compliance/reports/schedules", headers=AUTH)
+        check("scheduled compliance reports non-empty",
+              r.status_code == 200 and len(r.json().get("items", [])) >= 1, r.text[:150])
+
+        r = client.get("/api/v1/exports/templates", headers=AUTH)
+        et = r.json() if r.status_code == 200 else []
+        et = et.get("items", et) if isinstance(et, dict) else et
+        check("export templates non-empty",
+              r.status_code == 200 and len(et) >= 2, r.text[:150])
+
+        r = client.get("/api/v1/historian/query", headers=AUTH, params={
+            "asset_id": A_VIB, "metric": "vibration_rms",
+            "start": days_ago(14).isoformat(), "end": NOW.isoformat(), "granularity": "raw"})
+        check("historian query returns points",
+              r.status_code == 200 and r.json().get("count", 0) > 0, r.text[:150])
+
+        r = client.get("/api/v1/health-index", headers=AUTH)
+        check("health index computed for assets",
+              r.status_code == 200 and len(r.json()) >= 5, r.text[:150])
+
+        r = client.get("/api/v1/rul", headers=AUTH)
+        check("RUL assessments computed for assets",
+              r.status_code == 200 and len(r.json()) >= 5, r.text[:150])
+
+    print(f"\nVERIFY: {'PASS' if ok else 'FAIL'}")
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    _verify = "--verify" in sys.argv
+    _rc = asyncio.run(main(verify=_verify))
+    # run_verify drives TestClient on its own event loop, so it must run
+    # AFTER the seeding loop has closed (see run_verify docstring).
+    if _rc == 0 and _verify:
+        _rc = run_verify()
+    sys.exit(_rc)

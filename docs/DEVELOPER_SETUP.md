@@ -97,26 +97,37 @@ docker-compose up -d
 
 ### 6. Initialize Database
 
+Apply the full, checksum-tracked SQL migration chain with the migration runner
+(idempotent — safe to re-run). This replaces the older habit of manually piping
+individual `.sql` files.
+
 ```bash
-# Wait for TimescaleDB to be ready
-docker-compose exec timescaledb psql -U omniusgrid -d omniusgrid -f /docker-entrypoint-initdb.d/001_init.sql
-docker-compose exec timescaledb psql -U omniusgrid -d omniusgrid -f /docker-entrypoint-initdb.d/002_continuous_aggregates.sql
-docker-compose exec timescaledb psql -U omniusgrid -d omniusgrid -f /docker-entrypoint-initdb.d/003_kanban_tables.sql
+# Wait for TimescaleDB to be ready, then apply all migrations
+python backend/scripts/migrate.py
+
+# Inspect state / adopt an existing database
+python backend/scripts/migrate.py --status
+python backend/scripts/migrate.py --baseline           # mark applied without running
+python backend/scripts/migrate.py --rebaseline-drifted # re-baseline drifted checksums
 ```
 
-### 7. Seed Demo Data (Optional)
+### 7. Seed the Offline Demo (Recommended)
+
+The whole platform demos with **no live edge, cloud, or external services**.
+`seed_demo_data.py` seeds every page — assets, 14 days of correlated telemetry,
+alarms, OEE, a fully-synced ERP integration, yard, transportation, geofencing,
+kanban, operations, fleet OTA, MLOps model registry, compliance/registries,
+notifications, error-triage, exports, and historian — idempotently. The only
+thing that still needs its model is the Correlation-AI **inference** (a ready
+analysis session is seeded). See [`DEMO.md`](DEMO.md).
 
 ```bash
+# From the project root (defaults DATABASE_URL to backend/dev.db SQLite)
+make seed-demo
+
+# Or run it directly
 cd backend
-
-# Seed demo assets
-python scripts/seed_demo_assets.py
-
-# Seed demo Kanban tasks
-python scripts/seed_demo_kanban.py
-
-# Initialize correlation registries
-python scripts/initialize_correlation_registries.py dev-org
+python scripts/seed_demo_data.py            # add --verify to sanity-check row counts
 ```
 
 ## Backend Development
@@ -194,11 +205,21 @@ python -m pdb app/main.py
 ```bash
 cd frontend
 
-# Start development server
-npm run dev
-
-# This starts Vite dev server on http://localhost:3000
+# Start development server (Vite) on http://localhost:9999
+npm run dev -- --port 9999
 ```
+
+The frontend talks to a real backend by default. To drive the UI without a
+backend (demos, isolated frontend work), enable the opt-in mock layer:
+
+```bash
+# Mock mode — every API client serves in-memory data, no backend required
+VITE_USE_MOCK=true npm run dev -- --port 9999
+```
+
+Dev-mode login: username `dev` with any password uses the auth bypass, but only
+in a dev build **and** with `VITE_DEV_MODE=true` (see `frontend/.env.example`).
+Production bundles can never enable it.
 
 ### Frontend Testing
 
@@ -256,25 +277,47 @@ source venv/bin/activate
 # Install dependencies
 pip install -r requirements.txt
 
-# Run edge agent
-python -m opsgrid_agent.main
+# Run edge agent. Collectors come from the COLLECTORS env var (JSON) by
+# default, or from a YAML file when COLLECTORS_FILE is set:
+COLLECTORS_FILE=config/local_collectors.yml python -m opsgrid_agent.main
+
+# Optional: expose Prometheus metrics on :9108/metrics
+METRICS_PORT=9108 COLLECTORS_FILE=config/local_collectors.yml python -m opsgrid_agent.main
 ```
 
 ### Edge Agent Configuration
 
 ```bash
-# Create configuration file
+# Start from the example (covers all supported collector types) and edit it
 cp config/poc_collectors.yml config/local_collectors.yml
+```
 
-# Edit configuration with your collectors
-# Example:
-# collectors:
-#   - type: mqtt
-#     asset_id: printer-001
-#     config:
-#       host: localhost
-#       port: 1883
-#       topic: bambu/printer/001
+Each entry is envelope-validated at startup (`opsgrid_agent/config_schema.py`);
+invalid entries are logged and skipped. Both `collector_type` (YAML style) and
+`type` (env-JSON style) are accepted. Supported types: `bambu_mqtt`, `mqtt`,
+`qidi_screen`, `sovol_screen`, `orca_file`, `opcua`, `modbus`, `ethernet_ip`,
+`profinet`, `bacnet`, `can_bus`, `snmp`, `sparkplug_b`, `dnp3`, `http_rest`
+(keep in sync with `SUPPORTED_COLLECTOR_TYPES` in `config_schema.py`).
+
+```yaml
+collectors:
+  - asset_id: printer-001
+    collector_type: mqtt
+    config:
+      host: localhost
+      port: 1883
+      topic: bambu/printer/001
+
+  # Optional: normalize a raw state field to PackML (OEE/state analytics).
+  - asset_id: ab-plc-001
+    collector_type: ethernet_ip
+    config:
+      ip_address: 192.168.1.210
+      tags: ["Program:MainProgram.MachineState"]
+      packml:
+        asset_type: industrial_plc
+        state_key: state
+        mappings: { "1": "Execute", "0": "Stopped" }
 ```
 
 ### Edge Agent Testing
@@ -282,11 +325,12 @@ cp config/poc_collectors.yml config/local_collectors.yml
 ```bash
 cd edge-agent
 
-# Run tests
-pytest
+# Install the test toolchain (protocol drivers are faked in tests, so the
+# pylogix/python-snap7/BAC0/python-can libs are not required).
+pip install -r requirements-dev.txt
 
-# Run with coverage
-pytest --cov=opsgrid_agent --cov-report=html
+# Run tests (pytest.ini sets testpaths + pythonpath)
+pytest
 ```
 
 ## Database Development
@@ -307,14 +351,27 @@ docker-compose exec timescaledb psql -U omniusgrid -d omniusgrid
 
 ### Running Migrations
 
-```bash
-# Using Alembic (if configured)
-cd backend
-alembic upgrade head
+The canonical runner is `backend/scripts/migrate.py` — a checksum-tracked,
+idempotent SQL migration runner that applies the full chain on a clean Postgres
+and supports baseline/rebaseline flows for adopting existing databases. Tests
+build their schema through the same runner. (Alembic is not used.)
 
-# Manual SQL migration
-docker-compose exec timescaledb psql -U omniusgrid -d omniusgrid -f database/migrations/004_new_feature.sql
+```bash
+cd backend
+
+# Apply all pending migrations
+python scripts/migrate.py
+
+# Show current status (applied vs pending, checksum drift)
+python scripts/migrate.py --status
+
+# Adopt an existing database without re-running historical migrations
+python scripts/migrate.py --baseline
+python scripts/migrate.py --rebaseline-drifted
 ```
+
+To add a migration, drop a new numbered `.sql` file into the migrations
+directory; the runner tracks and applies it on the next run.
 
 ### Database Queries
 
@@ -479,37 +536,50 @@ export const getNewFeature = async () => {
 
 ### Adding a New Collector
 
-1. **Create collector** in `edge-agent/opsgrid_agent/collectors/`
+There are two collector patterns. Prefer the **BaseCollector** pattern for new
+protocol collectors — it keeps the collector focused on driver I/O and is bridged
+to the coordinator by the adapter (which also provides optional PackML mapping).
+
+1. **Create collector** in `edge-agent/opsgrid_agent/collectors/` as a
+   `BaseCollector` subclass (see `ethernet_ip.py`/`http_rest.py` as templates):
 ```python
 # edge-agent/opsgrid_agent/collectors/new_collector.py
-from abc import ABC, abstractmethod
+from .base import BaseCollector
 
-class NewCollector(ABC):
+class NewCollector(BaseCollector):
     def __init__(self, config: dict):
-        self.config = config
-    
+        super().__init__(config)
+        # read config.get(...) for your params; import drivers lazily
+
     async def start(self):
-        pass
-    
+        await super().start()   # sets running; spawn your poll task
+        ...
+
     async def stop(self):
-        pass
+        await super().stop()    # clears running; cancel your poll task
+        ...
+    # emit() readings as {timestamp_edge, asset_id, topic, collector_type, payload}
 ```
 
-2. **Register collector** in `edge-agent/opsgrid_agent/collectors/coordinator.py`
+2. **Register** it in `edge-agent/opsgrid_agent/collectors/coordinator.py`
+   using the adapter, and add the type to `SUPPORTED_COLLECTOR_TYPES` in
+   `config_schema.py`:
 ```python
 from .new_collector import NewCollector
-
-# Add to COLLECTOR_REGISTRY
-COLLECTOR_REGISTRY['new_collector'] = NewCollector
+# inside SUPPORTED_COLLECTORS:
+'new_collector': coordinator_adapter(NewCollector),
 ```
+(Mature collectors — mqtt/opcua/modbus/screen/file — instead take
+`on_message_callback` and a blocking `start()`; register those classes directly.)
 
-3. **Add configuration** in `edge-agent/config/poc_collectors.yml`
+3. **Add example configuration** in `edge-agent/config/poc_collectors.yml`
 ```yaml
 collectors:
-  - type: new_collector
-    asset_id: asset-001
+  - asset_id: asset-001
+    collector_type: new_collector
     config:
       # collector-specific config
+      # packml: { asset_type: ..., state_key: state }   # optional
 ```
 
 ## Troubleshooting
@@ -634,7 +704,7 @@ Create `.vscode/launch.json`:
       "name": "Chrome: Frontend",
       "type": "chrome",
       "request": "launch",
-      "url": "http://localhost:3000",
+      "url": "http://localhost:9999",
       "webRoot": "${workspaceFolder}/frontend/src"
     }
   ]
@@ -716,6 +786,6 @@ Create `.vscode/launch.json`:
 
 ---
 
-**Document Version:** 1.0  
-**Last Updated:** 2026-05-25  
+**Document Version:** 1.1  
+**Last Updated:** 2026-07-17  
 **Component:** Developer Setup Guide

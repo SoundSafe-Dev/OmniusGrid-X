@@ -23,6 +23,9 @@ from typing import Any, Callable, Dict, Optional
 import structlog
 
 from .base import BaseCollector
+# Relative import keeps the adapter independent of the omniusgrid_agent ->
+# opsgrid_agent package rename (Hridyansh's package-renaming-fix).
+from ..packml import create_mapper_for_asset_type
 
 logger = structlog.get_logger()
 
@@ -43,6 +46,34 @@ class CoordinatorCollectorAdapter:
         self._stop_event: Optional[asyncio.Event] = None
         self._stopped = False
 
+        # Optional state -> PackML mapping. BaseCollector-style collectors emit
+        # raw payloads; when a `packml` block is present in config we normalize a
+        # raw state field the same way modbus/opcua do, so OEE/state analytics see
+        # one shape regardless of collector. No-op when `packml` is absent.
+        self._mapper = None
+        self._state_key = None
+        packml_conf = config.get("packml")
+        if packml_conf:
+            self._state_key = packml_conf.get("state_key", "state")
+            self._mapper = create_mapper_for_asset_type(
+                packml_conf.get("asset_type", "generic"),
+                packml_conf.get("mappings"),
+            )
+
+    def _apply_packml(self, message: Dict[str, Any]) -> None:
+        """Enrich the envelope with PackML state, mirroring the modbus shape."""
+        if self._mapper is None:
+            return
+        payload = message.get("payload") or {}
+        raw_state = payload.get(self._state_key)
+        if raw_state is None:
+            return
+        state = self._mapper.map_state(str(raw_state))
+        message["packml_state"] = state.value
+        payload["packml_state"] = state.value
+        payload["packml_category"] = self._mapper.get_state_category(state)
+        message["payload"] = payload
+
     def _forward(self, message: Dict[str, Any]) -> None:
         """Forward an emitted reading to the coordinator's async callback.
 
@@ -50,6 +81,7 @@ class CoordinatorCollectorAdapter:
         schedule the awaitable callback as a task rather than blocking the
         collector's poll loop.
         """
+        self._apply_packml(message)
         if self._on_message_callback is None:
             return
         try:

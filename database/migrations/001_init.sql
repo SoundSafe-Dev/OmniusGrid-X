@@ -43,7 +43,7 @@ CREATE TABLE asset_types (
 CREATE TABLE assets (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-    workcell_id UUID REFERENCES workcells(id) ON DELETE SET NULL,
+    workcell_id UUID NOT NULL REFERENCES workcells(id) ON DELETE RESTRICT,
     asset_type_id UUID NOT NULL REFERENCES asset_types(id),
     name VARCHAR(255) NOT NULL,
     serial_number VARCHAR(255),
@@ -164,6 +164,7 @@ SELECT create_hypertable('alarms', 'occurred_at', if_not_exists => TRUE);
 CREATE TABLE commands (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     asset_id UUID NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     command_type VARCHAR(100) NOT NULL, -- 'operator', 'engine', 'system'
     action_id VARCHAR(100) NOT NULL, -- matches action_space definition
     parameters JSONB NOT NULL,

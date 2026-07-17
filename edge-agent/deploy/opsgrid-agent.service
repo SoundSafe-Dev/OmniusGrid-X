@@ -1,0 +1,25 @@
+# OmniusGrid edge agent — bare-metal systemd unit (FS-36).
+# Install: edge-agent/deploy/install.sh (creates the user, venv, and state dir).
+[Unit]
+Description=OmniusGrid Edge Agent (industrial telemetry collectors)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=opsgrid
+Group=opsgrid
+EnvironmentFile=-/etc/opsgrid-agent/agent.env
+ExecStart=/opt/opsgrid-agent/venv/bin/opsgrid-agent
+Restart=always
+RestartSec=5
+# The buffer must survive restarts; everything else is read-only.
+StateDirectory=opsgrid-agent
+ReadWritePaths=/var/lib/opsgrid-agent
+ProtectSystem=strict
+ProtectHome=true
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

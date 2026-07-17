@@ -8,7 +8,7 @@ Service for integrating with MuleSoft Anypoint Platform:
 """
 
 from typing import Dict, Any, Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 import structlog
 import aiohttp
 
@@ -218,7 +218,7 @@ class MuleSoftIntegrationService:
             "eventData": event_data,
             "organizationId": self.organization_id,
             "integrationId": self.integration_id,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
         
         headers = {
@@ -290,12 +290,12 @@ class MuleSoftIntegrationService:
                 "status": "healthy",
                 "message": "MuleSoft connection successful",
                 "environment": self.environment,
-                "checked_at": datetime.utcnow().isoformat()
+                "checked_at": datetime.now(timezone.utc).isoformat()
             }
         except Exception as e:
             return {
                 "status": "unhealthy",
                 "message": str(e),
                 "environment": self.environment,
-                "checked_at": datetime.utcnow().isoformat()
+                "checked_at": datetime.now(timezone.utc).isoformat()
             }

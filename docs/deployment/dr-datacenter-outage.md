@@ -153,6 +153,13 @@ This runbook covers the recovery procedures for complete data center outages in 
    curl https://dr-api.omniusgrid.com/docs
    ```
 
+> **Auth note:** `$OPS_TOKEN` is a real operator JWT — obtain one with
+> `curl -sf $API/api/v1/auth/login -d 'username=<ops-user>&password=...'`
+> and export the `access_token`. Production **rejects** the old `dev-token`
+> bypass (`ALLOW_DEV_TOKEN` must be false there), so runbook steps must use a
+> real credential.
+
+
 2. **Test Critical Endpoints:**
    ```bash
    # Authentication
@@ -162,16 +169,16 @@ This runbook covers the recovery procedures for complete data center outages in 
    
    # Assets
    curl https://dr-api.omniusgrid.com/api/v1/assets/ \
-     -H "Authorization: Bearer dev-token"
+     -H "Authorization: Bearer $OPS_TOKEN"
    
    # Kanban
    curl https://dr-api.omniusgrid.com/api/v1/kanban/board \
-     -H "Authorization: Bearer dev-token"
+     -H "Authorization: Bearer $OPS_TOKEN"
    ```
 
 3. **Check WebSocket Connectivity:**
    ```bash
-   wscat -c wss://dr-api.omniusgrid.com/ws -H "Authorization: Bearer dev-token"
+   wscat -c wss://dr-api.omniusgrid.com/ws -H "Authorization: Bearer $OPS_TOKEN"
    ```
 
 ### Step 5: Handle Data Consistency
@@ -363,18 +370,18 @@ echo "Data consistency check complete"
 2. Test assets endpoint:
    ```bash
    curl https://dr-api.omniusgrid.com/api/v1/assets/ \
-     -H "Authorization: Bearer dev-token"
+     -H "Authorization: Bearer $OPS_TOKEN"
    ```
 
 3. Test telemetry endpoint:
    ```bash
    curl https://dr-api.omniusgrid.com/api/v1/telemetry/{asset_id}/latest \
-     -H "Authorization: Bearer dev-token"
+     -H "Authorization: Bearer $OPS_TOKEN"
    ```
 
 4. Test WebSocket:
    ```bash
-   wscat -c wss://dr-api.omniusgrid.com/ws -H "Authorization: Bearer dev-token"
+   wscat -c wss://dr-api.omniusgrid.com/ws -H "Authorization: Bearer $OPS_TOKEN"
    ```
 
 ## Post-Incident Actions

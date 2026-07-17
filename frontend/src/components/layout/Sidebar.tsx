@@ -20,11 +20,15 @@ import {
   Kanban as KanbanIcon,
   MessageSquare,
   Inbox,
+  Database,
+  Bug,
+  UploadCloud,
+  HeartPulse,
 } from 'lucide-react';
 import { useUIStore, useAuthStore } from '../../stores';
 import { cn } from '../../utils';
 import { useAuth } from '../../hooks';
-import { Tooltip, TooltipTrigger, TooltipContent } from '../ui';
+import { Tooltip, TooltipTrigger, TooltipContent, Wordmark } from '../ui';
 
 interface NavItem {
   path: string;
@@ -67,6 +71,16 @@ const navItems: NavItem[] = [
     ],
   },
   {
+    path: '/predictive',
+    label: 'Predictive',
+    icon: HeartPulse,
+    description: 'RUL predictive maintenance and time-series historian',
+    children: [
+      { path: '/predictive/rul', label: 'Asset RUL', icon: HeartPulse, description: 'Remaining useful life and failure risk per asset' },
+      { path: '/predictive/historian', label: 'Historian', icon: Database, description: 'Query the tenant time-series historian' },
+    ],
+  },
+  {
     path: '/fleet',
     label: 'Fleet',
     icon: Globe,
@@ -87,6 +101,12 @@ const navItems: NavItem[] = [
     ],
   },
   {
+    path: '/erp',
+    label: 'ERP',
+    icon: Database,
+    description: 'ERP integrations — data feeds Correlation AI',
+  },
+  {
     path: '/admin',
     label: 'Admin',
     icon: Settings,
@@ -96,6 +116,9 @@ const navItems: NavItem[] = [
       { path: '/admin/users', label: 'Users', icon: Users, description: 'User and role management' },
       { path: '/admin/collectors', label: 'Collectors', icon: Box, description: 'Data collector configuration' },
       { path: '/admin/health', label: 'System Health', icon: LayoutDashboard, description: 'Infrastructure status monitoring' },
+      { path: '/admin/errors', label: 'Error Triage', icon: Bug, description: 'Production error monitoring' },
+      { path: '/admin/fleet', label: 'Fleet OTA', icon: UploadCloud, description: 'Edge-agent releases and staged rollouts' },
+      { path: '/admin/notifications', label: 'Notifications', icon: Bell, description: 'Alert delivery subscriptions and log' },
       { path: '/admin/settings', label: 'Settings', icon: Settings, description: 'System configuration' },
     ],
   },
@@ -212,14 +235,27 @@ export const Sidebar: FC<SidebarProps> = ({ mobile = false, onClose }) => {
       {/* Logo */}
       <div className="p-4 border-b border-opsgrid-border flex items-center justify-between">
         {!sidebarCollapsed || mobile ? (
-          <div>
-            <h1 className="text-xl font-bold text-opsgrid-primary">OmniusGrid</h1>
-            <p className="text-xs text-opsgrid-text-secondary">Data Correlation for Industry 4.0</p>
+          <div className="flex items-center gap-2.5">
+            <img
+              src="/omniusgrid-logo.png"
+              alt="OmniusGrid"
+              className="w-9 h-9 rounded-lg bg-white shrink-0"
+            />
+            <div className="min-w-0">
+              <h1 className="text-xl text-opsgrid-primary whitespace-nowrap leading-none">
+                <Wordmark />
+              </h1>
+              <p className="text-[11px] leading-tight tracking-tight text-opsgrid-text-secondary whitespace-nowrap">
+                Data Correlation for Industry 4.0
+              </p>
+            </div>
           </div>
         ) : (
-          <div className="w-8 h-8 bg-opsgrid-primary rounded-lg flex items-center justify-center mx-auto">
-            <span className="text-white font-bold text-lg">O</span>
-          </div>
+          <img
+            src="/omniusgrid-logo.png"
+            alt="OmniusGrid"
+            className="w-8 h-8 rounded-lg bg-white mx-auto"
+          />
         )}
         {!mobile && (
           <Tooltip>

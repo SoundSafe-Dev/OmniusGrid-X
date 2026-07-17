@@ -5,6 +5,7 @@
  */
 
 import { api } from './client';
+import { USE_MOCK } from './mockMode';
 
 // ==================== Types ====================
 
@@ -29,7 +30,6 @@ export interface UserGoal {
 }
 
 export interface UpdateUserContextRequest {
-  role?: string;
   department?: string;
   priorities?: string[];
 }
@@ -46,12 +46,16 @@ export interface UserGoalRequest {
  * Get current user's context and goals
  */
 export async function getUserContext(): Promise<UserContext> {
+  if (USE_MOCK) {
+    const { mockUserContext } = await import('./mocks/nlpMocks');
+    return mockUserContext;
+  }
   const response = await api.get<UserContext>('/api/v1/user/context');
   return response.data;
 }
 
 /**
- * Update user context (role, department, priorities)
+ * Update user context (department and priorities)
  */
 export async function updateUserContext(request: UpdateUserContextRequest): Promise<UserContext> {
   const response = await api.put<UserContext>('/api/v1/user/context', request);

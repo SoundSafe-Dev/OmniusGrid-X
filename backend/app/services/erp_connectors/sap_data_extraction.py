@@ -10,7 +10,7 @@ Service for extracting and storing SAP data:
 """
 
 from typing import Dict, Any, Optional, List
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
 import structlog
@@ -69,7 +69,7 @@ class SAPDataExtractionService:
         Returns:
             Dict with extraction results
         """
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
         
         try:
             # Fetch data from SAP
@@ -98,20 +98,20 @@ class SAPDataExtractionService:
                 "completed",
                 stored_count,
                 0,
-                (datetime.utcnow() - start_time).total_seconds()
+                (datetime.now(timezone.utc) - start_time).total_seconds()
             )
             
             logger.info(
                 "sap_purchase_orders_extracted",
                 count=stored_count,
-                duration_seconds=(datetime.utcnow() - start_time).total_seconds()
+                duration_seconds=(datetime.now(timezone.utc) - start_time).total_seconds()
             )
             
             return {
                 "status": "success",
                 "entity_type": "PurchaseOrder",
                 "records_extracted": stored_count,
-                "duration_seconds": (datetime.utcnow() - start_time).total_seconds()
+                "duration_seconds": (datetime.now(timezone.utc) - start_time).total_seconds()
             }
             
         except Exception as e:
@@ -126,7 +126,7 @@ class SAPDataExtractionService:
                 "failed",
                 0,
                 1,
-                (datetime.utcnow() - start_time).total_seconds()
+                (datetime.now(timezone.utc) - start_time).total_seconds()
             )
             
             raise
@@ -148,7 +148,7 @@ class SAPDataExtractionService:
         Returns:
             Dict with extraction results
         """
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
         
         try:
             # Fetch data from SAP
@@ -175,20 +175,20 @@ class SAPDataExtractionService:
                 "completed",
                 stored_count,
                 0,
-                (datetime.utcnow() - start_time).total_seconds()
+                (datetime.now(timezone.utc) - start_time).total_seconds()
             )
             
             logger.info(
                 "sap_manufacturing_orders_extracted",
                 count=stored_count,
-                duration_seconds=(datetime.utcnow() - start_time).total_seconds()
+                duration_seconds=(datetime.now(timezone.utc) - start_time).total_seconds()
             )
             
             return {
                 "status": "success",
                 "entity_type": "ManufacturingOrder",
                 "records_extracted": stored_count,
-                "duration_seconds": (datetime.utcnow() - start_time).total_seconds()
+                "duration_seconds": (datetime.now(timezone.utc) - start_time).total_seconds()
             }
             
         except Exception as e:
@@ -203,7 +203,7 @@ class SAPDataExtractionService:
                 "failed",
                 0,
                 1,
-                (datetime.utcnow() - start_time).total_seconds()
+                (datetime.now(timezone.utc) - start_time).total_seconds()
             )
             
             raise
@@ -225,7 +225,7 @@ class SAPDataExtractionService:
         Returns:
             Dict with extraction results
         """
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
         
         try:
             # Fetch data from SAP
@@ -252,20 +252,20 @@ class SAPDataExtractionService:
                 "completed",
                 stored_count,
                 0,
-                (datetime.utcnow() - start_time).total_seconds()
+                (datetime.now(timezone.utc) - start_time).total_seconds()
             )
             
             logger.info(
                 "sap_inventory_extracted",
                 count=stored_count,
-                duration_seconds=(datetime.utcnow() - start_time).total_seconds()
+                duration_seconds=(datetime.now(timezone.utc) - start_time).total_seconds()
             )
             
             return {
                 "status": "success",
                 "entity_type": "Inventory",
                 "records_extracted": stored_count,
-                "duration_seconds": (datetime.utcnow() - start_time).total_seconds()
+                "duration_seconds": (datetime.now(timezone.utc) - start_time).total_seconds()
             }
             
         except Exception as e:
@@ -280,7 +280,7 @@ class SAPDataExtractionService:
                 "failed",
                 0,
                 1,
-                (datetime.utcnow() - start_time).total_seconds()
+                (datetime.now(timezone.utc) - start_time).total_seconds()
             )
             
             raise
@@ -302,7 +302,7 @@ class SAPDataExtractionService:
         Returns:
             Dict with extraction results
         """
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
         
         try:
             # Fetch data from SAP
@@ -329,20 +329,20 @@ class SAPDataExtractionService:
                 "completed",
                 stored_count,
                 0,
-                (datetime.utcnow() - start_time).total_seconds()
+                (datetime.now(timezone.utc) - start_time).total_seconds()
             )
             
             logger.info(
                 "sap_vendors_extracted",
                 count=stored_count,
-                duration_seconds=(datetime.utcnow() - start_time).total_seconds()
+                duration_seconds=(datetime.now(timezone.utc) - start_time).total_seconds()
             )
             
             return {
                 "status": "success",
                 "entity_type": "Vendor",
                 "records_extracted": stored_count,
-                "duration_seconds": (datetime.utcnow() - start_time).total_seconds()
+                "duration_seconds": (datetime.now(timezone.utc) - start_time).total_seconds()
             }
             
         except Exception as e:
@@ -357,7 +357,7 @@ class SAPDataExtractionService:
                 "failed",
                 0,
                 1,
-                (datetime.utcnow() - start_time).total_seconds()
+                (datetime.now(timezone.utc) - start_time).total_seconds()
             )
             
             raise
@@ -379,7 +379,7 @@ class SAPDataExtractionService:
         Returns:
             Dict with extraction results
         """
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
         
         try:
             # Fetch data from SAP
@@ -406,20 +406,20 @@ class SAPDataExtractionService:
                 "completed",
                 stored_count,
                 0,
-                (datetime.utcnow() - start_time).total_seconds()
+                (datetime.now(timezone.utc) - start_time).total_seconds()
             )
             
             logger.info(
                 "sap_work_orders_extracted",
                 count=stored_count,
-                duration_seconds=(datetime.utcnow() - start_time).total_seconds()
+                duration_seconds=(datetime.now(timezone.utc) - start_time).total_seconds()
             )
             
             return {
                 "status": "success",
                 "entity_type": "WorkOrder",
                 "records_extracted": stored_count,
-                "duration_seconds": (datetime.utcnow() - start_time).total_seconds()
+                "duration_seconds": (datetime.now(timezone.utc) - start_time).total_seconds()
             }
             
         except Exception as e:
@@ -434,7 +434,7 @@ class SAPDataExtractionService:
                 "failed",
                 0,
                 1,
-                (datetime.utcnow() - start_time).total_seconds()
+                (datetime.now(timezone.utc) - start_time).total_seconds()
             )
             
             raise
@@ -551,7 +551,7 @@ class SAPDataExtractionService:
         if existing:
             # Update existing record
             # Mark old version as inactive
-            existing.valid_to = datetime.utcnow()
+            existing.valid_to = datetime.now(timezone.utc)
             existing.is_active = False
             
             # Create new version
@@ -563,7 +563,7 @@ class SAPDataExtractionService:
                 entity_data=entity_data,
                 source_system=source_system,
                 is_active=True,
-                valid_from=datetime.utcnow()
+                valid_from=datetime.now(timezone.utc)
             )
             db.add(new_entity)
             
@@ -577,7 +577,7 @@ class SAPDataExtractionService:
                 entity_data=entity_data,
                 source_system=source_system,
                 is_active=True,
-                valid_from=datetime.utcnow()
+                valid_from=datetime.now(timezone.utc)
             )
             db.add(entity)
         
@@ -613,7 +613,7 @@ class SAPDataExtractionService:
         )
         sync_status = result.scalar_one_or_none()
         
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         
         if sync_status:
             sync_status.last_sync_at = now

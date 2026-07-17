@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_
 from typing import List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import uuid
 
 from app.db.models import (
@@ -27,8 +27,9 @@ from app.models.schemas import (
     DataCorrelationResponse,
     DataCorrelationCreate
 )
-from app.api.auth import get_current_active_user
+from app.middleware.rbac import require_admin
 from app.db.database import get_db
+from app.middleware.rbac import require_admin
 
 router = APIRouter(prefix="/api/v1/registries", tags=["registries"])
 
@@ -42,7 +43,7 @@ async def get_registries(
     is_active: Optional[bool] = None,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=0, le=1000),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Get all actionable registries for the organization"""
@@ -67,7 +68,7 @@ async def get_registries(
 @router.get("/{registry_id}", response_model=ActionableRegistryResponse)
 async def get_registry(
     registry_id: uuid.UUID,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Get a specific actionable registry by ID"""
@@ -87,17 +88,17 @@ async def get_registry(
     return registry
 
 
-@router.post("", response_model=ActionableRegistryResponse, status_code=201)
+@router.post("", response_model=ActionableRegistryResponse, status_code=201, dependencies=[Depends(require_admin)])
 async def create_registry(
     registry: ActionableRegistryCreate,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Create a new actionable registry"""
     new_registry = ActionableRegistry(
         organization_id=current_user.organization_id,
         created_by=current_user.id,
-        **registry.dict()
+        **registry.model_dump()
     )
     
     db.add(new_registry)
@@ -107,11 +108,11 @@ async def create_registry(
     return new_registry
 
 
-@router.put("/{registry_id}", response_model=ActionableRegistryResponse)
+@router.put("/{registry_id}", response_model=ActionableRegistryResponse, dependencies=[Depends(require_admin)])
 async def update_registry(
     registry_id: uuid.UUID,
     registry: ActionableRegistryUpdate,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Update an existing actionable registry"""
@@ -138,10 +139,10 @@ async def update_registry(
     return existing_registry
 
 
-@router.delete("/{registry_id}", status_code=204)
+@router.delete("/{registry_id}", status_code=204, dependencies=[Depends(require_admin)])
 async def delete_registry(
     registry_id: uuid.UUID,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Delete an actionable registry"""
@@ -170,7 +171,7 @@ async def get_registry_items(
     is_active: Optional[bool] = None,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=0, le=1000),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Get all items for a specific registry"""
@@ -202,11 +203,11 @@ async def get_registry_items(
     return items
 
 
-@router.post("/{registry_id}/items", response_model=ActionableRegistryItemResponse, status_code=201)
+@router.post("/{registry_id}/items", response_model=ActionableRegistryItemResponse, status_code=201, dependencies=[Depends(require_admin)])
 async def create_registry_item(
     registry_id: uuid.UUID,
     item: ActionableRegistryItemCreate,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Create a new item in a registry"""
@@ -226,7 +227,7 @@ async def create_registry_item(
     
     new_item = ActionableRegistryItem(
         registry_id=registry_id,
-        **item.dict()
+        **item.model_dump()
     )
     
     db.add(new_item)
@@ -236,11 +237,11 @@ async def create_registry_item(
     return new_item
 
 
-@router.put("/items/{item_id}", response_model=ActionableRegistryItemResponse)
+@router.put("/items/{item_id}", response_model=ActionableRegistryItemResponse, dependencies=[Depends(require_admin)])
 async def update_registry_item(
     item_id: uuid.UUID,
     item: ActionableRegistryItemUpdate,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Update an existing registry item"""
@@ -267,10 +268,10 @@ async def update_registry_item(
     return existing_item
 
 
-@router.delete("/items/{item_id}", status_code=204)
+@router.delete("/items/{item_id}", status_code=204, dependencies=[Depends(require_admin)])
 async def delete_registry_item(
     item_id: uuid.UUID,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Delete a registry item"""
@@ -301,7 +302,7 @@ async def get_correlations(
     is_active: Optional[bool] = None,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=0, le=1000),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Get data correlations for the organization"""
@@ -325,17 +326,17 @@ async def get_correlations(
     return correlations
 
 
-@router.post("/correlations", response_model=DataCorrelationResponse, status_code=201)
+@router.post("/correlations", response_model=DataCorrelationResponse, status_code=201, dependencies=[Depends(require_admin)])
 async def create_correlation(
     correlation: DataCorrelationCreate,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Create a new data correlation"""
     new_correlation = DataCorrelation(
         organization_id=current_user.organization_id,
         created_by=current_user.id,
-        **correlation.dict()
+        **correlation.model_dump()
     )
     
     db.add(new_correlation)
@@ -345,13 +346,13 @@ async def create_correlation(
     return new_correlation
 
 
-@router.put("/correlations/{correlation_id}", response_model=DataCorrelationResponse)
+@router.put("/correlations/{correlation_id}", response_model=DataCorrelationResponse, dependencies=[Depends(require_admin)])
 async def update_correlation(
     correlation_id: uuid.UUID,
     correlation_strength: Optional[int] = None,
     confidence_score: Optional[int] = None,
     is_active: Optional[bool] = None,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Update an existing data correlation"""
@@ -381,10 +382,10 @@ async def update_correlation(
     return existing_correlation
 
 
-@router.delete("/correlations/{correlation_id}", status_code=204)
+@router.delete("/correlations/{correlation_id}", status_code=204, dependencies=[Depends(require_admin)])
 async def delete_correlation(
     correlation_id: uuid.UUID,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Delete a data correlation"""
@@ -407,10 +408,10 @@ async def delete_correlation(
 
 # ============ Scoring and Analytics ============
 
-@router.get("/{registry_id}/score", response_model=dict)
+@router.get("/{registry_id}/score", response_model=dict, dependencies=[Depends(require_admin)])
 async def get_registry_score(
     registry_id: uuid.UUID,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Calculate and return the compliance score for a registry"""
@@ -452,7 +453,7 @@ async def get_registry_score(
     
     total_items = len(items)
     completed_items = sum(1 for item in items if item.last_completed_at)
-    overdue_items = sum(1 for item in items if item.next_due_at and item.next_due_at < datetime.utcnow())
+    overdue_items = sum(1 for item in items if item.next_due_at and item.next_due_at < datetime.now(timezone.utc))
     at_risk_items = sum(1 for item in items if item.risk_score >= 70)
     
     # Calculate compliance score
@@ -480,10 +481,10 @@ async def get_registry_score(
     }
 
 
-@router.post("/items/{item_id}/score", response_model=dict)
+@router.post("/items/{item_id}/score", response_model=dict, dependencies=[Depends(require_admin)])
 async def calculate_item_risk_score(
     item_id: uuid.UUID,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Calculate and update the risk score for a registry item"""
@@ -513,8 +514,8 @@ async def calculate_item_risk_score(
     risk_score += severity_scores.get(item.severity_level, 20)
     
     # Overdue contribution (0-30 points)
-    if item.next_due_at and item.next_due_at < datetime.utcnow():
-        days_overdue = (datetime.utcnow() - item.next_due_at).days
+    if item.next_due_at and item.next_due_at < datetime.now(timezone.utc):
+        days_overdue = (datetime.now(timezone.utc) - item.next_due_at).days
         risk_score += min(30, days_overdue * 5)
     
     # Required status contribution (0-15 points)
@@ -536,7 +537,7 @@ async def calculate_item_risk_score(
         "risk_score": risk_score,
         "factors": {
             "severity": severity_scores.get(item.severity_level, 20),
-            "overdue": 30 if (item.next_due_at and item.next_due_at < datetime.utcnow()) else 0,
+            "overdue": 30 if (item.next_due_at and item.next_due_at < datetime.now(timezone.utc)) else 0,
             "required": 15 if (item.is_required and not item.last_completed_at) else 0,
             "compliance": max(0, 15 - (item.compliance_score / 100 * 15))
         }

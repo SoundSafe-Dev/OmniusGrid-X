@@ -19,6 +19,8 @@ from app.db.models import User, AnalysisSession, SessionDataSource, SessionMessa
 from app.api.nlp_correlation import _process_uploaded_file, build_source_descriptor, _run_scenarios
 from app.services.correlation_ai_engine import correlation_ai_engine
 from app.services.cross_file_scenario_builder import build_cross_file_scenarios
+from app.services.multi_spreadsheet_correlator import correlate_spreadsheet_sources
+from app.services.session_suggested_questions import generate_suggested_questions
 
 logger = structlog.get_logger()
 
@@ -70,14 +72,11 @@ async def _get_analysis_session(
     result = await db.execute(query)
     session = result.scalar_one_or_none()
 
-    if session is None:
-        result = await db.execute(
-            select(AnalysisSession).where(func.lower(AnalysisSession.id) == sid)
-        )
-        session = result.scalar_one_or_none()
-        if session is not None and not _is_dev_user(current_user):
-            if str(session.user_id).strip().lower() != uid:
-                session = None
+    # NOTE (convergence seam): a legacy case-insensitive fallback here did
+    # `func.lower(AnalysisSession.id)`, which 500s now that migration 032 made id
+    # a native postgres uuid ("function lower(uuid) does not exist"). The uuid
+    # type already compares case-insensitively, so the primary query above covers
+    # it and the fallback is removed. Flagged for Harsh's nlp/session lane.
 
     if session is None:
         logger.warning(
@@ -89,6 +88,35 @@ async def _get_analysis_session(
         raise HTTPException(status_code=404, detail="Session not found")
 
     return session
+
+
+def _session_source_payloads(data_sources: List[SessionDataSource]) -> List[Dict[str, Any]]:
+    return [
+        {
+            "id": str(ds.id),
+            "source_id": str(ds.id),
+            "source_type": ds.source_type,
+            "file_name": ds.file_name,
+            "data_type": ds.data_type,
+            "processed_data": ds.processed_data,
+        }
+        for ds in data_sources
+    ]
+
+
+def _session_multi_spreadsheet_analysis(data_sources: List[SessionDataSource]) -> Optional[Dict[str, Any]]:
+    spreadsheet_payloads = [
+        {
+            "source_id": str(ds.id),
+            "file_name": ds.file_name,
+            "processed_data": ds.processed_data or {},
+        }
+        for ds in data_sources
+        if (ds.processed_data or {}).get("type") == "spreadsheet"
+    ]
+    if len(spreadsheet_payloads) >= 2:
+        return correlate_spreadsheet_sources(spreadsheet_payloads)
+    return None
 
 
 def _is_lightweight_chat(message: str) -> bool:
@@ -279,6 +307,18 @@ class SessionMessageResponse(BaseModel):
     timestamp: datetime
 
 
+class SuggestedQuestionItem(BaseModel):
+    question: str
+    category: str
+
+
+class SuggestedQuestionsResponse(BaseModel):
+    questions: List[str]
+    items: List[SuggestedQuestionItem] = Field(default_factory=list)
+    context_summary: str = ""
+    intelligence: Optional[Dict[str, Any]] = None
+
+
 # ==================== Session Management Endpoints ====================
 
 @router.post("", response_model=SessionResponse)
@@ -295,7 +335,7 @@ async def create_session(
     logger.info("create_session", user_id=str(current_user.id))
     
     # Generate default title if not provided
-    title = request.title or f"Analysis Session {datetime.utcnow().strftime('%Y-%m-%d %H:%M')}"
+    title = request.title or f"Analysis Session {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}"
     
     # Create session
     session = AnalysisSession(
@@ -498,7 +538,7 @@ async def update_session(
     if request.description is not None:
         session.description = request.description
     
-    session.updated_at = datetime.utcnow()
+    session.updated_at = datetime.now(timezone.utc)
     
     await db.commit()
     await db.refresh(session)
@@ -563,7 +603,7 @@ async def delete_session(
     
     # Soft delete
     session.status = "deleted"
-    session.updated_at = datetime.utcnow()
+    session.updated_at = datetime.now(timezone.utc)
     
     await db.commit()
 
@@ -627,7 +667,7 @@ async def resume_session(
     
     # Update last accessed
     session.last_accessed_at = _utc_now()
-    session.updated_at = datetime.utcnow()
+    session.updated_at = datetime.now(timezone.utc)
     
     await db.commit()
     await db.refresh(session)
@@ -820,6 +860,41 @@ async def list_session_data(
     ]
 
 
+@router.get("/{session_id}/suggested-questions", response_model=SuggestedQuestionsResponse)
+async def get_session_suggested_questions(
+    session_id: UUID,
+    limit: int = Query(default=3, ge=1, le=6),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Otter-style suggested questions personalized to the session's uploaded data.
+    """
+    logger.info("get_session_suggested_questions", user_id=str(current_user.id), session_id=str(session_id))
+
+    session_id_str = _session_id_str(session_id)
+    await _get_analysis_session(db, session_id, current_user)
+
+    query = select(SessionDataSource).where(SessionDataSource.session_id == session_id_str)
+    query = query.order_by(SessionDataSource.added_at.asc())
+    result = await db.execute(query)
+    data_sources = result.scalars().all()
+
+    payloads = _session_source_payloads(data_sources)
+    multi = _session_multi_spreadsheet_analysis(data_sources)
+    generated = generate_suggested_questions(payloads, multi, limit=limit)
+
+    return SuggestedQuestionsResponse(
+        questions=generated.get("questions") or [],
+        items=[
+            SuggestedQuestionItem(question=item["question"], category=item["category"])
+            for item in generated.get("items") or []
+        ],
+        context_summary=generated.get("context_summary") or "",
+        intelligence=generated.get("intelligence"),
+    )
+
+
 class SessionCorrelationRequest(BaseModel):
     """Request to correlate all data sources in a session."""
     shared_keys: Optional[List[str]] = Field(
@@ -869,6 +944,21 @@ async def correlate_session(
     )
     agg = await _run_scenarios(scenarios, db, current_user)
 
+    spreadsheet_payloads = [
+        {
+            "source_id": str(ds.id),
+            "file_name": ds.file_name,
+            "processed_data": ds.processed_data,
+        }
+        for ds in data_sources
+        if (ds.processed_data or {}).get("type") == "spreadsheet"
+    ]
+    multi_analysis = (
+        correlate_spreadsheet_sources(spreadsheet_payloads)
+        if len(spreadsheet_payloads) >= 2
+        else None
+    )
+
     summary_text = (
         f"Correlated {len(data_sources)} session data sources into {agg['scenario_count']} group(s) "
         f"across {len(agg['domains_seen'])} domains "
@@ -883,9 +973,13 @@ async def correlate_session(
             f"reference common identifiers (asset_id, order number, date, etc.)."
         )
 
+    if multi_analysis and multi_analysis.get("cross_file_findings"):
+        summary_text = multi_analysis["narrative_summary"] + "\n\n" + summary_text
+
     return {
         "session_id": str(session_id),
         "analysis": summary_text,
+        "multi_spreadsheet_analysis": multi_analysis,
         "data_sources": [{"source_id": d["source_id"], "file_name": d["file_name"],
                           "data_type": d["data_type"], "domains": d["domains"],
                           "keys": d["keys"]} for d in descriptors],
@@ -967,7 +1061,7 @@ async def session_chat(
     session = await _get_analysis_session(db, session_id, current_user)
     
     # Update session last accessed
-    session.last_accessed_at = datetime.utcnow()
+    session.last_accessed_at = datetime.now(timezone.utc)
     
     # Save user message
     user_message = SessionMessage(
@@ -1010,6 +1104,18 @@ async def session_chat(
         "user_context": session.context_snapshot,
         "user_goals": session.goals_snapshot
     }
+
+    spreadsheet_payloads = [
+        {
+            "source_id": str(ds.id),
+            "file_name": ds.file_name,
+            "processed_data": ds.processed_data,
+        }
+        for ds in data_sources
+        if (ds.processed_data or {}).get("type") == "spreadsheet"
+    ]
+    if len(spreadsheet_payloads) >= 2:
+        context["multi_spreadsheet_analysis"] = correlate_spreadsheet_sources(spreadsheet_payloads)
     
     # Let the model handle the conversation naturally. It can still use uploaded
     # data context, but it does not force every response into risk/task format.
@@ -1265,11 +1371,11 @@ async def generate_session_title(
     elif keywords:
         title = f"{', '.join(keywords[:2])} Analysis"
     else:
-        title = f"Analysis Session {datetime.utcnow().strftime('%Y-%m-%d %H:%M')}"
+        title = f"Analysis Session {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}"
     
     # Update session title
     session.title = title
-    session.updated_at = datetime.utcnow()
+    session.updated_at = datetime.now(timezone.utc)
     
     await db.commit()
     await db.refresh(session)
@@ -1444,7 +1550,7 @@ async def get_session_telemetry_context(
         }
     
     # Get recent telemetry (last 1 hour)
-    time_threshold = datetime.utcnow() - timedelta(hours=1)
+    time_threshold = datetime.now(timezone.utc) - timedelta(hours=1)
     telemetry_data = []
     
     for asset in assets[:5]:  # Limit to 5 assets for performance
@@ -1526,7 +1632,7 @@ async def get_session_alarms_context(
         }
     
     # Get recent alarms (last 24 hours)
-    time_threshold = datetime.utcnow() - timedelta(hours=24)
+    time_threshold = datetime.now(timezone.utc) - timedelta(hours=24)
     alarm_data = []
     
     for asset in assets[:5]:  # Limit to 5 assets for performance

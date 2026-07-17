@@ -6,7 +6,8 @@ import json
 import structlog
 
 from app.services.websocket_manager import websocket_manager
-from app.core.security import get_current_user_ws
+from app.api.auth import resolve_websocket_user
+from app.middleware.request_context import correlation_id_from_headers
 
 logger = structlog.get_logger()
 router = APIRouter()
@@ -38,26 +39,66 @@ async def websocket_endpoint(
     - command_status: Command execution updates
     - connection_established: Initial connection confirmation
     """
-    # Validate authentication
+    # Preferred auth transport: the token rides the Sec-WebSocket-Protocol
+    # header as ["bearer.v1", "<jwt>"] — query-string tokens end up in access
+    # logs and proxies. The ?token= form remains as a legacy fallback.
+    negotiated_subprotocol = None
+    proto_header = websocket.headers.get("sec-websocket-protocol", "")
+    proto_parts = [p.strip() for p in proto_header.split(",") if p.strip()]
+    if len(proto_parts) >= 2 and proto_parts[0] == "bearer.v1":
+        token = proto_parts[1]
+        # Echo the marker protocol back or browsers abort the handshake.
+        negotiated_subprotocol = "bearer.v1"
+
+    # FS-108: bind a connection-scoped correlation id so EVERY log line in this
+    # WebSocket session carries it. BaseHTTPMiddleware (which binds request_id on
+    # the HTTP path) never runs for the WebSocket scope, so WS logs were
+    # previously uncorrelatable. Honour an inbound X-Request-ID / traceparent
+    # from the handshake so a WS session lines up with the HTTP trace that opened
+    # it. Unbound in the finally, mirroring the HTTP middleware.
+    connection_id = correlation_id_from_headers(websocket.headers)
+    structlog.contextvars.bind_contextvars(request_id=connection_id)
+    try:
+        await _serve_websocket(
+            websocket, token, organization_id, asset_ids, negotiated_subprotocol
+        )
+    finally:
+        structlog.contextvars.unbind_contextvars("request_id")
+
+
+async def _serve_websocket(
+    websocket: WebSocket,
+    token: Optional[str],
+    organization_id: Optional[str],
+    asset_ids: Optional[str],
+    negotiated_subprotocol: Optional[str],
+):
+    # Validate authentication via the shared resolver (handles JWTs and the
+    # dev-token bypass under ALLOW_DEV_TOKEN — one ws auth path, not two).
     user = None
     if token:
         try:
-            user = await get_current_user_ws(token)
+            user = await resolve_websocket_user(token)
         except Exception as e:
             await websocket.close(code=1008, reason="Authentication failed")
             logger.warning("websocket_auth_failed", error=str(e))
             return
-    
+        if user is None:
+            await websocket.close(code=1008, reason="Authentication failed")
+            logger.warning("websocket_auth_failed", error="invalid token")
+            return
+
     # Default to user's organization if not specified
     if not organization_id and user:
         organization_id = str(user.organization_id)
-    
+
     if not organization_id:
         await websocket.close(code=1008, reason="Organization ID required")
         return
-    
+
     # Connect client
-    await websocket_manager.connect_client(websocket, organization_id)
+    await websocket_manager.connect_client(websocket, organization_id,
+                                           subprotocol=negotiated_subprotocol)
     
     # Parse asset filter
     subscribed_assets: Set[str] = set()

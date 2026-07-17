@@ -1,13 +1,12 @@
 import { api } from './client';
-import { 
+import { TRANSPORT_ALIASES, TRANSPORT_OUT_ALIASES } from './transform';
+import { registerTransform } from './transformRegistry';
+import {
   Carrier, 
   Driver, 
   Shipment, 
-  Route, 
+  Route,
   Vehicle,
-  FreightCharge,
-  LogisticsOverview,
-  HOSViolationAlert,
   ShipmentFilters,
   PaginatedResponse,
   GeoLocation,
@@ -17,7 +16,12 @@ import {
   GeoTabException
 } from '../types';
 
-const USE_MOCK = true;
+import { USE_MOCK } from './mockMode';
+
+// FS-61: casing handled by the axios seam — no per-call toCamel/toSnake.
+// (/api/v1/logistics is deliberately NOT registered: legacy-camel backend.)
+registerTransform('/api/v1/transportation', { inAliases: TRANSPORT_ALIASES, outAliases: TRANSPORT_OUT_ALIASES });
+registerTransform('/api/v1/geotab');
 
 const MOCK_DELAY = 500;
 
@@ -417,11 +421,12 @@ export const transportationApi = {
       };
     }
     const response = await api.get<Carrier[]>('/api/v1/transportation/carriers');
+    const items = response.data;
     return {
-      items: response.data,
-      total: response.data.length,
+      items,
+      total: items.length,
       skip: 0,
-      limit: response.data.length,
+      limit: items.length,
       hasMore: false,
     };
   },
@@ -466,11 +471,12 @@ export const transportationApi = {
       };
     }
     const response = await api.get<Driver[]>('/api/v1/transportation/drivers', { params: { carrier_id: carrierId } });
+    const items = response.data;
     return {
-      items: response.data,
-      total: response.data.length,
+      items,
+      total: items.length,
       skip: 0,
-      limit: response.data.length,
+      limit: items.length,
       hasMore: false,
     };
   },
@@ -522,13 +528,20 @@ export const transportationApi = {
         hasMore: false,
       };
     }
-    const response = await api.get<Vehicle[]>('/api/v1/transportation/vehicles', { params: { carrier_id: carrierId } });
+    // FS-99: backend returns the {items, meta} pagination envelope with a real
+    // total now. Map it to the flat PaginatedResponse; tolerate either casing
+    // of has_more from the transform seam.
+    const response = await api.get<{
+      items: Vehicle[];
+      meta: { total: number; skip: number; limit: number; has_more?: boolean; hasMore?: boolean };
+    }>('/api/v1/transportation/vehicles', { params: { carrier_id: carrierId } });
+    const { items, meta } = response.data;
     return {
-      items: response.data,
-      total: response.data.length,
-      skip: 0,
-      limit: response.data.length,
-      hasMore: false,
+      items,
+      total: meta.total,
+      skip: meta.skip,
+      limit: meta.limit,
+      hasMore: meta.hasMore ?? meta.has_more ?? meta.skip + items.length < meta.total,
     };
   },
 
@@ -559,13 +572,20 @@ export const transportationApi = {
         hasMore: false,
       };
     }
-    const response = await api.get<Shipment[]>('/api/v1/transportation/shipments', { params: filters });
+    // FS-99: backend returns the {items, meta} pagination envelope with a real
+    // total now. Map it to the flat PaginatedResponse; tolerate either casing
+    // of has_more from the transform seam.
+    const response = await api.get<{
+      items: Shipment[];
+      meta: { total: number; skip: number; limit: number; has_more?: boolean; hasMore?: boolean };
+    }>('/api/v1/transportation/shipments', { params: filters ?? {} });
+    const { items, meta } = response.data;
     return {
-      items: response.data,
-      total: response.data.length,
-      skip: 0,
-      limit: response.data.length,
-      hasMore: false,
+      items,
+      total: meta.total,
+      skip: meta.skip,
+      limit: meta.limit,
+      hasMore: meta.hasMore ?? meta.has_more ?? meta.skip + items.length < meta.total,
     };
   },
 
@@ -626,6 +646,24 @@ export const transportationApi = {
     return response.data;
   },
 
+  // Lifecycle status transitions (delivered, exception, ...) — task D22.
+  updateShipmentStatus: async (id: string, status: Shipment['status'], note?: string): Promise<Shipment> => {
+    if (USE_MOCK) {
+      await delay(MOCK_DELAY);
+      const shipment = mockShipments.find(s => s.id === id);
+      if (!shipment) throw new Error('Shipment not found');
+      shipment.status = status;
+      if (status === 'delivered') shipment.actualDelivery = new Date().toISOString();
+      shipment.updatedAt = new Date().toISOString();
+      return shipment;
+    }
+    const response = await api.post<Shipment>(
+      `/api/v1/transportation/shipments/${id}/status`,
+      { status, note }
+    );
+    return response.data;
+  },
+
   getShipmentCosts: async (id: string): Promise<{ freight: number; fuel: number; accessorials: number; detention: number; total: number }> => {
     if (USE_MOCK) {
       await delay(MOCK_DELAY);
@@ -674,6 +712,7 @@ export const transportationApi = {
         lateDeliveries: delivered.length - onTime,
       };
     }
+    // /api/v1/logistics is legacy-camel (never-registered); data arrives camelCase.
     const response = await api.get('/api/v1/logistics/delivery-efficiency');
     return response.data;
   },
@@ -768,8 +807,21 @@ export const geoTabApi = {
         { id: 'diag-2', deviceId, diagnosticCode: 'Seatbelt', name: 'Seatbelt Violation', source: 'Safety', value: 'Unbuckled', timestamp: new Date().toISOString(), isActive: true },
       ];
     }
-    const response = await api.get<GeoTabDiagnostic[]>(`/api/v1/geotab/devices/${deviceId}/diagnostics`);
-    return response.data;
+    const response = await api.get<any>(`/api/v1/geotab/devices/${deviceId}/diagnostics`);
+    const d = response.data;
+    // Backend returns an envelope with diagnostics.dtc_codes; the transform
+    // seam camelizes it (dtcCodes/lastSeen) before we flatten to entries.
+    if (Array.isArray(d)) return d as GeoTabDiagnostic[];
+    const codes: string[] = d?.diagnostics?.dtcCodes ?? [];
+    return codes.map((code, i) => ({
+      id: `${deviceId}-dtc-${i}`,
+      deviceId,
+      diagnosticCode: code,
+      name: code,
+      source: 'OBDII',
+      timestamp: d?.lastSeen ?? new Date().toISOString(),
+      isActive: true,
+    }));
   },
 
   // Exceptions (Rules Violations)
@@ -793,8 +845,9 @@ export const geoTabApi = {
       if (deviceId) return exceptions.filter(e => e.deviceId === deviceId);
       return exceptions;
     }
-    const response = await api.get<GeoTabException[]>('/api/v1/geotab/exceptions', { params: deviceId ? { device_id: deviceId } : undefined });
-    return response.data;
+    const response = await api.get<any>('/api/v1/geotab/exceptions', { params: deviceId ? { device_id: deviceId } : undefined });
+    // Backend wraps the list in an envelope ({exceptions: [...]}); unwrap either shape.
+    return (response.data?.exceptions ?? response.data) as GeoTabException[];
   },
 
   // Fleet Summary from GeoTab

@@ -1,5 +1,6 @@
 import { FC, useMemo } from 'react';
 import Plot from 'react-plotly.js';
+import type { Config, Layout, PlotData } from 'plotly.js';
 import { Card } from '../ui';
 
 interface Spatial3DPoint {
@@ -35,8 +36,8 @@ export const Spatial3DChart: FC<Spatial3DChartProps> = ({
     const textValues = data.map(d => d.label || `(${d.x}, ${d.y}, ${d.z}): ${d.value}`);
     const colorValues = data.map(d => d.color || d.value);
     
-    return [{
-      type: 'scatter3d' as const,
+    const trace: Partial<PlotData> = {
+      type: 'scatter3d',
       mode: 'markers',
       x: xValues,
       y: yValues,
@@ -48,8 +49,7 @@ export const Spatial3DChart: FC<Spatial3DChartProps> = ({
         colorscale: colorScale,
         showscale: showColorbar,
         colorbar: {
-          title: 'Value',
-          titleside: 'right'
+          title: { text: 'Value', side: 'right' }
         },
         opacity: 0.8,
         line: {
@@ -57,35 +57,39 @@ export const Spatial3DChart: FC<Spatial3DChartProps> = ({
           width: 0.5
         }
       },
-      hoverinfo: 'text+x+y+z',
+      // Same flags as the previous 'text+x+y+z'; plotly treats the combination as
+      // order-insensitive and the typed union only lists this permutation.
+      hoverinfo: 'x+y+z+text',
       hovertemplate: '<b>%{text}</b><br>' +
                     'X: %{x}<br>' +
                     'Y: %{y}<br>' +
                     'Z: %{z}<br>' +
                     'Value: %{marker.color}<extra></extra>'
-    }];
+    };
+
+    return [trace];
   }, [data, colorScale, showColorbar, markerSize]);
-  
-  const layout = {
+
+  const layout: Partial<Layout> = {
     title: {
       text: title,
       font: { size: 18, color: '#94a3b8' }
     },
     scene: {
       xaxis: {
-        title: 'X',
+        title: { text: 'X' },
         color: '#94a3b8',
         gridcolor: '#334155',
         backgroundcolor: '#1e293b'
       },
       yaxis: {
-        title: 'Y',
+        title: { text: 'Y' },
         color: '#94a3b8',
         gridcolor: '#334155',
         backgroundcolor: '#1e293b'
       },
       zaxis: {
-        title: 'Z',
+        title: { text: 'Z' },
         color: '#94a3b8',
         gridcolor: '#334155',
         backgroundcolor: '#1e293b'
@@ -99,8 +103,8 @@ export const Spatial3DChart: FC<Spatial3DChartProps> = ({
     font: { color: '#94a3b8' },
     margin: { l: 0, r: 100, t: 60, b: 0 }
   };
-  
-  const config = {
+
+  const config: Partial<Config> = {
     responsive: true,
     displayModeBar: true,
     modeBarButtonsToRemove: ['lasso2d', 'select2d'],

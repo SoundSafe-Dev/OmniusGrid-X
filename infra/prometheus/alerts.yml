@@ -11,7 +11,7 @@ groups:
         annotations:
           summary: "TimescaleDB is down"
           description: "TimescaleDB has been down for more than 1 minute. All data ingestion is halted."
-          runbook_url: "https://wiki/runbooks/timescaledb-down"
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/deployment/dr-timescaledb-failure.md"
 
       # CRITICAL: Message broker down
       - alert: RedpandaDown
@@ -23,6 +23,7 @@ groups:
         annotations:
           summary: "Redpanda message broker is down"
           description: "Redpanda has been down for more than 1 minute. Edge agents are buffering locally."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/deployment/dr-redpanda-failure.md"
 
       # CRITICAL: Disk space
       - alert: DiskSpaceCritical
@@ -45,6 +46,7 @@ groups:
         annotations:
           summary: "OpsGrid Backend API is down"
           description: "Backend API has been down for more than 2 minutes. Dashboard inaccessible."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/deployment/dr-backend-crash.md"
 
       # HIGH: Memory pressure
       - alert: HighMemoryUsage
@@ -121,3 +123,324 @@ groups:
         annotations:
           summary: "OCR accuracy below threshold"
           description: "Screen scraper accuracy dropped below 80% on {{ $labels.asset_id }}"
+
+  # Rules on metrics the edge agent actually emits on its /metrics endpoint
+  # (edge_collector_* / edge_buffer_*), distinct from the backend-side
+  # opsgrid_edge_buffer_messages gauge referenced above.
+  - name: opsgrid_edge_collectors
+    rules:
+      # HIGH: agent unreachable — scrape target down is the fleet-side
+      # heartbeat-staleness signal (the agent stopped serving /metrics).
+      - alert: EdgeAgentUnreachable
+        expr: up{job=~"edge-agent.*|opsgrid-edge-agent"} == 0
+        for: 3m
+        labels:
+          severity: high
+          team: edge
+        annotations:
+          summary: "Edge agent unreachable"
+          description: "Agent target {{ $labels.instance }} has not answered scrapes for 3m (crashed, network-partitioned, or metrics disabled)"
+
+      # HIGH: a collector's task is down
+      - alert: EdgeCollectorDown
+        expr: edge_collector_connection_state == 0
+        for: 5m
+        labels:
+          severity: high
+          team: edge
+        annotations:
+          summary: "Edge collector down"
+          description: "Collector for asset {{ $labels.asset_id }} ({{ $labels.collector_type }}) has been down for 5m"
+
+      # MEDIUM: store-and-forward buffer growing (upstream/Kafka issue)
+      - alert: EdgeBufferGrowing
+        expr: edge_buffer_messages > 5000
+        for: 3m
+        labels:
+          severity: medium
+          team: edge
+        annotations:
+          summary: "Edge store-and-forward buffer growing"
+          description: "Edge buffer holds {{ $value }} pending messages (upstream likely unavailable)"
+
+      # MEDIUM: backfill lag high (oldest buffered message getting old)
+      - alert: EdgeBackfillLagHigh
+        expr: edge_buffer_backfill_lag_seconds > 3600
+        for: 10m
+        labels:
+          severity: medium
+          team: edge
+        annotations:
+          summary: "Edge backfill lag high"
+          description: "Oldest pending edge message is over 1h old ({{ $value }}s)"
+
+      # HIGH: messages being dead-lettered (delivery failing permanently)
+      - alert: EdgeDeadLettering
+        expr: increase(edge_buffer_dead_lettered_total[15m]) > 0
+        for: 0m
+        labels:
+          severity: high
+          team: edge
+        annotations:
+          summary: "Edge messages dead-lettered"
+          description: "{{ $value }} edge messages exhausted retries and were dead-lettered in the last 15m"
+
+      # MEDIUM: buffer dropping oldest messages to stay under the size cap
+      - alert: EdgeBufferDropping
+        expr: increase(edge_buffer_dropped_total[15m]) > 0
+        for: 0m
+        labels:
+          severity: medium
+          team: edge
+        annotations:
+          summary: "Edge buffer dropping messages (size cap)"
+          description: "{{ $value }} oldest edge messages pruned to stay under the buffer size cap"
+
+      # MEDIUM: sustained collector error rate
+      - alert: EdgeCollectorErrors
+        expr: sum by (asset_id, collector_type) (rate(edge_collector_errors_total[5m])) > 0.1
+        for: 10m
+        labels:
+          severity: medium
+          team: edge
+        annotations:
+          summary: "Edge collector error rate elevated"
+          description: "Collector {{ $labels.asset_id }} ({{ $labels.collector_type }}) erroring at {{ $value }}/s"
+
+  - name: opsgrid_edge_fleet
+    rules:
+      # HIGH: an agent has stopped heartbeating (backend marks it down)
+      - alert: EdgeAgentOffline
+        expr: edge_agent_up == 0
+        for: 5m
+        labels:
+          severity: high
+          team: edge
+        annotations:
+          summary: "Edge agent offline"
+          description: "Agent {{ $labels.agent_id }} has not sent a healthy heartbeat for 5m"
+
+      # MEDIUM: store-and-forward buffer backing up (uplink struggling)
+      - alert: EdgeAgentBufferHigh
+        expr: edge_agent_buffer_pending > 5000
+        for: 10m
+        labels:
+          severity: medium
+          team: edge
+        annotations:
+          summary: "Edge agent buffer backing up"
+          description: "Agent {{ $labels.agent_id }} has {{ $value }} messages pending — uplink may be degraded"
+
+      # HIGH: agent certificate close to expiry (rotation not keeping up)
+      - alert: EdgeAgentCertExpiringSoon
+        expr: edge_agent_cert_expiry_seconds < 172800
+        for: 15m
+        labels:
+          severity: high
+          team: edge
+        annotations:
+          summary: "Edge agent certificate expiring"
+          description: "Agent {{ $labels.agent_id }} cert expires in < 2 days; rotation may be failing"
+  - name: opsgrid_api
+    rules:
+      # CRITICAL: 5xx error ratio over 5% sustained — likely a broken deploy or
+      # downstream outage. Powered by the profiling middleware request counter.
+      - alert: APIHighErrorRate
+        expr: |
+          sum(rate(opsgrid_http_requests_total{status=~"5.."}[5m]))
+            / sum(rate(opsgrid_http_requests_total[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "API 5xx error rate above 5%"
+          description: "More than 5% of API requests are returning 5xx over the last 5 minutes. Check Error Triage (/admin/errors) for the dominant exception."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/error-triage.md"
+
+      # WARNING: elevated-but-not-critical error ratio over a longer window.
+      - alert: APIErrorRateElevated
+        expr: |
+          sum(rate(opsgrid_http_requests_total{status=~"5.."}[5m]))
+            / sum(rate(opsgrid_http_requests_total[5m])) > 0.01
+        for: 15m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "API 5xx error rate above 1%"
+          description: "API 5xx error rate has exceeded 1% for 15 minutes. Investigate via Error Triage before it escalates."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/error-triage.md"
+
+      # WARNING: a spike in unhandled exceptions specifically (tracker counter).
+      - alert: APIUnhandledExceptionSpike
+        expr: sum(rate(opsgrid_unhandled_exceptions_total[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Unhandled exception spike"
+          description: "More than 1 unhandled exception per second over 5 minutes. Open Error Triage to identify the fingerprint."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/error-triage.md"
+
+      # WARNING: p95 latency regression.
+      - alert: APILatencyP95High
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(opsgrid_http_request_duration_seconds_bucket[5m]))
+          ) > 2
+        for: 10m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "API p95 latency above 2s"
+          description: "95th-percentile API latency has exceeded 2 seconds for 10 minutes."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/error-triage.md"
+
+  # FS-107: the subsystems FS-105 instrumented (notifications, predictive RUL,
+  # digital-twin optimizer, historian, error-tracker, ingestion lag) all emit
+  # opsgrid_* metrics but had ZERO alert coverage — a metric no one alerts on is
+  # a dashboard nobody watches. These close that gap. Ratios/increase() naturally
+  # produce no series when a subsystem is idle, so none of these fire at rest.
+  - name: opsgrid_subsystems
+    rules:
+      # WARNING: notification delivery is failing for a sustained share of
+      # attempts — subscribers (webhooks/email) are silently not getting alerts.
+      - alert: NotificationDeliveryFailing
+        expr: |
+          sum(rate(opsgrid_notification_dispatches_total{status="failure"}[10m]))
+            / sum(rate(opsgrid_notification_dispatches_total[10m])) > 0.2
+        for: 10m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Notification delivery failure rate above 20%"
+          description: "More than 20% of notification dispatches have failed over 10 minutes. Downstream alerts (webhook/email/SMS) may not be reaching operators. Check the notification channel config and target reachability."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/subsystems.md#notifications"
+
+      # WARNING: delivery latency regression per channel (p95).
+      - alert: NotificationDeliverySlow
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le, channel) (rate(opsgrid_notification_delivery_duration_seconds_bucket[10m]))
+          ) > 10
+        for: 10m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Notification p95 delivery latency above 10s"
+          description: "95th-percentile delivery latency for channel {{ $labels.channel }} has exceeded 10s for 10 minutes. A slow channel backs up the dispatcher and delays every subsequent alert."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/subsystems.md#notifications"
+
+      # WARNING: a surge in high/critical low-RUL alerts means many assets are
+      # predicted to fail soon — could be a real fleet event OR a degradation in
+      # the health-index feed. Either way an operator should look.
+      - alert: PredictiveMaintenanceLowRULSurge
+        expr: sum(increase(opsgrid_rul_low_rul_alerts_total{risk_level=~"high|critical"}[1h])) > 5
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Surge in high/critical low-RUL predictions"
+          description: "More than 5 high/critical low-RUL alerts were raised in the last hour. Review the Predictive Maintenance board — this is either a genuine cluster of aging assets or a bad health-index/telemetry feed skewing the estimator."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/subsystems.md#predictive-maintenance"
+
+      # WARNING: digital-twin optimization runs are slow (p95), starving the
+      # recommendation queue.
+      # NB: the histogram's largest finite bucket is 10s (next is 30s);
+      # histogram_quantile never returns above the largest FINITE le, so the
+      # threshold must sit below it (>10 lands in the 30s bucket) to be firable.
+      - alert: DigitalTwinOptimizeSlow
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(opsgrid_twin_optimize_run_duration_seconds_bucket[15m]))
+          ) > 10
+        for: 15m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Digital-twin optimize p95 runtime above 10s"
+          description: "95th-percentile twin optimization runtime has exceeded 10s for 15 minutes. The candidate sweep is likely too wide or the baseline pull is slow; recommendations will lag."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/subsystems.md#digital-twin"
+
+      # WARNING: historian queries are slow (p95, per granularity) — the
+      # dashboards and exports that read from them will feel it.
+      # NB: the histogram's largest finite bucket is 5s; histogram_quantile
+      # caps at the largest finite le, so >2.5 (lands in the 5s bucket) is the
+      # firable threshold — a p95 sitting in the top bucket is the signal.
+      - alert: HistorianQueriesSlow
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le, granularity) (rate(opsgrid_historian_query_duration_seconds_bucket[10m]))
+          ) > 2.5
+        for: 10m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Historian p95 query latency above 2.5s"
+          description: "95th-percentile historian query latency at granularity {{ $labels.granularity }} has exceeded 2.5s for 10 minutes. Check continuous-aggregate freshness and chunk pruning on TimescaleDB."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/subsystems.md#historian"
+
+      # CRITICAL: the error tracker itself is dropping occurrences at capacity —
+      # this is an observability blind spot (we stop seeing the errors we exist
+      # to surface), so it's treated more urgently than the subsystem warnings.
+      - alert: ErrorTrackerDropping
+        expr: increase(opsgrid_error_tracker_dropped_total[15m]) > 0
+        for: 5m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "Error tracker is dropping occurrences"
+          description: "The error-tracking aggregator has dropped events at capacity in the last 15 minutes — Error Triage is now under-counting. Investigate the flush pipeline before trusting error dashboards."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/subsystems.md#error-tracker"
+
+      # WARNING: flush cycles are failing (batches re-queued) — precursor to
+      # ErrorTrackerDropping if the backlog keeps growing.
+      - alert: ErrorTrackerFlushFailing
+        expr: increase(opsgrid_error_tracker_flush_failures_total[15m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Error tracker flush cycles are failing"
+          description: "One or more error-tracker flush cycles failed in the last 15 minutes (batch re-queued). Usually the errors sink (DB) is unreachable or slow; fix before the pending buffer hits capacity and drops."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/subsystems.md#error-tracker"
+
+      # WARNING: the pending-fingerprint buffer isn't draining.
+      - alert: ErrorTrackerBacklog
+        expr: opsgrid_error_tracker_pending_fingerprints > 500
+        for: 10m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Error tracker backlog above 500 fingerprints"
+          description: "The error-tracker has held more than 500 distinct pending fingerprints for 10 minutes — flush is not keeping up with intake. Check ErrorTrackerFlushFailing and the errors sink."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/subsystems.md#error-tracker"
+
+      # WARNING: application-measured ingestion lag per topic. Complements the
+      # broker-side IngestionLagHigh (consumer-group lag) with the wall-clock lag
+      # the ingestion worker actually observes between event time and write time.
+      - alert: IngestionLagHighApp
+        expr: max by (topic) (opsgrid_ingestion_lag_seconds) > 120
+        for: 10m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Ingestion lag above 2 minutes"
+          description: "Topic {{ $labels.topic }} has an event-to-write lag above 120s for 10 minutes. Telemetry is landing late; check the ingestion worker throughput and TimescaleDB write path."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/subsystems.md#ingestion"

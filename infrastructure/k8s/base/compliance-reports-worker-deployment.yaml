@@ -1,0 +1,95 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: compliance-reports-worker
+  namespace: omniusgrid
+  labels:
+    app.kubernetes.io/name: compliance-reports-worker
+    app.kubernetes.io/component: worker
+    app.kubernetes.io/part-of: omniusgrid
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: compliance-reports-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: compliance-reports-worker
+        app.kubernetes.io/component: worker
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: compliance-reports-worker
+          image: omniusgrid/backend:latest
+          imagePullPolicy: Always
+          command: ["python", "-m", "app.workers.compliance_reports"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          env:
+            # download links are built from this — dev default is localhost;
+            # overlays patch the real public hostname
+            - name: EXPORT_PUBLIC_BASE_URL
+              value: "https://api.omniusgrid.local"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: database-credentials
+                  key: url
+            - name: REDPANDA_URL
+              value: "redpanda:9092"
+            - name: JWT_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: jwt-secret
+                  key: secret
+            - name: SIGNED_URL_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: signed-url-secret
+                  key: secret
+            # NOTE: emptyDir — generated reports are lost on pod restart and
+            # are NOT visible to the backend API pods. Production needs a
+            # shared RWX PVC (or object storage) here and on the backend.
+            - name: EXPORT_STORAGE_PATH
+              value: "/var/lib/omniusgrid/exports"
+            - name: LOG_LEVEL
+              value: "info"
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+            - name: PYTHONUNBUFFERED
+              value: "1"
+          # Optional SMTP delivery credentials; also set
+          # COMPLIANCE_REPORT_EMAIL_ENABLED=true there to turn on emailing.
+          envFrom:
+            - secretRef:
+                name: smtp-credentials
+                optional: true
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: export-data
+              mountPath: /var/lib/omniusgrid/exports
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: export-data
+          emptyDir: {}
+      terminationGracePeriodSeconds: 30

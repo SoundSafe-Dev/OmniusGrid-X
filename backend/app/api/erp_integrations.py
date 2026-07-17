@@ -7,16 +7,25 @@ field mappings, and sync operations.
 
 from typing import List, Dict, Any, Optional
 from uuid import UUID
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, Field
 import structlog
 
-from app.db.database import get_db
+from app.core.tenant import get_tenant_db
+# NOTE (FS-56, for HARSH's review): ERP routes now use get_tenant_db — 020's
+# RLS policies were rewritten onto the canonical app.current_org_id GUC, and a
+# session that never sets it would read zero rows under any non-owner DB role.
+from app.db.database import get_db  # noqa: F401 - kept for any non-tenant use
 from app.api.auth import get_current_active_user
-from app.db.models import User, IntegrationConfiguration, ERPDataMapping, ERPSyncStatus
+from app.db.models import User, IntegrationConfiguration, ERPDataMapping, ERPSyncStatus, ERPEntity
 from app.services.erp_connector_base import ERPType, AuthType, ERPConfig
+from app.services.erp_connector_factory import (
+    ERPConnectorFactory,
+    ERPConnectorUnavailable,
+    UnsupportedERPType,
+)
 
 logger = structlog.get_logger()
 
@@ -126,7 +135,7 @@ class SyncStatusResponse(BaseModel):
 @router.post("", response_model=ERPIntegrationResponse)
 async def create_integration(
     request: ERPIntegrationCreate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -212,7 +221,7 @@ async def create_integration(
 
 @router.get("", response_model=List[ERPIntegrationResponse])
 async def list_integrations(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -250,7 +259,7 @@ async def list_integrations(
 @router.get("/{integration_id}", response_model=ERPIntegrationResponse)
 async def get_integration(
     integration_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -289,7 +298,7 @@ async def get_integration(
 async def update_integration(
     integration_id: UUID,
     request: ERPIntegrationUpdate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -334,7 +343,7 @@ async def update_integration(
         config["ip_whitelist"] = request.ip_whitelist
     
     integration.configuration = config
-    integration.updated_at = datetime.utcnow()
+    integration.updated_at = datetime.now(timezone.utc)
     
     await db.commit()
     await db.refresh(integration)
@@ -363,7 +372,7 @@ async def update_integration(
 @router.delete("/{integration_id}")
 async def delete_integration(
     integration_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -398,7 +407,7 @@ async def delete_integration(
 @router.post("/{integration_id}/test")
 async def test_connection(
     integration_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -416,14 +425,39 @@ async def test_connection(
     
     if not integration:
         raise HTTPException(status_code=404, detail="Integration not found")
-    
-    # TODO: Implement actual connection test using connector
-    # For now, return mock response
+
+    # Build the concrete connector and run its real health check.
+    tested_at = datetime.now(timezone.utc)
+    try:
+        connector = ERPConnectorFactory.create(integration)
+    except UnsupportedERPType as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except ERPConnectorUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+    try:
+        health = await connector.health_check()
+        status, message = interpret_health(health)
+        details = health
+    except Exception as exc:  # real connection failure — report, don't 500
+        status, message, details = "error", str(exc), {}
+    finally:
+        try:
+            await connector.close()
+        except Exception:
+            pass
+
+    # Persist the outcome on the integration row.
+    integration.health_status = status
+    integration.last_health_check = tested_at
+    await db.commit()
+
     return {
-        "status": "success",
-        "message": "Connection test successful",
+        "status": status,
+        "message": message,
+        "details": details,
         "integration_id": str(integration_id),
-        "tested_at": datetime.utcnow().isoformat()
+        "tested_at": tested_at.isoformat(),
     }
 
 
@@ -432,7 +466,7 @@ async def trigger_sync(
     integration_id: UUID,
     background_tasks: BackgroundTasks,
     entity_type: Optional[str] = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -450,22 +484,151 @@ async def trigger_sync(
     
     if not integration:
         raise HTTPException(status_code=404, detail="Integration not found")
-    
-    # TODO: Implement actual sync trigger
-    # For now, return mock response
+
+    # Resolve which entity types to sync: explicit param, else the distinct
+    # source entities from the field mappings.
+    if entity_type:
+        entity_types = [entity_type]
+    else:
+        maps = await db.execute(
+            select(ERPDataMapping.source_entity).where(
+                ERPDataMapping.integration_id == integration_id
+            ).distinct()
+        )
+        entity_types = [row[0] for row in maps.all() if row[0]]
+
+    if not entity_types:
+        raise HTTPException(
+            status_code=400,
+            detail="No entity_type given and no field mappings to infer entities from",
+        )
+
+    # Run off the request path so long syncs don't block the response.
+    background_tasks.add_task(
+        run_erp_sync, str(integration_id), str(current_user.organization_id), entity_types
+    )
     return {
         "status": "triggered",
-        "message": "Sync triggered successfully",
+        "message": f"Sync triggered for {len(entity_types)} entity type(s)",
         "integration_id": str(integration_id),
-        "entity_type": entity_type,
-        "triggered_at": datetime.utcnow().isoformat()
+        "entity_types": entity_types,
+        "triggered_at": datetime.now(timezone.utc).isoformat(),
     }
+
+
+def interpret_health(health: Dict[str, Any]) -> tuple:
+    """Reduce a connector health_check() dict to (status, message).
+
+    Connectors vary: some return {"healthy": bool}, some {"status": "healthy"}.
+    Treat healthy/ok/connected as success; anything else as an error.
+    """
+    healthy = health.get("healthy")
+    if healthy is None:
+        healthy = str(health.get("status", "")).lower() in ("healthy", "ok", "connected", "up")
+    status = "success" if healthy else "error"
+    default = "Connection test successful" if status == "success" else "Connection test failed"
+    return status, health.get("message", default)
+
+
+def extract_entity_id(record: Dict[str, Any], index: int) -> str:
+    """Best-effort stable id for a fetched ERP record."""
+    for key in ("id", "Id", "ID", "entity_id", "number", "Number", "key", "Key"):
+        if record.get(key) not in (None, ""):
+            return str(record[key])
+    return f"row-{index}"
+
+
+async def run_erp_sync(integration_id: str, organization_id: str, entity_types: List[str]) -> Dict[str, Any]:
+    """Fetch each entity type via the connector, upsert erp_entities, and record
+    per-entity sync status. Runs in its own DB session (background task)."""
+    from app.db.database import AsyncSessionLocal
+    from sqlalchemy import select as _select
+
+    summary: Dict[str, Any] = {}
+    async with AsyncSessionLocal() as db:
+        integration = (
+            await db.execute(
+                _select(IntegrationConfiguration).where(IntegrationConfiguration.id == integration_id)
+            )
+        ).scalar_one_or_none()
+        if integration is None:
+            return {"error": "integration not found"}
+
+        try:
+            connector = ERPConnectorFactory.create(integration)
+        except (UnsupportedERPType, ERPConnectorUnavailable) as exc:
+            logger.error("erp_sync_connector_error", integration_id=integration_id, error=str(exc))
+            return {"error": str(exc)}
+
+        source_system = str(integration.erp_type or "erp")
+        any_success = False
+        for etype in entity_types:
+            started = datetime.now(timezone.utc)
+            synced = failed = 0
+            status = "success"
+            try:
+                records = await connector.fetch_data(etype) or []
+                for i, record in enumerate(records):
+                    eid = extract_entity_id(record, i)
+                    existing = (
+                        await db.execute(
+                            _select(ERPEntity).where(
+                                ERPEntity.integration_id == integration_id,
+                                ERPEntity.entity_type == etype,
+                                ERPEntity.entity_id == eid,
+                            )
+                        )
+                    ).scalar_one_or_none()
+                    if existing is None:
+                        db.add(ERPEntity(
+                            organization_id=organization_id, integration_id=integration_id,
+                            entity_type=etype, entity_id=eid, entity_data=record,
+                            source_system=source_system,
+                        ))
+                    else:
+                        existing.entity_data = record
+                        existing.updated_at = datetime.now(timezone.utc)
+                    synced += 1
+                any_success = True
+            except Exception as exc:
+                status, failed = "failed", 1
+                logger.error("erp_sync_entity_failed", entity_type=etype, error=str(exc))
+
+            duration = (datetime.now(timezone.utc) - started).total_seconds()
+            sync_row = (
+                await db.execute(
+                    _select(ERPSyncStatus).where(
+                        ERPSyncStatus.integration_id == integration_id,
+                        ERPSyncStatus.entity_type == etype,
+                    )
+                )
+            ).scalar_one_or_none()
+            if sync_row is None:
+                sync_row = ERPSyncStatus(
+                    organization_id=organization_id, integration_id=integration_id, entity_type=etype
+                )
+                db.add(sync_row)
+            sync_row.last_sync_at = started
+            sync_row.last_sync_status = status
+            sync_row.records_synced = synced
+            sync_row.records_failed = failed
+            sync_row.sync_duration_seconds = int(duration)
+            summary[etype] = {"status": status, "records_synced": synced, "records_failed": failed}
+
+        if any_success:
+            integration.last_successful_sync = datetime.now(timezone.utc)
+        await db.commit()
+        try:
+            await connector.close()
+        except Exception:
+            pass
+    return summary
 
 
 @router.get("/{integration_id}/sync-status", response_model=List[SyncStatusResponse])
 async def get_sync_status(
     integration_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -501,7 +664,7 @@ async def get_sync_status(
 async def create_field_mapping(
     integration_id: UUID,
     request: FieldMappingCreate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -561,7 +724,7 @@ async def create_field_mapping(
 @router.get("/{integration_id}/mappings", response_model=List[FieldMappingResponse])
 async def list_field_mappings(
     integration_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -599,7 +762,7 @@ async def update_field_mapping(
     integration_id: UUID,
     mapping_id: UUID,
     request: FieldMappingUpdate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -631,7 +794,7 @@ async def update_field_mapping(
     if request.is_required is not None:
         mapping.is_required = request.is_required
     
-    mapping.updated_at = datetime.utcnow()
+    mapping.updated_at = datetime.now(timezone.utc)
     
     await db.commit()
     await db.refresh(mapping)
@@ -659,7 +822,7 @@ async def update_field_mapping(
 async def delete_field_mapping(
     integration_id: UUID,
     mapping_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -690,3 +853,90 @@ async def delete_field_mapping(
     )
     
     return {"message": "Field mapping deleted successfully"}
+
+
+# ==================== ERP data surfaces (ERP hub page) ====================
+
+@router.get("/{integration_id}/entities")
+async def list_erp_entities(
+    integration_id: UUID,
+    entity_type: Optional[str] = None,
+    limit: int = 200,
+    db: AsyncSession = Depends(get_tenant_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Synced ERP business objects (erp_entities) for the hub's Entities tab."""
+    from sqlalchemy import select
+
+    query = select(ERPEntity).where(
+        ERPEntity.integration_id == integration_id,
+        ERPEntity.organization_id == current_user.organization_id,
+        ERPEntity.is_active == True,  # noqa: E712
+    )
+    if entity_type:
+        query = query.where(ERPEntity.entity_type == entity_type)
+    rows = (await db.execute(query.order_by(ERPEntity.updated_at.desc()).limit(min(limit, 1000)))).scalars().all()
+    return [{
+        "id": str(e.id),
+        "entity_type": e.entity_type,
+        "entity_id": e.entity_id,
+        "source_system": e.source_system,
+        "entity_data": e.entity_data,
+        "updated_at": e.updated_at.isoformat() if e.updated_at else None,
+    } for e in rows]
+
+
+@router.get("/{integration_id}/events")
+async def list_erp_events(
+    integration_id: UUID,
+    status: Optional[str] = None,
+    limit: int = 100,
+    db: AsyncSession = Depends(get_tenant_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Webhook/sync event feed (erp_integration_events) for the hub's Events tab."""
+    from sqlalchemy import select
+    from app.db.models import ERPIntegrationEvent
+
+    query = select(ERPIntegrationEvent).where(
+        ERPIntegrationEvent.integration_id == integration_id,
+        ERPIntegrationEvent.organization_id == current_user.organization_id,
+    )
+    if status:
+        query = query.where(ERPIntegrationEvent.processing_status == status)
+    rows = (await db.execute(query.order_by(ERPIntegrationEvent.created_at.desc()).limit(min(limit, 500)))).scalars().all()
+    return [{
+        "id": str(ev.id),
+        "event_type": ev.event_type,
+        "event_id": ev.event_id,
+        "source_system": ev.source_system,
+        "entity_type": ev.entity_type,
+        "entity_id": ev.entity_id,
+        "processing_status": ev.processing_status,
+        "created_at": ev.created_at.isoformat() if ev.created_at else None,
+    } for ev in rows]
+
+
+@router.get("/correlations/recent")
+async def list_erp_correlations(
+    limit: int = 100,
+    db: AsyncSession = Depends(get_tenant_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """ERP<->sensor correlations recorded in erp_correlations (AI tab)."""
+    from sqlalchemy import select
+    from app.db.models import ERPCorrelation
+
+    rows = (await db.execute(
+        select(ERPCorrelation)
+        .where(ERPCorrelation.organization_id == current_user.organization_id)
+        .order_by(ERPCorrelation.created_at.desc()).limit(min(limit, 500))
+    )).scalars().all()
+    return [{
+        "id": str(c.id),
+        "correlation_type": c.correlation_type,
+        "erp_event_id": str(c.erp_event_id) if c.erp_event_id else None,
+        "sensor_event_id": c.sensor_event_id,
+        "correlation_score": float(c.correlation_score) if c.correlation_score is not None else None,
+        "created_at": c.created_at.isoformat() if c.created_at else None,
+    } for c in rows]
