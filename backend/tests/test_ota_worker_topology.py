@@ -162,6 +162,9 @@ def test_compose_and_k8s_use_one_dedicated_ota_owner():
     assert _effective(compose_worker["environment"]["SCHEDULERS_IN_API"]) == "false"
     assert compose_worker["command"] == "python -m app.workers.ota_rollouts"
     assert compose_worker["depends_on"] == {
+        # migrate gate: the one-shot schema builder must finish before any
+        # DB-writing worker starts (the initdb-mount removal fix).
+        "migrate": {"condition": "service_completed_successfully"},
         "timescaledb": {"condition": "service_healthy"},
         "redpanda": {"condition": "service_healthy"},
     }
