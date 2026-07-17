@@ -44,6 +44,16 @@ SENSITIVE_OPERATIONS = {
     "POST:/api/v1/kanban/tasks/{id}/approve": "task_approved",
     "POST:/api/v1/kanban/tasks/{id}/reject": "task_rejected",
     "POST:/api/v1/kanban/tasks/{id}/assign": "task_assigned",
+
+    # FS-111: newly-mounted subsystem control-plane mutations. Only the
+    # destructive / admin control actions are audited — the high-frequency
+    # compute endpoints (drift/detect, performance/prediction) are deliberately
+    # NOT here, or they'd flood the trail. Historian and RUL expose no mutations.
+    "POST:/api/v1/twin/optimize": "twin_optimization_run",
+    "POST:/api/v1/model-monitoring/reset/{id}": "model_monitoring_reset",
+    "POST:/api/v1/admin/query-performance/record-snapshot": "query_performance_snapshot_recorded",
+    "POST:/api/v1/admin/query-performance/refresh-frequent-queries": "query_performance_refreshed",
+    "POST:/api/v1/admin/query-performance/reset-stats": "query_performance_stats_reset",
 }
 
 
@@ -112,14 +122,20 @@ class AuditLoggingMiddleware(BaseHTTPMiddleware):
         return response
     
     def _normalize_path(self, path: str) -> str:
-        """Normalize path by replacing UUIDs with {id}"""
+        """Normalize path by replacing resource identifiers with {id}"""
         import re
         # Replace UUID patterns with {id}
-        return re.sub(
+        path = re.sub(
             r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}',
             '{id}',
             path
         )
+        # FS-111: some resource ids are free-form strings, not UUIDs (e.g. the
+        # model_id on /model-monitoring/reset/{model_id}), so the UUID rule alone
+        # wouldn't collapse them. Collapse the single segment following a known
+        # single-resource action verb so those keys match their template.
+        path = re.sub(r'(/reset)/[^/]+$', r'\1/{id}', path)
+        return path
     
     def _extract_resource(self, path: str, request: Request) -> tuple:
         """Extract resource type and ID from path and request"""
