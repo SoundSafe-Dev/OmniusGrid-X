@@ -64,6 +64,44 @@ jobs:
           RUN_CONTRACT_TESTS: "1"
         run: pytest tests/test_api_contract.py -q
 
+  # --- FS-114: real-DB guard suite (schema parity + endpoint/write smoke) ---
+  backend-realdb:
+    runs-on: ubuntu-latest
+    # BLOCKING. This is the only workflow that runs on hamad/** pushes, and
+    # until now NO job here executed the backend suite — so the FS-91/92/93
+    # real-DB guards (which spin an ephemeral TimescaleDB via testcontainers)
+    # never ran on the convergence branch. They also SILENTLY SKIPPED in
+    # ci-cd.yml because testcontainers wasn't a pinned dev dep. FS-114 fixes
+    # both: the pin lands in requirements-dev.txt and this job runs the guards
+    # against a real Postgres so ORM<->migration drift and naive-datetime bugs
+    # (which SQLite create_all masks) fail the merge instead of prod.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install dev deps (incl. testcontainers)
+        working-directory: ./backend
+        run: pip install -r requirements-dev.txt
+      - name: Verify testcontainers is importable (guards must not skip)
+        working-directory: ./backend
+        # Fail loudly if the pin ever regresses: a skipped guard is a silent
+        # loss of the exact coverage this job exists to provide.
+        run: python -c "import testcontainers.postgres; print('testcontainers OK')"
+      - name: Real-DB guard suite
+        working-directory: ./backend
+        # testcontainers talks to the host Docker daemon (present on
+        # ubuntu-latest); each spun container migrates the schema via
+        # scripts/migrate.py, so this is a true fresh-chain parity check.
+        run: |
+          pytest -q \
+            tests/test_schema_parity.py \
+            tests/test_realdb_endpoint_smoke.py \
+            tests/test_realdb_write_smoke.py \
+            tests/test_no_naive_utcnow.py \
+            tests/test_demo_seeder_smoke.py
+
   # --- task 1: frontend unit tests (Vitest) --------------------------------
   frontend-unit:
     runs-on: ubuntu-latest
