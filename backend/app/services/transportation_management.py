@@ -3,7 +3,7 @@ Transportation Management System (TMS)
 Carrier management, shipment tracking, route optimization, HOS compliance
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any
 from uuid import UUID
 import structlog
@@ -58,9 +58,9 @@ class HOSComplianceMonitor:
             warnings.append(f"Cycle time nearing limit: {cycle_hours}h")
 
         # Check medical cert
-        if driver.medical_cert_expires and driver.medical_cert_expires < datetime.utcnow():
+        if driver.medical_cert_expires and driver.medical_cert_expires < datetime.now(timezone.utc):
             violations.append("Medical certificate expired")
-        elif driver.medical_cert_expires and driver.medical_cert_expires < datetime.utcnow() + timedelta(days=30):
+        elif driver.medical_cert_expires and driver.medical_cert_expires < datetime.now(timezone.utc) + timedelta(days=30):
             warnings.append("Medical certificate expiring soon")
 
         return {
@@ -634,7 +634,7 @@ class TransportationManagementService:
                 compliance = self.hos_monitor.check_compliance(driver)
                 if not compliance['is_compliant']:
                     hos_violations += 1
-                if driver.medical_cert_expires and driver.medical_cert_expires < datetime.utcnow():
+                if driver.medical_cert_expires and driver.medical_cert_expires < datetime.now(timezone.utc):
                     expired_medical_certs += 1
             
             return {
@@ -646,7 +646,7 @@ class TransportationManagementService:
                     'is_valid': (
                         carrier.ctpat_certified and 
                         carrier.ctpat_expires_at and 
-                        carrier.ctpat_expires_at > datetime.utcnow()
+                        carrier.ctpat_expires_at > datetime.now(timezone.utc)
                     )
                 },
                 'insurance_status': {
@@ -655,7 +655,7 @@ class TransportationManagementService:
                     'is_valid': (
                         carrier.insurance_on_file and
                         carrier.insurance_expires_at and
-                        carrier.insurance_expires_at > datetime.utcnow()
+                        carrier.insurance_expires_at > datetime.now(timezone.utc)
                     )
                 },
                 'safety_rating': carrier.safety_rating,
