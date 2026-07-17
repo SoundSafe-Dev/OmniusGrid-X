@@ -52,8 +52,24 @@ export class WebSocketManager {
   // Last server-side subscription filter, replayed after a reconnect.
   private lastSubscribeMessage: WebSocketMessage | null = null;
 
+  // Last emitted status, so late subscribers (e.g. a header indicator mounting
+  // after the socket settled) can read the current state synchronously.
+  private lastStatus: ConnectionStatus = {
+    connected: false,
+    state: 'disconnected',
+    pollingFallback: false,
+  };
+
+  // The access token rotates (refresh flow writes the new one to localStorage),
+  // so it must be read at connect time — never captured once and replayed on
+  // reconnect, or re-auth fails after the first rotation.
+  private currentToken(): string | undefined {
+    return localStorage.getItem('accessToken') || undefined;
+  }
+
   connect(token?: string): void {
     if (this.ws?.readyState === WebSocket.OPEN) return;
+    token = token ?? this.currentToken();
 
     this.manualClose = false;
     // Keep pollingFallback steady while a background attempt is in flight so the
@@ -132,20 +148,27 @@ export class WebSocketManager {
         console.error('Max reconnection attempts reached — falling back to polling; retrying in background');
       }
       this.emitStatus('disconnected', true);
-      this.scheduleReconnectTimer(RECONNECT_CAP_MS);
+      this.scheduleReconnectTimer(this.jitter(RECONNECT_CAP_MS));
       return;
     }
 
-    const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), RECONNECT_CAP_MS);
+    const backoff = Math.min(1000 * Math.pow(2, this.reconnectAttempts), RECONNECT_CAP_MS);
     this.reconnectAttempts++;
     this.emitStatus('reconnecting');
-    this.scheduleReconnectTimer(delay);
+    this.scheduleReconnectTimer(this.jitter(backoff));
+  }
+
+  // Equal jitter: [delay/2, delay), capped by construction. Spreads a fleet of
+  // clients reconnecting after a shared outage so the backend isn't stampeded.
+  private jitter(delay: number): number {
+    return delay / 2 + Math.random() * (delay / 2);
   }
 
   private scheduleReconnectTimer(delay: number): void {
     this.reconnectTimeout = window.setTimeout(() => {
-      const token = localStorage.getItem('accessToken') || undefined;
-      this.connect(token);
+      // Re-auth with whatever token is current NOW (it may have rotated since
+      // the last connect); connect() falls back to currentToken().
+      this.connect();
     }, delay);
   }
 
@@ -248,7 +271,14 @@ export class WebSocketManager {
       state,
       pollingFallback,
     };
+    this.lastStatus = status;
     this.emit('connection_status', status);
+  }
+
+  // Synchronous snapshot of the connection status, for consumers that mount
+  // after the last 'connection_status' event was emitted.
+  getStatus(): ConnectionStatus {
+    return this.lastStatus;
   }
 
   isConnected(): boolean {
