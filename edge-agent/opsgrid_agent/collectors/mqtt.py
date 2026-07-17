@@ -2,7 +2,7 @@
 
 import asyncio
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional, Callable
 import paho.mqtt.client as mqtt
 import structlog
@@ -148,7 +148,7 @@ class MQTTCollector:
             payload = json.loads(msg.payload.decode('utf-8'))
             
             # Extract timestamp (prefer device timestamp if available)
-            timestamp = datetime.utcnow()
+            timestamp = datetime.now(timezone.utc)
             if 'timestamp' in payload:
                 try:
                     timestamp = datetime.fromisoformat(payload['timestamp'].replace('Z', '+00:00'))
@@ -361,7 +361,7 @@ class BambuCollector(MQTTCollector):
                 
                 # Create normalized message
                 message = {
-                    'timestamp_edge': datetime.utcnow().isoformat(),
+                    'timestamp_edge': datetime.now(timezone.utc).isoformat(),
                     'asset_id': self.asset_id,
                     'topic': msg.topic,
                     'payload': {

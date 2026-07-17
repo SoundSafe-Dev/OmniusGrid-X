@@ -5,7 +5,7 @@ Manages all data source collectors in a single coordinated system
 
 import asyncio
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Any, Optional, Callable
 from dataclasses import dataclass
 import structlog
@@ -262,9 +262,9 @@ class UnifiedCollectorCoordinator:
                 elif ts_raw:
                     timestamp_edge = datetime.fromisoformat(ts_raw)
                 else:
-                    timestamp_edge = datetime.utcnow()
+                    timestamp_edge = datetime.now(timezone.utc)
             except ValueError:
-                timestamp_edge = datetime.utcnow()
+                timestamp_edge = datetime.now(timezone.utc)
 
             await self.buffer.store(
                 timestamp_edge=timestamp_edge,
@@ -275,11 +275,17 @@ class UnifiedCollectorCoordinator:
             )
 
             # Observability: count the reading and its end-to-edge age.
-            now = (datetime.now(timestamp_edge.tzinfo)
-                   if timestamp_edge.tzinfo else datetime.utcnow())
+            # Coerce naive edge timestamps to UTC before the aware-now math
+            # (FS-96): a naive-vs-aware TypeError here was swallowed by the
+            # handler's catch-all and silently DROPPED the reading.
+            ts_aware = (timestamp_edge if timestamp_edge.tzinfo
+                        else timestamp_edge.replace(tzinfo=timezone.utc))
             metrics.record_message(
                 asset_id, collector_type,
-                age_seconds=max(0.0, (now - timestamp_edge).total_seconds()),
+                age_seconds=max(
+                    0.0,
+                    (datetime.now(timezone.utc) - ts_aware).total_seconds(),
+                ),
             )
 
             # Local analytics (OEE from PackML states, anomaly detection, alerting).
