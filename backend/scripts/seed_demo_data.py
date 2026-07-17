@@ -33,6 +33,7 @@ Run:  make seed-demo     (defaults DATABASE_URL to backend/dev.db SQLite)
 import asyncio
 import math
 import os
+import uuid as _uuid
 import random
 import sys
 from datetime import datetime, timedelta
@@ -257,7 +258,7 @@ async def main(verify: bool = False) -> int:
         await db.execute(delete(ErrorEventBucket).where(ErrorEventBucket.fingerprint.in_(ERROR_FINGERPRINTS)))
         await db.execute(delete(ErrorEvent).where(ErrorEvent.fingerprint.in_(ERROR_FINGERPRINTS)))
         await db.execute(delete(ExportTemplate).where(ExportTemplate.organization_id == ORG))
-        await db.execute(delete(HistorianRetentionPolicy).where(HistorianRetentionPolicy.organization_id == ORG))
+        await db.execute(delete(HistorianRetentionPolicy).where(HistorianRetentionPolicy.organization_id == _uuid.UUID(ORG)))
 
         await db.execute(delete(Asset).where(Asset.id.in_(asset_ids)))
         await db.execute(delete(AssetType).where(AssetType.id.in_([AT_CNC, AT_VIB, AT_AUDIO, AT_VIDEO, AT_CONVEYOR])))
@@ -860,13 +861,13 @@ async def main(verify: bool = False) -> int:
 
         # ---- Historian retention policy ----------------------------------------
         db.add(HistorianRetentionPolicy(
-            organization_id=ORG, metric_name="*", hot_retention_days=30,
+            organization_id=_uuid.UUID(ORG), metric_name="*", hot_retention_days=30,
             warm_retention_days=365, cold_retention_days=1825, ingestion_priority=3,
-            archival_enabled=True, created_by=USER))
+            archival_enabled=True, created_by=_uuid.UUID(USER)))
         db.add(HistorianRetentionPolicy(
-            organization_id=ORG, metric_name="vibration_rms", hot_retention_days=90,
+            organization_id=_uuid.UUID(ORG), metric_name="vibration_rms", hot_retention_days=90,
             warm_retention_days=730, cold_retention_days=1825, ingestion_priority=1,
-            archival_enabled=True, created_by=USER))
+            archival_enabled=True, created_by=_uuid.UUID(USER)))
         print(f"  operations: {op_rows}, kanban tasks: {len(tasks)}, "
               f"rollout targets: {len(rollout_assets)}, registries: 2, errors: {len(errors)}")
 
@@ -962,7 +963,9 @@ def run_verify() -> int:
         r = client.get(f"/api/v1/telemetry/{A_VIB}/history", headers=AUTH,
                        params={"metric_name": "vibration_rms", "aggregation": "1hour",
                                "start_time": days_ago(14).isoformat()})
-        rows = r.json() if r.status_code == 200 else []
+        payload = r.json() if r.status_code == 200 else {}
+        # FS-89: telemetry history returns a {items, meta} envelope now.
+        rows = payload.get("items", payload) if isinstance(payload, dict) else payload
         peak = max((x["max"] for x in rows), default=0)
         check("vibration degradation arc visible (peak > 7 mm/s)", peak > 7, f"peak={peak}")
 

@@ -434,11 +434,13 @@ async def create_repair_order(payload: Dict[str, Any], db: AsyncSession = Depend
 
 def summarize_maintenance(schedules: List[Any], orders: List[Any], now: Optional[datetime] = None) -> Dict[str, Any]:
     """Pure stats/costs aggregate for the maintenance panel."""
-    now = now or datetime.now(timezone.utc)
+    now = _aware(now) or _now_utc()
     overdue = [
         s for s in schedules
         if getattr(s, "status", None) in ("scheduled", "overdue")
-        and getattr(s, "due_date", None) and s.due_date < now
+        # _aware(): SQLite hands back naive datetimes, PG aware — coerce before
+        # comparing with the aware `now` (naive-vs-aware raises TypeError).
+        and getattr(s, "due_date", None) and _aware(s.due_date) < now
     ]
     active = [o for o in orders if getattr(o, "status", None) in ("open", "in_progress", "awaiting_parts")]
     ytd = [
