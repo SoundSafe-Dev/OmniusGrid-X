@@ -3,7 +3,7 @@ Yard Management API Endpoints (YMS)
 Trailer tracking, dock scheduling, yard operations
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -127,7 +127,7 @@ async def update_trailer(
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(trailer, field, value)
     
-    trailer.updated_at = datetime.utcnow()
+    trailer.updated_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(trailer)
     return trailer
@@ -216,7 +216,7 @@ async def create_dock_appointment(
 @router.get("/dock/appointments", response_model=List[DockAppointmentResponse])
 async def get_dock_schedule(
     organization_id: UUID,
-    start_date: datetime = Query(default_factory=lambda: datetime.utcnow()),
+    start_date: datetime = Query(default_factory=lambda: datetime.now(timezone.utc)),
     end_date: Optional[datetime] = Query(None),
     dock_door_id: Optional[UUID] = None,
     db: AsyncSession = Depends(get_db)
@@ -308,13 +308,13 @@ async def complete_yard_move(
 @router.get("/dwell-times", response_model=List[DwellTimeAnalytics])
 async def get_dwell_time_analytics(
     organization_id: UUID,
-    start_date: datetime = Query(default_factory=lambda: datetime.utcnow() - timedelta(days=7)),
+    start_date: datetime = Query(default_factory=lambda: datetime.now(timezone.utc) - timedelta(days=7)),
     end_date: Optional[datetime] = Query(None),
     db: AsyncSession = Depends(get_db)
 ):
     """Get dwell time analytics"""
     if not end_date:
-        end_date = datetime.utcnow()
+        end_date = datetime.now(timezone.utc)
     
     analytics = await yard_management_service.get_dwell_time_analytics(
         organization_id=organization_id,
@@ -380,7 +380,7 @@ def build_detention_alert(
     free time expires ("at_risk") or already accruing charges ("detention");
     None while comfortably inside free time.
     """
-    now = now or datetime.utcnow()
+    now = now or datetime.now(timezone.utc)
     elapsed_minutes = (now - check_in_at).total_seconds() / 60
     remaining_free = free_minutes - elapsed_minutes
 
@@ -422,7 +422,7 @@ async def get_detention_alerts(
         query = query.where(YardTrailer.organization_id == organization_id)
 
     trailers = (await db.execute(query)).scalars().all()
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     alerts = []
     for t in trailers:
         alert = build_detention_alert(

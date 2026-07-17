@@ -175,7 +175,7 @@ async def acknowledge_alert(alert_id: str, db: AsyncSession = Depends(get_db)):
     if alert is None:
         raise HTTPException(status_code=404, detail="alert not found")
     alert.acknowledged = True
-    alert.acknowledged_at = datetime.utcnow()
+    alert.acknowledged_at = datetime.now(timezone.utc)
     await db.commit()
     return {"message": "acknowledged", "id": alert_id}
 
@@ -236,7 +236,7 @@ async def list_schedules(
     db: AsyncSession = Depends(get_db),
 ):
     query = select(MaintenanceSchedule)
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     if status == "overdue":
         query = query.where(
             MaintenanceSchedule.status.in_(("scheduled", "overdue")),
@@ -291,7 +291,7 @@ async def update_schedule(schedule_id: str, payload: Dict[str, Any], db: AsyncSe
     if scheduled:
         s.due_date = _iso_or_400(scheduled, "scheduledDate")
     if payload.get("status") == "completed" and s.completed_at is None:
-        s.completed_at = datetime.utcnow()
+        s.completed_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(s)
     return _schedule_out(s)
@@ -303,7 +303,7 @@ async def list_vehicle_schedules(vehicle_id: str, db: AsyncSession = Depends(get
         select(MaintenanceSchedule).where(MaintenanceSchedule.vehicle_id == vehicle_id)
         .order_by(MaintenanceSchedule.due_date.asc())
     )).scalars().all()
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     return [_schedule_out(s, now) for s in schedules]
 
 
@@ -361,7 +361,7 @@ async def update_repair_order(order_id: str, payload: Dict[str, Any], db: AsyncS
         if payload.get(key) is not None:
             setattr(o, attr, payload[key])
     if payload.get("status") == "completed" and o.completed_at is None:
-        o.completed_at = datetime.utcnow()
+        o.completed_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(o)
     return _order_out(o)
@@ -403,7 +403,7 @@ async def add_service_history(payload: Dict[str, Any], db: AsyncSession = Depend
         vendor=payload.get("technician"),
         cost=payload.get("cost"),
         category=payload.get("serviceType"),
-        completed_at=_iso_or_400(payload["serviceDate"], "serviceDate") if payload.get("serviceDate") else datetime.utcnow(),
+        completed_at=_iso_or_400(payload["serviceDate"], "serviceDate") if payload.get("serviceDate") else datetime.now(timezone.utc),
     )
     db.add(order)
     await db.commit()
@@ -434,7 +434,7 @@ async def create_repair_order(payload: Dict[str, Any], db: AsyncSession = Depend
 
 def summarize_maintenance(schedules: List[Any], orders: List[Any], now: Optional[datetime] = None) -> Dict[str, Any]:
     """Pure stats/costs aggregate for the maintenance panel."""
-    now = now or datetime.utcnow()
+    now = now or datetime.now(timezone.utc)
     overdue = [
         s for s in schedules
         if getattr(s, "status", None) in ("scheduled", "overdue")
@@ -487,7 +487,7 @@ async def compliance_summary(db: AsyncSession = Depends(get_db)):
     """Org-wide carrier/driver compliance rollup for the Compliance tab."""
     carriers = (await db.execute(select(Carrier).where(Carrier.is_active == True))).scalars().all()  # noqa: E712
     drivers = (await db.execute(select(Driver).where(Driver.is_active == True))).scalars().all()  # noqa: E712
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     hos_violations = sum(
         1 for d in drivers
         if (d.hos_drive_hours_today or 0) >= 11 or (d.hos_cycle_hours or 0) >= 70
