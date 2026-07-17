@@ -171,7 +171,9 @@ class HistorianRetentionPolicy(Base):
             name="uq_historian_retention_org_metric",
         ),
         CheckConstraint(
-            "length(btrim(metric_name)) > 0",
+            # trim() (not btrim) — identical semantics on Postgres AND SQLite, so
+            # dev/offline-demo create_all works; migration 034 keeps btrim on PG.
+            "length(trim(metric_name)) > 0",
             name="ck_historian_retention_metric",
         ),
         CheckConstraint(
@@ -1293,7 +1295,7 @@ class UserSession(Base):
     revoked_at = Column(DateTime(timezone=True), nullable=True)
     revoked_reason = Column(String(100), nullable=True)
     replaced_by_jti = Column(UUID(as_uuid=True), nullable=True)
-    meta_data = Column("metadata", JSONB, default=dict)
+    meta_data = Column("metadata", JSON().with_variant(JSONB, "postgresql"), default=dict)
 
 
 class RevokedToken(Base):
@@ -1317,7 +1319,7 @@ class RevokedToken(Base):
     expires_at = Column(DateTime(timezone=True), nullable=False)
     revoked_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     reason = Column(String(100), nullable=True)
-    meta_data = Column("metadata", JSONB, default=dict)
+    meta_data = Column("metadata", JSON().with_variant(JSONB, "postgresql"), default=dict)
 
 
 class ConsentRecord(Base):

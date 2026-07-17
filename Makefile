@@ -33,8 +33,11 @@ smoke: ## Deployment-free end-to-end smoke (in-process app + SQLite)
 seed-demo: ## Seed realistic correlated demo data (simulated ERP + sensors + yard)
 	cd backend && python scripts/seed_demo_data.py --verify
 
-demo: seed-demo ## Seed demo data, then serve the API against it (dev.db)
-	cd backend && DATABASE_URL="sqlite+aiosqlite:///$$(pwd)/dev.db" uvicorn app.main:app --port 8000
+demo: seed-demo ## One-shot offline demo: seed, then serve the API against dev.db
+	@echo ">> API on :8000 with dev-token auth. In another shell:"
+	@echo ">>   cd frontend && VITE_USE_MOCK=false npm run dev   (login: dev / any password)"
+	@echo ">> Full walkthrough: docs/DEMO.md"
+	cd backend && DATABASE_URL="sqlite+aiosqlite:///$$(pwd)/dev.db" ALLOW_DEV_TOKEN=true uvicorn app.main:app --port 8000
 
 test-backend: ## Backend pytest
 	cd backend && python -m pytest -q

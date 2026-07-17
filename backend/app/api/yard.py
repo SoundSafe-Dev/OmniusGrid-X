@@ -381,6 +381,12 @@ def build_detention_alert(
     None while comfortably inside free time.
     """
     now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:  # callers/tests may pass naive nows
+        now = now.replace(tzinfo=timezone.utc)
+    if check_in_at.tzinfo is None:
+        # SQLite hands back naive datetimes, PG aware — coerce before the
+        # aware-`now` subtraction (naive-vs-aware raises TypeError).
+        check_in_at = check_in_at.replace(tzinfo=timezone.utc)
     elapsed_minutes = (now - check_in_at).total_seconds() / 60
     remaining_free = free_minutes - elapsed_minutes
 
