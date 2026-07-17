@@ -118,6 +118,7 @@ const navItems: NavItem[] = [
       { path: '/admin/health', label: 'System Health', icon: LayoutDashboard, description: 'Infrastructure status monitoring' },
       { path: '/admin/errors', label: 'Error Triage', icon: Bug, description: 'Production error monitoring' },
       { path: '/admin/fleet', label: 'Fleet OTA', icon: UploadCloud, description: 'Edge-agent releases and staged rollouts' },
+      { path: '/admin/notifications', label: 'Notifications', icon: Bell, description: 'Alert delivery subscriptions and log' },
       { path: '/admin/settings', label: 'Settings', icon: Settings, description: 'System configuration' },
     ],
   },

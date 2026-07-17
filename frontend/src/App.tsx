@@ -42,6 +42,9 @@ const FleetRolloutDetail = named(() => import('./pages/admin'), 'FleetRolloutDet
 const ErrorTriage = named(() => import('./pages/admin'), 'ErrorTriage')
 const ErrorTriageDetail = named(() => import('./pages/admin'), 'ErrorTriageDetail')
 
+// FS-132: notifications center (subscriptions + delivery log), kept lazy.
+const Notifications = named(() => import('./pages/admin'), 'Notifications')
+
 const Users = named(() => import('./pages/admin'), 'Users')
 const Collectors = named(() => import('./pages/admin'), 'Collectors')
 const SystemHealth = named(() => import('./pages/admin'), 'SystemHealth')
@@ -124,6 +127,7 @@ const App: FC = () => {
                 <Route path="/admin/collectors" element={<Collectors />} />
                 <Route path="/admin/health" element={<SystemHealth />} />
                 <Route path="/admin/settings" element={<Settings />} />
+                <Route path="/admin/notifications" element={<Notifications />} />
                 <Route path="/admin/errors" element={<ErrorTriage />} />
                 <Route path="/admin/errors/:fingerprint" element={<ErrorTriageDetail />} />
                 <Route path="/admin/fleet" element={<Fleet />} />

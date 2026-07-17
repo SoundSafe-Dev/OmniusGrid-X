@@ -17,3 +17,4 @@ export { fleetApi } from './fleet';
 export { rulApi } from './rul';
 export { historianApi } from './historian';
 export { twinOptimizerApi, defaultOptimizeRequest } from './twinOptimizer';
+export { notificationsApi } from './notifications';
