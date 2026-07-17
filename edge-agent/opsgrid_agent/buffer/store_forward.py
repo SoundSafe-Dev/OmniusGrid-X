@@ -3,7 +3,7 @@
 import asyncio
 import json
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, asdict
@@ -69,7 +69,7 @@ class StoreForwardBuffer:
                 raise sqlite3.DatabaseError(f"integrity_check: {result[0]}")
         except sqlite3.DatabaseError as e:
             quarantine = self.buffer_path.with_suffix(
-                f".corrupt-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
+                f".corrupt-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
             )
             logger.error(
                 "buffer_corrupt_quarantining",
@@ -225,7 +225,7 @@ class StoreForwardBuffer:
         """Adapter for coordinator message dicts -> store()."""
         raw_ts = message.get("timestamp_edge") or message.get("timestamp")
         if raw_ts is None:
-            timestamp_edge = datetime.utcnow()
+            timestamp_edge = datetime.now(timezone.utc)
         elif isinstance(raw_ts, datetime):
             timestamp_edge = raw_ts
         else:
@@ -339,7 +339,7 @@ class StoreForwardBuffer:
     
     async def cleanup_old_messages(self) -> int:
         """Remove messages older than retention policy"""
-        cutoff = datetime.utcnow() - timedelta(hours=self.retention_hours)
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=self.retention_hours)
         
         async with self._lock:
             try:
@@ -484,8 +484,12 @@ class StoreForwardBuffer:
             return 0.0
         try:
             ts = datetime.fromisoformat(timestamp_edge)
-            now = datetime.now(ts.tzinfo) if ts.tzinfo else datetime.utcnow()
-            return max(0.0, (now - ts).total_seconds())
+            if ts.tzinfo is None:
+                # Buffered edge timestamps are naive-UTC ISO strings; coerce so
+                # the aware `now` subtraction (FS-96 sweep) can't raise (a raise
+                # here was swallowed below and silently reported lag=0).
+                ts = ts.replace(tzinfo=timezone.utc)
+            return max(0.0, (datetime.now(timezone.utc) - ts).total_seconds())
         except (ValueError, TypeError):
             return 0.0
     

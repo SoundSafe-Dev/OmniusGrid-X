@@ -23,7 +23,7 @@ Frame analysis is pure numpy (unit-tested); OpenCV is only needed for the
 other driver-dependent collectors.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 import asyncio
 
@@ -160,7 +160,7 @@ class VideoFrameCollector(BaseCollector):
                     await self.emit({
                         "asset_id": self.asset_id,
                         "collector_type": "video",
-                        "timestamp_edge": datetime.utcnow().isoformat(),
+                        "timestamp_edge": datetime.now(timezone.utc).isoformat(),
                         "topic": "telemetry",
                         "payload": payload,
                     })

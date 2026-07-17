@@ -4,7 +4,7 @@ Supports Modbus TCP and RTU for PLCs, VFDs, sensors
 """
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional, Callable, List, Union
 import structlog
 from pymodbus.client import ModbusTcpClient, ModbusSerialClient
@@ -323,7 +323,7 @@ class ModbusCollector:
             packml_state = self.packml_mapper.map_state(state_str)
         
         message = {
-            'timestamp_edge': datetime.utcnow().isoformat(),
+            'timestamp_edge': datetime.now(timezone.utc).isoformat(),
             'asset_id': self.asset_id,
             'payload': {
                 'telemetry': telemetry,

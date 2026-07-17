@@ -7,7 +7,7 @@ import asyncio
 import json
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Any, Optional, Callable, Set
 import structlog
@@ -68,7 +68,7 @@ class OrcaSlicerHandler(FileSystemEventHandler):
             packml_state = self.packml_mapper.map_state("IDLE")
             
             message = {
-                'timestamp_edge': datetime.utcnow().isoformat(),
+                'timestamp_edge': datetime.now(timezone.utc).isoformat(),
                 'asset_id': self.asset_id,
                 'payload': {
                     'file_path': str(file_path),
