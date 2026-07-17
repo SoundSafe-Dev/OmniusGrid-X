@@ -483,6 +483,19 @@ class TwinOptimizer:
                     organization_id=result.organization_id,
                     error=str(exc),
                 )
+                # FS-110: report into error-triage, not just the log stream.
+                from app.services.error_tracker import error_tracker
+
+                await error_tracker.report_subsystem_error(
+                    exc,
+                    subsystem="twin",
+                    operation="emit_recommendation",
+                    organization_id=(
+                        str(result.organization_id)
+                        if result.organization_id is not None
+                        else None
+                    ),
+                )
                 emitted.append(recommendation)
             else:
                 emitted.append(
