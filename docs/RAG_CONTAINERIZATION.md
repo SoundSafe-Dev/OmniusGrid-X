@@ -6,8 +6,10 @@ The application code is deployment-agnostic on purpose: every dependency is a UR
 services, how they connect, and how they compose into each deployment shape.
 
 > Status: application layer is code-complete (document store, embeddings/reranker
-> service + clients, vector store). Compose wiring for the new services is **not
-> yet added** — see the checklist at the end.
+> service + clients, vector store) **and** the local Docker Compose stack is wired
+> (`qdrant`, `seaweedfs`, `rag-inference` under the `rag` profile). To bring it up
+> and prove it end-to-end on your machine, jump to
+> [§7 Running & testing the RAG backend locally](#7-running--testing-the-rag-backend-locally).
 
 ---
 
@@ -154,16 +156,146 @@ into `backend/app/api/health.py` so the backend reports a capability matrix.
 
 ---
 
-## 6. Wiring checklist (compose services still to add)
+## 6. Wiring checklist
 
-- [ ] `seaweedfs` service + `seaweedfs-data` volume (config + `s3config.json` exist)
-- [ ] `qdrant` service + `qdrant-storage` volume
-- [ ] `rag-inference` service (build `./rag-inference`) + `HF_HOME` model volume; GPU reservation optional
-- [ ] `gemma` service (vLLM/Ollama) + GPU reservation  *(separate task)*
-- [ ] backend: add the RAG env vars (already have sensible in-cluster defaults)
-- [ ] index worker: reuse backend image with a RAG `WORKER_MODE`
+Local Compose wiring is **done** (see `docker-compose.yml`, `rag` profile):
+
+- [x] `seaweedfs` service + `seaweedfs-data` volume (config + `s3config.json` exist)
+- [x] `qdrant` service + `qdrant-data` volume
+- [x] `rag-inference` service (build `./rag-inference`) + `rag-models` model volume; CPU-first, GPU optional
+- [x] backend: RAG env vars wired (`QDRANT_URL`, `S3_ENDPOINT_URL`, `RAG_INFERENCE_URL`, `LLM_BASE_URL`)
+- [x] index worker: reuse backend image with `WORKER_MODE`
+- [x] `GET /api/v1/rag/health` capability matrix (`backend/app/api/rag.py`)
+
+Still open (deployment, separate tasks):
+
+- [ ] `gemma` service (vLLM/Ollama) as a **container** + GPU reservation — locally the LLM runs *natively* on the host (Ollama) and the backend reaches it via `host.docker.internal`
 - [ ] `compose.no-gpu.yml` override for topology C (omits GPU services)
-- [ ] wire the four `health_check()`s into `backend/app/api/health.py`
+- [ ] Fold the four `health_check()`s into the backend `/health` aggregate too
+
+---
+
+## 7. Running & testing the RAG backend locally
+
+Goal: bring up the RAG data plane on one machine and **prove data actually lands**
+in SeaweedFS, Qdrant, and comes back through retrieval. Everything below is driven
+by two helpers so you don't hand-type `curl`:
+
+- `scripts/rag.sh` — up/down/ingest/query/verify/doctor wrapper around Compose
+- `scripts/verify_rag_e2e.py` — full data-plane E2E check (inspects each store directly)
+
+### 7.1 Prerequisites
+
+- Docker Desktop with **≥ 8 GB** allocated to the engine (12 GB+ for the full stack).
+  BGE-M3 + reranker weights are ~5 GB and load into CPU RAM.
+- ~10 GB free disk (container images + the ~5 GB weight cache).
+- Python 3 on the host with `httpx` and `boto3` (only for `verify`): `pip install httpx boto3`.
+- *(optional, for answer generation)* Ollama running **natively** on the host:
+  `ollama serve` + `ollama pull gemma2:2b`. Retrieval works without it; only
+  `generate=true` needs it.
+
+Run the preflight first — it checks all of the above and the ports:
+
+```bash
+./scripts/rag.sh doctor
+```
+
+### 7.2 Bring the stack up
+
+The RAG services are behind the `rag` Compose profile, so they are **opt-in** and
+never start with a plain `docker compose up`.
+
+```bash
+./scripts/rag.sh up        # LEAN: qdrant + seaweedfs + rag-inference + backend
+# or
+./scripts/rag.sh up-full   # everything (observability, redpanda, worker) + rag profile
+```
+
+`up` blocks while `rag-inference` downloads BGE weights on **first boot** (~5 GB;
+can take several minutes — cached in the `rag-models` volume afterward). Watch it:
+
+```bash
+./scripts/rag.sh logs      # follows rag-inference until "models_loaded":true
+```
+
+Host ports once up: backend `:8000`, rag-inference `:8001`, Qdrant `:6333`,
+SeaweedFS S3 `:8333`. (Inside the network the backend still talks to
+`rag-inference:8000` — only the published host port is remapped to 8001 to avoid
+clashing with the backend.)
+
+### 7.3 Smoke test by hand
+
+```bash
+# ingest a document (any .txt/.pdf/.docx the parsers support)
+./scripts/rag.sh ingest ./path/to/policy.pdf
+
+# retrieval only (no LLM) — returns citations
+./scripts/rag.sh query "What is the emergency shutdown procedure?"
+
+# full RAG with a generated answer (needs Ollama running natively)
+./scripts/rag.sh query "What is the emergency shutdown procedure?" true
+```
+
+All calls authenticate with the `dev-token` bearer, which `backend/app/api/auth.py`
+maps to a seeded dev org/user. The endpoints (prefix `/api/v1/rag`):
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/ingest` | multipart upload → parse → chunk → embed → store + index |
+| POST | `/query` | retrieve (`generate=false`) or retrieve+answer (`generate=true`) |
+| GET | `/documents` | list this org's stored docs |
+| DELETE | `/documents/{doc_id}` | remove from **both** SeaweedFS and Qdrant |
+| GET | `/health` | RAG capability matrix (each dependency's `health_check()`) |
+
+### 7.4 Automated end-to-end verification
+
+The `/health` endpoint only proves services are *reachable*. The E2E script proves
+**data correctness** by inspecting each store directly (boto3 into SeaweedFS, REST
+scroll into Qdrant), not just trusting the API response:
+
+```bash
+./scripts/rag.sh verify        # == python3 scripts/verify_rag_e2e.py
+```
+
+It runs 8 stages and exits non-zero on any failure:
+
+1. **Preflight** — backend, rag-inference (models loaded), Qdrant, SeaweedFS all up
+2. **BGE** — `POST /embed` direct; asserts a non-zero 1024-d dense vector + aligned sparse
+3. **Ingest** — uploads a sentinel document through the backend API
+4. **SeaweedFS** — HEAD+GET the blob at `{org}/{doc}/{filename}`; bytes match exactly
+5. **Qdrant** — scroll by `doc_id`; point count == chunks, real named dense+sparse vectors, full payload
+6. **Retrieval** — `generate=false`; asserts our doc is the **top citation**
+7. **Generation** — `generate=true` *if Ollama is up* (skipped otherwise)
+8. **Cleanup** — DELETE; asserts the doc is gone from **both** planes
+
+Override endpoints via env if you remapped ports:
+`BACKEND_URL`, `QDRANT_URL`, `S3_ENDPOINT`, `INFER_URL`, `OLLAMA_URL`.
+
+### 7.5 Tear down
+
+```bash
+./scripts/rag.sh down          # stops the RAG services (volumes/data preserved)
+```
+
+Add `docker compose down -v` only if you want to wipe the `qdrant-data`,
+`seaweedfs-data`, and `rag-models` volumes (forces a full re-download next time).
+
+### 7.6 Troubleshooting
+
+- **`rag-inference` never reports `models_loaded:true`** — almost always still
+  downloading weights on first boot, or the engine is starved of RAM. Check
+  `./scripts/rag.sh logs` and confirm Docker has ≥ 8 GB.
+- **Backend won't start / exits on boot** — two known cross-cutting backend issues
+  (a schema `uuid` vs `varchar(36)` conflict on a *fresh* DB, and the
+  backend→Redpanda startup gate) can block the whole app, and therefore the RAG
+  endpoints, even though RAG code doesn't touch either. The local `docker-compose.yml`
+  carries **uncommitted** workarounds (Redpanda gate relaxed to `service_started`;
+  SQL-migration initdb mount left off) so the stack comes up. A clean checkout won't
+  have those — if the backend crashes at startup, that's why. These are tracked for a
+  dedicated fix session.
+- **`generate=true` returns no answer** — Ollama isn't reachable on the host.
+  `ollama serve` + `ollama pull gemma2:2b`; the backend reaches it at
+  `host.docker.internal:11434`. Retrieval (`generate=false`) is unaffected.
 
 Application code for the document store, embeddings/reranker, and vector store is
-in place and verified; the above is packaging/wiring only.
+in place and verified end-to-end by the flow above.
