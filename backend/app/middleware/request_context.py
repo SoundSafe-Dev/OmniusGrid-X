@@ -25,18 +25,30 @@ logger = structlog.get_logger()
 REQUEST_ID_HEADER = "X-Request-ID"
 
 
-def _incoming_id(request: Request) -> str:
-    """Prefer an explicit request id, then the traceparent trace-id, else new."""
-    rid = request.headers.get(REQUEST_ID_HEADER)
+def correlation_id_from_headers(headers) -> str:
+    """Derive a correlation id from request/handshake headers.
+
+    Prefer an explicit ``X-Request-ID``, then the W3C ``traceparent`` trace-id,
+    else mint a fresh one. Accepts anything with ``.get(name)`` (Starlette's
+    ``Headers`` for both HTTP requests and WebSocket handshakes), so the HTTP
+    middleware and the WebSocket endpoint (FS-108) share one derivation and
+    ids line up across both transports and with distributed traces.
+    """
+    rid = headers.get(REQUEST_ID_HEADER)
     if rid:
         return rid[:128]
-    traceparent = request.headers.get("traceparent")
+    traceparent = headers.get("traceparent")
     if traceparent:
         # W3C format: version-traceid-spanid-flags; reuse the 32-hex trace id.
         parts = traceparent.split("-")
         if len(parts) >= 2 and len(parts[1]) == 32:
             return parts[1]
     return uuid.uuid4().hex
+
+
+def _incoming_id(request: Request) -> str:
+    """Prefer an explicit request id, then the traceparent trace-id, else new."""
+    return correlation_id_from_headers(request.headers)
 
 
 class RequestContextMiddleware(BaseHTTPMiddleware):
