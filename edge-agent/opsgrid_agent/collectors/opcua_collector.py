@@ -4,7 +4,7 @@ Supports subscriptions, browsing, and reading/writing node values
 """
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional, Callable, List, Set
 import structlog
 from asyncua import Client, Node, ua
@@ -251,7 +251,7 @@ class OPCUACollector:
         """Handle data change notification"""
         try:
             value = datavalue.Value.Value if datavalue.Value else None
-            timestamp = datetime.utcnow()
+            timestamp = datetime.now(timezone.utc)
             
             # Get source timestamp if available
             if datavalue.SourceTimestamp:
