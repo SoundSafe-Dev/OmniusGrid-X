@@ -7,3 +7,10 @@ structlog==23.2.0
 # reranker. Pulls in torch/transformers. The default torch wheel runs on CPU and
 # uses CUDA automatically when a GPU is present.
 FlagEmbedding>=1.2.10
+# NOTE: We use FlagEmbedding ONLY for the embedder (BGEM3FlagModel - dense+sparse
+# in one pass, works with current transformers). The reranker is implemented
+# directly on `transformers` (AutoModelForSequenceClassification) in
+# model_manager.py, because FlagEmbedding's FlagReranker calls the removed
+# tokenizer.prepare_for_model path and is incompatible with current transformers.
+# This keeps transformers UNpinned (the embedder needs a recent version) while
+# the reranker stays stable across versions.
