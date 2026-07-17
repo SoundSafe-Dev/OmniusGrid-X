@@ -5,3 +5,9 @@ pytest==9.1.1
 pytest-asyncio==1.4.0
 schemathesis==4.22.4    # property-based API contract testing (task 12); 4.x for OpenAPI 3.1 (fastapi >=0.99 emits 3.1)
 pip-audit==2.7.3        # dependency vulnerability audit (task 20)
+# FS-114: the real-DB guard suite (test_schema_parity / test_realdb_*_smoke)
+# gates on `pytest.importorskip("testcontainers")` and SILENTLY SKIPS without
+# it. Pinned to 3.7.x because conftest.py's pg_container fixture uses the 3.x
+# PostgresContainer API (user=/dbname= kwargs, get_connection_url() ->
+# postgresql+psycopg2://); 4.x renamed user->username and would TypeError.
+testcontainers==3.7.1   # ephemeral TimescaleDB for real-DB parity/smoke tests (FS-91/92/93)
