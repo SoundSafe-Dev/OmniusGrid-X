@@ -10,7 +10,7 @@ Security and audit logging framework for ERP integrations:
 """
 
 from typing import Dict, Any, Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -234,7 +234,7 @@ class ERPSecurityManager:
             organization_id=self.organization_id,
             details=masked_details,
             ip_address=ip_address,
-            created_at=datetime.utcnow()
+            created_at=datetime.now(timezone.utc)
         )
         
         db.add(audit_log)

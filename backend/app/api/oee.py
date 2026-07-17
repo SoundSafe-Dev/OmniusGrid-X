@@ -1,6 +1,6 @@
 """API routes for OEE (Overall Equipment Effectiveness)"""
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -68,7 +68,7 @@ async def get_current_oee(
     
     return {
         "asset_id": asset_id,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "availability": oee.availability,
         "performance": oee.performance,
         "quality": oee.quality,
@@ -106,7 +106,7 @@ async def get_historical_oee(
         if not asset or asset.organization_id != current_user.organization_id:
             raise HTTPException(status_code=404, detail="Asset not found")
     
-    end_time = datetime.utcnow()
+    end_time = datetime.now(timezone.utc)
     start_time = end_time - timedelta(hours=hours)
     
     # Get historical data
@@ -181,7 +181,7 @@ async def get_oee_dashboard_summary(
     
     return {
         "organization_id": str(current_user.organization_id),
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "aggregate": {
             "avg_oee": round(avg_oee, 2),
             "avg_availability": round(avg_availability, 2),

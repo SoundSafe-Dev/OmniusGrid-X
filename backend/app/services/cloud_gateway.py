@@ -6,7 +6,7 @@ Sends feature vectors to cloud without allowing inbound connections
 import asyncio
 import json
 import ssl
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 import structlog
@@ -86,7 +86,7 @@ class CloudGateway:
             self._queue.pop(0)
             logger.warning("cloud_queue_shedded_oldest")
         
-        vector['_queued_at'] = datetime.utcnow().isoformat()
+        vector['_queued_at'] = datetime.now(timezone.utc).isoformat()
         self._queue.append(vector)
     
     async def queue_discrete_event(self, event_type: str, data: Dict):
@@ -95,8 +95,8 @@ class CloudGateway:
             'type': 'discrete_event',
             'event_type': event_type,
             'data': data,
-            'timestamp': datetime.utcnow().isoformat(),
-            '_queued_at': datetime.utcnow().isoformat(),
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+            '_queued_at': datetime.now(timezone.utc).isoformat(),
         }
         await self.queue_feature_vector(event)
     

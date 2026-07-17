@@ -9,7 +9,7 @@ Correlation patterns for Dynamics 365-specific scenarios:
 """
 
 from typing import Dict, Any, List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_
@@ -71,7 +71,7 @@ class DynamicsCorrelationPatterns:
         # Check for overdue invoices
         if invoice_data.get("due_date"):
             due_date = datetime.fromisoformat(invoice_data["due_date"])
-            if due_date < datetime.utcnow() and invoice_data.get("status") != "paid":
+            if due_date < datetime.now(timezone.utc) and invoice_data.get("status") != "paid":
                 correlations.append({
                     "type": "overdue_invoice",
                     "severity": "high",
@@ -153,7 +153,7 @@ class DynamicsCorrelationPatterns:
         )
         
         # Calculate velocity (orders in last 90 days)
-        ninety_days_ago = datetime.utcnow() - timedelta(days=90)
+        ninety_days_ago = datetime.now(timezone.utc) - timedelta(days=90)
         recent_orders = [
             order for order in orders
             if order.created_at >= ninety_days_ago
@@ -257,7 +257,7 @@ class DynamicsCorrelationPatterns:
         # Check for projects nearing deadline
         if project_data.get("end_date"):
             end_date = datetime.fromisoformat(project_data["end_date"])
-            days_remaining = (end_date - datetime.utcnow()).days
+            days_remaining = (end_date - datetime.now(timezone.utc)).days
             
             if days_remaining < 30 and project_data.get("status") == "active":
                 correlations.append({

@@ -5,7 +5,7 @@ Forensic logging of all commands for compliance
 
 import json
 import hashlib
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass, field
 from enum import Enum
@@ -89,7 +89,7 @@ class AuditTrailService:
         Log a command execution to the immutable audit trail.
         """
         # Generate timestamp
-        timestamp = datetime.utcnow()
+        timestamp = datetime.now(timezone.utc)
         
         # Build entry data for hashing
         entry_data = {
@@ -345,7 +345,7 @@ class AuditTrailService:
         
         export = {
             'export_metadata': {
-                'generated_at': datetime.utcnow().isoformat(),
+                'generated_at': datetime.now(timezone.utc).isoformat(),
                 'date_range': {
                     'start': start_time.isoformat(),
                     'end': end_time.isoformat()

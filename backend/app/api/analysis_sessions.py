@@ -335,7 +335,7 @@ async def create_session(
     logger.info("create_session", user_id=str(current_user.id))
     
     # Generate default title if not provided
-    title = request.title or f"Analysis Session {datetime.utcnow().strftime('%Y-%m-%d %H:%M')}"
+    title = request.title or f"Analysis Session {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}"
     
     # Create session
     session = AnalysisSession(
@@ -538,7 +538,7 @@ async def update_session(
     if request.description is not None:
         session.description = request.description
     
-    session.updated_at = datetime.utcnow()
+    session.updated_at = datetime.now(timezone.utc)
     
     await db.commit()
     await db.refresh(session)
@@ -603,7 +603,7 @@ async def delete_session(
     
     # Soft delete
     session.status = "deleted"
-    session.updated_at = datetime.utcnow()
+    session.updated_at = datetime.now(timezone.utc)
     
     await db.commit()
 
@@ -667,7 +667,7 @@ async def resume_session(
     
     # Update last accessed
     session.last_accessed_at = _utc_now()
-    session.updated_at = datetime.utcnow()
+    session.updated_at = datetime.now(timezone.utc)
     
     await db.commit()
     await db.refresh(session)
@@ -1061,7 +1061,7 @@ async def session_chat(
     session = await _get_analysis_session(db, session_id, current_user)
     
     # Update session last accessed
-    session.last_accessed_at = datetime.utcnow()
+    session.last_accessed_at = datetime.now(timezone.utc)
     
     # Save user message
     user_message = SessionMessage(
@@ -1371,11 +1371,11 @@ async def generate_session_title(
     elif keywords:
         title = f"{', '.join(keywords[:2])} Analysis"
     else:
-        title = f"Analysis Session {datetime.utcnow().strftime('%Y-%m-%d %H:%M')}"
+        title = f"Analysis Session {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}"
     
     # Update session title
     session.title = title
-    session.updated_at = datetime.utcnow()
+    session.updated_at = datetime.now(timezone.utc)
     
     await db.commit()
     await db.refresh(session)
@@ -1550,7 +1550,7 @@ async def get_session_telemetry_context(
         }
     
     # Get recent telemetry (last 1 hour)
-    time_threshold = datetime.utcnow() - timedelta(hours=1)
+    time_threshold = datetime.now(timezone.utc) - timedelta(hours=1)
     telemetry_data = []
     
     for asset in assets[:5]:  # Limit to 5 assets for performance
@@ -1632,7 +1632,7 @@ async def get_session_alarms_context(
         }
     
     # Get recent alarms (last 24 hours)
-    time_threshold = datetime.utcnow() - timedelta(hours=24)
+    time_threshold = datetime.now(timezone.utc) - timedelta(hours=24)
     alarm_data = []
     
     for asset in assets[:5]:  # Limit to 5 assets for performance

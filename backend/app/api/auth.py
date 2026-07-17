@@ -538,7 +538,7 @@ async def resolve_websocket_user(token: Optional[str]) -> Optional[User]:
             if user_id is None:
                 return None
             exp = payload.get("exp")
-            if exp and datetime.utcnow().timestamp() > exp:
+            if exp and datetime.now(timezone.utc).timestamp() > exp:
                 return None
         except JWTError:
             return None

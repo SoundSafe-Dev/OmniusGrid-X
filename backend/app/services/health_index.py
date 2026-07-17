@@ -8,7 +8,7 @@ signal for other systems. It does NOT generate recommendations or create tasks â
 that remains the Correlation AI engine's responsibility.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 import statistics
@@ -96,7 +96,7 @@ class HealthIndexCalculator:
             health_score=round(health, 1),
             drivers=drivers,
             confidence=round(confidence, 2),
-            computed_at=(now or datetime.utcnow()).isoformat(),
+            computed_at=(now or datetime.now(timezone.utc)).isoformat(),
         )
 
     # ------------------------------------------------------------------ #
@@ -104,7 +104,7 @@ class HealthIndexCalculator:
     # ------------------------------------------------------------------ #
     async def get_asset_health(self, asset_id: str, hours: int = 24) -> HealthResult:
         """Gather recent OEE + alarm rate for an asset and compute its health."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         recent_oee: List[float] = []
         availability: Optional[float] = None
         try:
@@ -127,7 +127,7 @@ class HealthIndexCalculator:
             from sqlalchemy import select, func
             from app.db.database import AsyncSessionLocal
             from app.db.models import Alarm
-            since = datetime.utcnow() - timedelta(hours=hours)
+            since = datetime.now(timezone.utc) - timedelta(hours=hours)
             async with AsyncSessionLocal() as session:
                 result = await session.execute(
                     select(func.count()).select_from(Alarm).where(

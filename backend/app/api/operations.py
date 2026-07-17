@@ -2,7 +2,7 @@
 
 from typing import List, Optional
 from uuid import UUID
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -131,7 +131,7 @@ async def create_operation(
     operation = Operation(
         **operation_data.model_dump(),
         status='running',
-        started_at=datetime.utcnow()
+        started_at=datetime.now(timezone.utc)
     )
     db.add(operation)
     await db.commit()
@@ -160,7 +160,7 @@ async def complete_operation(
         raise HTTPException(status_code=400, detail=f"Operation is {operation.status}, not running")
     
     # Calculate actual duration
-    completed_at = datetime.utcnow()
+    completed_at = datetime.now(timezone.utc)
     actual_duration = None
     if operation.started_at:
         actual_duration = int((completed_at - operation.started_at).total_seconds())

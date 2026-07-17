@@ -8,7 +8,7 @@ and Intake Inbox for data upload and analysis.
 import json
 from typing import List, Dict, Any, Optional, Set
 from uuid import UUID
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, Field
@@ -1133,7 +1133,7 @@ async def nlp_query(
     operational_metrics = _extract_metrics_from_query(request.query, request.context)
     
     scenario = CorrelationScenario(
-        scenario_id=f"nlp-{current_user.id}-{int(datetime.utcnow().timestamp())}",
+        scenario_id=f"nlp-{current_user.id}-{int(datetime.now(timezone.utc).timestamp())}",
         active_domains=domain_types,
         ingested_metrics=operational_metrics,
         domain_links=[]
@@ -1207,7 +1207,7 @@ async def nlp_chat(
         "risk_score": response.risk_score,
         "domains": response.domains_analyzed,
         "actions": response.recommended_actions,
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": datetime.now(timezone.utc).isoformat()
     }
     
     return chat_response
@@ -1385,7 +1385,7 @@ async def analyze_intake(
     # Persist results on the intake item
     item.analysis_result = analysis_result
     item.status = "analyzed"
-    item.analyzed_at = datetime.utcnow()
+    item.analyzed_at = datetime.now(timezone.utc)
     await db.commit()
 
     analysis_result["analyzed_at"] = item.analyzed_at.isoformat()
@@ -1958,7 +1958,7 @@ def _extract_metrics_from_query(query: str, context: Dict[str, Any]) -> List:
     from datetime import datetime
 
     metrics = []
-    timestamp = datetime.utcnow().isoformat()
+    timestamp = datetime.now(timezone.utc).isoformat()
 
     # Extract numeric values from query into a single metric payload
     import re

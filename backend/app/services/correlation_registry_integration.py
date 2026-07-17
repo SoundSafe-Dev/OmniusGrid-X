@@ -8,7 +8,7 @@ and correlations based on AI analysis results.
 
 from typing import List, Dict, Any, Optional, Tuple
 from uuid import UUID
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_
 import structlog
@@ -554,7 +554,7 @@ class CorrelationRegistryIntegration:
                 verification_method=item_config["verification_method"],
                 estimated_effort_minutes=item_config["estimated_effort_minutes"],
                 completion_frequency=item_config["completion_frequency"],
-                created_at=datetime.utcnow(),
+                created_at=datetime.now(timezone.utc),
                 meta_data={"domain": domain_name}
             )
             
@@ -871,7 +871,7 @@ class CorrelationRegistryIntegration:
         # Create registry item
         item = ActionableRegistryItem(
             registry_id=registry.id,
-            item_code=f"AI-{domain[:4].upper()}-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}",
+            item_code=f"AI-{domain[:4].upper()}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}",
             item_name=f"Correlation AI: {analysis[:100]}...",
             item_description=analysis,
             severity_level=severity,
@@ -886,7 +886,7 @@ class CorrelationRegistryIntegration:
                 "domain": domain,
                 "risk_score": risk_score
             },
-            created_at=datetime.utcnow()
+            created_at=datetime.now(timezone.utc)
         )
         
         db.add(item)
@@ -986,9 +986,9 @@ class CorrelationRegistryIntegration:
             },
             approval_status="approved",  # Auto-approve AI-generated tasks
             approved_by=created_by,
-            approved_at=datetime.utcnow(),
+            approved_at=datetime.now(timezone.utc),
             created_by=created_by,
-            created_at=datetime.utcnow()
+            created_at=datetime.now(timezone.utc)
         )
         
         db.add(task)
@@ -1026,7 +1026,7 @@ class CorrelationRegistryIntegration:
                 "auto_generated": True
             },
             created_by=created_by,
-            created_at=datetime.utcnow()
+            created_at=datetime.now(timezone.utc)
         )
         
         db.add(correlation)
@@ -1052,13 +1052,13 @@ class CorrelationRegistryIntegration:
             "analysis": analysis,
             "risk_score": risk_score,
             "recommended_actions": recommended_actions,
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
             "severity": "critical" if risk_score > 75 else "high"
         }
         
         logger.warning("correlation_alert_notification", alert_data=alert_data)
         
-        return f"alert-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
+        return f"alert-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
 
 
 # Global instance

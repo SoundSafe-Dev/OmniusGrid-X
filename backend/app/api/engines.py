@@ -3,7 +3,7 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import UUID
 from typing import Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -71,7 +71,7 @@ async def run_tactical_inference(asset_id: str, feature_vector: dict):
     vector = {
         'asset_id': asset_id,
         'features': feature_vector,
-        'timestamp': datetime.utcnow().isoformat(),
+        'timestamp': datetime.now(timezone.utc).isoformat(),
     }
     
     decision = await tactical_engine.infer(vector)

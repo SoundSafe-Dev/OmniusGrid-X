@@ -4,7 +4,7 @@ import asyncio
 import json
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 from uuid import UUID
 import structlog
@@ -160,7 +160,7 @@ class IngestionWorker:
         if timestamp_str:
             timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
         else:
-            timestamp = datetime.utcnow()
+            timestamp = datetime.now(timezone.utc)
         
         packml_state = data.get('packml_state')
         payload = data.get('payload', {})
@@ -269,7 +269,7 @@ class IngestionWorker:
         if timestamp_str:
             timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
         else:
-            timestamp = datetime.utcnow()
+            timestamp = datetime.now(timezone.utc)
 
         result = await session.execute(
             update(Asset)
@@ -301,7 +301,7 @@ class IngestionWorker:
         if timestamp_str:
             timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
         else:
-            timestamp = datetime.utcnow()
+            timestamp = datetime.now(timezone.utc)
         
         if not new_state:
             return
@@ -379,7 +379,7 @@ class IngestionWorker:
             message=data.get('message', 'Unknown alarm'),
             description=data.get('description'),
             meta_data=data.get('metadata', {}),
-            occurred_at=datetime.utcnow()
+            occurred_at=datetime.now(timezone.utc)
         )
         session.add(alarm)
         

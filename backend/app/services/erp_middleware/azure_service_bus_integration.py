@@ -8,7 +8,7 @@ Service for integrating with Azure Service Bus for ERP messaging:
 """
 
 from typing import Dict, Any, Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 import structlog
 import aiohttp
 import json
@@ -285,7 +285,7 @@ class AzureServiceBusIntegrationService:
             "userProperties": {
                 "organization_id": self.organization_id,
                 "integration_id": self.integration_id,
-                "timestamp": datetime.utcnow().isoformat()
+                "timestamp": datetime.now(timezone.utc).isoformat()
             }
         }
         
@@ -409,12 +409,12 @@ class AzureServiceBusIntegrationService:
                 "status": "healthy",
                 "message": "Azure Service Bus connection successful",
                 "namespace": self.namespace,
-                "checked_at": datetime.utcnow().isoformat()
+                "checked_at": datetime.now(timezone.utc).isoformat()
             }
         except Exception as e:
             return {
                 "status": "unhealthy",
                 "message": str(e),
                 "namespace": self.namespace,
-                "checked_at": datetime.utcnow().isoformat()
+                "checked_at": datetime.now(timezone.utc).isoformat()
             }

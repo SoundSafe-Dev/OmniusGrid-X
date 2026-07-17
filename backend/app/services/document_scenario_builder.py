@@ -13,7 +13,7 @@ Modes:
 """
 
 from typing import Dict, List, Iterator, Optional, Any
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.models.domain_interaction import (
     DomainType,
@@ -163,7 +163,7 @@ def _build_section_mode(sections, mapping: DocumentDomainMapping, source_id: str
             metrics.append(OperationalMetric(
                 endpoint=_endpoint(domain, source_id, sec_id),
                 payload_snapshot=_section_payload(section, domain),
-                timestamp=datetime.utcnow().isoformat(),
+                timestamp=datetime.now(timezone.utc).isoformat(),
             ))
             emitted_section_ids.add(sec_id)
         links = _build_links(domains, str(key), max_sev) if len(domains) >= 2 else []
@@ -189,7 +189,7 @@ def _build_section_mode(sections, mapping: DocumentDomainMapping, source_id: str
             ingested_metrics=[OperationalMetric(
                 endpoint=_endpoint(domain, source_id, sec_id),
                 payload_snapshot=_section_payload(section, domain),
-                timestamp=datetime.utcnow().isoformat(),
+                timestamp=datetime.now(timezone.utc).isoformat(),
             )],
         )
         count += 1
@@ -212,7 +212,7 @@ def _build_document_mode(sections, mapping: DocumentDomainMapping,
         metrics.append(OperationalMetric(
             endpoint=_endpoint(domain, source_id, sec_id),
             payload_snapshot=_section_payload(section, domain),
-            timestamp=datetime.utcnow().isoformat(),
+            timestamp=datetime.now(timezone.utc).isoformat(),
         ))
     links = _build_links(domains, source_id, max_sev)
     yield CorrelationScenario(
@@ -249,7 +249,7 @@ def _build_table_mode(sections, source_id: str,
                         "rows": table[:50],
                         "shared_keys": extract_keys_from_text(blob),
                     },
-                    timestamp=datetime.utcnow().isoformat(),
+                    timestamp=datetime.now(timezone.utc).isoformat(),
                 )],
             )
             count += 1
