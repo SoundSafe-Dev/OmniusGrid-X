@@ -26,6 +26,8 @@ export const alarmsApi = {
     if (filters?.acknowledged !== undefined) params.acknowledged = filters.acknowledged;
     if (filters?.startTime) params.start_time = filters.startTime;
     if (filters?.endTime) params.end_time = filters.endTime;
+    if (filters?.skip !== undefined) params.skip = filters.skip;
+    if (filters?.limit !== undefined) params.limit = filters.limit;
 
     // Backend returns a {items, meta} envelope (FS-82) with a real total; alarms
     // is on the transform seam so has_more arrives camelCased as hasMore.

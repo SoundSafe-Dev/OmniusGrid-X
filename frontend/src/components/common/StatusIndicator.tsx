@@ -48,23 +48,40 @@ export const StatusIndicator: FC<StatusIndicatorProps> = ({
 
 interface ConnectionStatusProps {
   connected: boolean;
+  // FS-130: full lifecycle state so the indicator can show "Reconnecting…"
+  // during the backoff window instead of a flat Disconnected. Optional to keep
+  // existing <ConnectionStatus connected={...} /> call sites working.
+  state?: 'connecting' | 'connected' | 'disconnected' | 'reconnecting';
+  pollingFallback?: boolean;
   className?: string;
 }
 
 export const ConnectionStatus: FC<ConnectionStatusProps> = ({
   connected,
+  state,
+  pollingFallback = false,
   className,
 }) => {
+  const effectiveState = state ?? (connected ? 'connected' : 'disconnected');
+
+  let dotClass = 'bg-status-offline';
+  let label = 'Disconnected';
+  if (effectiveState === 'connected') {
+    dotClass = 'bg-status-running animate-pulse';
+    label = 'Live';
+  } else if (effectiveState === 'connecting' || effectiveState === 'reconnecting') {
+    dotClass = 'bg-status-warning animate-pulse';
+    label = effectiveState === 'connecting' ? 'Connecting…' : 'Reconnecting…';
+  } else if (pollingFallback) {
+    // Socket gave up for now; REST polling keeps the data fresh in the background.
+    dotClass = 'bg-status-warning';
+    label = 'Polling';
+  }
+
   return (
     <div className={`flex items-center gap-2 ${className}`}>
-      <span
-        className={`w-2 h-2 rounded-full ${
-          connected ? 'bg-status-running animate-pulse' : 'bg-status-offline'
-        }`}
-      />
-      <span className="text-sm text-opsgrid-text-secondary">
-        {connected ? 'Live' : 'Disconnected'}
-      </span>
+      <span className={`w-2 h-2 rounded-full ${dotClass}`} />
+      <span className="text-sm text-opsgrid-text-secondary">{label}</span>
     </div>
   );
 };

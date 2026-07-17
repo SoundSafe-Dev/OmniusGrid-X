@@ -1,30 +1,23 @@
-import { FC } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { FC, useState } from 'react'
 import { AlertTriangle, CheckCircle, Bell } from 'lucide-react'
-import { alarmsApi } from '../api'
+import { useAlarms, useActiveAlarms, useAcknowledgeAlarm } from '../hooks'
 import { Tooltip, TooltipTrigger, TooltipContent } from '../components/ui'
 
 const Alarms: FC = () => {
-  const queryClient = useQueryClient()
-  
-  const { data: alarmsData, isLoading } = useQuery({
-    queryKey: ['alarms-list'],
-    queryFn: () => alarmsApi.list(),
-  })
+  // FS-127: page through the FS-82 envelope. Page size comes from the limit the
+  // backend echoes back; skip is part of the queryKey via the hook's filters.
+  const [skip, setSkip] = useState(0)
+  const { data: alarmsData, isLoading } = useAlarms({ skip })
   const alarms = alarmsData?.items || []
+  const total = alarmsData?.total ?? 0
+  const limit = alarmsData?.limit || alarms.length || 1
+  const rangeStart = total === 0 ? 0 : (alarmsData?.skip ?? skip) + 1
+  const rangeEnd = (alarmsData?.skip ?? skip) + alarms.length
 
-  const { data: activeAlarms } = useQuery({
-    queryKey: ['active-alarms'],
-    queryFn: () => alarmsApi.getActive(),
-  })
+  const { data: activeAlarms } = useActiveAlarms()
 
-  const acknowledgeMutation = useMutation({
-    mutationFn: (alarmId: string) => alarmsApi.acknowledge(alarmId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['alarms-list'] })
-      queryClient.invalidateQueries({ queryKey: ['active-alarms'] })
-    },
-  })
+  // Invalidates the shared ['alarms'] key, refreshing both list and active queries.
+  const acknowledgeMutation = useAcknowledgeAlarm()
 
   const getSeverityColor = (severity: string) => {
     switch (severity) {
@@ -68,7 +61,7 @@ const Alarms: FC = () => {
                 <Bell className="text-opsgrid-primary" size={24} />
                 <div>
                   <p className="text-sm text-opsgrid-text-secondary">Total Alarms</p>
-                  <p className="text-2xl font-bold">{alarms?.length || 0}</p>
+                  <p className="text-2xl font-bold">{total}</p>
                 </div>
               </div>
             </div>
@@ -99,7 +92,7 @@ const Alarms: FC = () => {
                 <div>
                   <p className="text-sm text-opsgrid-text-secondary">Acknowledged</p>
                   <p className="text-2xl font-bold">
-                    {(alarms?.length || 0) - (activeAlarms?.count || 0)}
+                    {Math.max(0, total - (activeAlarms?.count || 0))}
                   </p>
                 </div>
               </div>
@@ -170,7 +163,7 @@ const Alarms: FC = () => {
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <button
-                        onClick={() => acknowledgeMutation.mutate(alarm.id)}
+                        onClick={() => acknowledgeMutation.mutate({ alarmId: alarm.id })}
                         className="px-3 py-1 bg-opsgrid-primary text-white rounded text-sm hover:bg-opsgrid-primary/80"
                       >
                         Acknowledge
@@ -195,6 +188,31 @@ const Alarms: FC = () => {
             </div>
           )}
         </div>
+
+        {/* Pagination (FS-127) */}
+        {total > 0 && (
+          <div className="p-4 border-t border-opsgrid-border flex items-center justify-between">
+            <span className="text-sm text-opsgrid-text-secondary">
+              {rangeStart}&ndash;{rangeEnd} of {total}
+            </span>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setSkip(Math.max(0, skip - limit))}
+                disabled={skip === 0}
+                className="px-3 py-1 text-sm rounded border border-opsgrid-border text-opsgrid-text-secondary hover:border-opsgrid-primary disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-opsgrid-border"
+              >
+                Previous
+              </button>
+              <button
+                onClick={() => setSkip(skip + limit)}
+                disabled={!alarmsData?.hasMore}
+                className="px-3 py-1 text-sm rounded border border-opsgrid-border text-opsgrid-text-secondary hover:border-opsgrid-primary disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-opsgrid-border"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )

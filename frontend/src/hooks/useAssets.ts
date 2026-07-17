@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient, UseQueryOptions } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, UseQueryOptions, keepPreviousData } from '@tanstack/react-query';
 import { assetsApi, dashboardApi, workcellsApi, organizationsApi } from '../api';
 import {
   Asset,
@@ -24,6 +24,9 @@ export function useAssets(
   return useQuery<PaginatedResponse<Asset>, Error>({
     queryKey: [ASSETS_QUERY_KEY, 'list', params],
     queryFn: () => assetsApi.list(params),
+    // FS-127: params (skip/limit) are part of the key; keep the previous page
+    // rendered while the next one loads so paging doesn't blank the list.
+    placeholderData: keepPreviousData,
     ...options,
   });
 }

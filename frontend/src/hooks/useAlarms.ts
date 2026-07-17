@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient, UseQueryOptions } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, UseQueryOptions, keepPreviousData } from '@tanstack/react-query';
 import { alarmsApi } from '../api';
 import { Alarm, AlarmFilters, ActiveAlarmsResponse, PaginatedResponse } from '../types';
 
@@ -8,6 +8,9 @@ export function useAlarms(filters?: AlarmFilters, options?: UseQueryOptions<Pagi
   return useQuery<PaginatedResponse<Alarm>, Error>({
     queryKey: [ALARMS_QUERY_KEY, 'list', filters],
     queryFn: () => alarmsApi.list(filters),
+    // FS-127: filters (skip/limit) are part of the key; keep the previous page
+    // rendered while the next one loads so paging doesn't blank the list.
+    placeholderData: keepPreviousData,
     ...options,
   });
 }
