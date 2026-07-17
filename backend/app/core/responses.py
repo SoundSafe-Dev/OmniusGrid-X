@@ -35,7 +35,28 @@ class ErrorDetail(BaseModel):
 
 
 class ErrorEnvelope(BaseModel):
-    """The full error body returned for every 4xx/5xx."""
+    """The full error body returned for every 4xx/5xx.
+
+    Carries both the OmniusGrid envelope (``error``/``detail``) and the RFC-9457
+    (``application/problem+json``) standard members (``type``/``title``/
+    ``status``/``instance``) so a single body satisfies existing callers and
+    standards-based consumers alike (FS-102). The four problem members are
+    additive — existing fields are unchanged.
+    """
+
+    # RFC-9457 problem-details members (additive).
+    type: str = Field(
+        "about:blank",
+        description="URI reference identifying the problem type (RFC-9457).",
+    )
+    title: str = Field(
+        ..., description="Short, human-readable summary of the problem type (RFC-9457)."
+    )
+    status: int = Field(..., description="HTTP status code, mirrored per RFC-9457.")
+    instance: Optional[str] = Field(
+        None,
+        description="URI reference (request path) or trace id identifying this occurrence.",
+    )
 
     error: ErrorDetail
     detail: str = Field(
@@ -45,6 +66,10 @@ class ErrorEnvelope(BaseModel):
     model_config = {
         "json_schema_extra": {
             "example": {
+                "type": "https://omniusgrid.dev/problems/not_found",
+                "title": "Not Found",
+                "status": 404,
+                "instance": "/api/v1/assets/123",
                 "error": {
                     "code": "not_found",
                     "message": "Asset not found",

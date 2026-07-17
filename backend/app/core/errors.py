@@ -69,12 +69,55 @@ def _trace_id(request: Request) -> Optional[str]:
     return getattr(request.state, "request_id", None)
 
 
+# RFC-9457 (problem+json) additive layer (FS-102).
+#
+# We keep the existing ``error``/``detail`` members untouched for backward
+# compatibility and ADD the four standard problem members alongside them, so a
+# single body satisfies both existing callers and RFC-9457 consumers.
+#
+# Content-Type choice: error responses now advertise
+# ``application/problem+json`` (the RFC-9457 media type). This is safe because
+# the body is still valid JSON — httpx/TestClient ``.json()`` and existing tests
+# read the parsed body regardless of media type, and the only content-type
+# assertion in the suite is on a 2xx download response, which these handlers do
+# not touch. Kept as a module constant so it is easy to flip back to
+# ``application/json`` if a downstream consumer ever requires the narrower type.
+PROBLEM_JSON = "application/problem+json"
+_PROBLEM_TYPE_BASE = "https://omniusgrid.dev/problems/"
+
+
+def _problem_type(code: str) -> str:
+    """Stable, dereferenceable-looking problem type URI per machine code."""
+    if not code or code == "error":
+        return "about:blank"
+    return _PROBLEM_TYPE_BASE + code
+
+
+def _problem_title(code: str) -> str:
+    """Short human-readable summary derived from the machine code."""
+    if not code:
+        return "Error"
+    return code.replace("_", " ").title()
+
+
 def _envelope(
-    message: str, code: str, status_code: int, details: Any, trace_id: Optional[str]
+    message: str,
+    code: str,
+    status_code: int,
+    details: Any,
+    trace_id: Optional[str],
+    instance: Optional[str] = None,
 ) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
+        media_type=PROBLEM_JSON,
         content={
+            # RFC-9457 standard members (additive).
+            "type": _problem_type(code),
+            "title": _problem_title(code),
+            "status": status_code,
+            "instance": instance or trace_id,
+            # Existing OmniusGrid envelope (unchanged, backward-compatible).
             "error": {
                 "code": code,
                 "message": message,
@@ -86,12 +129,22 @@ def _envelope(
     )
 
 
+def _instance(request: Request) -> Optional[str]:
+    try:
+        return request.url.path
+    except Exception:  # pragma: no cover - defensive
+        return None
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     """Wire the envelope handlers onto a FastAPI app."""
 
     @app.exception_handler(AppError)
     async def _app_error(request: Request, exc: AppError) -> JSONResponse:
-        return _envelope(exc.message, exc.code, exc.status_code, exc.details, _trace_id(request))
+        return _envelope(
+            exc.message, exc.code, exc.status_code, exc.details,
+            _trace_id(request), _instance(request),
+        )
 
     @app.exception_handler(StarletteHTTPException)
     async def _http_error(request: Request, exc: StarletteHTTPException) -> JSONResponse:
@@ -99,7 +152,10 @@ def register_exception_handlers(app: FastAPI) -> None:
         # exc.detail may be a str or a structured payload; normalize to message.
         message = exc.detail if isinstance(exc.detail, str) else "request failed"
         details = {} if isinstance(exc.detail, str) else {"detail": exc.detail}
-        return _envelope(message, code, exc.status_code, details, _trace_id(request))
+        return _envelope(
+            message, code, exc.status_code, details,
+            _trace_id(request), _instance(request),
+        )
 
     @app.exception_handler(RequestValidationError)
     async def _validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
@@ -109,6 +165,7 @@ def register_exception_handlers(app: FastAPI) -> None:
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             {"errors": exc.errors()},
             _trace_id(request),
+            _instance(request),
         )
 
     @app.exception_handler(Exception)
@@ -116,4 +173,4 @@ def register_exception_handlers(app: FastAPI) -> None:
         # Never leak internals; log with the trace id for correlation.
         tid = _trace_id(request)
         logger.error("unhandled_exception", error=str(exc), trace_id=tid, path=request.url.path)
-        return _envelope("internal server error", "internal_error", 500, {}, tid)
+        return _envelope("internal server error", "internal_error", 500, {}, tid, _instance(request))

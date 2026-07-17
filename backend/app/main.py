@@ -245,6 +245,9 @@ app.add_middleware(
 app.add_middleware(RequestContextMiddleware)
 
 # Idempotency-Key replay for mutations on the unowned platform domains only.
+# Prefixes are HAMAD-lane mutation surfaces where at-least-once retries are safe
+# to dedupe (FS-103). Correlation/kanban/intake/OTA/auth/RBAC surfaces are
+# deliberately excluded — they are owned by other lanes.
 app.add_middleware(
     IdempotencyMiddleware,
     protected_prefixes=(
@@ -253,6 +256,12 @@ app.add_middleware(
         "/api/v1/yard",
         "/api/v1/transportation",
         "/api/v1/geotab",
+        # FS-103: additional HAMAD-lane mutation surfaces.
+        "/api/v1/assets",
+        "/api/v1/alarms",
+        "/api/v1/telemetry",
+        "/api/v1/maintenance",
+        "/api/v1/notifications",
     ),
 )
 
