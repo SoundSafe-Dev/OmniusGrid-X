@@ -224,6 +224,17 @@ jobs:
           # tags, where the extra build time is acceptable.
           platforms: ${{ startsWith(github.ref, 'refs/tags/v') && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
 
+      # FS-118: supply-chain SBOM per image (CycloneDX). Advisory artifact —
+      # consumers (audits, license review, VEX tooling) download it from the run;
+      # generation failure must not block a deploy.
+      - name: Generate SBOM (CycloneDX)
+        uses: anchore/sbom-action@v0
+        continue-on-error: true
+        with:
+          image: ghcr.io/${{ github.repository }}/${{ matrix.component }}:${{ github.ref_name }}-${{ github.sha }}
+          format: cyclonedx-json
+          artifact-name: sbom-${{ matrix.component }}.cyclonedx.json
+
   # ============================================================================
   # SECURITY SCAN
   # ============================================================================
