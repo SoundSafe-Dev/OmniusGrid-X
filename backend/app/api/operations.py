@@ -1,9 +1,10 @@
 """Operations API Routes (Job/Process Tracking)"""
 
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy import select, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,6 +17,39 @@ from app.api.auth import get_current_active_user
 from app.middleware.rbac import require_operator_or_admin
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
+
+
+# ---- Small response schemas for stable dict-shaped endpoints (FS-100). ----
+# Shapes are unchanged; these only document/type what the handlers already return.
+
+class ActiveOperationItem(BaseModel):
+    id: str
+    asset_id: str
+    asset_name: Optional[str] = None
+    operation_name: Optional[str] = None
+    job_id: Optional[str] = None
+    started_at: Optional[str] = None
+    progress: Optional[Any] = None
+
+
+class ActiveOperationsResponse(BaseModel):
+    count: int
+    operations: List[ActiveOperationItem]
+
+
+class PackMLStateSlice(BaseModel):
+    seconds: float
+    percentage: float
+
+
+class PackMLSummaryResponse(BaseModel):
+    operation_id: str
+    operation_name: Optional[str] = None
+    status: Optional[str] = None
+    total_duration_seconds: float
+    state_breakdown: Dict[str, PackMLStateSlice]
+    productive_time_seconds: float
+    productive_percentage: float
 
 
 @router.get("/", response_model=PaginatedResponse[OperationResponse])
@@ -62,7 +96,7 @@ async def list_operations(
     return paginate(operations, total, page)
 
 
-@router.get("/active")
+@router.get("/active", response_model=ActiveOperationsResponse)
 async def get_active_operations(
     organization_id: Optional[UUID] = None,
     workcell_id: Optional[UUID] = None,
@@ -91,7 +125,10 @@ async def get_active_operations(
                 "operation_name": op.operation_name,
                 "job_id": op.job_id,
                 "started_at": op.started_at.isoformat() if op.started_at else None,
-                "progress": op.metadata.get('progress') if op.metadata else None
+                # NB: the JSON column is meta_data ("metadata" is SQLAlchemy's
+                # reserved Base.metadata — op.metadata is a MetaData object and
+                # .get() on it 500'd this route whenever an operation was running).
+                "progress": op.meta_data.get('progress') if op.meta_data else None
             }
             for op in operations
         ]
@@ -140,7 +177,7 @@ async def create_operation(
     return operation
 
 
-@router.post("/{operation_id}/complete", dependencies=[Depends(require_operator_or_admin)])
+@router.post("/{operation_id}/complete", response_model=OperationResponse, dependencies=[Depends(require_operator_or_admin)])
 async def complete_operation(
     operation_id: UUID,
     success: bool = True,
@@ -163,16 +200,22 @@ async def complete_operation(
     completed_at = datetime.now(timezone.utc)
     actual_duration = None
     if operation.started_at:
-        actual_duration = int((completed_at - operation.started_at).total_seconds())
+        started_at = operation.started_at
+        if started_at.tzinfo is None:
+            # SQLite hands back naive datetimes, PG aware — coerce before the
+            # aware-`completed_at` subtraction (naive-vs-aware raises TypeError).
+            started_at = started_at.replace(tzinfo=timezone.utc)
+        actual_duration = int((completed_at - started_at).total_seconds())
     
     operation.status = 'completed' if success else 'failed'
     operation.completed_at = completed_at
     operation.actual_duration = actual_duration
     
     if metadata:
-        current_metadata = operation.metadata or {}
+        # meta_data, not metadata — see note in get_active_operations.
+        current_metadata = dict(operation.meta_data or {})
         current_metadata.update(metadata)
-        operation.metadata = current_metadata
+        operation.meta_data = current_metadata
     
     # Calculate PackML state durations for this operation
     await _calculate_state_durations(operation, db)
@@ -211,7 +254,7 @@ async def _calculate_state_durations(operation: Operation, db: AsyncSession):
     operation.packml_state_durations = state_durations
 
 
-@router.get("/{operation_id}/packml-summary")
+@router.get("/{operation_id}/packml-summary", response_model=PackMLSummaryResponse)
 async def get_operation_packml_summary(
     operation_id: UUID,
     db: AsyncSession = Depends(get_db)

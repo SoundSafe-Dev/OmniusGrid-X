@@ -136,10 +136,13 @@ export const dashboardApi = {
 export const workcellsApi = {
   list: async (organizationId?: string): Promise<Workcell[]> => {
     if (USE_MOCK) return mockApi.getWorkcells();
-    const response = await api.get<Workcell[]>('/api/v1/workcells/', {
-      params: organizationId ? { organization_id: organizationId } : undefined,
-    });
-    return response.data;
+    // FS-99: backend returns the {items, meta} pagination envelope now; callers
+    // consume a plain array, so unwrap here.
+    const response = await api.get<{ items: Workcell[]; meta: { total: number } }>(
+      '/api/v1/workcells/',
+      { params: organizationId ? { organization_id: organizationId } : undefined },
+    );
+    return response.data.items;
   },
 
   get: async (workcellId: string): Promise<Workcell> => {

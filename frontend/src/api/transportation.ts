@@ -528,14 +528,20 @@ export const transportationApi = {
         hasMore: false,
       };
     }
-    const response = await api.get<Vehicle[]>('/api/v1/transportation/vehicles', { params: { carrier_id: carrierId } });
-    const items = response.data;
+    // FS-99: backend returns the {items, meta} pagination envelope with a real
+    // total now. Map it to the flat PaginatedResponse; tolerate either casing
+    // of has_more from the transform seam.
+    const response = await api.get<{
+      items: Vehicle[];
+      meta: { total: number; skip: number; limit: number; has_more?: boolean; hasMore?: boolean };
+    }>('/api/v1/transportation/vehicles', { params: { carrier_id: carrierId } });
+    const { items, meta } = response.data;
     return {
       items,
-      total: items.length,
-      skip: 0,
-      limit: items.length,
-      hasMore: false,
+      total: meta.total,
+      skip: meta.skip,
+      limit: meta.limit,
+      hasMore: meta.hasMore ?? meta.has_more ?? meta.skip + items.length < meta.total,
     };
   },
 
@@ -566,14 +572,20 @@ export const transportationApi = {
         hasMore: false,
       };
     }
-    const response = await api.get<Shipment[]>('/api/v1/transportation/shipments', { params: filters ?? {} });
-    const items = response.data;
+    // FS-99: backend returns the {items, meta} pagination envelope with a real
+    // total now. Map it to the flat PaginatedResponse; tolerate either casing
+    // of has_more from the transform seam.
+    const response = await api.get<{
+      items: Shipment[];
+      meta: { total: number; skip: number; limit: number; has_more?: boolean; hasMore?: boolean };
+    }>('/api/v1/transportation/shipments', { params: filters ?? {} });
+    const { items, meta } = response.data;
     return {
       items,
-      total: items.length,
-      skip: 0,
-      limit: items.length,
-      hasMore: false,
+      total: meta.total,
+      skip: meta.skip,
+      limit: meta.limit,
+      hasMore: meta.hasMore ?? meta.has_more ?? meta.skip + items.length < meta.total,
     };
   },
 

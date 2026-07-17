@@ -4,13 +4,16 @@ Carrier management, shipment tracking, routing, HOS compliance
 """
 
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional
+from types import SimpleNamespace
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 from app.api.auth import get_current_active_user
+from app.core.pagination import PaginatedResponse, paginate
 from app.db.database import get_db
 from app.db.models import Carrier, Driver, Shipment, Route, LoadPlan, FreightCharge
 from app.models.schemas import (
@@ -29,6 +32,27 @@ from app.services.transportation_management import transportation_management_ser
 from app.middleware.rbac import require_operator_or_admin
 
 router = APIRouter(tags=["transportation_management"], dependencies=[Depends(get_current_active_user)])
+
+
+# ---- Small response schemas for stable dict-shaped endpoints (FS-100). ----
+# Shapes are unchanged; these only document/type what the handlers already return.
+
+class ShipmentDispatchResponse(BaseModel):
+    message: str
+    shipment_id: str
+    driver_id: str
+    status: str
+
+
+class ShipmentStatusUpdateResponse(BaseModel):
+    message: str
+    shipment_id: str
+    status: str
+
+
+class VehicleCreatedResponse(BaseModel):
+    id: str
+    vehicleNumber: str  # noqa: N815 — vehicles endpoints are legacy-camelCase
 
 
 # ==================== Carrier Endpoints ====================
@@ -256,14 +280,16 @@ async def create_shipment(
     return shipment
 
 
-@router.get("/shipments", response_model=List[ShipmentResponse])
+@router.get("/shipments", response_model=PaginatedResponse[ShipmentResponse])
 async def get_shipments(
     organization_id: UUID,
     status: Optional[str] = Query(None),
     carrier_id: Optional[UUID] = None,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=1000),
     db: AsyncSession = Depends(get_db)
 ):
-    """Get shipments for organization"""
+    """Get shipments for organization (FS-99: {items, meta} envelope with a real total)."""
     query = select(Shipment).where(
         Shipment.organization_id == organization_id
     )
@@ -271,9 +297,14 @@ async def get_shipments(
         query = query.where(Shipment.status == status)
     if carrier_id:
         query = query.where(Shipment.carrier_id == carrier_id)
-    
-    result = await db.execute(query.order_by(Shipment.created_at.desc()))
-    return result.scalars().all()
+
+    total = (await db.execute(
+        select(func.count()).select_from(query.subquery())
+    )).scalar_one()
+    result = await db.execute(
+        query.order_by(Shipment.created_at.desc()).offset(skip).limit(limit)
+    )
+    return paginate(result.scalars().all(), total, SimpleNamespace(skip=skip, limit=limit))
 
 
 @router.get("/shipments/{shipment_id}", response_model=ShipmentResponse)
@@ -314,7 +345,7 @@ async def update_shipment(
     return shipment
 
 
-@router.post("/shipments/{shipment_id}/dispatch", dependencies=[Depends(require_operator_or_admin)])
+@router.post("/shipments/{shipment_id}/dispatch", response_model=ShipmentDispatchResponse, dependencies=[Depends(require_operator_or_admin)])
 async def dispatch_shipment(
     shipment_id: UUID,
     driver_id: UUID,
@@ -339,7 +370,7 @@ async def dispatch_shipment(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.post("/shipments/{shipment_id}/status", dependencies=[Depends(require_operator_or_admin)])
+@router.post("/shipments/{shipment_id}/status", response_model=ShipmentStatusUpdateResponse, dependencies=[Depends(require_operator_or_admin)])
 async def update_shipment_status(
     shipment_id: UUID,
     status: str,
@@ -495,20 +526,25 @@ async def get_shipment_charges(
 
 # ==================== Vehicles (task D20; backed by migration 025) ====================
 
-@router.get("/vehicles")
+@router.get("/vehicles", response_model=PaginatedResponse[Dict[str, Any]])
 async def get_vehicles(
     carrier_id: Optional[UUID] = None,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=1000),
     db: AsyncSession = Depends(get_db)
 ):
-    """List fleet vehicles (previously frontend-mock-only)."""
-    from sqlalchemy import select
+    """List fleet vehicles (FS-99: {items, meta} envelope; items stay legacy-camelCase)."""
     from app.db.logistics_models import Vehicle
 
     query = select(Vehicle).where(Vehicle.is_active == True)  # noqa: E712
     if carrier_id:
         query = query.where(Vehicle.carrier_id == str(carrier_id))
-    vehicles = (await db.execute(query)).scalars().all()
-    return [
+
+    total = (await db.execute(
+        select(func.count()).select_from(query.subquery())
+    )).scalar_one()
+    vehicles = (await db.execute(query.offset(skip).limit(limit))).scalars().all()
+    items = [
         {
             "id": str(v.id),
             "vehicleNumber": v.vehicle_number,
@@ -525,9 +561,10 @@ async def get_vehicles(
         }
         for v in vehicles
     ]
+    return paginate(items, total, SimpleNamespace(skip=skip, limit=limit))
 
 
-@router.post("/vehicles")
+@router.post("/vehicles", response_model=VehicleCreatedResponse)
 async def create_vehicle(
     payload: dict,
     db: AsyncSession = Depends(get_db)
