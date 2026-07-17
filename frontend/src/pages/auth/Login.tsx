@@ -1,9 +1,9 @@
 import { FC, useState, FormEvent } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
-import { Factory, Eye, EyeOff, AlertCircle, Zap } from 'lucide-react';
+import { Eye, EyeOff, AlertCircle, Zap } from 'lucide-react';
 import { useAuthStore } from '../../stores';
 import { Input, Button } from '../../components';
-import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
+import { Tooltip, TooltipTrigger, TooltipContent, Wordmark } from '../../components/ui';
 
 // Dev login bypass is OFF unless explicitly enabled (VITE_DEV_MODE=true), and
 // only ever in a non-production build. Production bundles can never enable it.
@@ -56,19 +56,19 @@ export const Login: FC = () => {
         <div className="text-center mb-8">
           <Tooltip>
             <TooltipTrigger asChild>
-              <div className="inline-flex items-center justify-center w-16 h-16 bg-opsgrid-primary/20 rounded-xl mb-4">
-                <Factory className="w-8 h-8 text-opsgrid-primary" />
+              <div className="inline-flex items-center justify-center w-16 h-16 bg-white rounded-xl mb-4 shadow-sm border border-opsgrid-border overflow-hidden">
+                <img src="/omniusgrid-logo.png" alt="OmniusGrid" className="w-16 h-16" />
               </div>
             </TooltipTrigger>
             <TooltipContent>OmniusGrid Logo</TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
-              <h1 className="text-2xl font-bold text-opsgrid-text">OmniusGrid</h1>
+              <h1 className="text-2xl text-opsgrid-text"><Wordmark /></h1>
             </TooltipTrigger>
-            <TooltipContent>Universal Manufacturing Data Feed Dashboard</TooltipContent>
+            <TooltipContent>The correlation engine for Industry 4.0</TooltipContent>
           </Tooltip>
-          <p className="text-opsgrid-text-secondary mt-1">Universal Manufacturing Data Feed Dashboard</p>
+          <p className="text-opsgrid-text-secondary mt-1">Data Correlation for Industry 4.0</p>
           {DEV_MODE && (
             <Tooltip>
               <TooltipTrigger asChild>
