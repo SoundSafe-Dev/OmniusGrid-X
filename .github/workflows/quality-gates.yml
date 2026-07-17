@@ -102,6 +102,31 @@ jobs:
             tests/test_no_naive_utcnow.py \
             tests/test_demo_seeder_smoke.py
 
+  # --- FS-107: Prometheus alert rules — lint + unit test -------------------
+  prometheus-rules:
+    runs-on: ubuntu-latest
+    # BLOCKING. Alert rules are code: a typo'd expr or an unfirable threshold
+    # (e.g. a histogram_quantile compared above its largest finite bucket) is a
+    # silent gap — the alert simply never pages. Until now nothing validated
+    # infra/prometheus/alerts.yml at all. This lints every rule and runs the
+    # promtool unit tests that assert the deterministic alerts actually fire.
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install promtool
+        run: |
+          PROM_VERSION=2.53.1
+          curl -sSL -o /tmp/prom.tar.gz \
+            "https://github.com/prometheus/prometheus/releases/download/v${PROM_VERSION}/prometheus-${PROM_VERSION}.linux-amd64.tar.gz"
+          tar -xzf /tmp/prom.tar.gz -C /tmp
+          sudo mv "/tmp/prometheus-${PROM_VERSION}.linux-amd64/promtool" /usr/local/bin/promtool
+          promtool --version
+      - name: Lint alert rules
+        working-directory: ./infra/prometheus
+        run: promtool check rules alerts.yml
+      - name: Run alert unit tests
+        working-directory: ./infra/prometheus
+        run: promtool test rules tests/error_alerts_test.yml tests/subsystems_alerts_test.yml
+
   # --- task 1: frontend unit tests (Vitest) --------------------------------
   frontend-unit:
     runs-on: ubuntu-latest
