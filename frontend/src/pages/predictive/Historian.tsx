@@ -1,6 +1,6 @@
 import { FC, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Database, Search } from 'lucide-react';
+import { Database, Download, Search } from 'lucide-react';
 import {
   LineChart,
   Line,
@@ -13,7 +13,11 @@ import {
 } from 'recharts';
 import { Card, Button } from '../../components';
 import { assetsApi, historianApi } from '../../api';
-import type { HistorianGranularity, HistorianQueryParams } from '../../api/historian';
+import type {
+  HistorianGranularity,
+  HistorianQueryParams,
+  HistorianQueryResponse,
+} from '../../api/historian';
 
 const GRANULARITIES: { value: HistorianGranularity; label: string }[] = [
   { value: 'raw', label: 'Raw' },
@@ -23,6 +27,25 @@ const GRANULARITIES: { value: HistorianGranularity; label: string }[] = [
 ];
 
 const RANGE_HOURS: Record<string, number> = { '24h': 24, '7d': 168, '30d': 720 };
+
+/** Client-side CSV export of the loaded historian result (no extra API call). */
+const exportCsv = (result: HistorianQueryResponse) => {
+  const header = 'timestamp,average,minimum,maximum,sample_count';
+  const rows = result.points.map(
+    (p) => `${p.timestamp},${p.average},${p.minimum},${p.maximum},${p.sampleCount}`
+  );
+  const blob = new Blob([[header, ...rows].join('\n') + '\n'], {
+    type: 'text/csv;charset=utf-8',
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `historian_${result.assetId}_${result.metric}_${result.granularity}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+};
 
 export const Historian: FC = () => {
   const { data: assetsPage } = useQuery({
@@ -74,6 +97,21 @@ export const Historian: FC = () => {
       })),
     [data]
   );
+
+  // Summary of the loaded points: envelope min/max plus the mean of averages.
+  const summary = useMemo(() => {
+    const points = data?.points ?? [];
+    if (points.length === 0) return null;
+    let min = Infinity;
+    let max = -Infinity;
+    let sum = 0;
+    for (const p of points) {
+      if (p.minimum < min) min = p.minimum;
+      if (p.maximum > max) max = p.maximum;
+      sum += p.average;
+    }
+    return { min, max, avg: sum / points.length, count: points.length };
+  }, [data]);
 
   return (
     <div className="space-y-6">
@@ -153,11 +191,42 @@ export const Historian: FC = () => {
 
       {data && (
         <>
+          {summary && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <Card className="p-4">
+                <p className="text-xs text-opsgrid-text-secondary">Min</p>
+                <p className="text-xl font-bold">{summary.min.toFixed(2)}</p>
+              </Card>
+              <Card className="p-4">
+                <p className="text-xs text-opsgrid-text-secondary">Max</p>
+                <p className="text-xl font-bold">{summary.max.toFixed(2)}</p>
+              </Card>
+              <Card className="p-4">
+                <p className="text-xs text-opsgrid-text-secondary">Average</p>
+                <p className="text-xl font-bold">{summary.avg.toFixed(2)}</p>
+              </Card>
+              <Card className="p-4">
+                <p className="text-xs text-opsgrid-text-secondary">Points Loaded</p>
+                <p className="text-xl font-bold">{summary.count}</p>
+              </Card>
+            </div>
+          )}
           <Card
             title={`${data.metric} — ${data.granularity}`}
             subtitle={`${data.count} point${data.count === 1 ? '' : 's'}${
               data.hasMore ? ' (more available)' : ''
             }`}
+            action={
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={data.points.length === 0}
+                onClick={() => exportCsv(data)}
+              >
+                <Download size={16} className="mr-1" />
+                Export CSV
+              </Button>
+            }
           >
             {chartData.length === 0 ? (
               <p className="text-opsgrid-text-secondary text-center py-8">

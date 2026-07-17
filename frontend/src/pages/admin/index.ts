@@ -3,3 +3,4 @@ export { ErrorTriage } from './ErrorTriage';
 export { ErrorTriageDetail } from './ErrorTriageDetail';
 export { Fleet } from './Fleet';
 export { FleetRolloutDetail } from './FleetRolloutDetail';
+export { Notifications } from './Notifications';
