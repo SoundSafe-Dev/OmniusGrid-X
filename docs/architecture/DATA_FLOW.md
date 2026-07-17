@@ -2,7 +2,163 @@
 
 ## Overview
 
-This document describes the data flow across the OmniusGrid system, from edge data collection to cloud processing and user visualization.
+This document describes the data flow across the OmniusGrid system. OmniusGrid's
+differentiator is correlating the **document / ERP** world with the **machine**
+world, so the flows are ordered accordingly:
+
+1. **Textual / business surface (lead).** Documents (PDF / DOCX / XLSX / images)
+   and ERP systems flow through parsers and the intake pipeline, get linked by
+   shared keys into cross-file / cross-tab correlation scenarios, and are scored
+   by the Correlation AI (Gemma) into actionable registries, Kanban tasks, and
+   notifications.
+2. **Machine surface.** Machines and sensors are read by the Edge Agent
+   (10+ protocol collectors, a 24h store-and-forward buffer, PackML
+   normalization), pushed outbound-only over mTLS to Redpanda, consumed by
+   ingestion workers, and landed in TimescaleDB.
+3. **Convergence.** Both surfaces meet at the FastAPI backend (REST + WebSocket,
+   one error envelope, paginated lists), which the React frontend renders.
+
+The Correlation-AI **inference** step needs the Gemma model; everything else —
+including the fully-correlated offline demo seeded by
+`backend/scripts/seed_demo_data.py` (see [`../DEMO.md`](../DEMO.md)) — runs with
+no live edge, cloud, or external services.
+
+The sections below start with the textual/ERP-first flows and the predictive /
+historian / notification subsystems, then cover the machine telemetry, command,
+alarm, OEE, and retention flows.
+
+## Document / ERP Intake → Correlation Flow
+
+Textual and business data is the lead surface. Documents and ERP records are
+parsed, linked by shared keys (asset IDs, order/PO numbers, dates), assembled
+into cross-file / cross-tab correlation scenarios, and scored by the Correlation
+AI — which emits actionable registry items, Kanban tasks, and notifications.
+
+```mermaid
+flowchart LR
+    subgraph SRC["Business data sources"]
+        DOC["Documents<br/>PDF · DOCX · XLSX · images"]
+        ERP["ERP systems<br/>SAP · NetSuite · ..."]
+    end
+    subgraph INTAKE["Parsers / Intake"]
+        PDF["pdf_parser · docx_parser"]
+        XLS["spreadsheet parser<br/>every workbook tab"]
+        OCR["image_text_extractor<br/>vision OCR"]
+        HOOK["ERP connectors + webhooks"]
+    end
+    subgraph CORR["Correlation"]
+        SHARED["Shared-key detector<br/>asset · order · date"]
+        SCEN["Scenario builders<br/>cross-file / cross-tab"]
+        CAI["Correlation AI (Gemma)<br/>risk scoring"]
+    end
+    subgraph OUT["Actionable outputs"]
+        REG["Actionable registries"]
+        TASK["Kanban tasks"]
+        NOTE["Notifications"]
+    end
+    DOC --> PDF
+    DOC --> XLS
+    DOC --> OCR
+    ERP --> HOOK
+    PDF --> SHARED
+    XLS --> SHARED
+    OCR --> SHARED
+    HOOK --> SHARED
+    SHARED --> SCEN
+    SCEN --> CAI
+    CAI --> REG
+    CAI --> TASK
+    CAI --> NOTE
+```
+
+**Endpoints:** `/api/v1/nlp/correlation/intake/*` (upload, analyze,
+cross-correlate), `/api/v1/nlp/sessions/*` (analysis sessions),
+`/api/v1/erp/integrations` + `/api/v1/erp/webhooks`,
+`/api/v1/platform-correlation`, `/api/v1/registries`, `/api/v1/kanban`.
+
+## Predictive Maintenance & Digital-Twin Flow
+
+Machine telemetry feeds a health index, which feeds a remaining-useful-life
+(RUL) estimate. The digital-twin optimizer runs recommendations over the
+simulation engine; because they can drive machine changes, recommendations are
+**approval-gated** before they become commands or work orders.
+
+```mermaid
+flowchart LR
+    TEL["Telemetry<br/>TimescaleDB"] --> HI["Health Index<br/>/api/v1/health-index"]
+    HI --> RUL["RUL estimator<br/>/api/v1/rul"]
+    RUL --> RISK["Remaining useful life<br/>+ failure risk"]
+    RISK --> TWIN["Digital-Twin Optimizer<br/>/api/v1/twin"]
+    SIM["Simulation engine<br/>/api/v1/simulation"] --> TWIN
+    TWIN --> REC["Recommendations<br/>approval-gated"]
+    REC --> QUEUE{"Approval queue"}
+    QUEUE -->|"approved"| CMD["Command / work order"]
+    QUEUE -->|"rejected"| AUD["Audit log"]
+    RISK --> API["Backend API"]
+    API --> UI["Predictive Maintenance page"]
+```
+
+## Historian Query & Retention Flow
+
+The historian serves tenant-scoped time-series history with per-tenant retention
+policies (hot / warm / cold tiers, continuous aggregates, compression, and
+purge).
+
+```mermaid
+flowchart LR
+    subgraph ING["Ingest"]
+        TEL["Telemetry hypertable"]
+    end
+    subgraph RET["Per-tenant retention"]
+        POL["HistorianRetentionPolicy<br/>hot · warm · cold"]
+        CAGG["Continuous aggregates"]
+        COMP["Compression + purge"]
+    end
+    subgraph SRV["Serve"]
+        HAPI["Historian API<br/>/api/v1/historian"]
+        DRAPI["Data-retention API<br/>/api/v1/data-retention"]
+    end
+    TEL --> CAGG
+    CAGG --> HAPI
+    TEL --> COMP
+    POL --> COMP
+    POL --> DRAPI
+    HAPI --> UI["Historian page"]
+```
+
+## Notifications Dispatch Flow
+
+The notifications center matches events (by severity and domain) against tenant
+subscriptions and dispatches over webhook, email, or Slack, recording every
+attempt in a delivery log.
+
+```mermaid
+flowchart LR
+    subgraph EV["Event sources"]
+        ALM["Alarms"]
+        MNT["Maintenance / RUL"]
+        YRD["Yard detention"]
+        CAI2["Correlation AI"]
+    end
+    SVC["notification_service<br/>severity + domain match"]
+    subgraph SUB["Subscriptions"]
+        WH["webhook"]
+        EM["email"]
+        SL["slack"]
+    end
+    LOG["Delivery log<br/>NotificationDelivery"]
+    ALM --> SVC
+    MNT --> SVC
+    YRD --> SVC
+    CAI2 --> SVC
+    SVC --> WH
+    SVC --> EM
+    SVC --> SL
+    WH --> LOG
+    EM --> LOG
+    SL --> LOG
+    LOG --> API["/api/v1/notifications"]
+```
 
 ## Telemetry Data Flow
 
@@ -595,6 +751,6 @@ graph LR
 
 ---
 
-**Document Version:** 1.0  
-**Last Updated:** 2026-05-25  
+**Document Version:** 1.1  
+**Last Updated:** 2026-07-17  
 **Component:** Data Flow Documentation
