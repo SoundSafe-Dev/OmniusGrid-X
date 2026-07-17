@@ -13,7 +13,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import get_current_active_user, require_admin_user
+from app.api.auth import get_current_active_user
+from app.middleware.rbac import require_admin
 from app.middleware.tenant_isolation import get_tenant_org_id, get_tenant_db
 from app.db.models import Workcell, Organization
 
@@ -121,7 +122,7 @@ async def get_org_settings(
 @organizations_router.put("/settings/current")
 async def update_org_settings(
     settings_patch: Dict[str, Any],
-    current_user=Depends(require_admin_user),
+    current_user=Depends(require_admin),
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),
 ):
