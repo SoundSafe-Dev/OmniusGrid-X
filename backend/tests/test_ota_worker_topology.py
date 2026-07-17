@@ -248,3 +248,56 @@ def test_compose_and_k8s_use_one_dedicated_ota_owner():
         for port in rule["ports"]
     }
     assert {53, 5432, 9092} <= egress_ports
+
+
+def _network_policies():
+    k8s_base = REPO_ROOT / "infrastructure/k8s/base"
+    network_documents = yaml.safe_load_all((k8s_base / "ingress.yaml").read_text())
+    return {
+        document["metadata"]["name"]: document
+        for document in network_documents
+        if document and document["kind"] == "NetworkPolicy"
+    }
+
+
+def _egress_ports(policy_spec):
+    return {
+        port["port"]
+        for rule in policy_spec["egress"]
+        for port in rule["ports"]
+    }
+
+
+def test_per_workload_egress_policies_exist_with_dns_and_datastores():
+    """FS-116: every default-deny egress workload gets a scoped allow-list.
+
+    Each of the four app workloads (the OTA worker is covered separately above)
+    must have its own ``allow-<workload>-egress`` NetworkPolicy that selects the
+    workload, is Egress-typed, and permits at minimum DNS (53), TimescaleDB
+    (5432) and Redpanda (9092). This guards the default-deny egress FS-78 set:
+    if a policy is dropped, an enforcing CNI would silently cut the workload off.
+    """
+    policies = _network_policies()
+
+    # No lingering broad grant — FS-116 replaced allow-app-egress with the
+    # per-workload policies below.
+    assert "allow-app-egress" not in policies
+
+    for workload in (
+        "backend",
+        "ingestion-worker",
+        "export-worker",
+        "compliance-reports-worker",
+    ):
+        name = f"allow-{workload}-egress"
+        assert name in policies, f"missing egress policy {name}"
+        spec = policies[name]["spec"]
+        assert spec["podSelector"]["matchLabels"] == {
+            "app.kubernetes.io/name": workload
+        }
+        assert spec["policyTypes"] == ["Egress"]
+        assert {53, 5432, 9092} <= _egress_ports(spec)
+
+    # backend additionally needs Redis and outbound HTTPS/443.
+    backend_ports = _egress_ports(policies["allow-backend-egress"]["spec"])
+    assert {6379, 443} <= backend_ports
