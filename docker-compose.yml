@@ -69,6 +69,16 @@ services:
       JWT_SECRET_KEY: dev_secret_key_change_in_production
       JWT_ALGORITHM: HS256
       JWT_ACCESS_TOKEN_EXPIRE_MINUTES: 30
+      # --- RAG pipeline wiring (service names resolve on omniusgrid-network) ---
+      QDRANT_URL: http://qdrant:6333
+      S3_ENDPOINT_URL: http://seaweedfs:8333
+      RAG_INFERENCE_URL: http://rag-inference:8000
+      # LLM runs NATIVELY on the host (Ollama w/ Metal on Mac, ROCm on Linux) and
+      # is reached via host.docker.internal - Docker can't GPU-accelerate a
+      # container on Mac, so the LLM stays outside the container by design.
+      LLM_BASE_URL: http://host.docker.internal:11434/v1
+      LLM_MODEL: gemma2:2b
+      VISION_MODEL_ENABLED: "false"
     ports:
       - "8000:8000"
     volumes:
@@ -80,6 +90,10 @@ services:
         condition: service_healthy
     networks:
       - omniusgrid-network
+    # host-gateway makes host.docker.internal resolve on Linux/WSL2 too (it is
+    # automatic on Docker Desktop for Mac, harmless to declare).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
   # Ingestion Workers - Process data from Redpanda to TimescaleDB
@@ -220,6 +234,75 @@ services:
     networks:
       - omniusgrid-network
 
+  # ======================================================================
+  # RAG pipeline services (profile: "rag" - opt-in, not started by default)
+  #   Lean RAG stack:  docker compose up qdrant seaweedfs rag-inference backend
+  #   Full stack+RAG:  docker compose --profile rag up
+  # ======================================================================
+
+  # Vector store - Qdrant (hybrid dense + sparse). Prod uses Qdrant Hybrid
+  # Cloud; locally we self-host the identical engine (same code, only QDRANT_URL
+  # differs). No GPU needed.
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    container_name: omniusgrid-qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"   # REST/HTTP API
+      - "6334:6334"   # gRPC
+    volumes:
+      - qdrant-data:/qdrant/storage
+    networks:
+      - omniusgrid-network
+    profiles: ["rag"]
+
+  # Document/blob store - SeaweedFS S3 gateway (S3-compatible). All-in-one
+  # server (master+volume+filer+s3) for local dev. Identity comes from the same
+  # s3config.json used in prod. No GPU needed.
+  seaweedfs:
+    image: chrislusf/seaweedfs:3.68
+    container_name: omniusgrid-seaweedfs
+    restart: unless-stopped
+    ports:
+      - "8333:8333"   # S3 API
+      - "9333:9333"   # master UI (optional)
+      - "8888:8888"   # filer (optional)
+    command: "server -dir=/data -s3 -s3.config=/etc/seaweedfs/s3config.json -s3.port=8333 -ip.bind=0.0.0.0"
+    volumes:
+      - seaweedfs-data:/data
+      - ./infra/seaweedfs/s3config.json:/etc/seaweedfs/s3config.json:ro
+    networks:
+      - omniusgrid-network
+    profiles: ["rag"]
+
+  # Embeddings + reranker - BGE-M3 + BGE-Reranker-v2-m3 (FlagEmbedding).
+  # CPU-first: fp16 auto-disabled without CUDA. First boot downloads ~5GB of
+  # weights into the rag-models volume (cached across restarts). Host port 8001
+  # avoids clashing with the backend on 8000; internal port stays 8000.
+  rag-inference:
+    build:
+      context: ./rag-inference
+      dockerfile: Dockerfile
+    container_name: omniusgrid-rag-inference
+    restart: unless-stopped
+    ports:
+      - "8001:8000"
+    environment:
+      EMBEDDING_MODEL: BAAI/bge-m3
+      RERANKER_MODEL: BAAI/bge-reranker-v2-m3
+      USE_FP16: "false"   # CPU in Docker on Mac; set true only on CUDA
+    volumes:
+      - rag-models:/models
+    networks:
+      - omniusgrid-network
+    profiles: ["rag"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 600s   # first boot downloads model weights
+      retries: 5
+
   # Edge Agent Simulator (for testing)
   edge-agent-sim:
     build:
@@ -251,6 +334,9 @@ volumes:
   alertmanager-data:
   grafana-data:
   loki-data:
+  qdrant-data:
+  seaweedfs-data:
+  rag-models:      # HF weight cache - avoids re-downloading BGE (~5GB) on recreate
 
 networks:
   omniusgrid-network:
