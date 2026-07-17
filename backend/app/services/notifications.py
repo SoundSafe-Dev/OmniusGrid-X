@@ -39,6 +39,11 @@ NOTIFICATION_DELIVERY_DURATION = Histogram(
 SEVERITY_ORDER = {"info": 0, "warning": 1, "error": 2, "critical": 3}
 
 
+class NotificationDeliveryError(Exception):
+    """A delivery attempt that failed. Carries the adapter's detail message so
+    FS-110 error-triage fingerprints failures per channel + reason."""
+
+
 def severity_rank(sev: Any) -> int:
     return SEVERITY_ORDER.get(str(sev).lower(), 0)
 
@@ -172,6 +177,22 @@ class NotificationService:
         # freeze the event loop for every other request in the process.
         results = await asyncio.to_thread(self.dispatch_rules, event, rules)
         await self._record_deliveries(event, org_id, results)
+        # FS-110: a failed delivery only lands in the delivery log + a failure
+        # metric; also surface it in error-triage so a broken channel (bad
+        # webhook target, SMTP down, unknown channel) shows on the error
+        # dashboard instead of being invisible until someone reads the DB.
+        failed = [r for r in results if not r.get("delivered")]
+        if failed:
+            from app.services.error_tracker import error_tracker
+
+            for res in failed:
+                channel = res.get("channel") or "unknown"
+                await error_tracker.report_subsystem_error(
+                    NotificationDeliveryError(str(res.get("detail") or "delivery failed")),
+                    subsystem="notifications",
+                    operation=f"deliver.{channel}",
+                    organization_id=str(org_id) if org_id is not None else None,
+                )
         return results
 
     async def _load_rules(self, org_id: Optional[str]) -> List[Dict[str, Any]]:

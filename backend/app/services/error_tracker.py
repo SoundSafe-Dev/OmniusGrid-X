@@ -248,6 +248,30 @@ class ErrorTracker:
                 )
             ERROR_TRACKER_PENDING_FINGERPRINTS.set(len(self._pending))
 
+    async def report_subsystem_error(
+        self,
+        exc: BaseException,
+        *,
+        subsystem: str,
+        operation: str,
+        organization_id: Optional[str] = None,
+    ) -> None:
+        """Report a background-subsystem exception into error-triage (FS-110).
+
+        HTTP exceptions reach the tracker through the error-tracking middleware,
+        but the converged subsystems (rul notify, twin emit, notification
+        delivery) catch-and-continue so their failures never surfaced in triage.
+        This routes them under a synthetic ``subsystem:<name>.<op>`` route with an
+        ``INTERNAL`` method so they group distinctly from HTTP routes. Delegates
+        to record(), which never raises.
+        """
+        await self.record(
+            exc,
+            method="INTERNAL",
+            route=f"subsystem:{subsystem}.{operation}",
+            organization_id=organization_id,
+        )
+
     # -- lifecycle ------------------------------------------------------------
     async def start(self) -> None:
         if not self.enabled:
