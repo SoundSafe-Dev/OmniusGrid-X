@@ -15,7 +15,7 @@ Config:
 """
 
 from typing import Dict, Any, Optional, List, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 import asyncio
 import structlog
 
@@ -88,7 +88,25 @@ class SNMPCollector(BaseCollector):
 
     @staticmethod
     def _coerce(value: Any) -> Any:
-        """Best-effort numeric coercion of an SNMP varBind value."""
+        """Best-effort numeric coercion of an SNMP varBind value.
+
+        SNMP's numeric types (INTEGER, Counter32/64, Gauge32, TimeTicks,
+        Unsigned32) are all integers, and Counter64 ranges up to 2**64-1.
+        Routing those through ``float()`` first (the old behaviour) loses
+        precision above 2**53: e.g. a Counter64 of 2**64-1 came back as
+        2**64 (off by one, and worse for larger deltas), corrupting every
+        rate/consumption derived from it. So integers go through ``int()``
+        directly, which is exact for arbitrarily large values; only genuine
+        floats (rare Opaque-Float) take the float path.
+        """
+        if isinstance(value, bool):  # bool is an int subclass; keep it boolean
+            return value
+        if isinstance(value, float):
+            return int(value) if value.is_integer() else value
+        try:
+            return int(value)  # exact for all integer SNMP types + int-valued objects
+        except (TypeError, ValueError):
+            pass
         try:
             f = float(value)
             return int(f) if f.is_integer() else f
@@ -129,7 +147,12 @@ class SNMPCollector(BaseCollector):
 
     def _normalize_data(self, values: Dict[str, Any]) -> Dict[str, Any]:
         return {
-            "timestamp_edge": datetime.now().isoformat(),
+            # Aware UTC, not naive local time: downstream backfill-lag and
+            # end-to-edge age math subtracts an aware now(), and a naive local
+            # stamp there is either a TypeError (silently swallowed -> dropped
+            # reading) or, once coerced-as-UTC, an age wrong by the host's
+            # timezone offset.
+            "timestamp_edge": datetime.now(timezone.utc).isoformat(),
             "asset_id": self.asset_id,
             "topic": "telemetry",
             "collector_type": "snmp",
