@@ -8,7 +8,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from opsgrid_agent.buffer.store_forward import StoreForwardBuffer
 
@@ -110,6 +110,63 @@ class StoreForwardTest(unittest.TestCase):
         deleted, stats = run(scenario())
         self.assertEqual(deleted, 1)
         self.assertEqual(stats["total_messages"], 0)
+
+    def test_cleanup_keeps_fresh_rows_sharing_cutoff_date(self):
+        """FS-123: retention must not delete rows newer than the cutoff.
+
+        created_at is written by SQLite CURRENT_TIMESTAMP as 'YYYY-MM-DD HH:MM:SS'
+        (space). The old cleanup compared it as a raw string against an
+        isoformat cutoff ('...THH:MM:SS+00:00'); because ' ' (0x20) < 'T' (0x54)
+        every row on the cutoff's calendar date sorted as older and was wiped
+        regardless of time-of-day — silent loss of fresh telemetry.
+        """
+        buf = make_buffer(retention_hours=1)
+
+        async def scenario():
+            # A row created 'now' (real CURRENT_TIMESTAMP) under a 1h retention
+            # must survive; a genuinely old row must be deleted.
+            await buf.store(datetime.utcnow(), "fresh", "telemetry", {"v": 1})
+            await buf.store(datetime.utcnow(), "old", "telemetry", {"v": 2})
+            import sqlite3
+            with sqlite3.connect(buf.buffer_path) as conn:
+                # Age only the 'old' row well past retention (space format,
+                # same as CURRENT_TIMESTAMP).
+                old_ts = (datetime.now(timezone.utc) - timedelta(hours=5)).strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
+                conn.execute(
+                    "UPDATE messages SET created_at = ? WHERE asset_id = 'old'",
+                    (old_ts,),
+                )
+                conn.commit()
+            deleted = await buf.cleanup_old_messages()
+            assets = set()
+            with sqlite3.connect(buf.buffer_path) as conn:
+                for (a,) in conn.execute("SELECT asset_id FROM messages"):
+                    assets.add(a)
+            return deleted, assets
+
+        deleted, assets = run(scenario())
+        self.assertEqual(deleted, 1)          # only the 5h-old row
+        self.assertEqual(assets, {"fresh"})   # fresh row preserved
+
+    def test_store_message_converts_aware_to_utc(self):
+        """FS-123: store_message must convert aware non-UTC times to UTC before
+        stripping tzinfo, else stored edge-time (and lag) is off by the offset."""
+        buf = make_buffer()
+
+        async def scenario():
+            # 12:00 at +05:00 == 07:00 UTC.
+            await buf.store_message({
+                "timestamp_edge": "2026-07-05T12:00:00+05:00",
+                "asset_id": "a1",
+                "payload": {"v": 1},
+            })
+            pending = await buf.get_pending_messages()
+            return pending[0].timestamp_edge
+
+        stored = run(scenario())
+        self.assertEqual(datetime.fromisoformat(stored), datetime(2026, 7, 5, 7, 0, 0))
 
     def test_stats_include_lag_and_dead_letter(self):
         buf = make_buffer()
