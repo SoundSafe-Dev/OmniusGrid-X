@@ -40,6 +40,12 @@ export const useAuthStore = create<AuthState>()(
           localStorage.setItem('accessToken', accessToken);
           if (refreshToken) localStorage.setItem('refreshToken', refreshToken);
           localStorage.setItem('user', JSON.stringify(user));
+          // FS-128: cache the org id so stateless API clients (transportation/
+          // geotab) can send it as the required organization_id query param.
+          // /auth/me returns snake organization_id; the User type uses
+          // organizationId — read whichever is present.
+          const orgId = (user as any).organizationId ?? (user as any).organization_id;
+          if (orgId) localStorage.setItem('organizationId', orgId);
 
           set({
             user,
@@ -69,6 +75,7 @@ export const useAuthStore = create<AuthState>()(
         localStorage.removeItem('refreshToken');
         localStorage.removeItem('devToken');
         localStorage.removeItem('user');
+        localStorage.removeItem('organizationId');
 
         set({
           user: null,
@@ -107,6 +114,8 @@ export const useAuthStore = create<AuthState>()(
         localStorage.setItem('accessToken', token);
         localStorage.setItem('devToken', token);
         localStorage.setItem('user', JSON.stringify(user));
+        const devOrgId = (user as any).organizationId ?? (user as any).organization_id;
+        if (devOrgId) localStorage.setItem('organizationId', devOrgId);
         set({
           user,
           accessToken: token,

@@ -34,6 +34,10 @@ export const Login: FC = () => {
         name: 'Dev Admin',
         role: 'admin',
         isActive: true,
+        // The seeded demo org (== the dev-token org, see seed_demo_data.py). The
+        // real login path gets this from /auth/me; devLogin must set it so
+        // org-scoped endpoints (transportation/geotab) work in the offline demo.
+        organizationId: '00000000-0000-0000-0000-000000000001',
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       }, 'dev-token');

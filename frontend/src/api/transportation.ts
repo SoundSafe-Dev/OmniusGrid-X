@@ -407,6 +407,17 @@ const mockRoutes: Route[] = [
 ];
 
 // TMS API
+// FS-128: several transportation/geotab endpoints REQUIRE an organization_id
+// query param (unlike /vehicles, which the backend derives from the JWT), and
+// the frontend wasn't sending it — so drivers/carriers/shipments/fleet-summary
+// 422'd in real mode (and the offline demo showed errors instead of seeded
+// data). The current org is stashed in localStorage at login (authStore
+// devLogin/login); read it here and pass it as a snake_case param, matching the
+// existing `carrier_id` convention. Returns undefined if unknown (call behaves
+// as before).
+const orgId = (): string | undefined =>
+  (typeof localStorage !== 'undefined' && localStorage.getItem('organizationId')) || undefined;
+
 export const transportationApi = {
   // Carriers
   getCarriers: async (): Promise<PaginatedResponse<Carrier>> => {
@@ -420,7 +431,7 @@ export const transportationApi = {
         hasMore: false,
       };
     }
-    const response = await api.get<Carrier[]>('/api/v1/transportation/carriers');
+    const response = await api.get<Carrier[]>('/api/v1/transportation/carriers', { params: { organization_id: orgId() } });
     const items = response.data;
     return {
       items,
@@ -470,7 +481,7 @@ export const transportationApi = {
         hasMore: false,
       };
     }
-    const response = await api.get<Driver[]>('/api/v1/transportation/drivers', { params: { carrier_id: carrierId } });
+    const response = await api.get<Driver[]>('/api/v1/transportation/drivers', { params: { carrier_id: carrierId, organization_id: orgId() } });
     const items = response.data;
     return {
       items,
@@ -578,7 +589,7 @@ export const transportationApi = {
     const response = await api.get<{
       items: Shipment[];
       meta: { total: number; skip: number; limit: number; has_more?: boolean; hasMore?: boolean };
-    }>('/api/v1/transportation/shipments', { params: filters ?? {} });
+    }>('/api/v1/transportation/shipments', { params: { ...(filters ?? {}), organization_id: orgId() } });
     const { items, meta } = response.data;
     return {
       items,
@@ -872,7 +883,7 @@ export const geoTabApi = {
         fuelConsumedToday: 375,
       };
     }
-    const response = await api.get('/api/v1/geotab/fleet/summary');
+    const response = await api.get('/api/v1/geotab/fleet/summary', { params: { organization_id: orgId() } });
     return response.data;
   },
 };
