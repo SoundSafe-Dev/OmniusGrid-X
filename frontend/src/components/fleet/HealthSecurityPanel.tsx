@@ -261,7 +261,7 @@ export const HealthSecurityPanel: FC = () => {
                       <AlertTriangle className="w-4 h-4" />
                     </div>
                     <div className="flex-1">
-                      <p className="font-medium text-sm">{event.eventType.replace(/_/g, ' ')}</p>
+                      <p className="font-medium text-sm">{event.eventType?.replace(/_/g, ' ')}</p>
                       <p className="text-xs text-gray-600">{event.description}</p>
                       <p className="text-xs text-gray-500 mt-1">{event.vehicleNumber} • {new Date(event.timestamp).toLocaleString()}</p>
                     </div>

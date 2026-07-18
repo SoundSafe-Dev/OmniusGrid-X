@@ -338,7 +338,7 @@ const OEEDetailPanel: FC<{ assetId: string; assetName: string }> = ({ assetId, a
                 : 0
               return (
                 <div key={state} className="flex items-center gap-3 text-sm">
-                  <span className="w-28 shrink-0 capitalize">{state.replace(/_/g, ' ')}</span>
+                  <span className="w-28 shrink-0 capitalize">{state?.replace(/_/g, ' ')}</span>
                   <div className="flex-1 h-2 bg-opsgrid-bg rounded-full overflow-hidden">
                     <div className="h-full bg-opsgrid-primary" style={{ width: `${Math.min(share, 100)}%` }} />
                   </div>

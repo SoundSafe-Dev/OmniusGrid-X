@@ -14,7 +14,7 @@ import { formatDateTime } from '../../utils';
 const severityVariant = (
   severity: string
 ): 'success' | 'warning' | 'error' | 'info' | 'neutral' => {
-  switch (severity.toLowerCase()) {
+  switch (severity?.toLowerCase()) {
     case 'critical':
       return 'error';
     case 'error':

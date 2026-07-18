@@ -263,7 +263,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
             <div className="flex items-center gap-1 text-gray-600 dark:text-gray-400">
               <span>Status:</span>
               <span className="font-medium text-gray-900 dark:text-white capitalize">
-                {task.status.replace('_', ' ')}
+                {task.status?.replace('_', ' ')}
               </span>
             </div>
           </div>

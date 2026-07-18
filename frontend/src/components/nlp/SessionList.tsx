@@ -78,7 +78,7 @@ export const SessionList: React.FC<SessionListProps> = ({
   };
 
   const filteredSessions = sessions.filter(session =>
-    session.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    session.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
     (session.description && session.description.toLowerCase().includes(searchQuery.toLowerCase()))
   );
 

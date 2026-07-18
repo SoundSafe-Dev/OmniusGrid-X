@@ -15,7 +15,7 @@ export const SeverityBadge: FC<SeverityBadgeProps> = ({
 }) => {
   return (
     <Badge variant={severity} size={size} dot={showDot} pulse={severity === 'critical'}>
-      {severity.charAt(0).toUpperCase() + severity.slice(1)}
+      {severity ? severity.charAt(0).toUpperCase() + severity.slice(1) : ''}
     </Badge>
   );
 };

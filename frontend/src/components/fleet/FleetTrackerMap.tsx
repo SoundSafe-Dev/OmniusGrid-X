@@ -300,7 +300,7 @@ export const FleetTrackerMap: FC<FleetTrackerMapProps> = ({
               <Popup autoClose={true} closeOnClick={true} autoPan={false}>
                 <div className="p-2">
                   <p className="font-semibold">{shipment.shipmentNumber}</p>
-                  <p className="text-sm text-gray-600 capitalize">{shipment.status.replace('_', ' ')}</p>
+                  <p className="text-sm text-gray-600 capitalize">{shipment.status?.replace('_', ' ')}</p>
                   {shipment.driverName && (
                     <p className="text-xs text-gray-500 mt-1">Driver: {shipment.driverName}</p>
                   )}
