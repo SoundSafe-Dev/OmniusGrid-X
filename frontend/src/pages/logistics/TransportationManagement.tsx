@@ -1128,7 +1128,7 @@ const DriverDetailModal: FC<{ driver: Driver; onClose: () => void }> = ({ driver
             </div>
             <div>
               <p className="text-sm text-opsgrid-text-secondary">Endorsements</p>
-              <p className="font-medium">{driver.endorsements.join(', ') || 'None'}</p>
+              <p className="font-medium">{driver.endorsements?.join(', ') || 'None'}</p>
             </div>
             <div>
               <p className="text-sm text-opsgrid-text-secondary">Hazmat Certified</p>
@@ -1136,7 +1136,7 @@ const DriverDetailModal: FC<{ driver: Driver; onClose: () => void }> = ({ driver
             </div>
             <div>
               <p className="text-sm text-opsgrid-text-secondary">License Expires</p>
-              <p className="font-medium">{new Date(driver.licenseExpiry).toLocaleDateString()}</p>
+              <p className="font-medium">{driver.licenseExpiry ? new Date(driver.licenseExpiry).toLocaleDateString() : 'N/A'}</p>
             </div>
           </div>
 
@@ -1150,18 +1150,18 @@ const DriverDetailModal: FC<{ driver: Driver; onClose: () => void }> = ({ driver
               <div className="flex justify-between">
                 <span className="text-sm text-opsgrid-text-secondary">Drive Hours Remaining</span>
                 <span className={`font-medium ${driver.hosDriveHoursRemaining === 0 ? 'text-red-500' : driver.hosDriveHoursRemaining < 2 ? 'text-yellow-500' : 'text-green-500'}`}>
-                  {driver.hosDriveHoursRemaining.toFixed(1)}h
+                  {driver.hosDriveHoursRemaining?.toFixed(1) ?? 'N/A'}h
                 </span>
               </div>
               <div className="flex justify-between">
                 <span className="text-sm text-opsgrid-text-secondary">Duty Hours Remaining</span>
                 <span className={`font-medium ${driver.hosDutyHoursRemaining === 0 ? 'text-red-500' : driver.hosDutyHoursRemaining < 2 ? 'text-yellow-500' : 'text-green-500'}`}>
-                  {driver.hosDutyHoursRemaining.toFixed(1)}h
+                  {driver.hosDutyHoursRemaining?.toFixed(1) ?? 'N/A'}h
                 </span>
               </div>
               <div className="flex justify-between">
                 <span className="text-sm text-opsgrid-text-secondary">Cycle Hours Used</span>
-                <span className="font-medium">{driver.hosCycleHoursUsed.toFixed(1)}h / 70h</span>
+                <span className="font-medium">{driver.hosCycleHoursUsed?.toFixed(1) ?? 'N/A'}h / 70h</span>
               </div>
             </div>
           </div>

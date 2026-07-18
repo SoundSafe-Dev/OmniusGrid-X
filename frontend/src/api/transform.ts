@@ -56,6 +56,9 @@ export const YARD_ALIASES: Record<string, string> = {
   checkOutAt: 'checkedOutAt',
   dockDoorId: 'assignedDoorId',
   metaData: 'metadata',
+  // DockAppointment: backend scheduled_start/_end -> TS scheduledArrival/Departure
+  scheduledStart: 'scheduledArrival',
+  scheduledEnd: 'scheduledDeparture',
 }
 // Outbound (TS name -> camel backend name) for write payloads.
 export const YARD_OUT_ALIASES: Record<string, string> = {
@@ -72,6 +75,11 @@ export const TRANSPORT_ALIASES: Record<string, string> = {
   insuranceExpiresAt: 'insuranceExpiry',
   hosCycleHours: 'hosCycleHoursUsed',
   metaData: 'metadata',
+  // Driver: backend hazmat_endorsed -> TS hazmatCertified
+  hazmatEndorsed: 'hazmatCertified',
+  // Shipment: backend total_weight_lbs/total_pieces -> TS weight/pieces
+  totalWeightLbs: 'weight',
+  totalPieces: 'pieces',
 }
 export const TRANSPORT_OUT_ALIASES: Record<string, string> = {
   name: 'carrierName',
