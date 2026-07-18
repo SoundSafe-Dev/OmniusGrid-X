@@ -345,6 +345,45 @@ export const RemotionRoot: React.FC = () => (
         height={2160}
       />
     ))}
+    {/* 4:5 portrait editions of every square card (2160x2700 → 1080x1350) */}
+    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].flatMap((i) => {
+      const dark = [
+        Marketing1, Marketing2, Marketing3, Marketing4, Marketing5,
+        Marketing6, Marketing7, Marketing8, Marketing9, Marketing10,
+      ][i - 1];
+      const lightC = [
+        Marketing1Light, Marketing2Light, Marketing3Light, Marketing4Light, Marketing5Light,
+        Marketing6Light, Marketing7Light, Marketing8Light, Marketing9Light, Marketing10Light,
+      ][i - 1];
+      return [
+        <Still key={`mkt45-${i}`} id={`Marketing${i}-4x5`} component={dark} width={2160} height={2700} />,
+        <Still key={`mkt45l-${i}`} id={`Marketing${i}Light-4x5`} component={lightC} width={2160} height={2700} />,
+      ];
+    })}
+    {[1, 2, 3, 4, 5, 6, 7, 8].flatMap((i) => {
+      const comps = RS as Record<string, React.FC>;
+      return ['', 'Light'].map((suffix) => (
+        <Still
+          key={`rs45-${i}${suffix}`}
+          id={`RealScreen${i}${suffix}-4x5`}
+          component={comps[`RealScreen${i}${suffix}`]}
+          width={2160}
+          height={2700}
+        />
+      ));
+    })}
+    {[1, 2, 3, 4, 5, 6].flatMap((i) => {
+      const comps = CAR as Record<string, React.FC>;
+      return ['', 'Light'].map((suffix) => (
+        <Still
+          key={`car45-${i}${suffix}`}
+          id={`CarouselS${i}${suffix}-4x5`}
+          component={comps[`CarouselS${i}${suffix}`]}
+          width={2160}
+          height={2700}
+        />
+      ));
+    })}
     {/* 9:16 story variants */}
     {[
       Marketing1Tall,
