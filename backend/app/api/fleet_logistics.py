@@ -496,7 +496,8 @@ async def compliance_summary(db: AsyncSession = Depends(get_db)):
     )
     expiring_soon = sum(
         1 for c in carriers
-        if c.insurance_expires_at and (c.insurance_expires_at - now).days <= 30
+        if c.insurance_expires_at
+        and (_aware(c.insurance_expires_at) - now).days <= 30
     )
     return {
         "totalCarriers": len(carriers),
