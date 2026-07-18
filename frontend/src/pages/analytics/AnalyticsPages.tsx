@@ -1,7 +1,7 @@
 import { FC, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, ChevronDown, ChevronRight, Wrench } from 'lucide-react';
-import { Card, Badge } from '../../components';
+import { Card, Badge, SkeletonCard } from '../../components';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
 import { AnnotatedChart, FacilityHeatmap } from '../../components/charts';
 import { assetsApi, dashboardApi, telemetryApi, maintenanceApi } from '../../api';
@@ -22,8 +22,28 @@ const RUNNING_STATES = ['Execute', 'Idle'];
 const AT_RISK_STATES = ['Held', 'Holding', 'Suspended', 'Aborted', 'Aborting', 'Stopped', 'Stopping'];
 
 export const AssetHealth: FC = () => {
-  const { data: assetsPage } = useQuery({ queryKey: ['assethealth-assets'], queryFn: () => assetsApi.list({ limit: 500 }) });
+  const { data: assetsPage, isLoading, isError } = useQuery({ queryKey: ['assethealth-assets'], queryFn: () => assetsApi.list({ limit: 500 }) });
   const assets = assetsPage?.items ?? [];
+
+  if (isLoading) {
+    return (
+      <div className="space-y-6">
+        <Card title="Fleet Health Overview" subtitle="Asset state distribution">
+          <SkeletonCard lines={4} />
+        </Card>
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <Card className="p-4">
+        <p className="text-status-alarm text-sm">
+          Failed to load asset health data. Please try again.
+        </p>
+      </Card>
+    );
+  }
 
   const buckets = [
     { status: 'Executing', count: assets.filter((a) => a.currentPackmlState === 'Execute').length },
@@ -79,7 +99,7 @@ export const AssetHealth: FC = () => {
 };
 
 export const PredictiveMaintenance: FC = () => {
-  const { data: upcoming } = useQuery({ queryKey: ['predictive-upcoming'], queryFn: () => maintenanceApi.getUpcomingMaintenance(30) });
+  const { data: upcoming, isLoading, isError } = useQuery({ queryKey: ['predictive-upcoming'], queryFn: () => maintenanceApi.getUpcomingMaintenance(30) });
   const items = upcoming ?? [];
 
   const dueLabel = (dateStr?: string) => {
@@ -94,7 +114,13 @@ export const PredictiveMaintenance: FC = () => {
     <div className="space-y-6">
       <Card title="Upcoming Maintenance" subtitle="Scheduled maintenance tasks (next 30 days)">
         <div className="space-y-2">
-          {items.length === 0 ? (
+          {isLoading ? (
+            <SkeletonCard lines={3} />
+          ) : isError ? (
+            <p className="text-status-alarm text-sm">
+              Failed to load maintenance schedule. Please try again.
+            </p>
+          ) : items.length === 0 ? (
             <p className="text-sm text-opsgrid-text-secondary">No maintenance scheduled in the next 30 days.</p>
           ) : items.map((s) => (
             <Tooltip key={s.id}>
@@ -129,17 +155,17 @@ export const TelemetryCharts: FC = () => {
   // Real data: first asset's telemetry history, current fleet OEE, and the
   // fleet's PackML-state distribution. (Nozzle/bed/vibration were 3D-printer
   // demo metrics; the chart now plots whatever metrics the asset actually has.)
-  const { data: assetsPage } = useQuery({ queryKey: ['analytics-assets'], queryFn: () => assetsApi.list({ limit: 500 }) });
+  const { data: assetsPage, isLoading: assetsLoading, isError: assetsError } = useQuery({ queryKey: ['analytics-assets'], queryFn: () => assetsApi.list({ limit: 500 }) });
   const assets = assetsPage?.items ?? [];
   const firstAsset = assets[0];
 
   const startTime = new Date(Date.now() - (RANGE_HOURS[timeRange] ?? 24) * 3600_000).toISOString();
-  const { data: history } = useQuery({
+  const { data: history, isLoading: historyLoading, isError: historyError } = useQuery({
     queryKey: ['analytics-telemetry', firstAsset?.id, timeRange],
     queryFn: () => telemetryApi.getHistory(firstAsset!.id, { startTime }),
     enabled: !!firstAsset,
   });
-  const { data: fleetOEE } = useQuery({ queryKey: ['analytics-fleet-oee'], queryFn: () => dashboardApi.getFleetOEE() });
+  const { data: fleetOEE, isLoading: oeeLoading, isError: oeeError } = useQuery({ queryKey: ['analytics-fleet-oee'], queryFn: () => dashboardApi.getFleetOEE() });
 
   // Pivot the flat TelemetryPoint[] into chart rows keyed by the full timestamp
   // (not time-of-day) so multi-day ranges don't collapse different days into the
@@ -208,6 +234,29 @@ export const TelemetryCharts: FC = () => {
       line: { color: '#10B981' },
     },
   ];
+
+  const anyError = assetsError || historyError || oeeError;
+  const anyLoading = assetsLoading || historyLoading || oeeLoading;
+
+  if (anyError) {
+    return (
+      <Card className="p-4">
+        <p className="text-status-alarm text-sm">
+          Failed to load telemetry data. Please try again.
+        </p>
+      </Card>
+    );
+  }
+
+  if (anyLoading) {
+    return (
+      <div className="space-y-6">
+        <Card title="Telemetry Visualization" subtitle="Historical data analysis">
+          <SkeletonCard lines={6} />
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
