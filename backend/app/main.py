@@ -76,6 +76,13 @@ async def lifespan(app: FastAPI):
         await rollout_orchestrator.start()
     await report_scheduler.start()
     await error_tracker.start()
+    # Offline demo: the cloud strategic listener never connects, so seed a few
+    # recommendations into the in-memory engine (same process as the API) to make
+    # the Strategic Engine approve/reject workflow demo-able. Gated on the same
+    # dev flag as the dev-token bypass, so it never runs in production.
+    if settings.ALLOW_DEV_TOKEN:
+        from app.services.strategic_engine import strategic_engine
+        strategic_engine.load_demo_recommendations()
     # Best-effort: create the RAG vector collection if the store is reachable
     # (Hudson). Never blocks startup — storage/retrieval-only deployments run
     # without it.
