@@ -372,6 +372,12 @@ class CarrierUpdate(BaseModel):
 class CarrierResponse(CarrierBase):
     id: UUID
     organization_id: UUID
+    # Migration 042 UI columns (the seam camelizes these for the frontend:
+    # compliance_score -> complianceScore, etc.).
+    compliance_score: Optional[float] = None
+    on_time_performance: Optional[float] = None
+    operating_authority: Optional[str] = None
+    scac: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
