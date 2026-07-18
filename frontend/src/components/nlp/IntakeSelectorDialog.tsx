@@ -70,8 +70,8 @@ export const IntakeSelectorDialog: React.FC<IntakeSelectorDialogProps> = ({
   };
 
   const filteredItems = items.filter(item =>
-    item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    item.description.toLowerCase().includes(searchQuery.toLowerCase())
+    (item.title ?? '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+    (item.description ?? '').toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   if (!isOpen) return null;

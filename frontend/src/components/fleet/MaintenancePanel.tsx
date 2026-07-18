@@ -150,7 +150,7 @@ export const MaintenancePanel: FC = () => {
                 {overdueMaintenance.map(item => (
                   <div key={item.id} className="bg-white rounded-lg p-3 flex items-center justify-between">
                     <div>
-                      <p className="font-medium">{item.vehicleNumber} - {item.serviceType.replace(/_/g, ' ')}</p>
+                      <p className="font-medium">{item.vehicleNumber} - {item.serviceType?.replace(/_/g, ' ')}</p>
                       <p className="text-sm text-gray-600">{item.description}</p>
                       <p className="text-xs text-red-500 mt-1">
                         Due: {new Date(item.scheduledDate).toLocaleDateString()}
@@ -242,7 +242,7 @@ export const MaintenancePanel: FC = () => {
                     <div className="flex items-center gap-2">
                       <span className="font-semibold">{order.workOrderNumber}</span>
                       <span className={`px-2 py-0.5 rounded text-xs ${getStatusColor(order.status)}`}>
-                        {order.status.replace(/_/g, ' ')}
+                        {order.status?.replace(/_/g, ' ')}
                       </span>
                       <span className={`text-xs ${getPriorityColor(order.priority)}`}>
                         {order.priority}
@@ -405,7 +405,7 @@ const CreateScheduleModal: FC<{ onClose: () => void; onCreated: () => void }> = 
       await maintenanceApi.createSchedule({
         vehicleNumber: vehicleNumber.trim(),
         serviceType,
-        description: description.trim() || serviceType.replace(/_/g, ' '),
+        description: description.trim() || serviceType?.replace(/_/g, ' '),
         scheduledDate: new Date(scheduledDate).toISOString(),
         priority,
         currentMileage: Number(currentMileage) || 0,

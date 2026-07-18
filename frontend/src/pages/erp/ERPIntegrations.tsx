@@ -107,7 +107,7 @@ export const ERPIntegrationsPage: FC = () => {
                   <div className="flex items-center gap-2">
                     <Database className="w-4 h-4 text-opsgrid-primary" />
                     <span className="font-semibold text-opsgrid-text">{it.integration_name}</span>
-                    <Badge variant="info">{it.erp_type.toUpperCase()}</Badge>
+                    <Badge variant="info">{it.erp_type?.toUpperCase()}</Badge>
                     {it.is_active && <Badge variant="success">active</Badge>}
                   </div>
                   <div className="text-xs text-opsgrid-text-secondary mt-1">{it.base_url}</div>
