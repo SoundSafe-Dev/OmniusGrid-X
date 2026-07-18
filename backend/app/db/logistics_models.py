@@ -31,6 +31,16 @@ class Vehicle(Base):
     geotab_device_id = Column(String(100))
     current_driver_id = Column(String(36))
     last_location = Column(JSON, default={})  # {latitude, longitude, speed, heading, timestamp}
+    # Fleet-asset attributes the UI displays (added with migration 041 — the
+    # frontend Vehicle type declared these long before the backend had columns).
+    vehicle_type = Column(String(50))          # tractor | straight_truck | van | reefer | flatbed | tanker
+    fuel_type = Column(String(50))             # diesel | gasoline | electric | hybrid | lng | cng
+    license_plate = Column(String(32))
+    dot_number = Column(String(32))
+    gross_vehicle_weight_kg = Column(Float)
+    engine_hours = Column(Float)
+    registration_expiry = Column(DateTime(timezone=True))
+    inspection_due = Column(DateTime(timezone=True))
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)

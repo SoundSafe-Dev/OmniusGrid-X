@@ -1210,9 +1210,6 @@ const VehicleDetailModal: FC<{ vehicle: Vehicle; onClose: () => void }> = ({ veh
           </button>
         </div>
         <div className="p-6 space-y-6">
-          {/* Only fields the backend Vehicle model actually returns — the
-              type/fuel-type/plate/DOT/GVW/engine-hours/registration/inspection
-              fields have no backend column, so they're not shown. */}
           <div className="grid grid-cols-2 gap-4">
             <div>
               <p className="text-sm text-opsgrid-text-secondary">Status</p>
@@ -1223,8 +1220,28 @@ const VehicleDetailModal: FC<{ vehicle: Vehicle; onClose: () => void }> = ({ veh
               <p className="font-medium">{vehicle.carrierName || 'N/A'}</p>
             </div>
             <div>
+              <p className="text-sm text-opsgrid-text-secondary">Type</p>
+              <p className="font-medium capitalize">{vehicle.vehicleType?.replace('_', ' ') || 'N/A'}</p>
+            </div>
+            <div>
+              <p className="text-sm text-opsgrid-text-secondary">Fuel Type</p>
+              <p className="font-medium capitalize">{vehicle.fuelType || 'N/A'}</p>
+            </div>
+            <div>
+              <p className="text-sm text-opsgrid-text-secondary">License Plate</p>
+              <p className="font-medium">{vehicle.licensePlate || 'N/A'}</p>
+            </div>
+            <div>
               <p className="text-sm text-opsgrid-text-secondary">VIN</p>
               <p className="font-medium">{vehicle.vin || 'N/A'}</p>
+            </div>
+            <div>
+              <p className="text-sm text-opsgrid-text-secondary">DOT Number</p>
+              <p className="font-medium">{vehicle.dotNumber || 'N/A'}</p>
+            </div>
+            <div>
+              <p className="text-sm text-opsgrid-text-secondary">Gross Vehicle Weight</p>
+              <p className="font-medium">{vehicle.grossVehicleWeight?.toLocaleString() ?? 'N/A'} kg</p>
             </div>
           </div>
 
@@ -1233,7 +1250,7 @@ const VehicleDetailModal: FC<{ vehicle: Vehicle; onClose: () => void }> = ({ veh
               <Activity className="w-4 h-4 text-opsgrid-primary" />
               Telematics
             </h4>
-            <div className="grid grid-cols-2 gap-4 text-sm">
+            <div className="grid grid-cols-3 gap-4 text-sm">
               <div>
                 <p className="text-opsgrid-text-secondary flex items-center gap-1">
                   <Fuel className="w-3 h-3" /> Fuel Level
@@ -1245,6 +1262,10 @@ const VehicleDetailModal: FC<{ vehicle: Vehicle; onClose: () => void }> = ({ veh
                   <Gauge className="w-3 h-3" /> Odometer
                 </p>
                 <p className="font-medium">{vehicle.odometer?.toLocaleString() ?? 'N/A'} mi</p>
+              </div>
+              <div>
+                <p className="text-opsgrid-text-secondary">Engine Hours</p>
+                <p className="font-medium">{vehicle.engineHours?.toLocaleString() ?? 'N/A'}</p>
               </div>
             </div>
           </div>
@@ -1271,6 +1292,21 @@ const VehicleDetailModal: FC<{ vehicle: Vehicle; onClose: () => void }> = ({ veh
               </div>
             </div>
           )}
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <p className="text-sm text-opsgrid-text-secondary">Registration Expires</p>
+              <p className="font-medium">
+                {vehicle.registrationExpiry ? new Date(vehicle.registrationExpiry).toLocaleDateString() : 'N/A'}
+              </p>
+            </div>
+            <div>
+              <p className="text-sm text-opsgrid-text-secondary">Inspection Due</p>
+              <p className="font-medium">
+                {vehicle.inspectionDue ? new Date(vehicle.inspectionDue).toLocaleDateString() : 'N/A'}
+              </p>
+            </div>
+          </div>
 
           {vehicle.geoTabDeviceId && (
             <div className="bg-opsgrid-bg rounded-lg p-3">
