@@ -431,7 +431,7 @@ export const TransportationManagement: FC = () => {
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
                           <span className={`w-2 h-2 rounded-full ${getStatusColor(shipment.status)}`} />
-                          <span className="capitalize">{shipment.status.replace('_', ' ')}</span>
+                          <span className="capitalize">{shipment.status?.replace('_', ' ')}</span>
                         </div>
                       </td>
                       <td className="px-4 py-3 text-sm">{shipment.carrierName}</td>
@@ -593,7 +593,7 @@ export const TransportationManagement: FC = () => {
                               driver.currentHosStatus === 'on_duty' ? 'bg-blue-500/20 text-blue-500' :
                               'bg-gray-500/20 text-gray-500'
                             }`}>
-                              {driver.currentHosStatus.replace('_', ' ')}
+                              {driver.currentHosStatus?.replace('_', ' ')}
                             </span>
                           </td>
                           <td className={`px-4 py-3 font-medium ${getHosColor(driver.hosDriveHoursRemaining)}`}>
@@ -664,7 +664,7 @@ export const TransportationManagement: FC = () => {
                 </div>
                 <div className="flex justify-between">
                   <span className="text-opsgrid-text-secondary">Authority:</span>
-                  <span className="capitalize">{carrier.operatingAuthority.replace('_', ' ')}</span>
+                  <span className="capitalize">{carrier.operatingAuthority?.replace('_', ' ')}</span>
                 </div>
               </div>
               <div className="mt-4 pt-3 border-t border-opsgrid-border">
@@ -915,7 +915,7 @@ const ShipmentDetailModal: FC<{
           <div className="grid grid-cols-2 gap-4">
             <div>
               <p className="text-sm text-opsgrid-text-secondary">Status</p>
-              <p className="font-medium capitalize">{shipment.status.replace('_', ' ')}</p>
+              <p className="font-medium capitalize">{shipment.status?.replace('_', ' ')}</p>
             </div>
             <div>
               <p className="text-sm text-opsgrid-text-secondary">Carrier</p>
@@ -1145,7 +1145,7 @@ const DriverDetailModal: FC<{ driver: Driver; onClose: () => void }> = ({ driver
             <div className="space-y-2">
               <div className="flex justify-between">
                 <span className="text-sm text-opsgrid-text-secondary">Current Status</span>
-                <span className="text-sm capitalize">{driver.currentHosStatus.replace('_', ' ')}</span>
+                <span className="text-sm capitalize">{driver.currentHosStatus?.replace('_', ' ')}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-sm text-opsgrid-text-secondary">Drive Hours Remaining</span>
@@ -1221,7 +1221,7 @@ const VehicleDetailModal: FC<{ vehicle: Vehicle; onClose: () => void }> = ({ veh
             </div>
             <div>
               <p className="text-sm text-opsgrid-text-secondary">Type</p>
-              <p className="font-medium capitalize">{vehicle.vehicleType.replace('_', ' ')}</p>
+              <p className="font-medium capitalize">{vehicle.vehicleType?.replace('_', ' ')}</p>
             </div>
             <div>
               <p className="text-sm text-opsgrid-text-secondary">Fuel Type</p>

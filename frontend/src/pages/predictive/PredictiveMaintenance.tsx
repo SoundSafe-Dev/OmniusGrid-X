@@ -11,7 +11,7 @@ import { formatDateTime, formatPercentage, cn } from '../../utils';
 const RISK_LEVELS = ['critical', 'high', 'medium', 'low'] as const;
 
 const riskVariant = (risk: string): 'success' | 'warning' | 'error' | 'info' | 'neutral' => {
-  switch (risk.toLowerCase()) {
+  switch (risk?.toLowerCase()) {
     case 'critical':
       return 'error';
     case 'high':
@@ -46,7 +46,7 @@ export const PredictiveMaintenance: FC = () => {
   // Most-urgent-first: RUL ascending, optionally narrowed to one risk level.
   const visibleAssessments = useMemo(() => {
     const filtered = riskFilter
-      ? assessments.filter((a) => a.riskLevel.toLowerCase() === riskFilter)
+      ? assessments.filter((a) => a.riskLevel?.toLowerCase() === riskFilter)
       : assessments;
     return [...filtered].sort(
       (a, b) => a.remainingUsefulLifeHours - b.remainingUsefulLifeHours
@@ -56,7 +56,7 @@ export const PredictiveMaintenance: FC = () => {
   const riskCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const a of assessments) {
-      const key = a.riskLevel.toLowerCase();
+      const key = a.riskLevel?.toLowerCase();
       counts[key] = (counts[key] ?? 0) + 1;
     }
     return counts;
@@ -72,7 +72,7 @@ export const PredictiveMaintenance: FC = () => {
   }
 
   const atRisk = assessments.filter((a) =>
-    ['critical', 'high'].includes(a.riskLevel.toLowerCase())
+    ['critical', 'high'].includes(a.riskLevel?.toLowerCase())
   );
   const avgHealth =
     assessments.length > 0

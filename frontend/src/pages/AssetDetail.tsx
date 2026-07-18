@@ -178,7 +178,7 @@ const AssetDetail: FC = () => {
                   <TooltipTrigger asChild>
                     <div className="bg-opsgrid-bg rounded-lg p-4">
                       <p className="text-sm text-opsgrid-text-secondary capitalize">
-                        {key.replace('_', ' ')}
+                        {key?.replace('_', ' ')}
                       </p>
                       <p className="text-xl font-semibold">
                         {metric.value}{metric.unit || ''}
@@ -188,7 +188,7 @@ const AssetDetail: FC = () => {
                       </p>
                     </div>
                   </TooltipTrigger>
-                  <TooltipContent>Latest reading for {key.replace('_', ' ')}</TooltipContent>
+                  <TooltipContent>Latest reading for {key?.replace('_', ' ')}</TooltipContent>
                 </Tooltip>
               )) :
               // Single metric case
