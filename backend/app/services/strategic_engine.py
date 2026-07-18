@@ -56,7 +56,69 @@ class CloudStrategicEngine:
         
         # Start listening for cloud recommendations
         asyncio.create_task(self._recommendation_listener())
-    
+
+    def load_demo_recommendations(self) -> int:
+        """Seed a few strategic recommendations for the offline demo.
+
+        The cloud recommendation listener never connects offline, so the
+        Strategic Engine page — and its approve/reject workflow — would be empty.
+        Called from the API lifespan when ALLOW_DEV_TOKEN is set. Only seeds when
+        the pending queue is empty, so it never duplicates real cloud recs.
+        """
+        if self.pending_recommendations:
+            return 0
+        now = datetime.now(timezone.utc)
+        demos = [
+            StrategicRecommendation(
+                recommendation_id="demo-rec-1",
+                asset_id=None,
+                recommendation_type="maintenance_window",
+                priority=1,
+                description=(
+                    "Shift CNC Mill #1 preventive maintenance to the Sunday "
+                    "02:00–06:00 low-demand window to avoid a mid-week stop."
+                ),
+                expected_impact={"oee_improvement": 0.06, "cost_reduction": 4200},
+                confidence=0.88,
+                simulation_basis="Fleet OEE rollup + maintenance-window scheduler (14 days)",
+                valid_until=now + timedelta(days=7),
+                requires_approval=True,
+            ),
+            StrategicRecommendation(
+                recommendation_id="demo-rec-2",
+                asset_id=None,
+                recommendation_type="schedule_change",
+                priority=2,
+                description=(
+                    "Rebalance line load away from the Machining Center during "
+                    "the 14:00–18:00 peak to cut the acoustic-anomaly rate."
+                ),
+                expected_impact={"oee_improvement": 0.03, "throughput_gain": 0.04},
+                confidence=0.79,
+                simulation_basis="Bottleneck analysis on seeded telemetry",
+                valid_until=now + timedelta(days=5),
+                requires_approval=True,
+            ),
+            StrategicRecommendation(
+                recommendation_id="demo-rec-3",
+                asset_id=None,
+                recommendation_type="parameter_tuning",
+                priority=3,
+                description=(
+                    "Lower Conveyor #1 target speed by 8% during high-vibration "
+                    "periods to extend bearing RUL."
+                ),
+                expected_impact={"rul_extension_days": 45, "cost_reduction": 1500},
+                confidence=0.72,
+                simulation_basis="Vibration-degradation slope + RUL model",
+                valid_until=now + timedelta(days=10),
+                requires_approval=True,
+            ),
+        ]
+        self.pending_recommendations.extend(demos)
+        logger.info("strategic_engine_demo_recommendations_loaded", count=len(demos))
+        return len(demos)
+
     async def _recommendation_listener(self):
         """Listen for recommendations from cloud via secure gateway"""
         # In practice, this would subscribe to a topic from cloud gateway
