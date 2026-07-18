@@ -1,21 +1,20 @@
 import { FC, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Zap, Activity, Shield, Play, Pause } from 'lucide-react';
+import { Zap, Activity, Shield, Eye, EyeOff } from 'lucide-react';
 import { Card, Badge, Button, SkeletonCard } from '../../components';
 import { enginesApi } from '../../api';
-import { TacticalDecision } from '../../types';
-import { formatDuration, formatNumber } from '../../utils';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
 
 export const TacticalEngine: FC = () => {
-  const { data: status, isLoading } = useQuery({
+  const { data: status, isLoading, isError } = useQuery({
     queryKey: ['tactical-status'],
     queryFn: () => enginesApi.getTacticalStatus(),
     refetchInterval: 5000,
   });
 
-  const [decisions] = useState<TacticalDecision[]>([]);
-  const [safetyEnabled, setSafetyEnabled] = useState(true);
+  // Local display-only toggle — reveals the safety thresholds reported by the
+  // engine. There is no endpoint to change enforcement from here.
+  const [showThresholds, setShowThresholds] = useState(true);
 
   if (isLoading) {
     return (
@@ -26,10 +25,21 @@ export const TacticalEngine: FC = () => {
     );
   }
 
+  const thresholds = status?.safetyThresholds ?? {};
+  const thresholdEntries = Object.entries(thresholds);
+
   return (
     <div className="space-y-6">
+      {isError && (
+        <Card className="p-4">
+          <p className="text-status-alarm text-sm">
+            Failed to load tactical engine status. Retrying automatically…
+          </p>
+        </Card>
+      )}
+
       {/* Status Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <Tooltip>
           <TooltipTrigger asChild>
             <Card className="p-4">
@@ -65,101 +75,53 @@ export const TacticalEngine: FC = () => {
           </TooltipTrigger>
           <TooltipContent>Current model version in use</TooltipContent>
         </Tooltip>
-
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Card className="p-4">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-opsgrid-primary/20 rounded-lg">
-                  <Activity className="w-5 h-5 text-opsgrid-primary" />
-                </div>
-                <div>
-                  <p className="text-sm text-opsgrid-text-secondary">Avg Latency</p>
-                  <p className="font-medium">{formatNumber(status?.averageLatencyMs || 0)} ms</p>
-                </div>
-              </div>
-            </Card>
-          </TooltipTrigger>
-          <TooltipContent>Average inference latency in milliseconds</TooltipContent>
-        </Tooltip>
-
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Card className="p-4">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-opsgrid-primary/20 rounded-lg">
-                  <Activity className="w-5 h-5 text-opsgrid-primary" />
-                </div>
-                <div>
-                  <p className="text-sm text-opsgrid-text-secondary">Total Inferences</p>
-                  <p className="font-medium">{formatNumber(status?.totalInferences || 0)}</p>
-                </div>
-              </div>
-            </Card>
-          </TooltipTrigger>
-          <TooltipContent>Total number of inferences made</TooltipContent>
-        </Tooltip>
       </div>
 
-      {/* Controls */}
-      <Card title="Safety Controls" subtitle="Manage automated decision-making">
+      {/* Safety Thresholds (display only) */}
+      <Card title="Safety Thresholds" subtitle="Configured limits reported by the engine (view only)">
         <Tooltip>
           <TooltipTrigger asChild>
             <div className="flex items-center justify-between p-4 bg-opsgrid-bg rounded-lg">
               <div className="flex items-center gap-3">
                 <Shield className="w-5 h-5 text-opsgrid-primary" />
                 <div>
-                  <p className="font-medium">Safety Thresholds</p>
+                  <p className="font-medium">Configured Safety Thresholds</p>
                   <p className="text-sm text-opsgrid-text-secondary">
-                    Override automated actions with hard limits
+                    Read-only view of the limits the engine reports
                   </p>
                 </div>
               </div>
               <Button
-                variant={safetyEnabled ? 'primary' : 'secondary'}
+                variant="secondary"
                 size="sm"
-                onClick={() => setSafetyEnabled(!safetyEnabled)}
+                onClick={() => setShowThresholds((v) => !v)}
               >
-                {safetyEnabled ? <Pause size={16} /> : <Play size={16} />}
-                {safetyEnabled ? 'Enabled' : 'Disabled'}
+                {showThresholds ? <EyeOff size={16} /> : <Eye size={16} />}
+                {showThresholds ? 'Hide' : 'Show'}
               </Button>
             </div>
           </TooltipTrigger>
-          <TooltipContent>Toggle safety threshold enforcement for automated decisions</TooltipContent>
+          <TooltipContent>Show or hide the reported safety thresholds (local view only)</TooltipContent>
         </Tooltip>
-      </Card>
 
-      {/* Recent Decisions */}
-      <Card title="Recent Decisions" subtitle="Live inference outputs">
-        <div className="space-y-2">
-          {decisions.length === 0 ? (
-            <p className="text-opsgrid-text-secondary text-center py-8">
-              No recent decisions. Decisions will appear here when the engine makes automated adjustments.
-            </p>
-          ) : (
-            decisions.map((decision) => (
-              <div
-                key={`${decision.assetId}-${decision.timestamp}`}
-                className="flex items-center justify-between p-3 bg-opsgrid-bg rounded-lg"
-              >
-                <div className="flex items-center gap-3">
-                  <Badge variant={decision.confidence > 0.8 ? 'success' : 'warning'} size="sm">
-                    {(decision.confidence * 100).toFixed(0)}%
-                  </Badge>
-                  <div>
-                    <p className="font-medium">{decision.actionType}</p>
-                    <p className="text-sm text-opsgrid-text-secondary">
-                      {decision.assetId} • {decision.latencyMs.toFixed(1)}ms
-                    </p>
+        {showThresholds && (
+          <div className="mt-4">
+            {thresholdEntries.length === 0 ? (
+              <p className="text-opsgrid-text-secondary text-sm">
+                No safety thresholds reported by the engine.
+              </p>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {thresholdEntries.map(([key, value]) => (
+                  <div key={key} className="flex items-center justify-between p-3 bg-opsgrid-bg rounded-lg">
+                    <span className="text-sm text-opsgrid-text-secondary">{key}</span>
+                    <span className="font-medium">{String(value)}</span>
                   </div>
-                </div>
-                <span className="text-sm text-opsgrid-text-secondary">
-                  {formatDuration((Date.now() - new Date(decision.timestamp).getTime()) / 1000)} ago
-                </span>
+                ))}
               </div>
-            ))
-          )}
-        </div>
+            )}
+          </div>
+        )}
       </Card>
     </div>
   );

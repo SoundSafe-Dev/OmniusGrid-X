@@ -1,16 +1,15 @@
 import { FC, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Cpu, History, RotateCcw, Download, CheckCircle } from 'lucide-react';
+import { Cpu, RotateCcw, Download, CheckCircle } from 'lucide-react';
 import { Card, Badge, Button, Select, SkeletonCard } from '../../components';
 import { enginesApi } from '../../api';
-import { formatDateTime } from '../../utils';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
 
 export const MLOpsPipeline: FC = () => {
   const queryClient = useQueryClient();
   const [selectedVersion, setSelectedVersion] = useState('');
 
-  const { data: status, isLoading } = useQuery({
+  const { data: status, isLoading, isError } = useQuery({
     queryKey: ['mlops-status'],
     queryFn: () => enginesApi.getMLOpsStatus(),
     refetchInterval: 30000,
@@ -26,6 +25,8 @@ export const MLOpsPipeline: FC = () => {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['mlops-status'] }),
   });
 
+  const actionError = deployMutation.isError || rollbackMutation.isError;
+
   if (isLoading) {
     return (
       <div className="space-y-6">
@@ -36,10 +37,28 @@ export const MLOpsPipeline: FC = () => {
   }
 
   const availableVersions = status?.cachedModels || [];
-  const deploymentHistory = status?.deploymentHistory || [];
+  // A rollback target exists only when a cached model other than the current
+  // one is available; the backend performs no rollback with a single version.
+  const canRollback = availableVersions.some((v) => v !== status?.currentModel);
 
   return (
     <div className="space-y-6">
+      {isError && (
+        <Card className="p-4">
+          <p className="text-status-alarm text-sm">
+            Failed to load MLOps status. Retrying automatically…
+          </p>
+        </Card>
+      )}
+
+      {actionError && (
+        <Card className="p-4">
+          <p className="text-status-alarm text-sm">
+            Action failed. The model operation did not complete — please try again.
+          </p>
+        </Card>
+      )}
+
       {/* Current Model */}
       <Card title="Current Model" subtitle="Active deployment">
         <Tooltip>
@@ -61,11 +80,6 @@ export const MLOpsPipeline: FC = () => {
                     </TooltipTrigger>
                     <TooltipContent>Currently deployed model version</TooltipContent>
                   </Tooltip>
-                  {status?.lastDeploymentAt && (
-                    <p className="text-sm text-opsgrid-text-secondary">
-                      Deployed {formatDateTime(status.lastDeploymentAt)}
-                    </p>
-                  )}
                 </div>
               </div>
               <Tooltip>
@@ -125,7 +139,7 @@ export const MLOpsPipeline: FC = () => {
               </div>
               <Button
                 variant="danger"
-                disabled={rollbackMutation.isPending || deploymentHistory.length < 2}
+                disabled={rollbackMutation.isPending || !canRollback}
                 loading={rollbackMutation.isPending}
                 onClick={() => rollbackMutation.mutate()}
               >
@@ -138,39 +152,6 @@ export const MLOpsPipeline: FC = () => {
         </Tooltip>
       </Card>
 
-      {/* Deployment History */}
-      <Card title="Deployment History" subtitle="Recent model updates">
-        <div className="space-y-2">
-          {deploymentHistory.length === 0 ? (
-            <p className="text-opsgrid-text-secondary text-center py-8">
-              No deployment history available.
-            </p>
-          ) : (
-            deploymentHistory.map((deployment, index) => (
-              <div
-                key={`${deployment.version}-${index}`}
-                className="flex items-center justify-between p-3 bg-opsgrid-bg rounded-lg"
-              >
-                <div className="flex items-center gap-3">
-                  <History className="w-4 h-4 text-opsgrid-text-secondary" />
-                  <div>
-                    <p className="font-medium">{deployment.version}</p>
-                    <p className="text-sm text-opsgrid-text-secondary">
-                      {formatDateTime(deployment.deployedAt)}
-                    </p>
-                  </div>
-                </div>
-                {deployment.rolledBackAt ? (
-                  <Badge variant="neutral" size="sm">Rolled back</Badge>
-                ) : index === 0 ? (
-                  <Badge variant="success" size="sm">Current</Badge>
-                ) : null}
-              </div>
-            ))
-          )}
-        </div>
-      </Card>
-
       {/* Registry Status */}
       <Card title="Registry Status" subtitle="Model registry connection">
         <div className="grid grid-cols-2 gap-4">
@@ -181,12 +162,6 @@ export const MLOpsPipeline: FC = () => {
           <div className="p-3 bg-opsgrid-bg rounded-lg">
             <p className="text-sm text-opsgrid-text-secondary">Available Models</p>
             <p className="font-medium">{availableVersions.length}</p>
-          </div>
-          <div className="p-3 bg-opsgrid-bg rounded-lg">
-            <p className="text-sm text-opsgrid-text-secondary">Last Poll</p>
-            <p className="font-medium">
-              {status?.lastPollAt ? formatDateTime(status.lastPollAt) : 'Never'}
-            </p>
           </div>
         </div>
       </Card>
