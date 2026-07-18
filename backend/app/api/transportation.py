@@ -544,15 +544,39 @@ async def get_vehicles(
         select(func.count()).select_from(query.subquery())
     )).scalar_one()
     vehicles = (await db.execute(query.offset(skip).limit(limit))).scalars().all()
+
+    # Resolve carrier names for the listed vehicles in one query (the UI shows
+    # the carrier, not just its id).
+    carrier_ids = {v.carrier_id for v in vehicles if v.carrier_id}
+    carrier_names: Dict[str, Any] = {}
+    if carrier_ids:
+        rows = (await db.execute(
+            select(Carrier.id, Carrier.carrier_name).where(Carrier.id.in_(carrier_ids))
+        )).all()
+        carrier_names = {str(cid): name for cid, name in rows}
+
+    def _iso(dt):
+        return dt.isoformat() if dt else None
+
     items = [
         {
             "id": str(v.id),
             "vehicleNumber": v.vehicle_number,
+            "carrierId": v.carrier_id,
+            "carrierName": carrier_names.get(str(v.carrier_id)),
             "vin": v.vin,
             "make": v.make,
             "model": v.model,
             "year": v.year,
             "status": v.status,
+            "vehicleType": v.vehicle_type,
+            "fuelType": v.fuel_type,
+            "licensePlate": v.license_plate,
+            "dotNumber": v.dot_number,
+            "grossVehicleWeight": v.gross_vehicle_weight_kg,
+            "engineHours": v.engine_hours,
+            "registrationExpiry": _iso(v.registration_expiry),
+            "inspectionDue": _iso(v.inspection_due),
             "fuelLevel": v.fuel_level_percent,
             "odometer": v.odometer_miles,
             "geotabDeviceId": v.geotab_device_id,

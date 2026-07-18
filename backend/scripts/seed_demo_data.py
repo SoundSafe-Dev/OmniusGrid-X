@@ -588,6 +588,14 @@ async def main(verify: bool = False) -> int:
                            vin=vin, make=mk, model=mdl, year=yr, status=status,
                            fuel_level_percent=round(fuel * 100, 1), odometer_miles=odo,
                            geotab_device_id=gt, current_driver_id=drv,
+                           # migration 041 columns — full fleet-asset attributes
+                           vehicle_type="tractor", fuel_type="diesel",
+                           license_plate=f"IL {num.replace('-', '')}",
+                           dot_number=f"DOT-{3100000 + int(num[-3:])}",
+                           gross_vehicle_weight_kg=36287.0,  # ~80,000 lb Class-8 GVWR
+                           engine_hours=round(odo / 48.0, 1),
+                           registration_expiry=days_ago(-180),  # ~6 months out
+                           inspection_due=days_ago(-90),        # ~3 months out
                            last_location={"latitude": lat, "longitude": lng, "speed": speed,
                                           "heading": heading, "timestamp": NOW.isoformat()}))
         # ---- optimized routes (Transportation → get_routes) --------------------
