@@ -11,7 +11,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
 export const StrategicEngine: FC = () => {
   const queryClient = useQueryClient();
 
-  const { data: recommendations, isLoading } = useQuery({
+  const { data: recommendations, isLoading, isError } = useQuery({
     queryKey: ['strategic-recommendations'],
     queryFn: () => enginesApi.getStrategicRecommendations(),
     refetchInterval: 30000,
@@ -29,6 +29,8 @@ export const StrategicEngine: FC = () => {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['strategic-recommendations'] }),
   });
 
+  const actionError = approveMutation.isError || rejectMutation.isError;
+
   // Digital-twin what-if optimizer (FS-84): POST a default two-candidate
   // scenario and render the ranked recommendations the twin returns.
   const optimizeMutation = useMutation({
@@ -45,11 +47,31 @@ export const StrategicEngine: FC = () => {
     );
   }
 
-  const pendingRecs = recommendations?.filter((r) => r.status === 'pending') || [];
-  const historyRecs = recommendations?.filter((r) => r.status !== 'pending') || [];
+  // The backend recommendations response has no `status` field (it only ever
+  // returns pending recs), so treat a missing/unknown status as pending —
+  // otherwise the Approve/Reject cards would never render. History keeps only
+  // recs that carry an explicit resolved status.
+  const pendingRecs = recommendations?.filter((r) => !r.status || r.status === 'pending') || [];
+  const historyRecs = recommendations?.filter((r) => r.status && r.status !== 'pending') || [];
 
   return (
     <div className="space-y-6">
+      {isError && (
+        <Card className="p-4">
+          <p className="text-status-alarm text-sm">
+            Failed to load recommendations. Retrying automatically…
+          </p>
+        </Card>
+      )}
+
+      {actionError && (
+        <Card className="p-4">
+          <p className="text-status-alarm text-sm">
+            Action failed. The recommendation could not be updated — please try again.
+          </p>
+        </Card>
+      )}
+
       {/* Summary */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Tooltip>
