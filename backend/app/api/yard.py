@@ -5,17 +5,18 @@ Trailer tracking, dock scheduling, yard operations
 
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_active_user
 from app.core.pagination import PaginatedResponse, paginate
 from app.db.database import get_db
 from app.db.models import (
-    YardTrailer, DockDoor, YardMove, DriverWaitTime, 
-    DockAppointment, YardCheckPoint
+    YardTrailer, DockDoor, YardMove, DriverWaitTime,
+    DockAppointment, YardCheckPoint, Carrier
 )
 from app.models.schemas import (
     YardTrailerCreate, YardTrailerUpdate, YardTrailerResponse,
@@ -36,6 +37,22 @@ from app.services.yard_management import (
 from app.middleware.rbac import require_operator_or_admin
 
 router = APIRouter(tags=["yard_management"], dependencies=[Depends(get_current_active_user)])
+
+
+def _iso(dt):
+    """ISO-8601 string for a datetime, or None."""
+    return dt.isoformat() if dt else None
+
+
+async def _resolve_carrier_names(carrier_ids, db: AsyncSession) -> Dict[str, Any]:
+    """Map {carrier_id -> carrier_name} in one query (the UI shows names)."""
+    ids = {c for c in carrier_ids if c}
+    if not ids:
+        return {}
+    rows = (await db.execute(
+        select(Carrier.id, Carrier.carrier_name).where(Carrier.id.in_(ids))
+    )).all()
+    return {str(cid): name for cid, name in rows}
 
 
 # ==================== Yard Trailer Endpoints ====================
@@ -80,7 +97,7 @@ async def trailer_check_out(
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@router.get("/trailers", response_model=PaginatedResponse[YardTrailerResponse])
+@router.get("/trailers", response_model=PaginatedResponse[Dict[str, Any]])
 async def get_yard_inventory(
     organization_id: UUID,
     status: Optional[str] = Query(None, description="Filter by status: checked_in, docked, yard"),
@@ -88,7 +105,10 @@ async def get_yard_inventory(
     limit: int = Query(100, ge=1, le=1000),
     db: AsyncSession = Depends(get_db)
 ):
-    """Get current yard inventory (FS-99: {items, meta} envelope with a real total)."""
+    """Get current yard inventory (FS-99: {items, meta} envelope with a real total).
+
+    Adds carrierName join + the MISSING UI columns.
+    """
     trailers, total = await yard_management_service.get_yard_inventory(
         organization_id=organization_id,
         status=status,
@@ -96,7 +116,20 @@ async def get_yard_inventory(
         limit=limit,
         db=db
     )
-    return paginate(trailers, total, SimpleNamespace(skip=skip, limit=limit))
+
+    carrier_names = await _resolve_carrier_names(
+        {t.carrier_id for t in trailers if t.carrier_id}, db
+    )
+
+    items: List[Dict[str, Any]] = []
+    for t in trailers:
+        row = YardTrailerResponse.model_validate(t).model_dump(mode="json", by_alias=True)
+        row["carrierName"] = carrier_names.get(str(t.carrier_id))
+        row["licensePlate"] = t.license_plate
+        row["detentionCost"] = t.detention_cost
+        row["detentionRisk"] = t.detention_risk
+        items.append(row)
+    return paginate(items, total, SimpleNamespace(skip=skip, limit=limit))
 
 
 @router.get("/trailers/{trailer_id}", response_model=YardTrailerResponse)
@@ -219,7 +252,7 @@ async def create_dock_appointment(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.get("/dock/appointments", response_model=List[DockAppointmentResponse])
+@router.get("/dock/appointments", response_model=List[Dict[str, Any]])
 async def get_dock_schedule(
     organization_id: UUID,
     start_date: datetime = Query(default_factory=lambda: datetime.now(timezone.utc)),
@@ -227,10 +260,10 @@ async def get_dock_schedule(
     dock_door_id: Optional[UUID] = None,
     db: AsyncSession = Depends(get_db)
 ):
-    """Get dock schedule for date range"""
+    """Get dock schedule for date range (adds carrierName join)."""
     if not end_date:
         end_date = start_date + timedelta(days=1)
-    
+
     appointments = await dock_scheduler.get_dock_schedule(
         organization_id=organization_id,
         start_date=start_date,
@@ -238,7 +271,17 @@ async def get_dock_schedule(
         dock_door_id=dock_door_id,
         db=db
     )
-    return appointments
+
+    carrier_names = await _resolve_carrier_names(
+        {a.carrier_id for a in appointments if a.carrier_id}, db
+    )
+
+    items: List[Dict[str, Any]] = []
+    for a in appointments:
+        row = DockAppointmentResponse.model_validate(a).model_dump(mode="json", by_alias=True)
+        row["carrierName"] = carrier_names.get(str(a.carrier_id))
+        items.append(row)
+    return items
 
 
 @router.post("/dock/appointments/{appointment_id}/start", response_model=DockAppointmentResponse, dependencies=[Depends(require_operator_or_admin)])

@@ -509,30 +509,44 @@ async def main(verify: bool = False) -> int:
         db.add(Carrier(id=CARRIER_A, organization_id=ORG, carrier_name="Great Lakes Freight",
                        dot_number="DOT-448821", mc_number="MC-99120", ctpat_certified=True,
                        insurance_on_file=True, insurance_expires_at=NOW + timedelta(days=21),
-                       safety_rating="satisfactory", csa_score=41.5, is_active=True))
+                       safety_rating="satisfactory", csa_score=41.5, is_active=True,
+                       # migration 042 — carrier scorecard columns
+                       compliance_score=92.5, on_time_performance=0.94,
+                       operating_authority="common", scac="GLFT"))
         db.add(Carrier(id=CARRIER_B, organization_id=ORG, carrier_name="Prairie Express",
                        dot_number="DOT-102934", mc_number="MC-55431", ctpat_certified=False,
                        insurance_on_file=True, insurance_expires_at=NOW + timedelta(days=180),
-                       safety_rating="conditional", csa_score=68.0, is_active=True))
+                       safety_rating="conditional", csa_score=68.0, is_active=True,
+                       # migration 042 — carrier scorecard columns
+                       compliance_score=78.0, on_time_performance=0.87,
+                       operating_authority="contract", scac="PREX"))
 
         db.add(YardTrailer(id=TRAILER_DWELL, organization_id=ORG, trailer_number="TRL-4482",
                            carrier_id=CARRIER_A, trailer_type="dry_van", status="yard",
                            yard_location="Zone A-04", seal_number="SL-88121",
                            check_in_at=NOW - timedelta(hours=6),  # 4h past free time -> detention
+                           # migration 042 — plate + detention exposure
+                           license_plate="IL TRL4482", detention_cost=200.0, detention_risk="high",
                            meta_data={"po_number": "PO-10018", "contents": "6061 aluminum billet"}))
         db.add(YardTrailer(id=TRAILER_DOCKED, organization_id=ORG, trailer_number="TRL-7731",
                            carrier_id=CARRIER_A, trailer_type="reefer", status="docked",
                            dock_door_id=DOOR_IDS[2], seal_number="SL-88907",
                            check_in_at=NOW - timedelta(hours=1.2),
+                           license_plate="IL TRL7731", detention_cost=0.0, detention_risk="low",
                            meta_data={"po_number": "PO-10021", "contents": "Spindle bearing kit"}))
         db.add(YardTrailer(id=TRAILER_YARD, organization_id=ORG, trailer_number="TRL-9017",
                            carrier_id=CARRIER_B, trailer_type="dry_van", status="yard",
                            yard_location="Zone B-02", check_in_at=NOW - timedelta(hours=0.8),
+                           license_plate="WI TRL9017", detention_cost=0.0, detention_risk="medium",
                            meta_data={"po_number": "PO-10019", "contents": "ABS pellets"}))
         for tid, num, d_in, d_out in [(TRAILER_OUT1, "TRL-3306", 3.4, 3.1),
                                       (TRAILER_OUT2, "TRL-5540", 1.6, 1.35)]:
+            _out_detention = round(max(0.0, ((d_in - d_out) * 1440 - 120) / 60 * 50), 2)
             db.add(YardTrailer(id=tid, organization_id=ORG, trailer_number=num,
                                carrier_id=CARRIER_B, trailer_type="dry_van", status="checked_out",
+                               license_plate=f"WI {num.replace('-', '')}",
+                               detention_cost=_out_detention,
+                               detention_risk="high" if _out_detention > 100 else "low",
                                check_in_at=days_ago(d_in), check_out_at=days_ago(d_out)))
             db.add(DriverWaitTime(organization_id=ORG, trailer_id=tid,
                                   check_in_at=days_ago(d_in), check_out_at=days_ago(d_out),
@@ -550,19 +564,26 @@ async def main(verify: bool = False) -> int:
                                    meta_data={"po_number": "PO-10018" if hour == 7 else "PO-10019"}))
 
         # ---- transportation (correlated to invoices) ---------------------------
+        # migration 042 — HOS remaining = 11 - drive_today / 14 - on_duty_today
         db.add(Driver(id=DRIVER_1, organization_id=ORG, carrier_id=CARRIER_A, first_name="Maria",
                       last_name="Santos", license_number="IL-D449-2210", license_state="IL",
                       cdl_class="A", hos_drive_hours_today=10.6, hos_on_duty_hours_today=12.9,
-                      hos_cycle_hours=61.0, current_hos_status="driving", is_active=True))
+                      hos_cycle_hours=61.0, current_hos_status="driving", is_active=True,
+                      endorsements=["hazmat", "tanker"], license_expiry=NOW + timedelta(days=365),
+                      hos_drive_hours_remaining=11 - 10.6, hos_duty_hours_remaining=14 - 12.9))
         db.add(Driver(id=DRIVER_2, organization_id=ORG, carrier_id=CARRIER_A, first_name="Dwayne",
                       last_name="Carter", license_number="IL-D101-8837", license_state="IL",
                       cdl_class="A", hos_drive_hours_today=3.2, hos_on_duty_hours_today=5.0,
-                      hos_cycle_hours=28.5, current_hos_status="on_duty", is_active=True))
+                      hos_cycle_hours=28.5, current_hos_status="on_duty", is_active=True,
+                      endorsements=["hazmat"], license_expiry=NOW + timedelta(days=420),
+                      hos_drive_hours_remaining=11 - 3.2, hos_duty_hours_remaining=14 - 5.0))
         db.add(Driver(id=DRIVER_3, organization_id=ORG, carrier_id=CARRIER_B, first_name="Priya",
                       last_name="Natarajan", license_number="WI-D778-1204", license_state="WI",
                       cdl_class="A", hos_drive_hours_today=0.0, hos_on_duty_hours_today=1.5,
                       hos_cycle_hours=44.0, current_hos_status="off_duty", is_active=True,
-                      medical_cert_expires=NOW + timedelta(days=18)))
+                      medical_cert_expires=NOW + timedelta(days=18),
+                      endorsements=["doubles_triples"], license_expiry=NOW + timedelta(days=300),
+                      hos_drive_hours_remaining=11 - 0.0, hos_duty_hours_remaining=14 - 1.5))
         # Every UI-read column populated (vin/make/model/year/driver + telematics)
         # so the vehicle detail modal never hits a null. NOTE: the Vehicle ORM
         # model (logistics_models) has no vehicle_type/fuel_type/license_plate/
@@ -634,16 +655,24 @@ async def main(verify: bool = False) -> int:
             ("SHP-2204", "in_transit", 0.4, None, -0.6, DRIVER_1),
             ("SHP-2205", "planned", None, None, -2.0, None),
         ]
-        for num, status, picked_d, delivered_d, sched_d, drv in ships:
+        for idx, (num, status, picked_d, delivered_d, sched_d, drv) in enumerate(ships):
+            # scheduled_pickup was previously null -> UI showed "Invalid Date".
+            sched_pickup_d = picked_d if picked_d is not None else (
+                (sched_d + 0.5) if sched_d is not None else 0.0)
             db.add(Shipment(organization_id=ORG, carrier_id=CARRIER_A, driver_id=drv,
                             shipment_number=num, shipment_type="outbound", status=status,
-                            origin={"city": "Chicago", "state": "IL"},
-                            destination={"city": "Dallas", "state": "TX"},
+                            origin={"name": "Plant CHI-01", "city": "Chicago", "state": "IL"},
+                            destination={"name": "Dallas DC", "city": "Dallas", "state": "TX"},
                             route_id=ROUTE_CHI_DAL,
+                            scheduled_pickup=days_ago(sched_pickup_d),
                             actual_pickup=days_ago(picked_d) if picked_d else None,
                             scheduled_delivery=days_ago(sched_d) if sched_d is not None else None,
                             actual_delivery=days_ago(delivered_d) if delivered_d else None,
-                            priority="normal", total_weight_lbs=32000, total_pieces=18))
+                            priority="normal", total_weight_lbs=32000, total_pieces=18,
+                            # migration 042 — PO / freight / pallet
+                            po_number=f"PO-2020{idx + 1}",
+                            freight_charge=round(1850.0 + idx * 175.0, 2),
+                            pallet_count=18 + idx))
         db.add(GeofenceZone(organization_id=ORG, name="Plant CHI-01 Perimeter", zone_type="circle",
                             center_lat=41.8781, center_lng=-87.6298, radius_meters=800,
                             trigger_on="both", severity="warning"))

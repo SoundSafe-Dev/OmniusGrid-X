@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 from typing import Optional, List
-from sqlalchemy import Column, String, DateTime, Boolean, Numeric, JSON, ForeignKey, Text, BigInteger, Integer, ARRAY, Date, UUID, UniqueConstraint, CheckConstraint, Index, func, text
+from sqlalchemy import Column, String, DateTime, Boolean, Numeric, Float, JSON, ForeignKey, Text, BigInteger, Integer, ARRAY, Date, UUID, UniqueConstraint, CheckConstraint, Index, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.types import TypeDecorator
@@ -290,6 +290,10 @@ class YardTrailer(Base):
     seal_number = Column(String(50))
     seal_status = Column(String(20), default="intact")  # intact, broken, missing
     weight_lbs = Column(Numeric)
+    # migration 042 — fleet UI columns
+    license_plate = Column(String(32))
+    detention_cost = Column(Float)
+    detention_risk = Column(String(20))  # low, medium, high
     check_in_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     check_out_at = Column(DateTime(timezone=True))
     dock_door_id = UUIDForeignKey("dock_doors.id", nullable=True)
@@ -397,6 +401,11 @@ class Carrier(Base):
     safety_rating = Column(String(20))  # satisfactory, conditional, unsatisfactory
     csa_score = Column(Numeric)
     contract_rate = Column(JSON, default={})  # negotiated rates
+    # migration 042 — fleet UI columns
+    compliance_score = Column(Float)  # 0-100
+    on_time_performance = Column(Float)  # 0-1
+    operating_authority = Column(String(50))  # common, contract
+    scac = Column(String(8))  # Standard Carrier Alpha Code (4 letters)
     is_active = Column(Boolean, default=True)
     contact_info = Column(JSON, default={})
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
@@ -422,6 +431,11 @@ class Driver(Base):
     hos_drive_hours_today = Column(Numeric, default=0)
     hos_on_duty_hours_today = Column(Numeric, default=0)
     hos_cycle_hours = Column(Numeric, default=0)
+    # migration 042 — fleet UI columns
+    endorsements = Column(JSON, default=list)  # e.g. ["hazmat", "tanker"]
+    license_expiry = Column(DateTime(timezone=True))
+    hos_drive_hours_remaining = Column(Float)  # 11 - hos_drive_hours_today
+    hos_duty_hours_remaining = Column(Float)  # 14 - hos_on_duty_hours_today
     eld_device_id = Column(String(100))
     phone = Column(String(50))
     email = Column(String(255))
@@ -453,6 +467,10 @@ class Shipment(Base):
     priority = Column(String(20), default="normal")  # low, normal, high, critical
     total_weight_lbs = Column(Numeric)
     total_pieces = Column(Integer)
+    # migration 042 — fleet UI columns
+    po_number = Column(String(100))
+    freight_charge = Column(Float)
+    pallet_count = Column(Integer)
     hazmat = Column(Boolean, default=False)
     temperature_required = Column(Boolean, default=False)
     temperature_min = Column(Numeric)
