@@ -75,6 +75,11 @@ DRIVER_3 = "66666666-0000-4000-8000-000000000003"
 
 SESSION_ID = "77777777-0000-4000-8000-000000000001"
 
+# ---- transportation routes (get_routes) + telematics (fleet_health) ----------
+ROUTE_CHI_DAL = "70000000-0000-4000-8000-000000000001"  # Chicago -> Dallas lane
+ROUTE_CHI_MSP = "70000000-0000-4000-8000-000000000002"  # Chicago -> Minneapolis
+ROUTE_CHI_DET = "70000000-0000-4000-8000-000000000003"  # Chicago -> Detroit
+
 # ---- gap-area fixed ids (kanban / OTA / MLOps / compliance / notifications) ----
 BOARD_ID = "aaaaaaaa-0000-4000-8000-000000000001"
 COL_IDS = {  # column_type -> fixed id
@@ -170,9 +175,10 @@ async def main(verify: bool = False) -> int:
     from app.db.models import (
         Alarm, AnalysisSession, Asset, AssetType, Carrier, DockAppointment,
         DockDoor, Driver, DriverWaitTime, ERPCorrelation, ERPDataMapping,
-        ERPEntity, ERPIntegrationEvent, ERPSyncStatus, IntegrationConfiguration,
-        Organization, SessionDataSource, Shipment, Telemetry, User, Workcell,
-        YardTrailer,
+        ERPEntity, ERPIntegrationEvent, ERPSyncStatus, GeoTabDiagnostic,
+        GeoTabException, GeoTabTrip, IntegrationConfiguration,
+        Organization, Route, SessionDataSource, Shipment, Telemetry, User,
+        Workcell, YardTrailer,
     )
     from app.db.logistics_models import (
         GeofenceAlert, GeofenceZone, MaintenanceSchedule, RepairOrder, Vehicle,
@@ -225,6 +231,10 @@ async def main(verify: bool = False) -> int:
             (YardTrailer, YardTrailer.organization_id),
             (DockDoor, DockDoor.organization_id),
             (Shipment, Shipment.organization_id),
+            (Route, Route.organization_id),
+            (GeoTabTrip, GeoTabTrip.organization_id),
+            (GeoTabException, GeoTabException.organization_id),
+            (GeoTabDiagnostic, GeoTabDiagnostic.organization_id),
             (Vehicle, Vehicle.organization_id),
             (GeofenceAlert, GeofenceAlert.organization_id),
             (GeofenceZone, GeofenceZone.organization_id),
@@ -353,6 +363,42 @@ async def main(verify: bool = False) -> int:
                      message="High-frequency band energy trending up (bearing-wear signature)",
                      occurred_at=days_ago(3.5), is_active=False, is_acknowledged=True,
                      acknowledged_by=USER, acknowledged_at=days_ago(3.4)))
+
+        # A live spread of alarms so the Alarms page (default: last 24h window)
+        # is populated: mixed severities, some active/unacknowledged, some
+        # acknowledged, some resolved. occurred_at spread over the recent days.
+        # (asset, code, severity, message, hours_ago, active, acked, cleared_h)
+        recent_alarms = [
+            (A_CNC, "SPINDLE_TEMP_HIGH", "critical",
+             "Spindle bearing temperature 79°C — above 75°C critical threshold",
+             1.5, True, False, None),
+            (A_CONVEYOR, "BELT_SLIP", "high",
+             "Conveyor #1 belt slip detected (speed variance > 12%)",
+             4.0, True, False, None),
+            (A_CAMERA, "MOTION_LOSS", "low",
+             "Dock Camera — Door 3 reported no motion during scheduled appointment",
+             8.0, True, True, None),
+            (A_VIB, "VIB_ELEVATED", "medium",
+             "Spindle vibration mildly elevated (3.4 mm/s) — monitor",
+             18.0, True, False, None),
+            (A_CONVEYOR, "MOTOR_CURRENT_HIGH", "high",
+             "Conveyor #1 drive motor current spike (overload trip avoided)",
+             30.0, False, True, 28.0),
+            (A_CNC, "COOLANT_LOW", "medium",
+             "CNC Mill #1 coolant reservoir below 20%",
+             46.0, False, True, 44.0),
+            (A_AUDIO, "AUDIO_CLIPPING", "low",
+             "Acoustic Monitor input clipping on high-band channel",
+             70.0, False, True, 69.0),
+        ]
+        for aid, code, sev, msg, h_ago, active, acked, cleared_h in recent_alarms:
+            db.add(Alarm(
+                asset_id=aid, alarm_code=code, severity=sev, message=msg,
+                occurred_at=NOW - timedelta(hours=h_ago), is_active=active,
+                is_acknowledged=acked,
+                acknowledged_by=USER if acked else None,
+                acknowledged_at=(NOW - timedelta(hours=h_ago - 0.2)) if acked else None,
+                cleared_at=(NOW - timedelta(hours=cleared_h)) if cleared_h is not None else None))
 
         # ---- SIMULATED FULLY-SYNCED ERP INTEGRATION ---------------------------
         db.add(IntegrationConfiguration(
@@ -517,16 +563,62 @@ async def main(verify: bool = False) -> int:
                       cdl_class="A", hos_drive_hours_today=0.0, hos_on_duty_hours_today=1.5,
                       hos_cycle_hours=44.0, current_hos_status="off_duty", is_active=True,
                       medical_cert_expires=NOW + timedelta(days=18)))
-        vehicles = [("TRK-081", 0.62, 214880, "gt-device-001", "moving"),
-                    ("TRK-114", 0.35, 158211, "gt-device-002", "idle"),
-                    ("TRK-207", 0.88, 88109, "gt-device-003", "idle")]
-        for num, fuel, odo, gt, status in vehicles:
+        # Every UI-read column populated (vin/make/model/year/driver + telematics)
+        # so the vehicle detail modal never hits a null. NOTE: the Vehicle ORM
+        # model (logistics_models) has no vehicle_type/fuel_type/license_plate/
+        # engine_hours columns, so those cannot be seeded here — the make/model/
+        # year + fuel_level + odometer are the descriptive fields it exposes.
+        # num, fuel, odometer, geotab device, status, vin, make, model, year, driver
+        vehicles = [
+            ("TRK-081", 0.62, 214880, "gt-device-001", "moving", "1FUJGLDR8PLBW4481",
+             "Freightliner", "Cascadia", 2023, DRIVER_1),
+            ("TRK-114", 0.35, 158211, "gt-device-002", "idle", "3AKJHHDR1MSMP1142",
+             "Kenworth", "T680", 2022, DRIVER_2),
+            ("TRK-207", 0.88, 88109, "gt-device-003", "idle", "1XKYDP9X4NJ207091",
+             "Peterbilt", "579", 2024, DRIVER_3),
+        ]
+        vehicle_geo = {}  # geotab device_id -> (vehicle_number, driver_id, lat, lng, speed, heading)
+        for num, fuel, odo, gt, status, vin, mk, mdl, yr, drv in vehicles:
+            lat = round(41.87 + RNG.uniform(-0.4, 0.4), 5)
+            lng = round(-87.62 + RNG.uniform(-0.5, 0.5), 5)
+            speed = 58 if status == "moving" else 0
+            heading = round(RNG.uniform(0, 359), 1)
+            vehicle_geo[gt] = (num, drv, lat, lng, speed, heading)
             db.add(Vehicle(organization_id=ORG, carrier_id=CARRIER_A, vehicle_number=num,
-                           make="Freightliner", model="Cascadia", year=2023, status=status,
-                           fuel_level_percent=fuel * 100, odometer_miles=odo, geotab_device_id=gt,
-                           last_location={"latitude": 41.87 + RNG.uniform(-0.4, 0.4),
-                                          "longitude": -87.62 + RNG.uniform(-0.5, 0.5),
-                                          "speed": 58 if status == "moving" else 0}))
+                           vin=vin, make=mk, model=mdl, year=yr, status=status,
+                           fuel_level_percent=round(fuel * 100, 1), odometer_miles=odo,
+                           geotab_device_id=gt, current_driver_id=drv,
+                           last_location={"latitude": lat, "longitude": lng, "speed": speed,
+                                          "heading": heading, "timestamp": NOW.isoformat()}))
+        # ---- optimized routes (Transportation → get_routes) --------------------
+        # Standalone, org-scoped rows the /transportation/routes endpoint returns;
+        # the Chicago→Dallas lane is linked from the outbound shipments below.
+        db.add(Route(id=ROUTE_CHI_DAL, organization_id=ORG,
+                     route_name="Chicago CHI-01 → Dallas DC", is_active=True,
+                     origin={"city": "Chicago", "state": "IL", "latitude": 41.8781, "longitude": -87.6298},
+                     destination={"city": "Dallas", "state": "TX", "latitude": 32.7767, "longitude": -96.7970},
+                     waypoints=[{"city": "St. Louis", "state": "MO", "latitude": 38.627, "longitude": -90.199},
+                                {"city": "Oklahoma City", "state": "OK", "latitude": 35.4676, "longitude": -97.5164}],
+                     total_distance_miles=967, estimated_duration_hours=14.5,
+                     fuel_cost_estimate=612.0, toll_cost_estimate=48.5,
+                     optimization_criteria="balanced"))
+        db.add(Route(id=ROUTE_CHI_MSP, organization_id=ORG,
+                     route_name="Chicago CHI-01 → Minneapolis DC", is_active=True,
+                     origin={"city": "Chicago", "state": "IL", "latitude": 41.8781, "longitude": -87.6298},
+                     destination={"city": "Minneapolis", "state": "MN", "latitude": 44.9778, "longitude": -93.2650},
+                     waypoints=[{"city": "Madison", "state": "WI", "latitude": 43.0731, "longitude": -89.4012}],
+                     total_distance_miles=408, estimated_duration_hours=6.5,
+                     fuel_cost_estimate=258.0, toll_cost_estimate=12.0,
+                     optimization_criteria="fastest"))
+        db.add(Route(id=ROUTE_CHI_DET, organization_id=ORG,
+                     route_name="Chicago CHI-01 → Detroit plant", is_active=False,
+                     origin={"city": "Chicago", "state": "IL", "latitude": 41.8781, "longitude": -87.6298},
+                     destination={"city": "Detroit", "state": "MI", "latitude": 42.3314, "longitude": -83.0458},
+                     waypoints=[], total_distance_miles=283, estimated_duration_hours=4.75,
+                     fuel_cost_estimate=179.0, toll_cost_estimate=9.5,
+                     optimization_criteria="cheapest"))
+        await db.flush()  # routes before shipments reference them via route_id
+
         ships = [
             ("SHP-2201", "delivered", 3.0, 2.2, 2.4, DRIVER_1),   # on time
             ("SHP-2202", "delivered", 5.0, 4.1, 3.9, DRIVER_2),   # late
@@ -539,6 +631,7 @@ async def main(verify: bool = False) -> int:
                             shipment_number=num, shipment_type="outbound", status=status,
                             origin={"city": "Chicago", "state": "IL"},
                             destination={"city": "Dallas", "state": "TX"},
+                            route_id=ROUTE_CHI_DAL,
                             actual_pickup=days_ago(picked_d) if picked_d else None,
                             scheduled_delivery=days_ago(sched_d) if sched_d is not None else None,
                             actual_delivery=days_ago(delivered_d) if delivered_d else None,
@@ -577,6 +670,74 @@ async def main(verify: bool = False) -> int:
             db.add(RepairOrder(organization_id=ORG, vehicle_id="TRK-081", title=title,
                                status="completed", priority="medium", cost=cost, category=cat,
                                opened_at=days_ago(d + 2), completed_at=days_ago(d)))
+
+        # ---- GeoTab telematics (Fleet Health / DTCs / Security / live map) ------
+        # Feeds app/api/fleet_health.py: _active_diagnostics reads DTCs with
+        # status=="active"; _exceptions reads all exceptions; /vehicles/locations
+        # reads the latest GeoTabTrip per device. device_id reuses the vehicles'
+        # geotab_device_id so health/security/locations correlate to the fleet.
+        # device, dtc_code, severity, description, status, last_seen_hours_ago
+        diags = [
+            ("gt-device-002", "P0301", "critical", "Cylinder 1 misfire detected", "active", 2.0),
+            ("gt-device-002", "P0128", "medium", "Coolant thermostat below regulating temperature", "active", 5.0),
+            ("gt-device-001", "P0420", "high", "Catalyst system efficiency below threshold (Bank 1)", "active", 9.0),
+            ("gt-device-001", "P0442", "low", "Evaporative emission system small leak", "active", 20.0),
+            ("gt-device-003", "B1318", "low", "Battery voltage low", "active", 12.0),
+            ("gt-device-003", "C0035", "medium", "Left front wheel speed sensor circuit", "active", 30.0),
+            ("gt-device-001", "U0100", "medium", "Lost communication with ECM/PCM", "resolved", 96.0),
+        ]
+        for dev, code, sev, desc, dstatus, h_ago in diags:
+            num, drv, lat, lng, speed, heading = vehicle_geo[dev]
+            db.add(GeoTabDiagnostic(
+                device_id=dev, vehicle_id=num, organization_id=ORG,
+                dtc_code=code, severity=sev, description=desc, status=dstatus,
+                first_seen_at=NOW - timedelta(hours=h_ago + 6),
+                last_seen_at=NOW - timedelta(hours=h_ago),
+                cleared_at=(NOW - timedelta(hours=h_ago - 1)) if dstatus != "active" else None,
+                battery_voltage=round(12.2 + RNG.uniform(-0.6, 0.8), 2),
+                fuel_level=round(RNG.uniform(25, 90), 1),
+                odometer=int(RNG.uniform(90000, 220000)),
+                engine_hours=round(RNG.uniform(3000, 9000), 1)))
+
+        # Safety/security exceptions (device_id matches the diagnostics' devices).
+        # device, exception_type, severity, hours_ago, acknowledged, driver
+        excs = [
+            ("gt-device-001", "speeding", "high", 3.0, False, DRIVER_1),
+            ("gt-device-001", "harsh_braking", "medium", 10.0, True, DRIVER_1),
+            ("gt-device-002", "harsh_acceleration", "medium", 6.0, False, DRIVER_2),
+            ("gt-device-002", "after_hours", "low", 26.0, True, DRIVER_2),
+            ("gt-device-003", "speeding", "critical", 1.0, False, DRIVER_3),
+            ("gt-device-003", "geofence", "high", 40.0, True, DRIVER_3),
+        ]
+        for dev, etype, sev, h_ago, acked, drv in excs:
+            num, ddrv, lat, lng, speed, heading = vehicle_geo[dev]
+            db.add(GeoTabException(
+                device_id=dev, driver_id=drv, organization_id=ORG,
+                exception_type=etype, severity=sev,
+                timestamp=NOW - timedelta(hours=h_ago),
+                location={"latitude": round(lat + RNG.uniform(-0.05, 0.05), 5),
+                          "longitude": round(lng + RNG.uniform(-0.05, 0.05), 5),
+                          "address": "IL-355 near Downers Grove"},
+                details={"value": round(RNG.uniform(1.1, 1.6), 2), "threshold": 1.0},
+                acknowledged=acked,
+                acknowledged_by=USER if acked else None,
+                acknowledged_at=(NOW - timedelta(hours=h_ago - 0.5)) if acked else None))
+
+        # Latest trip per device -> /vehicles/locations (live fleet map).
+        for dev, (num, drv, lat, lng, speed, heading) in vehicle_geo.items():
+            start = NOW - timedelta(hours=3)
+            end = NOW - timedelta(minutes=int(RNG.uniform(5, 45)))
+            db.add(GeoTabTrip(
+                device_id=dev, vehicle_id=num, driver_id=drv, organization_id=ORG,
+                start_time=start, end_time=end,
+                duration_seconds=int((end - start).total_seconds()),
+                start_location={"latitude": 41.8781, "longitude": -87.6298,
+                                "address": "Plant CHI-01", "speed": 0, "heading": 0},
+                end_location={"latitude": lat, "longitude": lng,
+                              "address": "En route", "speed": speed, "heading": heading},
+                distance_miles=round(RNG.uniform(20, 140), 1),
+                idle_time_seconds=int(RNG.uniform(120, 900)),
+                status="completed"))
 
         # ---- operations (Operations page + PackML history) ---------------------
         # A cadence of machining jobs; the vibration-fault window shows an idle
@@ -903,6 +1064,10 @@ async def main(verify: bool = False) -> int:
         for label, model in [("telemetry", Telemetry), ("erp_entities", ERPEntity),
                              ("erp_events", ERPIntegrationEvent), ("trailers", YardTrailer),
                              ("shipments", Shipment), ("vehicles", Vehicle),
+                             ("alarms", Alarm), ("routes", Route),
+                             ("geotab_dtcs", GeoTabDiagnostic),
+                             ("geotab_exceptions", GeoTabException),
+                             ("geotab_trips", GeoTabTrip),
                              ("operations", Operation), ("kanban_tasks", Task),
                              ("agent_releases", AgentRelease), ("rollout_targets", AgentRolloutTarget),
                              ("models", ModelRegistryEntry), ("registries", ActionableRegistry),
