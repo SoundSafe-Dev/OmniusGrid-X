@@ -34,10 +34,16 @@ def compute_signature(secret: str, event_data: Dict[str, Any]) -> str:
 
 
 def verify_signature(secret: Optional[str], event_data: Dict[str, Any], signature: Optional[str]) -> bool:
-    """True when no secret is configured, or the signature matches."""
-    if not secret:
-        return True
-    if not signature:
+    """True only when a secret is configured and the signature matches.
+
+    Fails closed on a missing secret. This used to return True when no secret was
+    configured, so any integration row with an absent or empty
+    `configuration.webhook_secret` accepted unsigned webhooks and wrote ERP
+    events from them. That is also the control test_route_auth_walk.py cites when
+    it exempts this route from the authentication walk, so the exemption was
+    unearned. Matches the fail-closed posture of edge_enroll.py.
+    """
+    if not secret or not signature:
         return False
     return hmac.compare_digest(compute_signature(secret, event_data), signature)
 
@@ -69,6 +75,15 @@ async def receive_erp_webhook(
 
     secret = (integration.configuration or {}).get("webhook_secret")
     if not verify_signature(secret, event_data, x_webhook_signature):
+        # Log why server-side; the response stays generic so an unauthenticated
+        # caller can't probe whether an integration has a secret configured.
+        logger.warning(
+            "erp_webhook_signature_rejected",
+            erp_type=erp_type,
+            integration_id=str(integration.id),
+            has_secret=bool(secret),
+            has_signature=bool(x_webhook_signature),
+        )
         raise HTTPException(status_code=401, detail="invalid webhook signature")
 
     event_type = x_event_type or event_data.get("event_type")
