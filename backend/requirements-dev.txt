@@ -6,8 +6,15 @@ pytest-asyncio==1.4.0
 schemathesis==4.22.4    # property-based API contract testing (task 12); 4.x for OpenAPI 3.1 (fastapi >=0.99 emits 3.1)
 pip-audit==2.7.3        # dependency vulnerability audit (task 20)
 # FS-114: the real-DB guard suite (test_schema_parity / test_realdb_*_smoke)
-# gates on `pytest.importorskip("testcontainers")` and SILENTLY SKIPS without
-# it. Pinned to 3.7.x because conftest.py's pg_container fixture uses the 3.x
-# PostgresContainer API (user=/dbname= kwargs, get_connection_url() ->
-# postgresql+psycopg2://); 4.x renamed user->username and would TypeError.
-testcontainers==3.7.1   # ephemeral TimescaleDB for real-DB parity/smoke tests (FS-91/92/93)
+# gates on `pytest.importorskip("testcontainers")` and SILENTLY SKIPS without it.
+#
+# This was pinned to 3.7.1 while requirements.txt (included above via -r) pinned
+# testcontainers[postgres]==4.14.2, so `pip install -r requirements-dev.txt`
+# failed with ResolutionImpossible — the exact command both the blocking
+# backend-realdb gate and the ci-cd backend test job run. Backend dependencies
+# have been uninstallable in CI since 2026-07-17.
+#
+# Resolved forward onto the maintained 4.x line (conftest.py's pg_container uses
+# the 4.x `username=` kwarg) with testcontainers removed from requirements.txt,
+# where a test-only dep did not belong.
+testcontainers[postgres]==4.14.2   # ephemeral TimescaleDB for real-DB parity/smoke tests (FS-91/92/93)
