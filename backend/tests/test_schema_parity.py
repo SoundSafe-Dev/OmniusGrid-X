@@ -161,3 +161,42 @@ def test_id_column_type_parity(admin_sync_url):
         "uuid-vs-text drift on id columns (binds/joins break on real Postgres "
         f"— the pre-032 class): {sorted(drift)}"
     )
+
+
+def test_column_type_category_parity(admin_sync_url):
+    """Type-class drift on ANY column, not just ids.
+
+    test_id_column_type_parity only inspects id/*_id columns and only the
+    uuid-vs-text pair, so audit_logs.ip_address — INET in migrations 001/009,
+    String(45) in the ORM — was invisible to it. Every audit insert bound
+    $n::VARCHAR against an inet column, Postgres rejected it, and the audit
+    middleware swallowed the failure as `audit_log_failed`: the tamper-evident
+    audit trail was silently empty on real deployments while every request
+    reported success.
+
+    Compares the ORM's Postgres-compiled type category against the database's,
+    so a mismatch fails here instead of at the first insert in production.
+    """
+    db = _db_columns(admin_sync_url)
+    drift = []
+    for tname, tbl in Base.metadata.tables.items():
+        for col in tbl.columns:
+            key = (tname, col.name)
+            if key not in db or key in TYPE_ALLOWLIST:
+                continue
+            orm_cat = _orm_type_category(col)
+            db_cat = _db_type_category(db[key]["udt"])
+            # "other" on either side means a type this categoriser doesn't model
+            # (enums, inet, ranges...). Only compare when the DB side is known,
+            # so an ORM type we can't classify doesn't produce noise — but an
+            # ORM "text" against a DB type we *can't* classify is exactly the
+            # ip_address bug, so that pairing is reported.
+            if orm_cat == db_cat:
+                continue
+            if db_cat == "other" and orm_cat != "text":
+                continue
+            drift.append(f"{tname}.{col.name}: ORM={orm_cat} DB={db[key]['udt']}")
+    assert not drift, (
+        "column type-class drift between the ORM and the migrated schema "
+        "(binds fail at insert/read time on real Postgres): " + str(sorted(drift))
+    )

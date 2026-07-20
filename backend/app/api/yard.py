@@ -13,7 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_active_user
 from app.core.pagination import PaginatedResponse, paginate
-from app.db.database import get_db
+from app.db.database import get_db  # noqa: F401  (kept for any non-tenant reads)
+from app.middleware.tenant_isolation import get_tenant_db
 from app.db.models import (
     YardTrailer, DockDoor, YardMove, DriverWaitTime,
     DockAppointment, YardCheckPoint, Carrier
@@ -60,7 +61,7 @@ async def _resolve_carrier_names(carrier_ids, db: AsyncSession) -> Dict[str, Any
 @router.post("/trailers/checkin", response_model=YardTrailerResponse, dependencies=[Depends(require_operator_or_admin)])
 async def trailer_check_in(
     data: YardTrailerCreate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Process trailer check-in to yard"""
     trailer = await yard_management_service.check_in_trailer(
@@ -80,7 +81,7 @@ async def trailer_check_in(
 @router.post("/trailers/{trailer_id}/checkout", response_model=dict, dependencies=[Depends(require_operator_or_admin)])
 async def trailer_check_out(
     trailer_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Process trailer check-out from yard"""
     try:
@@ -103,7 +104,7 @@ async def get_yard_inventory(
     status: Optional[str] = Query(None, description="Filter by status: checked_in, docked, yard"),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get current yard inventory (FS-99: {items, meta} envelope with a real total).
 
@@ -135,7 +136,7 @@ async def get_yard_inventory(
 @router.get("/trailers/{trailer_id}", response_model=YardTrailerResponse)
 async def get_trailer(
     trailer_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get trailer details"""
     from sqlalchemy import select
@@ -152,7 +153,7 @@ async def get_trailer(
 async def update_trailer(
     trailer_id: UUID,
     data: YardTrailerUpdate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Update trailer information"""
     from sqlalchemy import select
@@ -177,7 +178,7 @@ async def update_trailer(
 @router.post("/dock/doors", response_model=DockDoorResponse, dependencies=[Depends(require_operator_or_admin)])
 async def create_dock_door(
     data: DockDoorCreate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Create new dock door"""
     door = DockDoor(**data.model_dump())
@@ -191,7 +192,7 @@ async def create_dock_door(
 async def get_dock_doors(
     organization_id: UUID,
     status: Optional[str] = Query(None),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get all dock doors"""
     from sqlalchemy import select
@@ -206,7 +207,7 @@ async def get_dock_doors(
 async def assign_trailer_to_dock(
     door_id: UUID,
     trailer_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Assign trailer to dock door"""
     try:
@@ -230,7 +231,7 @@ async def assign_trailer_to_dock(
 @router.post("/dock/appointments", response_model=DockAppointmentResponse, dependencies=[Depends(require_operator_or_admin)])
 async def create_dock_appointment(
     data: DockAppointmentCreate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Schedule dock appointment"""
     try:
@@ -258,7 +259,7 @@ async def get_dock_schedule(
     start_date: datetime = Query(default_factory=lambda: datetime.now(timezone.utc)),
     end_date: Optional[datetime] = Query(None),
     dock_door_id: Optional[UUID] = None,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get dock schedule for date range (adds carrierName join)."""
     if not end_date:
@@ -287,7 +288,7 @@ async def get_dock_schedule(
 @router.post("/dock/appointments/{appointment_id}/start", response_model=DockAppointmentResponse, dependencies=[Depends(require_operator_or_admin)])
 async def start_appointment(
     appointment_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Mark appointment as started"""
     try:
@@ -303,7 +304,7 @@ async def start_appointment(
 @router.post("/dock/appointments/{appointment_id}/complete", response_model=DockAppointmentResponse, dependencies=[Depends(require_operator_or_admin)])
 async def complete_appointment(
     appointment_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Mark appointment as completed"""
     try:
@@ -321,7 +322,7 @@ async def complete_appointment(
 @router.post("/moves", response_model=YardMoveResponse, dependencies=[Depends(require_operator_or_admin)])
 async def record_yard_move(
     data: YardMoveCreate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Record yard jockey move"""
     move = await yard_management_service.record_yard_move(
@@ -339,7 +340,7 @@ async def record_yard_move(
 @router.post("/moves/{move_id}/complete", response_model=YardMoveResponse, dependencies=[Depends(require_operator_or_admin)])
 async def complete_yard_move(
     move_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Complete yard move"""
     try:
@@ -359,7 +360,7 @@ async def get_dwell_time_analytics(
     organization_id: UUID,
     start_date: datetime = Query(default_factory=lambda: datetime.now(timezone.utc) - timedelta(days=7)),
     end_date: Optional[datetime] = Query(None),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get dwell time analytics"""
     if not end_date:
@@ -377,7 +378,7 @@ async def get_dwell_time_analytics(
 @router.post("/driver-wait-times", response_model=DriverWaitTimeResponse, dependencies=[Depends(require_operator_or_admin)])
 async def create_driver_wait_time(
     data: DriverWaitTimeCreate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Create driver wait time record"""
     wait_time = await yard_management_service.create_driver_wait_time(
@@ -397,7 +398,7 @@ async def create_driver_wait_time(
 @router.post("/checkpoints", response_model=YardCheckPointResponse, dependencies=[Depends(require_operator_or_admin)])
 async def record_checkpoint(
     data: YardCheckPointCreate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Record trailer checkpoint passage"""
     checkpoint = await yard_management_service.record_checkpoint(
@@ -460,7 +461,7 @@ def build_detention_alert(
 @router.get("/detention-alerts", response_model=List[dict])
 async def get_detention_alerts(
     organization_id: Optional[UUID] = None,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Live detention exposure for trailers still in the yard.
 

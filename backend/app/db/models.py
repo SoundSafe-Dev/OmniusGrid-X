@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Optional, List
 from sqlalchemy import Column, String, DateTime, Boolean, Numeric, Float, JSON, ForeignKey, Text, BigInteger, Integer, ARRAY, Date, UUID, UniqueConstraint, CheckConstraint, Index, func, text
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import INET, JSONB
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.types import TypeDecorator
 
@@ -237,7 +237,9 @@ class Alarm(Base):
     description = Column(Text)
     is_active = Column(Boolean, default=True)
     is_acknowledged = Column(Boolean, default=False)
-    acknowledged_by = Column(String(36))
+    # UUID in migration 001; String(36) here bound text against a uuid column.
+    # Not caught by the id-parity guard because the name has no _id suffix.
+    acknowledged_by = Column(UUIDString())
     acknowledged_at = Column(DateTime(timezone=True))
     acknowledged_comment = Column(Text)
     occurred_at = Column(DateTime(timezone=True), nullable=False)
@@ -256,8 +258,10 @@ class Operation(Base):
     packml_state_durations = Column(JSON, default={})
     started_at = Column(DateTime(timezone=True))
     completed_at = Column(DateTime(timezone=True))
-    planned_duration = Column(Numeric)
-    actual_duration = Column(Numeric)
+    # INTEGER (seconds) in migration 001 — Numeric here made reads return
+    # Decimal for a column the schema stores as int4.
+    planned_duration = Column(Integer)
+    actual_duration = Column(Integer)
     meta_data = Column(JSON, default={})
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
@@ -765,9 +769,14 @@ class Task(Base):
     # Relationships to OmniusGrid entities
     asset_id = UUIDForeignKey("assets.id", nullable=True)
     operation_id = UUIDForeignKey("operations.id", nullable=True)
-    alarm_id = Column(String(36))
-    command_id = Column(String(255))  # Command ID (string format)
-    work_order_id = Column(String(36))
+    # UUIDString, not String(36): migrations 003/004 create both of these as
+    # native UUID, so the ORM was declaring text against uuid columns — the
+    # pre-032 drift class, where binds and joins fail on real Postgres while
+    # SQLite create_all hides it. UUIDString still reads and binds as str, so
+    # nothing Python-side changes.
+    alarm_id = Column(UUIDString())
+    command_id = Column(String(255))  # Command ID (string format), text in the DB too
+    work_order_id = Column(UUIDString())
     parent_task_id = UUIDForeignKey("tasks.id", nullable=True)
     rule_id = UUIDForeignKey("task_rules.id", nullable=True)  # Rule that created this task
 
@@ -1141,7 +1150,14 @@ class AuditLog(Base):
     resource_type = Column(String(50), nullable=True)
     resource_id = Column(String(36), nullable=True)  # Polymorphic - can reference any table
     details = Column(JSON, default={}, nullable=False)
-    ip_address = Column(String(45), nullable=True)  # IPv6 compatible
+    # Migrations 001/009 create this as INET. Declared as VARCHAR here, every
+    # insert bound $n::VARCHAR and Postgres rejected it with
+    # 'column "ip_address" is of type inet but expression is of type character
+    # varying' — and audit_trail swallows the failure as `audit_log_failed`, so
+    # the audit trail has been silently empty on real deployments while every
+    # write appeared to succeed. VARCHAR(45) is kept for SQLite, which has no
+    # inet type.
+    ip_address = Column(String(45).with_variant(INET, "postgresql"), nullable=True)
     user_agent = Column(Text, nullable=True)
     hash_chain = Column(String(64), nullable=False)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
