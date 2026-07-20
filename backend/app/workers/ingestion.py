@@ -9,13 +9,14 @@ from typing import Dict, Any, Optional
 from uuid import UUID
 import structlog
 from aiokafka import AIOKafkaConsumer
-from sqlalchemy import text, update
+from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import sys
 sys.path.insert(0, '/app')
 
 from app.core.config import settings
+from app.core.datetime_utils import aware_utc
 from app.db.database import AsyncSessionLocal
 from app.db.models import Telemetry, PackMLState, Asset, Alarm
 from app.services.data_shedding import data_shedder
@@ -305,39 +306,54 @@ class IngestionWorker:
         
         if not new_state:
             return
-        
-        # Close previous state if exists
+
+        asset_uuid = UUID(asset_id)
+
+        # Close previous state if exists.
+        #
+        # Both statements here used to be f-strings passed bare to
+        # session.execute(). SQLAlchemy 2.x refuses a plain str, so this raised
+        # ObjectNotExecutableError before any SQL ran — and since _handle_message
+        # rolls back and re-raises, *every* state message failed and no PackML
+        # row was ever written by this worker. Done via the ORM (as the telemetry
+        # and alarm paths already do) so it is both parameterised and portable:
+        # the old EXTRACT(EPOCH FROM ...::timestamp) was Postgres-only.
         if previous_state:
-            await session.execute(
-                f"""
-                UPDATE packml_states 
-                SET state_exited_at = '{timestamp.isoformat()}',
-                    duration_seconds = EXTRACT(EPOCH FROM ('{timestamp.isoformat()}'::timestamp - state_entered_at))
-                WHERE asset_id = '{asset_id}'
-                AND state = '{previous_state}'
-                AND state_exited_at IS NULL
-                """
-            )
-        
+            open_states = (
+                await session.execute(
+                    select(PackMLState).where(
+                        PackMLState.asset_id == asset_uuid,
+                        PackMLState.state == previous_state,
+                        PackMLState.state_exited_at.is_(None),
+                    )
+                )
+            ).scalars().all()
+
+            for record in open_states:
+                # state_entered_at reads back naive on SQLite; comparing it to an
+                # aware timestamp raises TypeError, which the caller would turn
+                # into a dropped message.
+                entered_at = aware_utc(record.state_entered_at)
+                record.state_exited_at = timestamp
+                record.duration_seconds = (timestamp - entered_at).total_seconds()
+
         # Create new state entry
         state_record = PackMLState(
-            asset_id=asset_id,
+            asset_id=asset_uuid,
             state=new_state,
             previous_state=previous_state,
             state_entered_at=timestamp,
             meta_data=data.get('metadata', {})
         )
         session.add(state_record)
-        
+
         # Update asset current state
         await session.execute(
-            f"""
-            UPDATE assets 
-            SET current_packml_state = '{new_state}'
-            WHERE id = '{asset_id}'
-            """
+            update(Asset)
+            .where(Asset.id == asset_uuid)
+            .values(current_packml_state=new_state)
         )
-        
+
         logger.info(
             "state_transition",
             asset_id=asset_id,
