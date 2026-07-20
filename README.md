@@ -72,14 +72,18 @@ OmniusGrid is a resilient manufacturing operations platform designed for Industr
 
 ## Active Development & Team Progress
 
-> **Snapshot: July 17, 2026.** Both remotes (`origin` = SoundSafe-ai, `backup` = SoundSafe-Dev)
-> are in sync. **`main` was promoted from `hamad/converged-pre-main` on 2026-07-17** — it now
-> carries the full converged backend + the refreshed frontend/UI and brand system, so start new
-> work from an up-to-date `main` (`git fetch origin && git merge origin/main`, then reinstall
-> deps — `pip install -r backend/requirements.txt` for the python-jose→PyJWT swap, and
-> `npm install` in `frontend/`). This maps in-flight work to owners so contributors can
-> coordinate and avoid overlap. Branch tips move — treat this as a directory, not a record of
-> exact commits.
+> **Snapshot: July 19, 2026.** Both remotes (`origin` = SoundSafe-ai, `backup` = SoundSafe-Dev)
+> are in sync. **`main` was promoted from `hamad/converged-pre-main` on 2026-07-17**; the
+> FS-141+ work described below has since landed on `hamad/converged-pre-main` and is **ahead of
+> `main`**, so start new work from `hamad/converged-pre-main` until the next promotion.
+> Reinstall deps after pulling (`pip install -r backend/requirements.txt` — `scipy` is new and
+> `testcontainers` moved to `requirements-dev.txt`; `npm install` in `frontend/`). This maps
+> in-flight work to owners so contributors can coordinate and avoid overlap. Branch tips move —
+> treat this as a directory, not a record of exact commits.
+>
+> **`frontend/node_modules` is no longer tracked in git.** It was committed before `.gitignore`
+> listed it, which made the ignore rule inert and every `npm install` produce thousands of
+> spurious diffs. If `git status` still shows it after pulling, run `npm ci` in `frontend/`.
 
 ### Convergence branch — `hamad/converged-pre-main` (merge candidate)
 
@@ -101,7 +105,7 @@ to land here and is promoted to `main` periodically. Highlights:
   registration, missing secrets).
 - **One schema, one migration path** — `backend/scripts/migrate.py`
   (checksum-tracked, idempotent, baseline/rebaseline flows) applies the full
-  chain `001..033` on a clean Postgres for the first time in repo history;
+  chain `001..042` on a clean Postgres for the first time in repo history;
   UUIDs are native on Postgres everywhere (dialect-aware `UUIDString`, with a
   guarded conversion migration for pre-existing databases); tests build their
   schema through the same runner (tenant-isolation RLS suite runs against the
@@ -173,7 +177,8 @@ guard so the gap can't silently reopen.
   endpoint/write smoke guards run against an ephemeral **testcontainers**
   TimescaleDB, and a new **blocking backend-realdb CI job** runs them on every
   `hamad/**` push (they had been silently skipping — `testcontainers` was never
-  pinned). A backend+edge timezone-aware sweep fixed naive-`utcnow()`-vs-
+  pinned; note the pin added here then *collided* with one in `requirements.txt`
+  and made the whole job uninstallable until FS-141+ resolved it). A backend+edge timezone-aware sweep fixed naive-`utcnow()`-vs-
   `TIMESTAMPTZ` data-loss bugs (incl. an edge age-lag that read 0 forever and a
   coordinator that dropped readings).
 - **Observability for the converged subsystems (FS-105/107/108/110).**
@@ -207,6 +212,96 @@ FS-91..140 backlog — SDK regen (FS-101/104), HPA/PDB + secrets/canary
 real-mode audit + loading states (FS-128/129), seeder profiles + continuous
 aggregates + offline export (FS-133/134/136), and the signed-URL/geotab/ERP
 security passes (FS-138/139/140). The 3 intake-lane test failures remain Harsh's.
+
+### Delivered since — FS-141+ (release path, backups, and the guards that weren't guarding)
+
+On `hamad/converged-pre-main`, ahead of `main`. The theme is the previous
+slice's taken one level further: not just *silent failures*, but **guards that
+reported success while testing nothing**, and **subsystems that had never once
+worked against a production-shaped database**.
+
+- **The blocking `backend-realdb` gate now passes — for the first time ever.**
+  It had never installed: `requirements.txt` pinned
+  `testcontainers[postgres]==4.14.2` while `requirements-dev.txt` pinned `3.7.1`
+  *and* did `-r requirements.txt`, so `pip install -r requirements-dev.txt` — the
+  exact command that job and the ci-cd backend job run — failed with
+  `ResolutionImpossible`. **Backend dependencies were uninstallable in CI from
+  2026-07-17.** Resolved forward onto 4.x; `testcontainers` also left
+  `requirements.txt`, where a test-only dependency was being baked into the
+  runtime image.
+- **The audit trail was silently empty on every real deployment.** Two
+  independent faults, both swallowed by the middleware's catch-all as
+  `audit_log_failed`, so every request reported success while nothing was
+  recorded: `audit_logs.ip_address` is `INET` in migrations but was `String(45)`
+  in the ORM (every insert bound `::VARCHAR` and was rejected), and `audit_logs`
+  is `FORCE ROW LEVEL SECURITY` while the middleware wrote through a session that
+  never set `app.current_org_id`. **`FORCE` applies even to the table owner**, so
+  no connecting role escaped it.
+- **Endpoints that had never returned a success.** Yard trailer check-in 500'd on
+  the same `FORCE`-RLS problem (all 18 yard routes moved to `get_tenant_db`,
+  which also closes a tenant-trust hole — `organization_id` came from the request
+  body). Five logistics call sites used the SQLAlchemy 1.x
+  `func.case([...], else_=0)` signature and raised on first execution; one also
+  counted *expired* insurance as valid, because `CASE` returns on first match.
+  All five `/model-monitoring` endpoints 500'd because `scipy` was never declared,
+  so the router fell back to `service = None`.
+- **PackML state ingestion was dead.** Both statements in the ingestion worker's
+  state path were f-strings passed bare to `session.execute()`; SQLAlchemy 2.x
+  rejects a plain `str`, and the caller rolls back and re-raises — so *every*
+  state message failed and no `packml_states` row was ever written, silently
+  corrupting downtime/OEE history. The path had no test; it has four now.
+- **Guards that were passing vacuously.** The real-DB endpoint smoke walked
+  `app.routes` directly and so probed **2 GET routes instead of ~200** (fastapi
+  ≥0.130 keeps `include_router()` results as lazy containers). The schema-parity
+  guard only compared `id`/`*_id` columns for uuid-vs-text — structurally why the
+  `ip_address` drift was invisible to it; widened to all columns, it immediately
+  found three more. Both walks now share one definition in `tests/route_walk.py`.
+- **Access control, both sides of the wire.** `AdminRoute` was implemented and
+  exported but wired to no route, so all nine `/admin/*` pages sat behind
+  `ProtectedRoute` alone. `GET /edge/fleet` — which backs `/admin/collectors` —
+  required only an authenticated user *and* carried no `organization_id` filter,
+  letting any tenant enumerate every organization's edge agents. Both fixed, with
+  a guard test and a new policy-side assertion (the old admin inventory was a
+  *regression lock*, not a policy check, and was shaped around the `/admin/`
+  path prefix).
+- **Webhooks fail closed.** ERP webhook signature verification returned `True`
+  when no secret was configured — and its own test asserted that as intended
+  behaviour ("open webhook"), which is why review never caught it. The
+  route-auth walk exempts this route *on the grounds that it is HMAC-protected*,
+  so the exemption was unearned. A second, currently-unreachable receiver
+  returned `True` whenever the signature header was simply absent.
+- **Real backups exist now.** Staging and production had **none**: the only
+  pgBackRest CronJob lives in `legacy-patroni/`, which CI never applies, so every
+  DR runbook restored from a repository nothing wrote to. pgBackRest cannot run in
+  the deployed stack at all (`timescale/timescaledb:latest-pg15` ships no
+  `pgbackrest` binary and no `archive_mode` is configured), so a nightly
+  `pg_dump -Fc`-to-S3 CronJob landed as the working safety net, with an egress
+  NetworkPolicy and **a restore drill in the blocking gate** — a backup nobody
+  restores is not a backup. PITR via `timescaledb-ha` is the tracked next step;
+  see [`docs/runbooks/database-backup-restore.md`](docs/runbooks/database-backup-restore.md).
+- **The release path.** Both deploy jobs ran a single `kubectl apply -k`, which
+  updates the Deployments and creates the migration Job together — so new pods
+  began serving before migrations finished. Deploys now apply the Job alone, wait,
+  then apply the rest. Every trigger naming `develop` was dead (that branch has
+  never existed), which is why staging was never deployed and four
+  `hridyansh/**` branches ran **zero CI**.
+- **Repo hygiene, enforced.** The root `.dockerignore` existed only in a working
+  tree, so CI built the backend image with `frontend/`, `backend/venv`, `.git`
+  and `*.pem` in the build context. 19,048 `node_modules` files were untracked. A
+  blocking `repo-hygiene` job now fails on any tracked dependency tree, build
+  output, or key material.
+
+Known-remaining endpoint failures against a real database are **other lanes** and
+are tracked in an attributed `KNOWN_LANE_FAILURES` list in the endpoint smoke,
+which asserts both directions so it cannot rot: kanban ×4 and the nlp intake
+correlation query (Harsh), `/rag/documents` (Hudson). Also still open: the k8s
+cluster has **no monitoring stack at all** — no Prometheus, Alertmanager, Grafana
+or kube-state-metrics — so every alert rule and dashboard in `infra/prometheus`
+and `infra/grafana` only runs under docker-compose, and backup/migration-failure
+alerting is blocked on that decision. `HAMAD_IDE.pem` remains retrievable from
+git history; see [`docs/runbooks/leaked-key-rotation.md`](docs/runbooks/leaked-key-rotation.md)
+(rotation is the fix and is still outstanding; the history purge is deliberately
+deferred because it would rewrite every collaborator's branch).
 
 ### Offline demo — `backend/scripts/seed_demo_data.py`
 
@@ -1738,7 +1833,13 @@ The correlation AI model seamlessly integrates with OmniusGrid's Kanban task man
 - **Schema Evolution**: Strict Pydantic contracts with Dead Letter Queue
 - **Zero-Trust Security**: mTLS device provisioning with certificate revocation
 - **Immutable Audit Trail**: Tamper-evident logging with cryptographic hash chaining
-- **Disaster Recovery**: pgBackRest WAL archiving to S3 with point-in-time recovery
+- **Disaster Recovery**: nightly logical backup (`pg_dump -Fc`) to S3 via the
+  `db-backup` CronJob, verified by a restore drill in the blocking CI gate.
+  **Point-in-time recovery is not yet operational** — the pgBackRest WAL-archiving
+  config exists but the deployed database image ships no `pgbackrest` binary and
+  no `archive_mode` is set, so treat pgBackRest instructions in the
+  `docs/deployment/dr-*.md` runbooks as aspirational until that lands. See
+  [`docs/runbooks/database-backup-restore.md`](docs/runbooks/database-backup-restore.md).
 - **Enhanced API Documentation**: Comprehensive OpenAPI/Swagger documentation with detailed descriptions, authentication flows, error codes, and examples
 - **Automated Recovery Scripts**: Shell scripts for TimescaleDB, Redpanda, and backend service recovery
 - **Disaster Recovery Runbooks**: Detailed runbooks for TimescaleDB failure, Redpanda failure, backend crash, network partition, and data center outage scenarios with RTO/RPO targets
@@ -2158,9 +2259,9 @@ The ERP integration system correlates ERP data with operational telemetry to pro
 - [OmniusGrid Glossary](OMNIUSGRID_GLOSSARY.md) - Backend & Frontend combined terminology reference (400+ terms)
 - [Intake Cross-Correlation](docs/INTAKE_CROSS_CORRELATION.md) - PDF/DOCX/image parsing, shared key detection, cross-file correlation
 - [Correlation AI Engine](docs/CORRELATION_AI_ENGINE.md) - Cross-domain AI analysis, synthetic data generation, and Gemma 4 fine-tuning
-- [Hybrid Architecture](docs/HYBRID_ARCHITECTURE.md) - Human-in-the-Loop + Lights Out modes
-- [Gold Standard Architecture](docs/GOLD_STANDARD_ARCHITECTURE.md) - Edge AI + Cloud Training
-- [Implementation Summary](docs/IMPLEMENTATION_SUMMARY.md) - Complete feature inventory
+- [Hybrid Architecture](HYBRID_ARCHITECTURE.md) - Human-in-the-Loop + Lights Out modes
+- [Gold Standard Architecture](GOLD_STANDARD_ARCHITECTURE.md) - Edge AI + Cloud Training
+- [Implementation Summary](IMPLEMENTATION_SUMMARY.md) - Complete feature inventory
 
 ---
 
