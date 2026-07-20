@@ -5,10 +5,15 @@
 
 set -euo pipefail
 
-# Configuration
-STANZA="omniusgrid-db"
-S3_BUCKET="omniusgrid-backups"
-REPO_PATH="/pgbackrest/omniusgrid"
+# Configuration — must match infra/pgbackrest/pgbackrest.conf, which is what the
+# backup CronJob actually runs with. All three of these disagreed with it:
+# STANZA was the Patroni CLUSTER name (omniusgrid-db) rather than the pgBackRest
+# stanza (opsgrid-db), and the bucket and repo path were omniusgrid* against a
+# repository configured as opsgrid*. Every command in this script therefore
+# addressed a stanza and repository that do not exist.
+STANZA="opsgrid-db"
+S3_BUCKET="opsgrid-backups"
+REPO_PATH="/pgbackrest/opsgrid"
 LOG_FILE="/var/log/omniusgrid/disaster_recovery.log"
 
 # Colors for output
