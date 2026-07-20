@@ -12,6 +12,7 @@ import structlog
 from sqlalchemy import select, insert, update, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.datetime_utils import aware_utc
 from app.db.database import AsyncSessionLocal
 from app.db.models import Asset, Telemetry, PackMLState
 from app.services.websocket_manager import websocket_manager
@@ -54,14 +55,10 @@ class StateTransition:
     duration_seconds: Optional[float] = None
 
 
-def _aware_utc(dt: datetime) -> datetime:
-    """Coerce a possibly-naive datetime to aware UTC (naive is assumed UTC).
-
-    Transition history can carry naive datetimes (SQLite reads, shim tests,
-    older callers); internal now/cutoff values are aware since the FS-96 sweep,
-    and mixing the two raises TypeError on every comparison/subtraction.
-    """
-    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+# Canonical definition now lives in app.core.datetime_utils so workers can share
+# it. Kept as a module-level alias: this name is referenced throughout the file
+# and in tests.
+_aware_utc = aware_utc
 
 
 class OEECalculator:
