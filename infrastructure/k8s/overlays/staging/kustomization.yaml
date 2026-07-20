@@ -18,13 +18,17 @@ replicas:
   - name: frontend
     count: 2
 
+# Checked-in defaults only. The deploy job overrides both with
+# `kustomize edit set image ...:<branch>-<sha>` before applying, so these tags
+# are what you get from a manual `kubectl apply -k` and nothing else. They used
+# to read `develop`, a branch that has never existed.
 images:
   - name: omniusgrid/backend
     newName: ghcr.io/omniusgrid/backend
-    newTag: develop
+    newTag: main
   - name: omniusgrid/frontend
     newName: ghcr.io/omniusgrid/frontend
-    newTag: develop
+    newTag: main
 
 configMapGenerator:
   - name: backend-config
