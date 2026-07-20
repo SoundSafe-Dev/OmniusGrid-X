@@ -5,7 +5,16 @@ name: Quality Gates
 
 on:
   push:
-    branches: [main, develop, 'hamad/**']
+    # Every namespace that actually exists on the remotes. `develop` was listed
+    # here for a long time but has never existed, so it gated nothing; the dev
+    # branches below ran zero CI as a result.
+    branches:
+      - main
+      - 'hamad/**'
+      - 'hridyansh/**'
+      - 'feature/**'
+      - htreinen
+      - HARSH-CONTRIBUTION
     # Docs/media-only pushes don't need the gates — skip them so a README or
     # demo-video commit doesn't run (and fail-email) the whole pipeline.
     paths-ignore:
@@ -16,7 +25,7 @@ on:
       - '**/*.jpg'
       - '**/*.jpeg'
   pull_request:
-    branches: [main, develop]
+    branches: [main]
     paths-ignore:
       - '**/*.md'
       - 'docs/**'
@@ -211,6 +220,44 @@ jobs:
           severity: HIGH,CRITICAL
           exit-code: "1"
           trivyignores: .trivyignore
+
+  # --- FS-144/145: repo hygiene (blocking) ----------------------------------
+  # Both of these were real regressions, not hypotheticals:
+  #   * the root .dockerignore existed only in Hamad's working tree, so every CI
+  #     backend build (context: .) shipped frontend/, backend/venv, .git and
+  #     *.pem into the build context.
+  #   * frontend/node_modules was committed before .gitignore listed it, so the
+  #     ignore rule was inert and 19k darwin-built files were tracked.
+  repo-hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Root .dockerignore must be tracked
+        run: |
+          if ! git ls-files --error-unmatch .dockerignore >/dev/null 2>&1; then
+            echo "::error::.dockerignore is not tracked — CI image builds will" \
+                 "include frontend/, venv, .git and *.pem in the build context."
+            exit 1
+          fi
+
+      - name: No dependency or build output may be tracked
+        run: |
+          offenders=$(git ls-files | grep -E '(^|/)(node_modules|venv|\.venv)/' || true)
+          if [ -n "$offenders" ]; then
+            echo "::error::$(echo "$offenders" | wc -l) dependency files are tracked in git."
+            echo "$offenders" | head -20
+            exit 1
+          fi
+
+      - name: No private key material may be tracked
+        run: |
+          offenders=$(git ls-files | grep -E '\.(pem|key|p12|pfx)$' || true)
+          if [ -n "$offenders" ]; then
+            echo "::error::private key material is tracked in git:"
+            echo "$offenders"
+            exit 1
+          fi
 
   # --- task 20: k6 load test (non-blocking) --------------------------------
   load-test:
