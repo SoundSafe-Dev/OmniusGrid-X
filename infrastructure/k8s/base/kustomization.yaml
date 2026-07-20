@@ -15,6 +15,7 @@ resources:
   - export-worker-deployment.yaml
   - compliance-reports-worker-deployment.yaml
   - migration-job.yaml
+  - db-backup-cronjob.yaml
   - timescaledb-statefulset.yaml
   - redpanda-statefulset.yaml
   - ingress.yaml
