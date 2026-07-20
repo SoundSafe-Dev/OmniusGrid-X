@@ -16,8 +16,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 
-from app.api.auth import get_current_active_user
 from app.api.edge_enroll import require_agent
+from app.db.models import User
+from app.middleware.rbac import require_admin
 from app.db.database import AsyncSessionLocal
 from app.db.edge_fleet_models import EdgeAgentStatus
 from app.services.edge_ca import AgentPrincipal
@@ -91,17 +92,33 @@ def _to_out(row: EdgeAgentStatus, now: datetime) -> AgentStatusOut:
 
 
 @router.get("/api/v1/edge/fleet", response_model=List[AgentStatusOut], tags=["Edge"])
-async def list_fleet(_user=Depends(get_current_active_user)) -> List[AgentStatusOut]:
+async def list_fleet(user: User = Depends(require_admin)) -> List[AgentStatusOut]:
+    """List this organization's agents. Backs the /admin/collectors page.
+
+    Was gated on get_current_active_user with an unscoped `select(...)`. Since
+    edge_agent_status carries organization_id but has no RLS policy and this
+    runs on AsyncSessionLocal rather than the tenant session, every
+    authenticated user saw every tenant's agents — ids, versions, cert expiry
+    and buffer stats. Now admin-only and organization-scoped.
+    """
     now = datetime.now(timezone.utc)
     async with AsyncSessionLocal() as session:
-        rows = (await session.execute(select(EdgeAgentStatus))).scalars().all()
+        rows = (
+            await session.execute(
+                select(EdgeAgentStatus).where(
+                    EdgeAgentStatus.organization_id == str(user.organization_id)
+                )
+            )
+        ).scalars().all()
     return [_to_out(r, now) for r in rows]
 
 
 @router.get("/api/v1/edge/fleet/{agent_id}", response_model=AgentStatusOut, tags=["Edge"])
-async def get_agent(agent_id: str, _user=Depends(get_current_active_user)) -> AgentStatusOut:
+async def get_agent(agent_id: str, user: User = Depends(require_admin)) -> AgentStatusOut:
     async with AsyncSessionLocal() as session:
         row = await session.get(EdgeAgentStatus, agent_id)
-    if row is None:
+    # 404 rather than 403 for another tenant's agent: distinguishing the two
+    # would confirm the agent id exists.
+    if row is None or row.organization_id != str(user.organization_id):
         raise HTTPException(404, detail="unknown agent")
     return _to_out(row, datetime.now(timezone.utc))
