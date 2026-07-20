@@ -20,9 +20,19 @@ DOCS_ROOT = REPO_ROOT / "docs"
 MARKDOWN_LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
 
 
+def _markdown_files() -> list[Path]:
+    """Everything under docs/, plus the top-level markdown at the repo root.
+
+    The root README is the first thing anyone reads and was not covered
+    initially — it pointed at docs/GOLD_STANDARD_ARCHITECTURE.md and two
+    siblings that actually live at the repo root.
+    """
+    return sorted(DOCS_ROOT.rglob("*.md")) + sorted(REPO_ROOT.glob("*.md"))
+
+
 def _relative_links() -> list[tuple[Path, str]]:
     links: list[tuple[Path, str]] = []
-    for path in sorted(DOCS_ROOT.rglob("*.md")):
+    for path in _markdown_files():
         for target in MARKDOWN_LINK.findall(path.read_text(encoding="utf-8")):
             if target.startswith(("http://", "https://", "mailto:", "#")):
                 continue

@@ -46,8 +46,10 @@ git checkout -b fix/your-bug-fix
 ### 2. Test Your Changes
 
 ```bash
-# Backend tests
+# Backend tests. Install the dev requirements first — they pull in pytest and
+# testcontainers, and requirements-dev.txt already includes requirements.txt.
 cd backend
+pip install -r requirements-dev.txt
 pytest
 
 # Frontend tests
@@ -64,6 +66,29 @@ cd frontend
 npm run lint
 npx tsc --noEmit
 ```
+
+**The real-DB suite needs Docker.** `test_schema_parity`, `test_realdb_*_smoke`
+and `test_backup_restore_drill` spin an ephemeral TimescaleDB via
+testcontainers and build its schema through `scripts/migrate.py`. They
+`importorskip` when testcontainers is missing, so a green local `pytest` does
+**not** mean they ran. CI runs them as a blocking `backend-realdb` job; run them
+yourself before touching schema, tenancy, or any endpoint:
+
+```bash
+cd backend
+TESTCONTAINERS_RYUK_DISABLED=true pytest \
+  tests/test_schema_parity.py tests/test_realdb_endpoint_smoke.py \
+  tests/test_realdb_write_smoke.py tests/test_backup_restore_drill.py
+```
+
+These catch the class of bug SQLite `create_all` hides: ORM↔migration type
+drift, and RLS — `set_config` is a no-op on SQLite, so tenant-isolation tests
+passing there prove nothing.
+
+`tests/test_realdb_endpoint_smoke.py` carries a `KNOWN_LANE_FAILURES` list of
+endpoints owned by other lanes. **Do not add to it to make your own change go
+green** — it asserts both directions, so an entry that starts passing also
+fails the build.
 
 ### 3. Commit Your Changes
 

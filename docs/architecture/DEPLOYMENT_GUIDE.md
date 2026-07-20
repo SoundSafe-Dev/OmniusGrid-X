@@ -280,23 +280,47 @@ kubectl wait --for=condition=available deployment/frontend -n omniusgrid --timeo
 
 ### Step 7: Configure Backup
 
+The `db-backup` CronJob ships in `infrastructure/k8s/base` and is applied by the
+overlay in Step 6 — it needs only its credentials. **Without this secret the job
+fails every night**, which is worse than no CronJob because the schedule makes it
+look like backups are running.
+
 ```bash
-# Deploy pgBackRest
-kubectl apply -f infra/pgbackrest/pgbackrest.conf
-kubectl apply -f infra/pgbackrest/backup-cronjob.yaml
+kubectl -n omniusgrid create secret generic backup-credentials \
+  --from-literal=aws-access-key-id='<key>' \
+  --from-literal=aws-secret-access-key='<secret>' \
+  --from-literal=region='us-east-1' \
+  --from-literal=bucket='opsgrid-backups'
+
+# Verify by running it once, out of schedule:
+kubectl -n omniusgrid create job --from=cronjob/prod-db-backup backup-smoke
+kubectl -n omniusgrid logs job/backup-smoke -c upload
 ```
+
+Set a bucket lifecycle policy for retention (the job does not prune) and enable
+versioning + object lock.
+
+> The previous version of this step ran
+> `kubectl apply -f infra/pgbackrest/pgbackrest.conf` — an INI file `kubectl`
+> cannot parse — and `infra/pgbackrest/backup-cronjob.yaml`, which does not
+> exist. pgBackRest is **not** operational: the deployed database image ships no
+> `pgbackrest` binary and no `archive_command` is configured, so there is no
+> point-in-time recovery yet. See
+> [`docs/runbooks/database-backup-restore.md`](../runbooks/database-backup-restore.md).
 
 ### Step 8: Configure Monitoring Alerts
 
-```bash
-# Configure Alertmanager routes
-kubectl apply -f infra/prometheus/alertmanager-production.yml
+> **Not applicable to the Kubernetes stack today.** There is no Prometheus,
+> Alertmanager, Grafana or kube-state-metrics in `infrastructure/k8s/` — only the
+> otel-collector and Jaeger for tracing. The rules in `infra/prometheus/` and the
+> dashboards in `infra/grafana/` are wired up by `docker-compose.yml` only, and
+> `infra/prometheus/alertmanager-production.yml` (referenced by the previous
+> version of this step) does not exist. Deploying a monitoring stack into the
+> cluster is a prerequisite for in-cluster alerting.
 
-# Configure Slack webhook
-kubectl create secret generic slack-webhook \
-  --from-literal=url=https://hooks.slack.com/services/your-webhook \
-  -n omniusgrid-monitoring
-```
+For the docker-compose stack, Alertmanager reads `infra/prometheus/alertmanager.yml`;
+supply the Slack webhook through the `SLACK_WEBHOOK_URL` environment variable it
+interpolates.
 
 ### Step 9: Verify Production Deployment
 
