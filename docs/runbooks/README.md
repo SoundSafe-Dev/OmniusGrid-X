@@ -38,6 +38,7 @@ OmniusGrid component failures. Start here during any incident.
 | [rto-rpo-checklist.md](rto-rpo-checklist.md) | Verify recovery met its RTO/RPO targets before closing the incident |
 | [incident-communication-templates.md](incident-communication-templates.md) | Copy-paste templates for internal, customer, and status-page comms |
 | [compliance-tenant-data-cleanup.md](compliance-tenant-data-cleanup.md) | Review and resolve legacy compliance rows before enforcing tenant ownership |
+| [leaked-key-rotation.md](leaked-key-rotation.md) | Rotate the private key committed in `acc35f92`; deferred history purge (**rotation outstanding**) |
 
 ## Post-recovery validation
 
