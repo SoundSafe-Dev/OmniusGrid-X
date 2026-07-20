@@ -34,6 +34,14 @@ opentelemetry-instrumentation-sqlalchemy==0.64b0
 # ML Inference (Gemma 4 needs torch>=2.4 + transformers 5.x)
 torch>=2.4.0
 numpy==1.24.3
+# app/services/model_monitoring.py needs scipy.stats.ks_2samp for the
+# drift-detection KS test. It was never declared, so the service raised
+# ImportError, app/api/model_monitoring.py fell back to
+# `model_monitoring_service = None`, and all five /model-monitoring endpoints
+# returned 500 (AttributeError on None) against a real deployment.
+# Capped below 1.12, which requires numpy>=1.22.4 but drops support for the
+# 1.24 line's ABI in later releases.
+scipy==1.11.4
 
 # Spreadsheet / Workbook Intake
 pandas==2.2.2

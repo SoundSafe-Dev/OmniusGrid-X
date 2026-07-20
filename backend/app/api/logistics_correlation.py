@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import or_
+from sqlalchemy import and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_active_user
@@ -28,6 +28,20 @@ from app.services.logistics_correlation_engine import (
 )
 from app.middleware.rbac import require_operator_or_admin
 
+# NOTE ON THE DOUBLED PREFIX. main.py mounts this router at /api/v1/logistics
+# and the prefix below adds another, so every path here is served at
+# /api/v1/logistics/logistics/... That looks like an obvious bug to delete —
+# don't, without reading this first.
+#
+# fleet_logistics.logistics_router is ALSO mounted at /api/v1/logistics and
+# defines its own /delivery-efficiency and /compliance/summary with different
+# (legacy camelCase) response shapes — and those single-prefix paths are what
+# the frontend calls today. Dropping the prefix here would collide on both, and
+# since this router is registered first it would silently win, changing the
+# payload the frontend receives.
+#
+# De-duplicating means picking one implementation per path and migrating the
+# frontend deliberately; it is not a prefix edit.
 router = APIRouter(
     prefix="/logistics",
     tags=["logistics_correlation"],
@@ -172,7 +186,7 @@ async def get_delivery_efficiency(
     db: AsyncSession = Depends(get_db)
 ):
     """Get on-time delivery vs production efficiency metrics"""
-    from sqlalchemy import select, func
+    from sqlalchemy import case, func, select
     from app.db.models import Shipment
     
     start_date = datetime.now(timezone.utc) - timedelta(days=days)
@@ -181,7 +195,7 @@ async def get_delivery_efficiency(
     result = await db.execute(
         select(
             func.count(Shipment.id).label('total_shipments'),
-            func.sum(func.case([(Shipment.actual_delivery <= Shipment.scheduled_delivery, 1)], else_=0)).label('on_time'),
+            func.sum(case((Shipment.actual_delivery <= Shipment.scheduled_delivery, 1), else_=0)).label('on_time'),
             func.avg(
                 func.extract('epoch', Shipment.actual_delivery - Shipment.scheduled_delivery) / 60
             ).label('avg_delay_minutes')
@@ -288,18 +302,29 @@ async def get_compliance_summary(
     db: AsyncSession = Depends(get_db)
 ):
     """Get logistics compliance summary (DOT, CTPAT, HOS)"""
-    from sqlalchemy import select, func
+    from sqlalchemy import case, func, select
     from app.db.models import Carrier, Driver, DockAppointment
     
     # Carrier compliance
     carrier_result = await db.execute(
         select(
             func.count(Carrier.id).label('total'),
-            func.sum(func.case([(Carrier.ctpat_certified == True, 1)], else_=0)).label('ctpat_count'),
-            func.sum(func.case([
-                (Carrier.insurance_on_file == True, 1),
-                (Carrier.insurance_expires_at > datetime.now(timezone.utc), 1)
-            ], else_=0)).label('valid_insurance')
+            func.sum(case((Carrier.ctpat_certified == True, 1), else_=0)).label('ctpat_count'),
+            # Both conditions must hold. Written as two separate WHENs, it
+            # counted any carrier with insurance on file as valid — CASE returns
+            # on the first match, so an expired policy still scored 1.
+            func.sum(
+                case(
+                    (
+                        and_(
+                            Carrier.insurance_on_file == True,  # noqa: E712
+                            Carrier.insurance_expires_at > datetime.now(timezone.utc),
+                        ),
+                        1,
+                    ),
+                    else_=0,
+                )
+            ).label('valid_insurance')
         ).where(
             Carrier.organization_id == organization_id,
             Carrier.is_active == True
@@ -375,7 +400,7 @@ async def get_liability_costs(
     db: AsyncSession = Depends(get_db)
 ):
     """Get detention, demurrage, and quality liability costs"""
-    from sqlalchemy import select, func
+    from sqlalchemy import case, func, select
     from app.db.models import DriverWaitTime, LoadQualityLog
     
     start_date = datetime.now(timezone.utc) - timedelta(days=days)
@@ -397,8 +422,8 @@ async def get_liability_costs(
     quality_result = await db.execute(
         select(
             func.sum(LoadQualityLog.claim_amount).label('total_claims'),
-            func.sum(func.case([(LoadQualityLog.carrier_liable == False, LoadQualityLog.claim_amount)], else_=0)).label('manufacturing_liability'),
-            func.sum(func.case([(LoadQualityLog.carrier_liable == True, LoadQualityLog.claim_amount)], else_=0)).label('carrier_liability')
+            func.sum(case((LoadQualityLog.carrier_liable == False, LoadQualityLog.claim_amount), else_=0)).label('manufacturing_liability'),
+            func.sum(case((LoadQualityLog.carrier_liable == True, LoadQualityLog.claim_amount), else_=0)).label('carrier_liability')
         ).where(
             LoadQualityLog.organization_id == organization_id,
             LoadQualityLog.created_at >= start_date
