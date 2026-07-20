@@ -66,7 +66,22 @@ async def test_asset_create_then_read(client_a, seeded_orgs, seeded_asset_type):
 
 
 @pytest.mark.asyncio
-async def test_alarm_create_then_read(client_a, seeded_orgs, seeded_asset_type):
+async def test_alarm_acknowledge_write_path(
+    client_a, seeded_orgs, seeded_asset_type, admin_sync_url
+):
+    """Exercise the alarm mutation the API actually exposes.
+
+    This used to POST /api/v1/alarms/ and assert 200/201, which could never
+    pass: there is no alarm-create endpoint and there shouldn't be. Alarms are
+    produced by the ingestion pipeline, and the API exposes only acknowledge and
+    clear. The test was asserting an invented contract rather than the real
+    write path, so it reported 405 forever.
+
+    Seeds the alarm the way ingestion does — a direct insert — then drives the
+    real mutation through HTTP.
+    """
+    import psycopg2
+
     org = str(seeded_orgs["org_a_id"])
     asset = await client_a.post(
         "/api/v1/assets/",
@@ -80,24 +95,38 @@ async def test_alarm_create_then_read(client_a, seeded_orgs, seeded_asset_type):
     assert asset.status_code in (200, 201), asset.text[:200]
     asset_id = asset.json()["id"]
 
-    alarm = await client_a.post(
-        "/api/v1/alarms/",
-        json={
-            "asset_id": asset_id,
-            "alarm_code": "SMOKE_TEST",
-            "severity": "high",
-            "message": "write-path smoke alarm",
-        },
-    )
-    assert alarm.status_code in (200, 201), (
-        f"alarm create failed: {alarm.status_code} {alarm.text[:200]}"
-    )
+    # alarms carries no organization_id — it is tenant-scoped through
+    # asset_id -> assets.organization_id — and its time column is occurred_at
+    # (the table is a hypertable keyed on it).
+    alarm_id = str(uuid4())
+    conn = psycopg2.connect(admin_sync_url)
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO alarms (id, asset_id, alarm_code, severity, message,
+                                    is_active, occurred_at)
+                VALUES (%s, %s, %s, %s, %s, TRUE, now())
+                """,
+                (alarm_id, asset_id, "SMOKE_TEST", "high",
+                 "write-path smoke alarm"),
+            )
+    finally:
+        conn.close()
 
     listed = await client_a.get("/api/v1/alarms/")
     assert listed.status_code == 200
     page = listed.json()
     assert set(page) == {"items", "meta"}
     assert any(a["alarm_code"] == "SMOKE_TEST" for a in page["items"])
+
+    acked = await client_a.post(
+        f"/api/v1/alarms/{alarm_id}/acknowledge",
+        json={"comment": "write-path smoke"},  # AlarmAcknowledge body is required
+    )
+    assert acked.status_code in (200, 204), (
+        f"alarm acknowledge failed: {acked.status_code} {acked.text[:200]}"
+    )
 
 
 @pytest.mark.asyncio
