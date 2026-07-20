@@ -80,7 +80,9 @@ Each runbook contains its own detailed escalation matrix.
 
 - **Kubernetes namespace:** `omniusgrid`
 - **Backend deployment:** `omniusgrid-backend` (container port `8000`)
-- **pgBackRest stanza:** `omniusgrid-db` (see `infra/scripts/disaster_recovery.sh`)
+- **pgBackRest stanza:** `opsgrid-db` (see `infra/pgbackrest/pgbackrest.conf`).
+  Not to be confused with the Patroni **cluster** name `omniusgrid-db`, which is
+  what `patronictl` commands in the DR runbooks take.
 - **Local health base URL:** `http://localhost:8002` (Docker Compose), `http://localhost:8000` (in-cluster)
 - Placeholders such as `[PHONE]`, `[EMAIL]`, `[TIME]` must be filled in before an
   incident — keep the on-call contact list current.
