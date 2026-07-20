@@ -330,8 +330,8 @@ kubectl logs $POD -n $NAMESPACE | grep -i "redpanda\|kafka" || echo "No Redpanda
 | 10+ minutes | Escalate to CTO and SoundSafe support |
 
 ## Related Documentation
-- [Backend Deployment](../../infra/k8s/base/backend-deployment.yaml)
-- [Backend Service](../../infra/k8s/base/backend-service.yaml)
+- [Backend Deployment](../../infrastructure/k8s/base/backend-deployment.yaml)
+- [Backend Service](../../infrastructure/k8s/base/backend-service.yaml)
 - [Backend Configuration](../../backend/app/core/config.py)
 - [Health Check Implementation](../../backend/app/api/health.py)
 

@@ -15,11 +15,11 @@ OmniusGrid component failures. Start here during any incident.
 
 | Scenario | Runbook | Severity | RTO target | RPO target |
 |----------|---------|----------|-----------|-----------|
-| TimescaleDB primary failure (primary → standby promotion) | [dr-timescaledb-failure.md](../dr-timescaledb-failure.md) | Critical | 15 min | 5 min |
-| Redpanda broker / cluster failure | [dr-redpanda-failure.md](../dr-redpanda-failure.md) | Critical | 10 min | 0 min |
-| Backend API crash | [dr-backend-crash.md](../dr-backend-crash.md) | High | 5 min | 0 min |
-| Network partition (split-brain) | [dr-network-partition.md](../dr-network-partition.md) | Critical | 30 min | 15 min |
-| Full data center outage | [dr-datacenter-outage.md](../dr-datacenter-outage.md) | Critical | 60 min | 15 min |
+| TimescaleDB primary failure (primary → standby promotion) | [dr-timescaledb-failure.md](../deployment/dr-timescaledb-failure.md) | Critical | 15 min | 5 min |
+| Redpanda broker / cluster failure | [dr-redpanda-failure.md](../deployment/dr-redpanda-failure.md) | Critical | 10 min | 0 min |
+| Backend API crash | [dr-backend-crash.md](../deployment/dr-backend-crash.md) | High | 5 min | 0 min |
+| Network partition (split-brain) | [dr-network-partition.md](../deployment/dr-network-partition.md) | Critical | 30 min | 15 min |
+| Full data center outage | [dr-datacenter-outage.md](../deployment/dr-datacenter-outage.md) | Critical | 60 min | 15 min |
 | Application rollback (bad deploy) | [application-rollback.md](application-rollback.md) | High | 10 min | 0 min |
 
 > **Note on TimescaleDB & Redpanda runbooks:** the failover (primary → standby
@@ -55,17 +55,17 @@ validation script:
 ```
 
 The script is **read-only** — it runs `SELECT` queries and health checks only, and
-never mutates data. See [scripts/dr-validate-recovery.sh](../../../scripts/dr-validate-recovery.sh).
+never mutates data. See [scripts/dr-validate-recovery.sh](../../scripts/dr-validate-recovery.sh).
 
 ## Recovery helper scripts
 
 | Script | Scenario |
 |--------|----------|
-| [scripts/dr-timescaledb-recovery.sh](../../../scripts/dr-timescaledb-recovery.sh) | TimescaleDB failover helper |
-| [scripts/dr-redpanda-recovery.sh](../../../scripts/dr-redpanda-recovery.sh) | Redpanda broker replacement |
-| [scripts/dr-backend-recovery.sh](../../../scripts/dr-backend-recovery.sh) | Backend pod restart |
-| [scripts/dr-validate-recovery.sh](../../../scripts/dr-validate-recovery.sh) | Post-recovery data validation (read-only) |
-| [infra/scripts/disaster_recovery.sh](../../../infra/scripts/disaster_recovery.sh) | pgBackRest backup / restore / PITR |
+| [scripts/dr-timescaledb-recovery.sh](../../scripts/dr-timescaledb-recovery.sh) | TimescaleDB failover helper |
+| [scripts/dr-redpanda-recovery.sh](../../scripts/dr-redpanda-recovery.sh) | Redpanda broker replacement |
+| [scripts/dr-backend-recovery.sh](../../scripts/dr-backend-recovery.sh) | Backend pod restart |
+| [scripts/dr-validate-recovery.sh](../../scripts/dr-validate-recovery.sh) | Post-recovery data validation (read-only) |
+| [infra/scripts/disaster_recovery.sh](../../infra/scripts/disaster_recovery.sh) | pgBackRest backup / restore / PITR |
 
 ## Severity & escalation summary
 
