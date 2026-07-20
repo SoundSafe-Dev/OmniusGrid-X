@@ -727,15 +727,29 @@ class DockScheduleCorrelationResponse(BaseModel):
 
 
 class LogisticsCorrelationResponse(BaseModel):
-    """Cross-domain correlation data"""
+    """Cross-domain correlation data.
+
+    Mirrors exactly what LogisticsCorrelationEngine.get_correlation_dashboard
+    computes. It previously required `on_time_arrivals`, `late_arrivals` and
+    `safety_incidents_today`, which nothing anywhere produces, so
+    GET /logistics/correlation-dashboard raised ResponseValidationError on every
+    call — it has never returned a successful response. It also dropped four
+    fields the engine does compute (date, at_risk_appointments,
+    quality_issues_today, sync_breakdown).
+
+    The three phantom metrics are omitted rather than stubbed to null: add them
+    here together with the query that derives them, so the contract keeps
+    describing what the endpoint actually returns.
+    """
+    date: str
     truck_arrivals_today: int
-    on_time_arrivals: int
-    late_arrivals: int
+    production_dock_sync_percent: float
+    at_risk_appointments: int
     avg_dwell_time_hours: float
     total_detention_charges: float
-    production_dock_sync_percent: float
-    safety_incidents_today: int
     hos_violations: int
+    quality_issues_today: int
+    sync_breakdown: Dict[str, int]
 
 
 class DetentionRiskPrediction(BaseModel):
