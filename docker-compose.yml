@@ -76,6 +76,8 @@ services:
         condition: service_healthy
     command: python scripts/migrate.py --dir /migrations
     restart: "no"
+    networks:
+      - omniusgrid-network
 
   backend:
     build:
