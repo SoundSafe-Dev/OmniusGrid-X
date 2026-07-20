@@ -308,7 +308,7 @@ rpk group list --brokers localhost:9092
 
 ## Related Documentation
 - [Redpanda Configuration](../../docker-compose.yml)
-- [Kubernetes StatefulSet](../../infra/k8s/base/redpanda-statefulset.yaml)
+- [Kubernetes StatefulSet](../../infrastructure/k8s/base/redpanda-statefulset.yaml)
 - [Topic Configuration](../../edge-agent/opsgrid_agent/collectors/coordinator.py)
 
 ## Common Topics

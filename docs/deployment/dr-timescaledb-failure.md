@@ -274,7 +274,7 @@ psql -U omniusgrid -d omniusgrid -c "SELECT version();"
 
 ## Related Documentation
 - [pgBackRest Configuration](../../infra/pgbackrest/pgbackrest.conf)
-- [Patroni Configuration](../../infra/k8s/base/timescaledb-statefulset.yaml)
+- [Patroni Configuration](../../infrastructure/k8s/base/timescaledb-statefulset.yaml)
 - [Database Schema](../../database/migrations/001_init.sql)
 
 ---
