@@ -114,6 +114,8 @@ ADMIN_ROUTE_INVENTORY = {
     ("GET", "/api/v1/audit/verify"),
     ("GET", "/api/v1/compliance/reports/schedules"),
     ("GET", "/api/v1/compliance/reports/schedules/{schedule_id}"),
+    ("GET", "/api/v1/edge/fleet"),
+    ("GET", "/api/v1/edge/fleet/{agent_id}"),
     ("GET", "/api/v1/exports/definitions"),
     ("GET", "/api/v1/exports/deliveries"),
     ("GET", "/api/v1/exports/jobs/{job_id}"),
@@ -442,6 +444,37 @@ def test_admin_route_inventory_matches_dependency_graph():
         "Admin dependency inventory is stale. Missing gates: "
         f"{sorted(ADMIN_ROUTE_INVENTORY - discovered)}; "
         f"unreviewed admin routes: {sorted(discovered - ADMIN_ROUTE_INVENTORY)}"
+    )
+
+
+# Endpoints the frontend's admin-only pages (/admin/*) call. The inventory above
+# is a *regression lock* — it records what is currently admin-gated and notices
+# drift — but it never asserts what *should* be gated, and it is shaped around
+# the /api/v1/admin/ path prefix. So an admin-UI endpoint living outside that
+# prefix was invisible to it: GET /api/v1/edge/fleet backs /admin/collectors and
+# required only an authenticated user, letting any tenant enumerate every
+# organization's edge agents. This list is the policy side of the contract; add
+# an entry whenever an admin page starts calling a new endpoint.
+ADMIN_UI_BACKED_ROUTES = {
+    ("GET", "/api/v1/edge/fleet"): "frontend /admin/collectors",
+    ("GET", "/api/v1/edge/fleet/{agent_id}"): "frontend /admin/collectors",
+    ("GET", "/api/v1/admin/errors"): "frontend /admin/errors",
+    ("GET", "/api/v1/admin/errors/{fingerprint}"): "frontend /admin/errors/:fingerprint",
+}
+
+
+def test_admin_ui_backed_routes_require_admin():
+    """Every endpoint behind an /admin/* page must carry the admin dependency."""
+    discovered = set(_admin_routes())
+
+    ungated = [
+        f"{method} {path}  (backs {page})"
+        for (method, path), page in sorted(ADMIN_UI_BACKED_ROUTES.items())
+        if (method, path) not in discovered
+    ]
+    assert not ungated, (
+        "Endpoints behind admin-only UI pages are not admin-gated:\n  "
+        + "\n  ".join(ungated)
     )
 
 

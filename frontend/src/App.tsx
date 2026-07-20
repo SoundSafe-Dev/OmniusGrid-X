@@ -1,6 +1,6 @@
 import { FC, lazy, Suspense } from 'react'
 import { Routes, Route } from 'react-router-dom'
-import { Layout, ProtectedRoute } from './components'
+import { AdminRoute, Layout, ProtectedRoute } from './components'
 import { Login } from './pages/auth'
 import { TooltipProvider } from './components/ui'
 import ErrorBoundary from './components/ErrorBoundary'
@@ -122,16 +122,20 @@ const App: FC = () => {
                 <Route path="/nlp" element={<CorrelationAIPane />} />
                 <Route path="/intake" element={<IntakeInbox />} />
 
-                {/* Admin */}
-                <Route path="/admin/users" element={<Users />} />
-                <Route path="/admin/collectors" element={<Collectors />} />
-                <Route path="/admin/health" element={<SystemHealth />} />
-                <Route path="/admin/settings" element={<Settings />} />
-                <Route path="/admin/notifications" element={<Notifications />} />
-                <Route path="/admin/errors" element={<ErrorTriage />} />
-                <Route path="/admin/errors/:fingerprint" element={<ErrorTriageDetail />} />
-                <Route path="/admin/fleet" element={<Fleet />} />
-                <Route path="/admin/fleet/rollouts/:rolloutId" element={<FleetRolloutDetail />} />
+                {/* Admin — AdminRoute exists and was exported but was wired to
+                    no route, so every page below sat behind ProtectedRoute
+                    alone and any authenticated user could reach it. */}
+                <Route element={<AdminRoute />}>
+                  <Route path="/admin/users" element={<Users />} />
+                  <Route path="/admin/collectors" element={<Collectors />} />
+                  <Route path="/admin/health" element={<SystemHealth />} />
+                  <Route path="/admin/settings" element={<Settings />} />
+                  <Route path="/admin/notifications" element={<Notifications />} />
+                  <Route path="/admin/errors" element={<ErrorTriage />} />
+                  <Route path="/admin/errors/:fingerprint" element={<ErrorTriageDetail />} />
+                  <Route path="/admin/fleet" element={<Fleet />} />
+                  <Route path="/admin/fleet/rollouts/:rolloutId" element={<FleetRolloutDetail />} />
+                </Route>
               </Route>
             </Route>
 
