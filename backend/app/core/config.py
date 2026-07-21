@@ -232,6 +232,12 @@ class Settings(BaseSettings):
     RAG_CHARS_PER_TOKEN: float = 4.0  # heuristic used to convert tokens<->chars
     RAG_MIN_CHUNK_CHARS: int = 40  # merge a trailing chunk shorter than this
     RAG_EMBED_BATCH: int = 32  # chunks embedded per rag-inference request
+    # Ingestion guardrails (durability). Upload cap matches the k8s ingress
+    # proxy-body-size so local and prod reject the same files; the per-doc chunk
+    # cap stops a pathological document from exploding embeddings/Qdrant/memory.
+    RAG_MAX_UPLOAD_BYTES: int = 50 * 1024 * 1024  # 50 MiB, mirrors ingress
+    RAG_MAX_CHUNKS_PER_DOC: int = 2000  # hard cap; larger docs are truncated + flagged
+    RAG_TABLE_ROWS_PER_BLOCK: int = 1  # table rows per citable block (1 = one row/block)
 
     # Retrieval (query path). Hybrid search returns RAG_RETRIEVE_LIMIT fused
     # candidates; the reranker cuts them to RAG_RERANK_TOP_N passages, capped at

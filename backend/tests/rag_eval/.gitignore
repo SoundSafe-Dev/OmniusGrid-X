@@ -1,0 +1,4 @@
+# Generated eval artifacts + caches — not source.
+reports/
+__pycache__/
+*.pyc
