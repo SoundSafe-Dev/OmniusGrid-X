@@ -96,3 +96,9 @@ def test_auto_detect_with_manual_keys():
         manual_keys=["MANUAL-KEY"],
     )
     assert len(groups2) == 1
+def test_normalize_key_with_extra_spaces():
+    """
+    normalize_key should clean up extra whitespace and
+    produce the same canonical key.
+    """
+    assert normalize_key("   po   999   ") == "PO-999"
