@@ -300,8 +300,9 @@ const ANSWER = {
   out: 61.2,
   rows: [
     { at: 40.4, chip: 'XLSX', tone: 'blue' as const, src: 'order-book_aug.xlsx', bold: '3,000 units/day', rest: " — Line 2's sweet spot" },
-    { at: 45.2, chip: 'YMS', tone: 'neutral' as const, src: 'TR-2214', bold: 'materials for the full run', rest: ' — checked in Tue' },
-    { at: 50.2, chip: '● LIVE', tone: 'green' as const, src: 'Lines 1–3', bold: '58% load', rest: ' · vibration clean · PM done' },
+    { at: 44.0, chip: 'PDF', tone: 'blue' as const, src: 'pm-log_line2.pdf', bold: 'serviced last Tuesday', rest: ' — no windows in the way' },
+    { at: 47.6, chip: 'YMS', tone: 'neutral' as const, src: 'TR-2214', bold: 'materials for the full run', rest: ' — checked in Tue' },
+    { at: 51.2, chip: '● LIVE', tone: 'green' as const, src: 'Lines 1–3', bold: '58% load', rest: ' · vibration clean' },
   ],
   verdictAt: 55.2,
   actionsAt: 57.4,
