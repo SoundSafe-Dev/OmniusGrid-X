@@ -117,7 +117,7 @@ const CAPTIONS: Caption[] = [
   // the film's thesis lands on its best image: the glowing order buried
   { at: 22.8, dur: 4.2, text: 'GROWTH HIDES IN YOUR DATA.', hi: 'IN YOUR DATA' },
   // question beat = ChatBar; receipts + verdict = AnswerPanel (below)
-  { at: 61.8, dur: 3.4, text: 'MEETINGS, REPLACED BY QUESTIONS.', hi: 'QUESTIONS' },
+  { at: 61.8, dur: 3.4, text: 'NOW YOUR DATA TALKS BACK.', hi: 'TALKS BACK' },
   { at: 67.8, dur: 3.2, text: 'WHEREVER DATA PILES UP.' },
   { at: 74.2, dur: 3.2, text: 'SHIPPED FRIDAY.', hi: 'FRIDAY' },
 ];
