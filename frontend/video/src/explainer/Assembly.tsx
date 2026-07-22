@@ -107,19 +107,23 @@ type Caption = {
   hi?: string;
   mono?: boolean;
   color?: string;
+  /** render the split-weight brand wordmark instead of text */
+  wordmark?: boolean;
 };
 
 const CAPTIONS: Caption[] = [
-  { at: 1.2, dur: 3.2, text: 'ALL THIS DATA.' },
+  { at: 1.2, dur: 3.2, text: 'MADE IN A DAY. READ IN A YEAR.', hi: 'READ IN A YEAR' },
   { at: 7.4, dur: 3.4, text: 'THREE DEPARTMENTS. THREE VERSIONS OF THE TRUTH.', hi: 'THREE VERSIONS' },
   { at: 13.4, dur: 3.2, text: 'NOT BROKEN. JUST BLIND.', hi: 'BLIND' },
-  { at: 18.2, dur: 3.4, text: '12,000 UNITS. BY FRIDAY.', hi: 'BY FRIDAY' },
+  { at: 18.2, dur: 3.6, text: '12,000 UNITS. BY FRIDAY. CAN YOU SAY YES?', hi: 'CAN YOU SAY YES?' },
   // the film's thesis lands on its best image: the glowing order buried
   { at: 22.8, dur: 4.2, text: 'GROWTH HIDES IN YOUR DATA.', hi: 'IN YOUR DATA' },
+  // the product-name beat: wordmark over the floor plan connecting
+  { at: 29.6, dur: 3.2, text: '', wordmark: true },
   // question beat = ChatBar; receipts + verdict = AnswerPanel (below)
   { at: 61.8, dur: 3.8, text: 'MEETINGS, REPLACED BY A CONVERSATION WITH YOUR DATA.', hi: 'CONVERSATION' },
-  { at: 67.8, dur: 3.2, text: 'WHEREVER DATA PILES UP.' },
-  { at: 74.2, dur: 3.2, text: 'SHIPPED FRIDAY.', hi: 'FRIDAY' },
+  { at: 67.8, dur: 3.4, text: 'WHEREVER DATA PILES UP, SO DOES OPPORTUNITY.', hi: 'OPPORTUNITY' },
+  { at: 74.2, dur: 3.6, text: "SHIPPED FRIDAY. THE NEXT ONE'S ALREADY INBOUND.", hi: 'ALREADY INBOUND' },
 ];
 
 /** The question beat: the dashboard's actual Correlation AI composer,
@@ -300,9 +304,9 @@ const ANSWER = {
   out: 61.2,
   rows: [
     { at: 40.4, chip: 'XLSX', tone: 'blue' as const, src: 'order-book_aug.xlsx', bold: '3,000 units/day', rest: " — Line 2's sweet spot" },
-    { at: 44.0, chip: 'PDF', tone: 'blue' as const, src: 'pm-log_line2.pdf', bold: 'serviced last Tuesday', rest: ' — no windows in the way' },
+    { at: 44.0, chip: 'PDF', tone: 'blue' as const, src: 'pm-log_line2.pdf', bold: 'serviced last Tuesday', rest: ' — nothing due this week' },
     { at: 47.6, chip: 'YMS', tone: 'neutral' as const, src: 'TR-2214', bold: 'materials for the full run', rest: ' — checked in Tue' },
-    { at: 51.2, chip: '● LIVE', tone: 'green' as const, src: 'Lines 1–3', bold: '58% load', rest: ' · vibration clean' },
+    { at: 51.2, chip: '● LIVE', tone: 'green' as const, src: 'Lines 1–3', bold: '58% load', rest: ' · vibration clean · headroom to spare' },
   ],
   verdictAt: 55.2,
   actionsAt: 57.4,
@@ -546,6 +550,37 @@ const CaptionLayer: React.FC = () => {
           extrapolateRight: 'clamp',
         });
         const parts = c.hi ? c.text.split(c.hi) : [c.text];
+        if (c.wordmark) {
+          const line = interpolate(local, [8, 26], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
+          return (
+            <div
+              key={i}
+              style={{
+                position: 'absolute',
+                left: 0,
+                right: 0,
+                bottom: 620,
+                opacity: outFade,
+                transform: `translateY(${(1 - pop) * 40}px)`,
+                textAlign: 'center',
+                fontFamily: theme.fontFamily,
+              }}
+            >
+              <div style={{ fontSize: 100, color: '#fafafa', letterSpacing: -2, textShadow: '0 4px 40px rgba(0,0,0,0.85)' }}>
+                <Wordmark />
+              </div>
+              <div
+                style={{
+                  height: 6,
+                  width: `${line * 300}px`,
+                  margin: '14px auto 0',
+                  borderRadius: 3,
+                  background: BLUE,
+                }}
+              />
+            </div>
+          );
+        }
         return (
           <div
             key={i}
