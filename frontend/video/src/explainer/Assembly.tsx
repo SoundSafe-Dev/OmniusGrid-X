@@ -112,7 +112,7 @@ type Caption = {
 const CAPTIONS: Caption[] = [
   { at: 1.2, dur: 3.2, text: 'ALL THIS DATA.' },
   { at: 7.4, dur: 3.4, text: 'THREE DEPARTMENTS. THREE VERSIONS OF THE TRUTH.', hi: 'THREE VERSIONS' },
-  { at: 13.4, dur: 3.2, text: "THE LINE ISN'T BROKEN. IT'S BLIND.", hi: 'BLIND' },
+  { at: 13.4, dur: 3.2, text: 'NOT BROKEN. JUST BLIND.', hi: 'BLIND' },
   { at: 18.2, dur: 3.4, text: '12,000 UNITS. BY FRIDAY.', hi: 'BY FRIDAY' },
   // the film's thesis lands on its best image: the glowing order buried
   { at: 22.8, dur: 4.2, text: 'GROWTH HIDES IN YOUR DATA.', hi: 'IN YOUR DATA' },
