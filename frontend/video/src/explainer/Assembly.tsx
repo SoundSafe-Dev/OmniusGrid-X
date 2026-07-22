@@ -111,20 +111,30 @@ type Caption = {
 
 const CAPTIONS: Caption[] = [
   { at: 1.2, dur: 3.2, text: 'ALL THIS DATA.' },
-  { at: 8.4, dur: 3.0, text: 'NOTHING CONNECTS.' },
-  { at: 15.2, dur: 3.4, text: 'THE GAPS ARE EXPENSIVE.', hi: 'EXPENSIVE' },
-  { at: 20.6, dur: 3.6, text: '12,000 UNITS. BY FRIDAY.', hi: 'BY FRIDAY' },
-  { at: 26.4, dur: 3.4, text: "THE MOST EXPENSIVE WORD: 'NO.'", hi: "'NO.'" },
-  { at: 37.8, dur: 4.2, text: 'Can we take the 12,000-unit rush order and still ship Friday?', mono: true },
-  { at: 43.2, dur: 3.2, text: 'order-book_aug.xlsx -> 3,000 units/day', hi: '3,000 units/day', mono: true },
-  { at: 46.8, dur: 3.2, text: 'TR-2214 · materials -> checked in Tue', hi: 'checked in Tue', mono: true },
-  { at: 50.4, dur: 3.2, text: 'Line 2 -> PM done · 58% load · vib clean', hi: '58%', mono: true },
-  { at: 54.4, dur: 2.6, text: 'GO · 96', mono: true, color: GREEN },
-  { at: 57.0, dur: 3.4, text: 'reply to Sales ✓ · production ✓ · Dock 2 ✓', mono: true, color: GREEN },
-  { at: 63.0, dur: 3.0, text: '9 SECONDS.', hi: '9' },
-  { at: 70.0, dur: 3.4, text: 'WHEREVER DATA HIDES.' },
-  { at: 76.5, dur: 3.6, text: 'GROWTH HIDES IN YOUR DATA TOO.', hi: 'IN YOUR DATA' },
+  { at: 7.4, dur: 3.0, text: 'NOTHING CONNECTS.' },
+  { at: 13.4, dur: 3.2, text: 'THE GAPS ARE EXPENSIVE.', hi: 'EXPENSIVE' },
+  { at: 18.2, dur: 3.4, text: '12,000 UNITS. BY FRIDAY.', hi: 'BY FRIDAY' },
+  // the film's thesis lands on its best image: the glowing order buried
+  { at: 22.8, dur: 4.2, text: 'GROWTH HIDES IN YOUR DATA.', hi: 'IN YOUR DATA' },
+  // question beat is the real chat composer (CHAT below), not a caption
+  { at: 40.2, dur: 3.4, text: 'order-book_aug.xlsx -> 3,000 units/day', hi: '3,000 units/day', mono: true },
+  { at: 45.2, dur: 3.4, text: 'TR-2214 · materials -> checked in Tue', hi: 'checked in Tue', mono: true },
+  { at: 50.2, dur: 3.4, text: 'Line 2 -> PM done · 58% load · vib clean', hi: '58%', mono: true },
+  { at: 55.2, dur: 2.4, text: 'GO · 96', mono: true, color: GREEN },
+  { at: 57.6, dur: 3.2, text: 'reply to Sales ✓ · production ✓ · Dock 2 ✓', mono: true, color: GREEN },
+  { at: 61.8, dur: 3.0, text: '9 SECONDS.', hi: '9' },
+  { at: 67.8, dur: 3.2, text: 'WHEREVER DATA PILES UP.' },
+  { at: 74.2, dur: 3.2, text: 'SHIPPED FRIDAY.', hi: 'FRIDAY' },
 ];
+
+/** The question beat: the dashboard's actual Correlation AI composer,
+ *  typed live. Mirrors CorrelationAIPane's input + Send button. */
+const CHAT = {
+  at: 35.0,
+  dur: 4.4,
+  text: 'Can we take the 12,000-unit rush order and still ship Friday?',
+  typeSeconds: 2.6,
+};
 
 // ---------------------------------------------------------------- pieces
 const ClipPiece: React.FC<{ piece: Piece }> = ({ piece }) => {
@@ -179,6 +189,108 @@ const SignalWipe: React.FC<{ dir: 'left' | 'right' | 'up' | 'down' }> = ({ dir }
           filter: 'blur(6px)',
         }}
       />
+    </AbsoluteFill>
+  );
+};
+
+
+const ChatBar: React.FC = () => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const start = Math.round(CHAT.at * fps);
+  const end = start + Math.round(CHAT.dur * fps);
+  if (frame < start || frame >= end) return null;
+  const local = frame - start;
+  const pop = spring({ frame: local, fps, config: { damping: 15, stiffness: 160 }, durationInFrames: 22 });
+  const outFade = interpolate(frame, [end - 8, end], [1, 0], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp',
+  });
+  const typedChars = Math.round(
+    interpolate(local, [8, 8 + CHAT.typeSeconds * fps], [0, CHAT.text.length], {
+      extrapolateLeft: 'clamp',
+      extrapolateRight: 'clamp',
+    })
+  );
+  const typed = CHAT.text.slice(0, typedChars);
+  const doneTyping = typedChars >= CHAT.text.length;
+  const caretOn = Math.floor(local / 15) % 2 === 0 && !doneTyping;
+  return (
+    <AbsoluteFill style={{ pointerEvents: 'none' }}>
+      <div
+        style={{
+          position: 'absolute',
+          left: 60,
+          right: 60,
+          bottom: 560,
+          opacity: outFade,
+          transform: `translateY(${(1 - pop) * 50}px)`,
+          background: '#171717',
+          border: '2px solid #2e2e2e',
+          borderRadius: 20,
+          boxShadow: '0 0 70px rgba(59,130,246,0.14), 0 30px 80px rgba(0,0,0,0.55)',
+          overflow: 'hidden',
+          fontFamily: theme.fontFamily,
+        }}
+      >
+        {/* window header — brand law: UI is always framed as a window */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            padding: '14px 22px',
+            borderBottom: '2px solid #2e2e2e',
+          }}
+        >
+          {['#f87171', '#fbbf24', '#4ade80'].map((c) => (
+            <div key={c} style={{ width: 12, height: 12, borderRadius: 6, background: c, opacity: 0.85 }} />
+          ))}
+          <span style={{ marginLeft: 10, fontSize: 24, fontWeight: 600, color: '#a3a3a3' }}>
+            Correlation AI
+          </span>
+        </div>
+        {/* the composer row, mirroring CorrelationAIPane's Input + Send */}
+        <div style={{ display: 'flex', gap: 14, padding: 20 }}>
+          <div
+            style={{
+              flex: 1,
+              minWidth: 0,
+              border: '2px solid #2e2e2e',
+              borderRadius: 12,
+              background: '#0a0a0a',
+              padding: '16px 20px',
+              fontSize: 30,
+              lineHeight: 1.35,
+              color: typed ? '#fafafa' : '#525252',
+              minHeight: 78,
+            }}
+          >
+            {typed || 'Ask anything about your uploaded data...'}
+            {caretOn && typed ? (
+              <span style={{ borderLeft: `3px solid ${BLUE}`, marginLeft: 2 }} />
+            ) : null}
+          </div>
+          <div
+            style={{
+              width: 78,
+              borderRadius: 12,
+              background: doneTyping ? BLUE : '#2e2e2e',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              alignSelf: 'stretch',
+              flexShrink: 0,
+            }}
+          >
+            {/* Send (paper plane), as in the app */}
+            <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="m22 2-7 20-4-9-9-4Z" />
+              <path d="M22 2 11 13" />
+            </svg>
+          </div>
+        </div>
+      </div>
     </AbsoluteFill>
   );
 };
@@ -334,6 +446,7 @@ export const ExplainerAssembly: React.FC = () => {
         <EndCard />
       </Sequence>
       <CaptionLayer />
+      <ChatBar />
       {HAS_VO ? <Audio src={staticFile('explainer/vo.mp3')} /> : null}
     </AbsoluteFill>
   );
