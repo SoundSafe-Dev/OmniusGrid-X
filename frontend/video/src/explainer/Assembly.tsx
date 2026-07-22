@@ -111,17 +111,12 @@ type Caption = {
 
 const CAPTIONS: Caption[] = [
   { at: 1.2, dur: 3.2, text: 'ALL THIS DATA.' },
-  { at: 7.4, dur: 3.0, text: 'NOTHING CONNECTS.' },
-  { at: 13.4, dur: 3.2, text: 'THE GAPS ARE EXPENSIVE.', hi: 'EXPENSIVE' },
+  { at: 7.4, dur: 3.0, text: 'THREE SYSTEMS. NO ANSWERS.', hi: 'NO ANSWERS' },
+  { at: 13.4, dur: 3.2, text: "THIS IS WHERE 'YES' DIES.", hi: "'YES'" },
   { at: 18.2, dur: 3.4, text: '12,000 UNITS. BY FRIDAY.', hi: 'BY FRIDAY' },
   // the film's thesis lands on its best image: the glowing order buried
   { at: 22.8, dur: 4.2, text: 'GROWTH HIDES IN YOUR DATA.', hi: 'IN YOUR DATA' },
-  // question beat is the real chat composer (CHAT below), not a caption
-  { at: 40.2, dur: 3.4, text: 'order-book_aug.xlsx -> 3,000 units/day', hi: '3,000 units/day', mono: true },
-  { at: 45.2, dur: 3.4, text: 'TR-2214 · materials -> checked in Tue', hi: 'checked in Tue', mono: true },
-  { at: 50.2, dur: 3.4, text: 'Line 2 -> PM done · 58% load · vib clean', hi: '58%', mono: true },
-  { at: 55.2, dur: 2.4, text: 'GO · 96', mono: true, color: GREEN },
-  { at: 57.6, dur: 3.2, text: 'reply to Sales ✓ · production ✓ · Dock 2 ✓', mono: true, color: GREEN },
+  // question beat = ChatBar; receipts + verdict = AnswerPanel (below)
   { at: 61.8, dur: 3.0, text: '9 SECONDS.', hi: '9' },
   { at: 67.8, dur: 3.2, text: 'WHEREVER DATA PILES UP.' },
   { at: 74.2, dur: 3.2, text: 'SHIPPED FRIDAY.', hi: 'FRIDAY' },
@@ -295,6 +290,241 @@ const ChatBar: React.FC = () => {
   );
 };
 
+
+/** The correlation answer as it assembles in the dashboard: one
+ *  Correlation AI window that accumulates receipt rows as each source
+ *  answers, then lands the scored verdict + attached actions.
+ *  Component metrics follow BRAND.md sec.6b (chips, score badge). */
+const ANSWER = {
+  at: 39.8,
+  out: 61.2,
+  rows: [
+    { at: 40.4, chip: 'XLSX', tone: 'blue' as const, src: 'order-book_aug.xlsx', bold: '3,000 units/day', rest: " — Line 2's sweet spot" },
+    { at: 45.2, chip: 'YMS', tone: 'neutral' as const, src: 'TR-2214', bold: 'materials for the full run', rest: ' — checked in Tue' },
+    { at: 50.2, chip: '● LIVE', tone: 'green' as const, src: 'Lines 1–3', bold: '58% load', rest: ' · vibration clean · PM done' },
+  ],
+  verdictAt: 55.2,
+  actionsAt: 57.4,
+  kanbanAt: 58.6,
+};
+
+const CHIP_TONES = {
+  blue: { border: 'rgba(59,130,246,0.45)', bg: 'rgba(59,130,246,0.10)', color: '#93c5fd' },
+  green: { border: 'rgba(74,222,128,0.5)', bg: 'rgba(74,222,128,0.10)', color: GREEN },
+  neutral: { border: '#2e2e2e', bg: 'rgba(255,255,255,0.05)', color: '#a3a3a3' },
+};
+
+const AnswerPanel: React.FC = () => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const start = Math.round(ANSWER.at * fps);
+  const end = Math.round(ANSWER.out * fps);
+  if (frame < start || frame >= end) return null;
+  const pop = spring({ frame: frame - start, fps, config: { damping: 15, stiffness: 160 }, durationInFrames: 22 });
+  const outFade = interpolate(frame, [end - 10, end], [1, 0], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
+  const verdictOn = frame >= Math.round(ANSWER.verdictAt * fps);
+  const vPop = spring({ frame: frame - Math.round(ANSWER.verdictAt * fps), fps, config: { damping: 13, stiffness: 180 }, durationInFrames: 26 });
+  return (
+    <AbsoluteFill style={{ pointerEvents: 'none' }}>
+      <div
+        style={{
+          position: 'absolute',
+          left: 56,
+          right: 56,
+          bottom: 430,
+          opacity: outFade,
+          transform: `translateY(${(1 - pop) * 50}px)`,
+          background: 'rgba(23,23,23,0.94)',
+          border: `2px solid ${verdictOn ? 'rgba(74,222,128,0.5)' : '#2e2e2e'}`,
+          borderRadius: 20,
+          boxShadow: '0 0 90px rgba(59,130,246,0.16), 0 30px 80px rgba(0,0,0,0.55)',
+          padding: '16px 22px 18px',
+          fontFamily: theme.fontFamily,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+          {['#f87171', '#fbbf24', '#4ade80'].map((c) => (
+            <div key={c} style={{ width: 11, height: 11, borderRadius: 6, background: c, opacity: 0.85 }} />
+          ))}
+          <span style={{ marginLeft: 8, fontSize: 22, fontWeight: 600, color: '#a3a3a3' }}>Correlation AI</span>
+          <span style={{ marginLeft: 'auto', fontSize: 19, fontFamily: MONO, color: '#525252' }}>
+            {verdictOn ? 'answer · scored' : 'cross-referencing 4 sources…'}
+          </span>
+        </div>
+        {ANSWER.rows.map((r, i) => {
+          const rs = Math.round(r.at * fps);
+          if (frame < rs) return null;
+          const rp = spring({ frame: frame - rs, fps, config: { damping: 14, stiffness: 170 }, durationInFrames: 22 });
+          const tone = CHIP_TONES[r.tone];
+          return (
+            <div
+              key={i}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 12,
+                padding: '9px 0',
+                opacity: (verdictOn ? 0.62 : 1) * rp,
+                transform: `translateX(${(1 - rp) * -34}px)`,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              <span
+                style={{
+                  padding: '5px 14px',
+                  borderRadius: 999,
+                  border: `2.5px solid ${tone.border}`,
+                  background: tone.bg,
+                  color: tone.color,
+                  fontSize: 19,
+                  fontWeight: 700,
+                  flexShrink: 0,
+                }}
+              >
+                {r.chip}
+              </span>
+              <span style={{ fontFamily: MONO, fontSize: 20, color: '#a3a3a3', flexShrink: 0 }}>{r.src}</span>
+              <span style={{ fontSize: 23, color: '#fafafa', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                <b>{r.bold}</b>
+                {r.rest}
+              </span>
+            </div>
+          );
+        })}
+        {verdictOn ? (
+          <div style={{ opacity: vPop, transform: `translateY(${(1 - vPop) * 24}px)` }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '14px 0 10px', borderTop: '2px solid #2e2e2e', marginTop: 8 }}>
+              <span
+                style={{
+                  fontFamily: MONO,
+                  fontSize: 30,
+                  fontWeight: 800,
+                  color: GREEN,
+                  border: '3px solid rgba(74,222,128,0.5)',
+                  background: 'rgba(74,222,128,0.10)',
+                  borderRadius: 14,
+                  padding: '8px 20px',
+                  flexShrink: 0,
+                }}
+              >
+                GO · 96
+              </span>
+              <span style={{ fontSize: 27, fontWeight: 700, color: '#fafafa' }}>
+                Take the order — Line 2 covers it.
+              </span>
+            </div>
+            {frame >= Math.round(ANSWER.actionsAt * fps) ? (
+              <div style={{ display: 'flex', gap: 10, marginTop: 6, whiteSpace: 'nowrap' }}>
+                {[
+                  { t: 'Confirm — reply to Sales', filled: true },
+                  { t: 'Kanban → Production ✓', filled: false },
+                  { t: 'Dock 2 + carrier ✓', filled: false },
+                ].map((a, i) => {
+                  const as_ = Math.round(ANSWER.actionsAt * fps) + i * 7;
+                  if (frame < as_) return null;
+                  const ap = spring({ frame: frame - as_, fps, config: { damping: 14, stiffness: 190 }, durationInFrames: 18 });
+                  return (
+                    <span
+                      key={i}
+                      style={{
+                        opacity: ap,
+                        transform: `scale(${0.9 + 0.1 * ap})`,
+                        fontSize: 20,
+                        fontWeight: 700,
+                        padding: '9px 18px',
+                        borderRadius: 999,
+                        background: a.filled ? BLUE : 'transparent',
+                        border: a.filled ? `2.5px solid ${BLUE}` : '2.5px solid #2e2e2e',
+                        color: a.filled ? '#ffffff' : '#a3a3a3',
+                      }}
+                    >
+                      {a.t}
+                    </span>
+                  );
+                })}
+              </div>
+            ) : null}
+            {frame >= Math.round(ANSWER.kanbanAt * fps) ? (() => {
+              const ks = Math.round(ANSWER.kanbanAt * fps);
+              const kp = spring({ frame: frame - ks, fps, config: { damping: 15, stiffness: 150 }, durationInFrames: 30 });
+              // card slides from QUEUED lane into PRODUCTION lane
+              const slide = interpolate(kp, [0, 1], [0, 100]);
+              return (
+                <div style={{ display: 'flex', gap: 10, marginTop: 12, opacity: Math.min(1, kp * 2) }}>
+                  {['QUEUED', 'PRODUCTION'].map((lane, li) => (
+                    <div
+                      key={lane}
+                      style={{
+                        flex: 1,
+                        border: '2px solid #2e2e2e',
+                        borderRadius: 12,
+                        padding: '8px 10px',
+                        minHeight: 74,
+                        background: 'rgba(255,255,255,0.03)',
+                        position: 'relative',
+                        overflow: 'hidden',
+                      }}
+                    >
+                      <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: 3, color: '#525252', marginBottom: 6 }}>
+                        {lane}{' '}
+                        <span style={{ fontFamily: MONO, color: li === 0 ? '#525252' : GREEN }}>
+                          {li === 0 ? (slide > 55 ? '3' : '4') : slide > 55 ? '6' : '5'}
+                        </span>
+                      </div>
+                      {/* the rush order's card, mid-flight between lanes */}
+                      {li === 0 ? (
+                        <div
+                          style={{
+                            position: 'absolute',
+                            left: `${10 + slide * 1.15}%`,
+                            right: 'auto',
+                            width: '84%',
+                            opacity: slide > 96 ? 0 : 1,
+                            background: '#0a0a0a',
+                            border: '2px solid #2e2e2e',
+                            borderLeft: `6px solid ${slide > 55 ? GREEN : BLUE}`,
+                            borderRadius: 8,
+                            padding: '7px 10px',
+                            fontFamily: MONO,
+                            fontSize: 17,
+                            color: '#fafafa',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          RUSH-12K · Line 2
+                        </div>
+                      ) : (
+                        slide > 96 && (
+                          <div
+                            style={{
+                              width: '84%',
+                              background: '#0a0a0a',
+                              border: '2px solid rgba(74,222,128,0.4)',
+                              borderLeft: `6px solid ${GREEN}`,
+                              borderRadius: 8,
+                              padding: '7px 10px',
+                              fontFamily: MONO,
+                              fontSize: 17,
+                              color: '#fafafa',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            RUSH-12K · Line 2 <span style={{ color: GREEN }}>✓ Fri</span>
+                          </div>
+                        )
+                      )}
+                    </div>
+                  ))}
+                </div>
+              );
+            })() : null}
+          </div>
+        ) : null}
+      </div>
+    </AbsoluteFill>
+  );
+};
+
 const CaptionLayer: React.FC = () => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
@@ -447,6 +677,7 @@ export const ExplainerAssembly: React.FC = () => {
       </Sequence>
       <CaptionLayer />
       <ChatBar />
+      <AnswerPanel />
       {HAS_VO ? <Audio src={staticFile('explainer/vo.mp3')} /> : null}
     </AbsoluteFill>
   );
