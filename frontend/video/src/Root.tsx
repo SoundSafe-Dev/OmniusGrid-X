@@ -3,6 +3,7 @@ import { Composition, Sequence, Still } from 'remotion';
 import { Route, Routes } from 'react-router-dom';
 import AssetDetail from '../../src/pages/AssetDetail';
 import { AppFrame } from './AppFrame';
+import { ExplainerAssembly, EXPLAINER_DURATION } from './explainer/Assembly';
 import { PanZoom } from './components/PanZoom';
 import { TransitionSeries, linearTiming } from '@remotion/transitions';
 import { fade } from '@remotion/transitions/fade';
@@ -437,6 +438,14 @@ export const RemotionRoot: React.FC = () => (
       ));
     })}
     {/* micro-demo clips (9:16 video) */}
+    <Composition
+      id="Explainer"
+      component={ExplainerAssembly}
+      durationInFrames={EXPLAINER_DURATION}
+      fps={30}
+      width={1080}
+      height={1920}
+    />
     <Composition id="ClipAsk" component={ClipAsk} durationInFrames={CLIP_ASK_DURATION} fps={FPS} width={2160} height={3840} />
     <Composition id="ClipDetention" component={ClipDetention} durationInFrames={CLIP_DETENTION_DURATION} fps={FPS} width={2160} height={3840} />
     <Composition id="ClipTherapy" component={ClipTherapy} durationInFrames={CLIP_THERAPY_DURATION} fps={FPS} width={2160} height={3840} />
