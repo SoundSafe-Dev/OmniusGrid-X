@@ -111,13 +111,13 @@ type Caption = {
 
 const CAPTIONS: Caption[] = [
   { at: 1.2, dur: 3.2, text: 'ALL THIS DATA.' },
-  { at: 7.4, dur: 3.0, text: 'THREE SYSTEMS. NO ANSWERS.', hi: 'NO ANSWERS' },
-  { at: 13.4, dur: 3.2, text: "THIS IS WHERE 'YES' DIES.", hi: "'YES'" },
+  { at: 7.4, dur: 3.4, text: 'THREE DEPARTMENTS. THREE VERSIONS OF THE TRUTH.', hi: 'THREE VERSIONS' },
+  { at: 13.4, dur: 3.2, text: "THE LINE ISN'T BROKEN. IT'S BLIND.", hi: 'BLIND' },
   { at: 18.2, dur: 3.4, text: '12,000 UNITS. BY FRIDAY.', hi: 'BY FRIDAY' },
   // the film's thesis lands on its best image: the glowing order buried
   { at: 22.8, dur: 4.2, text: 'GROWTH HIDES IN YOUR DATA.', hi: 'IN YOUR DATA' },
   // question beat = ChatBar; receipts + verdict = AnswerPanel (below)
-  { at: 61.8, dur: 3.0, text: '9 SECONDS.', hi: '9' },
+  { at: 61.8, dur: 3.4, text: 'MEETINGS, REPLACED BY QUESTIONS.', hi: 'QUESTIONS' },
   { at: 67.8, dur: 3.2, text: 'WHEREVER DATA PILES UP.' },
   { at: 74.2, dur: 3.2, text: 'SHIPPED FRIDAY.', hi: 'FRIDAY' },
 ];
