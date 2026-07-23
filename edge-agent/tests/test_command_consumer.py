@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from aiokafka import TopicPartition
 
-from opsgrid_agent.commands import CommandConsumer
+from opsgrid_agent.commands import CommandConsumer, DeferredCommandAck
 
 
 COMMAND_ID = "11111111-1111-4111-8111-111111111111"
@@ -290,3 +290,57 @@ async def test_dlq_publish_failure_does_not_commit_source_offset(monkeypatch):
         message.offset,
     )
     sleep.assert_awaited_once_with(1)
+
+
+@pytest.mark.asyncio
+async def test_deferred_ack_commits_offset_before_restart_callback():
+    consumer = _consumer()
+    message = SimpleNamespace(
+        topic="opsgrid.commands",
+        partition=6,
+        offset=20,
+        value=_command(action_id="agent_self_update"),
+    )
+    broker_consumer = _OneMessageConsumer(consumer, message)
+    consumer._consumer = broker_consumer
+    consumer._running = True
+    callback_observations = []
+
+    async def after_commit():
+        callback_observations.append(broker_consumer.commit.await_count)
+
+    async def handler(_payload):
+        return DeferredCommandAck(
+            reason="agent_process_restart",
+            after_commit=after_commit,
+        )
+
+    consumer.register_handler("agent_self_update", handler)
+
+    await consumer._consume_loop()
+
+    broker_consumer.commit.assert_awaited_once_with(
+        {TopicPartition(message.topic, message.partition): message.offset + 1}
+    )
+    assert callback_observations == [1]
+    consumer._producer.send_and_wait.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_deferred_post_commit_action_retries_without_seeking(monkeypatch):
+    consumer = _consumer()
+    consumer._running = True
+    callback = AsyncMock(side_effect=[RuntimeError("restart unavailable"), None])
+    sleep = AsyncMock()
+    monkeypatch.setattr("opsgrid_agent.commands.consumer.asyncio.sleep", sleep)
+
+    await consumer._run_deferred_after_commit(
+        DeferredCommandAck(
+            reason="agent_process_restart",
+            after_commit=callback,
+        ),
+        command_offset=20,
+    )
+
+    assert callback.await_count == 2
+    sleep.assert_awaited_once_with(5)

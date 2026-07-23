@@ -354,6 +354,55 @@ async def test_duplicate_terminal_ack_is_idempotent(command_db):
 
 
 @pytest.mark.asyncio
+async def test_local_boot_rollback_corrects_prior_self_update_success(command_db):
+    executor = _executor(command_db)
+    command_id = await _submit(
+        executor,
+        command_db,
+        action_id="agent_self_update",
+    )
+    identity = {
+        "command_id": command_id,
+        "organization_id": str(command_db["organization_id"]),
+        "asset_id": str(command_db["asset_id"]),
+    }
+    assert await executor.handle_command_ack(
+        {
+            **identity,
+            "status": "completed",
+            "success": True,
+            "result": {
+                "attempted_version": "2.0.0",
+                "running_version": "2.0.0",
+                "rolled_back": False,
+            },
+        }
+    )
+    executor._broadcast_safely.reset_mock()
+
+    assert await executor.handle_command_ack(
+        {
+            **identity,
+            "status": "failed",
+            "success": False,
+            "error": "new process exited before the bootstrap health marker",
+            "result": {
+                "attempted_version": "2.0.0",
+                "running_version": "1.0.0",
+                "rolled_back": True,
+                "phase": "process_exit",
+            },
+        }
+    )
+
+    command = await _load_command(command_db, command_id)
+    assert command.status == CommandStatus.FAILED.value
+    assert command.result["edge_ack"]["result"]["rolled_back"] is True
+    assert command.result["edge_ack"]["result"]["running_version"] == "1.0.0"
+    executor._broadcast_safely.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_ack_with_wrong_asset_does_not_resolve_command(command_db):
     executor = _executor(command_db)
     command_id = await _submit(executor, command_db)

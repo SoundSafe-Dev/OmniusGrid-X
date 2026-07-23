@@ -22,6 +22,7 @@ structlog==25.4.0
 prometheus-client==0.21.1
 slowapi==0.1.9
 cryptography==48.0.1   # edge_ca needs >=42; keep matched with the agent pin
+packaging==23.2
 python-keycloak==3.9.1
 
 # Distributed tracing (OpenTelemetry) — only imported when OTEL_ENABLED (task 13).

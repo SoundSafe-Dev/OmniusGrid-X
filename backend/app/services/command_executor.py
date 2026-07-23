@@ -348,12 +348,21 @@ class CommandExecutor:
                     )
                     return False
 
-                if command.status in TERMINAL_STATUSES:
+                corrective_rollback = self._is_corrective_self_rollback(
+                    command,
+                    status,
+                    ack_payload,
+                )
+                if command.status in TERMINAL_STATUSES and not corrective_rollback:
                     duplicate = True
-                elif command.status not in {
-                    CommandStatus.PENDING.value,
-                    CommandStatus.EXECUTING.value,
-                }:
+                elif (
+                    not corrective_rollback
+                    and command.status
+                    not in {
+                        CommandStatus.PENDING.value,
+                        CommandStatus.EXECUTING.value,
+                    }
+                ):
                     return False
                 else:
                     now = _utcnow()
@@ -884,6 +893,26 @@ class CommandExecutor:
             )
             return CommandStatus.FAILED, error
         return None
+
+    @staticmethod
+    def _is_corrective_self_rollback(
+        command: Command,
+        incoming_status: CommandStatus,
+        ack_payload: Dict[str, Any],
+    ) -> bool:
+        """Allow a post-success boot rollback to correct the durable outcome."""
+        result = ack_payload.get("result")
+        return (
+            command.action_id == "agent_self_update"
+            and command.status
+            in {
+                CommandStatus.COMPLETED.value,
+                CommandStatus.TIMEOUT.value,
+            }
+            and incoming_status is CommandStatus.FAILED
+            and isinstance(result, dict)
+            and result.get("rolled_back") is True
+        )
 
     @staticmethod
     def _command_snapshot(command: Command) -> Dict[str, str]:

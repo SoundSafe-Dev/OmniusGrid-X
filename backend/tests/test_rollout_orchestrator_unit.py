@@ -212,3 +212,64 @@ async def test_inactive_rollout_never_dispatches(rollout_status):
     assert fake_commands.submissions == []
     assert rollout.targets[0].status == "pending"
     assert _event_types(session) == []
+
+
+@pytest.mark.asyncio
+async def test_agent_release_dispatches_self_update_with_artifact_metadata():
+    session = FakeSession()
+    fake_commands = FakeCommandClient()
+    orchestrator = RolloutOrchestrator(command_client=fake_commands)
+    rollout = _rollout(waves=(0,))
+    rollout.release.artifact_type = "agent"
+    rollout.release.artifact_format = "wheel"
+    rollout.release.artifact_filename = "opsgrid_agent-2.0.0-py3-none-any.whl"
+    rollout.release.artifact_size_bytes = 1234
+    rollout.release.package_name = "opsgrid-agent"
+    rollout.release.minimum_bootstrap_version = "1.0.0"
+
+    await orchestrator._dispatch_wave(session, rollout, 0)
+
+    submission = fake_commands.submissions[0]
+    assert submission["action_id"] == "agent_self_update"
+    assert submission["parameters"]["artifact_format"] == "wheel"
+    assert submission["parameters"]["artifact_filename"].endswith(".whl")
+    assert submission["parameters"]["artifact_size_bytes"] == 1234
+    assert submission["parameters"]["package_name"] == "opsgrid-agent"
+    assert submission["parameters"]["minimum_bootstrap_version"] == "1.0.0"
+    assert rollout.targets[0].attempted_version == "2.0.0"
+
+
+@pytest.mark.asyncio
+async def test_failed_ack_with_local_rollback_records_running_version():
+    session = FakeSession()
+    fake_commands = FakeCommandClient()
+    orchestrator = RolloutOrchestrator(command_client=fake_commands)
+    rollout = _rollout(waves=(0,))
+    rollout.status = "running"
+    target = rollout.targets[0]
+    target.status = "updating"
+    target.command_id = "cmd-1"
+    target.current_version = "1.0.0"
+    fake_commands.statuses["cmd-1"] = {
+        "status": "failed",
+        "result": {
+            "edge_ack": {
+                "result": {
+                    "attempted_version": "2.0.0",
+                    "running_version": "1.0.0",
+                    "rolled_back": True,
+                    "phase": "health_timeout",
+                    "error": "v2 did not become healthy",
+                }
+            }
+        },
+    }
+
+    await orchestrator._refresh_updating_targets(session, rollout)
+
+    assert target.status == "rolled_back"
+    assert target.local_rollback is True
+    assert target.attempted_version == "2.0.0"
+    assert target.running_version == "1.0.0"
+    assert target.failure_reason == "v2 did not become healthy"
+    assert "device_self_rolled_back" in _event_types(session)

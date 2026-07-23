@@ -149,6 +149,8 @@ class UnifiedCollectorCoordinator:
             for config in self.configs.values()
             if config.enabled
         ]
+        if tasks:
+            await asyncio.gather(*tasks)
         
         # Start health monitoring
         self._health_check_task = asyncio.create_task(self._health_monitor())

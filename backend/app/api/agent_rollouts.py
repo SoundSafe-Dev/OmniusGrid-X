@@ -53,6 +53,9 @@ class AgentRolloutTargetResponse(BaseModel):
     wave_index: int
     status: str
     current_version: str | None
+    attempted_version: str | None = None
+    running_version: str | None = None
+    local_rollback: bool = False
     attempts: int
     command_id: str | None = None
     rollback_command_id: str | None = None
@@ -92,6 +95,9 @@ def _target_response(target: AgentRolloutTarget) -> AgentRolloutTargetResponse:
         wave_index=target.wave_index,
         status=target.status,
         current_version=target.current_version,
+        attempted_version=target.attempted_version,
+        running_version=target.running_version,
+        local_rollback=bool(target.local_rollback),
         attempts=target.attempts,
         command_id=target.command_id,
         rollback_command_id=target.rollback_command_id,

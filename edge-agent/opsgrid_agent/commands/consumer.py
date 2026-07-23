@@ -7,15 +7,31 @@ import hashlib
 import inspect
 import json
 from collections import OrderedDict
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, Dict, Iterable, Optional, Set
+from typing import Any, Awaitable, Callable, Dict, Iterable, Optional, Set, Union
 from uuid import UUID
 
 import structlog
 
 logger = structlog.get_logger()
 
-CommandHandler = Callable[[Dict[str, Any]], Awaitable[Optional[Dict[str, Any]]]]
+
+@dataclass
+class DeferredCommandAck:
+    """A durable handler outcome whose acknowledgement follows a process restart."""
+
+    reason: str
+    after_commit: Callable[[], Awaitable[None] | None]
+
+    async def run_after_commit(self) -> None:
+        result = self.after_commit()
+        if inspect.isawaitable(result):
+            await result
+
+
+CommandResult = Optional[Union[Dict[str, Any], DeferredCommandAck]]
+CommandHandler = Callable[[Dict[str, Any]], Awaitable[CommandResult] | CommandResult]
 
 
 class CommandConsumer:
@@ -51,6 +67,10 @@ class CommandConsumer:
         self._task: Optional[asyncio.Task] = None
         self._running = False
 
+    @property
+    def is_running(self) -> bool:
+        return self._running
+
     def register_handler(self, action_id: str, handler: CommandHandler) -> None:
         """Register a handler for an action_id."""
         if not action_id:
@@ -59,9 +79,11 @@ class CommandConsumer:
             raise TypeError("handler must be callable")
         self._handlers[str(action_id)] = handler
 
-    async def start(self) -> None:
+    async def start(self, *, consume: bool = True) -> None:
         """Start raw command consumption with manual offset commits."""
         if self._running:
+            if consume:
+                self.start_consuming()
             return
 
         from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
@@ -85,7 +107,8 @@ class CommandConsumer:
             await self._consumer.start()
             await self._producer.start()
             self._running = True
-            self._task = asyncio.create_task(self._consume_loop())
+            if consume:
+                self.start_consuming()
             logger.info(
                 "command_consumer_started",
                 agent_id=self.agent_id,
@@ -96,6 +119,13 @@ class CommandConsumer:
         except Exception:
             await self._stop_clients()
             raise
+
+    def start_consuming(self) -> None:
+        """Begin consumption after startup reconciliation has completed."""
+        if not self._running:
+            raise RuntimeError("Command consumer clients are not started")
+        if self._task is None or self._task.done():
+            self._task = asyncio.create_task(self._consume_loop())
 
     async def stop(self) -> None:
         """Stop command consumption and publication."""
@@ -116,7 +146,7 @@ class CommandConsumer:
         *,
         source_partition: Optional[int] = None,
         source_offset: Optional[int] = None,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> CommandResult:
         """Validate and handle one raw command record."""
         command, validation_error = self._decode_and_validate(payload)
         if validation_error:
@@ -162,6 +192,14 @@ class CommandConsumer:
             result = handler(command)
             if inspect.isawaitable(result):
                 result = await result
+            if isinstance(result, DeferredCommandAck):
+                logger.info(
+                    "command_ack_deferred",
+                    command_id=command_id,
+                    action_id=action_id,
+                    reason=result.reason,
+                )
+                return result
             if result is None:
                 result = {}
             elif not isinstance(result, dict):
@@ -195,6 +233,26 @@ class CommandConsumer:
         await self._remember_and_emit(command_id, ack)
         return ack
 
+    async def emit_command_ack(
+        self,
+        command: Dict[str, Any],
+        *,
+        status: str,
+        success: bool,
+        result: Dict[str, Any],
+        error: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Publish an acknowledgement reconstructed after a process restart."""
+        ack = self._build_ack(
+            command,
+            status=status,
+            success=success,
+            result=result,
+            error=error,
+        )
+        await self._remember_and_emit(str(command["command_id"]), ack)
+        return ack
+
     async def _consume_loop(self) -> None:
         from aiokafka import TopicPartition
 
@@ -204,7 +262,7 @@ class CommandConsumer:
                     if not self._running:
                         return
                     try:
-                        await self.handle_message(
+                        outcome = await self.handle_message(
                             message.value,
                             source_partition=message.partition,
                             source_offset=message.offset,
@@ -215,6 +273,12 @@ class CommandConsumer:
                                     message.offset + 1
                             }
                         )
+                        if isinstance(outcome, DeferredCommandAck):
+                            await self._run_deferred_after_commit(
+                                outcome,
+                                command_offset=message.offset,
+                            )
+                            return
                     except asyncio.CancelledError:
                         raise
                     except Exception as exc:  # noqa: BLE001
@@ -234,6 +298,28 @@ class CommandConsumer:
                 raise
             except Exception as exc:  # noqa: BLE001
                 logger.error("command_consumer_loop_error", error=str(exc))
+                await asyncio.sleep(5)
+
+    async def _run_deferred_after_commit(
+        self,
+        outcome: DeferredCommandAck,
+        *,
+        command_offset: int,
+    ) -> None:
+        """Retry the restart handoff without rewinding an already committed offset."""
+        while self._running:
+            try:
+                await outcome.run_after_commit()
+                return
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "command_post_commit_action_failed",
+                    reason=outcome.reason,
+                    source_offset=command_offset,
+                    error=str(exc),
+                )
                 await asyncio.sleep(5)
 
     async def _stop_clients(self) -> None:

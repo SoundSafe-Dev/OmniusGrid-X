@@ -1,5 +1,14 @@
-"""OTA update executor for edge-agent config bundles."""
+"""OTA executors for signed configuration and agent artifacts."""
 
+from opsgrid_agent.ota.agent_executor import (
+    AgentSelfUpdateError,
+    AgentSelfUpdateExecutor,
+)
 from opsgrid_agent.ota.executor import OTAUpdateError, OTAUpdateExecutor
 
-__all__ = ["OTAUpdateError", "OTAUpdateExecutor"]
+__all__ = [
+    "AgentSelfUpdateError",
+    "AgentSelfUpdateExecutor",
+    "OTAUpdateError",
+    "OTAUpdateExecutor",
+]

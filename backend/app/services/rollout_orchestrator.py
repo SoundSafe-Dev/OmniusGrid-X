@@ -206,6 +206,15 @@ class RolloutOrchestrator:
             status = str(command_status.get("status") or "").lower() if command_status else ""
 
             if status in COMMAND_FAILURE_STATUSES:
+                result = self._edge_result(command_status)
+                if bool(result.get("rolled_back")):
+                    self._mark_target_locally_rolled_back(
+                        session,
+                        rollout,
+                        target,
+                        result,
+                    )
+                    continue
                 await self._mark_target_failed(
                     session,
                     rollout,
@@ -266,6 +275,7 @@ class RolloutOrchestrator:
             now = _utcnow()
             target.status = "updating"
             target.command_id = command_id
+            target.attempted_version = rollout.release.version
             target.attempts = (target.attempts or 0) + 1
             target.dispatched_at = now
             target.last_event_at = now
@@ -294,7 +304,10 @@ class RolloutOrchestrator:
         bundle_url, _ = issue_release_bundle_url(release.id, rollout.organization_id)
         if capture_current_version:
             target.current_version = await self._current_asset_version(session, target.asset_id)
-        action_id = "model_update" if release.artifact_type == "model" else "agent_update"
+        action_id = {
+            "model": "model_update",
+            "agent": "agent_self_update",
+        }.get(release.artifact_type, "agent_update")
         parameters = {
             "release_id": str(release.id),
             "bundle_url": bundle_url,
@@ -304,6 +317,21 @@ class RolloutOrchestrator:
         }
         if release.artifact_type == "model":
             parameters["model_name"] = release.model_name
+        elif release.artifact_type == "agent":
+            parameters.update(
+                {
+                    "artifact_format": release.artifact_format,
+                    "artifact_filename": release.artifact_filename,
+                    "artifact_size_bytes": release.artifact_size_bytes,
+                    "package_name": release.package_name,
+                    "minimum_bootstrap_version": release.minimum_bootstrap_version,
+                }
+            )
+        default_command_timeout = (
+            settings.OTA_AGENT_UPDATE_COMMAND_TIMEOUT_SECONDS
+            if release.artifact_type == "agent"
+            else settings.OTA_ROLLOUT_DEFAULT_COMMAND_TIMEOUT_SECONDS
+        )
         return await self.command_client.submit_command(
             asset_id=str(target.asset_id),
             command_type="system",
@@ -314,7 +342,7 @@ class RolloutOrchestrator:
             timeout_seconds=self._strategy_int(
                 rollout.strategy or {},
                 "command_timeout_seconds",
-                settings.OTA_ROLLOUT_DEFAULT_COMMAND_TIMEOUT_SECONDS,
+                default_command_timeout,
             ),
         )
 
@@ -383,7 +411,14 @@ class RolloutOrchestrator:
         command_status: dict[str, Any] | None,
     ) -> None:
         now = _utcnow()
+        result = self._edge_result(command_status)
         target.status = "success"
+        target.running_version = str(
+            result.get("running_version")
+            or result.get("new_version")
+            or rollout.release.version
+        )
+        target.local_rollback = False
         target.completed_at = now
         target.last_event_at = now
         target.failure_reason = None
@@ -394,10 +429,52 @@ class RolloutOrchestrator:
             asset_id=target.asset_id,
             detail={
                 "command_id": target.command_id,
-                "result": (command_status or {}).get("result") or {},
+                "result": result,
                 "wave_index": target.wave_index,
             },
         )
+
+    def _mark_target_locally_rolled_back(
+        self,
+        session,
+        rollout: AgentRollout,
+        target: AgentRolloutTarget,
+        result: dict[str, Any],
+    ) -> None:
+        now = _utcnow()
+        attempted = str(result.get("attempted_version") or rollout.release.version)
+        running = result.get("running_version") or target.current_version
+        target.status = "rolled_back"
+        target.attempted_version = attempted
+        target.running_version = str(running) if running else None
+        target.local_rollback = True
+        target.failure_reason = str(
+            result.get("error") or "Agent restored its previous version after failed boot"
+        )
+        target.completed_at = now
+        target.last_event_at = now
+        self._add_event(
+            session,
+            rollout,
+            "device_self_rolled_back",
+            asset_id=target.asset_id,
+            detail={
+                "command_id": target.command_id,
+                "attempted_version": target.attempted_version,
+                "running_version": target.running_version,
+                "phase": result.get("phase"),
+            },
+        )
+
+    @staticmethod
+    def _edge_result(command_status: dict[str, Any] | None) -> dict[str, Any]:
+        result = (command_status or {}).get("result") or {}
+        if not isinstance(result, dict):
+            return {}
+        edge_ack = result.get("edge_ack")
+        if isinstance(edge_ack, dict) and isinstance(edge_ack.get("result"), dict):
+            return dict(edge_ack["result"])
+        return dict(result)
 
     async def _halt_and_rollback_wave(
         self,
@@ -492,6 +569,7 @@ class RolloutOrchestrator:
                     AgentRelease.id == release_id,
                     AgentRelease.organization_id == rollout.organization_id,
                     AgentRelease.status == "published",
+                    AgentRelease.artifact_type == rollout.release.artifact_type,
                 )
             )
         ).scalar_one_or_none()
