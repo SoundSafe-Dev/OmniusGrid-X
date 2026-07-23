@@ -1568,7 +1568,7 @@ class ComplianceReportJob(Base):
 
 
 class AgentRelease(Base):
-    """Signed edge-agent release metadata and config-bundle pointer."""
+    """Signed config, model, or executable edge-agent release artifact."""
     __tablename__ = "agent_releases"
     __table_args__ = (
         CheckConstraint(
@@ -1576,12 +1576,26 @@ class AgentRelease(Base):
             name="ck_agent_releases_status",
         ),
         CheckConstraint(
-            "artifact_type IN ('config', 'model')",
+            "artifact_type IN ('config', 'model', 'agent')",
             name="ck_agent_releases_artifact_type",
         ),
+        CheckConstraint(
+            "("
+            "artifact_type <> 'agent' OR ("
+            "artifact_format IS NOT NULL AND "
+            "artifact_format = 'wheel' AND "
+            "artifact_filename IS NOT NULL AND "
+            "artifact_size_bytes IS NOT NULL AND "
+            "artifact_size_bytes > 0 AND "
+            "package_name IS NOT NULL AND "
+            "package_name = 'opsgrid-agent'"
+            ")"
+            ")",
+            name="ck_agent_releases_agent_artifact",
+        ),
         UniqueConstraint(
-            "organization_id", "version", "channel",
-            name="uq_agent_releases_org_version_channel",
+            "organization_id", "artifact_type", "version", "channel",
+            name="uq_agent_releases_org_type_version_channel",
         ),
     )
 
@@ -1596,6 +1610,11 @@ class AgentRelease(Base):
     image_tag = Column(String(255), nullable=True)
     artifact_type = Column(String(20), nullable=False, default="config", server_default="config")
     model_name = Column(String(100), nullable=True)
+    artifact_format = Column(String(20), nullable=True)
+    artifact_filename = Column(String(255), nullable=True)
+    artifact_size_bytes = Column(BigInteger, nullable=True)
+    package_name = Column(String(100), nullable=True)
+    minimum_bootstrap_version = Column(String(100), nullable=True)
     bundle_storage_key = Column(Text, nullable=False)
     checksum_sha256 = Column(String(64), nullable=False)
     signature_ed25519 = Column(Text, nullable=False)
@@ -1702,6 +1721,9 @@ class AgentRolloutTarget(Base):
     wave_index = Column(Integer, nullable=False, default=0, server_default="0")
     status = Column(String(30), nullable=False, default="pending", server_default="pending")
     current_version = Column(String(100))
+    attempted_version = Column(String(100))
+    running_version = Column(String(100))
+    local_rollback = Column(Boolean, nullable=False, default=False, server_default=text("false"))
     attempts = Column(Integer, nullable=False, default=0, server_default="0")
     command_id = Column(String(255))
     rollback_command_id = Column(String(255))

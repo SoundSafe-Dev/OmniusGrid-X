@@ -73,3 +73,30 @@ def test_heartbeat_payload_shape():
         "buffer_depth": 4,
         "timestamp": "2030-01-01T00:00:00Z",
     }
+
+
+def test_heartbeat_reports_restart_spanning_update_state():
+    payload = build_heartbeat_payload(
+        agent_id="agent-1",
+        organization_id="org-1",
+        asset_ids=["asset-1"],
+        manifest={"agent_version": "1.0.0"},
+        config_hash="abc123",
+        collector_status={"active_collectors": 1, "total_collectors": 1},
+        buffer_depth=0,
+        update_status={
+            "status": "rolled_back",
+            "attempted_version": "2.0.0",
+            "running_version": "1.0.0",
+            "rolled_back": True,
+        },
+        timestamp="2030-01-01T00:00:00Z",
+    )
+
+    assert payload["agent_version"] == "1.0.0"
+    assert payload["agent_update"] == {
+        "status": "rolled_back",
+        "attempted_version": "2.0.0",
+        "running_version": "1.0.0",
+        "rolled_back": True,
+    }

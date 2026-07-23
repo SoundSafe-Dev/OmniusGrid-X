@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import io
+import zipfile
 from urllib.parse import urlsplit
 from uuid import uuid4
 
@@ -18,6 +20,32 @@ from app.api.agent_rollouts import (
 from app.core.config import settings
 from app.db.models import AgentRollout
 from app.services.agent_signing import public_key_to_base64, verify_bundle_signature
+
+
+def _agent_wheel(version: str = "2.0.0") -> bytes:
+    dist_info = f"opsgrid_agent-{version}.dist-info"
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr(
+            "opsgrid_agent/__init__.py",
+            f'__version__ = "{version}"\n',
+        )
+        archive.writestr("opsgrid_agent/main.py", "def main(): pass\n")
+        archive.writestr(
+            f"{dist_info}/METADATA",
+            "Metadata-Version: 2.1\n"
+            "Name: opsgrid-agent\n"
+            f"Version: {version}\n\n",
+        )
+        archive.writestr(
+            f"{dist_info}/WHEEL",
+            "Wheel-Version: 1.0\n"
+            "Generator: opsgrid-test\n"
+            "Root-Is-Purelib: true\n"
+            "Tag: py3-none-any\n\n",
+        )
+        archive.writestr(f"{dist_info}/RECORD", "")
+    return output.getvalue()
 
 
 def _write_signing_key(tmp_path, monkeypatch):
@@ -128,6 +156,91 @@ async def test_release_create_signs_stores_and_downloads_bundle(client_a, tmp_pa
     assert download.content == b"collectors:\n  - type: mqtt\n"
     assert download.headers["x-checksum-sha256"] == release["checksum_sha256"]
     assert download.headers["x-signature-ed25519"] == release["signature_ed25519"]
+
+
+@pytest.mark.asyncio
+async def test_agent_wheel_release_is_signed_downloadable_and_type_scoped(
+    client_a,
+    tmp_path,
+    monkeypatch,
+):
+    _write_signing_key(tmp_path, monkeypatch)
+    config_release = await client_a.post(
+        "/api/v1/fleet/releases",
+        json=_release_payload("2.0.0"),
+    )
+    assert config_release.status_code == 201, config_release.text
+
+    wheel = _agent_wheel("2.0.0")
+    response = await client_a.post(
+        "/api/v1/fleet/releases/agent",
+        data={
+            "version": "2.0.0",
+            "channel": "stable",
+            "minimum_bootstrap_version": "1.0.0",
+            "release_notes": "agent process update",
+        },
+        files={
+            "artifact": (
+                "opsgrid_agent-2.0.0-py3-none-any.whl",
+                wheel,
+                "application/zip",
+            )
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    release = response.json()
+    assert release["artifact_type"] == "agent"
+    assert release["artifact_format"] == "wheel"
+    assert release["artifact_filename"] == "opsgrid_agent-2.0.0-py3-none-any.whl"
+    assert release["artifact_size_bytes"] == len(wheel)
+    assert release["package_name"] == "opsgrid-agent"
+    assert release["minimum_bootstrap_version"] == "1.0.0"
+    assert release["checksum_sha256"] == hashlib.sha256(wheel).hexdigest()
+    assert verify_bundle_signature(
+        wheel,
+        release["signature_ed25519"],
+        settings.OTA_SIGNING_PUBLIC_KEY,
+    )
+
+    artifact_url = urlsplit(release["artifact_url"])
+    download = await client_a.get(
+        f"{artifact_url.path}?{artifact_url.query}"
+    )
+    assert download.status_code == 200, download.text
+    assert download.content == wheel
+    assert download.headers["content-type"].startswith("application/zip")
+
+    listed = await client_a.get(
+        "/api/v1/fleet/releases",
+        params={"artifact_type": "agent"},
+    )
+    assert listed.status_code == 200
+    assert [item["id"] for item in listed.json()] == [release["id"]]
+
+
+@pytest.mark.asyncio
+async def test_agent_wheel_release_rejects_metadata_version_mismatch(
+    client_a,
+    tmp_path,
+    monkeypatch,
+):
+    _write_signing_key(tmp_path, monkeypatch)
+    response = await client_a.post(
+        "/api/v1/fleet/releases/agent",
+        data={"version": "2.0.1"},
+        files={
+            "artifact": (
+                "opsgrid_agent-2.0.0-py3-none-any.whl",
+                _agent_wheel("2.0.0"),
+                "application/zip",
+            )
+        },
+    )
+
+    assert response.status_code == 400
+    assert "version does not match" in response.json()["detail"]
 
 
 @pytest.mark.asyncio

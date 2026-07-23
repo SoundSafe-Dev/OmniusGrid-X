@@ -1,20 +1,17 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "opsgrid-agent"
-version = "1.0.0"
+dynamic = ["version", "dependencies"]
 description = "OmniusGrid edge agent: industrial protocol collectors with store-and-forward buffering and an mTLS cloud uplink"
 requires-python = ">=3.11"
 license = { text = "Proprietary" }
-# Single source of truth: requirements.txt (also used by the Dockerfile). Two
-# hand-maintained lists WILL drift — an earlier draft of this file already
-# disagreed with requirements.txt on the aiokafka major version and omitted
-# hard imports (httpx, watchdog), which crash-looped the bare-metal install.
-dynamic = ["dependencies"]
 
 [tool.setuptools.dynamic]
+version = {attr = "opsgrid_agent.__version__"}
+# Single source of truth: requirements.txt (also used by the Dockerfile).
 dependencies = { file = "requirements.txt" }
 
 [project.scripts]
@@ -22,3 +19,4 @@ opsgrid-agent = "opsgrid_agent.main:run"
 
 [tool.setuptools.packages.find]
 include = ["opsgrid_agent*"]
+exclude = ["tests*"]

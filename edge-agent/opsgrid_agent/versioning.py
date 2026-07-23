@@ -61,9 +61,10 @@ def build_heartbeat_payload(
     config_hash: str,
     collector_status: dict[str, Any],
     buffer_depth: int,
+    update_status: dict[str, Any] | None = None,
     timestamp: str | None = None,
 ) -> dict[str, Any]:
-    return {
+    payload = {
         "message_type": "agent_heartbeat",
         "agent_id": agent_id,
         "organization_id": organization_id,
@@ -76,6 +77,9 @@ def build_heartbeat_payload(
         "buffer_depth": buffer_depth,
         "timestamp": timestamp or _utc_now(),
     }
+    if update_status:
+        payload["agent_update"] = update_status
+    return payload
 
 
 def load_agent_state(path: str | Path) -> dict[str, Any]:
@@ -97,5 +101,15 @@ def persist_agent_state(path: str | Path, state: dict[str, Any]) -> None:
     ) as tmp:
         tmp.write(payload)
         tmp.write("\n")
+        tmp.flush()
+        os.fsync(tmp.fileno())
         tmp_path = Path(tmp.name)
     tmp_path.replace(state_path)
+    try:
+        directory_fd = os.open(state_path.parent, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)

@@ -85,6 +85,7 @@ async def create_model_release(
         await db.execute(
             select(AgentRelease.id).where(
                 AgentRelease.organization_id == org_id,
+                AgentRelease.artifact_type == "model",
                 AgentRelease.version == entry.version,
                 AgentRelease.channel == entry.name,
             )
@@ -105,6 +106,9 @@ async def create_model_release(
         organization_id=org_id,
         artifact_type="model",
         model_name=entry.name,
+        artifact_format="pytorch",
+        artifact_filename=f"{entry.name}-{entry.version}.pt",
+        artifact_size_bytes=stored.size_bytes,
         version=entry.version,
         channel=entry.name,
         image_tag=None,
