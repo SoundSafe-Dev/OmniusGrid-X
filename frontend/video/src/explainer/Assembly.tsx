@@ -78,6 +78,8 @@ const END_CARD_FRAMES = Math.round(6.15 * FPS);
 
 /** VO file: drop the ElevenLabs render at public/explainer/vo.mp3 and set true. */
 const HAS_VO = true;
+/** Music bed: public/explainer/music.mp3 (Pixel Lift), ducked under the VO. */
+const HAS_MUSIC = true;
 
 const pieceFrames = (p: Piece) => {
   const usable = SRC_LEN - (p.in ?? 0) - (p.out ?? 0);
@@ -712,6 +714,21 @@ export const ExplainerAssembly: React.FC = () => {
       <ChatBar />
       <AnswerPanel />
       {HAS_VO ? <Audio src={staticFile('explainer/vo.mp3')} /> : null}
+      {HAS_MUSIC ? (
+        <Audio
+          src={staticFile('explainer/music.mp3')}
+          volume={(f) =>
+            interpolate(
+              f,
+              // ducked bed under speech; brief lift at the turn (28-29s
+              // speech gap); swell after the sign-off; fade at the tail
+              [0, 830, 845, 880, 2600, 2640, 2672, 2686],
+              [0.13, 0.13, 0.2, 0.13, 0.13, 0.3, 0.3, 0],
+              { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }
+            )
+          }
+        />
+      ) : null}
     </AbsoluteFill>
   );
 };
