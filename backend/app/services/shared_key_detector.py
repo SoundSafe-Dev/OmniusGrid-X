@@ -55,6 +55,18 @@ def normalize_key(value: Any) -> str:
     text = text.strip("-")
     return text
 
+def normalize_column_header(value: Any) -> str:
+    """Normalize spreadsheet column headers."""
+    if value is None:
+        return ""
+
+    text = str(value).strip().lower()
+    text = text.replace("#", " number ")
+    text = re.sub(r"[^a-z0-9]+", "_", text)
+    text = re.sub(r"_+", "_", text)
+
+    return text.strip("_")
+
 
 def _dedupe(items: Iterable[str]) -> List[str]:
     seen = set()
