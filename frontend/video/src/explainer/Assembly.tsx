@@ -667,7 +667,6 @@ const EndCard: React.FC = () => {
     extrapolateLeft: 'clamp',
     extrapolateRight: 'clamp',
   });
-  const s = spring({ frame, fps, config: { damping: 16 }, durationInFrames: 40 });
   return (
     <AbsoluteFill
       style={{
@@ -693,7 +692,6 @@ const EndCard: React.FC = () => {
           flexDirection: 'column',
           alignItems: 'center',
           gap: 40,
-          transform: `scale(${0.92 + 0.08 * s})`,
           zIndex: 1,
         }}
       >
