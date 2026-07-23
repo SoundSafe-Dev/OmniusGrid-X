@@ -56,25 +56,26 @@ const TIMELINE: Piece[] = [
   { src: 'bridge-b.mp4', in: 0.2, out: 0.7, rate: 3 },
   { src: 'clip-03.mp4', in: 0.25, joint: { wipe: 'down' } },
   { src: 'clip-04.mp4' }, // hard cut on VO beat "opportunity shows up"
-  { src: 'clip-05.mp4', rate: 0.55, joint: { dissolve: 12 } }, // slowed: 'growth hides... buried' plays out on this image
+  { src: 'clip-05.mp4', joint: { dissolve: 12 } }, // growth hides... buried
+  { src: 'clip-02.mp4', in: 0.25 }, // INSERT (native speed): cutaway reprise under 'most teams say no'
   { src: 'bridge-c.mp4', in: 0.2, out: 0.7, rate: 3 },
   { src: 'clip-06.mp4', in: 0.25, joint: { wipe: 'up' } },
   { src: 'bridge-d.mp4', in: 0.2, out: 0.7, rate: 3 },
   { src: 'clip-07.mp4', in: 0.25, joint: { wipe: 'down' } },
-  { src: 'clip-08a.mp4', rate: 0.6 }, // slowed: carries both paper receipts (order book + PM log)
+  { src: 'clip-08a.mp4' }, // THE hard cut - masked by line motion
   { src: 'clip-08b.mp4', joint: { wipe: 'right' } },
   { src: 'clip-08c.mp4', joint: { wipe: 'right' } },
   { src: 'clip-09.mp4', joint: { wipe: 'right' } },
   { src: 'bridge-e.mp4', in: 0.2, out: 0.7, rate: 3 },
-  { src: 'clip-10.mp4', in: 0.25, out: 0.75, joint: { wipe: 'up' } },
+  { src: 'clip-10.mp4', in: 0.25, joint: { wipe: 'up' } },
   { src: 'bridge-f.mp4', in: 0.2, out: 0.7, rate: 3 },
-  { src: 'clip-11.mp4', in: 0.25, out: 0.5, joint: { wipe: 'up' } },
+  { src: 'clip-11.mp4', in: 0.25, joint: { wipe: 'up' } },
   { src: 'bridge-g.mp4', in: 0.2, out: 0.7, rate: 3 },
-  { src: 'clip-12.mp4', in: 0.25, out: 0.85, joint: { wipe: 'down' } },
+  { src: 'clip-12.mp4', in: 0.25, joint: { wipe: 'down' } },
 ];
 
 const SRC_LEN = 5.04; // seconds per Higgsfield clip
-const END_CARD_FRAMES = Math.round(6.15 * FPS);
+const END_CARD_FRAMES = Math.round(6.9 * FPS);
 
 /** VO file: drop the ElevenLabs render at public/explainer/vo.mp3 and set true. */
 const HAS_VO = true;
@@ -119,7 +120,7 @@ const CAPTIONS: Caption[] = [
   { at: 14.2, dur: 3.2, text: 'NOT BROKEN. JUST BLIND.', hi: 'BLIND' },                  // "isn't broken" @14.0
   { at: 17.4, dur: 4.8, text: '12,000 UNITS. BY FRIDAY. CAN YOU SAY YES?', hi: 'CAN YOU SAY YES?' }, // "12,000" @17.0
   { at: 22.9, dur: 4.6, text: 'GROWTH HIDES IN YOUR DATA.', hi: 'IN YOUR DATA' },        // "growth hides" @23.2
-  { at: 32.6, dur: 3.6, text: '', wordmark: true },                                      // floor plan lands @32.5
+  { at: 33.3, dur: 3.6, text: '', wordmark: true },                                      // floor plan lands @33.2
   { at: 66.3, dur: 4.4, text: 'MEETINGS, REPLACED BY A CONVERSATION WITH YOUR DATA.', hi: 'CONVERSATION' }, // @66.3
   { at: 74.2, dur: 3.8, text: 'WHEREVER DATA PILES UP, SO DOES OPPORTUNITY.', hi: 'OPPORTUNITY' }, // @74.3
   { at: 79.2, dur: 3.8, text: "SHIPPED FRIDAY. THE NEXT ONE'S ALREADY INBOUND.", hi: 'ALREADY INBOUND' }, // "shipped" @79.3
@@ -128,8 +129,8 @@ const CAPTIONS: Caption[] = [
 /** The question beat: the dashboard's actual Correlation AI composer,
  *  typed live. Mirrors CorrelationAIPane's input + Send button. */
 const CHAT = {
-  at: 38.2,
-  dur: 4.4,
+  at: 39.5,
+  dur: 4.2,
   text: 'Can we take the 12,000-unit rush order and still ship Friday?',
   typeSeconds: 2.6,
 };
@@ -299,8 +300,8 @@ const ChatBar: React.FC = () => {
  *  answers, then lands the scored verdict + attached actions.
  *  Component metrics follow BRAND.md sec.6b (chips, score badge). */
 const ANSWER = {
-  at: 39.6,
-  out: 65.9,
+  at: 40.1,
+  out: 65.6,
   rows: [
     { at: 40.3, chip: 'XLSX', tone: 'blue' as const, src: 'order-book_aug.xlsx', bold: '3,000 units/day', rest: " — Line 2's sweet spot" },
     { at: 44.5, chip: 'PDF', tone: 'blue' as const, src: 'pm-log_line2.pdf', bold: 'serviced last Tuesday', rest: ' — nothing due this week' },
@@ -722,8 +723,8 @@ export const ExplainerAssembly: React.FC = () => {
               f,
               // ducked bed under speech; brief lift at the turn (28-29s
               // speech gap); swell after the sign-off; fade at the tail
-              [0, 830, 845, 880, 2600, 2640, 2672, 2686],
-              [0.35, 0.35, 0.55, 0.35, 0.35, 0.7, 0.7, 0],
+              [0, 2660, 2688],
+              [0.22, 0.22, 0],
               { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }
             )
           }
