@@ -47,20 +47,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from queries import QUERIES  # noqa: E402
+from queries import QUERY_SETS  # noqa: E402
+from corpus import DOC_BY_ID, PRIMARY  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 DOCS_DIR = HERE.parent / "docs"
 REPORTS_DIR = HERE / "reports"
-BASENAME = "SOP-QA-014_Allergen_Control_Sanitation"
 
-FORMATS = {
-    "pdf":  (f"{BASENAME}.pdf",  "application/pdf"),
-    "docx": (f"{BASENAME}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
-    "md":   (f"{BASENAME}.md",   "text/markdown"),
-    "txt":  (f"{BASENAME}.txt",  "text/plain"),
-    "csv":  (f"{BASENAME}.csv",  "text/csv"),
-}
+# These describe the ACTIVE document and are (re)bound in main() from --doc. They
+# default to the primary corpus document so importing this module still works.
+DOC = PRIMARY
+BASENAME = PRIMARY.basename
+FORMATS = {f: PRIMARY.file(f) for f in PRIMARY.formats}
+QUERIES = QUERY_SETS[PRIMARY.id]
 
 GREEN, RED, YEL, GREY, BOLD, RST = "\033[32m", "\033[31m", "\033[33m", "\033[90m", "\033[1m", "\033[0m"
 
@@ -299,7 +298,10 @@ def status_cell(res):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="RAG eval harness for SOP-QA-014.")
+    ap = argparse.ArgumentParser(description="RAG eval harness — matrix report for one corpus document.")
+    ap.add_argument("--doc", default=PRIMARY.id,
+                    help=f"corpus document id to evaluate (default {PRIMARY.id}); "
+                         f"choices: {', '.join(DOC_BY_ID)}")
     ap.add_argument("--base-url", default=os.environ.get("RAG_BASE_URL", "http://localhost:8000"))
     ap.add_argument("--token", default=os.environ.get("RAG_TEST_TOKEN"),
                     help="bearer token; defaults to the 'dev-token' bypass (needs ALLOW_DEV_TOKEN)")
@@ -314,6 +316,16 @@ def main():
     ap.add_argument("--no-cleanup", action="store_true", help="leave docs indexed at the end")
     args = ap.parse_args()
 
+    # Bind the active document: rebind the module globals the phases read from.
+    if args.doc not in DOC_BY_ID:
+        print(f"unknown --doc {args.doc!r}; choices: {', '.join(DOC_BY_ID)}", file=sys.stderr)
+        return 2
+    global DOC, BASENAME, FORMATS, QUERIES
+    DOC = DOC_BY_ID[args.doc]
+    BASENAME = DOC.basename
+    FORMATS = {f: DOC.file(f) for f in DOC.formats}
+    QUERIES = QUERY_SETS[DOC.id]
+
     base = args.base_url.rstrip("/")
     fmts = [f.strip() for f in args.formats.split(",") if f.strip()]
     for f in fmts:
@@ -326,7 +338,7 @@ def main():
 
     run_id = uuid.uuid4().hex[:8]
     started = datetime.now(timezone.utc)
-    print(c(f"\n=== RAG eval  (run {run_id})  {base}  ===", BOLD))
+    print(c(f"\n=== RAG eval  [{DOC.id}]  (run {run_id})  {base}  ===", BOLD))
 
     # --- auth --- token > email/password login > dev-token bypass (default)
     token = args.token
@@ -350,7 +362,8 @@ def main():
         print(f"rag health: vectors={health.get('vector_store', health.get('vectors'))} "
               f"llm_available={llm_available}")
         if not llm_available:
-            print(c("  ! LLM unavailable — synthesis queries (Q2,Q4,Q5,Q6,Q7,Q8) will SKIP. "
+            gen_ids = ", ".join(q["id"] for q in QUERIES if q["generate"])
+            print(c(f"  ! LLM unavailable — synthesis queries ({gen_ids}) will SKIP. "
                     "Start Ollama with the configured model to test synthesis.", YEL))
     except ApiError as e:
         print(c(f"  ! could not read /rag/health ({e}); assuming LLM available.", YEL))
@@ -464,8 +477,9 @@ def write_report(run_id, started, base, fmts, per_format, combined, llm_availabl
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     ts = started.strftime("%Y%m%d_%H%M%S")
     lines = []
-    lines.append(f"# RAG eval — SOP-QA-014 — run {run_id}")
+    lines.append(f"# RAG eval — {DOC.id} — run {run_id}")
     lines.append("")
+    lines.append(f"- **Document:** {DOC.title} (`{DOC.basename}`)")
     lines.append(f"- **When:** {started.isoformat()}")
     lines.append(f"- **Endpoint:** {base}")
     lines.append(f"- **Formats:** {', '.join(fmts)}")

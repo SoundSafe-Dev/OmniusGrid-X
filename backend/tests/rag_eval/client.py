@@ -19,16 +19,11 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-DOCS_DIR = Path(__file__).resolve().parent.parent / "docs"
-BASENAME = "SOP-QA-014_Allergen_Control_Sanitation"
-
-FORMATS = {
-    "pdf":  (f"{BASENAME}.pdf",  "application/pdf"),
-    "docx": (f"{BASENAME}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
-    "md":   (f"{BASENAME}.md",   "text/markdown"),
-    "txt":  (f"{BASENAME}.txt",  "text/plain"),
-    "csv":  (f"{BASENAME}.csv",  "text/csv"),
-}
+# The corpus registry (documents x formats) is the single source of truth.
+# DOCS_DIR / BASENAME / FORMATS are re-exported here for back-compat with callers
+# that predate corpus.py (the standalone runner, lifecycle/isolation tests);
+# FORMATS is the single-doc view of the PRIMARY document.
+from corpus import DOCS_DIR, BASENAME, FORMATS  # noqa: F401,E402
 
 
 class ApiError(Exception):
