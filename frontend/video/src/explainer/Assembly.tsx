@@ -167,13 +167,11 @@ const ClipPiece: React.FC<{ piece: Piece }> = ({ piece }) => {
   // full source plays (no geometry skip at either end).
   let trimBefore = Math.round((piece.in ?? 0) * FPS);
   let playbackRate = piece.rate ?? 1;
-  let whip = 0; // 0..1 intensity of the whip mid-bridge
   if (piece.ease) {
     const map = BRIDGE_MAPS[piece.src];
     const srcSec = map[Math.min(map.length - 1, frame)];
     trimBefore = Math.max(0, Math.round(srcSec * FPS) - frame);
     playbackRate = 1;
-    whip = Math.pow(Math.sin(Math.PI * Math.min(1, frame / (map.length - 1))), 2.5);
   }
   return (
     <AbsoluteFill style={{ opacity: fadeIn, background: '#0a0a0a' }}>
@@ -182,13 +180,7 @@ const ClipPiece: React.FC<{ piece: Piece }> = ({ piece }) => {
         trimBefore={trimBefore}
         playbackRate={playbackRate}
         muted
-        style={{
-          width: W,
-          height: H,
-          objectFit: 'cover',
-          filter: whip > 0.08 ? `blur(${(whip * 13).toFixed(1)}px)` : undefined,
-          transform: whip > 0.08 ? `scale(${(1 + whip * 0.05).toFixed(3)})` : undefined,
-        }}
+        style={{ width: W, height: H, objectFit: 'cover' }}
       />
     </AbsoluteFill>
   );
