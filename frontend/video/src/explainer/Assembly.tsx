@@ -40,8 +40,11 @@ type Piece = {
   /** seconds trimmed off the source head/tail (at source speed) */
   in?: number;
   out?: number;
-  /** playback rate; bridges run ~3x, footage 1x */
+  /** playback rate; footage 1x */
   rate?: number;
+  /** eased bridge: plays FULL source with a 1x->peak->1x speed curve so
+   *  both joints match the neighbouring clips in speed and geometry */
+  ease?: boolean;
   /** treatment applied at the CUT INTO this piece */
   joint?: Joint;
 };
@@ -51,37 +54,39 @@ type Piece = {
 // the wipe on the joint into the NEXT piece hides the morphiest frames.
 const TIMELINE: Piece[] = [
   { src: 'clip-01.mp4' },
-  { src: 'bridge-a.mp4', in: 0.2, out: 0.7, rate: 2 },
-  { src: 'clip-02.mp4', in: 0.25, joint: { wipe: 'up' } },
-  { src: 'bridge-b.mp4', in: 0.2, out: 0.7, rate: 2 },
-  { src: 'clip-03.mp4', in: 0.25, joint: { wipe: 'down' } },
+  { src: 'bridge-a.mp4', ease: true },
+  { src: 'clip-02.mp4', joint: { wipe: 'up' } },
+  { src: 'bridge-b.mp4', ease: true },
+  { src: 'clip-03.mp4', joint: { wipe: 'down' } },
   { src: 'clip-04.mp4' }, // hard cut on VO beat "opportunity shows up"
   { src: 'clip-05.mp4', joint: { dissolve: 12 } }, // growth hides... buried
-  { src: 'bridge-c.mp4', in: 0.2, out: 0.7, rate: 2 },
-  { src: 'clip-06.mp4', in: 0.25, joint: { wipe: 'up' } },
-  { src: 'bridge-d.mp4', in: 0.2, out: 0.7, rate: 2 },
-  { src: 'clip-07.mp4', in: 0.25, joint: { wipe: 'down' } },
+  { src: 'bridge-c.mp4', ease: true },
+  { src: 'clip-06.mp4', joint: { wipe: 'up' } },
+  { src: 'bridge-d.mp4', ease: true },
+  { src: 'clip-07.mp4', joint: { wipe: 'down' } },
   { src: 'clip-08a.mp4' }, // THE hard cut - masked by line motion
   { src: 'clip-08b.mp4', joint: { wipe: 'right' } },
   { src: 'clip-08c.mp4', joint: { wipe: 'right' } },
   { src: 'clip-09.mp4', joint: { wipe: 'right' } },
-  { src: 'bridge-e.mp4', in: 0.2, out: 0.7, rate: 2 },
-  { src: 'clip-10.mp4', in: 0.25, joint: { wipe: 'up' } },
-  { src: 'bridge-f.mp4', in: 0.2, out: 0.7, rate: 2 },
-  { src: 'clip-11.mp4', in: 0.25, joint: { wipe: 'up' } },
-  { src: 'bridge-g.mp4', in: 0.2, out: 0.7, rate: 2 },
-  { src: 'clip-12.mp4', in: 0.25, joint: { wipe: 'down' } },
+  { src: 'bridge-e.mp4', ease: true },
+  { src: 'clip-10.mp4', joint: { wipe: 'up' } },
+  { src: 'bridge-f.mp4', ease: true },
+  { src: 'clip-11.mp4', joint: { wipe: 'up' } },
+  { src: 'bridge-g.mp4', ease: true },
+  { src: 'clip-12.mp4', joint: { wipe: 'down' } },
 ];
 
 const SRC_LEN = 5.04; // seconds per Higgsfield clip
-const END_CARD_FRAMES = Math.round(6.8 * FPS);
+const END_CARD_FRAMES = Math.round(5.05 * FPS);
 
 /** VO file: drop the ElevenLabs render at public/explainer/vo.mp3 and set true. */
 const HAS_VO = true;
 /** Music bed: public/explainer/music.mp3 (Pixel Lift), ducked under the VO. */
 const HAS_MUSIC = true;
 
+const BRIDGE_COMP_SEC = 2.07; // eased bridges: full 5.04s source in 2.07s
 const pieceFrames = (p: Piece) => {
+  if (p.ease) return Math.round(BRIDGE_COMP_SEC * FPS);
   const usable = SRC_LEN - (p.in ?? 0) - (p.out ?? 0);
   return Math.round((usable / (p.rate ?? 1)) * FPS);
 };
@@ -119,7 +124,7 @@ const CAPTIONS: Caption[] = [
   { at: 14.2, dur: 3.2, text: 'NOT BROKEN. JUST BLIND.', hi: 'BLIND' },                  // "isn't broken" @14.0
   { at: 18.0, dur: 4.6, text: '12,000 UNITS. BY FRIDAY. CAN YOU SAY YES?', hi: 'CAN YOU SAY YES?' }, // "12,000" @17.0, order clip @18.8
   { at: 23.2, dur: 4.6, text: 'GROWTH HIDES IN YOUR DATA.', hi: 'IN YOUR DATA' },        // "growth hides" @23.2, buried clip @23.4
-  { at: 30.6, dur: 3.6, text: '', wordmark: true },                                      // 'digs it out' @30.1, floor plan @30.5
+  { at: 31.1, dur: 3.6, text: '', wordmark: true },                                      // floor plan lands @31.0
   { at: 66.3, dur: 4.4, text: 'MEETINGS, REPLACED BY A CONVERSATION WITH YOUR DATA.', hi: 'CONVERSATION' }, // @66.3
   { at: 74.2, dur: 3.8, text: 'WHEREVER DATA PILES UP, SO DOES OPPORTUNITY.', hi: 'OPPORTUNITY' }, // @74.3
   { at: 79.2, dur: 3.8, text: "SHIPPED FRIDAY. THE NEXT ONE'S ALREADY INBOUND.", hi: 'ALREADY INBOUND' }, // "shipped" @79.3
@@ -128,7 +133,7 @@ const CAPTIONS: Caption[] = [
 /** The question beat: the dashboard's actual Correlation AI composer,
  *  typed live. Mirrors CorrelationAIPane's input + Send button. */
 const CHAT = {
-  at: 37.8,
+  at: 38.2,
   dur: 4.2,
   text: 'Can we take the 12,000-unit rush order and still ship Friday?',
   typeSeconds: 2.6,
@@ -143,12 +148,25 @@ const ClipPiece: React.FC<{ piece: Piece }> = ({ piece }) => {
         extrapolateRight: 'clamp',
       })
     : 1;
+  // eased bridges: remap comp time -> source time along a smooth bell so the
+  // joint speeds match the neighbouring 1x clips (no velocity snap) and the
+  // full source plays (no geometry skip at either end).
+  let trimBefore = Math.round((piece.in ?? 0) * FPS);
+  let playbackRate = piece.rate ?? 1;
+  if (piece.ease) {
+    const N = Math.round(BRIDGE_COMP_SEC * FPS);
+    const u = Math.min(1, frame / N);
+    const B = 2 * (SRC_LEN / BRIDGE_COMP_SEC - 1);
+    const srcSec = BRIDGE_COMP_SEC * (u + B * (u / 2 - Math.sin(2 * Math.PI * u) / (4 * Math.PI)));
+    trimBefore = Math.max(0, Math.round(srcSec * FPS) - frame);
+    playbackRate = 1;
+  }
   return (
     <AbsoluteFill style={{ opacity: fadeIn, background: '#0a0a0a' }}>
       <OffthreadVideo
         src={staticFile(`explainer/${piece.src}`)}
-        trimBefore={Math.round((piece.in ?? 0) * FPS)}
-        playbackRate={piece.rate ?? 1}
+        trimBefore={trimBefore}
+        playbackRate={playbackRate}
         muted
         style={{ width: W, height: H, objectFit: 'cover' }}
       />
