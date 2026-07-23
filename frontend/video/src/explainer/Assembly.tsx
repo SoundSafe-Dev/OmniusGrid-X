@@ -723,7 +723,7 @@ export const ExplainerAssembly: React.FC = () => {
               // ducked bed under speech; brief lift at the turn (28-29s
               // speech gap); swell after the sign-off; fade at the tail
               [0, 830, 845, 880, 2600, 2640, 2672, 2686],
-              [0.13, 0.13, 0.2, 0.13, 0.13, 0.3, 0.3, 0],
+              [0.35, 0.35, 0.55, 0.35, 0.35, 0.7, 0.7, 0],
               { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }
             )
           }
