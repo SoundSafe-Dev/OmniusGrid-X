@@ -112,22 +112,22 @@ type Caption = {
 };
 
 const CAPTIONS: Caption[] = [
-  { at: 2.0, dur: 3.4, text: 'MADE IN A DAY. READ IN A YEAR.', hi: 'READ IN A YEAR' },
-  { at: 9.3, dur: 3.6, text: 'THREE DEPARTMENTS. THREE VERSIONS OF THE TRUTH.', hi: 'THREE VERSIONS' },
-  { at: 16.6, dur: 3.4, text: 'NOT BROKEN. JUST BLIND.', hi: 'BLIND' },
-  { at: 21.0, dur: 4.0, text: '12,000 UNITS. BY FRIDAY. CAN YOU SAY YES?', hi: 'CAN YOU SAY YES?' },
-  { at: 29.3, dur: 4.0, text: 'GROWTH HIDES IN YOUR DATA.', hi: 'IN YOUR DATA' },
-  { at: 34.4, dur: 3.2, text: '', wordmark: true },
-  { at: 66.9, dur: 4.0, text: 'MEETINGS, REPLACED BY A CONVERSATION WITH YOUR DATA.', hi: 'CONVERSATION' },
-  { at: 74.2, dur: 3.6, text: 'WHEREVER DATA PILES UP, SO DOES OPPORTUNITY.', hi: 'OPPORTUNITY' },
-  { at: 79.8, dur: 3.6, text: "SHIPPED FRIDAY. THE NEXT ONE'S ALREADY INBOUND.", hi: 'ALREADY INBOUND' },
+  { at: 1.6, dur: 3.4, text: 'MADE IN A DAY. READ IN A YEAR.', hi: 'READ IN A YEAR' },   // "data in a day" @1.2
+  { at: 10.0, dur: 4.2, text: 'THREE DEPARTMENTS. THREE VERSIONS OF THE TRUTH.', hi: 'THREE VERSIONS' }, // spoken @10.1
+  { at: 14.2, dur: 3.2, text: 'NOT BROKEN. JUST BLIND.', hi: 'BLIND' },                  // "isn't broken" @14.0
+  { at: 17.4, dur: 4.8, text: '12,000 UNITS. BY FRIDAY. CAN YOU SAY YES?', hi: 'CAN YOU SAY YES?' }, // "12,000" @17.0
+  { at: 22.9, dur: 4.6, text: 'GROWTH HIDES IN YOUR DATA.', hi: 'IN YOUR DATA' },        // "growth hides" @23.2
+  { at: 32.6, dur: 3.6, text: '', wordmark: true },                                      // floor plan lands @32.5
+  { at: 66.3, dur: 4.4, text: 'MEETINGS, REPLACED BY A CONVERSATION WITH YOUR DATA.', hi: 'CONVERSATION' }, // @66.3
+  { at: 74.2, dur: 3.8, text: 'WHEREVER DATA PILES UP, SO DOES OPPORTUNITY.', hi: 'OPPORTUNITY' }, // @74.3
+  { at: 79.2, dur: 3.8, text: "SHIPPED FRIDAY. THE NEXT ONE'S ALREADY INBOUND.", hi: 'ALREADY INBOUND' }, // "shipped" @79.3
 ];
 
 /** The question beat: the dashboard's actual Correlation AI composer,
  *  typed live. Mirrors CorrelationAIPane's input + Send button. */
 const CHAT = {
-  at: 39.4,
-  dur: 4.6,
+  at: 38.2,
+  dur: 4.4,
   text: 'Can we take the 12,000-unit rush order and still ship Friday?',
   typeSeconds: 2.6,
 };
@@ -297,17 +297,17 @@ const ChatBar: React.FC = () => {
  *  answers, then lands the scored verdict + attached actions.
  *  Component metrics follow BRAND.md sec.6b (chips, score badge). */
 const ANSWER = {
-  at: 42.6,
-  out: 66.8,
+  at: 39.6,
+  out: 65.9,
   rows: [
-    { at: 43.0, chip: 'XLSX', tone: 'blue' as const, src: 'order-book_aug.xlsx', bold: '3,000 units/day', rest: " — Line 2's sweet spot" },
-    { at: 49.2, chip: 'PDF', tone: 'blue' as const, src: 'pm-log_line2.pdf', bold: 'serviced last Tuesday', rest: ' — nothing due this week' },
-    { at: 52.6, chip: 'YMS', tone: 'neutral' as const, src: 'TR-2214', bold: 'materials for the full run', rest: ' — checked in Tue' },
-    { at: 57.1, chip: '● LIVE', tone: 'green' as const, src: 'Lines 1–3', bold: '58% load', rest: ' · vibration clean · headroom to spare' },
+    { at: 40.3, chip: 'XLSX', tone: 'blue' as const, src: 'order-book_aug.xlsx', bold: '3,000 units/day', rest: " — Line 2's sweet spot" },
+    { at: 44.5, chip: 'PDF', tone: 'blue' as const, src: 'pm-log_line2.pdf', bold: 'serviced last Tuesday', rest: ' — nothing due this week' },
+    { at: 47.9, chip: 'YMS', tone: 'neutral' as const, src: 'TR-2214', bold: 'materials for the full run', rest: ' — checked in Tue' },
+    { at: 52.1, chip: '● LIVE', tone: 'green' as const, src: 'Lines 1–3', bold: '58% load', rest: ' · vibration clean · headroom to spare' },
   ],
-  verdictAt: 60.0,
-  actionsAt: 62.8,
-  kanbanAt: 64.3,
+  verdictAt: 58.6,
+  actionsAt: 62.4,
+  kanbanAt: 64.8,
 };
 
 const CHIP_TONES = {
