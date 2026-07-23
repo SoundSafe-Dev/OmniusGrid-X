@@ -237,6 +237,10 @@ class Settings(BaseSettings):
     # cap stops a pathological document from exploding embeddings/Qdrant/memory.
     RAG_MAX_UPLOAD_BYTES: int = 50 * 1024 * 1024  # 50 MiB, mirrors ingress
     RAG_MAX_CHUNKS_PER_DOC: int = 2000  # hard cap; larger docs are truncated + flagged
+    # Per-citation snippet preview length. A citation shows a window of its source
+    # chunk; too short and the cited fact falls outside the preview (e.g. a long
+    # table row or an unstructured .txt chunk whose match sits past the cutoff).
+    RAG_CITATION_SNIPPET_CHARS: int = 600
     RAG_TABLE_ROWS_PER_BLOCK: int = 1  # table rows per citable block (1 = one row/block)
 
     # Retrieval (query path). Hybrid search returns RAG_RETRIEVE_LIMIT fused

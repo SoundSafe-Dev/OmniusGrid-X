@@ -188,7 +188,7 @@ class Retriever:
                     s3_key=payload.get("s3_key"),
                     source=_source_meta(payload),
                     score=round(float(score), 4),
-                    snippet=text[:240],
+                    snippet=text[: settings.RAG_CITATION_SNIPPET_CHARS],
                 )
             )
         return "\n\n".join(blocks), citations
