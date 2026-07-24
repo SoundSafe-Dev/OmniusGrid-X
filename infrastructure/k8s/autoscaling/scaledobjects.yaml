@@ -1,0 +1,109 @@
+# KEDA lag-based autoscaling for the Kafka/Redpanda consumer workers.
+#
+# The base Deployments run a FIXED replicas: 1 — a telemetry burst or a backlog
+# of scheduled exports just queues up behind one pod. These KEDA ScaledObjects
+# scale each worker on its consumer-group LAG (unprocessed messages) instead of
+# CPU, which is the signal that actually reflects queue pressure for an I/O-bound
+# consumer. KEDA creates/owns an HPA per ScaledObject and takes over the replica
+# count from the Deployment.
+#
+# maxReplicaCount is capped at (or below) each topic's partition count: extra
+# consumers past the partition count sit idle, so scaling beyond it wastes pods.
+# Tune these to the partition counts you provision on Redpanda.
+#
+# The OTA rollout worker is intentionally NOT here — it is a stateful DB/orchestrator
+# loop, not a lag-scalable Kafka consumer.
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: ingestion-worker
+  namespace: omniusgrid
+  labels:
+    app.kubernetes.io/name: ingestion-worker
+    app.kubernetes.io/part-of: omniusgrid
+spec:
+  scaleTargetRef:
+    name: ingestion-worker
+  # Real-time telemetry: never scale to zero (cold start would drop the live
+  # stream behind), keep a warm floor and burst up on lag.
+  minReplicaCount: 2
+  maxReplicaCount: 12
+  pollingInterval: 15        # seconds between lag checks
+  cooldownPeriod: 120        # seconds of no activity before scaling down
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 300
+          policies:
+            - type: Percent
+              value: 25
+              periodSeconds: 60
+        scaleUp:
+          stabilizationWindowSeconds: 30
+          policies:
+            - type: Percent
+              value: 100
+              periodSeconds: 30
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: redpanda:9092
+        consumerGroup: opsgrid-ingestion-workers
+        # topic omitted → KEDA sums lag across ALL topics the group consumes
+        # (the ingestion worker subscribes to a pattern of telemetry topics).
+        lagThreshold: "2000"
+        offsetResetPolicy: latest
+        allowIdleConsumers: "false"
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: export-worker
+  namespace: omniusgrid
+  labels:
+    app.kubernetes.io/name: export-worker
+    app.kubernetes.io/part-of: omniusgrid
+spec:
+  scaleTargetRef:
+    name: export-worker
+  # Scheduled exports are bursty and latency-tolerant → scale to zero when idle,
+  # spin up on the first queued run.
+  minReplicaCount: 0
+  maxReplicaCount: 8
+  pollingInterval: 20
+  cooldownPeriod: 180
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: redpanda:9092
+        consumerGroup: omniusgrid-export-delivery
+        topic: opsgrid.exports
+        lagThreshold: "5"
+        offsetResetPolicy: latest
+        allowIdleConsumers: "false"
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: compliance-reports-worker
+  namespace: omniusgrid
+  labels:
+    app.kubernetes.io/name: compliance-reports-worker
+    app.kubernetes.io/part-of: omniusgrid
+spec:
+  scaleTargetRef:
+    name: compliance-reports-worker
+  minReplicaCount: 0
+  maxReplicaCount: 6
+  pollingInterval: 20
+  cooldownPeriod: 180
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: redpanda:9092
+        consumerGroup: omniusgrid-compliance-reports
+        topic: opsgrid.compliance-reports
+        lagThreshold: "5"
+        offsetResetPolicy: latest
+        allowIdleConsumers: "false"
