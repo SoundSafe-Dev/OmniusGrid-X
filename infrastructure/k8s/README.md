@@ -41,6 +41,12 @@ applied by CI and drift from the base names.
 > otel-collector + Jaeger (tracing) remain in `base/`. This is the stack that
 > makes backup-failure and migration-failure alerts actually fire.
 
+> **Worker autoscaling.** The base worker Deployments are fixed at `replicas: 1`.
+> `autoscaling/` adds KEDA `ScaledObject`s that scale ingestion / export /
+> compliance-reports workers on Redpanda consumer-group **lag** (export +
+> compliance scale to zero when idle; ingestion keeps a warm floor). Opt-in —
+> needs the KEDA operator. See [`autoscaling/README.md`](autoscaling/README.md).
+
 > **Object storage.** Generated export/compliance artifacts go to SeaweedFS
 > (`base/object-store.yaml`, S3-compatible) instead of a pod-local `emptyDir`:
 > the worker writes on its pod and the backend API serves the download from
