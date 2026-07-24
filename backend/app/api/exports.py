@@ -60,6 +60,7 @@ from app.utils.signed_urls import (
     SignedTokenError,
     verify_signed_download_token,
 )
+from app.services.export_store import get_export_store, export_object_key
 from app.services.export_processor import (
     EXPORT_DEFINITIONS,
     ExportError,
@@ -87,12 +88,27 @@ public_router = APIRouter()
 INVALID_LINK_DETAIL = "Invalid or expired download link"
 
 
+_DOWNLOAD_SECURITY_HEADERS = {
+    "Cache-Control": "private, no-store",
+    "Pragma": "no-cache",
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+}
+
+
 def _secure_file_response(path, media_type: str, filename: str) -> FileResponse:
     response = FileResponse(path, media_type=media_type, filename=filename)
-    response.headers["Cache-Control"] = "private, no-store"
-    response.headers["Pragma"] = "no-cache"
-    response.headers["Referrer-Policy"] = "no-referrer"
-    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers.update(_DOWNLOAD_SECURITY_HEADERS)
+    return response
+
+
+def _secure_streaming_response(stream, media_type: str, filename: str) -> StreamingResponse:
+    """Stream a download straight from object storage with the same hardening as
+    the local file response (used when EXPORT_USE_S3 is on and the artifact lives
+    in S3, not on this pod's disk)."""
+    response = StreamingResponse(stream, media_type=media_type)
+    response.headers.update(_DOWNLOAD_SECURITY_HEADERS)
+    response.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
     return response
 
 
@@ -897,11 +913,20 @@ async def download_export_job(job_id: str, current_user: User = Depends(get_curr
     if job.get("status") != "completed":
         raise HTTPException(status_code=409, detail=f"Export is {job.get('status')}, not ready")
     path = job.get("file_path")
-    if not path or not os.path.exists(path):
+    if not path:
         raise HTTPException(status_code=410, detail="Export file no longer available")
-    return FileResponse(
-        path, media_type="text/csv", filename=job.get("filename") or "export.csv"
-    )
+    filename = job.get("filename") or "export.csv"
+    # These async jobs are telemetry CSVs. When object storage is on, the file is
+    # in S3 (a different pod generated it), so stream it from there.
+    store = get_export_store()
+    if store.enabled:
+        key = export_object_key(str(job_id), filename.rsplit(".", 1)[-1] or "csv")
+        if await store.exists(key):
+            return _secure_streaming_response(store.download_stream(key), "text/csv", filename)
+        raise HTTPException(status_code=410, detail="Export file no longer available")
+    if not os.path.exists(path):
+        raise HTTPException(status_code=410, detail="Export file no longer available")
+    return FileResponse(path, media_type="text/csv", filename=filename)
 
 
 @router.get("/deliveries", summary="List scheduled export delivery jobs")
@@ -1022,50 +1047,47 @@ async def download_scheduled_export(
             token_id=verified.token_id,
         )
         raise HTTPException(status_code=410, detail="Export file no longer available")
-    try:
-        absolute = _resolve_export_delivery_path(job.file_path, job_id)
-    except ValueError:
-        await audit_export_delivery_download(
-            request=request,
-            succeeded=False,
-            job_id=job_id,
-            organization_id=org_id,
-            reason="unsafe_path",
-            token_version=verified.token_version,
-            purpose=verified.purpose,
-            token_id=verified.token_id,
-        )
-        raise HTTPException(status_code=410, detail="Export file no longer available")
-    if not absolute.is_file():
-        await audit_export_delivery_download(
-            request=request,
-            succeeded=False,
-            job_id=job_id,
-            organization_id=org_id,
-            reason="file_missing",
-            token_version=verified.token_version,
-            purpose=verified.purpose,
-            token_id=verified.token_id,
-        )
-        raise HTTPException(status_code=410, detail="Export file no longer available")
     media_types = {
         "csv": "text/csv",
         "xlsx": XLSX_MEDIA_TYPE,
         "pdf": "application/pdf",
     }
-    extension = (job.filename or absolute.name).rsplit(".", 1)[-1]
-    await audit_export_delivery_download(
-        request=request,
-        succeeded=True,
-        job_id=job_id,
-        organization_id=org_id,
-        reason="ok",
-        token_version=verified.token_version,
-        purpose=verified.purpose,
-        token_id=verified.token_id,
-    )
-    return _secure_file_response(
-        absolute,
-        media_types.get(extension, "application/octet-stream"),
-        job.filename or "report",
-    )
+    extension = (job.filename or job.file_path or "").rsplit(".", 1)[-1] or "csv"
+    media_type = media_types.get(extension, "application/octet-stream")
+
+    async def _audit(succeeded: bool, reason: str):
+        await audit_export_delivery_download(
+            request=request,
+            succeeded=succeeded,
+            job_id=job_id,
+            organization_id=org_id,
+            reason=reason,
+            token_version=verified.token_version,
+            purpose=verified.purpose,
+            token_id=verified.token_id,
+        )
+
+    # Object-store path: the worker that generated this ran on a different pod,
+    # so the artifact is in S3, not on this API pod's disk. Stream it from there.
+    store = get_export_store()
+    if store.enabled:
+        key = export_object_key(str(job_id), extension)
+        if not await store.exists(key):
+            await _audit(False, "file_missing")
+            raise HTTPException(status_code=410, detail="Export file no longer available")
+        await _audit(True, "ok")
+        return _secure_streaming_response(
+            store.download_stream(key), media_type, job.filename or "report"
+        )
+
+    # Local-disk path (single-node / EXPORT_USE_S3 off).
+    try:
+        absolute = _resolve_export_delivery_path(job.file_path, job_id)
+    except ValueError:
+        await _audit(False, "unsafe_path")
+        raise HTTPException(status_code=410, detail="Export file no longer available")
+    if not absolute.is_file():
+        await _audit(False, "file_missing")
+        raise HTTPException(status_code=410, detail="Export file no longer available")
+    await _audit(True, "ok")
+    return _secure_file_response(absolute, media_type, job.filename or "report")

@@ -58,11 +58,27 @@ spec:
                 secretKeyRef:
                   name: signed-url-secret
                   key: secret
-            # NOTE: emptyDir — generated reports are lost on pod restart and
-            # are NOT visible to the backend API pods. Production needs a
-            # shared RWX PVC (or object storage) here and on the backend.
+            # Local path is a per-pod scratch fast-path only. The durable, shared
+            # copy goes to S3 (below) so the backend API — on another pod — can
+            # serve the download. The emptyDir volume is therefore just scratch.
             - name: EXPORT_STORAGE_PATH
               value: "/var/lib/omniusgrid/exports"
+            - name: EXPORT_USE_S3
+              value: "true"
+            - name: S3_ENDPOINT_URL
+              value: "http://seaweedfs:8333"
+            - name: S3_EXPORT_BUCKET
+              value: "omniusgrid-exports"
+            - name: S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: s3-credentials
+                  key: access-key
+            - name: S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: s3-credentials
+                  key: secret-key
             - name: LOG_LEVEL
               value: "info"
             - name: PYTHONDONTWRITEBYTECODE
