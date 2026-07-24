@@ -68,11 +68,12 @@ CloudNativePG creates these Services automatically:
 3. Repoint the app: set `DATABASE_URL` host to `omniusgrid-db-pooler-rw` (or
    `omniusgrid-db-rw` without the pooler).
 4. Remove `timescaledb-statefulset.yaml` from `base/kustomization.yaml`.
-5. **NetworkPolicy:** the backend/worker egress policies in `base/ingress.yaml`
-   open `:5432` to the `app.kubernetes.io/name: timescaledb` pod, not the CNPG
-   pods. Add `cnpg.io/cluster: omniusgrid-db` to those egress selectors (or relabel)
-   so the app can reach the HA database — otherwise it's denied under
-   `default-deny-all`. See [`../NETWORK_SECURITY.md`](../NETWORK_SECURITY.md).
+5. **NetworkPolicy:** nothing to do — the DB-client egress policies in
+   `base/ingress.yaml` already list `cnpg.io/cluster: omniusgrid-db` alongside
+   `timescaledb` on `:5432`, and the Cluster's `spec.inheritedMetadata` stamps the
+   `part-of`/`managed-by` labels those selectors match onto the operator-created
+   pods. Both are asserted by the `k8s-netpol` CI gate. See
+   [`../NETWORK_SECURITY.md`](../NETWORK_SECURITY.md).
 6. Scale writers back up; verify replication (`kubectl cnpg status omniusgrid-db`).
 
 ## Failover & recovery

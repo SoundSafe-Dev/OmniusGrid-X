@@ -1,23 +1,21 @@
-# Probe pods for the NetworkPolicy enforcement test. They carry the REAL workload
-# labels so the REAL base NetworkPolicies select them, then the CI job asserts
-# allowed vs denied connectivity between them under Calico.
+# Probe pods for the NetworkPolicy enforcement test. Each carries the REAL labels
+# of the workload it stands in for, so the REAL policies select it; the test then
+# asserts allowed vs denied connectivity between them under Calico.
 #
-#   np-seaweedfs-stub   (seaweedfs)        listens on 8333; `allow-seaweedfs-ingress`
-#                                          selects it.
-#   np-export-client    (export-worker)    MUST reach seaweedfs:8333 — this is the
-#                                          S3 export-upload path (allow-export-worker-egress
-#                                          + allow-seaweedfs-ingress). Regression guard.
-#   np-ingestion-client (ingestion-worker) MUST NOT reach seaweedfs:8333 — its egress
-#                                          omits SeaweedFS and the SeaweedFS ingress
-#                                          omits it. Proves policies actually DENY.
+# IMPORTANT: every generated podSelector matches on THREE labels — kustomize's
+# commonLabels bake `part-of` and `managed-by` into all of them. A probe pod
+# missing any of the three would not be selected by the real policy, and the
+# assertion would be vacuous (reachable simply because nothing applied).
 #
-# IMPORTANT: base/kustomization.yaml sets commonLabels (part-of + managed-by), so
-# every generated podSelector matches on all THREE labels. These pods must carry
-# all three or the real policies would not select them and the test would be
-# vacuous (everything "allowed" because nothing applies).
+# Servers (agnhost netexec = HTTP listener) and clients (agnhost pause + the
+# `connect` dialer) are split so each direction is asserted explicitly.
 #
-# agnhost is the upstream Kubernetes e2e network-test image: `netexec` serves HTTP,
-# `connect` is a scriptable TCP dialer with a meaningful exit code.
+# NOTE: the CNPG probe deliberately carries part-of/managed-by IN ADDITION to
+# cnpg.io/cluster — mirroring `spec.inheritedMetadata` on the Cluster. If that
+# inheritance is ever dropped, the real pods lose those labels, the policies stop
+# selecting them, and the database silently falls under default-deny.
+---
+# ---------- servers ----------
 apiVersion: v1
 kind: Pod
 metadata:
@@ -32,9 +30,38 @@ spec:
     - name: server
       image: registry.k8s.io/e2e-test-images/agnhost:2.47
       args: ["netexec", "--http-port=8333"]
-      ports:
-        - containerPort: 8333
 ---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: np-redpanda-stub
+  namespace: omniusgrid
+  labels:
+    app.kubernetes.io/name: redpanda
+    app.kubernetes.io/part-of: omniusgrid
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  containers:
+    - name: server
+      image: registry.k8s.io/e2e-test-images/agnhost:2.47
+      args: ["netexec", "--http-port=9092"]
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: np-cnpg-stub
+  namespace: omniusgrid
+  labels:
+    cnpg.io/cluster: omniusgrid-db
+    app.kubernetes.io/part-of: omniusgrid
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  containers:
+    - name: server
+      image: registry.k8s.io/e2e-test-images/agnhost:2.47
+      args: ["netexec", "--http-port=5432"]
+---
+# ---------- clients (in-namespace) ----------
 apiVersion: v1
 kind: Pod
 metadata:
@@ -53,12 +80,60 @@ spec:
 apiVersion: v1
 kind: Pod
 metadata:
+  name: np-backend-client
+  namespace: omniusgrid
+  labels:
+    app.kubernetes.io/name: backend
+    app.kubernetes.io/part-of: omniusgrid
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  containers:
+    - name: client
+      image: registry.k8s.io/e2e-test-images/agnhost:2.47
+      args: ["pause"]
+---
+apiVersion: v1
+kind: Pod
+metadata:
   name: np-ingestion-client
   namespace: omniusgrid
   labels:
     app.kubernetes.io/name: ingestion-worker
     app.kubernetes.io/part-of: omniusgrid
     app.kubernetes.io/managed-by: kustomize
+spec:
+  containers:
+    - name: client
+      image: registry.k8s.io/e2e-test-images/agnhost:2.47
+      args: ["pause"]
+---
+# ---------- cross-namespace client (KEDA, finding #6) ----------
+# The KEDA scalers live in the `keda` namespace and read consumer-group lag from
+# Redpanda:9092. allow-redpanda-ingress permits this via a namespaceSelector on
+# kubernetes.io/metadata.name (auto-set by Kubernetes on every namespace).
+apiVersion: v1
+kind: Pod
+metadata:
+  name: np-keda-client
+  namespace: keda
+  labels:
+    app: keda-operator
+spec:
+  containers:
+    - name: client
+      image: registry.k8s.io/e2e-test-images/agnhost:2.47
+      args: ["pause"]
+---
+# ---------- cross-namespace negative control ----------
+# An identical pod in an unrelated namespace MUST be denied — proving the KEDA
+# allowance is scoped to that namespace and not an accidental allow-all.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: np-outsider-client
+  namespace: netpol-outsider
+  labels:
+    app: outsider
 spec:
   containers:
     - name: client

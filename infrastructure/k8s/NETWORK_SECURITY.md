@@ -28,23 +28,52 @@ traffic that `default-deny-all` blocks. Findings and fixes:
 
 | Job | CNI | What it proves |
 |-----|-----|----------------|
-| `k8s-manifests` | — | Every kustomization builds; policies are schema-valid (blocking) |
-| `k8s-smoke` | kindnet | Manifests apply to a real API server; operator CRs pass admission (blocking) |
-| `k8s-netpol` | **Calico** | Policies are actually **enforced** — asserts `export-worker → seaweedfs:8333` is reachable (the S3 path, finding #1) and `ingestion-worker → seaweedfs:8333` is blocked (proves enforcement is real, not vacuous) |
+| `k8s-manifests` | — | Every kustomization builds; policies are schema-valid |
+| `k8s-smoke` | kindnet | Manifests apply to a real API server; operator CRs pass admission |
+| `netpol-simulate` | — | The enforcement matrix evaluated against the policy YAML — same expectations as below, in seconds, no cluster |
+| `k8s-netpol` | **Calico** | Policies are actually **enforced** — the matrix asserted with real TCP connections |
 
-`k8s-netpol` exists because finding #1 was invisible to every other gate: the
-policies were valid and applied cleanly, they just denied traffic the app needed.
-Probe pods carry the real workload labels (including the `commonLabels`
-`part-of`/`managed-by` that kustomize bakes into every podSelector) so the real
-policies select them.
+All four are blocking. `k8s-netpol` exists because finding #1 was invisible to
+every other gate: the policies were valid and applied cleanly, they just denied
+traffic the app needed. `netpol-simulate` is the fast feedback loop (a broken
+path fails in ~20s instead of after a 5-minute kind+Calico spin-up); `k8s-netpol`
+remains the source of truth, since only a real CNI can confirm the model.
+
+### The enforcement matrix
+
+| Case | Expect | Guards |
+|------|--------|--------|
+| `export-worker → seaweedfs:8333` | ALLOW | S3 export upload (finding #1) |
+| `backend → seaweedfs:8333` | ALLOW | S3 export download (finding #1) |
+| `cnpg → seaweedfs:8333` | ALLOW | WAL archiving to object store (finding #5) |
+| `backend → cnpg:5432` | ALLOW | App → HA database (finding #5) |
+| `export-worker → redpanda:9092` | ALLOW | Worker consumes its topic |
+| `keda → redpanda:9092` | ALLOW | Consumer-group lag reads (finding #6), cross-namespace |
+| `ingestion-worker → seaweedfs:8333` | DENY | No rule grants it — proves enforcement is real |
+| `outsider-ns → redpanda:9092` | DENY | KEDA allowance is namespace-scoped, not allow-all |
+| `outsider-ns → seaweedfs:8333` | DENY | Object store is not namespace-open |
+
+The DENY cases are load-bearing: without them, a cluster with no policy
+enforcement at all would satisfy every ALLOW assertion and the suite would be
+worthless.
+
+**Probe pods must carry all three labels** (`name` + `part-of` + `managed-by`) —
+kustomize's `commonLabels` bakes `part-of`/`managed-by` into every generated
+podSelector, so a probe missing one would not be selected by the real policy and
+its assertion would be vacuous. The same trap applies to the CNPG pods: the
+operator creates them at runtime, beyond kustomize's reach, so the Cluster
+declares `spec.inheritedMetadata` to stamp those labels on. Drop that and the
+CNPG policies select nothing — the database falls under `default-deny-all` with
+no allow rules.
 
 ## Caveats operators must know
 
-- **CNPG cutover egress.** The backend/worker egress policies open `:5432` to the
-  `app.kubernetes.io/name: timescaledb` pod, **not** the CNPG pods
-  (`cnpg.io/cluster`). When you repoint `DATABASE_URL` at `omniusgrid-db-rw`, add
-  `cnpg.io/cluster` to those egress selectors — otherwise the app can't reach the
-  HA database. Called out in `database-ha/README.md`.
+- **CNPG cutover egress — resolved.** The DB-client egress policies now list the
+  CNPG cluster (`cnpg.io/cluster: omniusgrid-db`) alongside `timescaledb` on
+  `:5432`, so repointing `DATABASE_URL` at `omniusgrid-db-rw` needs no policy
+  edit. Before database-ha is deployed that selector simply matches nothing.
+  (This was originally a documented manual step; the enforcement matrix flagged
+  `backend → cnpg` as denied, so it was fixed at the source instead.)
 - **Enforcement needs a real CNI.** kind's default `kindnet` **ignores**
   NetworkPolicies, so `k8s-smoke` validates them structurally but cannot prove
   they work. Staging/production must run an enforcing CNI (Calico / Cilium) for

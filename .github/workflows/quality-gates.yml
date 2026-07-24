@@ -278,15 +278,19 @@ jobs:
         run: |
           curl -sL "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.4.3/kustomize_v5.4.3_linux_amd64.tar.gz" \
             | sudo tar xz -C /usr/local/bin kustomize
-      - name: Apply base NetworkPolicies
+      - name: Apply NetworkPolicies (base + monitoring + database-ha)
         run: |
           set -euo pipefail
           kubectl create namespace omniusgrid
+          kubectl create namespace keda              # cross-namespace: KEDA scalers
+          kubectl create namespace netpol-outsider   # negative control
           # Apply ONLY the policies (not the whole app) — the probe pods stand in
           # for the real workloads, so no application images need to pull.
-          kustomize build infrastructure/k8s/base \
-            | ./tests/k8s/extract-netpols.py \
-            | kubectl apply -f -
+          {
+            kustomize build infrastructure/k8s/base
+            kustomize build --load-restrictor LoadRestrictionsNone infrastructure/k8s/monitoring
+            kustomize build --load-restrictor LoadRestrictionsNone infrastructure/k8s/database-ha
+          } | ./tests/k8s/extract-netpols.py | kubectl apply -f -
           kubectl -n omniusgrid get networkpolicy
       - name: Deploy probe pods
         run: kubectl apply -f tests/k8s/netpol-probe.yaml
@@ -296,7 +300,37 @@ jobs:
         if: failure()
         run: |
           kubectl -n omniusgrid get pods -o wide || true
+          kubectl -n keda get pods -o wide || true
+          kubectl -n netpol-outsider get pods -o wide || true
           kubectl -n omniusgrid describe networkpolicy || true
+
+  # --- NetworkPolicy matrix simulation (blocking, no cluster) --------------
+  netpol-simulate:
+    runs-on: ubuntu-latest
+    # BLOCKING and cheap (seconds, no cluster). Evaluates the SAME client->server
+    # matrix that k8s-netpol asserts, but directly against the policy YAML — so a
+    # policy change that breaks an expected path fails in ~20s instead of after a
+    # 5-minute kind+Calico spin-up. k8s-netpol remains the source of truth (it
+    # proves a real CNI agrees with this model); this is the fast feedback loop.
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup kustomize
+        run: |
+          curl -sL "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.4.3/kustomize_v5.4.3_linux_amd64.tar.gz" \
+            | sudo tar xz -C /usr/local/bin kustomize
+      - name: Simulate the enforcement matrix
+        run: |
+          set -euo pipefail
+          pip install pyyaml
+          {
+            kustomize build infrastructure/k8s/base
+            kustomize build --load-restrictor LoadRestrictionsNone infrastructure/k8s/monitoring
+            kustomize build --load-restrictor LoadRestrictionsNone infrastructure/k8s/database-ha
+          } | ./tests/k8s/extract-netpols.py > /tmp/netpols.yaml
+          # Derive the matrix from the shell script so the two can't drift.
+          grep -oE '^  "[^"]+"' tests/k8s/netpol-test.sh | tr -d ' "' \
+            | awk -F'|' 'NF>=6{print $1"\t"$3"\t"$4"\t"$5"\t"$6}' > /tmp/matrix.tsv
+          ./tests/k8s/simulate-netpols.py /tmp/netpols.yaml tests/k8s/netpol-probe.yaml /tmp/matrix.tsv
 
   # --- task 1: frontend unit tests (Vitest) --------------------------------
   frontend-unit:

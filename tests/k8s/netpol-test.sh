@@ -1,81 +1,96 @@
 #!/usr/bin/env bash
-# NetworkPolicy ENFORCEMENT test.
+# NetworkPolicy ENFORCEMENT test (matrix-driven).
 #
-# The k8s-smoke job proves manifests apply; it cannot prove NetworkPolicies work,
-# because kind's default CNI (kindnet) ignores them entirely. This runs against a
-# Calico cluster where policy is actually enforced, and asserts real connectivity:
+# k8s-smoke runs on kind's default CNI (kindnet), which ignores NetworkPolicies:
+# it proves they parse and apply, never that they work. This runs against Calico,
+# where policy is enforced, and asserts real connectivity for each finding from
+# infrastructure/k8s/NETWORK_SECURITY.md.
 #
-#   ALLOW  export-worker    -> seaweedfs:8333   (the S3 export-upload path)
-#   DENY   ingestion-worker -> seaweedfs:8333   (not in any allow-list)
-#
-# The ALLOW case is the regression guard: the S3 object-store feature shipped with
-# no matching egress rule, so under an enforcing CNI every export upload/download
-# was silently denied. That bug would fail this test.
-#
-# The DENY case is the anti-vacuous guard: if policy were not enforced at all,
-# everything would be reachable and the ALLOW case alone would still "pass".
+# Each ALLOW case guards a path the platform needs. Each DENY case proves the
+# policies actually deny — without them a cluster with no enforcement at all
+# would pass every ALLOW assertion and the suite would be worthless.
 set -euo pipefail
 
-NS=omniusgrid
 TIMEOUT="${CONNECT_TIMEOUT:-5}"
+NS=omniusgrid
+
+# name | client-ns | client-pod | server-pod | port | expect | rationale
+MATRIX=(
+  "export->s3|omniusgrid|np-export-client|np-seaweedfs-stub|8333|ALLOW|S3 export upload path (finding #1)"
+  "backend->s3|omniusgrid|np-backend-client|np-seaweedfs-stub|8333|ALLOW|S3 export download path (finding #1)"
+  "ingestion->s3|omniusgrid|np-ingestion-client|np-seaweedfs-stub|8333|DENY|no rule grants this; proves enforcement is real"
+  "cnpg->s3|omniusgrid|np-cnpg-stub|np-seaweedfs-stub|8333|ALLOW|CNPG WAL archiving to object store (finding #5)"
+  "backend->cnpg|omniusgrid|np-backend-client|np-cnpg-stub|5432|ALLOW|app -> HA database (finding #5)"
+  "export->redpanda|omniusgrid|np-export-client|np-redpanda-stub|9092|ALLOW|worker consumes its topic"
+  "keda->redpanda|keda|np-keda-client|np-redpanda-stub|9092|ALLOW|KEDA reads consumer-group lag (finding #6)"
+  "outsider->redpanda|netpol-outsider|np-outsider-client|np-redpanda-stub|9092|DENY|KEDA allowance must be namespace-scoped"
+  "outsider->s3|netpol-outsider|np-outsider-client|np-seaweedfs-stub|8333|DENY|object store must not be namespace-open"
+)
 
 fail() { echo "::error::$*"; exit 1; }
 
-# Dial $2:$3 from pod $1. Returns 0 if the TCP connect succeeded, non-zero if not.
-# `agnhost connect` exits non-zero on refusal/timeout, which is exactly what a
-# NetworkPolicy drop looks like from inside the pod.
-probe() {
-  local pod="$1" target="$2"
-  kubectl -n "$NS" exec "$pod" -- \
-    /agnhost connect --timeout="${TIMEOUT}s" --protocol=tcp "$target" >/dev/null 2>&1
+probe() { # <client-ns> <client-pod> <target-ip:port>
+  kubectl -n "$1" exec "$2" -- \
+    /agnhost connect --timeout="${TIMEOUT}s" --protocol=tcp "$3" >/dev/null 2>&1
 }
 
-echo "Waiting for probe pods to be Ready..."
-kubectl -n "$NS" wait --for=condition=Ready pod/np-seaweedfs-stub \
-  pod/np-export-client pod/np-ingestion-client --timeout=180s
+echo "Waiting for probe pods..."
+kubectl -n "$NS" wait --for=condition=Ready \
+  pod/np-seaweedfs-stub pod/np-redpanda-stub pod/np-cnpg-stub \
+  pod/np-export-client pod/np-backend-client pod/np-ingestion-client --timeout=180s
+kubectl -n keda wait --for=condition=Ready pod/np-keda-client --timeout=180s
+kubectl -n netpol-outsider wait --for=condition=Ready pod/np-outsider-client --timeout=180s
 
-# Resolve the stub's pod IP: the base `seaweedfs` Service is headless (clusterIP:
-# None), so dialing the Service name depends on DNS being permitted too. Testing
-# the pod IP isolates what we care about — the NetworkPolicy verdict.
-STUB_IP=$(kubectl -n "$NS" get pod np-seaweedfs-stub -o jsonpath='{.status.podIP}')
-[ -n "$STUB_IP" ] || fail "could not resolve np-seaweedfs-stub pod IP"
-echo "SeaweedFS stub at ${STUB_IP}:8333"
+# Resolve server pod IPs. Dialing the pod IP (not the Service name) isolates the
+# NetworkPolicy verdict from DNS reachability, which is a separate rule.
+declare -A IP
+for p in np-seaweedfs-stub np-redpanda-stub np-cnpg-stub; do
+  IP[$p]=$(kubectl -n "$NS" get pod "$p" -o jsonpath='{.status.podIP}')
+  [ -n "${IP[$p]}" ] || fail "could not resolve pod IP for $p"
+done
 
 rc=0
+pass=0
+failed=0
 
-# --- ALLOW: export-worker -> seaweedfs:8333 --------------------------------
-# Retry briefly: Calico programs dataplane rules asynchronously after pod start.
-echo -n "ALLOW  export-worker -> seaweedfs:8333 ... "
-allowed=1
-for _ in $(seq 1 6); do
-  if probe np-export-client "${STUB_IP}:8333"; then allowed=0; break; fi
-  sleep 5
+for row in "${MATRIX[@]}"; do
+  IFS='|' read -r name cns cpod spod port expect why <<< "$row"
+  target="${IP[$spod]}:${port}"
+  printf '%-22s %-5s ' "$name" "$expect"
+
+  if [ "$expect" = "ALLOW" ]; then
+    # Retry: Calico programs dataplane rules asynchronously after pod start.
+    ok=1
+    for _ in $(seq 1 6); do
+      if probe "$cns" "$cpod" "$target"; then ok=0; break; fi
+      sleep 5
+    done
+    if [ "$ok" -eq 0 ]; then
+      echo "OK (reachable)"; pass=$((pass+1))
+    else
+      echo "FAILED (blocked, expected reachable)"
+      echo "::error::${name}: ${why} — traffic is BLOCKED by NetworkPolicy."
+      rc=1; failed=$((failed+1))
+    fi
+  else
+    # Must stay blocked for the whole window; one success means reachable.
+    blocked=0
+    for _ in $(seq 1 3); do
+      if probe "$cns" "$cpod" "$target"; then blocked=1; break; fi
+    done
+    if [ "$blocked" -eq 0 ]; then
+      echo "OK (blocked)"; pass=$((pass+1))
+    else
+      echo "FAILED (reachable, expected blocked)"
+      echo "::error::${name}: ${why} — traffic is ALLOWED but no policy grants it."
+      echo "::error::Either a rule is over-broad, or policy is not being enforced at"
+      echo "::error::all — in which case every ALLOW assertion here is vacuous."
+      rc=1; failed=$((failed+1))
+    fi
+  fi
 done
-if [ "$allowed" -eq 0 ]; then
-  echo "OK (reachable)"
-else
-  echo "FAILED"
-  echo "::error::export-worker cannot reach seaweedfs:8333 — the S3 export/compliance"
-  echo "::error::upload+download path is BLOCKED by NetworkPolicy. Check"
-  echo "::error::allow-export-worker-egress and allow-seaweedfs-ingress in base/ingress.yaml."
-  rc=1
-fi
 
-# --- DENY: ingestion-worker -> seaweedfs:8333 ------------------------------
-# Must stay blocked for the whole window; a single success means it is reachable.
-echo -n "DENY   ingestion-worker -> seaweedfs:8333 ... "
-denied=0
-for _ in $(seq 1 3); do
-  if probe np-ingestion-client "${STUB_IP}:8333"; then denied=1; break; fi
-done
-if [ "$denied" -eq 0 ]; then
-  echo "OK (blocked)"
-else
-  echo "FAILED"
-  echo "::error::ingestion-worker CAN reach seaweedfs:8333 but no policy allows it."
-  echo "::error::Either an over-broad rule was added, or NetworkPolicy is not being"
-  echo "::error::enforced at all — in which case every other assertion here is vacuous."
-  rc=1
-fi
-
-[ "$rc" -eq 0 ] && echo "NetworkPolicy enforcement verified." || fail "NetworkPolicy enforcement test failed."
+echo
+echo "NetworkPolicy matrix: ${pass} passed, ${failed} failed, ${#MATRIX[@]} total"
+[ "$rc" -eq 0 ] || fail "NetworkPolicy enforcement test failed."
+echo "NetworkPolicy enforcement verified."
