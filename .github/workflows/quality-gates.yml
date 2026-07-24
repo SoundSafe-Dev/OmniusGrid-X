@@ -137,6 +137,52 @@ jobs:
         working-directory: ./infra/prometheus
         run: promtool test rules tests/error_alerts_test.yml tests/subsystems_alerts_test.yml
 
+  # --- k8s manifest validation (blocking) ----------------------------------
+  k8s-manifests:
+    runs-on: ubuntu-latest
+    # BLOCKING. Deploy jobs in ci-cd.yml only build the staging/production
+    # overlays — nothing validated base/ or the operator-managed stacks
+    # (monitoring, database-ha, autoscaling), so a broken kustomization or an
+    # invalid manifest in any of them would only surface at apply time (or never,
+    # for the opt-in stacks). This builds EVERY kustomization and schema-validates
+    # the output, so a typo'd field or an unbuildable overlay fails the merge.
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup kustomize
+        run: |
+          curl -sL "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.4.3/kustomize_v5.4.3_linux_amd64.tar.gz" \
+            | sudo tar xz -C /usr/local/bin kustomize
+          kustomize version
+      - name: Install kubeconform
+        run: |
+          curl -sSL -o /tmp/kc.tar.gz \
+            "https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz"
+          sudo tar xz -C /usr/local/bin -f /tmp/kc.tar.gz kubeconform
+          kubeconform -v
+      - name: Build + validate app manifests (base + overlays)
+        run: |
+          set -euo pipefail
+          for t in base overlays/staging overlays/production; do
+            echo "::group::$t"
+            kustomize build "infrastructure/k8s/$t" \
+              | kubeconform -strict -summary -ignore-missing-schemas \
+                  -kubernetes-version 1.29.0
+            echo "::endgroup::"
+          done
+      - name: Build + validate operator stacks (monitoring, database-ha, autoscaling)
+        # These reference operator CRDs (Prometheus rules from outside the tree,
+        # CloudNativePG Cluster/Pooler, KEDA ScaledObject) — build with the None
+        # load-restrictor and let kubeconform skip the CRD schemas it can't know.
+        run: |
+          set -euo pipefail
+          for t in monitoring database-ha autoscaling; do
+            echo "::group::$t"
+            kustomize build --load-restrictor LoadRestrictionsNone "infrastructure/k8s/$t" \
+              | kubeconform -summary -ignore-missing-schemas \
+                  -kubernetes-version 1.29.0
+            echo "::endgroup::"
+          done
+
   # --- task 1: frontend unit tests (Vitest) --------------------------------
   frontend-unit:
     runs-on: ubuntu-latest
