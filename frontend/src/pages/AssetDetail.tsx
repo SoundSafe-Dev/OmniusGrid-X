@@ -16,7 +16,7 @@ const AssetDetail: FC = () => {
   const { id } = useParams<{ id: string }>()
   const { isAdmin, isOperator } = useAuth()
 
-  const { data: asset, isLoading } = useQuery({
+  const { data: asset, isLoading, isError } = useQuery({
     queryKey: ['asset', id],
     queryFn: () => assetsApi.get(id!),
   })
@@ -51,6 +51,23 @@ const AssetDetail: FC = () => {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="text-opsgrid-text-secondary">Loading...</div>
+      </div>
+    )
+  }
+
+  // A failed fetch previously fell through to the "Asset not found" branch below,
+  // which is misleading (it's a load error, not a missing asset). Distinguish
+  // them so a transient failure reads as retryable, not as a 404.
+  if (isError) {
+    return (
+      <div className="text-center py-12">
+        <p className="text-status-alarm">Failed to load asset.</p>
+        <p className="text-sm text-opsgrid-text-secondary mt-1">
+          Check your connection and try again.
+        </p>
+        <Link to="/assets" className="text-opsgrid-primary hover:underline mt-4 inline-block">
+          Back to Assets
+        </Link>
       </div>
     )
   }
