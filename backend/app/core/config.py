@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     REDPANDA_COMMAND_TOPIC: str = "opsgrid.commands"
     REDPANDA_COMMAND_ACK_TOPIC: str = "opsgrid.commands.acks"
     REDPANDA_COMMAND_DLQ_TOPIC: str = "opsgrid.commands.dlq"
+    # Poison telemetry/state/alarm messages the ingestion worker can't process
+    # go here instead of being silently dropped as the offset auto-commits past
+    # them. Lets them be inspected/replayed rather than lost.
+    REDPANDA_INGESTION_DLQ_TOPIC: str = "opsgrid.ingestion.dlq"
     REDPANDA_EXPORT_TOPIC: str = "opsgrid.exports"
     REDPANDA_COMPLIANCE_REPORTS_TOPIC: str = "opsgrid.compliance-reports"
     AGENT_STATUS_TOPIC: str = "opsgrid.agent-status"

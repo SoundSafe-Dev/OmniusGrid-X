@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 from uuid import UUID
 import structlog
-from aiokafka import AIOKafkaConsumer
+from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -53,12 +53,14 @@ class IngestionWorker:
     def __init__(self):
         self.broker_url = os.getenv('REDPANDA_URL', 'redpanda:29092')
         self.consumer: Optional[AIOKafkaConsumer] = None
+        self._producer: Optional[AIOKafkaProducer] = None
         self._running = False
         self._topics = ['telemetry', 'state', 'alarms']
         self.agent_status_topic = os.getenv(
             'AGENT_STATUS_TOPIC',
             settings.AGENT_STATUS_TOPIC,
         )
+        self.dlq_topic = settings.REDPANDA_INGESTION_DLQ_TOPIC
     
     async def start(self):
         """Start the ingestion worker"""
@@ -73,6 +75,15 @@ class IngestionWorker:
             auto_commit_interval_ms=5000,
         )
         
+        # Producer for the dead-letter topic: a message this worker can't process
+        # is published here (best-effort) before its offset advances, so poison
+        # data is preserved for inspection/replay instead of vanishing.
+        self._producer = AIOKafkaProducer(
+            bootstrap_servers=self.broker_url,
+            value_serializer=lambda v: json.dumps(v).encode('utf-8'),
+        )
+        await self._producer.start()
+
         # Subscribe to all relevant topics
         await self.consumer.start()
         
@@ -98,10 +109,54 @@ class IngestionWorker:
                         topic=msg.topic,
                         error=str(e)
                     )
-        
+                    # Preserve the poison message in the DLQ before the offset
+                    # auto-commits past it — otherwise it is silently lost.
+                    await self._dead_letter(msg, e)
+
         finally:
             await self.consumer.stop()
+            if self._producer is not None:
+                await self._producer.stop()
             logger.info("ingestion_worker_stopped")
+
+    async def _dead_letter(self, msg, error: Exception) -> None:
+        """Publish an unprocessable message to the ingestion DLQ (best-effort).
+
+        Best-effort by design: if the DLQ publish itself fails we log loudly but
+        don't crash the worker or block the partition. The envelope carries the
+        original payload plus enough provenance (topic/partition/offset) to
+        replay it after the underlying bug is fixed.
+        """
+        if self._producer is None:
+            return
+        try:
+            envelope = {
+                "schema_version": 1,
+                "message_type": "dead_letter",
+                "reason": str(error),
+                "error_type": type(error).__name__,
+                "source_topic": msg.topic,
+                "source_partition": msg.partition,
+                "source_offset": msg.offset,
+                "consumer": "opsgrid-ingestion-workers",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "payload": msg.value,
+            }
+            key = (msg.key if isinstance(msg.key, (bytes, bytearray)) else None)
+            await self._producer.send_and_wait(self.dlq_topic, envelope, key=key)
+            logger.warning(
+                "ingestion_dead_lettered",
+                source_topic=msg.topic,
+                source_offset=msg.offset,
+                error=str(error),
+            )
+        except Exception as dlq_error:  # noqa: BLE001 — DLQ failure must not crash the worker
+            logger.error(
+                "ingestion_dead_letter_failed",
+                source_topic=getattr(msg, "topic", None),
+                error=str(dlq_error),
+                original_error=str(error),
+            )
     
     async def _process_message(self, msg):
         """Process a single message"""
