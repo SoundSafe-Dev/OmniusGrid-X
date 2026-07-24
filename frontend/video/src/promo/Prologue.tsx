@@ -9,11 +9,12 @@ import { Wordmark } from '../components/Wordmark';
  * Dark + light editions; 4:5 (2160x2700) and 9:16 (2160x3840).
  */
 
+// explicit breaks: one thought per line, no dangling words
 const QUOTE = (
   <>
-    Every operation already has its answers — scattered across systems
-    that don't talk. We built OmniusGrid to turn them into{' '}
-    <span style={{ whiteSpace: 'nowrap' }}>one conversation.</span>
+    Every operation already has its answers —<br />
+    scattered across systems that don't talk.<br />
+    We built OmniusGrid to turn them into one conversation.
   </>
 );
 const ATTRIB_NAME = 'Hamad Dada';
@@ -118,11 +119,11 @@ const Card: React.FC<{ pal: Pal; tall?: boolean }> = ({ pal, tall }) => (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 54 }}>
         <div
           style={{
-            fontSize: tall ? 66 : 62,
+            fontSize: tall ? 60 : 56,
             fontWeight: 500,
-            lineHeight: 1.48,
+            lineHeight: 1.52,
             color: pal.text,
-            maxWidth: 1560,
+            whiteSpace: 'nowrap',
           }}
         >
           <span style={{ color: theme.highlight, fontWeight: 800 }}>&ldquo;</span>
