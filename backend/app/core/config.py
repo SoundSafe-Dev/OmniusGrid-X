@@ -126,6 +126,14 @@ class Settings(BaseSettings):
     EXPORT_SCHEDULER_ENABLED: bool = True
     EXPORT_SCHEDULER_INTERVAL_SECONDS: int = 30
     EXPORT_STORAGE_PATH: str = "/var/lib/omniusgrid/exports"
+    # When true, generated export/compliance artifacts are stored in object
+    # storage (S3/SeaweedFS) instead of the pod's local disk, and downloads
+    # stream from there. This is required in any multi-pod deployment: a worker
+    # generates the file on its own node while the API serves the download from a
+    # DIFFERENT pod, so a pod-local file is invisible to the API and the download
+    # 404s. Off by default so dev/single-node keeps the simple local path.
+    EXPORT_USE_S3: bool = False
+    S3_EXPORT_BUCKET: str = "omniusgrid-exports"
     EXPORT_PUBLIC_BASE_URL: str = "http://localhost:8002"
     EXPORT_LINK_EXPIRE_MINUTES: int = 1440
     SIGNED_URL_SECRET_KEY: str = ""

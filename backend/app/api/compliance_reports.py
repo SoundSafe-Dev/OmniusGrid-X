@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,6 +28,7 @@ from app.services.compliance_report_service import (
     absolute_report_path,
     report_file_matches_metadata,
 )
+from app.services.export_store import get_export_store
 from app.services.report_scheduler import SCHEDULE_FREQUENCIES
 from app.services.report_download_audit import audit_compliance_report_download
 from app.utils.signed_urls import (
@@ -50,6 +51,19 @@ def _secure_file_response(path, media_type: str, filename: str) -> FileResponse:
     response.headers["Pragma"] = "no-cache"
     response.headers["Referrer-Policy"] = "no-referrer"
     response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+def _secure_streaming_response(stream, media_type: str, filename: str) -> StreamingResponse:
+    """Stream a report straight from object storage with the same hardening as the
+    local file response (used when EXPORT_USE_S3 is on and the artifact lives in S3,
+    not on this pod's disk)."""
+    response = StreamingResponse(stream, media_type=media_type)
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
     return response
 
 
@@ -631,6 +645,20 @@ async def download_compliance_report(
             status_code=status.HTTP_410_GONE,
             detail="Report file no longer available",
         )
+    # Object-store path: the worker that generated this ran on a different pod, so
+    # the artifact is in S3 keyed by its relative path, not on this pod's disk.
+    store = get_export_store()
+    if store.enabled:
+        if not await store.exists(job.file_path):
+            raise HTTPException(
+                status_code=status.HTTP_410_GONE,
+                detail="Report file no longer available",
+            )
+        return _secure_streaming_response(
+            store.download_stream(job.file_path),
+            job.media_type or "application/octet-stream",
+            job.filename or job.file_path.rsplit("/", 1)[-1],
+        )
     try:
         absolute = absolute_report_path(
             job.file_path,
@@ -762,6 +790,42 @@ async def download_compliance_report_signed(
         raise HTTPException(
             status_code=status.HTTP_410_GONE,
             detail="Report file no longer available",
+        )
+
+    # Object-store path: artifact lives in S3 (a different pod generated it), so
+    # stream it from there. S3 provides its own integrity; existence is confirmed
+    # via head before streaming.
+    store = get_export_store()
+    if store.enabled:
+        if not await store.exists(job.file_path):
+            await audit_compliance_report_download(
+                request=request,
+                succeeded=False,
+                job_id=job_id,
+                organization_id=org_id,
+                reason="file_missing",
+                token_version=verified.token_version,
+                purpose=verified.purpose,
+                token_id=verified.token_id,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_410_GONE,
+                detail="Report file no longer available",
+            )
+        await audit_compliance_report_download(
+            request=request,
+            succeeded=True,
+            job_id=job_id,
+            organization_id=org_id,
+            reason="ok",
+            token_version=verified.token_version,
+            purpose=verified.purpose,
+            token_id=verified.token_id,
+        )
+        return _secure_streaming_response(
+            store.download_stream(job.file_path),
+            job.media_type or "application/octet-stream",
+            job.filename or job.file_path.rsplit("/", 1)[-1],
         )
 
     try:

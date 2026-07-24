@@ -52,6 +52,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.services.export_store import get_export_store, export_object_key
 from app.db.database import AsyncSessionLocal
 from app.db.models import (
     ActionableRegistry,
@@ -401,6 +402,17 @@ class ExportProcessor:
             job["file_path"] = path
             job["filename"] = filename
             job["status"] = "completed"
+            # When object storage is on, the download is served by a different pod,
+            # so push the artifact to S3. Local file stays as a same-pod fast path.
+            store = get_export_store()
+            if store.enabled:
+                try:
+                    await store.ensure_bucket()
+                    await store.upload_file(export_object_key(str(job_id), "csv"), path)
+                except Exception as exc:  # noqa: BLE001 - artifact still on local disk
+                    logger.error(
+                        "export_object_upload_failed", job_id=str(job_id), error=str(exc)
+                    )
         except Exception as exc:  # noqa: BLE001 - record and surface via the job
             logger.error("export_telemetry_failed", job_id=job_id, error=str(exc))
             job["status"] = "failed"
@@ -719,6 +731,22 @@ class ExportProcessor:
                 _write_bytes(path, self.build_oee_summary_pdf(rows))
             else:
                 raise ExportError(f"Unsupported scheduled export type '{export_type}'")
+
+        # In a multi-pod deployment the API serves this download from a different
+        # pod than the worker that wrote it, so a pod-local file is unreachable.
+        # Upload to object storage (when EXPORT_USE_S3 is on) so any pod can
+        # stream it; the local file stays as a same-pod cache. No-op otherwise.
+        store = get_export_store()
+        if store.enabled:
+            try:
+                await store.ensure_bucket()
+                await store.upload_file(export_object_key(str(job_id), extension), path)
+            except Exception as exc:  # noqa: BLE001
+                # A store failure must not lose the artifact — it still exists on
+                # the worker's disk; log loudly so delivery/monitoring can react.
+                logger.error(
+                    "export_object_upload_failed", job_id=str(job_id), error=str(exc)
+                )
 
         return path, filename
 
