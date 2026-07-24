@@ -161,38 +161,41 @@ async def get_idle_time(
     db: AsyncSession = Depends(get_tenant_db),
 ):
     since = _range_start(range)
-    rows = (await db.execute(
-        select(GeoTabTrip).where(
+    # One GROUP BY vehicle_id in SQL instead of loading every trip and summing in
+    # Python. The dict is still rebuilt Python-side with the same rounding, so
+    # the numbers are byte-identical. The NULL-vehicle group is returned too and
+    # feeds the totals (as before) but is excluded from the per-vehicle
+    # breakdown.
+    grouped = (await db.execute(
+        select(
+            GeoTabTrip.vehicle_id,
+            func.coalesce(func.sum(GeoTabTrip.idle_time_seconds), 0),
+            func.coalesce(func.sum(GeoTabTrip.duration_seconds), 0),
+        ).where(
             GeoTabTrip.organization_id == org_id,
             GeoTabTrip.start_time >= since,
-        )
-    )).scalars().all()
+        ).group_by(GeoTabTrip.vehicle_id)
+    )).all()
 
-    idle_by_vehicle: dict = defaultdict(float)
-    run_by_vehicle: dict = defaultdict(float)
     total_idle_s = 0.0
     total_run_s = 0.0
-    for t in rows:
-        idle_s = float(t.idle_time_seconds or 0)
-        run_s = float(t.duration_seconds or 0)
+    by_vehicle = {}
+    for vid, idle_sum, run_sum in grouped:
+        idle_s = float(idle_sum or 0)
+        run_s = float(run_sum or 0)
         total_idle_s += idle_s
         total_run_s += run_s
-        if t.vehicle_id:
-            idle_by_vehicle[t.vehicle_id] += idle_s
-            run_by_vehicle[t.vehicle_id] += run_s
+        if vid:
+            denom = run_s or 1
+            by_vehicle[vid] = {
+                "hours": round(idle_s / 3600, 2),
+                "percentage": round(idle_s / denom * 100, 1),
+                "cost": round((idle_s / 3600) * _COST_PER_MILE_USD, 2),
+            }
 
     idle_hours = total_idle_s / 3600
     pct = (total_idle_s / total_run_s * 100) if total_run_s else 0.0
     cost = idle_hours * _COST_PER_MILE_USD  # idle cost proxy (per idle hour)
-
-    by_vehicle = {}
-    for vid, idle_s in idle_by_vehicle.items():
-        run_s = run_by_vehicle[vid] or 1
-        by_vehicle[vid] = {
-            "hours": round(idle_s / 3600, 2),
-            "percentage": round(idle_s / run_s * 100, 1),
-            "cost": round((idle_s / 3600) * _COST_PER_MILE_USD, 2),
-        }
 
     return {
         "total_hours": round(idle_hours, 2),
