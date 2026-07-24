@@ -1,6 +1,6 @@
-import { FC, ReactNode } from 'react'
+import { FC, ReactNode, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Bar,
   BarChart,
@@ -25,13 +25,32 @@ import { dashboardAnalyticsApi } from '../api/dashboardAnalytics'
 import { Tooltip, TooltipTrigger, TooltipContent } from '../components/ui'
 import { chartPalette, orderSeverities, severityColor } from '../components/charts/chartPalette'
 import { useUIStore } from '../stores/uiStore'
+import { useRealtimeStore } from '../stores/realtimeStore'
+import type { BucketName } from '../api/dashboardAnalytics'
 
-/** Window for every trend on this page. FS-194 turns this into a control. */
-const HOURS = 24
-const BUCKET = '1hour' as const
+/**
+ * Time ranges for every trend on the page. The bucket widens with the range so
+ * a 30-day window doesn't ask for 720 hourly points — the series stays readable
+ * and the query stays cheap.
+ */
+const RANGES: ReadonlyArray<{ id: string; label: string; hours: number; bucket: BucketName }> = [
+  { id: '24h', label: '24h', hours: 24, bucket: '1hour' },
+  { id: '7d', label: '7d', hours: 168, bucket: '6hour' },
+  { id: '30d', label: '30d', hours: 720, bucket: '1day' },
+]
 
-const fmtTime = (iso: string) =>
-  new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+/** Plot height. Explicit, not flex-derived: a percentage height inside a
+ *  grid-stretched flex card resolves to 0 and the plot silently disappears. */
+const CHART_H = 190
+
+/** Axis label must follow the bucket. At 1-day buckets a clock time is
+ *  meaningless — every tick rendered as the same "07:00 PM" and collided. */
+const axisLabel = (iso: string, bucket: BucketName) => {
+  const d = new Date(iso)
+  return bucket === '1day' || bucket === '6hour'
+    ? d.toLocaleDateString([], { month: 'short', day: 'numeric' })
+    : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
 
 const fmtNum = (n: number | null | undefined) =>
   n == null ? '—' : n.toLocaleString(undefined, { maximumFractionDigits: 1 })
@@ -66,7 +85,7 @@ const Widget: FC<{
 }) => (
   <section
     aria-label={title}
-    className={`bg-opsgrid-panel border border-opsgrid-border rounded-lg ${className}`}
+    className={`bg-opsgrid-panel border border-opsgrid-border rounded-lg flex flex-col ${className}`}
   >
     <div className="flex items-start justify-between px-4 py-3 border-b border-opsgrid-border">
       <div>
@@ -81,29 +100,26 @@ const Widget: FC<{
         </Link>
       )}
     </div>
-    <div className="p-4" style={{ minHeight: height }}>
+    {/* flex-1 lets grid neighbours equalise; min-height (not a fixed height)
+        so a legend below the plot can't overflow the card. */}
+    <div className="p-4 flex-1 flex flex-col" style={{ minHeight: height }}>
       {isLoading ? (
         <div
           role="status"
           aria-live="polite"
-          className="h-full flex items-center justify-center text-sm text-opsgrid-text-secondary"
-          style={{ minHeight: height - 32 }}
+          className="flex-1 flex items-center justify-center text-sm text-opsgrid-text-secondary"
         >
           Loading…
         </div>
       ) : isError ? (
         <div
           role="alert"
-          className="h-full flex items-center justify-center text-sm text-status-alarm"
-          style={{ minHeight: height - 32 }}
+          className="flex-1 flex items-center justify-center text-sm text-status-alarm"
         >
           Couldn’t load this data
         </div>
       ) : isEmpty ? (
-        <div
-          className="h-full flex items-center justify-center text-sm text-opsgrid-text-secondary"
-          style={{ minHeight: height - 32 }}
-        >
+        <div className="flex-1 flex items-center justify-center text-sm text-opsgrid-text-secondary">
           {emptyLabel}
         </div>
       ) : (
@@ -116,6 +132,23 @@ const Widget: FC<{
 const Dashboard: FC = () => {
   const theme = useUIStore((s) => s.theme)
   const palette = chartPalette(theme === 'dark' ? 'dark' : 'light')
+  const queryClient = useQueryClient()
+
+  const [rangeId, setRangeId] = useState<string>(RANGES[0].id)
+  const range = RANGES.find((r) => r.id === rangeId) ?? RANGES[0]
+  const { hours: HOURS, bucket: BUCKET } = range
+
+  // Live updates: the WebSocket already pushes alarms into realtimeStore, so
+  // rather than polling harder, refresh the alarm-derived views when its alarm
+  // list actually changes. Trends move slowly; only the alarm views need this.
+  const liveAlarms = useRealtimeStore((s) => s.alarms)
+  const connectionState = useRealtimeStore((s) => s.connectionState)
+  useEffect(() => {
+    if (!liveAlarms.length) return
+    queryClient.invalidateQueries({ queryKey: ['active-alarms'] })
+    queryClient.invalidateQueries({ queryKey: ['dashboard-overview'] })
+    queryClient.invalidateQueries({ queryKey: ['dash-alarm-trend'] })
+  }, [liveAlarms, queryClient])
 
   const overviewQ = useQuery({
     queryKey: ['dashboard-overview'],
@@ -189,14 +222,14 @@ const Dashboard: FC = () => {
       icon: Gauge,
       tone: 'text-opsgrid-text',
       // Naming this "Availability" rather than "OEE" is deliberate — see FS-192.
-      tip: 'Run time ÷ elapsed time over the last 24h. Availability only — not full OEE.',
+      tip: `Run time ÷ elapsed time over the last ${range.label}. Availability only — not full OEE.`,
     },
     {
-      label: 'Parts (24h)',
+      label: `Parts (${range.label})`,
       value: fmtNum(throughputQ.data?.totals.totalParts),
       icon: Package,
       tone: 'text-opsgrid-text',
-      tip: 'Total parts reported by asset counters in the last 24 hours',
+      tip: `Total parts reported by asset counters in the last ${range.label}`,
     },
     {
       label: 'Active Alarms',
@@ -221,11 +254,44 @@ const Dashboard: FC = () => {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-2xl font-bold text-opsgrid-text">Operations Overview</h1>
-        <p className="text-sm text-opsgrid-text-secondary">
-          Live fleet status — trends over the last 24 hours
-        </p>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-opsgrid-text">Operations Overview</h1>
+          <p className="text-sm text-opsgrid-text-secondary flex items-center gap-2">
+            <span>Fleet status — trends over the last {range.label}</span>
+            {connectionState === 'connected' && (
+              <span className="inline-flex items-center gap-1 text-xs text-status-running">
+                <span
+                  className="w-1.5 h-1.5 rounded-full bg-status-running"
+                  aria-hidden="true"
+                />
+                Live
+              </span>
+            )}
+          </p>
+        </div>
+        {/* Filters sit in one row above the charts. */}
+        <div
+          role="group"
+          aria-label="Time range"
+          className="inline-flex rounded-lg border border-opsgrid-border overflow-hidden"
+        >
+          {RANGES.map((r) => (
+            <button
+              key={r.id}
+              type="button"
+              onClick={() => setRangeId(r.id)}
+              aria-pressed={r.id === rangeId}
+              className={`px-3 py-1.5 text-sm transition-colors ${
+                r.id === rangeId
+                  ? 'bg-opsgrid-primary text-opsgrid-bg font-medium'
+                  : 'bg-opsgrid-panel text-opsgrid-text-secondary hover:bg-opsgrid-hover'
+              }`}
+            >
+              {r.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* KPI row — headline numbers belong in stat tiles, not a bar chart. */}
@@ -263,13 +329,13 @@ const Dashboard: FC = () => {
           isError={availabilityQ.isError}
           isEmpty={!availabilityQ.data?.series?.length}
         >
-          <ResponsiveContainer width="100%" height={200}>
+          <ResponsiveContainer width="100%" height={CHART_H}>
             <LineChart
               data={availabilityQ.data?.series ?? []}
               margin={{ top: 5, right: 12, bottom: 0, left: -12 }}
             >
               <CartesianGrid strokeDasharray="3 3" stroke={palette.grid} vertical={false} />
-              <XAxis dataKey="timestamp" tickFormatter={fmtTime} {...axisProps} />
+              <XAxis dataKey="timestamp" tickFormatter={(v: string) => axisLabel(v, BUCKET)} {...axisProps} />
               <YAxis domain={[0, 100]} unit="%" {...axisProps} />
               <RTooltip
                 {...tooltipStyle}
@@ -301,13 +367,13 @@ const Dashboard: FC = () => {
           isError={throughputQ.isError}
           isEmpty={!throughputQ.data?.series?.length}
         >
-          <ResponsiveContainer width="100%" height={200}>
+          <ResponsiveContainer width="100%" height={CHART_H}>
             <LineChart
               data={throughputQ.data?.series ?? []}
               margin={{ top: 5, right: 12, bottom: 0, left: -12 }}
             >
               <CartesianGrid strokeDasharray="3 3" stroke={palette.grid} vertical={false} />
-              <XAxis dataKey="timestamp" tickFormatter={fmtTime} {...axisProps} />
+              <XAxis dataKey="timestamp" tickFormatter={(v: string) => axisLabel(v, BUCKET)} {...axisProps} />
               <YAxis {...axisProps} />
               <RTooltip
                 {...tooltipStyle}
@@ -364,13 +430,13 @@ const Dashboard: FC = () => {
           isEmpty={alarmTotal === 0}
           emptyLabel="No alarms in this window"
         >
-          <ResponsiveContainer width="100%" height={200}>
+          <ResponsiveContainer width="100%" height={CHART_H}>
             <BarChart
               data={alarmTrendQ.data?.series ?? []}
               margin={{ top: 5, right: 12, bottom: 0, left: -12 }}
             >
               <CartesianGrid strokeDasharray="3 3" stroke={palette.grid} vertical={false} />
-              <XAxis dataKey="timestamp" tickFormatter={fmtTime} {...axisProps} />
+              <XAxis dataKey="timestamp" tickFormatter={(v: string) => axisLabel(v, BUCKET)} {...axisProps} />
               <YAxis allowDecimals={false} {...axisProps} />
               <RTooltip
                 {...tooltipStyle}
@@ -419,7 +485,7 @@ const Dashboard: FC = () => {
           isEmpty={!healthQ.data?.assetCount}
           emptyLabel="No active assets"
         >
-          <ResponsiveContainer width="100%" height={200}>
+          <ResponsiveContainer width="100%" height={CHART_H}>
             <BarChart
               data={healthQ.data?.bands ?? []}
               layout="vertical"
