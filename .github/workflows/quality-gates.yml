@@ -112,7 +112,8 @@ jobs:
             tests/test_demo_seeder_smoke.py \
             tests/test_backup_restore_drill.py \
             tests/test_dashboard_tenancy.py \
-            tests/test_dashboard_analytics.py
+            tests/test_dashboard_analytics.py \
+            tests/test_raw_insert_timestamps.py
 
   # --- FS-107: Prometheus alert rules — lint + unit test -------------------
   prometheus-rules:
