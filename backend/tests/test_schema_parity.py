@@ -200,3 +200,54 @@ def test_column_type_category_parity(admin_sync_url):
         "column type-class drift between the ORM and the migrated schema "
         "(binds fail at insert/read time on real Postgres): " + str(sorted(drift))
     )
+
+
+def test_org_scoped_tables_have_org_index(admin_sync_url):
+    """Every org-scoped base table must have an index leading with organization_id.
+
+    RLS (011/033) makes organization_id a predicate on every query against these
+    tables, so a missing index means a sequential scan per tenant query. 27 base
+    tables were missing one (migration 043 added composite
+    (organization_id, <time>) indexes). This keeps the gap closed: a new
+    org-scoped table without a covering index fails here.
+
+    A composite index counts as long as organization_id is its LEADING column —
+    that is what the RLS equality predicate needs.
+    """
+    import psycopg2
+
+    conn = psycopg2.connect(admin_sync_url)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT c.table_name
+            FROM information_schema.columns c
+            JOIN information_schema.tables t
+              ON t.table_name = c.table_name AND t.table_schema = c.table_schema
+            WHERE c.table_schema = 'public'
+              AND c.column_name = 'organization_id'
+              AND t.table_type = 'BASE TABLE';
+            """
+        )
+        org_tables = {r[0] for r in cur.fetchall()}
+        cur.execute(
+            """
+            SELECT DISTINCT t.relname
+            FROM pg_index ix
+            JOIN pg_class t ON t.oid = ix.indrelid
+            JOIN pg_attribute a
+              ON a.attrelid = t.oid AND a.attnum = ix.indkey[0]
+            WHERE a.attname = 'organization_id';
+            """
+        )
+        indexed = {r[0] for r in cur.fetchall()}
+    finally:
+        conn.close()
+
+    missing = sorted(org_tables - indexed)
+    assert not missing, (
+        "org-scoped base tables with no organization_id-leading index (RLS "
+        "predicate forces a seq scan per query — add a composite "
+        "(organization_id, <time>) index, see migration 043): " + str(missing)
+    )
