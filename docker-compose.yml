@@ -76,6 +76,8 @@ services:
         condition: service_healthy
     command: python scripts/migrate.py --dir /migrations
     restart: "no"
+    networks:
+      - omniusgrid-network
 
   backend:
     build:
@@ -120,11 +122,23 @@ services:
       QDRANT_URL: http://qdrant:6333
       S3_ENDPOINT_URL: http://seaweedfs:8333
       RAG_INFERENCE_URL: http://rag-inference:8000
+      # Ingestion embeds RAG_EMBED_BATCH chunks per rag-inference request. On a
+      # CPU-only inference box that is ~2.7s per dense chunk, so the default 32
+      # lets a single request run ~60s+ and 500 with a ReadTimeout. Keep each
+      # request small so it stays well under the timeout regardless of doc size
+      # (GPU deployments can raise this back up). Timeout ceiling raised too as a
+      # backstop. See backend/tests/rag_eval — this was found by the eval suite.
+      RAG_EMBED_BATCH: ${RAG_EMBED_BATCH:-8}
+      RAG_INFERENCE_TIMEOUT: ${RAG_INFERENCE_TIMEOUT:-180}
       # LLM runs NATIVELY on the host (Ollama w/ Metal on Mac, ROCm on Linux) and
       # is reached via host.docker.internal - Docker can't GPU-accelerate a
       # container on Mac, so the LLM stays outside the container by design.
       LLM_BASE_URL: http://host.docker.internal:11434/v1
-      LLM_MODEL: gemma2:2b
+      LLM_MODEL: ${LLM_MODEL:-gemma2:2b}
+      # Overridable so an eval run can pin temperature to 0 for reproducible
+      # synthesis grading (the eval judges the LLM's output, so run-to-run
+      # variance is a flake source; 0 minimizes it).
+      LLM_TEMPERATURE: ${LLM_TEMPERATURE:-0.2}
       VISION_MODEL_ENABLED: "false"
     ports:
       - "8000:8000"
