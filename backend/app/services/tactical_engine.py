@@ -335,16 +335,25 @@ class LocalTacticalEngine:
         from sqlalchemy import text
         from app.db.database import AsyncSessionLocal
         
-        async with AsyncSessionLocal() as session:
-            result = await session.execute(
-                text(f"""
-                    SELECT maintenance_mode 
-                    FROM assets 
-                    WHERE id = '{asset_id}'
-                """)
+        # Bound parameter, never f-string interpolation: asset_id originates from
+        # the feature vector (edge/ingestion data), so `' OR '1'='1` used to
+        # match every row. Wrapped in try/except and failing SAFE (treat unknown
+        # state as "in maintenance" so a command is suppressed, not sent) because
+        # the query can also error on deployments where assets.maintenance_mode
+        # doesn't exist — a broken control command is worse than a skipped one.
+        try:
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(
+                    text("SELECT maintenance_mode FROM assets WHERE id = :asset_id"),
+                    {"asset_id": asset_id},
+                )
+                row = result.fetchone()
+                return bool(row and row[0])
+        except Exception as exc:
+            logger.warning(
+                "maintenance_mode_check_failed", asset_id=asset_id, error=str(exc)
             )
-            row = result.fetchone()
-            return row and row[0]
+            return True
     
     async def _send_command(self, decision: TacticalDecision):
         """Send command to asset via command queue"""
