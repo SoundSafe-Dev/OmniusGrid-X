@@ -31,8 +31,10 @@ spec:
       port: 8888
       targetPort: 8888
 ---
-# Placeholder credentials for local/dev clusters. Override in every real
-# environment, e.g.:
+# DEV/CI-ONLY placeholder credentials so base/ applies on a throwaway cluster.
+# Do NOT ship these to staging/production — provision the real s3-credentials via
+# Sealed Secrets or the External Secrets Operator: see infrastructure/k8s/secrets/.
+# Ad-hoc override for a quick cluster:
 #   kubectl create secret generic s3-credentials -n omniusgrid \
 #     --from-literal=access-key=... --from-literal=secret-key=... \
 #     --from-file=s3config.json=./infra/seaweedfs/s3config.json
