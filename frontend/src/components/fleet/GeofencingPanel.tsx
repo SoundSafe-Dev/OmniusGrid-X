@@ -6,8 +6,27 @@ import {
 } from 'lucide-react';
 import { geofencingApi } from '../../api';
 import { SkeletonCard } from '../ui/Skeleton';
-import type { GeofenceZoneExtended, GeofenceAlertExtended } from '../../types';
+import type { GeofenceZoneExtended, GeofenceAlertExtended, GeoLocation } from '../../types';
 import 'leaflet/dist/leaflet.css';
+
+// A leaflet <Circle> needs a center and a radius. center/radius are optional on
+// a zone (polygon zones and malformed data have neither), so rendering every
+// active zone as a Circle via `zone.center!.latitude` threw on the first
+// centerless zone — and with only the app-root ErrorBoundary, that blanked the
+// entire app. This narrows to the zones that can actually be drawn as circles,
+// so the map skips the others instead of crashing.
+export type CircleZone = GeofenceZoneExtended & { center: GeoLocation; radius: number };
+
+export function circleRenderableZones(zones: GeofenceZoneExtended[]): CircleZone[] {
+  return zones.filter(
+    (z): z is CircleZone =>
+      Boolean(z.isActive) &&
+      z.center != null &&
+      typeof z.center.latitude === 'number' &&
+      typeof z.center.longitude === 'number' &&
+      typeof z.radius === 'number'
+  );
+}
 
 const getZoneColor = (color: string) => {
   switch (color) {
@@ -136,10 +155,10 @@ export const GeofencingPanel: FC<GeofencingPanelProps> = ({ onAlert }) => {
                 attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
               />
-              {zones.filter(z => z.isActive).map(zone => (
+              {circleRenderableZones(zones).map(zone => (
                 <Circle
                   key={zone.id}
-                  center={[zone.center!.latitude, zone.center!.longitude]}
+                  center={[zone.center.latitude, zone.center.longitude]}
                   radius={zone.radius}
                   pathOptions={{
                     color: getZoneColor(zone.color),
