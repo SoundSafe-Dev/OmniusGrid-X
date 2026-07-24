@@ -1,0 +1,110 @@
+# Refrigerated and Frozen Storage Temperature Control and Cold-Chain Verification
+*Distribution Center DC-2 — Cold Rooms A/B and Freezer F1*
+
+| Field | Value | Field | Value |
+|---|---|---|---|
+| **SOP Number** | SOP-WH-021 | **Revision** | 2.2 |
+| **Effective Date** | April 15, 2026 | **Review Cycle** | Annual |
+| **Document Owner** | Warehouse Operations Dept. | **Approved By** | Distribution Quality Lead |
+| **Applicable Area(s)** | DC-2 Cold Rooms A/B, Freezer F1 | **Classification** | Internal - Controlled |
+
+## 1. Purpose
+
+This procedure defines the requirements for monitoring, recording, and verifying the temperature of refrigerated and frozen product during receiving, storage, and shipping at Distribution Center DC-2. It is intended to maintain an unbroken cold chain and to provide a documented, repeatable basis for shipment hold and release decisions.
+
+## 2. Scope
+
+This SOP applies to all refrigerated and frozen finished goods received, stored, and shipped through DC-2 Cold Rooms A and B and Freezer F1. It covers receiving temperature checks, continuous storage monitoring, temperature excursions, and pre-shipment verification. It does not cover ambient dry-goods storage, which is addressed in SOP-WH-004.
+
+## 3. Definitions
+
+- **Cold Chain:** The uninterrupted series of temperature-controlled storage and handling steps that keep a product within its required temperature range from receipt through shipment.
+- **TOR (Time-Out-of-Refrigeration):** The cumulative time a refrigerated product spends above 40 degrees F (4 degrees C) while outside controlled cold storage.
+- **Temperature Excursion:** Any recorded event in which a storage area's air temperature moves outside its validated setpoint range for more than 15 minutes.
+- **Setpoint:** The target air temperature a storage area is controlled to, distinct from the alarm limit at which corrective action begins.
+- **Cold-Chain Release:** The documented sign-off confirming a shipment met temperature requirements throughout storage and is cleared to ship.
+- **Data Logger:** A calibrated electronic device that records air or product temperature at fixed intervals.
+
+## 4. Responsibilities
+
+| Role | Responsibilities |
+|---|---|
+| Receiving Clerk | Measures and records product temperature at receipt and completes the Receiving Temperature Log before product is moved to storage. |
+| Cold Storage Operator | Monitors area temperatures, responds to alarms, and records corrective actions on the Excursion Log. |
+| Warehouse QA Technician | Performs pre-shipment temperature verification and approves or rejects shipments for cold-chain release. |
+| Shift Lead | Confirms the shipping schedule, resolves cold-dock conflicts, and co-signs the Cold-Chain Release Record. |
+| Distribution Quality Lead | Owns this SOP, reviews excursion and deviation reports, and approves any temporary variance to stated parameters. |
+
+## 5. Materials and Equipment
+
+- Calibrated data loggers: One per storage area, logging air temperature at 15-minute intervals
+- Handheld probe thermometer: Calibrated; used for product core temperature checks
+- Cold Rooms A and B: Validated setpoint 36 degrees F (2 degrees C), acceptable range 34-40 degrees F
+- Freezer F1: Validated setpoint -10 degrees F, acceptable range -20 to 0 degrees F
+- Cold-chain forms: Excursion Log, Receiving Temperature Log, and Cold-Chain Release Record
+
+## 6. Procedure
+
+### 6.1 Receiving Inspection
+
+1. Receiving Clerk verifies that the carrier's transport temperature record accompanies the shipment.
+2. Measure the product core temperature of at least three cases per pallet using the calibrated probe thermometer.
+3. Refrigerated product must be at or below 40 degrees F to be accepted into Cold Rooms A/B; frozen product must be at or below 0 degrees F to be accepted into Freezer F1.
+4. Reject and quarantine any refrigerated shipment with a product core temperature above 45 degrees F; place it on hold pending disposition.
+5. Record all receiving temperatures on the Receiving Temperature Log before product is moved to storage.
+
+### 6.2 Storage Monitoring
+
+6. Each storage area is continuously monitored by a calibrated data logger recording air temperature every 15 minutes.
+7. Cold Storage Operator reviews logger readings at the start of every shift and records the review on the Storage Monitoring Log.
+8. Product core temperature is spot-checked and recorded every 4 hours for product staged on the cold dock.
+9. The cumulative time-out-of-refrigeration (TOR) for any refrigerated product staged outside cold storage must not exceed 2 hours.
+
+### 6.3 Temperature Excursions
+
+10. An area temperature outside its validated range for more than 15 minutes is a Temperature Excursion and triggers an alarm.
+11. Cold Storage Operator responds to the alarm, identifies the cause, and records the event and corrective action on the Excursion Log.
+12. Product exposed to an excursion is placed on hold and evaluated for disposition before it may ship.
+
+### 6.4 Pre-Shipment Verification
+
+13. Warehouse QA Technician reviews the storage monitoring record for the shipment's storage period and confirms no unresolved excursion applies.
+14. Measure and record the product core temperature of a minimum of five cases from the outbound shipment.
+15. A refrigerated shipment passes when every measured case is at or below 40 degrees F; any case above 40 degrees F requires the shipment to be held and re-evaluated before release.
+16. Warehouse QA Technician completes and signs the Cold-Chain Release Record; Shift Lead co-signs before the shipment may leave the dock.
+
+## 7. Corrective Actions
+
+If any verification or monitoring step fails, the following actions apply:
+
+- Product affected by an excursion or a failed verification is placed on hold and evaluated for disposition before release.
+- Two consecutive failed pre-shipment verifications on the same shipment trigger a documented deviation report and notification to the Distribution Quality Lead before a third attempt.
+- Any shipment loaded before a passing verification is recorded is recalled from the dock and placed on hold.
+- Repeated excursions (3 or more in a rolling 30-day period) in the same storage area trigger a root-cause investigation per SOP-WH-030.
+
+## 8. Documentation and Record Retention
+
+The Receiving Temperature Log, Storage Monitoring Log, Excursion Log, data logger exports, and Cold-Chain Release Records generated by this procedure are retained by Warehouse Operations for a minimum of 12 months from the date of creation.
+
+## 9. Training Requirements
+
+All personnel performing tasks under this SOP must complete cold-chain handling and temperature-monitoring training and demonstrate competency before working unsupervised. Refresher training is required annually and whenever this SOP is revised at a level that changes a stated parameter (temperature, time, or interval).
+
+## 10. Related Documents
+
+- SOP-WH-004 – Ambient Dry-Goods Storage
+- SOP-WH-030 – Root Cause Investigation, Distribution
+- SOP-SN-005 – Warehouse Pest Control Program
+- SOP-QA-011 – Product Disposition and Hold Procedure
+- Attachment A – Receiving Temperature Log (form)
+- Attachment B – Storage Area Setpoint and Alarm Limits
+
+## 11. Revision History
+
+| Rev | Date | Author | Description of Change |
+|---|---|---|---|
+| 2.0 | 2024-05-02 | Warehouse Ops | Initial consolidated cold-chain SOP for DC-2, replacing area work instructions. |
+| 2.1 | 2025-07-18 | Warehouse Ops | Added continuous data-logger monitoring at 15-minute intervals and the Excursion Log. |
+| 2.2 | 2026-04-15 | Warehouse Ops | Lowered the refrigerated receiving rejection threshold from 47 to 45 degrees F. |
+
+*— End of Document —*
