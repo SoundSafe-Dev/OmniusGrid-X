@@ -18,6 +18,7 @@ resources:
   - db-backup-cronjob.yaml
   - timescaledb-statefulset.yaml
   - redpanda-statefulset.yaml
+  - pod-disruption-budgets.yaml
   - ingress.yaml
   - otel-collector.yaml
 
