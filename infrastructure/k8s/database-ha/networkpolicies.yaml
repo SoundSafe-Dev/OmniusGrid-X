@@ -1,0 +1,110 @@
+# NetworkPolicies for the CloudNativePG cluster. The app base ships a
+# `default-deny-all` over every pod in the omniusgrid namespace, so the CNPG
+# instance pods (label cnpg.io/cluster: omniusgrid-db) need explicit allow-lists
+# once database-ha is deployed alongside base.
+#
+# NOTE on cutover: the backend/worker EGRESS policies in base/ingress.yaml open
+# :5432 to the `app.kubernetes.io/name: timescaledb` pod — NOT to the CNPG pods.
+# When you repoint DATABASE_URL at omniusgrid-db-rw, add cnpg.io/cluster to those
+# egress selectors (or relabel), or the app can't reach the HA database. See
+# database-ha/README.md "Cutover".
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-cnpg-ingress
+  namespace: omniusgrid
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: omniusgrid-db
+  policyTypes:
+    - Ingress
+  ingress:
+    # SQL clients — API, workers, migration Job, and the PgBouncer pooler.
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - backend
+                  - ingestion-worker
+                  - export-worker
+                  - compliance-reports-worker
+                  - ota-rollout-worker
+                  - db-migrate
+        - podSelector:
+            matchLabels:
+              cnpg.io/poolerName: omniusgrid-db-pooler-rw
+      ports:
+        - protocol: TCP
+          port: 5432
+    # Streaming replication + the instance manager between CNPG instances.
+    - from:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: omniusgrid-db
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 8000   # instance manager / status
+    # Prometheus scrapes the CNPG exporter.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 9187
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-cnpg-egress
+  namespace: omniusgrid
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: omniusgrid-db
+  policyTypes:
+    - Egress
+  egress:
+    # Cluster DNS.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Peer instances (replication) and the operator/API.
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: omniusgrid-db
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 8000
+    # In-cluster SeaweedFS (WAL archiving / backups) on 8333, and off-cluster
+    # object stores (AWS S3 etc.) on 443.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: seaweedfs
+      ports:
+        - protocol: TCP
+          port: 8333
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 6443   # Kubernetes API (instance manager)
