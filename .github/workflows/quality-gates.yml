@@ -183,15 +183,15 @@ jobs:
             echo "::endgroup::"
           done
 
-  # --- k8s live smoke test on kind (advisory) ------------------------------
+  # --- k8s live smoke test on kind (blocking) ------------------------------
   k8s-smoke:
     runs-on: ubuntu-latest
-    # ADVISORY until observed green in CI (same pattern as api-contract /
-    # pre-commit). k8s-manifests above proves the manifests BUILD and are
+    # BLOCKING. k8s-manifests above proves the manifests BUILD and are
     # schema-valid; this proves the operator stacks actually RUN and that the
     # custom resources pass the REAL admission webhooks — which kubeconform
-    # can't check because it skips CRD schemas. Flip to blocking once green.
-    continue-on-error: true
+    # can't check because it skips CRD schemas. Promoted to blocking after
+    # observing it green end-to-end (monitoring applies + goes Ready; the CNPG
+    # Cluster and KEDA ScaledObjects pass their operators' validating webhooks).
     steps:
       - uses: actions/checkout@v4
       - name: Create kind cluster
