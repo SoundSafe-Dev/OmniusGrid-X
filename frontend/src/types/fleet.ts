@@ -262,6 +262,123 @@ export interface AgentVersionDistributionResponse {
   items: AgentVersionDistributionItem[];
 }
 
+export type AgentRemoteOperationAction =
+  | 'agent_fetch_logs'
+  | 'agent_diagnostics'
+  | 'collector_restart'
+  | 'agent_effective_config';
+
+export type AgentRemoteOperationStatus =
+  | 'pending'
+  | 'executing'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'timeout';
+
+export interface AgentRemoteOperationSubmission {
+  command_id: string;
+  status: AgentRemoteOperationStatus;
+  action: AgentRemoteOperationAction;
+  asset_id: string;
+  agent_id: string;
+  status_url: string;
+}
+
+export interface AgentRemoteLogEntry {
+  timestamp: string;
+  level: 'debug' | 'info' | 'warning' | 'error' | 'critical';
+  event: string;
+  fields: Record<string, unknown>;
+}
+
+export interface AgentRemoteLogsResult {
+  schema_version: 1;
+  action: 'agent_fetch_logs';
+  agent_id: string;
+  generated_at: string;
+  entries: AgentRemoteLogEntry[];
+  returned_count: number;
+  available_count: number;
+  truncated: boolean;
+  redacted_fields: number;
+}
+
+export interface AgentRemoteDiagnosticsResult {
+  schema_version: 1;
+  action: 'agent_diagnostics';
+  agent_id: string;
+  generated_at: string;
+  overall_status: 'healthy' | 'degraded';
+  agent: Record<string, unknown>;
+  buffer: Record<string, unknown>;
+  transport: Record<string, unknown>;
+  disk: Record<string, unknown>;
+  clock: Record<string, unknown>;
+  collectors: Record<string, unknown>;
+  warnings: string[];
+  truncated: boolean;
+}
+
+export interface AgentRemoteRestartResult {
+  schema_version: 1;
+  action: 'collector_restart';
+  agent_id: string;
+  generated_at: string;
+  collector_asset_id: string;
+  ready: boolean;
+  duration_ms: number;
+  before: Record<string, unknown>;
+  after: Record<string, unknown>;
+}
+
+export interface AgentRemoteConfigResult {
+  schema_version: 1;
+  action: 'agent_effective_config';
+  agent_id: string;
+  generated_at: string;
+  config_hash: string;
+  effective_config: Record<string, unknown>;
+  redacted_fields: number;
+  omitted_collectors: number;
+  truncated: boolean;
+}
+
+export interface AgentRemoteErrorResult {
+  schema_version: 1;
+  action: AgentRemoteOperationAction;
+  error_code: string;
+  message: string;
+}
+
+export type AgentRemoteOperationResult =
+  | AgentRemoteLogsResult
+  | AgentRemoteDiagnosticsResult
+  | AgentRemoteRestartResult
+  | AgentRemoteConfigResult
+  | AgentRemoteErrorResult;
+
+export interface AgentRemoteOperationCommand
+  extends AgentRemoteOperationSubmission {
+  issued_at: string | null;
+  executed_at: string | null;
+  completed_at: string | null;
+  result: AgentRemoteOperationResult | null;
+  error: string | null;
+}
+
+export interface SubmitAgentRemoteOperation {
+  assetId: string;
+  action: AgentRemoteOperationAction;
+  payload?: {
+    schema_version: 1;
+    limit?: number;
+    since?: string;
+    levels?: Array<'debug' | 'info' | 'warning' | 'error' | 'critical'>;
+    readiness_timeout_seconds?: number;
+  };
+}
+
 export interface AgentRelease {
   id: string;
   organization_id: string;

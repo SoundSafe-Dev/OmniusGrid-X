@@ -105,6 +105,7 @@ class UnifiedCollectorCoordinator:
         # Status tracking
         self._running = False
         self._health_check_task: Optional[asyncio.Task] = None
+        self._restart_locks: Dict[str, asyncio.Lock] = {}
     
     def register_collector(self, config: CollectorConfig):
         """Register a collector configuration"""
@@ -157,7 +158,7 @@ class UnifiedCollectorCoordinator:
         
         logger.info("all_collectors_started")
     
-    async def _start_collector(self, config: CollectorConfig):
+    async def _start_collector(self, config: CollectorConfig) -> bool:
         """Start a single collector instance"""
         try:
             collector_class = self.SUPPORTED_COLLECTORS.get(config.collector_type)
@@ -167,7 +168,7 @@ class UnifiedCollectorCoordinator:
                     asset_id=config.asset_id,
                     type=config.collector_type
                 )
-                return
+                return False
             
             # Create collector instance
             collector = collector_class(
@@ -188,6 +189,7 @@ class UnifiedCollectorCoordinator:
                 asset_id=config.asset_id,
                 type=config.collector_type
             )
+            return True
             
         except Exception as e:
             logger.error(
@@ -195,6 +197,7 @@ class UnifiedCollectorCoordinator:
                 asset_id=config.asset_id,
                 error=str(e)
             )
+            return False
     
     async def _run_collector(self, asset_id: str, collector: Any):
         """Run a collector and handle restarts"""
@@ -429,24 +432,92 @@ class UnifiedCollectorCoordinator:
         if task is not None and not task.done():
             task.cancel()
 
-    async def restart_collector(self, asset_id: str):
-        """Restart a specific collector"""
-        logger.info("restarting_collector", asset_id=asset_id)
-        
-        # Stop existing
-        if asset_id in self.collectors:
-            try:
-                await self.collectors[asset_id].stop()
-            except:
-                pass
-        
-        if asset_id in self.collector_tasks:
-            self.collector_tasks[asset_id].cancel()
-        
-        # Start new
+    async def restart_collector(
+        self,
+        asset_id: str,
+        *,
+        readiness_timeout_seconds: int = 10,
+    ) -> Dict[str, Any]:
+        """Restart exactly one configured collector and verify its task stays live."""
+
         config = self.configs.get(asset_id)
-        if config:
-            await self._start_collector(config)
+        if config is None:
+            raise KeyError(asset_id)
+        if not config.enabled:
+            raise PermissionError(asset_id)
+        if readiness_timeout_seconds <= 0:
+            raise ValueError("readiness_timeout_seconds must be positive")
+
+        lock = self._restart_locks.setdefault(asset_id, asyncio.Lock())
+        if lock.locked():
+            raise RuntimeError("collector restart already in progress")
+
+        async with lock:
+            before = self.get_collector_status(asset_id)
+            logger.info("restarting_collector", asset_id=asset_id)
+
+            collector = self.collectors.get(asset_id)
+            if collector is not None:
+                try:
+                    await asyncio.wait_for(collector.stop(), timeout=5)
+                except Exception as exc:
+                    logger.warning(
+                        "collector_stop_during_restart_failed",
+                        asset_id=asset_id,
+                        error=str(exc),
+                    )
+
+            task = self.collector_tasks.get(asset_id)
+            if task is not None and not task.done():
+                task.cancel()
+                try:
+                    await asyncio.wait_for(task, timeout=2)
+                except (asyncio.CancelledError, asyncio.TimeoutError):
+                    pass
+
+            self.collectors.pop(asset_id, None)
+            self.collector_tasks.pop(asset_id, None)
+            if not await self._start_collector(config):
+                raise RuntimeError("collector could not be started")
+
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + readiness_timeout_seconds
+            # A collector is ready for coordinator purposes once its newly
+            # created task survives a scheduling grace period. Protocol-level
+            # connectivity remains visible in diagnostics where supported.
+            await asyncio.sleep(min(0.1, readiness_timeout_seconds))
+            while loop.time() < deadline:
+                replacement = self.collector_tasks.get(asset_id)
+                if replacement is not None and not replacement.done():
+                    after = self.get_collector_status(asset_id)
+                    logger.info(
+                        "collector_restart_ready",
+                        asset_id=asset_id,
+                    )
+                    return {"before": before, "after": after}
+                if replacement is not None and replacement.done():
+                    break
+                await asyncio.sleep(0.05)
+
+            raise RuntimeError("collector did not become ready")
+
+    def get_collector_status(self, asset_id: str) -> Dict[str, Any]:
+        """Return bounded lifecycle state for one configured collector."""
+
+        config = self.configs.get(asset_id)
+        if config is None:
+            raise KeyError(asset_id)
+        task = self.collector_tasks.get(asset_id)
+        collector = self.collectors.get(asset_id)
+        status = {
+            "asset_id": asset_id,
+            "type": config.collector_type,
+            "enabled": config.enabled,
+            "running": task is not None and not task.done(),
+        }
+        if collector is not None and hasattr(collector, "_connected"):
+            status["connected"] = bool(getattr(collector, "_connected"))
+        return status
     
     def get_status(self) -> Dict[str, Any]:
         """Get status of all collectors"""

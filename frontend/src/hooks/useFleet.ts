@@ -3,6 +3,8 @@ import { fleetApi } from '../api/fleet';
 import {
   AgentRelease,
   AgentReleaseCreate,
+  AgentRemoteOperationCommand,
+  AgentRemoteOperationSubmission,
   AgentRollout,
   AgentRolloutCreate,
   AgentVersionDistributionResponse,
@@ -29,6 +31,7 @@ import {
   MaintenanceWindowPreview,
   MaintenanceWindowPreviewRequest,
   MaintenanceWindowUpdate,
+  SubmitAgentRemoteOperation,
 } from '../types/fleet';
 
 const FLEET_KEY = 'fleetOta';
@@ -423,6 +426,32 @@ export function useFleetInventory() {
     [...TARGETING_KEY, 'inventory'],
     fleetApi.inventory,
     { keepPreviousData: true }
+  );
+}
+
+export function useSubmitAgentRemoteOperation() {
+  return useMutation<
+    AgentRemoteOperationSubmission,
+    Error,
+    SubmitAgentRemoteOperation
+  >(fleetApi.submitRemoteOperation);
+}
+
+export function useAgentRemoteOperation(
+  assetId: string,
+  commandId: string
+) {
+  return useQuery<AgentRemoteOperationCommand, Error>(
+    [FLEET_KEY, 'remote-operation', assetId, commandId],
+    () => fleetApi.remoteOperationStatus(assetId, commandId),
+    {
+      enabled: Boolean(assetId && commandId),
+      refetchInterval: (data) =>
+        data &&
+        ['completed', 'failed', 'cancelled', 'timeout'].includes(data.status)
+          ? false
+          : 1_500,
+    }
   );
 }
 

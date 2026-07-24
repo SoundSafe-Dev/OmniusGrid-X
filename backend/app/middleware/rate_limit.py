@@ -1,8 +1,9 @@
 """Rate limiting middleware using slowapi with Redis backend.
 
-General API limits remain gated on settings.RATE_LIMIT_ENABLED.
-Authentication limits use a separate always-enabled limiter keyed by client
-IP so disabling the global limiter cannot disable brute-force protection.
+General API limits remain gated on settings.RATE_LIMIT_ENABLED. Authentication
+and remote agent-operation limits use separate always-enabled limiters, so
+disabling the global limiter cannot disable brute-force or remote-action
+protection.
 """
 
 import hashlib
@@ -71,6 +72,27 @@ def get_auth_client_key(request: Request) -> str:
     return f"auth-ip:{get_remote_address(request)}"
 
 
+def get_remote_operation_key(request: Request) -> str:
+    """Key remote-operation budgets by authenticated subject and target asset."""
+
+    asset_id = str(request.path_params.get("asset_id") or "unknown")
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+        if token == "dev-token":
+            subject = "dev-user"
+        else:
+            try:
+                claims = jwt.decode(token, options={"verify_signature": False})
+                subject = str(UUID(str(claims.get("sub"))))
+            except Exception:
+                # Authentication still validates the bearer token. This
+                # fallback avoids putting the credential itself in a key.
+                subject = hashlib.sha256(token.encode("utf-8")).hexdigest()[:24]
+        return f"remote-user:{subject}:asset:{asset_id}"
+    return f"remote-ip:{get_remote_address(request)}:asset:{asset_id}"
+
+
 # in_memory_fallback_enabled: if Redis is unreachable, fall back to per-process
 # counters instead of raising. Fleet-wide limits become per-worker limits, which
 # is weaker — but a rate limiter must never convert a cache outage into an API
@@ -100,6 +122,18 @@ limiter = Limiter(
 # counters rather than locking everyone out.
 auth_limiter = Limiter(
     key_func=get_auth_client_key,
+    storage_uri=settings.REDIS_URL,
+    in_memory_fallback_enabled=True,
+    swallow_errors=True,
+    headers_enabled=False,
+    enabled=True,
+)
+
+# Remote agent actions remain protected even when the optional global API
+# limiter is disabled. The route-specific decorators set separate read and
+# collector-restart budgets.
+remote_operation_limiter = Limiter(
+    key_func=get_remote_operation_key,
     storage_uri=settings.REDIS_URL,
     in_memory_fallback_enabled=True,
     swallow_errors=True,
@@ -181,6 +215,16 @@ def auth_rate_limit(limit: str) -> Callable:
     def decorator(func: Callable) -> Callable:
         _resolve_postponed_annotations(func)
         return auth_limiter.limit(limit)(func)
+
+    return decorator
+
+
+def remote_operation_rate_limit(limit: str) -> Callable:
+    """Always enforce a per-user, per-target remote-operation budget."""
+
+    def decorator(func: Callable) -> Callable:
+        _resolve_postponed_annotations(func)
+        return remote_operation_limiter.limit(limit)(func)
 
     return decorator
 

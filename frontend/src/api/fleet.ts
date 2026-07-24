@@ -2,6 +2,8 @@ import { api } from './client';
 import {
   AgentRelease,
   AgentReleaseCreate,
+  AgentRemoteOperationCommand,
+  AgentRemoteOperationSubmission,
   AgentRollout,
   AgentRolloutCreate,
   AgentVersionDistributionResponse,
@@ -28,6 +30,7 @@ import {
   MaintenanceWindowPreview,
   MaintenanceWindowPreviewRequest,
   MaintenanceWindowUpdate,
+  SubmitAgentRemoteOperation,
 } from '../types/fleet';
 
 const BASE = '/api/v1/fleet';
@@ -296,6 +299,34 @@ export const fleetApi = {
 
   inventory: async (): Promise<FleetInventoryResponse> => {
     const response = await api.get<FleetInventoryResponse>(`${BASE}/inventory`);
+    return response.data;
+  },
+
+  submitRemoteOperation: async ({
+    assetId,
+    action,
+    payload,
+  }: SubmitAgentRemoteOperation): Promise<AgentRemoteOperationSubmission> => {
+    const actionPaths = {
+      agent_fetch_logs: 'logs',
+      agent_diagnostics: 'diagnostics',
+      collector_restart: 'restart-collector',
+      agent_effective_config: 'effective-config',
+    } as const;
+    const response = await api.post<AgentRemoteOperationSubmission>(
+      `${BASE}/agents/${assetId}/operations/${actionPaths[action]}`,
+      payload || { schema_version: 1 }
+    );
+    return response.data;
+  },
+
+  remoteOperationStatus: async (
+    assetId: string,
+    commandId: string
+  ): Promise<AgentRemoteOperationCommand> => {
+    const response = await api.get<AgentRemoteOperationCommand>(
+      `${BASE}/agents/${assetId}/operations/${commandId}`
+    );
     return response.data;
   },
 
