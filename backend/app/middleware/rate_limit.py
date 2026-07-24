@@ -5,7 +5,10 @@ Authentication limits use a separate always-enabled limiter keyed by client
 IP so disabling the global limiter cannot disable brute-force protection.
 """
 
+import hashlib
 import re
+
+import jwt
 from typing import Callable, get_type_hints
 from uuid import UUID
 
@@ -41,10 +44,22 @@ def get_user_id_from_request(request: Request) -> str:
             token = auth_header[7:]
             if token == "dev-token":
                 return "user:dev-user"
-            # Token prefix is sufficient for keying without decoding the
-            # JWT on every request. The full identity check still happens
-            # in the auth dependency on the endpoint itself.
-            return f"user:{token[:16]}"
+            # Key by the token's `sub` (the user id). The previous `token[:16]`
+            # was the base64 of the JWT header, which is IDENTICAL for every
+            # HS256 token — so all authenticated users shared one bucket and any
+            # one of them could throttle everyone. Decode is unverified on
+            # purpose: this is only for bucketing, and the real identity/signature
+            # check happens in the endpoint's auth dependency. Fall back to a hash
+            # of the token (still per-token, never a shared constant) if the
+            # token can't be parsed.
+            try:
+                claims = jwt.decode(token, options={"verify_signature": False})
+                sub = claims.get("sub")
+                if sub:
+                    return f"user:{sub}"
+            except Exception:
+                pass
+            return f"user:{hashlib.sha256(token.encode()).hexdigest()[:32]}"
     except Exception:
         pass
 
