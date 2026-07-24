@@ -19,7 +19,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_active_user
@@ -131,20 +131,15 @@ async def get_fuel_efficiency(
     db: AsyncSession = Depends(get_tenant_db),
 ):
     since = _range_start(range)
-    rows = (await db.execute(
-        select(GeoTabTrip).where(
+    # Only the total distance is used below (per-vehicle fuel isn't collected
+    # yet, so by_vehicle is empty), so sum it in SQL instead of loading every
+    # trip row. coalesce keeps an all-NULL/no-rows range at 0.0.
+    total_distance = float((await db.execute(
+        select(func.coalesce(func.sum(GeoTabTrip.distance_miles), 0)).where(
             GeoTabTrip.organization_id == org_id,
             GeoTabTrip.start_time >= since,
         )
-    )).scalars().all()
-
-    dist_by_vehicle: dict = defaultdict(float)
-    total_distance = 0.0
-    for t in rows:
-        miles = float(t.distance_miles or 0)
-        total_distance += miles
-        if t.vehicle_id:
-            dist_by_vehicle[t.vehicle_id] += miles
+    )).scalar() or 0)
 
     # Fuel consumption is not collected yet, so efficiency cannot be computed.
     return {
@@ -299,13 +294,13 @@ async def get_cost_per_mile(
     db: AsyncSession = Depends(get_tenant_db),
 ):
     since = _range_start(range)
-    rows = (await db.execute(
-        select(GeoTabTrip).where(
+    # Sum in SQL rather than loading every trip row just to add up distances.
+    total_miles = round(float((await db.execute(
+        select(func.coalesce(func.sum(GeoTabTrip.distance_miles), 0)).where(
             GeoTabTrip.organization_id == org_id,
             GeoTabTrip.start_time >= since,
         )
-    )).scalars().all()
-    total_miles = round(sum(float(t.distance_miles or 0) for t in rows), 1)
+    )).scalar() or 0), 1)
     total_cost = round(total_miles * _COST_PER_MILE_USD, 2)
     return {
         "total_cost": total_cost,
