@@ -1,0 +1,39 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Cluster observability stack — Prometheus + Alertmanager + kube-state-metrics.
+# Deployed SEPARATELY from the app base (monitoring has a different lifecycle and
+# pulls in the canonical alert rules from infra/prometheus, which live OUTSIDE
+# this directory). Because of that cross-tree file reference, build it with:
+#
+#   kubectl kustomize --load-restrictor LoadRestrictionsNone \
+#     infrastructure/k8s/monitoring | kubectl apply -f -
+#
+# The alert rules are generated straight from infra/prometheus/*.yml so there is
+# ONE source of truth shared with the docker-compose Prometheus.
+namespace: omniusgrid
+
+resources:
+  - prometheus.yaml
+  - alertmanager.yaml
+  - kube-state-metrics.yaml
+
+configMapGenerator:
+  - name: prometheus-config
+    files:
+      - prometheus.yml=prometheus-config.yml
+  - name: prometheus-rules
+    files:
+      - alerts.yml=../../../infra/prometheus/alerts.yml
+      - slo_rules.yml=../../../infra/prometheus/slo_rules.yml
+  - name: alertmanager-config
+    files:
+      - alertmanager.yml=alertmanager-config.yml
+
+# Hash suffixes stay ON: kustomize rewrites the Deployment/StatefulSet volume
+# references to the hashed ConfigMap name, so changing the scrape config or the
+# alert rules rolls the pods automatically.
+
+commonLabels:
+  app.kubernetes.io/part-of: omniusgrid
+  app.kubernetes.io/managed-by: kustomize

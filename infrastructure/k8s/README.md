@@ -16,13 +16,30 @@ applied by CI and drift from the base names.
 > `archive_command`; the current image has neither. See
 > [`docs/runbooks/database-backup-restore.md`](../../docs/runbooks/database-backup-restore.md).
 
-> **No monitoring runs in this cluster.** There is no Prometheus, Alertmanager,
-> Grafana or kube-state-metrics in `base/` — only the otel-collector and Jaeger
-> (tracing). Pods carry `prometheus.io/scrape` annotations that nothing
-> consumes, and every alert rule in `infra/prometheus/` and dashboard in
-> `infra/grafana/` only runs under docker-compose. Deploying a monitoring stack
-> is a prerequisite for any in-cluster alerting, including backup-failure and
-> migration-failure alerts.
+> **Monitoring stack.** In-cluster metrics/alerting live in `monitoring/`
+> (Prometheus + Alertmanager + kube-state-metrics), deployed separately from the
+> app base because it has its own lifecycle and pulls the canonical alert rules
+> from `infra/prometheus/*.yml` (one source of truth shared with docker-compose):
+>
+> ```bash
+> kustomize build --load-restrictor LoadRestrictionsNone \
+>   infrastructure/k8s/monitoring | kubectl apply -f -
+> ```
+>
+> Prometheus discovers targets via the Kubernetes API (backend `/metrics`,
+> Redpanda, kube-state-metrics, plus any pod annotated `prometheus.io/scrape`),
+> evaluates the shared rules, and forwards firing alerts to Alertmanager, which
+> routes by severity to PagerDuty/Slack. Override the placeholder
+> `alertmanager-secrets` (Slack webhook, PagerDuty key) per environment. The
+> otel-collector + Jaeger (tracing) remain in `base/`. This is the stack that
+> makes backup-failure and migration-failure alerts actually fire.
+
+> **Object storage.** Generated export/compliance artifacts go to SeaweedFS
+> (`base/object-store.yaml`, S3-compatible) instead of a pod-local `emptyDir`:
+> the worker writes on its pod and the backend API serves the download from
+> another, so they must share one bucket. The backend and both workers set
+> `EXPORT_USE_S3=true` and read the `s3-credentials` Secret — override its
+> placeholder dev credentials per environment.
 
 ## Required external secrets (create BEFORE applying an overlay)
 

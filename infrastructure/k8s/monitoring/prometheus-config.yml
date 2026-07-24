@@ -1,0 +1,98 @@
+# Prometheus scrape config for the Kubernetes cluster. This is the k8s-native
+# counterpart to infra/prometheus/prometheus.yml (which uses docker-compose
+# service names): here targets are discovered via the Kubernetes API instead of
+# static hostnames, so new pods are scraped automatically.
+#
+# The ALERT RULES themselves are NOT duplicated here — the kustomization mounts
+# the canonical infra/prometheus/alerts.yml and slo_rules.yml as a ConfigMap so
+# there is exactly one source of truth for both compose and k8s.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: opsgrid
+    environment: kubernetes
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+rule_files:
+  - /etc/prometheus/rules/alerts.yml
+  - /etc/prometheus/rules/slo_rules.yml
+
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # kube-state-metrics — cluster object state (deployments, pods, HPAs, PVCs…)
+  - job_name: 'kube-state-metrics'
+    static_configs:
+      - targets: ['kube-state-metrics:8080']
+
+  # Backend API — the app's /metrics endpoint (root-mounted). Scrape via the
+  # Service so all backend replicas behind it are covered.
+  - job_name: 'opsgrid-backend'
+    metrics_path: '/metrics'
+    kubernetes_sd_configs:
+      - role: endpoints
+        namespaces:
+          names: ['omniusgrid']
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_service_label_app_kubernetes_io_name]
+        action: keep
+        regex: backend
+      - source_labels: [__meta_kubernetes_endpoint_port_name]
+        action: keep
+        regex: http|8000|web
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: pod
+      - source_labels: [__meta_kubernetes_namespace]
+        target_label: namespace
+
+  # Redpanda broker metrics
+  - job_name: 'redpanda'
+    metrics_path: '/public_metrics'
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names: ['omniusgrid']
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+        action: keep
+        regex: redpanda
+      - source_labels: [__address__]
+        action: replace
+        regex: '([^:]+)(?::\d+)?'
+        replacement: '${1}:9644'
+        target_label: __address__
+
+  # Generic pod discovery: any pod annotated with prometheus.io/scrape: "true"
+  # is scraped at its declared prometheus.io/port and prometheus.io/path. Lets a
+  # new worker opt into scraping with two annotations and no config change here.
+  - job_name: 'kubernetes-pods'
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names: ['omniusgrid']
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+        action: keep
+        regex: 'true'
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+        action: replace
+        target_label: __metrics_path__
+        regex: (.+)
+      - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+        action: replace
+        regex: '([^:]+)(?::\d+)?;(\d+)'
+        replacement: '${1}:${2}'
+        target_label: __address__
+      - source_labels: [__meta_kubernetes_namespace]
+        target_label: namespace
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: pod
