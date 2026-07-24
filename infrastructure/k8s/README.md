@@ -6,6 +6,13 @@ manifests that lived in `infra/k8s/` (Patroni-based TimescaleDB, pgBackRest
 CronJob) are archived under `legacy-patroni/` for reference; they are not
 applied by CI and drift from the base names.
 
+> **Database HA.** `base/` runs a **single** TimescaleDB pod — a node/disk loss
+> is a full outage. `database-ha/` is the enterprise replacement: a 3-instance
+> CloudNativePG cluster with automatic failover, synchronous replication (RPO≈0),
+> continuous WAL archiving to S3 for PITR, and a PgBouncer pooler. It supersedes
+> the archived `legacy-patroni/`. It is opt-in (needs the CloudNativePG operator
+> and a TimescaleDB-enabled image) — see [`database-ha/README.md`](database-ha/README.md).
+
 > **Backups.** Because `legacy-patroni/` is never applied, the pgBackRest
 > CronJob living there meant staging and production had **no backups at all**,
 > while the DR runbooks described restoring from a repository nothing wrote to.
