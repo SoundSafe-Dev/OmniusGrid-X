@@ -23,6 +23,19 @@ metadata:
 spec:
   instances: 3
 
+  # Stamp the platform labels onto the pods/PVCs the OPERATOR creates. Without
+  # this they carry only the operator's own labels (cnpg.io/*) — kustomize's
+  # commonLabels can't reach runtime-created objects, it only labels the Cluster
+  # CR itself. That matters because every NetworkPolicy podSelector generated
+  # here matches on all THREE labels (kustomize bakes part-of/managed-by in), so
+  # without inheritance allow-cnpg-ingress/-egress and the SeaweedFS ingress rule
+  # would select NOTHING: the instance pods would fall under default-deny-all
+  # with no allow rules and the database would be unreachable.
+  inheritedMetadata:
+    labels:
+      app.kubernetes.io/part-of: omniusgrid
+      app.kubernetes.io/managed-by: kustomize
+
   # TimescaleDB is NOT in the stock CloudNativePG image — this must be a
   # PostgreSQL 15 image with the timescaledb extension built in and preloaded.
   # Build from the CNPG image + timescaledb, or use a maintained community image;

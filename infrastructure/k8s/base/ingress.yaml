@@ -224,6 +224,12 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: timescaledb
+        # The CloudNativePG HA cluster (database-ha). Listed alongside timescaledb
+        # so adopting the HA database does not require editing every egress policy
+        # — before that stack is deployed this selector simply matches nothing.
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: omniusgrid-db
       ports:
         - protocol: TCP
           port: 5432
@@ -277,6 +283,12 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: timescaledb
+        # The CloudNativePG HA cluster (database-ha). Listed alongside timescaledb
+        # so adopting the HA database does not require editing every egress policy
+        # — before that stack is deployed this selector simply matches nothing.
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: omniusgrid-db
       ports:
         - protocol: TCP
           port: 5432
@@ -347,6 +359,12 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: timescaledb
+        # The CloudNativePG HA cluster (database-ha). Listed alongside timescaledb
+        # so adopting the HA database does not require editing every egress policy
+        # — before that stack is deployed this selector simply matches nothing.
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: omniusgrid-db
       ports:
         - protocol: TCP
           port: 5432
@@ -395,6 +413,12 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: timescaledb
+        # The CloudNativePG HA cluster (database-ha). Listed alongside timescaledb
+        # so adopting the HA database does not require editing every egress policy
+        # — before that stack is deployed this selector simply matches nothing.
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: omniusgrid-db
       ports:
         - protocol: TCP
           port: 5432
@@ -460,6 +484,12 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: timescaledb
+        # The CloudNativePG HA cluster (database-ha). Listed alongside timescaledb
+        # so adopting the HA database does not require editing every egress policy
+        # — before that stack is deployed this selector simply matches nothing.
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: omniusgrid-db
       ports:
         - protocol: TCP
           port: 5432
@@ -516,6 +546,12 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: timescaledb
+        # The CloudNativePG HA cluster (database-ha). Listed alongside timescaledb
+        # so adopting the HA database does not require editing every egress policy
+        # — before that stack is deployed this selector simply matches nothing.
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: omniusgrid-db
       ports:
         - protocol: TCP
           port: 5432
