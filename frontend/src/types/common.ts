@@ -32,16 +32,24 @@ export interface OEEMetrics {
   totalPlannedTimeSeconds: number;
 }
 
+/** Fleet-wide AVAILABILITY, not full OEE.
+ *
+ * The endpoint used to return availability under the name `oee` (performance and
+ * quality were hardcoded to 1.0 server-side), so anything labelled "OEE" from
+ * this shape was overstated. `availabilityOnly` is returned by the API to make
+ * that explicit. For real three-factor OEE use the per-asset
+ * `/dashboard/assets/{id}/oee`, which delegates to the OEE calculator.
+ */
 export interface FleetOEE {
   timeRange: string;
   assetCount: number;
   fleetAverageAvailability: number;
-  fleetAverageOee: number;
+  availabilityOnly: boolean;
   assets: Array<{
     assetId: string;
     assetName: string;
     availability: number;
-    oee: number;
+    availabilityOnly: boolean;
   }>;
 }
 

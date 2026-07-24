@@ -110,13 +110,13 @@ const OEE: FC = () => {
             <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-6">
               <div className="flex items-center gap-3 mb-2">
                 <BarChart3 className="text-status-running" size={24} />
-                <p className="text-opsgrid-text-secondary">Overall OEE</p>
+                <p className="text-opsgrid-text-secondary">Fleet Availability</p>
               </div>
               <p className="text-3xl font-bold">
-                {((fleetOEE?.fleetAverageOee || 0) * 100).toFixed(1)}%
+                {((fleetOEE?.fleetAverageAvailability || 0) * 100).toFixed(1)}%
               </p>
               <p className="text-sm text-opsgrid-text-secondary mt-1">
-                Availability × Performance × Quality
+                Run time ÷ planned time — not full OEE
               </p>
             </div>
           </TooltipTrigger>
