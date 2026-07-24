@@ -6,7 +6,7 @@ active-collector count, certificate expiry). Separate module reusing the shared
 Base, to avoid touching the large shared models.py.
 """
 
-from datetime import datetime
+from app.core.datetime_utils import utcnow
 
 from sqlalchemy import Column, DateTime, Integer, String
 
@@ -30,4 +30,4 @@ class EdgeAgentStatus(Base):
     total_collectors = Column(Integer, default=0)
     cert_expires_in_seconds = Column(Integer)
 
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)

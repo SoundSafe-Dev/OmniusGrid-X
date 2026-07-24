@@ -6,7 +6,7 @@ module reusing the shared Base — same pattern as notification_models.py — to
 avoid touching the large shared models.py (a convergence hotspot).
 """
 
-from datetime import datetime
+from app.core.datetime_utils import utcnow
 
 from sqlalchemy import Boolean, Column, DateTime, Float, Integer, JSON, String, Text
 
@@ -42,8 +42,8 @@ class Vehicle(Base):
     registration_expiry = Column(DateTime(timezone=True))
     inspection_due = Column(DateTime(timezone=True))
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
 class GeofenceZone(Base):
@@ -61,8 +61,8 @@ class GeofenceZone(Base):
     trigger_on = Column(String(20), default="both")  # entry | exit | both
     severity = Column(String(20), default="warning")  # info | warning | critical
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
 class GeofenceAlert(Base):
@@ -79,7 +79,7 @@ class GeofenceAlert(Base):
     acknowledged = Column(Boolean, default=False)
     acknowledged_by = Column(String(36))
     acknowledged_at = Column(DateTime(timezone=True))
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, index=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow, index=True)
 
 
 class MaintenanceSchedule(Base):
@@ -96,8 +96,8 @@ class MaintenanceSchedule(Base):
     status = Column(String(50), default="scheduled")  # scheduled | overdue | in_progress | completed | cancelled
     estimated_cost = Column(Float)
     completed_at = Column(DateTime(timezone=True))
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
 class RepairOrder(Base):
@@ -115,7 +115,7 @@ class RepairOrder(Base):
     vendor = Column(String(255))
     cost = Column(Float)
     category = Column(String(100))  # engine | brakes | tires | electrical | body | other
-    opened_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    opened_at = Column(DateTime(timezone=True), default=utcnow)
     completed_at = Column(DateTime(timezone=True))
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

@@ -1,7 +1,7 @@
 """Database models"""
 
 import uuid
-from datetime import datetime
+from app.core.datetime_utils import utcnow
 from typing import Optional, List
 from sqlalchemy import Column, String, DateTime, Boolean, Numeric, Float, JSON, ForeignKey, Text, BigInteger, Integer, ARRAY, Date, UUID, UniqueConstraint, CheckConstraint, Index, func, text
 from sqlalchemy.dialects.postgresql import INET, JSONB
@@ -77,8 +77,8 @@ class Organization(Base):
     id = UUIDColumn()
     name = Column(String(255), nullable=False)
     slug = Column(String(100), unique=True, nullable=False)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow)
     settings = Column(JSON, default={})
 
     assets = relationship("Asset", back_populates="organization")
@@ -97,7 +97,7 @@ class AssetType(Base):
     packml_config = Column(JSON, default={})
     telemetry_schema = Column(JSON, default={})
     action_space = Column(JSON, default={})
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
     
     assets = relationship("Asset", back_populates="asset_type")
 
@@ -126,8 +126,8 @@ class Asset(Base):
     agent_config_hash = Column(String(64))
     agent_build_id = Column(String(255))
     agent_last_heartbeat = Column(DateTime(timezone=True))
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow)
 
     organization = relationship("Organization", back_populates="assets")
     asset_type = relationship("AssetType", back_populates="assets")
@@ -144,7 +144,7 @@ class PackMLState(Base):
     state_exited_at = Column(DateTime(timezone=True))
     duration_seconds = Column(Numeric)
     meta_data = Column(JSON, default={})
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 class Telemetry(Base):
@@ -216,12 +216,12 @@ class HistorianRetentionPolicy(Base):
         nullable=True,
     )
     created_at = Column(
-        DateTime(timezone=True), default=datetime.utcnow, server_default=func.now()
+        DateTime(timezone=True), default=utcnow, server_default=func.now()
     )
     updated_at = Column(
         DateTime(timezone=True),
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=utcnow,
+        onupdate=utcnow,
         server_default=func.now(),
     )
 
@@ -263,7 +263,7 @@ class Operation(Base):
     planned_duration = Column(Integer)
     actual_duration = Column(Integer)
     meta_data = Column(JSON, default={})
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 class Workcell(Base):
@@ -274,8 +274,8 @@ class Workcell(Base):
     name = Column(String(255), nullable=False)
     description = Column(Text)
     location = Column(String(255))
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 # ==================== YMS Models ====================
@@ -298,7 +298,7 @@ class YardTrailer(Base):
     license_plate = Column(String(32))
     detention_cost = Column(Float)
     detention_risk = Column(String(20))  # low, medium, high
-    check_in_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    check_in_at = Column(DateTime(timezone=True), default=utcnow)
     check_out_at = Column(DateTime(timezone=True))
     dock_door_id = UUIDForeignKey("dock_doors.id", nullable=True)
     driver_id = UUIDForeignKey("drivers.id", nullable=True)
@@ -306,8 +306,8 @@ class YardTrailer(Base):
     temperature_setpoint = Column(Numeric)  # for reefers
     temperature_actual = Column(Numeric)
     meta_data = Column(JSON, default={})
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 class DockDoor(Base):
@@ -323,8 +323,8 @@ class DockDoor(Base):
     current_trailer_id = UUIDForeignKey("yard_trailers.id", nullable=True)
     last_occupied_at = Column(DateTime(timezone=True))
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 class YardMove(Base):
@@ -338,11 +338,11 @@ class YardMove(Base):
     to_location = Column(String(100), nullable=False)
     move_type = Column(String(50))  # check_in, dock, yard_relocate, check_out
     jockey_driver_id = UUIDForeignKey("drivers.id", nullable=True)
-    started_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    started_at = Column(DateTime(timezone=True), default=utcnow)
     completed_at = Column(DateTime(timezone=True))
     duration_seconds = Column(Numeric)
     meta_data = Column(JSON, default={})
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 class DriverWaitTime(Base):
@@ -366,8 +366,8 @@ class DriverWaitTime(Base):
     demurrage_charge = Column(Numeric)
     is_billed = Column(Boolean, default=False)
     meta_data = Column(JSON, default={})
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 class YardCheckPoint(Base):
@@ -379,12 +379,12 @@ class YardCheckPoint(Base):
     trailer_id = UUIDForeignKey("yard_trailers.id", nullable=True)
     checkpoint_type = Column(String(50), nullable=False)  # gate_in, guard_shack, weigh_station, gate_out
     checkpoint_name = Column(String(100))
-    passed_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    passed_at = Column(DateTime(timezone=True), default=utcnow)
     weight_lbs = Column(Numeric)
     inspection_status = Column(String(50))  # passed, failed, pending
     inspector_id = Column(String(36))
     meta_data = Column(JSON, default={})
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 # ==================== TMS Models ====================
@@ -412,8 +412,8 @@ class Carrier(Base):
     scac = Column(String(8))  # Standard Carrier Alpha Code (4 letters)
     is_active = Column(Boolean, default=True)
     contact_info = Column(JSON, default={})
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 class Driver(Base):
@@ -444,8 +444,8 @@ class Driver(Base):
     phone = Column(String(50))
     email = Column(String(255))
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 class Shipment(Base):
@@ -481,8 +481,8 @@ class Shipment(Base):
     temperature_max = Column(Numeric)
     route_id = UUIDForeignKey("routes.id", nullable=True)
     meta_data = Column(JSON, default={})
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 class Route(Base):
@@ -501,8 +501,8 @@ class Route(Base):
     toll_cost_estimate = Column(Numeric)
     optimization_criteria = Column(String(50))  # fastest, cheapest, balanced
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 class LoadPlan(Base):
@@ -514,7 +514,7 @@ class LoadPlan(Base):
     shipment_id = UUIDForeignKey("shipments.id", nullable=True)
     trailer_id = UUIDForeignKey("yard_trailers.id", nullable=True)
     planned_by = Column(String(36))
-    planned_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    planned_at = Column(DateTime(timezone=True), default=utcnow)
     load_sequence = Column(JSON, default=[])  # order of loading
     weight_distribution = Column(JSON, default={})  # axle weights
     space_utilization_percent = Column(Numeric)
@@ -523,8 +523,8 @@ class LoadPlan(Base):
     is_executed = Column(Boolean, default=False)
     executed_at = Column(DateTime(timezone=True))
     meta_data = Column(JSON, default={})
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 class FreightCharge(Base):
@@ -548,8 +548,8 @@ class FreightCharge(Base):
     approved_by = Column(String(36))
     approved_at = Column(DateTime(timezone=True))
     meta_data = Column(JSON, default={})
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 # ==================== Correlation Models ====================
@@ -575,8 +575,8 @@ class DockAppointment(Base):
     priority = Column(String(20), default="normal")
     compliance_required = Column(Boolean, default=False)  # FDA, etc.
     meta_data = Column(JSON, default={})
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 class TruckAssetCorrelation(Base):
@@ -599,7 +599,7 @@ class TruckAssetCorrelation(Base):
     detention_charge = Column(Numeric)
     efficiency_score = Column(Numeric)  # 0-100 based on synchronization
     meta_data = Column(JSON, default={})
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 class LoadQualityLog(Base):
@@ -623,8 +623,8 @@ class LoadQualityLog(Base):
     claim_amount = Column(Numeric)
     resolved_at = Column(DateTime(timezone=True))
     meta_data = Column(JSON, default={})
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 class User(Base):
@@ -643,8 +643,8 @@ class User(Base):
     user_goals = Column(JSON, default=[])
     is_active = Column(Boolean, default=True)
     last_login = Column(DateTime(timezone=True))
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 class Command(Base):
@@ -685,19 +685,19 @@ class Command(Base):
     priority = Column(String(20), default="normal")  # low, normal, high, critical
     timeout_seconds = Column(Integer, nullable=False, default=60)
     dispatch_attempts = Column(Integer, nullable=False, default=0)
-    next_dispatch_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    next_dispatch_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
     dispatched_at = Column(DateTime(timezone=True))
     deadline_at = Column(DateTime(timezone=True))
     last_dispatch_error = Column(Text)
-    issued_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    issued_at = Column(DateTime(timezone=True), default=utcnow)
     issued_by = UUIDForeignKey("users.id", nullable=True)
     executed_at = Column(DateTime(timezone=True))
     completed_at = Column(DateTime(timezone=True))
     result = Column(JSON, default=dict)
     error_message = Column(Text)
     organization_id = UUIDForeignKey("organizations.id")
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
 # ==================== Kanban Task Management Models ====================
@@ -717,8 +717,8 @@ class TaskBoard(Base):
         "show_completed": False
     })
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 class TaskColumn(Base):
@@ -734,8 +734,8 @@ class TaskColumn(Base):
     color = Column(String(7), default="#6366F1")  # hex color
     is_collapsed = Column(Boolean, default=False)
     auto_archive_days = Column(Integer, default=7)  # auto-archive tasks after N days in Done
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 class Task(Base):
@@ -803,8 +803,8 @@ class Task(Base):
 
     # Audit
     created_by = UUIDForeignKey("users.id")
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow)
     completed_at = Column(DateTime(timezone=True))
     completed_by = UUIDForeignKey("users.id")
 
@@ -819,7 +819,7 @@ class TaskComment(Base):
     comment_type = Column(String(50), default="comment")  # comment, system, time_log, status_change, approval_action
     content = Column(Text)
     extra_data = Column(JSON, default=dict)  # { "before_state": "...", "after_state": "..." }
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 class TaskTimer(Base):
@@ -834,7 +834,7 @@ class TaskTimer(Base):
     duration_minutes = Column(Integer, default=0)
     is_running = Column(Boolean, default=True)
     description = Column(Text)  # What was done during this time
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 class TaskRule(Base):
@@ -872,8 +872,8 @@ class TaskRule(Base):
 
     # Audit
     created_by = UUIDForeignKey("users.id")
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 class TaskEscalation(Base):
@@ -884,12 +884,12 @@ class TaskEscalation(Base):
     task_id = UUIDForeignKey("tasks.id")
     rule_id = UUIDForeignKey("task_rules.id")
     escalation_level = Column(Integer, nullable=False)  # 1-5
-    triggered_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    triggered_at = Column(DateTime(timezone=True), default=utcnow)
     resolved_at = Column(DateTime(timezone=True))
     notified_users = Column(JSON, default=list)  # User IDs notified
     actions_taken = Column(JSON, default=list)  # ["email_sent", "sms_sent", "reassigned"]
     notification_channels = Column(JSON, default=list)  # ["push", "email", "sms"]
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 class ActionableRegistry(Base):
@@ -915,8 +915,8 @@ class ActionableRegistry(Base):
     checklist_requirements = Column(JSON, default=list)  # [{id, requirement, completed, notes}]
     meta_data = Column(JSON, default=dict)
     created_by = UUIDForeignKey("users.id")
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 class ActionableRegistryItem(Base):
@@ -941,8 +941,8 @@ class ActionableRegistryItem(Base):
     compliance_score = Column(Integer, default=0)  # 0-100
     risk_score = Column(Integer, default=0)  # 0-100, calculated based on severity and overdue status
     meta_data = Column(JSON, default=dict)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 class DataCorrelation(Base):
@@ -963,8 +963,8 @@ class DataCorrelation(Base):
     is_bidirectional = Column(Boolean, default=False)
     correlation_meta_data = Column(JSON, default=dict)  # additional context
     created_by = UUIDForeignKey("users.id")
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 # ==================== NLP Analysis Session Models ====================
@@ -979,9 +979,9 @@ class AnalysisSession(Base):
     title = Column(String(500), nullable=False)
     description = Column(Text)
     status = Column(String(50), default="active")  # active, archived, deleted
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    last_accessed_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow)
+    last_accessed_at = Column(DateTime(timezone=True), default=utcnow)
     context_snapshot = Column(JSON, default=dict)  # User context snapshot at session creation
     goals_snapshot = Column(JSON, default=dict)  # User goals snapshot at session creation
     meta_data = Column(JSON, default=dict)
@@ -998,7 +998,7 @@ class SessionDataSource(Base):
     file_name = Column(String(255))
     data_type = Column(String(50))  # spreadsheet, report, image, document
     processed_data = Column(JSON, default=dict)
-    added_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    added_at = Column(DateTime(timezone=True), default=utcnow)
     meta_data = Column(JSON, default=dict)
 
 
@@ -1014,7 +1014,7 @@ class SessionMessage(Base):
     risk_score = Column(Numeric)
     domains = Column(JSON, default=list)  # List of domains analyzed
     actions = Column(JSON, default=list)  # Recommended actions
-    timestamp = Column(DateTime(timezone=True), default=datetime.utcnow)
+    timestamp = Column(DateTime(timezone=True), default=utcnow)
     context_used = Column(JSON, default=dict)  # Context snapshot used for this message
     meta_data = Column(JSON, default=dict)
 
@@ -1035,7 +1035,7 @@ class IntakeItem(Base):
     processed_data = Column(JSON, default={})
     status = Column(String(50), default="pending")  # pending, analyzing, analyzed, error
     analysis_result = Column(JSON, default={})
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
     analyzed_at = Column(DateTime(timezone=True))
     meta_data = Column(JSON, default=dict)
 
@@ -1074,8 +1074,8 @@ class GeoTabTrip(Base):
     # Status
     status = Column(String(50), default="active")  # active, completed, cancelled
     meta_data = Column(JSON, default=dict)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 class GeoTabDiagnostic(Base):
@@ -1094,8 +1094,8 @@ class GeoTabDiagnostic(Base):
     
     # Status
     status = Column(String(50), default="active")  # active, cleared, resolved
-    first_seen_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    last_seen_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    first_seen_at = Column(DateTime(timezone=True), default=utcnow)
+    last_seen_at = Column(DateTime(timezone=True), default=utcnow)
     cleared_at = Column(DateTime(timezone=True), nullable=True)
     
     # Additional vehicle health data
@@ -1105,8 +1105,8 @@ class GeoTabDiagnostic(Base):
     engine_hours = Column(Numeric(10, 2))
     
     meta_data = Column(JSON, default=dict)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 class GeoTabException(Base):
@@ -1135,7 +1135,7 @@ class GeoTabException(Base):
     acknowledged_at = Column(DateTime(timezone=True), nullable=True)
     
     meta_data = Column(JSON, default=dict)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 class AuditLog(Base):
@@ -1143,7 +1143,7 @@ class AuditLog(Base):
     __tablename__ = "audit_logs"
 
     id = UUIDColumn()
-    timestamp = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    timestamp = Column(DateTime(timezone=True), default=utcnow, nullable=False)
     user_id = UUIDForeignKey("users.id", nullable=True)
     organization_id = UUIDForeignKey("organizations.id", nullable=True)
     action = Column(String(100), nullable=False)
@@ -1160,7 +1160,7 @@ class AuditLog(Base):
     ip_address = Column(String(45).with_variant(INET, "postgresql"), nullable=True)
     user_agent = Column(Text, nullable=True)
     hash_chain = Column(String(64), nullable=False)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 class ExportTemplate(Base):
@@ -1197,8 +1197,8 @@ class ExportTemplate(Base):
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 class ScheduledExport(Base):
@@ -1240,8 +1240,8 @@ class ScheduledExport(Base):
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 class ExportDeliveryJob(Base):
@@ -1284,8 +1284,8 @@ class ExportDeliveryJob(Base):
     published_at = Column(DateTime(timezone=True))
     started_at = Column(DateTime(timezone=True))
     completed_at = Column(DateTime(timezone=True))
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 class APIKey(Base):
@@ -1301,7 +1301,7 @@ class APIKey(Base):
     is_active = Column(Boolean, nullable=False, default=True)
     expires_at = Column(DateTime(timezone=True), nullable=True)
     last_used_at = Column(DateTime(timezone=True), nullable=True)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
     created_by = UUIDForeignKey("users.id", nullable=True)
     revoked_at = Column(DateTime(timezone=True), nullable=True)
     revoked_by = UUIDForeignKey("users.id", nullable=True)
@@ -1322,8 +1322,8 @@ class UserSession(Base):
     token_type = Column(String(20), nullable=False, default="refresh")
     ip_address = Column(String(45), nullable=True)
     user_agent = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    last_activity_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    last_activity_at = Column(DateTime(timezone=True), default=utcnow)
     expires_at = Column(DateTime(timezone=True), nullable=False)
     is_active = Column(Boolean, nullable=False, default=True)
     revoked_at = Column(DateTime(timezone=True), nullable=True)
@@ -1351,7 +1351,7 @@ class RevokedToken(Base):
     )
     token_type = Column(String(20), nullable=False)
     expires_at = Column(DateTime(timezone=True), nullable=False)
-    revoked_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    revoked_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
     reason = Column(String(100), nullable=True)
     meta_data = Column("metadata", JSON().with_variant(JSONB, "postgresql"), default=dict)
 
@@ -1364,7 +1364,7 @@ class ConsentRecord(Base):
     user_id = UUIDForeignKey("users.id", nullable=True)
     consent_type = Column(String(50), nullable=False)
     consent_given = Column(Boolean, nullable=False)
-    consent_date = Column(DateTime(timezone=True), default=datetime.utcnow)
+    consent_date = Column(DateTime(timezone=True), default=utcnow)
     consent_method = Column(String(50), nullable=True)
     ip_address = Column(String(45), nullable=True)
     user_agent = Column(Text, nullable=True)
@@ -1385,8 +1385,8 @@ class DataProcessingRecord(Base):
     retention_period = Column(String(100), nullable=True)
     security_measures = StringListColumn(nullable=True)
     legal_basis = Column(String(100), nullable=True)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
 class SecurityAsset(Base):
@@ -1402,8 +1402,8 @@ class SecurityAsset(Base):
     classification = Column(String(50), nullable=True)
     location = Column(String(255), nullable=True)
     status = Column(String(50), default="active")
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
     meta_data = Column(JSON, default={})
 
 
@@ -1422,8 +1422,8 @@ class VendorRiskAssessment(Base):
     findings = StringListColumn(nullable=True)
     controls = StringListColumn(nullable=True)
     status = Column(String(50), default="pending")
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
 class ScheduledComplianceReport(Base):
@@ -1473,12 +1473,12 @@ class ScheduledComplianceReport(Base):
         nullable=True,
     )
     created_at = Column(
-        DateTime(timezone=True), default=datetime.utcnow, server_default=func.now()
+        DateTime(timezone=True), default=utcnow, server_default=func.now()
     )
     updated_at = Column(
         DateTime(timezone=True),
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=utcnow,
+        onupdate=utcnow,
         server_default=func.now(),
     )
 
@@ -1553,12 +1553,12 @@ class ComplianceReportJob(Base):
     file_size = Column(BigInteger)
     file_sha256 = Column(String(64))
     created_at = Column(
-        DateTime(timezone=True), default=datetime.utcnow, server_default=func.now()
+        DateTime(timezone=True), default=utcnow, server_default=func.now()
     )
     updated_at = Column(
         DateTime(timezone=True),
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=utcnow,
+        onupdate=utcnow,
         server_default=func.now(),
     )
     published_at = Column(DateTime(timezone=True))
@@ -1607,11 +1607,11 @@ class AgentRelease(Base):
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=utcnow, server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True),
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=utcnow,
+        onupdate=utcnow,
         server_default=func.now(),
     )
 
@@ -1648,11 +1648,11 @@ class AgentRollout(Base):
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=utcnow, server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True),
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=utcnow,
+        onupdate=utcnow,
         server_default=func.now(),
     )
 
@@ -1735,7 +1735,7 @@ class AgentRolloutEvent(Base):
         nullable=True,
     )
     detail = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False, default=dict)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=utcnow, server_default=func.now())
 
     rollout = relationship("AgentRollout", back_populates="events")
 
@@ -1754,8 +1754,8 @@ class IntegrationConfiguration(Base):
     health_check_url = Column(String(500), nullable=True)
     last_health_check = Column(DateTime(timezone=True), nullable=True)
     health_status = Column(String(50), nullable=True)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
     created_by = UUIDForeignKey("users.id", nullable=True)
     meta_data = Column(JSON, default={})
     
@@ -1775,7 +1775,7 @@ class DataResidencyTag(Base):
     table_name = Column(String(100), nullable=False)
     record_id = Column(String(36), nullable=False)
     region = Column(String(50), nullable=False, default="USA")
-    tagged_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    tagged_at = Column(DateTime(timezone=True), default=utcnow)
     tagged_by = UUIDForeignKey("users.id", nullable=True)
     meta_data = Column(JSON, default={})
 
@@ -1799,7 +1799,7 @@ class ERPIntegrationEvent(Base):
     processing_status = Column(String(50), default="pending")
     error_message = Column(Text, nullable=True)
     retry_count = Column(Integer, default=0)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 class ERPDataMapping(Base):
@@ -1816,8 +1816,8 @@ class ERPDataMapping(Base):
     transformation_rule = Column(Text, nullable=True)
     data_type = Column(String(50), nullable=True)
     is_required = Column(Boolean, default=True)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
 class ERPSyncStatus(Base):
@@ -1835,8 +1835,8 @@ class ERPSyncStatus(Base):
     sync_duration_seconds = Column(Numeric, nullable=True)
     next_sync_at = Column(DateTime(timezone=True), nullable=True)
     delta_token = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
 class ERPEntity(Base):
@@ -1851,10 +1851,10 @@ class ERPEntity(Base):
     entity_data = Column(JSON, nullable=False)
     source_system = Column(String(50), nullable=False)
     is_active = Column(Boolean, default=True)
-    valid_from = Column(DateTime(timezone=True), default=datetime.utcnow)
+    valid_from = Column(DateTime(timezone=True), default=utcnow)
     valid_to = Column(DateTime(timezone=True), nullable=True)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
 class ERPCorrelation(Base):
@@ -1868,7 +1868,7 @@ class ERPCorrelation(Base):
     sensor_event_id = Column(UUIDString(), nullable=True)
     correlation_score = Column(Numeric, nullable=True)
     correlation_metadata = Column(JSON, nullable=True)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 
@@ -1971,11 +1971,11 @@ class ModelRegistryEntry(Base):
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=utcnow, server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True),
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=utcnow,
+        onupdate=utcnow,
         server_default=func.now(),
     )
 
@@ -2014,6 +2014,6 @@ class ModelTrainingRun(Base):
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=utcnow, server_default=func.now())
     started_at = Column(DateTime(timezone=True))
     completed_at = Column(DateTime(timezone=True))
