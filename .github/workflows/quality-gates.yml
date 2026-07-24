@@ -246,20 +246,20 @@ jobs:
           kustomize build infrastructure/k8s/autoscaling \
             | kubectl apply --dry-run=server -f -
 
-  # --- NetworkPolicy enforcement on Calico (advisory) ----------------------
+  # --- NetworkPolicy enforcement on Calico (blocking) ----------------------
   k8s-netpol:
     runs-on: ubuntu-latest
-    # ADVISORY until observed green (same pattern as k8s-smoke was). k8s-smoke
-    # runs on kind's default CNI (kindnet), which IGNORES NetworkPolicies — so it
-    # proves the policies parse and apply, never that they work. This runs the same
-    # base manifests on Calico, where policy is enforced, and asserts real
-    # connectivity both ways:
+    # BLOCKING. k8s-smoke runs on kind's default CNI (kindnet), which IGNORES
+    # NetworkPolicies — so it proves the policies parse and apply, never that they
+    # work. This runs the same base manifests on Calico, where policy is enforced,
+    # and asserts real connectivity both ways:
     #   ALLOW export-worker -> seaweedfs:8333  (the S3 export path; this exact rule
     #         was missing when the object store shipped, silently breaking every
     #         export upload/download under an enforcing CNI)
     #   DENY  ingestion-worker -> seaweedfs:8333  (proves policy is really enforced;
     #         without this the ALLOW assertion would pass even with no CNI at all)
-    continue-on-error: true
+    # Promoted to blocking after observing both assertions execute and pass under
+    # Calico ("OK (reachable)" / "OK (blocked)").
     steps:
       - uses: actions/checkout@v4
       - name: Create kind cluster (no default CNI)
