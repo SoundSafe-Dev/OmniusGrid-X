@@ -1,0 +1,15 @@
+# Grafana datasource — the in-cluster Prometheus (monitoring/prometheus.yaml).
+# k8s-specific: unlike infra/grafana/provisioning/datasources/datasources.yml
+# (compose), this declares only Prometheus — no Loki/TimescaleDB creds — so the
+# platform dashboard renders without a secret in git.
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: "15s"
+      httpMethod: POST

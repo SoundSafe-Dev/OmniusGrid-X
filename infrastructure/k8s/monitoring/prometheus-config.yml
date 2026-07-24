@@ -71,6 +71,30 @@ scrape_configs:
         replacement: '${1}:9644'
         target_label: __address__
 
+  # CloudNativePG — the operator runs a metrics exporter on 9187 of every
+  # instance pod (labelled cnpg.io/cluster). Powers the replication-lag and
+  # cluster-health alerts/dashboard. No-op until the database-ha stack is applied.
+  - job_name: 'cloudnative-pg'
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names: ['omniusgrid']
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_cnpg_io_cluster]
+        action: keep
+        regex: .+
+      - source_labels: [__address__]
+        action: replace
+        regex: '([^:]+)(?::\d+)?'
+        replacement: '${1}:9187'
+        target_label: __address__
+      - source_labels: [__meta_kubernetes_pod_label_cnpg_io_cluster]
+        target_label: cnpg_cluster
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: pod
+      - source_labels: [__meta_kubernetes_namespace]
+        target_label: namespace
+
   # Generic pod discovery: any pod annotated with prometheus.io/scrape: "true"
   # is scraped at its declared prometheus.io/port and prometheus.io/path. Lets a
   # new worker opt into scraping with two annotations and no config change here.

@@ -1,7 +1,8 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-# Cluster observability stack — Prometheus + Alertmanager + kube-state-metrics.
+# Cluster observability stack — Prometheus + Alertmanager + kube-state-metrics +
+# Grafana (platform dashboards).
 # Deployed SEPARATELY from the app base (monitoring has a different lifecycle and
 # pulls in the canonical alert rules from infra/prometheus, which live OUTSIDE
 # this directory). Because of that cross-tree file reference, build it with:
@@ -17,6 +18,7 @@ resources:
   - prometheus.yaml
   - alertmanager.yaml
   - kube-state-metrics.yaml
+  - grafana.yaml
 
 configMapGenerator:
   - name: prometheus-config
@@ -29,6 +31,17 @@ configMapGenerator:
   - name: alertmanager-config
     files:
       - alertmanager.yml=alertmanager-config.yml
+  # Grafana provisioning: datasource + dashboard provider (local), and the
+  # platform dashboard from the canonical infra/grafana tree (single source).
+  - name: grafana-datasources
+    files:
+      - datasources.yml=grafana-datasource.yml
+  - name: grafana-dashboard-provider
+    files:
+      - provider.yml=grafana-dashboard-provider.yml
+  - name: grafana-dashboards
+    files:
+      - platform-infra.json=../../../infra/grafana/provisioning/dashboards/platform-infra.json
 
 # Hash suffixes stay ON: kustomize rewrites the Deployment/StatefulSet volume
 # references to the hashed ConfigMap name, so changing the scrape config or the

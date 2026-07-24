@@ -135,7 +135,7 @@ jobs:
         run: promtool check rules alerts.yml
       - name: Run alert unit tests
         working-directory: ./infra/prometheus
-        run: promtool test rules tests/error_alerts_test.yml tests/subsystems_alerts_test.yml
+        run: promtool test rules tests/error_alerts_test.yml tests/subsystems_alerts_test.yml tests/platform_alerts_test.yml
 
   # --- k8s manifest validation (blocking) ----------------------------------
   k8s-manifests:
@@ -214,6 +214,7 @@ jobs:
           kubectl -n omniusgrid rollout status statefulset/prometheus --timeout=180s
           kubectl -n omniusgrid rollout status statefulset/alertmanager --timeout=180s
           kubectl -n omniusgrid rollout status deployment/kube-state-metrics --timeout=180s
+          kubectl -n omniusgrid rollout status deployment/grafana --timeout=180s
 
       # --- CloudNativePG: install operator, validate the Cluster CR ----------
       - name: Install CloudNativePG operator
