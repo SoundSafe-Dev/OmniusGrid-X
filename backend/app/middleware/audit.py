@@ -216,9 +216,17 @@ class AuditLoggingMiddleware(BaseHTTPMiddleware):
                 # was swallowed by the handler below: the audit trail has been
                 # silently empty on real deployments while every request
                 # appeared to succeed.
+                #
+                # is_local=true (transaction-scoped), NOT false. get_tenant_db
+                # uses false but pairs it with an explicit reset in a finally
+                # block, precisely so the value can't ride a pooled connection
+                # into someone else's request. This writer has no such teardown,
+                # so it uses the transaction-scoped form the ingestion worker
+                # already uses: the setting reverts when the commit below ends
+                # the transaction, and there is nothing to leak.
                 if organization_id and session.bind.dialect.name == "postgresql":
                     await session.execute(
-                        text("SELECT set_config('app.current_org_id', :org_id, false)"),
+                        text("SELECT set_config('app.current_org_id', :org_id, true)"),
                         {"org_id": str(organization_id)},
                     )
 

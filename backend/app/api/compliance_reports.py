@@ -191,7 +191,6 @@ async def enqueue_compliance_report(
     )
     db.add(job)
     await db.commit()
-    await db.refresh(job)
     return _job_response(job)
 
 
@@ -455,7 +454,6 @@ async def create_compliance_report_schedule(
     )
     db.add(schedule)
     await db.commit()
-    await db.refresh(schedule)
     await _audit_schedule_action(
         action="compliance_report_schedule_created",
         schedule=schedule,
