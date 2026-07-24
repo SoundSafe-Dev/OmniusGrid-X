@@ -8,9 +8,8 @@ from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_active_user
-from app.db.database import get_db
+from app.core.tenant import get_tenant_db, get_tenant_org_id
 from app.db.models import Asset, Alarm, PackMLState, Organization, Telemetry
-from app.api.auth import get_current_active_user
 from app.models.schemas import DashboardOverview, OEEMetrics
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
@@ -18,40 +17,49 @@ router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
 @router.get("/overview", response_model=DashboardOverview)
 async def get_dashboard_overview(
-    organization_id: Optional[UUID] = None,
-    db: AsyncSession = Depends(get_db),
+    org_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
-    """Get dashboard overview metrics"""
-    # Base query
-    base_query = select(Asset)
-    if organization_id:
-        base_query = base_query.where(Asset.organization_id == organization_id)
-    
+    """Get dashboard overview metrics for the authenticated user's organization.
+
+    The org comes from the JWT, never from the query string: an earlier version
+    took an optional ``organization_id`` query param, which let a caller aim the
+    query at another tenant. Scoping is explicit here AND enforced by RLS —
+    ``get_tenant_db`` sets the ``app.current_org_id`` GUC the policies read.
+    Using ``get_db`` here (which sets no GUC) is what made every tile render 0.
+    """
+    # Base query — explicit org filter on top of the RLS predicate.
+    base_query = select(Asset).where(Asset.organization_id == org_id)
+
     # Total assets
     result = await db.execute(
         select(func.count()).select_from(base_query.subquery())
     )
     total_assets = result.scalar()
-    
+
     # Active assets
     result = await db.execute(
         select(func.count())
         .select_from(base_query.where(Asset.is_active == True).subquery())
     )
     active_assets = result.scalar()
-    
-    # Assets by PackML state (scoped to org when filtering)
-    state_query = select(Asset.current_packml_state, func.count()).group_by(Asset.current_packml_state)
-    if organization_id:
-        state_query = state_query.where(Asset.organization_id == organization_id)
+
+    # Assets by PackML state
+    state_query = (
+        select(Asset.current_packml_state, func.count())
+        .where(Asset.organization_id == org_id)
+        .group_by(Asset.current_packml_state)
+    )
     result = await db.execute(state_query)
     assets_by_state = {state: count for state, count in result.all()}
-    
+
     # Active alarms
-    alarms_query = select(Alarm).where(Alarm.is_active == True)
-    if organization_id:
-        alarms_query = alarms_query.join(Asset).where(Asset.organization_id == organization_id)
-    
+    alarms_query = (
+        select(Alarm)
+        .join(Asset, Alarm.asset_id == Asset.id)
+        .where(Alarm.is_active == True, Asset.organization_id == org_id)
+    )
+
     result = await db.execute(
         select(func.count()).select_from(alarms_query.subquery())
     )
@@ -78,7 +86,7 @@ async def get_dashboard_overview(
 @router.get("/workcells/{workcell_id}/status")
 async def get_workcell_status(
     workcell_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     """Get status for all assets in a workcell"""
     result = await db.execute(
@@ -109,7 +117,7 @@ async def get_workcell_status(
 async def get_asset_oee(
     asset_id: UUID,
     hours: int = Query(24, ge=1, le=168),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     """Calculate OEE for an asset over a time period"""
     # Verify asset exists
@@ -170,16 +178,19 @@ async def get_asset_oee(
 
 @router.get("/fleet/oee")
 async def get_fleet_oee(
-    organization_id: Optional[UUID] = None,
     hours: int = Query(24, ge=1, le=168),
-    db: AsyncSession = Depends(get_db),
+    org_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
-    """Get OEE metrics for entire fleet"""
-    # Get all assets
-    query = select(Asset).where(Asset.is_active == True)
-    if organization_id:
-        query = query.where(Asset.organization_id == organization_id)
-    
+    """Get OEE metrics for the authenticated user's fleet.
+
+    Org comes from the JWT — the old optional ``organization_id`` query param
+    let a caller read another tenant's fleet.
+    """
+    query = select(Asset).where(
+        Asset.is_active == True, Asset.organization_id == org_id
+    )
+
     result = await db.execute(query)
     assets = result.scalars().all()
     
