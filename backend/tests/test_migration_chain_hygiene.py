@@ -92,18 +92,42 @@ def test_known_fixture_list_is_not_stale():
     )
 
 
-def test_migration_numbering_has_no_unexplained_gap():
-    """Document the 019 gap rather than leaving it to be rediscovered.
+def test_migration_numbering_has_only_the_explained_gap():
+    """019 is the ONE known gap, and it is explained — a new gap is not.
 
-    A missing number is harmless to the runner (it keys on the full filename),
-    but an unexplained gap reads like a lost migration during review. This pins
-    the only known gap so a NEW one is noticed.
+    `019_erp_integration_tables` existed on the `integration-erp` branch. During
+    convergence that branch's ERP foundation was superseded by the canonical
+    connector suite, which landed as `020_erp_integration_tables.sql`, so 019 was
+    dropped deliberately rather than merged (see
+    docs/review/fixed-sprints-integration-convergence.md § Ownership, and
+    database/migrations/README.md).
+
+    A placeholder file would be worse than the gap: it would imply a migration
+    that never applied anywhere. So the gap stays, pinned — and any NEW gap,
+    which really would suggest a lost file, fails.
     """
     prefixes = sorted({int(p.name.split("_", 1)[0]) for p in _sql_files()})
-    gaps = [
-        n for n in range(prefixes[0], prefixes[-1] + 1) if n not in set(prefixes)
-    ]
+    gaps = [n for n in range(prefixes[0], prefixes[-1] + 1) if n not in set(prefixes)]
     assert gaps == [19], (
-        "unexpected gap(s) in migration numbering. 019 is a known historical gap "
-        f"(never authored); anything else suggests a lost file: {gaps}"
+        "unexpected gap(s) in migration numbering. 019 is explained (superseded "
+        "by 020 during the ERP convergence — see database/migrations/README.md); "
+        f"anything else suggests a lost file: {gaps}"
     )
+
+
+def test_the_gap_and_duplicates_are_documented():
+    """The provenance must live next to the migrations, not only in a test.
+
+    Whoever next wonders "where is 019?" will look in this directory, not in the
+    test suite — and the duplicate prefixes carry a genuine trap (renaming an
+    applied migration re-runs it, and 004_fix_kanban_tables DROPs tables).
+    """
+    readme = MIGRATIONS / "README.md"
+    assert readme.exists(), (
+        "database/migrations/README.md is missing — the 019 gap, the "
+        "grandfathered duplicate prefixes and the demo-data gating all need to "
+        "be explained where a reader of this directory will find them"
+    )
+    text = readme.read_text()
+    for needle in ("019", "duplicate", "with-dev-fixtures", "checksum"):
+        assert needle in text, f"migrations README no longer explains '{needle}'"
