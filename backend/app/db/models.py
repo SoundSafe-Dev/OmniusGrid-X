@@ -1785,6 +1785,13 @@ class DataResidencyTag(Base):
 class ERPIntegrationEvent(Base):
     """ERP integration events for tracking webhook and sync events"""
     __tablename__ = "erp_integration_events"
+    # Matches migration 020's `uq_erp_events`. Declaring it here makes create_all
+    # (SQLite tests) enforce it too, and it is the real idempotency guarantee for
+    # webhook delivery — the receiver relies on the conflict rather than a racy
+    # check-then-insert.
+    __table_args__ = (
+        UniqueConstraint("source_system", "event_id", name="uq_erp_events"),
+    )
 
     id = UUIDColumn()
     organization_id = UUIDForeignKey("organizations.id", nullable=False)

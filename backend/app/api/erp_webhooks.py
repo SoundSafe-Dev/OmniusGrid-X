@@ -17,6 +17,7 @@ from typing import Any, Dict, Optional
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db
@@ -93,18 +94,12 @@ async def receive_erp_webhook(
     if not event_type or not event_id:
         raise HTTPException(status_code=400, detail="missing event_type or event_id")
 
-    # Dedup by (source_system, event_id).
-    dup = (
-        await db.execute(
-            select(ERPIntegrationEvent).where(
-                ERPIntegrationEvent.source_system == source_system,
-                ERPIntegrationEvent.event_id == str(event_id),
-            )
-        )
-    ).scalars().first()
-    if dup is not None:
-        return {"status": "duplicate", "event_id": str(event_id)}
-
+    # Idempotent insert. Dedup is enforced by the UNIQUE(source_system,
+    # event_id) constraint, not a check-then-insert: two concurrent deliveries
+    # of the same event (providers retry aggressively) would both pass a
+    # pre-check SELECT and then collide at INSERT. Let the constraint decide and
+    # treat the conflict as the duplicate — race-safe, and one fewer query on the
+    # common first-delivery path.
     db.add(ERPIntegrationEvent(
         organization_id=integration.organization_id,
         integration_id=integration.id,
@@ -116,6 +111,11 @@ async def receive_erp_webhook(
         event_data=event_data,
         processing_status="pending",
     ))
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        logger.info("erp_webhook_duplicate", erp_type=erp_type, event_id=str(event_id))
+        return {"status": "duplicate", "event_id": str(event_id)}
     logger.info("erp_webhook_received", erp_type=erp_type, event_type=event_type, event_id=event_id)
     return {"status": "accepted", "event_id": str(event_id)}
