@@ -50,7 +50,9 @@ async def test_enqueue_persists_queued_job(seeded_orgs, bind_worker_db):
     )
     assert job.report_status == "queued"
     assert job.delivery_status == "pending"
-    assert job.organization_id == seeded_orgs["org_a_id"]
+    # UUIDString reads back a dashed str on every dialect (FS-55); the fixture
+    # holds a uuid.UUID, so compare as strings.
+    assert str(job.organization_id) == str(seeded_orgs["org_a_id"])
 
 
 @pytest.mark.asyncio
