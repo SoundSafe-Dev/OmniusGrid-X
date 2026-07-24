@@ -1,5 +1,5 @@
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: edge-agent
   namespace: omniusgrid
@@ -11,11 +11,13 @@ spec:
   # Single collector process per deployment; scale per site, not per replica
   # (multiple replicas would double-collect the same sources).
   replicas: 1
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 0
+  # Now a StatefulSet (was a Deployment) so the store-and-forward SQLite buffer
+  # gets a PVC that SURVIVES pod reschedule. As a Deployment the buffer was an
+  # emptyDir, so a reschedule discarded up to BUFFER_RETENTION_HOURS (24h) of
+  # offline telemetry — defeating the entire purpose of store-and-forward. The
+  # default RollingUpdate strategy terminates the single pod before the
+  # replacement starts, so the ReadWriteOnce PVC is never contended.
+  serviceName: edge-agent
   selector:
     matchLabels:
       app.kubernetes.io/name: edge-agent
@@ -108,9 +110,19 @@ spec:
             failureThreshold: 3
 
       volumes:
-        - name: buffer
-          emptyDir: {}
+        # buffer is a persistent volumeClaimTemplate (below), not emptyDir.
         - name: tmp
           emptyDir: {}
 
       terminationGracePeriodSeconds: 30
+
+  volumeClaimTemplates:
+    - metadata:
+        name: buffer
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            # Sized for the 24h store-and-forward backlog plus WAL/quarantine
+            # headroom; the buffer enforces its own 1GB ring-buffer cap in-app.
+            storage: 5Gi

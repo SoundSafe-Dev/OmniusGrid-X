@@ -9,7 +9,7 @@ resources:
   - backend-service.yaml
   - ota-rollout-worker-deployment.yaml
   - frontend-deployment.yaml
-  - edge-agent-deployment.yaml
+  - edge-agent-statefulset.yaml
   - edge-agent-service.yaml
   - ingestion-worker-deployment.yaml
   - export-worker-deployment.yaml
