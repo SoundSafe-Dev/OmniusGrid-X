@@ -26,8 +26,9 @@ spec:
   # TimescaleDB is NOT in the stock CloudNativePG image — this must be a
   # PostgreSQL 15 image with the timescaledb extension built in and preloaded.
   # Build from the CNPG image + timescaledb, or use a maintained community image;
-  # pin a digest in production. See README.md.
-  imageName: ghcr.io/omniusgrid/cnpg-timescaledb:pg15
+  # pin a digest in production. See README.md. The tag MUST encode a parseable
+  # PostgreSQL version (CNPG's webhook rejects a bare "pg15") — hence 15.x.
+  imageName: ghcr.io/omniusgrid/cnpg-timescaledb:15.4
   imagePullPolicy: IfNotPresent
 
   # Survive a node failure: never schedule two instances on the same node.
@@ -118,7 +119,7 @@ metadata:
   labels:
     app.kubernetes.io/part-of: omniusgrid
 spec:
-  schedule: "0 2 * * 0"   # 02:00 every Sunday (6-field cron: sec min hour dom mon dow)
+  schedule: "0 0 2 * * 0"   # 02:00 every Sunday (6-field cron: sec min hour dom mon dow)
   backupOwnerReference: self
   cluster:
     name: omniusgrid-db
