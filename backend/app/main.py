@@ -38,7 +38,7 @@ from app.services.oee_calculator import oee_calculator
 from app.core.errors import register_exception_handlers
 from app.core.openapi import custom_generate_unique_id
 from app.middleware.request_context import RequestContextMiddleware
-from app.middleware.idempotency import IdempotencyMiddleware
+from app.middleware.idempotency import IdempotencyMiddleware, make_idempotency_store
 from app.middleware.audit import AuditLoggingMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.middleware.csrf import CSRFMiddleware
@@ -257,6 +257,11 @@ app.add_middleware(RequestContextMiddleware)
 # deliberately excluded — they are owned by other lanes.
 app.add_middleware(
     IdempotencyMiddleware,
+    # Redis-backed when REDIS_URL is set (the deployed stack has Redis), so the
+    # dedup cache is shared across uvicorn workers and replicas. Without an
+    # explicit store the middleware defaulted to a per-process in-memory cache,
+    # so a retried Idempotency-Key hitting a different worker re-executed.
+    store=make_idempotency_store(),
     protected_prefixes=(
         "/api/v1/operations",
         "/api/v1/dashboard",
