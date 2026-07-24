@@ -29,6 +29,7 @@ from app.models.schemas import (
 )
 from app.middleware.rbac import require_admin
 from app.db.database import get_db
+from app.core.tenant import get_tenant_db
 from app.middleware.rbac import require_admin
 
 router = APIRouter(prefix="/api/v1/registries", tags=["registries"])
@@ -44,7 +45,7 @@ async def get_registries(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=0, le=1000),
     current_user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get all actionable registries for the organization"""
     query = select(ActionableRegistry).where(
@@ -69,7 +70,7 @@ async def get_registries(
 async def get_registry(
     registry_id: uuid.UUID,
     current_user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get a specific actionable registry by ID"""
     result = await db.execute(
@@ -92,7 +93,7 @@ async def get_registry(
 async def create_registry(
     registry: ActionableRegistryCreate,
     current_user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Create a new actionable registry"""
     new_registry = ActionableRegistry(
@@ -113,7 +114,7 @@ async def update_registry(
     registry_id: uuid.UUID,
     registry: ActionableRegistryUpdate,
     current_user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Update an existing actionable registry"""
     result = await db.execute(
@@ -143,7 +144,7 @@ async def update_registry(
 async def delete_registry(
     registry_id: uuid.UUID,
     current_user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Delete an actionable registry"""
     result = await db.execute(
@@ -172,7 +173,7 @@ async def get_registry_items(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=0, le=1000),
     current_user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get all items for a specific registry"""
     # Verify registry exists and belongs to organization
@@ -208,7 +209,7 @@ async def create_registry_item(
     registry_id: uuid.UUID,
     item: ActionableRegistryItemCreate,
     current_user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Create a new item in a registry"""
     # Verify registry exists and belongs to organization
@@ -242,7 +243,7 @@ async def update_registry_item(
     item_id: uuid.UUID,
     item: ActionableRegistryItemUpdate,
     current_user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Update an existing registry item"""
     result = await db.execute(
@@ -272,7 +273,7 @@ async def update_registry_item(
 async def delete_registry_item(
     item_id: uuid.UUID,
     current_user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Delete a registry item"""
     result = await db.execute(
@@ -303,7 +304,7 @@ async def get_correlations(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=0, le=1000),
     current_user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get data correlations for the organization"""
     query = select(DataCorrelation).where(
@@ -330,7 +331,7 @@ async def get_correlations(
 async def create_correlation(
     correlation: DataCorrelationCreate,
     current_user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Create a new data correlation"""
     new_correlation = DataCorrelation(
@@ -353,7 +354,7 @@ async def update_correlation(
     confidence_score: Optional[int] = None,
     is_active: Optional[bool] = None,
     current_user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Update an existing data correlation"""
     result = await db.execute(
@@ -386,7 +387,7 @@ async def update_correlation(
 async def delete_correlation(
     correlation_id: uuid.UUID,
     current_user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Delete a data correlation"""
     result = await db.execute(
@@ -412,7 +413,7 @@ async def delete_correlation(
 async def get_registry_score(
     registry_id: uuid.UUID,
     current_user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Calculate and return the compliance score for a registry"""
     # Verify registry exists and belongs to organization
@@ -485,7 +486,7 @@ async def get_registry_score(
 async def calculate_item_risk_score(
     item_id: uuid.UUID,
     current_user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Calculate and update the risk score for a registry item"""
     result = await db.execute(
