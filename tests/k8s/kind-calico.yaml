@@ -1,0 +1,9 @@
+# kind cluster config for the NetworkPolicy enforcement test. kind's default CNI
+# (kindnet) does NOT enforce NetworkPolicies, so we disable it and install Calico
+# instead. podSubnet matches Calico's default (192.168.0.0/16) so the manifest
+# applies unmodified.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+networking:
+  disableDefaultCNI: true
+  podSubnet: "192.168.0.0/16"

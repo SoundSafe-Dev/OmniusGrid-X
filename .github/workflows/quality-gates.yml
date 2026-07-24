@@ -246,6 +246,58 @@ jobs:
           kustomize build infrastructure/k8s/autoscaling \
             | kubectl apply --dry-run=server -f -
 
+  # --- NetworkPolicy enforcement on Calico (advisory) ----------------------
+  k8s-netpol:
+    runs-on: ubuntu-latest
+    # ADVISORY until observed green (same pattern as k8s-smoke was). k8s-smoke
+    # runs on kind's default CNI (kindnet), which IGNORES NetworkPolicies — so it
+    # proves the policies parse and apply, never that they work. This runs the same
+    # base manifests on Calico, where policy is enforced, and asserts real
+    # connectivity both ways:
+    #   ALLOW export-worker -> seaweedfs:8333  (the S3 export path; this exact rule
+    #         was missing when the object store shipped, silently breaking every
+    #         export upload/download under an enforcing CNI)
+    #   DENY  ingestion-worker -> seaweedfs:8333  (proves policy is really enforced;
+    #         without this the ALLOW assertion would pass even with no CNI at all)
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create kind cluster (no default CNI)
+        uses: helm/kind-action@v1.10.0
+        with:
+          cluster_name: omniusgrid-netpol
+          config: tests/k8s/kind-calico.yaml
+      - name: Install Calico
+        run: |
+          set -euo pipefail
+          kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.28.1/manifests/calico.yaml
+          # Nodes stay NotReady until the CNI is up.
+          kubectl -n kube-system rollout status daemonset/calico-node --timeout=300s
+          kubectl wait --for=condition=Ready nodes --all --timeout=300s
+      - name: Setup kustomize
+        run: |
+          curl -sL "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.4.3/kustomize_v5.4.3_linux_amd64.tar.gz" \
+            | sudo tar xz -C /usr/local/bin kustomize
+      - name: Apply base NetworkPolicies
+        run: |
+          set -euo pipefail
+          kubectl create namespace omniusgrid
+          # Apply ONLY the policies (not the whole app) — the probe pods stand in
+          # for the real workloads, so no application images need to pull.
+          kustomize build infrastructure/k8s/base \
+            | ./tests/k8s/extract-netpols.py \
+            | kubectl apply -f -
+          kubectl -n omniusgrid get networkpolicy
+      - name: Deploy probe pods
+        run: kubectl apply -f tests/k8s/netpol-probe.yaml
+      - name: Assert NetworkPolicy enforcement
+        run: ./tests/k8s/netpol-test.sh
+      - name: Debug on failure
+        if: failure()
+        run: |
+          kubectl -n omniusgrid get pods -o wide || true
+          kubectl -n omniusgrid describe networkpolicy || true
+
   # --- task 1: frontend unit tests (Vitest) --------------------------------
   frontend-unit:
     runs-on: ubuntu-latest
