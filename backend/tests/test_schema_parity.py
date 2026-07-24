@@ -251,3 +251,38 @@ def test_org_scoped_tables_have_org_index(admin_sync_url):
         "predicate forces a seq scan per query — add a composite "
         "(organization_id, <time>) index, see migration 043): " + str(missing)
     )
+
+
+# Columns that legitimately have no server default. Timestamps that record when
+# something *happened* (rather than when the row was written) must stay NULL
+# until the event occurs — defaulting them to NOW() would invent an event.
+TIMESTAMP_DEFAULT_EXEMPT: set[tuple[str, str]] = set()
+
+
+def test_timestamp_columns_have_server_defaults(admin_sync_url):
+    """created_at/updated_at must default server-side, not only in the ORM.
+
+    ~30 columns were declared as ``Column(DateTime(timezone=True),
+    default=utcnow)`` — a PYTHON-side default that only fires through
+    SQLAlchemy. Migration 030 was generated from that metadata, so it emitted
+    them as plain nullable TIMESTAMPTZ. Any raw-SQL INSERT (seed script, COPY,
+    worker bulk insert, psql fix-up) therefore wrote NULL, and those rows then
+    vanished from every time-ordered query and trend.
+
+    Nothing checked this before: the parity suite compared existence,
+    nullability and type, but never defaults — so the whole class was invisible.
+    Migration 044 sets the defaults; this keeps them set.
+    """
+    db_cols = _db_columns(admin_sync_url)
+    missing = sorted(
+        f"{t}.{c}"
+        for (t, c), meta in db_cols.items()
+        if c in ("created_at", "updated_at")
+        and meta["default"] is None
+        and (t, c) not in TIMESTAMP_DEFAULT_EXEMPT
+    )
+    assert not missing, (
+        "these created_at/updated_at columns have no SERVER default, so a raw "
+        "INSERT writes NULL and the row disappears from time-ordered queries "
+        "(see migration 044): " + ", ".join(missing)
+    )
