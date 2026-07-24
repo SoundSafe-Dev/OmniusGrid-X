@@ -11,6 +11,7 @@ resources:
   - secrets.yaml
   - cluster.yaml
   - pooler.yaml
+  - networkpolicies.yaml
 
 commonLabels:
   app.kubernetes.io/part-of: omniusgrid

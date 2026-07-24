@@ -19,6 +19,7 @@ resources:
   - alertmanager.yaml
   - kube-state-metrics.yaml
   - grafana.yaml
+  - networkpolicies.yaml
 
 configMapGenerator:
   - name: prometheus-config

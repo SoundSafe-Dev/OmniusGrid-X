@@ -1887,6 +1887,7 @@ The correlation AI model seamlessly integrates with OmniusGrid's Kanban task man
 | API | JWT Bearer token authentication |
 | Audit | Hash-chained tamper-evident command logging |
 | Secrets | No plaintext secrets in git — Sealed Secrets (encrypted) or External Secrets Operator (Vault / AWS SM / GCP SM); see [`infrastructure/k8s/secrets/`](infrastructure/k8s/secrets/) |
+| Cluster network | Zero-trust: `default-deny-all` NetworkPolicy + per-workload allow-lists (covers every stack); see [`infrastructure/k8s/NETWORK_SECURITY.md`](infrastructure/k8s/NETWORK_SECURITY.md) |
 | Workloads | Containers run non-root with read-only root filesystem and all Linux capabilities dropped |
 
 ---
