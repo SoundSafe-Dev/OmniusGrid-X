@@ -8,3 +8,5 @@ export { Skeleton, SkeletonCard, SkeletonTable } from './Skeleton';
 export { ChartContainer } from './ChartContainer';
 export { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from './Tooltip';
 export { Wordmark } from './Wordmark';
+export { Modal } from './Modal';
+export { DialogProvider, useDialog } from './DialogProvider';

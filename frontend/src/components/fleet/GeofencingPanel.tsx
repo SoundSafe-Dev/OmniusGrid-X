@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { geofencingApi } from '../../api';
 import { SkeletonCard } from '../ui/Skeleton';
+import { useDialog } from '../ui';
 import type { GeofenceZoneExtended, GeofenceAlertExtended, GeoLocation } from '../../types';
 import 'leaflet/dist/leaflet.css';
 
@@ -56,6 +57,7 @@ interface GeofencingPanelProps {
 }
 
 export const GeofencingPanel: FC<GeofencingPanelProps> = ({ onAlert }) => {
+  const { confirm } = useDialog();
   const [zones, setZones] = useState<GeofenceZoneExtended[]>([]);
   const [alerts, setAlerts] = useState<GeofenceAlertExtended[]>([]);
   const [selectedZone, setSelectedZone] = useState<GeofenceZoneExtended | null>(null);
@@ -103,7 +105,13 @@ export const GeofencingPanel: FC<GeofencingPanelProps> = ({ onAlert }) => {
   };
 
   const handleDeleteZone = async (zone: GeofenceZoneExtended) => {
-    if (!window.confirm(`Delete geofence zone "${zone.name}"? This cannot be undone.`)) return;
+    const ok = await confirm({
+      title: 'Delete geofence zone',
+      message: `Delete geofence zone "${zone.name}"? This cannot be undone.`,
+      confirmLabel: 'Delete',
+      destructive: true,
+    });
+    if (!ok) return;
     try {
       await geofencingApi.deleteZone(zone.id);
       setZones(prev => prev.filter(z => z.id !== zone.id));
