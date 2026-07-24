@@ -7,7 +7,11 @@ metadata:
     app.kubernetes.io/name: edge-agent
     app.kubernetes.io/component: edge
 spec:
-  type: ClusterIP
+  # Headless: the companion service for the edge-agent StatefulSet's serviceName.
+  # The agent is outbound-only (nothing dials in), and Prometheus scrapes the pod
+  # directly via its prometheus.io/scrape annotation, not through this service, so
+  # dropping the ClusterIP costs nothing.
+  clusterIP: None
   selector:
     app.kubernetes.io/name: edge-agent
   ports:
