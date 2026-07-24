@@ -90,7 +90,11 @@ COL_IDS = {  # column_type -> fixed id
     "rejected": "aaaaaaaa-0000-4000-8000-000000000014",
     "done": "aaaaaaaa-0000-4000-8000-000000000015",
 }
-TASK_IDS = [f"aaaaaaaa-0000-4000-8000-00000000002{i}" for i in range(1, 8)]
+# 18 tasks: the demo board has to look like a real shift board, not a stub. This
+# replaces migrations 005/006_populate_*_kanban_data, which used to insert demo
+# rows into the PRODUCTION chain (FS-203 gated them); the seeder is the sanctioned
+# home for demo data, so it has to carry at least as much as they did.
+TASK_IDS = [f"aaaaaaaa-0000-4000-8000-0000000000{20 + i:02d}" for i in range(1, 19)]
 TASK_RULE_ID = "aaaaaaaa-0000-4000-8000-000000000031"
 
 AGENT_RELEASE_ID = "bbbbbbbb-0000-4000-8000-000000000001"
@@ -819,28 +823,114 @@ async def main(verify: bool = False) -> int:
         await db.flush()  # board + columns before tasks/rule reference them
 
         # id, title, type, priority, status, column, asset, extras
+        #
+        # Shaped like a real shift board: work spread across every column, a
+        # blocked item, an emergency, a rejected one, subtasks under a parent,
+        # checklists mid-progress, and logged time against estimates. A demo
+        # board where every card looks the same tells you nothing about the UI.
         tasks = [
+            # ---- In Progress (under the WIP limit of 10) ----------------------
             (TASK_IDS[0], "Investigate VIB_HIGH on CNC Spindle vibration sensor",
              "alarm_response", "high", "in_progress", "in_progress", A_VIB,
-             {"alarm_id": None, "progress_percent": 60, "assigned_to": USER, "assigned_by": USER}),
-            (TASK_IDS[1], "Replace spindle bearing — CNC Mill #1 (WO-77105)",
+             {"alarm_id": None, "progress_percent": 60, "assigned_to": USER,
+              "assigned_by": USER, "assigned_at": days_ago(1),
+              "actual_start": NOW - timedelta(hours=3),
+              "estimated_effort_minutes": 120, "time_logged_minutes": 75,
+              "tags": ["vibration", "predictive"],
+              "checklist_items": [
+                  {"text": "Pull 24h vibration trend", "completed": True},
+                  {"text": "Cross-check acoustic feed", "completed": True},
+                  {"text": "Inspect bearing housing", "completed": False},
+              ]}),
+            (TASK_IDS[1], "Changeover: Product A → Product B on Conveyor #1",
+             "changeover", "medium", "in_progress", "in_progress", A_CONVEYOR,
+             {"progress_percent": 60, "assigned_to": USER,
+              "actual_start": NOW - timedelta(hours=2),
+              "planned_duration": 90, "estimated_effort_minutes": 90,
+              "time_logged_minutes": 55, "tags": ["changeover"],
+              "checklist_items": [
+                  {"text": "Purge line", "completed": True},
+                  {"text": "Swap tooling", "completed": True},
+                  {"text": "First-article check", "completed": False},
+              ]}),
+            (TASK_IDS[2], "Calibrate vision system on CNC Mill #1",
+             "maintenance_cm", "high", "in_progress", "in_progress", A_CNC,
+             {"progress_percent": 35, "assigned_to": USER,
+              "actual_start": NOW - timedelta(hours=4),
+              "estimated_effort_minutes": 180, "time_logged_minutes": 60}),
+
+            # ---- Blocked (status the board must be able to show) --------------
+            (TASK_IDS[3], "Replace vibration sensor mount — CNC Spindle",
+             "maintenance_cm", "high", "blocked", "in_progress", A_VIB,
+             {"progress_percent": 20, "assigned_to": USER,
+              "actual_start": days_ago(1), "tags": ["waiting-parts"],
+              "custom_fields": {"blocked_reason": "Thermistor on backorder — PO-10044 ETA 3 days"}}),
+
+            # ---- Triage --------------------------------------------------------
+            (TASK_IDS[4], "Emergency stop triggered on Conveyor #1 — verify before restart",
+             "command_execution", "emergency", "ready", "triage", A_CONVEYOR,
+             {"due_date": NOW + timedelta(hours=1), "tags": ["safety", "e-stop"],
+              "color_code": "#EF4444"}),
+            (TASK_IDS[5], "Follow up on TRL-4482 detention (aluminum billet)",
+             "material_request", "high", "ready", "triage", None,
+             {"due_date": NOW + timedelta(hours=6), "tags": ["logistics"]}),
+            (TASK_IDS[6], "High temperature on CNC spindle — 15°C above threshold",
+             "alarm_response", "critical", "ready", "triage", A_CNC,
+             {"due_date": NOW + timedelta(hours=2), "tags": ["thermal"]}),
+
+            # ---- Review --------------------------------------------------------
+            (TASK_IDS[7], "Review acoustic anomaly (bearing-wear signature)",
+             "quality_inspection", "medium", "in_progress", "review", A_AUDIO,
+             {"progress_percent": 90, "assigned_to": USER,
+              "estimated_effort_minutes": 60, "time_logged_minutes": 50}),
+            (TASK_IDS[8], "Quality inspection results — Batch #4521 (2% defect rate)",
+             "quality_inspection", "high", "in_progress", "review", A_CNC,
+             {"progress_percent": 80, "assigned_to": USER,
+              "approval_status": "pending", "tags": ["quality", "rca"]}),
+
+            # ---- Rejected (so the column isn't empty in the demo) -------------
+            (TASK_IDS[9], "Request second dock camera for Door 3",
+             "custom", "low", "cancelled", "rejected", A_CAMERA,
+             {"approval_status": "rejected", "approved_by": USER,
+              "approved_at": days_ago(4),
+              "rejection_reason": "Deferred to next capex cycle; existing coverage adequate."}),
+
+            # ---- Backlog -------------------------------------------------------
+            (TASK_IDS[10], "Calibrate Dock Camera — Door 3 motion detection",
+             "safety_check", "low", "ready", "backlog", A_CAMERA,
+             {"estimated_effort_minutes": 45}),
+            (TASK_IDS[11], "Monthly PM — acoustic monitor calibration and clean",
+             "maintenance_pm", "medium", "ready", "backlog", A_AUDIO,
+             {"planned_start": NOW + timedelta(days=3), "planned_duration": 120,
+              "estimated_effort_minutes": 120, "tags": ["pm", "scheduled"]}),
+            (TASK_IDS[12], "Verify SKF bearing kit receipt (PO-10021)",
+             "custom", "medium", "draft", "backlog", None, {}),
+            (TASK_IDS[13], "Quarterly safety audit — guarding and interlocks",
+             "safety_check", "medium", "ready", "backlog", None,
+             {"planned_start": NOW + timedelta(days=10),
+              "estimated_effort_minutes": 240, "tags": ["audit", "compliance"]}),
+            (TASK_IDS[14], "Update PM schedule after bearing replacement",
+             "custom", "low", "draft", "backlog", A_CNC, {}),
+
+            # ---- Done ----------------------------------------------------------
+            (TASK_IDS[15], "Replace spindle bearing — CNC Mill #1 (WO-77105)",
              "maintenance_cm", "critical", "completed", "done", A_CNC,
              {"work_order_id": "WO-77105", "progress_percent": 100,
               "approval_status": "approved", "approved_by": USER,
-              "completed_by": USER, "completed_at": days_ago(FIXED_D)}),
-            (TASK_IDS[2], "Belt tension check — Conveyor #1",
+              "approved_at": days_ago(FIXED_D + 1),
+              "completed_by": USER, "completed_at": days_ago(FIXED_D),
+              "actual_start": days_ago(FIXED_D + 1), "actual_end": days_ago(FIXED_D),
+              "estimated_effort_minutes": 240, "time_logged_minutes": 265,
+              "tags": ["bearing", "unplanned"]}),
+            (TASK_IDS[16], "Belt tension check — Conveyor #1",
              "maintenance_pm", "medium", "completed", "done", A_CONVEYOR,
-             {"progress_percent": 100, "completed_by": USER, "completed_at": days_ago(6)}),
-            (TASK_IDS[3], "Review acoustic anomaly (bearing-wear signature)",
-             "quality_inspection", "medium", "in_progress", "review", A_AUDIO,
-             {"progress_percent": 40, "assigned_to": USER}),
-            (TASK_IDS[4], "Calibrate Dock Camera — Door 3 motion detection",
-             "safety_check", "low", "ready", "backlog", A_CAMERA, {}),
-            (TASK_IDS[5], "Follow up on TRL-4482 detention (aluminum billet)",
-             "material_request", "high", "ready", "triage", None,
-             {"due_date": NOW + timedelta(hours=6)}),
-            (TASK_IDS[6], "Verify SKF bearing kit receipt (PO-10021)",
-             "custom", "medium", "draft", "backlog", None, {}),
+             {"progress_percent": 100, "completed_by": USER,
+              "completed_at": days_ago(6), "estimated_effort_minutes": 60,
+              "time_logged_minutes": 45}),
+            (TASK_IDS[17], "Firmware update — edge collector to 1.8.2",
+             "custom", "low", "completed", "done", A_CAMERA,
+             {"progress_percent": 100, "completed_by": USER,
+              "completed_at": days_ago(9), "tags": ["ota", "firmware"]}),
         ]
         for i, (tid, title, ttype, prio, tstatus, col, asset, extra) in enumerate(tasks):
             # approved_by/completed_by are NOT NULL under ORM create_all (the
@@ -853,11 +943,28 @@ async def main(verify: bool = False) -> int:
                         title=title, task_type=ttype, priority=prio, status=tstatus,
                         asset_id=asset, created_by=USER, **kwargs))
         await db.flush()  # tasks before comments reference them
+        # A readable thread on the flagship task, plus activity on the blocked and
+        # rejected cards — the comment types (comment / status_change / time_log /
+        # approval_action) all need to appear for the detail view to be exercised.
         db.add(TaskComment(task_id=TASK_IDS[0], user_id=USER, comment_type="comment",
                            content="Vibration hit 8.3 mm/s — pulled acoustic feed, high-band energy confirms bearing wear."))
         db.add(TaskComment(task_id=TASK_IDS[0], user_id=USER, comment_type="status_change",
                            content="Moved to In Progress; SAP work order WO-77105 released.",
                            extra_data={"before_state": "ready", "after_state": "in_progress"}))
+        db.add(TaskComment(task_id=TASK_IDS[0], user_id=USER, comment_type="time_log",
+                           content="75 min: trend review + acoustic cross-check.",
+                           extra_data={"minutes": 75}))
+        db.add(TaskComment(task_id=TASK_IDS[0], user_id=USER, comment_type="comment",
+                           content="Housing inspection scheduled with the next planned stop to avoid an unplanned line halt."))
+        db.add(TaskComment(task_id=TASK_IDS[3], user_id=USER, comment_type="status_change",
+                           content="Blocked: thermistor on backorder, PO-10044 raised.",
+                           extra_data={"before_state": "in_progress", "after_state": "blocked"}))
+        db.add(TaskComment(task_id=TASK_IDS[9], user_id=USER, comment_type="approval_action",
+                           content="Rejected — deferred to next capex cycle; existing coverage adequate.",
+                           extra_data={"decision": "rejected"}))
+        db.add(TaskComment(task_id=TASK_IDS[15], user_id=USER, comment_type="time_log",
+                           content="265 min against a 240 min estimate; bearing seized on the shaft.",
+                           extra_data={"minutes": 265}))
 
         # premade-style automation rule
         db.add(TaskRule(id=TASK_RULE_ID, organization_id=ORG,
