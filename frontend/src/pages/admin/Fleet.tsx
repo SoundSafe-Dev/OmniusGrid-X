@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import {
   LucideIcon,
   AlertTriangle,
+  CalendarClock,
   Eye,
   ListFilter,
   RefreshCw,
@@ -90,6 +91,8 @@ interface RolloutFormState {
   min_success_ratio: string;
   failure_threshold: string;
   rollback_release_id: string;
+  scheduled_start_at: string;
+  enforce_maintenance_windows: boolean;
 }
 
 const emptyReleaseForm: ReleaseFormState = {
@@ -113,6 +116,8 @@ const emptyRolloutForm: RolloutFormState = {
   min_success_ratio: '1',
   failure_threshold: '1',
   rollback_release_id: '',
+  scheduled_start_at: '',
+  enforce_maintenance_windows: false,
 };
 
 const SummaryCard: FC<{
@@ -362,6 +367,16 @@ export const Fleet: FC = () => {
       return;
     }
 
+    let scheduledStartAt: string | undefined;
+    if (rolloutForm.scheduled_start_at) {
+      const parsed = new Date(rolloutForm.scheduled_start_at);
+      if (Number.isNaN(parsed.getTime())) {
+        setFormError('Scheduled start time is invalid.');
+        return;
+      }
+      scheduledStartAt = parsed.toISOString();
+    }
+
     createRollout.mutate(
       {
         name: rolloutForm.name.trim(),
@@ -370,6 +385,9 @@ export const Fleet: FC = () => {
         preview_id: rolloutPreview.data.id,
         membership_hash: rolloutPreview.data.membership_hash,
         strategy,
+        scheduled_start_at: scheduledStartAt,
+        enforce_maintenance_windows:
+          rolloutForm.enforce_maintenance_windows,
       },
       {
         onSuccess: () => {
@@ -401,6 +419,13 @@ export const Fleet: FC = () => {
           >
             <ListFilter size={16} className="mr-2" />
             Targeting
+          </Link>
+          <Link
+            to="/admin/fleet/maintenance"
+            className="inline-flex items-center justify-center rounded-lg border border-opsgrid-border bg-opsgrid-panel px-4 py-2 text-sm font-medium text-opsgrid-text transition-colors hover:bg-opsgrid-border focus:outline-none focus:ring-2 focus:ring-opsgrid-border-emphasis"
+          >
+            <CalendarClock size={16} className="mr-2" />
+            Maintenance
           </Link>
           <Button variant="secondary" onClick={refreshAll}>
             <RefreshCw size={16} className="mr-2" />
@@ -528,7 +553,37 @@ export const Fleet: FC = () => {
                     options={releaseOptions}
                     placeholder="None"
                   />
+                  <Input
+                    label={`Not before (${Intl.DateTimeFormat().resolvedOptions().timeZone || 'local'})`}
+                    type="datetime-local"
+                    value={rolloutForm.scheduled_start_at}
+                    onChange={(e) =>
+                      setRolloutForm({
+                        ...rolloutForm,
+                        scheduled_start_at: e.target.value,
+                      })
+                    }
+                    helperText="Optional. Stored and evaluated in UTC."
+                  />
+                  <label className="flex min-h-[42px] items-center gap-2 self-end rounded-lg border border-opsgrid-border bg-opsgrid-bg px-3 text-sm text-opsgrid-text">
+                    <input
+                      type="checkbox"
+                      checked={rolloutForm.enforce_maintenance_windows}
+                      onChange={(e) =>
+                        setRolloutForm({
+                          ...rolloutForm,
+                          enforce_maintenance_windows: e.target.checked,
+                        })
+                      }
+                    />
+                    Dispatch only in maintenance windows
+                  </label>
                 </div>
+                {rolloutForm.enforce_maintenance_windows && (
+                  <p className="rounded-lg border border-status-warning/30 bg-status-warning/10 p-3 text-sm text-opsgrid-text-secondary">
+                    Every resolved agent group must have an organization or site window. Multi-site agents wait until all of their site windows overlap.
+                  </p>
+                )}
                 <div className="rounded-lg border border-opsgrid-border bg-opsgrid-bg p-4">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>

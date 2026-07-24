@@ -24,10 +24,16 @@ import {
   FleetTargetPreview,
   FleetTargetPreviewCreate,
   FleetWorkcell,
+  MaintenanceWindow,
+  MaintenanceWindowCreate,
+  MaintenanceWindowPreview,
+  MaintenanceWindowPreviewRequest,
+  MaintenanceWindowUpdate,
 } from '../types/fleet';
 
 const FLEET_KEY = 'fleetOta';
 const TARGETING_KEY = [FLEET_KEY, 'targeting'];
+const MAINTENANCE_KEY = [FLEET_KEY, 'maintenance'];
 const REFRESH_MS = 30_000;
 
 export function useAgentVersions() {
@@ -109,6 +115,19 @@ export function usePauseAgentRollout() {
   });
 }
 
+export function useResumeAgentRollout() {
+  const queryClient = useQueryClient();
+  return useMutation<AgentRollout, Error, string>(
+    fleetApi.resumeRollout,
+    {
+      onSuccess: (data) => {
+        queryClient.setQueryData([FLEET_KEY, 'rollout', data.id], data);
+        queryClient.invalidateQueries([FLEET_KEY, 'rollouts']);
+      },
+    }
+  );
+}
+
 export function useCancelAgentRollout() {
   const queryClient = useQueryClient();
   return useMutation<AgentRollout, Error, string>({
@@ -160,6 +179,57 @@ export function useDeactivateFleetSite() {
       onSuccess: () => queryClient.invalidateQueries(TARGETING_KEY),
     }
   );
+}
+
+export function useMaintenanceWindows() {
+  return useQuery<MaintenanceWindow[], Error>(
+    MAINTENANCE_KEY,
+    fleetApi.maintenanceWindows,
+    { keepPreviousData: true }
+  );
+}
+
+export function useCreateMaintenanceWindow() {
+  const queryClient = useQueryClient();
+  return useMutation<MaintenanceWindow, Error, MaintenanceWindowCreate>(
+    fleetApi.createMaintenanceWindow,
+    {
+      onSuccess: () => queryClient.invalidateQueries(MAINTENANCE_KEY),
+    }
+  );
+}
+
+export function useUpdateMaintenanceWindow() {
+  const queryClient = useQueryClient();
+  return useMutation<
+    MaintenanceWindow,
+    Error,
+    { windowId: string; payload: MaintenanceWindowUpdate }
+  >(
+    ({ windowId, payload }) =>
+      fleetApi.updateMaintenanceWindow(windowId, payload),
+    {
+      onSuccess: () => queryClient.invalidateQueries(MAINTENANCE_KEY),
+    }
+  );
+}
+
+export function useDisableMaintenanceWindow() {
+  const queryClient = useQueryClient();
+  return useMutation<MaintenanceWindow, Error, string>(
+    fleetApi.disableMaintenanceWindow,
+    {
+      onSuccess: () => queryClient.invalidateQueries(MAINTENANCE_KEY),
+    }
+  );
+}
+
+export function usePreviewMaintenanceWindows() {
+  return useMutation<
+    MaintenanceWindowPreview,
+    Error,
+    MaintenanceWindowPreviewRequest
+  >(fleetApi.previewMaintenanceWindows);
 }
 
 export function useFleetWorkcells() {

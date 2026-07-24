@@ -42,6 +42,7 @@ const OrganizationTree = named(() => import('./pages/fleet'), 'OrganizationTree'
 const Fleet = named(() => import('./pages/admin'), 'Fleet')
 const FleetRolloutDetail = named(() => import('./pages/admin'), 'FleetRolloutDetail')
 const FleetTargeting = named(() => import('./pages/admin'), 'FleetTargeting')
+const MaintenanceWindows = named(() => import('./pages/admin'), 'MaintenanceWindows')
 
 // Converged from integration: error-triage admin pages, kept lazy.
 const ErrorTriage = named(() => import('./pages/admin'), 'ErrorTriage')
@@ -141,6 +142,7 @@ const App: FC = () => {
                   <Route path="/admin/errors/:fingerprint" element={<ErrorTriageDetail />} />
                   <Route path="/admin/fleet" element={<Fleet />} />
                   <Route path="/admin/fleet/targeting" element={<FleetTargeting />} />
+                  <Route path="/admin/fleet/maintenance" element={<MaintenanceWindows />} />
                   <Route path="/admin/fleet/rollouts/:rolloutId" element={<FleetRolloutDetail />} />
                 </Route>
               </Route>

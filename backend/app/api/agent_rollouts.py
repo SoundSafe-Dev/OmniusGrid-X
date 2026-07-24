@@ -3,6 +3,7 @@
 
 import math
 from datetime import datetime, timezone
+from typing import Any
 from uuid import UUID
 
 import structlog
@@ -20,6 +21,7 @@ from app.db.models import (
     AgentRolloutEvent,
     AgentRolloutTarget,
     FleetTargetPreview,
+    MaintenanceWindow,
     User,
 )
 from app.middleware.rate_limit import rate_limit
@@ -30,11 +32,17 @@ from app.services.fleet_targeting import (
     fleet_target_resolver,
     normalize_selector,
 )
+from app.services.maintenance_windows import (
+    MaintenanceWindowValidationError,
+    effective_scope_label,
+    evaluate_rollout_groups,
+    utc_datetime,
+)
 
 router = APIRouter()
 logger = structlog.get_logger()
 
-PAUSABLE_ROLLOUT_STATUSES = frozenset({"pending", "running"})
+PAUSABLE_ROLLOUT_STATUSES = frozenset({"pending", "running", "paused"})
 RESUMABLE_ROLLOUT_STATUSES = frozenset({"paused"})
 CANCELLABLE_ROLLOUT_STATUSES = frozenset({"pending", "running", "paused"})
 UNFINISHED_TARGET_STATUSES = frozenset({"pending", "updating"})
@@ -52,6 +60,8 @@ class AgentRolloutCreate(BaseModel):
     preview_id: UUID
     membership_hash: str = Field(..., pattern=r"^[0-9a-f]{64}$")
     strategy: dict = Field(default_factory=dict)
+    scheduled_start_at: datetime | None = None
+    enforce_maintenance_windows: bool = False
 
 
 class AgentRolloutTargetResponse(BaseModel):
@@ -59,6 +69,7 @@ class AgentRolloutTargetResponse(BaseModel):
     asset_id: UUID
     agent_id: str | None = None
     route_asset_id: UUID | None = None
+    site_id: UUID | None = None
     wave_index: int
     status: str
     current_version: str | None
@@ -92,6 +103,10 @@ class AgentRolloutResponse(BaseModel):
     status: str
     target_preview_id: UUID | None = None
     target_membership_hash: str | None = None
+    scheduled_start_at: datetime | None = None
+    enforce_maintenance_windows: bool = False
+    pause_reason: str | None = None
+    next_eligible_at: datetime | None = None
     created_by: UUID | None
     created_at: datetime | None
     updated_at: datetime | None
@@ -105,6 +120,7 @@ def _target_response(target: AgentRolloutTarget) -> AgentRolloutTargetResponse:
         asset_id=target.asset_id,
         agent_id=target.agent_id,
         route_asset_id=target.route_asset_id,
+        site_id=target.site_id,
         wave_index=target.wave_index,
         status=target.status,
         current_version=target.current_version,
@@ -147,6 +163,12 @@ def _rollout_response(rollout: AgentRollout) -> AgentRolloutResponse:
         status=rollout.status,
         target_preview_id=rollout.target_preview_id,
         target_membership_hash=rollout.target_membership_hash,
+        scheduled_start_at=rollout.scheduled_start_at,
+        enforce_maintenance_windows=bool(
+            rollout.enforce_maintenance_windows
+        ),
+        pause_reason=rollout.pause_reason,
+        next_eligible_at=rollout.next_eligible_at,
         created_by=rollout.created_by,
         created_at=rollout.created_at,
         updated_at=rollout.updated_at,
@@ -182,6 +204,7 @@ async def _lock_rollout(
     rollout = (
         await db.execute(
             select(AgentRollout)
+            .options(selectinload(AgentRollout.targets))
             .where(
                 AgentRollout.id == rollout_id,
                 AgentRollout.organization_id == org_id,
@@ -222,15 +245,154 @@ def _wave_for_position(position: int, total: int, strategy: dict) -> int:
 def _agent_group_signature(groups: list[dict]) -> list[dict]:
     signature = []
     for group in groups:
+        asset_sites = []
+        for asset in group.get("assets", []):
+            asset_sites.append(
+                {
+                    "asset_id": str(asset.get("asset_id")),
+                    "site_id": (
+                        str(asset.get("site_id"))
+                        if asset.get("site_id") is not None
+                        else None
+                    ),
+                }
+            )
         signature.append(
             {
                 "agent_key": group.get("agent_key"),
                 "agent_id": group.get("agent_id"),
                 "route_asset_id": str(group.get("route_asset_id")),
                 "asset_ids": [str(asset_id) for asset_id in group.get("asset_ids", [])],
+                "asset_sites": sorted(
+                    asset_sites,
+                    key=lambda item: item["asset_id"],
+                ),
             }
         )
     return signature
+
+
+def _agent_group_site_map(
+    agent_group: dict,
+    asset_ids: list[UUID],
+) -> dict[UUID, UUID | None]:
+    raw_assets = agent_group.get("assets")
+    if not isinstance(raw_assets, list):
+        raise HTTPException(
+            status_code=409,
+            detail="Target preview is missing its site snapshot",
+        )
+    site_map: dict[UUID, UUID | None] = {}
+    try:
+        for raw_asset in raw_assets:
+            asset_id = UUID(str(raw_asset["asset_id"]))
+            raw_site_id = raw_asset.get("site_id")
+            site_map[asset_id] = (
+                UUID(str(raw_site_id)) if raw_site_id is not None else None
+            )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="Target preview site snapshot is invalid",
+        ) from exc
+    if set(site_map) != set(asset_ids):
+        raise HTTPException(
+            status_code=409,
+            detail="Target preview site snapshot is inconsistent",
+        )
+    return site_map
+
+
+def _preview_window_groups(agent_groups: list[dict]) -> dict[str, set[UUID | None]]:
+    groups: dict[str, set[UUID | None]] = {}
+    for agent_group in agent_groups:
+        try:
+            asset_ids = [
+                UUID(str(asset_id))
+                for asset_id in agent_group["asset_ids"]
+            ]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=409,
+                detail="Target preview snapshot is invalid",
+            ) from exc
+        site_map = _agent_group_site_map(agent_group, asset_ids)
+        group_key = str(
+            agent_group.get("agent_key")
+            or agent_group.get("agent_id")
+            or agent_group.get("route_asset_id")
+        )
+        groups[group_key] = set(site_map.values()) or {None}
+    return groups
+
+
+def _target_group_key(target: AgentRolloutTarget) -> str:
+    if target.agent_id:
+        return f"agent:{target.agent_id}"
+    return f"asset:{target.route_asset_id or target.asset_id}"
+
+
+def _target_window_groups(
+    targets: list[AgentRolloutTarget],
+    *,
+    statuses: frozenset[str] | None = None,
+) -> dict[str, set[UUID | None]]:
+    groups: dict[str, set[UUID | None]] = {}
+    for target in targets:
+        if statuses is not None and target.status not in statuses:
+            continue
+        groups.setdefault(_target_group_key(target), set()).add(target.site_id)
+    return groups
+
+
+async def _enabled_windows(
+    db: AsyncSession,
+    org_id: UUID,
+) -> list[MaintenanceWindow]:
+    return list(
+        (
+            await db.execute(
+                select(MaintenanceWindow).where(
+                    MaintenanceWindow.organization_id == org_id,
+                    MaintenanceWindow.enabled.is_(True),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
+def _window_contract_error(window_eligibility) -> HTTPException | None:
+    if window_eligibility.missing_groups:
+        descriptions = []
+        for group in window_eligibility.missing_groups[:5]:
+            scopes = ", ".join(
+                effective_scope_label(site_id)
+                for site_id in group.eligibility.missing_site_ids
+            )
+            descriptions.append(f"{group.group_key}: {scopes}")
+        return HTTPException(
+            status_code=422,
+            detail=(
+                "Maintenance-window enforcement requires an applicable "
+                "organization or site window for every target group. Missing: "
+                + "; ".join(descriptions)
+            ),
+        )
+    if window_eligibility.no_opening_groups:
+        groups = ", ".join(
+            group.group_key
+            for group in window_eligibility.no_opening_groups[:5]
+        )
+        return HTTPException(
+            status_code=422,
+            detail=(
+                "No shared maintenance-window opening exists in the next "
+                f"15 days for target group(s): {groups}"
+            ),
+        )
+    return None
 
 
 @router.post("/rollouts", response_model=AgentRolloutResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_admin)])
@@ -242,6 +404,13 @@ async def create_rollout(
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),
 ):
+    scheduled_start_at = None
+    if payload.scheduled_start_at is not None:
+        try:
+            scheduled_start_at = utc_datetime(payload.scheduled_start_at)
+        except MaintenanceWindowValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     release = (
         await db.execute(
             select(AgentRelease).where(
@@ -337,6 +506,51 @@ async def create_rollout(
     if not agent_groups:
         raise HTTPException(status_code=422, detail="No eligible agents matched selector")
 
+    prepared_groups: list[
+        tuple[dict, UUID, list[UUID], dict[UUID, UUID | None]]
+    ] = []
+    for agent_group in agent_groups:
+        try:
+            route_asset_id = UUID(str(agent_group["route_asset_id"]))
+            asset_ids = [
+                UUID(str(asset_id))
+                for asset_id in agent_group["asset_ids"]
+            ]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=409,
+                detail="Target preview snapshot is invalid",
+            ) from exc
+        prepared_groups.append(
+            (
+                agent_group,
+                route_asset_id,
+                asset_ids,
+                _agent_group_site_map(agent_group, asset_ids),
+            )
+        )
+
+    now = _utcnow()
+    next_eligible_at = (
+        scheduled_start_at
+        if scheduled_start_at is not None and scheduled_start_at > now
+        else None
+    )
+    if payload.enforce_maintenance_windows:
+        reference = max(now, scheduled_start_at or now)
+        try:
+            window_eligibility = evaluate_rollout_groups(
+                await _enabled_windows(db, org_id),
+                _preview_window_groups(agent_groups),
+                at=reference,
+            )
+        except MaintenanceWindowValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        contract_error = _window_contract_error(window_eligibility)
+        if contract_error is not None:
+            raise contract_error
+        next_eligible_at = window_eligibility.next_eligible_at
+
     rollout = AgentRollout(
         organization_id=org_id,
         release_id=release.id,
@@ -347,17 +561,21 @@ async def create_rollout(
         created_by=current_user.id,
         target_preview_id=preview.id,
         target_membership_hash=membership_hash,
+        scheduled_start_at=scheduled_start_at,
+        enforce_maintenance_windows=payload.enforce_maintenance_windows,
+        pause_reason=None,
+        next_eligible_at=next_eligible_at,
     )
     db.add(rollout)
     await db.flush()
     target_count = 0
-    for position, agent_group in enumerate(agent_groups):
+    for position, (
+        agent_group,
+        route_asset_id,
+        asset_ids,
+        site_map,
+    ) in enumerate(prepared_groups):
         wave_index = _wave_for_position(position, len(agent_groups), payload.strategy)
-        try:
-            route_asset_id = UUID(str(agent_group["route_asset_id"]))
-            asset_ids = [UUID(str(asset_id)) for asset_id in agent_group["asset_ids"]]
-        except (KeyError, TypeError, ValueError) as exc:
-            raise HTTPException(status_code=409, detail="Target preview snapshot is invalid") from exc
         for asset_id in asset_ids:
             db.add(
                 AgentRolloutTarget(
@@ -366,6 +584,7 @@ async def create_rollout(
                     asset_id=asset_id,
                     agent_id=agent_group.get("agent_id"),
                     route_asset_id=route_asset_id,
+                    site_id=site_map[asset_id],
                     wave_index=wave_index,
                     status="pending",
                 )
@@ -382,6 +601,19 @@ async def create_rollout(
                 "release_id": str(release.id),
                 "membership_hash": membership_hash,
                 "preview_id": str(preview.id),
+                "scheduled_start_at": (
+                    scheduled_start_at.isoformat()
+                    if scheduled_start_at is not None
+                    else None
+                ),
+                "enforce_maintenance_windows": (
+                    payload.enforce_maintenance_windows
+                ),
+                "next_eligible_at": (
+                    next_eligible_at.isoformat()
+                    if next_eligible_at is not None
+                    else None
+                ),
             },
         )
     )
@@ -432,15 +664,27 @@ async def pause_rollout(
 ):
     rollout = await _lock_rollout(rollout_id, org_id, db)
     _require_rollout_status(rollout, PAUSABLE_ROLLOUT_STATUSES, "paused")
+    if rollout.status == "paused" and rollout.pause_reason != "maintenance_window":
+        raise HTTPException(
+            status_code=400,
+            detail="Rollout is already manually paused",
+        )
     now = _utcnow()
+    previous_reason = rollout.pause_reason
     rollout.status = "paused"
+    rollout.pause_reason = "manual"
+    rollout.next_eligible_at = None
     rollout.updated_at = now
     db.add(
         AgentRolloutEvent(
             rollout_id=rollout.id,
             organization_id=org_id,
             event_type="paused",
-            detail={"by": str(current_user.id)},
+            detail={
+                "by": str(current_user.id),
+                "reason": "manual",
+                "previous_reason": previous_reason,
+            },
         )
     )
     await db.commit()
@@ -459,14 +703,75 @@ async def resume_rollout(
     rollout = await _lock_rollout(rollout_id, org_id, db)
     _require_rollout_status(rollout, RESUMABLE_ROLLOUT_STATUSES, "resumed")
     now = _utcnow()
-    rollout.status = "running"
+    previous_reason = rollout.pause_reason
+    scheduled_start_at = rollout.scheduled_start_at
+    if scheduled_start_at is not None:
+        scheduled_start_at = (
+            scheduled_start_at.replace(tzinfo=timezone.utc)
+            if scheduled_start_at.tzinfo is None
+            else scheduled_start_at.astimezone(timezone.utc)
+        )
+
+    event_type = "resumed"
+    detail: dict[str, Any] = {
+        "by": str(current_user.id),
+        "previous_reason": previous_reason,
+    }
+    if scheduled_start_at is not None and scheduled_start_at > now:
+        rollout.status = "pending"
+        rollout.pause_reason = None
+        rollout.next_eligible_at = scheduled_start_at
+        detail["status"] = "pending"
+        detail["scheduled_start_at"] = scheduled_start_at.isoformat()
+    elif rollout.enforce_maintenance_windows:
+        groups = _target_window_groups(
+            list(rollout.targets or []),
+            statuses=UNFINISHED_TARGET_STATUSES,
+        )
+        if groups:
+            try:
+                eligibility = evaluate_rollout_groups(
+                    await _enabled_windows(db, org_id),
+                    groups,
+                    at=now,
+                )
+            except MaintenanceWindowValidationError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+        else:
+            eligibility = None
+        if eligibility is not None and not eligibility.eligible_group_keys:
+            rollout.status = "paused"
+            rollout.pause_reason = "maintenance_window"
+            rollout.next_eligible_at = eligibility.next_eligible_at
+            event_type = "resume_deferred"
+            detail.update(
+                {
+                    "status": "paused",
+                    "reason": "maintenance_window",
+                    "next_eligible_at": (
+                        eligibility.next_eligible_at.isoformat()
+                        if eligibility.next_eligible_at is not None
+                        else None
+                    ),
+                }
+            )
+        else:
+            rollout.status = "running"
+            rollout.pause_reason = None
+            rollout.next_eligible_at = None
+            detail["status"] = "running"
+    else:
+        rollout.status = "running"
+        rollout.pause_reason = None
+        rollout.next_eligible_at = None
+        detail["status"] = "running"
     rollout.updated_at = now
     db.add(
         AgentRolloutEvent(
             rollout_id=rollout.id,
             organization_id=org_id,
-            event_type="resumed",
-            detail={"by": str(current_user.id)},
+            event_type=event_type,
+            detail=detail,
         )
     )
     await db.commit()
@@ -508,6 +813,8 @@ async def cancel_rollout(
         {target.command_id for target in unfinished_targets if target.command_id}
     )
     rollout.status = "cancelled"
+    rollout.pause_reason = None
+    rollout.next_eligible_at = None
     rollout.updated_at = now
     for target in unfinished_targets:
         target.status = "cancelled"

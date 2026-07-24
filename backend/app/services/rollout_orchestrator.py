@@ -8,7 +8,7 @@ from typing import Any, Optional
 from uuid import UUID
 
 import structlog
-from sqlalchemy import select, text
+from sqlalchemy import and_, or_, select, text
 from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
@@ -19,10 +19,17 @@ from app.db.models import (
     AgentRolloutEvent,
     AgentRolloutTarget,
     Asset,
+    MaintenanceWindow,
     Organization,
 )
 from app.services.agent_release_storage import issue_release_bundle_url
 from app.services.command_executor import command_executor
+from app.services.maintenance_windows import (
+    MaintenanceWindowValidationError,
+    RolloutWindowEligibility,
+    evaluate_rollout_groups,
+    utc_datetime,
+)
 
 logger = structlog.get_logger()
 
@@ -30,6 +37,7 @@ COMMAND_SUCCESS_STATUSES = {"completed", "success", "succeeded"}
 COMMAND_FAILURE_STATUSES = {"failed", "error", "rejected", "cancelled", "timeout"}
 TERMINAL_TARGET_STATUSES = {"success", "failed", "rolled_back", "cancelled", "skipped"}
 ACTIVE_ROLLOUT_STATUSES = frozenset({"pending", "running"})
+PROCESSABLE_ROLLOUT_STATUSES = frozenset({"pending", "running", "paused"})
 
 
 def _utcnow() -> datetime:
@@ -47,10 +55,14 @@ def _aware(value: datetime | None) -> datetime | None:
 class RolloutOrchestrator:
     """Poll rollout rows, dispatch waves, and gate promotion on command + heartbeat health."""
 
-    def __init__(self, *, command_client: Any = None) -> None:
+    def __init__(self, *, command_client: Any = None, clock=None) -> None:
         self.command_client = command_client or command_executor
+        self._clock = clock or _utcnow
         self._task: Optional[asyncio.Task] = None
         self._running = False
+
+    def _now(self) -> datetime:
+        return utc_datetime(self._clock())
 
     async def start(self) -> None:
         if not settings.OTA_ROLLOUT_DISPATCH_ENABLED or self._running:
@@ -94,6 +106,7 @@ class RolloutOrchestrator:
                 await self.dispatch_rollout(rollout_id, org_id)
 
     async def _due_rollout_ids_for_org(self, org_id: UUID) -> list[UUID]:
+        now = self._now()
         async with AsyncSessionLocal() as session:
             await self._set_org(session, org_id)
             return list(
@@ -102,7 +115,21 @@ class RolloutOrchestrator:
                         select(AgentRollout.id)
                         .where(
                             AgentRollout.organization_id == org_id,
-                            AgentRollout.status.in_(ACTIVE_ROLLOUT_STATUSES),
+                            or_(
+                                AgentRollout.status == "running",
+                                and_(
+                                    AgentRollout.status == "pending",
+                                    or_(
+                                        AgentRollout.scheduled_start_at.is_(None),
+                                        AgentRollout.scheduled_start_at <= now,
+                                    ),
+                                ),
+                                and_(
+                                    AgentRollout.status == "paused",
+                                    AgentRollout.pause_reason
+                                    == "maintenance_window",
+                                ),
+                            ),
                         )
                         .order_by(AgentRollout.created_at)
                     )
@@ -124,7 +151,14 @@ class RolloutOrchestrator:
                     .where(
                         AgentRollout.id == rollout_id,
                         AgentRollout.organization_id == org_id,
-                        AgentRollout.status.in_(ACTIVE_ROLLOUT_STATUSES),
+                        or_(
+                            AgentRollout.status.in_(ACTIVE_ROLLOUT_STATUSES),
+                            and_(
+                                AgentRollout.status == "paused",
+                                AgentRollout.pause_reason
+                                == "maintenance_window",
+                            ),
+                        ),
                     )
                     .with_for_update(skip_locked=True)
                 )
@@ -136,7 +170,15 @@ class RolloutOrchestrator:
             await session.commit()
 
     async def _process_rollout(self, session, rollout: AgentRollout) -> None:
-        if rollout.status not in ACTIVE_ROLLOUT_STATUSES:
+        if rollout.status not in PROCESSABLE_ROLLOUT_STATUSES:
+            return
+        if rollout.status == "paused" and rollout.pause_reason != "maintenance_window":
+            return
+
+        now = self._now()
+        scheduled_start_at = _aware(rollout.scheduled_start_at)
+        if scheduled_start_at is not None and scheduled_start_at > now:
+            rollout.next_eligible_at = scheduled_start_at
             return
 
         if rollout.release is None or rollout.release.status != "published":
@@ -148,36 +190,60 @@ class RolloutOrchestrator:
             )
             return
 
-        if rollout.status == "pending":
-            rollout.status = "running"
-            rollout.updated_at = _utcnow()
-            self._add_event(
-                session,
-                rollout,
-                "started",
-                detail={"release_id": str(rollout.release_id)},
-            )
-
         await self._refresh_updating_targets(session, rollout)
 
         targets = self._sorted_targets(rollout)
         if all(target.status == "success" for target in targets):
             rollout.status = "completed"
-            rollout.updated_at = _utcnow()
+            rollout.pause_reason = None
+            rollout.next_eligible_at = None
+            rollout.updated_at = now
             self._add_event(session, rollout, "completed", detail={"target_count": len(targets)})
             return
 
         failed_wave = self._first_failed_wave_exceeding_threshold(targets, rollout.strategy or {})
         if failed_wave is not None:
-            await self._halt_and_rollback_wave(
-                session,
-                rollout,
-                failed_wave,
-                reason="Wave failure threshold exceeded",
-            )
+            if rollout.enforce_maintenance_windows:
+                await self._halt_and_rollback_wave_in_windows(
+                    session,
+                    rollout,
+                    failed_wave,
+                    reason="Wave failure threshold exceeded",
+                    now=now,
+                )
+            else:
+                await self._halt_and_rollback_wave(
+                    session,
+                    rollout,
+                    failed_wave,
+                    reason="Wave failure threshold exceeded",
+                )
             return
 
         if any(target.status == "updating" for target in targets):
+            if rollout.enforce_maintenance_windows:
+                updating_groups = self._window_groups(
+                    [
+                        target
+                        for target in targets
+                        if target.status == "updating"
+                    ]
+                )
+                eligibility = await self._window_eligibility(
+                    session,
+                    rollout,
+                    updating_groups,
+                    at=now,
+                )
+                if not eligibility.eligible_group_keys:
+                    self._pause_for_maintenance(
+                        session,
+                        rollout,
+                        eligibility,
+                        now=now,
+                    )
+                else:
+                    self._activate_rollout(session, rollout, now=now)
             return
 
         pending_waves = [target.wave_index for target in targets if target.status == "pending"]
@@ -187,15 +253,171 @@ class RolloutOrchestrator:
 
         next_wave = min(pending_waves)
         if not self._previous_waves_passed(targets, next_wave, rollout.strategy or {}):
-            await self._halt_and_rollback_wave(
-                session,
-                rollout,
-                max(0, next_wave - 1),
-                reason="Previous wave did not meet health gate",
-            )
+            if rollout.enforce_maintenance_windows:
+                await self._halt_and_rollback_wave_in_windows(
+                    session,
+                    rollout,
+                    max(0, next_wave - 1),
+                    reason="Previous wave did not meet health gate",
+                    now=now,
+                )
+            else:
+                await self._halt_and_rollback_wave(
+                    session,
+                    rollout,
+                    max(0, next_wave - 1),
+                    reason="Previous wave did not meet health gate",
+                )
             return
 
-        await self._dispatch_wave(session, rollout, next_wave)
+        allowed_group_keys: set[str] | None = None
+        if rollout.enforce_maintenance_windows:
+            pending_groups = self._window_groups(
+                [
+                    target
+                    for target in targets
+                    if target.wave_index == next_wave
+                    and target.status == "pending"
+                ]
+            )
+            eligibility = await self._window_eligibility(
+                session,
+                rollout,
+                pending_groups,
+                at=now,
+            )
+            if not eligibility.eligible_group_keys:
+                self._pause_for_maintenance(
+                    session,
+                    rollout,
+                    eligibility,
+                    now=now,
+                )
+                return
+            allowed_group_keys = set(eligibility.eligible_group_keys)
+
+        self._activate_rollout(session, rollout, now=now)
+        await self._dispatch_wave(
+            session,
+            rollout,
+            next_wave,
+            allowed_group_keys=allowed_group_keys,
+        )
+
+    async def _window_eligibility(
+        self,
+        session,
+        rollout: AgentRollout,
+        groups: dict[str, set[UUID | None]],
+        *,
+        at: datetime,
+    ) -> RolloutWindowEligibility:
+        windows = list(
+            (
+                await session.execute(
+                    select(MaintenanceWindow).where(
+                        MaintenanceWindow.organization_id
+                        == rollout.organization_id,
+                        MaintenanceWindow.enabled.is_(True),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        try:
+            return evaluate_rollout_groups(windows, groups, at=at)
+        except MaintenanceWindowValidationError as exc:
+            logger.error(
+                "ota_rollout_maintenance_window_invalid",
+                rollout_id=str(rollout.id),
+                error=str(exc),
+            )
+            return evaluate_rollout_groups([], groups, at=at)
+
+    def _window_groups(
+        self,
+        targets: list[AgentRolloutTarget],
+    ) -> dict[str, set[UUID | None]]:
+        groups: dict[str, set[UUID | None]] = {}
+        for target in targets:
+            groups.setdefault(self._target_group_key(target), set()).add(
+                target.site_id
+            )
+        return groups
+
+    def _activate_rollout(
+        self,
+        session,
+        rollout: AgentRollout,
+        *,
+        now: datetime,
+    ) -> None:
+        if rollout.status == "pending":
+            rollout.status = "running"
+            rollout.pause_reason = None
+            rollout.next_eligible_at = None
+            rollout.updated_at = now
+            self._add_event(
+                session,
+                rollout,
+                "started",
+                detail={"release_id": str(rollout.release_id)},
+            )
+        elif (
+            rollout.status == "paused"
+            and rollout.pause_reason == "maintenance_window"
+        ):
+            rollout.status = "running"
+            rollout.pause_reason = None
+            rollout.next_eligible_at = None
+            rollout.updated_at = now
+            self._add_event(
+                session,
+                rollout,
+                "maintenance_window_resumed",
+                detail={"resumed_at": now.isoformat()},
+            )
+
+    def _pause_for_maintenance(
+        self,
+        session,
+        rollout: AgentRollout,
+        eligibility: RolloutWindowEligibility,
+        *,
+        now: datetime,
+    ) -> None:
+        was_window_paused = (
+            rollout.status == "paused"
+            and rollout.pause_reason == "maintenance_window"
+        )
+        rollout.status = "paused"
+        rollout.pause_reason = "maintenance_window"
+        rollout.next_eligible_at = eligibility.next_eligible_at
+        rollout.updated_at = now
+        if was_window_paused:
+            return
+        missing = {
+            group.group_key: [
+                str(site_id) if site_id is not None else "organization"
+                for site_id in group.eligibility.missing_site_ids
+            ]
+            for group in eligibility.missing_groups
+        }
+        self._add_event(
+            session,
+            rollout,
+            "maintenance_window_paused",
+            detail={
+                "paused_at": now.isoformat(),
+                "next_eligible_at": (
+                    eligibility.next_eligible_at.isoformat()
+                    if eligibility.next_eligible_at is not None
+                    else None
+                ),
+                "missing_scopes": missing,
+            },
+        )
 
     async def _refresh_updating_targets(self, session, rollout: AgentRollout) -> None:
         updating = [
@@ -265,7 +487,14 @@ class RolloutOrchestrator:
                         f"Command {command_id} timed out",
                     )
 
-    async def _dispatch_wave(self, session, rollout: AgentRollout, wave_index: int) -> None:
+    async def _dispatch_wave(
+        self,
+        session,
+        rollout: AgentRollout,
+        wave_index: int,
+        *,
+        allowed_group_keys: set[str] | None = None,
+    ) -> None:
         if rollout.status not in ACTIVE_ROLLOUT_STATUSES:
             return
 
@@ -277,14 +506,26 @@ class RolloutOrchestrator:
         if not wave_targets:
             return
 
-        target_groups = self._group_targets(wave_targets)
+        target_groups = [
+            group
+            for group in self._group_targets(wave_targets)
+            if allowed_group_keys is None
+            or self._target_group_key(group[0]) in allowed_group_keys
+        ]
+        if not target_groups:
+            return
+        dispatch_targets = [
+            target
+            for group in target_groups
+            for target in group
+        ]
         self._add_event(
             session,
             rollout,
             "wave_started",
             detail={
                 "wave_index": wave_index,
-                "target_count": len(wave_targets),
+                "target_count": len(dispatch_targets),
                 "agent_count": len(target_groups),
             },
         )
@@ -311,7 +552,7 @@ class RolloutOrchestrator:
                 route_asset_id=route_target.route_asset_id or route_target.asset_id,
                 capture_current_version=False,
             )
-            now = _utcnow()
+            now = self._now()
             for target in group_targets:
                 target.status = "updating"
                 target.command_id = command_id
@@ -422,7 +663,7 @@ class RolloutOrchestrator:
             "health_timeout_seconds",
             settings.OTA_ROLLOUT_DEFAULT_HEALTH_TIMEOUT_SECONDS,
         )
-        return _utcnow() - last_heartbeat <= timedelta(seconds=timeout)
+        return self._now() - last_heartbeat <= timedelta(seconds=timeout)
 
     async def _mark_target_failed(
         self,
@@ -431,7 +672,7 @@ class RolloutOrchestrator:
         target: AgentRolloutTarget,
         reason: str,
     ) -> None:
-        now = _utcnow()
+        now = self._now()
         target.status = "failed"
         target.failure_reason = reason
         target.completed_at = now
@@ -455,7 +696,7 @@ class RolloutOrchestrator:
         target: AgentRolloutTarget,
         command_status: dict[str, Any] | None,
     ) -> None:
-        now = _utcnow()
+        now = self._now()
         result = self._edge_result(command_status)
         target.status = "success"
         target.running_version = str(
@@ -486,7 +727,7 @@ class RolloutOrchestrator:
         target: AgentRolloutTarget,
         result: dict[str, Any],
     ) -> None:
-        now = _utcnow()
+        now = self._now()
         attempted = str(result.get("attempted_version") or rollout.release.version)
         running = result.get("running_version") or target.current_version
         target.status = "rolled_back"
@@ -528,21 +769,13 @@ class RolloutOrchestrator:
         wave_index: int,
         *,
         reason: str,
-    ) -> None:
-        rollout.status = "rolled_back"
-        rollout.updated_at = _utcnow()
-        self._add_event(
-            session,
-            rollout,
-            "rolled_back",
-            detail={"wave_index": wave_index, "reason": reason},
-        )
-
+        allowed_group_keys: set[str] | None = None,
+    ) -> bool:
         for target in self._sorted_targets(rollout):
             if target.status == "pending":
                 target.status = "skipped"
                 target.failure_reason = "Rollout halted before this target was updated"
-                target.last_event_at = _utcnow()
+                target.last_event_at = self._now()
                 self._add_event(
                     session,
                     rollout,
@@ -551,19 +784,127 @@ class RolloutOrchestrator:
                     detail={"reason": target.failure_reason},
                 )
 
-        affected = [
+        affected = self._rollback_targets(rollout, wave_index)
+        dispatch_targets = [
+            target
+            for target in affected
+            if allowed_group_keys is None
+            or self._target_group_key(target) in allowed_group_keys
+        ]
+        rollback_available = await self._dispatch_rollbacks(
+            session,
+            rollout,
+            dispatch_targets,
+        )
+        if not rollback_available and allowed_group_keys is not None:
+            undispatched = [
+                target for target in affected if target not in dispatch_targets
+            ]
+            if undispatched:
+                await self._dispatch_rollbacks(
+                    session,
+                    rollout,
+                    undispatched,
+                )
+
+        if rollback_available and self._rollback_targets(rollout, wave_index):
+            return False
+
+        rollout.status = "rolled_back"
+        rollout.pause_reason = None
+        rollout.next_eligible_at = None
+        rollout.updated_at = self._now()
+        self._add_event(
+            session,
+            rollout,
+            "rolled_back",
+            detail={"wave_index": wave_index, "reason": reason},
+        )
+        return True
+
+    async def _halt_and_rollback_wave_in_windows(
+        self,
+        session,
+        rollout: AgentRollout,
+        wave_index: int,
+        *,
+        reason: str,
+        now: datetime,
+    ) -> None:
+        affected = self._rollback_targets(rollout, wave_index)
+        rollback_groups = self._window_groups(affected)
+        if not rollback_groups:
+            await self._halt_and_rollback_wave(
+                session,
+                rollout,
+                wave_index,
+                reason=reason,
+            )
+            return
+
+        eligibility = await self._window_eligibility(
+            session,
+            rollout,
+            rollback_groups,
+            at=now,
+        )
+        allowed_group_keys = set(eligibility.eligible_group_keys)
+        if not allowed_group_keys:
+            self._pause_for_maintenance(
+                session,
+                rollout,
+                eligibility,
+                now=now,
+            )
+            return
+
+        self._activate_rollout(session, rollout, now=now)
+        completed = await self._halt_and_rollback_wave(
+            session,
+            rollout,
+            wave_index,
+            reason=reason,
+            allowed_group_keys=allowed_group_keys,
+        )
+        if completed:
+            return
+
+        remaining_groups = self._window_groups(
+            self._rollback_targets(rollout, wave_index)
+        )
+        remaining_eligibility = await self._window_eligibility(
+            session,
+            rollout,
+            remaining_groups,
+            at=now,
+        )
+        self._pause_for_maintenance(
+            session,
+            rollout,
+            remaining_eligibility,
+            now=now,
+        )
+
+    def _rollback_targets(
+        self,
+        rollout: AgentRollout,
+        wave_index: int,
+    ) -> list[AgentRolloutTarget]:
+        return [
             target
             for target in self._sorted_targets(rollout)
-            if target.wave_index == wave_index and target.status in {"failed", "updating", "success"}
+            if target.wave_index == wave_index
+            and target.status in {"failed", "updating", "success"}
         ]
-        await self._dispatch_rollbacks(session, rollout, affected)
 
     async def _dispatch_rollbacks(
         self,
         session,
         rollout: AgentRollout,
         targets: list[AgentRolloutTarget],
-    ) -> None:
+    ) -> bool:
+        if not targets:
+            return True
         rollback_release = await self._rollback_release(session, rollout)
         for group_targets in self._group_targets(targets):
             if all(target.rollback_command_id for target in group_targets):
@@ -587,7 +928,7 @@ class RolloutOrchestrator:
                 route_asset_id=route_target.route_asset_id or route_target.asset_id,
                 capture_current_version=False,
             )
-            now = _utcnow()
+            now = self._now()
             for target in group_targets:
                 target.rollback_command_id = command_id
                 target.status = "rolled_back"
@@ -605,6 +946,7 @@ class RolloutOrchestrator:
                         "agent_id": target.agent_id,
                     },
                 )
+        return rollback_release is not None
 
     async def _rollback_release(self, session, rollout: AgentRollout) -> AgentRelease | None:
         raw_release_id = (rollout.strategy or {}).get("rollback_release_id")
@@ -634,7 +976,9 @@ class RolloutOrchestrator:
         event_type: str = "failed",
     ) -> None:
         rollout.status = "failed"
-        rollout.updated_at = _utcnow()
+        rollout.pause_reason = None
+        rollout.next_eligible_at = None
+        rollout.updated_at = self._now()
         self._add_event(session, rollout, event_type, detail={"reason": reason})
 
     async def _finalize_incomplete_rollout(
@@ -649,7 +993,9 @@ class RolloutOrchestrator:
             rollout.status = "failed"
         else:
             rollout.status = "completed"
-        rollout.updated_at = _utcnow()
+        rollout.pause_reason = None
+        rollout.next_eligible_at = None
+        rollout.updated_at = self._now()
         self._add_event(session, rollout, rollout.status, detail={"target_count": len(targets)})
 
     async def _current_asset_version(self, session, asset_id: UUID) -> str | None:
@@ -669,7 +1015,7 @@ class RolloutOrchestrator:
             else settings.OTA_ROLLOUT_DEFAULT_COMMAND_TIMEOUT_SECONDS
         )
         timeout = self._strategy_int(strategy, key, default)
-        return _utcnow() - started_at > timedelta(seconds=timeout)
+        return self._now() - started_at > timedelta(seconds=timeout)
 
     def _first_failed_wave_exceeding_threshold(
         self,

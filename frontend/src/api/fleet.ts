@@ -23,6 +23,11 @@ import {
   FleetTargetPreview,
   FleetTargetPreviewCreate,
   FleetWorkcell,
+  MaintenanceWindow,
+  MaintenanceWindowCreate,
+  MaintenanceWindowPreview,
+  MaintenanceWindowPreviewRequest,
+  MaintenanceWindowUpdate,
 } from '../types/fleet';
 
 const BASE = '/api/v1/fleet';
@@ -73,6 +78,11 @@ export const fleetApi = {
     return response.data;
   },
 
+  resumeRollout: async (rolloutId: string): Promise<AgentRollout> => {
+    const response = await api.post<AgentRollout>(`${BASE}/rollouts/${rolloutId}/resume`);
+    return response.data;
+  },
+
   cancelRollout: async (rolloutId: string): Promise<AgentRollout> => {
     const response = await api.post<AgentRollout>(`${BASE}/rollouts/${rolloutId}/cancel`);
     return response.data;
@@ -98,6 +108,54 @@ export const fleetApi = {
 
   deactivateSite: async (siteId: string): Promise<FleetSite> => {
     const response = await api.delete<FleetSite>(`${BASE}/sites/${siteId}`);
+    return response.data;
+  },
+
+  maintenanceWindows: async (): Promise<MaintenanceWindow[]> => {
+    const response = await api.get<MaintenanceWindow[]>(
+      `${BASE}/maintenance-windows`,
+      { params: { include_disabled: true } }
+    );
+    return response.data;
+  },
+
+  createMaintenanceWindow: async (
+    payload: MaintenanceWindowCreate
+  ): Promise<MaintenanceWindow> => {
+    const response = await api.post<MaintenanceWindow>(
+      `${BASE}/maintenance-windows`,
+      payload
+    );
+    return response.data;
+  },
+
+  updateMaintenanceWindow: async (
+    windowId: string,
+    payload: MaintenanceWindowUpdate
+  ): Promise<MaintenanceWindow> => {
+    const response = await api.patch<MaintenanceWindow>(
+      `${BASE}/maintenance-windows/${windowId}`,
+      payload
+    );
+    return response.data;
+  },
+
+  disableMaintenanceWindow: async (
+    windowId: string
+  ): Promise<MaintenanceWindow> => {
+    const response = await api.delete<MaintenanceWindow>(
+      `${BASE}/maintenance-windows/${windowId}`
+    );
+    return response.data;
+  },
+
+  previewMaintenanceWindows: async (
+    payload: MaintenanceWindowPreviewRequest
+  ): Promise<MaintenanceWindowPreview> => {
+    const response = await api.post<MaintenanceWindowPreview>(
+      `${BASE}/maintenance-windows/preview`,
+      payload
+    );
     return response.data;
   },
 
