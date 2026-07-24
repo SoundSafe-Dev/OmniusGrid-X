@@ -752,7 +752,7 @@ async def export_kanban_tasks(
     task_status: Optional[str] = Query(None, alias="status", description="Filter by task status"),
     columns: Optional[str] = Query(None, description="Ordered subset of task columns"),
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     cols = _columns_or_400(TASK_COLUMNS, columns)
     content, n = await export_processor.export_tasks_xlsx(
@@ -773,7 +773,7 @@ async def export_registries(
     registry_type: Optional[str] = Query(None),
     columns: Optional[str] = Query(None, description="Ordered subset of registry columns"),
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     cols = _columns_or_400(REGISTRY_COLUMNS, columns)
     content, n = await export_processor.export_registries_xlsx(
@@ -793,7 +793,7 @@ async def export_registry_items(
     registry_id: UUID,
     columns: Optional[str] = Query(None, description="Ordered subset of registry-item columns"),
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     registry = (
         await db.execute(
@@ -822,7 +822,7 @@ async def export_registry_items(
 async def export_oee_summary(
     time_window_hours: float = Query(24.0, ge=0.5, le=24),
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     result = await db.execute(
         select(Asset).where(
@@ -864,7 +864,7 @@ async def export_oee_report(
     asset_id: UUID,
     time_window_hours: float = Query(1.0, ge=0.5, le=24),
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     asset = (
         await db.execute(select(Asset).where(Asset.id == asset_id))

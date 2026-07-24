@@ -13,6 +13,7 @@ from app.core.pagination import PaginatedResponse, paginate
 from app.db.database import get_db
 from app.db.models import Alarm, Asset
 from app.models.schemas import AlarmCreate, AlarmResponse, AlarmAcknowledge
+from app.core.tenant import get_tenant_db
 from app.middleware.rbac import require_operator_or_admin
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
@@ -28,7 +29,7 @@ async def list_alarms(
     end_time: Optional[datetime] = None,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     """List alarms with filtering"""
     query = select(Alarm)
@@ -62,7 +63,7 @@ async def list_alarms(
 async def get_active_alarms(
     organization_id: Optional[UUID] = None,
     severity: Optional[str] = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     """Get active (unacknowledged) alarms"""
     query = select(Alarm).where(
@@ -101,7 +102,7 @@ async def get_active_alarms(
 @router.get("/{alarm_id}", response_model=AlarmResponse, summary="Get alarm details", description="Retrieve detailed information about a specific alarm including its history, acknowledgment status, and related asset.")
 async def get_alarm(
     alarm_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     """Get a single alarm by ID"""
     result = await db.execute(
@@ -120,7 +121,7 @@ async def acknowledge_alarm(
     alarm_id: UUID,
     ack_data: AlarmAcknowledge,
     user_id: UUID = None,  # Would come from auth dependency
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     """Acknowledge an alarm"""
     result = await db.execute(
@@ -148,7 +149,7 @@ async def acknowledge_alarm(
 @router.post("/{alarm_id}/clear", summary="Clear alarm", description="Mark an alarm as resolved/cleared. This should only be done when the underlying issue has been fixed.", dependencies=[Depends(require_operator_or_admin)])
 async def clear_alarm(
     alarm_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     """Mark an alarm as cleared"""
     result = await db.execute(
@@ -173,7 +174,7 @@ async def acknowledge_all_alarms(
     asset_id: Optional[UUID] = None,
     severity: Optional[str] = None,
     user_id: UUID = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     """Acknowledge all active alarms matching criteria"""
     query = select(Alarm).where(
