@@ -187,12 +187,13 @@ export const TelemetryCharts: FC = () => {
   const metricSeries = Array.from(byTime.entries()).sort((a, b) => a[0] - b[0]).map(([, row]) => row);
 
   // Current fleet OEE as a single real period (no historical OEE series yet).
-  // FleetOEE exposes fleet-average availability and OEE (0-1 fractions).
+  // FleetOEE exposes fleet-average AVAILABILITY only (0-1 fraction). It used to
+  // also carry `fleetAverageOee`, which was the same availability number — so
+  // plotting both drew one series twice and called one of them OEE.
   const asPct = (v: number) => Math.round((v ?? 0) * (v > 1 ? 1 : 100));
   const oeeData = fleetOEE ? [{
     time: 'Current',
     availability: asPct(fleetOEE.fleetAverageAvailability),
-    oee: asPct(fleetOEE.fleetAverageOee),
   }] : [];
 
   // Health distribution from real PackML states.
@@ -210,11 +211,13 @@ export const TelemetryCharts: FC = () => {
   // heatmap (x = index % cols, y = row, value = OEE %), plus the fleet OEE
   // trend rendered through the annotatable plotly wrapper.
   const HEATMAP_COLS = 4;
+  // Availability per asset — the endpoint no longer reports a per-asset `oee`
+  // (it was the availability figure under another name).
   const oeeHeatmapData = (fleetOEE?.assets ?? []).map((a, i) => ({
     x: i % HEATMAP_COLS,
     y: Math.floor(i / HEATMAP_COLS),
-    value: asPct(a.oee),
-    label: `${a.assetName}: ${asPct(a.oee)}%`,
+    value: asPct(a.availability),
+    label: `${a.assetName}: ${asPct(a.availability)}% availability`,
   }));
   const oeeTrendTraces = [
     {
@@ -225,14 +228,9 @@ export const TelemetryCharts: FC = () => {
       y: oeeData.map((d) => d.availability),
       line: { color: '#3B82F6' },
     },
-    {
-      type: 'scatter',
-      mode: 'lines+markers',
-      name: 'OEE (%)',
-      x: oeeData.map((d) => d.time),
-      y: oeeData.map((d) => d.oee),
-      line: { color: '#10B981' },
-    },
+    // A second "OEE (%)" trace used to be plotted here from `fleetAverageOee`,
+    // which the API computed as exactly `fleetAverageAvailability` — so the
+    // chart drew one series twice and labelled one of them OEE.
   ];
 
   const anyError = assetsError || historyError || oeeError;

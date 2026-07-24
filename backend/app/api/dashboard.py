@@ -11,6 +11,7 @@ from app.api.auth import get_current_active_user
 from app.core.tenant import get_tenant_db, get_tenant_org_id
 from app.db.models import Asset, Alarm, PackMLState, Organization, Telemetry
 from app.models.schemas import DashboardOverview, OEEMetrics
+from app.services.oee_calculator import oee_calculator
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
@@ -147,32 +148,28 @@ async def get_asset_oee(
         .group_by(PackMLState.state)
     )
     state_durations = {state: duration or 0 for state, duration in result.all()}
-    
-    # Calculate OEE components
     total_time = hours * 3600
-    execute_time = state_durations.get('Execute', 0)
-    
-    # Availability = Execute time / Planned production time
-    availability = execute_time / total_time if total_time > 0 else 0
-    
-    # Performance and Quality would need additional data
-    # Placeholder: assume ideal performance and 100% quality for now
-    performance = 1.0
-    quality = 1.0
-    
-    # OEE = Availability × Performance × Quality
-    oee = availability * performance * quality
-    
+
+    # Delegate to the real calculator instead of recomputing a crippled version.
+    # This endpoint used to hardcode `performance = quality = 1.0` and return
+    # availability under the name "oee" — inflating every figure it served.
+    # oee_calculator derives performance from the asset's ideal cycle time and
+    # quality from good/total part counters, so the three factors are real.
+    metrics = await oee_calculator.calculate_oee(str(asset_id), time_window_hours=float(hours))
+
     return {
         "asset_id": str(asset_id),
         "asset_name": asset.name,
         "time_range": f"Last {hours} hours",
-        "availability": round(availability, 4),
-        "performance": round(performance, 4),
-        "quality": round(quality, 4),
-        "oee": round(oee, 4),
+        # calculate_oee returns percentages; keep this endpoint's 0–1 ratios.
+        "availability": round(metrics.availability / 100, 4),
+        "performance": round(metrics.performance / 100, 4),
+        "quality": round(metrics.quality / 100, 4),
+        "oee": round(metrics.oee / 100, 4),
+        "total_parts": metrics.total_parts,
+        "good_parts": metrics.good_parts,
         "state_durations": state_durations,
-        "total_planned_time_seconds": total_time
+        "total_planned_time_seconds": total_time,
     }
 
 
@@ -193,45 +190,54 @@ async def get_fleet_oee(
 
     result = await db.execute(query)
     assets = result.scalars().all()
-    
+
     end_time = datetime.now(timezone.utc)
     start_time = end_time - timedelta(hours=hours)
-    
-    oee_results = []
-    
-    for asset in assets:
-        # Query state durations for this asset
-        result = await db.execute(
-            select(
-                func.sum(PackMLState.duration_seconds)
-            )
-            .where(
-                PackMLState.asset_id == asset.id,
-                PackMLState.state == 'Execute',
-                PackMLState.state_entered_at >= start_time,
-                PackMLState.state_entered_at <= end_time
-            )
+    total_time = hours * 3600
+
+    # One grouped query for the whole fleet. This used to run a SELECT per asset
+    # inside the loop below — an N+1 that grew with the fleet.
+    run_rows = await db.execute(
+        select(PackMLState.asset_id, func.sum(PackMLState.duration_seconds))
+        .where(
+            PackMLState.asset_id.in_([a.id for a in assets]) if assets else False,
+            PackMLState.state == 'Execute',
+            PackMLState.state_entered_at >= start_time,
+            PackMLState.state_entered_at <= end_time,
         )
-        execute_time = result.scalar() or 0
-        
-        total_time = hours * 3600
-        availability = execute_time / total_time if total_time > 0 else 0
-        
+        .group_by(PackMLState.asset_id)
+    ) if assets else None
+    run_seconds = {r[0]: float(r[1] or 0) for r in run_rows.all()} if run_rows else {}
+
+    oee_results = []
+    for asset in assets:
+        availability = (
+            run_seconds.get(asset.id, 0.0) / total_time if total_time > 0 else 0
+        )
         oee_results.append({
             "asset_id": str(asset.id),
             "asset_name": asset.name,
             "availability": round(availability, 4),
-            "oee": round(availability, 4)  # Simplified: availability = OEE for now
+            # Availability only — NOT full OEE. Performance needs each asset's
+            # ideal cycle time and quality needs part counters, neither of which
+            # fits one grouped query. Use /api/v1/dashboard/assets/{id}/oee for
+            # the real three-factor figure. The old code returned this value
+            # under the key "oee", which overstated every asset.
+            "availability_only": True,
         })
-    
-    # Calculate fleet averages
-    avg_availability = sum(r["availability"] for r in oee_results) / len(oee_results) if oee_results else 0
-    avg_oee = sum(r["oee"] for r in oee_results) / len(oee_results) if oee_results else 0
-    
+
+    avg_availability = (
+        sum(r["availability"] for r in oee_results) / len(oee_results)
+        if oee_results else 0
+    )
+
     return {
         "time_range": f"Last {hours} hours",
         "asset_count": len(assets),
         "fleet_average_availability": round(avg_availability, 4),
-        "fleet_average_oee": round(avg_oee, 4),
-        "assets": oee_results
+        # `fleet_average_oee` used to be this same availability number. Callers
+        # wanting a fleet OEE trend should use /api/v1/dashboard/oee/trend,
+        # which is explicit about being availability-only.
+        "availability_only": True,
+        "assets": oee_results,
     }
