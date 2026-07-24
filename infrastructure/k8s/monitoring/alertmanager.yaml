@@ -1,7 +1,9 @@
 # Alertmanager: receives firing alerts from Prometheus and routes them by
 # severity to PagerDuty / Slack. Secrets (Slack webhook, PagerDuty key) come
 # from the `alertmanager-secrets` Secret, mounted as files and referenced by the
-# config's `*_file` fields. Placeholder values ship here — override per env.
+# config's `*_file` fields. DEV/CI-ONLY placeholder values ship here so the stack
+# runs on a throwaway cluster — for staging/production provision the real
+# alertmanager-secrets via Sealed Secrets or ESO: see infrastructure/k8s/secrets/.
 apiVersion: v1
 kind: Secret
 metadata:
