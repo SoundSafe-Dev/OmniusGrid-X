@@ -14,6 +14,16 @@ from uuid import UUID
 
 import structlog
 
+from opsgrid_agent.remote_ops.contracts import (
+    MAX_COMMAND_ACK_BYTES,
+    RemoteOperationError,
+    error_result,
+    is_remote_operation,
+    json_size,
+    validate_parameters,
+    validate_result,
+)
+
 logger = structlog.get_logger()
 
 
@@ -188,6 +198,25 @@ class CommandConsumer:
             await self._remember_and_emit(command_id, ack)
             return ack
 
+        remote_operation = is_remote_operation(action_id)
+        if remote_operation:
+            try:
+                command = dict(command)
+                command["parameters"] = validate_parameters(
+                    action_id,
+                    command["parameters"],
+                )
+            except RemoteOperationError as exc:
+                ack = self._build_ack(
+                    command,
+                    status="rejected",
+                    success=False,
+                    result=error_result(action_id, exc),
+                    error=exc.public_message,
+                )
+                await self._remember_and_emit(command_id, ack)
+                return ack
+
         try:
             result = handler(command)
             if inspect.isawaitable(result):
@@ -204,12 +233,28 @@ class CommandConsumer:
                 result = {}
             elif not isinstance(result, dict):
                 result = {"value": result}
+            if remote_operation:
+                result = validate_result(action_id, result)
 
             ack = self._build_ack(
                 command,
                 status="completed",
                 success=True,
                 result=result,
+            )
+        except RemoteOperationError as exc:
+            logger.warning(
+                "remote_operation_failed",
+                command_id=command_id,
+                action_id=action_id,
+                error_code=exc.code,
+            )
+            ack = self._build_ack(
+                command,
+                status="failed",
+                success=False,
+                result=error_result(action_id, exc),
+                error=exc.public_message,
             )
         except Exception as exc:  # noqa: BLE001
             logger.exception(
@@ -218,16 +263,23 @@ class CommandConsumer:
                 action_id=action_id,
                 error=str(exc),
             )
+            if remote_operation:
+                remote_error = RemoteOperationError("operation_failed")
+                result = error_result(action_id, remote_error)
+                public_error = remote_error.public_message
+            else:
+                result = {
+                    "error": str(exc),
+                    "action_id": action_id,
+                    **({"phase": exc.phase} if hasattr(exc, "phase") else {}),
+                }
+                public_error = str(exc)
             ack = self._build_ack(
                 command,
                 status="failed",
                 success=False,
-                result={
-                    "error": str(exc),
-                    "action_id": action_id,
-                    **({"phase": exc.phase} if hasattr(exc, "phase") else {}),
-                },
-                error=str(exc),
+                result=result,
+                error=public_error,
             )
 
         await self._remember_and_emit(command_id, ack)
@@ -412,7 +464,18 @@ class CommandConsumer:
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         if error:
-            ack["error"] = error
+            ack["error"] = str(error)[:512]
+        if json_size(ack) > MAX_COMMAND_ACK_BYTES:
+            action_id = str(payload.get("action_id") or "")
+            if is_remote_operation(action_id):
+                overflow = RemoteOperationError("result_too_large")
+                ack["result"] = error_result(action_id, overflow)
+                ack["error"] = overflow.public_message
+            else:
+                ack["result"] = {"error": "command_result_too_large"}
+                ack["error"] = "Command result exceeded the acknowledgement limit"
+            ack["status"] = "failed"
+            ack["success"] = False
         return ack
 
     @staticmethod

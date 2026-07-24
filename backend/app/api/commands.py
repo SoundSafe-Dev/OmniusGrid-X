@@ -11,6 +11,7 @@ from app.db.models import Command, Asset, User
 from app.api.auth import get_current_active_user
 from app.middleware.rbac import require_admin, require_operator_or_admin
 from app.services.command_executor import command_executor, CommandStatus
+from app.services.remote_operations import is_remote_operation
 from app.services.websocket_manager import websocket_manager
 
 router = APIRouter()
@@ -62,6 +63,13 @@ async def submit_command(
     - `emergency_stop`: Immediate stop (safety critical)
     - `set_temperature`: Adjust nozzle/bed temp (params: target_temp, component)
     """
+    if is_remote_operation(request.action_id):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Remote agent operations must use the Fleet operations API"
+            ),
+        )
     if request.action_id == "emergency_stop" and current_user.role != "admin":
         raise HTTPException(
             status_code=403,

@@ -47,6 +47,7 @@ from app.middleware.rate_limit import (
     auth_limiter,
     limiter,
     rate_limit_exceeded_handler,
+    remote_operation_limiter,
 )
 from app.middleware.profiling import setup_profiling
 from app.middleware.error_tracking import setup_error_tracking
@@ -230,6 +231,7 @@ setup_tracing(app, engine=_db_engine)
 # limits work in tests and dynamically configured deployments.
 app.state.limiter = limiter
 app.state.auth_limiter = auth_limiter
+app.state.remote_operation_limiter = remote_operation_limiter
 app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
 # Application-wide middleware remains gated on settings.RATE_LIMIT_ENABLED.

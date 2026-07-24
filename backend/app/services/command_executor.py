@@ -19,6 +19,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.db.database import AsyncSessionLocal
 from app.db.models import Command, Organization
+from app.services.remote_operations import (
+    MAX_COMMAND_ACK_BYTES,
+    RemoteOperationAuditContext,
+    RemoteOperationContractError,
+    add_remote_requested_audit,
+    add_remote_terminal_audit,
+    invalid_remote_ack,
+    is_remote_operation,
+    normalize_remote_ack,
+)
 from app.services.websocket_manager import websocket_manager
 
 logger = structlog.get_logger()
@@ -136,6 +146,8 @@ class CommandExecutor:
         issued_by: Optional[str] = None,
         organization_id: Optional[str] = None,
         timeout_seconds: Optional[int] = None,
+        remote_audit: Optional[RemoteOperationAuditContext] = None,
+        db_session: Optional[AsyncSession] = None,
     ) -> str:
         """Persist a command. A running executor replica will claim it."""
         command_id = uuid4()
@@ -158,7 +170,7 @@ class CommandExecutor:
             raise ValueError("timeout_seconds must be positive")
 
         now = _utcnow()
-        async with self._sessions() as session:
+        async def persist(session: AsyncSession) -> None:
             await self._set_org(session, organization_uuid)
             command = Command(
                 id=command_id,
@@ -177,7 +189,19 @@ class CommandExecutor:
                 updated_at=now,
             )
             session.add(command)
+            if remote_audit is not None:
+                if not is_remote_operation(action_id):
+                    raise ValueError(
+                        "remote_audit is only valid for remote-operation commands"
+                    )
+                add_remote_requested_audit(session, command, remote_audit)
             await session.commit()
+
+        if db_session is not None:
+            await persist(db_session)
+        else:
+            async with self._sessions() as session:
+                await persist(session)
 
         await self._broadcast_safely(
             str(organization_uuid),
@@ -263,6 +287,12 @@ class CommandExecutor:
                     "cancelled_by": cancelled_by,
                     "cancelled_at": now.isoformat(),
                 }
+                add_remote_terminal_audit(
+                    session,
+                    command,
+                    status=CommandStatus.CANCELLED.value,
+                    occurred_at=now,
+                )
                 snapshot = self._command_snapshot(command)
                 await session.commit()
 
@@ -303,6 +333,9 @@ class CommandExecutor:
     async def handle_command_ack(self, ack_payload: Dict[str, Any]) -> bool:
         """Reconcile an edge ack against its DB row from any replica."""
         if not isinstance(ack_payload, dict):
+            return False
+        if len(self._payload_bytes(ack_payload)) > MAX_COMMAND_ACK_BYTES:
+            logger.warning("command_ack_too_large")
             return False
         command_uuid = _uuid(ack_payload.get("command_id"))
         if command_uuid is None:
@@ -366,15 +399,36 @@ class CommandExecutor:
                     return False
                 else:
                     now = _utcnow()
+                    stored_ack = ack_payload
+                    if is_remote_operation(command.action_id):
+                        try:
+                            stored_ack, safe_error = normalize_remote_ack(
+                                command.action_id,
+                                ack_payload,
+                                successful=status is CommandStatus.COMPLETED,
+                            )
+                            error = safe_error
+                        except RemoteOperationContractError:
+                            status = CommandStatus.FAILED
+                            stored_ack, error = invalid_remote_ack(
+                                command.action_id,
+                                ack_payload,
+                            )
                     command.status = status.value
                     command.completed_at = now
                     command.updated_at = now
                     command.error_message = error
                     command.result = {
                         "ack_received_at": now.isoformat(),
-                        "edge_ack": ack_payload,
+                        "edge_ack": stored_ack,
                         **({"error": error} if error else {}),
                     }
+                    add_remote_terminal_audit(
+                        session,
+                        command,
+                        status=status.value,
+                        occurred_at=now,
+                    )
                     snapshot = self._command_snapshot(command)
                     await session.commit()
 
@@ -391,7 +445,7 @@ class CommandExecutor:
                 snapshot["command_id"],
                 status,
                 snapshot["action_id"],
-                result=ack_payload if status is CommandStatus.COMPLETED else None,
+                result=stored_ack if status is CommandStatus.COMPLETED else None,
                 error=error,
             )
             logger.info(
@@ -437,6 +491,12 @@ class CommandExecutor:
                     command.updated_at = now
                     command.error_message = "Command acknowledgement timed out"
                     command.result = {"timeout_at": now.isoformat()}
+                    add_remote_terminal_audit(
+                        session,
+                        command,
+                        status=CommandStatus.TIMEOUT.value,
+                        occurred_at=now,
+                    )
                     snapshots.append(self._command_snapshot(command))
                 if commands:
                     await session.commit()
@@ -561,6 +621,12 @@ class CommandExecutor:
                         "failed_at": now.isoformat(),
                         "dispatch_attempts": command.dispatch_attempts,
                     }
+                    add_remote_terminal_audit(
+                        session,
+                        command,
+                        status=CommandStatus.FAILED.value,
+                        occurred_at=now,
+                    )
                     snapshot = self._command_snapshot(command)
                 else:
                     command.status = CommandStatus.PENDING.value
@@ -934,7 +1000,11 @@ class CommandExecutor:
             "executed_at": (
                 command.executed_at.isoformat() if command.executed_at else None
             ),
+            "completed_at": (
+                command.completed_at.isoformat() if command.completed_at else None
+            ),
             "result": command.result,
+            "error": command.error_message,
         }
 
     @staticmethod

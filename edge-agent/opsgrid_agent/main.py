@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Any, List
@@ -14,6 +15,11 @@ from opsgrid_agent.config_bundle import collectors_from_bundle
 from opsgrid_agent.collectors.coordinator import UnifiedCollectorCoordinator, CollectorConfig
 from opsgrid_agent.packml import PackMLStateMapper
 from opsgrid_agent.ota import AgentSelfUpdateExecutor, OTAUpdateExecutor
+from opsgrid_agent.remote_ops import (
+    AgentRemoteOperations,
+    capture_structured_log,
+    structured_log_buffer,
+)
 from opsgrid_agent import metrics
 from opsgrid_agent.versioning import (
     asset_ids_from_collectors,
@@ -25,6 +31,7 @@ from opsgrid_agent.versioning import (
 
 structlog.configure(
     processors=[
+        capture_structured_log,
         structlog.stdlib.filter_by_level,
         structlog.stdlib.add_logger_name,
         structlog.stdlib.add_log_level,
@@ -57,6 +64,7 @@ class EdgeAgent:
     """
     
     def __init__(self):
+        self.started_monotonic = time.monotonic()
         self.config = self._load_config()
         self.runtime_root = Path(self.config['runtime_root']).resolve()
         metrics.configure(agent_id=self.config['agent_id'])
@@ -131,6 +139,21 @@ class EdgeAgent:
         self.coordinator = UnifiedCollectorCoordinator(
             buffer=self.buffer,
             kafka_producer=None  # Will be set after Kafka init
+        )
+        self.remote_operations = AgentRemoteOperations(
+            agent_id=self.config['agent_id'],
+            config_provider=lambda: self.config,
+            manifest_provider=lambda: self.manifest,
+            config_hash_provider=lambda: self.config_hash,
+            buffer=self.buffer,
+            coordinator=self.coordinator,
+            kafka_connected=lambda: self.kafka_producer is not None,
+            command_connected=lambda: bool(
+                self.command_consumer
+                and self.command_consumer.is_running
+            ),
+            log_buffer=structured_log_buffer,
+            started_monotonic=self.started_monotonic,
         )
     
     def _load_config(self) -> Dict[str, Any]:
@@ -264,11 +287,13 @@ class EdgeAgent:
             )
             self.ota_executor.register(self.command_consumer)
             self.agent_update_executor.register(self.command_consumer)
+            self.remote_operations.register(self.command_consumer)
 
     async def _restart_runtime_after_update(self):
         """Restart collectors after an OTA config-bundle swap."""
         await self.coordinator.stop_all()
         self.config = self._load_config()
+        self.config_hash = compute_config_hash(self.config.get('collectors', []))
         self.coordinator.configs.clear()
         self.coordinator.collectors.clear()
         self.coordinator.collector_tasks.clear()
