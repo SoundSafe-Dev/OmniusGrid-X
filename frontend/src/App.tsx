@@ -41,6 +41,7 @@ const OrganizationTree = named(() => import('./pages/fleet'), 'OrganizationTree'
 // OTA fleet management (integration), kept lazy like the other admin pages.
 const Fleet = named(() => import('./pages/admin'), 'Fleet')
 const FleetRolloutDetail = named(() => import('./pages/admin'), 'FleetRolloutDetail')
+const FleetTargeting = named(() => import('./pages/admin'), 'FleetTargeting')
 
 // Converged from integration: error-triage admin pages, kept lazy.
 const ErrorTriage = named(() => import('./pages/admin'), 'ErrorTriage')
@@ -139,6 +140,7 @@ const App: FC = () => {
                   <Route path="/admin/errors" element={<ErrorTriage />} />
                   <Route path="/admin/errors/:fingerprint" element={<ErrorTriageDetail />} />
                   <Route path="/admin/fleet" element={<Fleet />} />
+                  <Route path="/admin/fleet/targeting" element={<FleetTargeting />} />
                   <Route path="/admin/fleet/rollouts/:rolloutId" element={<FleetRolloutDetail />} />
                 </Route>
               </Route>

@@ -3,7 +3,7 @@
 import uuid
 from app.core.datetime_utils import utcnow
 from typing import Optional, List
-from sqlalchemy import Column, String, DateTime, Boolean, Numeric, Float, JSON, ForeignKey, Text, BigInteger, Integer, ARRAY, Date, UUID, UniqueConstraint, CheckConstraint, Index, func, text
+from sqlalchemy import Column, String, DateTime, Boolean, Numeric, Float, JSON, ForeignKey, ForeignKeyConstraint, Text, BigInteger, Integer, ARRAY, Date, UUID, UniqueConstraint, CheckConstraint, Index, func, text
 from sqlalchemy.dialects.postgresql import INET, JSONB
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.types import TypeDecorator
@@ -104,6 +104,37 @@ class AssetType(Base):
 
 class Asset(Base):
     __tablename__ = "assets"
+    __table_args__ = (
+        UniqueConstraint("id", "organization_id", name="uq_assets_id_org"),
+        CheckConstraint(
+            "("
+            "agent_version_valid AND "
+            "agent_version_major IS NOT NULL AND agent_version_major >= 0 AND "
+            "agent_version_minor IS NOT NULL AND agent_version_minor >= 0 AND "
+            "agent_version_patch IS NOT NULL AND agent_version_patch >= 0"
+            ") OR ("
+            "NOT agent_version_valid AND "
+            "agent_version_major IS NULL AND "
+            "agent_version_minor IS NULL AND "
+            "agent_version_patch IS NULL AND "
+            "agent_version_prerelease IS NULL"
+            ")",
+            name="ck_assets_agent_semver_components",
+        ),
+        ForeignKeyConstraint(
+            ["workcell_id", "organization_id"],
+            ["workcells.id", "workcells.organization_id"],
+            ondelete="RESTRICT",
+            name="fk_assets_workcell_org",
+        ),
+        Index(
+            "idx_assets_org_agent_reported",
+            "organization_id",
+            "agent_id",
+            "agent_reported_at",
+            postgresql_where=text("agent_id IS NOT NULL"),
+        ),
+    )
 
     id = UUIDColumn()
     organization_id = UUIDForeignKey("organizations.id")
@@ -126,6 +157,12 @@ class Asset(Base):
     agent_config_hash = Column(String(64))
     agent_build_id = Column(String(255))
     agent_last_heartbeat = Column(DateTime(timezone=True))
+    agent_reported_at = Column(DateTime(timezone=True))
+    agent_version_valid = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+    agent_version_major = Column(Integer)
+    agent_version_minor = Column(Integer)
+    agent_version_patch = Column(Integer)
+    agent_version_prerelease = Column(String(255))
     created_at = Column(DateTime(timezone=True), default=utcnow)
     updated_at = Column(DateTime(timezone=True), default=utcnow)
 
@@ -268,14 +305,269 @@ class Operation(Base):
 
 class Workcell(Base):
     __tablename__ = "workcells"
+    __table_args__ = (
+        UniqueConstraint("id", "organization_id", name="uq_workcells_id_org"),
+        ForeignKeyConstraint(
+            ["site_id", "organization_id"],
+            ["sites.id", "sites.organization_id"],
+            name="fk_workcells_site_org",
+        ),
+    )
     
     id = UUIDColumn()
     organization_id = UUIDForeignKey("organizations.id")
+    site_id = Column(UUID(as_uuid=True), nullable=True)
     name = Column(String(255), nullable=False)
     description = Column(Text)
     location = Column(String(255))
     created_at = Column(DateTime(timezone=True), default=utcnow)
     updated_at = Column(DateTime(timezone=True), default=utcnow)
+
+
+class Site(Base):
+    """Tenant-owned physical site containing zero or more workcells."""
+
+    __tablename__ = "sites"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "key", name="uq_sites_org_key"),
+        UniqueConstraint("organization_id", "name", name="uq_sites_org_name"),
+        UniqueConstraint("id", "organization_id", name="uq_sites_id_org"),
+        CheckConstraint("length(btrim(key)) > 0", name="ck_sites_key_nonempty"),
+        CheckConstraint("length(btrim(name)) > 0", name="ck_sites_name_nonempty"),
+    )
+
+    id = UUIDColumn()
+    organization_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    key = Column(String(100), nullable=False)
+    name = Column(String(255), nullable=False)
+    description = Column(Text)
+    is_active = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    created_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        server_default=func.now(),
+    )
+
+
+class AssetAgentCollector(Base):
+    """Latest collector facts reported for one asset by its edge agent."""
+
+    __tablename__ = "asset_agent_collectors"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["asset_id", "organization_id"],
+            ["assets.id", "assets.organization_id"],
+            ondelete="CASCADE",
+            name="fk_asset_agent_collectors_asset_org",
+        ),
+        CheckConstraint(
+            "length(btrim(collector_type)) > 0",
+            name="ck_asset_agent_collectors_type",
+        ),
+    )
+
+    organization_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    asset_id = Column(UUID(as_uuid=True), primary_key=True)
+    collector_type = Column(String(100), primary_key=True)
+    enabled = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    running = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+    heartbeat_at = Column(DateTime(timezone=True), nullable=False)
+
+
+class FleetTag(Base):
+    """Tenant-owned reusable asset label."""
+
+    __tablename__ = "fleet_tags"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "key", name="uq_fleet_tags_org_key"),
+        UniqueConstraint("organization_id", "name", name="uq_fleet_tags_org_name"),
+        UniqueConstraint("id", "organization_id", name="uq_fleet_tags_id_org"),
+        CheckConstraint("length(btrim(key)) > 0", name="ck_fleet_tags_key_nonempty"),
+        CheckConstraint("length(btrim(name)) > 0", name="ck_fleet_tags_name_nonempty"),
+    )
+
+    id = UUIDColumn()
+    organization_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    key = Column(String(100), nullable=False)
+    name = Column(String(255), nullable=False)
+    description = Column(Text)
+    color = Column(String(32))
+    is_active = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    created_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        server_default=func.now(),
+    )
+
+
+class AssetFleetTag(Base):
+    """Many-to-many tenant-safe asset/tag assignment."""
+
+    __tablename__ = "asset_fleet_tags"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["asset_id", "organization_id"],
+            ["assets.id", "assets.organization_id"],
+            ondelete="CASCADE",
+            name="fk_asset_fleet_tags_asset_org",
+        ),
+        ForeignKeyConstraint(
+            ["tag_id", "organization_id"],
+            ["fleet_tags.id", "fleet_tags.organization_id"],
+            ondelete="CASCADE",
+            name="fk_asset_fleet_tags_tag_org",
+        ),
+    )
+
+    organization_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    asset_id = Column(UUID(as_uuid=True), primary_key=True)
+    tag_id = Column(UUID(as_uuid=True), primary_key=True)
+    assigned_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    assigned_at = Column(DateTime(timezone=True), default=datetime.utcnow, server_default=func.now())
+
+
+class FleetGroup(Base):
+    """Tenant-owned explicit fleet group."""
+
+    __tablename__ = "fleet_groups"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "key", name="uq_fleet_groups_org_key"),
+        UniqueConstraint("organization_id", "name", name="uq_fleet_groups_org_name"),
+        UniqueConstraint("id", "organization_id", name="uq_fleet_groups_id_org"),
+        CheckConstraint("length(btrim(key)) > 0", name="ck_fleet_groups_key_nonempty"),
+        CheckConstraint("length(btrim(name)) > 0", name="ck_fleet_groups_name_nonempty"),
+    )
+
+    id = UUIDColumn()
+    organization_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    key = Column(String(100), nullable=False)
+    name = Column(String(255), nullable=False)
+    description = Column(Text)
+    is_active = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    created_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        server_default=func.now(),
+    )
+
+
+class AssetFleetGroup(Base):
+    """Many-to-many tenant-safe asset/group membership."""
+
+    __tablename__ = "asset_fleet_groups"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["asset_id", "organization_id"],
+            ["assets.id", "assets.organization_id"],
+            ondelete="CASCADE",
+            name="fk_asset_fleet_groups_asset_org",
+        ),
+        ForeignKeyConstraint(
+            ["group_id", "organization_id"],
+            ["fleet_groups.id", "fleet_groups.organization_id"],
+            ondelete="CASCADE",
+            name="fk_asset_fleet_groups_group_org",
+        ),
+    )
+
+    organization_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    asset_id = Column(UUID(as_uuid=True), primary_key=True)
+    group_id = Column(UUID(as_uuid=True), primary_key=True)
+    assigned_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    assigned_at = Column(DateTime(timezone=True), default=datetime.utcnow, server_default=func.now())
+
+
+class FleetCohort(Base):
+    """Saved validated dynamic targeting query."""
+
+    __tablename__ = "fleet_cohorts"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "name", name="uq_fleet_cohorts_org_name"),
+        UniqueConstraint("id", "organization_id", name="uq_fleet_cohorts_id_org"),
+        CheckConstraint("length(btrim(name)) > 0", name="ck_fleet_cohorts_name_nonempty"),
+        CheckConstraint("query_version = 1", name="ck_fleet_cohorts_query_version"),
+        CheckConstraint(
+            "jsonb_typeof(query) = 'object'",
+            name="ck_fleet_cohorts_query_object",
+        ),
+    )
+
+    id = UUIDColumn()
+    organization_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    name = Column(String(255), nullable=False)
+    description = Column(Text)
+    query_version = Column(Integer, nullable=False, default=1, server_default="1")
+    query = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    created_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        server_default=func.now(),
+    )
 
 
 # ==================== YMS Models ====================
@@ -1148,7 +1440,7 @@ class AuditLog(Base):
     organization_id = UUIDForeignKey("organizations.id", nullable=True)
     action = Column(String(100), nullable=False)
     resource_type = Column(String(50), nullable=True)
-    resource_id = Column(String(36), nullable=True)  # Polymorphic - can reference any table
+    resource_id = Column(UUID(as_uuid=True), nullable=True)  # Polymorphic UUID resource
     details = Column(JSON, default={}, nullable=False)
     # Migrations 001/009 create this as INET. Declared as VARCHAR here, every
     # insert bound $n::VARCHAR and Postgres rejected it with
@@ -1597,6 +1889,7 @@ class AgentRelease(Base):
             "organization_id", "artifact_type", "version", "channel",
             name="uq_agent_releases_org_type_version_channel",
         ),
+        UniqueConstraint("id", "organization_id", name="uq_agent_releases_id_org"),
     )
 
     id = UUIDColumn()
@@ -1637,6 +1930,79 @@ class AgentRelease(Base):
     rollouts = relationship("AgentRollout", back_populates="release")
 
 
+class FleetTargetPreview(Base):
+    """Short-lived exact resolution used to materialize a rollout."""
+
+    __tablename__ = "fleet_target_previews"
+    __table_args__ = (
+        CheckConstraint("asset_count >= 0 AND agent_count >= 0", name="ck_fleet_target_previews_counts"),
+        CheckConstraint(
+            "jsonb_typeof(selector) = 'object'",
+            name="ck_fleet_target_previews_selector_object",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(ordered_asset_ids) = 'array'",
+            name="ck_fleet_target_previews_assets_array",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(resolved_agents) = 'array'",
+            name="ck_fleet_target_previews_agents_array",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(excluded_assets) = 'array'",
+            name="ck_fleet_target_previews_excluded_array",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(warnings) = 'array'",
+            name="ck_fleet_target_previews_warnings_array",
+        ),
+        CheckConstraint(
+            "membership_hash ~ '^[0-9a-f]{64}$'",
+            name="ck_fleet_target_previews_hash",
+        ),
+        UniqueConstraint("id", "organization_id", name="uq_fleet_target_previews_id_org"),
+        ForeignKeyConstraint(
+            ["release_id", "organization_id"],
+            ["agent_releases.id", "agent_releases.organization_id"],
+            ondelete="CASCADE",
+            name="fk_fleet_target_previews_release_org",
+        ),
+    )
+
+    id = UUIDColumn()
+    organization_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    release_id = Column(UUID(as_uuid=True), nullable=False)
+    selector = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False)
+    ordered_asset_ids = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False)
+    resolved_agents = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False)
+    excluded_assets = Column(
+        JSON().with_variant(JSONB, "postgresql"),
+        nullable=False,
+        default=list,
+        server_default="[]",
+    )
+    warnings = Column(
+        JSON().with_variant(JSONB, "postgresql"),
+        nullable=False,
+        default=list,
+        server_default="[]",
+    )
+    membership_hash = Column(String(64), nullable=False)
+    asset_count = Column(Integer, nullable=False)
+    agent_count = Column(Integer, nullable=False)
+    created_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, server_default=func.now())
+
+
 class AgentRollout(Base):
     """Tenant-scoped OTA rollout definition."""
     __tablename__ = "agent_rollouts"
@@ -1644,6 +2010,18 @@ class AgentRollout(Base):
         CheckConstraint(
             "status IN ('pending', 'paused', 'running', 'completed', 'cancelled', 'rolled_back', 'failed')",
             name="ck_agent_rollouts_status",
+        ),
+        ForeignKeyConstraint(
+            ["target_preview_id", "organization_id"],
+            ["fleet_target_previews.id", "fleet_target_previews.organization_id"],
+            ondelete="RESTRICT",
+            name="fk_agent_rollouts_preview_org",
+        ),
+        Index(
+            "uq_agent_rollouts_target_preview",
+            "target_preview_id",
+            unique=True,
+            postgresql_where=text("target_preview_id IS NOT NULL"),
         ),
     )
 
@@ -1662,6 +2040,8 @@ class AgentRollout(Base):
     target_selector = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False, default=dict)
     strategy = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False, default=dict)
     status = Column(String(30), nullable=False, default="pending", server_default="pending")
+    target_preview_id = Column(UUID(as_uuid=True), nullable=True)
+    target_membership_hash = Column(String(64))
     created_by = Column(
         UUIDString(),
         ForeignKey("users.id", ondelete="SET NULL"),
@@ -1700,6 +2080,12 @@ class AgentRolloutTarget(Base):
             "rollout_id", "asset_id",
             name="uq_agent_rollout_targets_rollout_asset",
         ),
+        ForeignKeyConstraint(
+            ["route_asset_id", "organization_id"],
+            ["assets.id", "assets.organization_id"],
+            ondelete="RESTRICT",
+            name="fk_agent_rollout_targets_route_asset_org",
+        ),
     )
 
     id = UUIDColumn()
@@ -1718,6 +2104,8 @@ class AgentRolloutTarget(Base):
         ForeignKey("assets.id", ondelete="CASCADE"),
         nullable=False,
     )
+    agent_id = Column(String(255))
+    route_asset_id = Column(UUID(as_uuid=True), nullable=True)
     wave_index = Column(Integer, nullable=False, default=0, server_default="0")
     status = Column(String(30), nullable=False, default="pending", server_default="pending")
     current_version = Column(String(100))
