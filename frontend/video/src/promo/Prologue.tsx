@@ -5,7 +5,7 @@ import { Wordmark } from '../components/Wordmark';
 
 /**
  * Prologue announcement cards — the minimal piece that precedes the
- * campaign: overline, logo lockup, founder quote, SoundSafe credit.
+ * campaign: overline, logo lockup, company quote, SoundSafe credit.
  * Dark + light editions; 4:5 (2160x2700) and 9:16 (2160x3840).
  */
 
@@ -17,8 +17,6 @@ const QUOTE = (
     We built OmniusGrid to turn them into one conversation.
   </>
 );
-const ATTRIB_NAME = 'Hamad Dada';
-const ATTRIB_ROLE = 'SoundSafe.ai';
 
 type Pal = {
   bg: string;
@@ -129,10 +127,6 @@ const Card: React.FC<{ pal: Pal; tall?: boolean }> = ({ pal, tall }) => (
           <span style={{ color: theme.highlight, fontWeight: 800 }}>&ldquo;</span>
           {QUOTE}
           <span style={{ color: theme.highlight, fontWeight: 800 }}>&rdquo;</span>
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          <span style={{ fontSize: 46, fontWeight: 700, color: pal.text }}>{ATTRIB_NAME}</span>
-          <span style={{ fontSize: 36, fontWeight: 500, color: pal.secondary }}>{ATTRIB_ROLE}</span>
         </div>
       </div>
 
