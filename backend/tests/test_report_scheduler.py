@@ -183,8 +183,10 @@ async def test_due_active_schedule_creates_job(
     job = jobs[0]
     assert job.framework == "all"
     assert job.format == "json"
-    assert job.organization_id == org_id
-    assert job.requested_by == user_id
+    # UUIDString reads back a canonical dashed str on every dialect (FS-55, so
+    # JSON output is uniform), so compare as strings — not str vs uuid.UUID.
+    assert str(job.organization_id) == str(org_id)
+    assert str(job.requested_by) == str(user_id)
     assert job.scheduled_for == due
     assert job.report_status == "queued"
     assert schedule.last_status == "queued"
@@ -456,8 +458,9 @@ async def test_org_b_schedule_unaffected_when_dispatching_org_a(
 
     assert len(jobs_a) == 1
     assert len(jobs_b) == 1
-    assert jobs_a[0].organization_id == seeded_orgs["org_a_id"]
-    assert jobs_b[0].organization_id == seeded_orgs["org_b_id"]
+    # See note above: UUIDString reads are str, the fixture holds uuid.UUID.
+    assert str(jobs_a[0].organization_id) == str(seeded_orgs["org_a_id"])
+    assert str(jobs_b[0].organization_id) == str(seeded_orgs["org_b_id"])
 
 
 @pytest.mark.asyncio

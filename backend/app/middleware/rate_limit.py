@@ -71,9 +71,15 @@ def get_auth_client_key(request: Request) -> str:
     return f"auth-ip:{get_remote_address(request)}"
 
 
+# in_memory_fallback_enabled: if Redis is unreachable, fall back to per-process
+# counters instead of raising. Fleet-wide limits become per-worker limits, which
+# is weaker — but a rate limiter must never convert a cache outage into an API
+# outage. swallow_errors covers transient storage errors mid-request the same way.
 limiter = Limiter(
     key_func=get_user_id_from_request,
     storage_uri=settings.REDIS_URL,
+    in_memory_fallback_enabled=True,
+    swallow_errors=True,
     default_limits=[settings.RATE_LIMIT_GLOBAL],
     # headers_enabled=False: slowapi would otherwise require every decorated
     # endpoint to accept a ``response: Response`` kwarg for header injection.
@@ -86,9 +92,17 @@ limiter = Limiter(
 # This limiter is intentionally independent from RATE_LIMIT_ENABLED. Auth
 # decorators execute their own checks, so they do not require the optional
 # application-wide SlowAPI middleware.
+# This one matters most: it is deliberately enabled=True always, so before the
+# fallback below an unreachable Redis raised on EVERY /auth request — turning a
+# Redis outage into a total authentication outage (login and register 500). Redis
+# also has no Deployment in the k8s stack yet (FS-196), so that was the default
+# state, not an edge case. Brute-force protection now degrades to per-process
+# counters rather than locking everyone out.
 auth_limiter = Limiter(
     key_func=get_auth_client_key,
     storage_uri=settings.REDIS_URL,
+    in_memory_fallback_enabled=True,
+    swallow_errors=True,
     headers_enabled=False,
     enabled=True,
 )
