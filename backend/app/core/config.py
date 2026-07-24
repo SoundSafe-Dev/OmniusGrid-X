@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     OTA_AGENT_UPDATE_COMMAND_TIMEOUT_SECONDS: int = 600
     OTA_ROLLOUT_DEFAULT_HEALTH_TIMEOUT_SECONDS: int = 300
     OTA_ROLLOUT_DEFAULT_MIN_SUCCESS_RATIO: float = 1.0
+    FLEET_TARGET_PREVIEW_TTL_SECONDS: int = 900
     
     # Security
     JWT_SECRET_KEY: str = "dev_secret_key_change_in_production"

@@ -19,12 +19,17 @@ from app.db.models import (
     AgentRollout,
     AgentRolloutEvent,
     AgentRolloutTarget,
-    Asset,
+    FleetTargetPreview,
     User,
 )
 from app.middleware.rate_limit import rate_limit
 from app.middleware.rbac import require_admin
 from app.services.command_executor import command_executor
+from app.services.fleet_targeting import (
+    TargetingValidationError,
+    fleet_target_resolver,
+    normalize_selector,
+)
 
 router = APIRouter()
 logger = structlog.get_logger()
@@ -44,12 +49,16 @@ class AgentRolloutCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     release_id: UUID
     target_selector: dict = Field(default_factory=dict)
+    preview_id: UUID
+    membership_hash: str = Field(..., pattern=r"^[0-9a-f]{64}$")
     strategy: dict = Field(default_factory=dict)
 
 
 class AgentRolloutTargetResponse(BaseModel):
     id: UUID
     asset_id: UUID
+    agent_id: str | None = None
+    route_asset_id: UUID | None = None
     wave_index: int
     status: str
     current_version: str | None
@@ -81,6 +90,8 @@ class AgentRolloutResponse(BaseModel):
     target_selector: dict
     strategy: dict
     status: str
+    target_preview_id: UUID | None = None
+    target_membership_hash: str | None = None
     created_by: UUID | None
     created_at: datetime | None
     updated_at: datetime | None
@@ -92,6 +103,8 @@ def _target_response(target: AgentRolloutTarget) -> AgentRolloutTargetResponse:
     return AgentRolloutTargetResponse(
         id=target.id,
         asset_id=target.asset_id,
+        agent_id=target.agent_id,
+        route_asset_id=target.route_asset_id,
         wave_index=target.wave_index,
         status=target.status,
         current_version=target.current_version,
@@ -132,6 +145,8 @@ def _rollout_response(rollout: AgentRollout) -> AgentRolloutResponse:
         target_selector=rollout.target_selector or {},
         strategy=rollout.strategy or {},
         status=rollout.status,
+        target_preview_id=rollout.target_preview_id,
+        target_membership_hash=rollout.target_membership_hash,
         created_by=rollout.created_by,
         created_at=rollout.created_at,
         updated_at=rollout.updated_at,
@@ -191,48 +206,6 @@ def _require_rollout_status(
         )
 
 
-async def _resolve_targets(
-    selector: dict,
-    org_id: UUID,
-    db: AsyncSession,
-) -> list[Asset]:
-    if selector.get("all") is True:
-        assets = (
-            await db.execute(
-                select(Asset).where(
-                    Asset.organization_id == org_id,
-                    Asset.is_active.is_(True),
-                )
-            )
-        ).scalars().all()
-    else:
-        raw_asset_ids = selector.get("asset_ids") or []
-        if not raw_asset_ids:
-            raise HTTPException(
-                status_code=400,
-                detail="target_selector must include all=true or asset_ids",
-            )
-        asset_ids = [UUID(str(asset_id)) for asset_id in raw_asset_ids]
-        assets = (
-            await db.execute(
-                select(Asset).where(
-                    Asset.organization_id == org_id,
-                    Asset.id.in_(asset_ids),
-                    Asset.is_active.is_(True),
-                )
-            )
-        ).scalars().all()
-        if len(assets) != len(set(asset_ids)):
-            raise HTTPException(
-                status_code=404,
-                detail="One or more target assets were not found",
-            )
-
-    if not assets:
-        raise HTTPException(status_code=400, detail="No active target assets matched selector")
-    return list(assets)
-
-
 def _wave_for_position(position: int, total: int, strategy: dict) -> int:
     wave_size = strategy.get("wave_size")
     if isinstance(wave_size, int) and wave_size > 0:
@@ -244,6 +217,20 @@ def _wave_for_position(position: int, total: int, strategy: dict) -> int:
         return 0 if position < canary_size else 1
 
     return 0
+
+
+def _agent_group_signature(groups: list[dict]) -> list[dict]:
+    signature = []
+    for group in groups:
+        signature.append(
+            {
+                "agent_key": group.get("agent_key"),
+                "agent_id": group.get("agent_id"),
+                "route_asset_id": str(group.get("route_asset_id")),
+                "asset_ids": [str(asset_id) for asset_id in group.get("asset_ids", [])],
+            }
+        )
+    return signature
 
 
 @router.post("/rollouts", response_model=AgentRolloutResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_admin)])
@@ -268,34 +255,134 @@ async def create_rollout(
     if release.status != "published":
         raise HTTPException(status_code=400, detail="Rollouts require a published release")
 
-    assets = await _resolve_targets(payload.target_selector, org_id, db)
+    preview = (
+        await db.execute(
+            select(FleetTargetPreview)
+            .where(
+                FleetTargetPreview.id == payload.preview_id,
+                FleetTargetPreview.organization_id == org_id,
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if preview is None:
+        raise HTTPException(status_code=404, detail="Target preview not found")
+    if preview.created_by != current_user.id:
+        raise HTTPException(status_code=404, detail="Target preview not found")
+    if preview.release_id != release.id:
+        raise HTTPException(
+            status_code=409,
+            detail="Target preview was created for a different release",
+        )
+    expires_at = preview.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at <= _utcnow():
+        raise HTTPException(status_code=409, detail="Target preview has expired")
+    if payload.membership_hash != preview.membership_hash:
+        raise HTTPException(status_code=409, detail="Target preview hash does not match")
+    if payload.target_selector:
+        try:
+            submitted_selector = normalize_selector(payload.target_selector)
+        except TargetingValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if submitted_selector != preview.selector:
+            raise HTTPException(
+                status_code=409,
+                detail="Target selector changed after preview",
+            )
+    existing_rollout = (
+        await db.execute(
+            select(AgentRollout.id).where(
+                AgentRollout.target_preview_id == preview.id,
+                AgentRollout.organization_id == org_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing_rollout is not None:
+        raise HTTPException(status_code=409, detail="Target preview was already used")
+    try:
+        current_resolution = await fleet_target_resolver.resolve(
+            selector=preview.selector,
+            organization_id=org_id,
+            release=release,
+            db=db,
+        )
+    except TargetingValidationError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Target preview is stale: {exc}",
+        ) from exc
+    if current_resolution.membership_hash != preview.membership_hash:
+        raise HTTPException(
+            status_code=409,
+            detail="Target membership changed after preview; create a new preview",
+        )
+    if current_resolution.asset_ids != list(preview.ordered_asset_ids or []):
+        raise HTTPException(
+            status_code=409,
+            detail="Target preview asset snapshot is inconsistent",
+        )
+    if _agent_group_signature(current_resolution.agents) != _agent_group_signature(
+        list(preview.resolved_agents or [])
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="Target preview agent snapshot is inconsistent",
+        )
+    selector = dict(preview.selector)
+    membership_hash = preview.membership_hash
+    agent_groups = list(preview.resolved_agents or [])
+
+    if not agent_groups:
+        raise HTTPException(status_code=422, detail="No eligible agents matched selector")
+
     rollout = AgentRollout(
         organization_id=org_id,
         release_id=release.id,
         name=payload.name,
-        target_selector=payload.target_selector,
+        target_selector=selector,
         strategy=payload.strategy,
         status="pending",
         created_by=current_user.id,
+        target_preview_id=preview.id,
+        target_membership_hash=membership_hash,
     )
     db.add(rollout)
     await db.flush()
-    for position, asset in enumerate(assets):
-        db.add(
-            AgentRolloutTarget(
-                rollout_id=rollout.id,
-                organization_id=org_id,
-                asset_id=asset.id,
-                wave_index=_wave_for_position(position, len(assets), payload.strategy),
-                status="pending",
+    target_count = 0
+    for position, agent_group in enumerate(agent_groups):
+        wave_index = _wave_for_position(position, len(agent_groups), payload.strategy)
+        try:
+            route_asset_id = UUID(str(agent_group["route_asset_id"]))
+            asset_ids = [UUID(str(asset_id)) for asset_id in agent_group["asset_ids"]]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=409, detail="Target preview snapshot is invalid") from exc
+        for asset_id in asset_ids:
+            db.add(
+                AgentRolloutTarget(
+                    rollout_id=rollout.id,
+                    organization_id=org_id,
+                    asset_id=asset_id,
+                    agent_id=agent_group.get("agent_id"),
+                    route_asset_id=route_asset_id,
+                    wave_index=wave_index,
+                    status="pending",
+                )
             )
-        )
+            target_count += 1
     db.add(
         AgentRolloutEvent(
             rollout_id=rollout.id,
             organization_id=org_id,
             event_type="created",
-            detail={"target_count": len(assets), "release_id": str(release.id)},
+            detail={
+                "target_count": target_count,
+                "agent_count": len(agent_groups),
+                "release_id": str(release.id),
+                "membership_hash": membership_hash,
+                "preview_id": str(preview.id),
+            },
         )
     )
     await db.commit()
