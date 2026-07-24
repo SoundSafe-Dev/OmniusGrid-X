@@ -525,10 +525,16 @@
 | Term | Definition | Backend/Frontend |
 |------|------------|------------------|
 | **Offline Demo Seeder** | `backend/scripts/seed_demo_data.py` — populates every page with correlated demo data so the whole platform runs with no live edge/cloud/services (idempotent). Only Correlation-AI *inference* still needs its model. See `docs/DEMO.md` | Backend |
-| **Schema-parity check** | Guard that ORM `Base.metadata` matches the migrated Postgres schema (columns, nullability, types) — prevents the ORM↔migration drift that only surfaces on a real DB (SQLite `create_all` hides it) | Backend |
+| **Schema-parity check** | Guard that ORM `Base.metadata` matches the migrated Postgres schema (columns, nullability, types **and server defaults**) — prevents the ORM↔migration drift that only surfaces on a real DB (SQLite `create_all` hides it) | Backend |
+| **Tenant session (`get_tenant_db`)** | The FastAPI dependency that opens a session AND sets the `app.current_org_id` GUC that RLS policies read. Using plain `get_db` on an RLS-protected table returns ZERO rows without erroring — the failure mode behind the empty dashboard and the silently empty audit trail. Enforced by `test_tenant_session_guard.py` | Backend |
+| **Quiet-failure bug class** | A defect that returns empty/NULL instead of raising, so tests and UIs look healthy: RLS filtering every row when the tenant GUC is unset, or a raw INSERT writing NULL `created_at` so the row drops out of time-ordered queries. Both are now guarded | Backend |
+| **Server default (timestamps)** | `DEFAULT NOW()` in the DATABASE, as opposed to an ORM-side `default=utcnow` that only fires through SQLAlchemy. Migrations 044/045 added the defaults and back-filled existing NULLs from each row's own event timestamp | Backend |
+| **Demo-data gating** | Four `*_populate_*` migrations insert sample rows and used to run on every deployment; `migrate.py` now skips them unless `--with-dev-fixtures`. `backend/scripts/seed_demo_data.py` is the sanctioned source of demo data | Backend |
 | **k6** | Modern load testing tool for HTTP API performance testing | Backend |
 | **Ingestion Load Generator** | `tests/load/ingestion_load.py` — async Kafka producer that floods the telemetry topics (the ingestion worker's exact contract) to drive KEDA ingestion-worker scaling and the TimescaleDB write path under load | Backend |
 | **Load Test** | Performance test simulating high user load (1000 concurrent users, 10k req/sec) | Backend |
+| **backend-realdb** | The blocking CI gate that runs the real-DB guards against an ephemeral TimescaleDB (testcontainers): schema parity, tenant isolation + RLS, dashboard tenancy, timestamp defaults, backup/restore drill. Exists because RLS and server defaults are no-ops on SQLite, so a green SQLite run proves nothing | Backend |
+| **migration-hygiene** | Blocking CI gate running `check_migrations.py` (no new duplicate prefixes) plus the chain guards: no data-only migrations, the 019 gap pinned, demo fixtures still gated | Backend |
 | **k8s-manifests / k8s-smoke** | Blocking CI gates: `k8s-manifests` builds + kubeconform-validates every kustomization; `k8s-smoke` spins a kind cluster, applies the monitoring stack, and validates the CNPG + KEDA custom resources against the real operators' webhooks | Backend |
 | **Concurrent Users** | Number of simultaneous users during load test | Backend |
 | **Requests Per Second** | Target throughput metric for load testing | Backend |
@@ -720,6 +726,6 @@
 
 ---
 
-**Document Version:** 1.2  
+**Document Version:** 1.3  
 **Last Updated:** 2026-07-24  
 **System:** OmniusGrid v0.1.0  
