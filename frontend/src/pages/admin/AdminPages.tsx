@@ -2,12 +2,13 @@ import { FC, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Activity, HardDrive, X, Plus, Edit, Trash2 } from 'lucide-react';
 import { Card, Badge, Button, Table, SkeletonCard, Input, Select } from '../../components';
-import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
+import { Tooltip, TooltipTrigger, TooltipContent, useDialog } from '../../components/ui';
 import { authApi, api } from '../../api';
 import { User, UserRole } from '../../types';
 
 export const UsersPage: FC = () => {
   const queryClient = useQueryClient();
+  const { confirm, alert } = useDialog();
   const { data: users, isLoading, isError } = useQuery({ queryKey: ['users'], queryFn: () => authApi.getUsers() });
   // The backend exposes GET /users but no POST/PUT/DELETE /users routes yet, so
   // create/edit/delete would 404. Hide those write affordances until the
@@ -50,9 +51,12 @@ export const UsersPage: FC = () => {
     },
   });
 
-  const handleAddUser = () => {
+  const handleAddUser = async () => {
     if (!formData.name || !formData.email || !formData.password) {
-      alert('Please fill in all required fields');
+      await alert({
+        title: 'Missing information',
+        message: 'Please fill in all required fields.',
+      });
       return;
     }
     createMutation.mutate(formData);
@@ -71,8 +75,14 @@ export const UsersPage: FC = () => {
     });
   };
 
-  const handleDeleteUser = (userId: string) => {
-    if (confirm('Are you sure you want to delete this user?')) {
+  const handleDeleteUser = async (userId: string) => {
+    const ok = await confirm({
+      title: 'Delete user',
+      message: 'Are you sure you want to delete this user? This cannot be undone.',
+      confirmLabel: 'Delete',
+      destructive: true,
+    });
+    if (ok) {
       deleteMutation.mutate(userId);
     }
   };
