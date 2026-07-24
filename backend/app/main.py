@@ -12,7 +12,7 @@ from app.api import edge_enroll, edge_ingest, edge_fleet
 from app.api import erp_webhooks
 from app.api import platform_correlation
 from app.api import fleet_logistics
-from app.api import fleet_agents, fleet_targeting, agent_releases, agent_rollouts, models
+from app.api import fleet_agents, fleet_targeting, maintenance_windows, agent_releases, agent_rollouts, models
 from app.api import kpi
 from app.api import workcells
 from app.api import fleet_health
@@ -362,6 +362,7 @@ app.include_router(exports.public_router, prefix="/api/v1/exports", tags=["Expor
 app.include_router(error_tracking.router, prefix="/api/v1/admin/errors", tags=["Error Triage"], responses=common_responses)
 app.include_router(fleet_agents.router, prefix="/api/v1/fleet", tags=["Fleet"], responses=common_responses)
 app.include_router(fleet_targeting.router, prefix="/api/v1/fleet", tags=["Fleet"], responses=common_responses)
+app.include_router(maintenance_windows.router, prefix="/api/v1/fleet", tags=["Fleet"], responses=common_responses)
 app.include_router(agent_releases.router, prefix="/api/v1/fleet", tags=["Fleet"], responses=common_responses)
 app.include_router(agent_releases.public_router, prefix="/api/v1/fleet", tags=["Fleet"], responses=common_responses)
 app.include_router(agent_rollouts.router, prefix="/api/v1/fleet", tags=["Fleet"], responses=common_responses)

@@ -25,6 +25,7 @@ import {
   ListFilter,
   UploadCloud,
   HeartPulse,
+  CalendarClock,
 } from 'lucide-react';
 import { useUIStore, useAuthStore } from '../../stores';
 import { cn } from '../../utils';
@@ -121,6 +122,7 @@ const navItems: NavItem[] = [
       { path: '/admin/fleet', label: 'Fleet OTA', icon: UploadCloud, description: 'Edge-agent releases and staged rollouts' },
       { path: '/admin/notifications', label: 'Notifications', icon: Bell, description: 'Alert delivery subscriptions and log' },
       { path: '/admin/fleet/targeting', label: 'Fleet Targeting', icon: ListFilter, description: 'Sites, tags, groups, and dynamic cohorts' },
+      { path: '/admin/fleet/maintenance', label: 'Maintenance Windows', icon: CalendarClock, description: 'Recurring site windows and rollout scheduling' },
       { path: '/admin/settings', label: 'Settings', icon: Settings, description: 'System configuration' },
     ],
   },

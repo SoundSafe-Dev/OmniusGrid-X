@@ -291,6 +291,9 @@ export interface AgentReleaseCreate {
 export interface AgentRolloutTarget {
   id: string;
   asset_id: string;
+  agent_id?: string | null;
+  route_asset_id?: string | null;
+  site_id?: string | null;
   wave_index: number;
   status: AgentRolloutTargetStatus;
   current_version: string | null;
@@ -321,6 +324,10 @@ export interface AgentRollout {
   status: AgentRolloutStatus;
   target_preview_id?: string | null;
   target_membership_hash?: string | null;
+  scheduled_start_at?: string | null;
+  enforce_maintenance_windows: boolean;
+  pause_reason?: 'manual' | 'maintenance_window' | null;
+  next_eligible_at?: string | null;
   created_by: string | null;
   created_at: string | null;
   updated_at: string | null;
@@ -335,4 +342,59 @@ export interface AgentRolloutCreate {
   preview_id: string;
   membership_hash: string;
   strategy: Record<string, unknown>;
+  scheduled_start_at?: string;
+  enforce_maintenance_windows?: boolean;
+}
+
+export type MaintenanceWindowWeekday = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+
+export interface MaintenanceWindow {
+  id: string;
+  organization_id: string;
+  site_id: string | null;
+  site_name: string | null;
+  name: string;
+  timezone: string;
+  weekdays: MaintenanceWindowWeekday[];
+  local_start_time: string;
+  local_end_time: string;
+  overnight: boolean;
+  enabled: boolean;
+  created_by: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface MaintenanceWindowCreate {
+  name: string;
+  site_id: string | null;
+  timezone: string;
+  weekdays: MaintenanceWindowWeekday[];
+  local_start_time: string;
+  local_end_time: string;
+  enabled?: boolean;
+}
+
+export type MaintenanceWindowUpdate = Partial<MaintenanceWindowCreate>;
+
+export interface MaintenanceWindowPreviewRequest {
+  site_ids: Array<string | null>;
+  at?: string;
+  horizon_days?: number;
+}
+
+export interface MaintenanceWindowOccurrence {
+  start_at: string;
+  end_at: string;
+}
+
+export interface MaintenanceWindowPreview {
+  at: string;
+  site_ids: Array<string | null>;
+  is_open: boolean;
+  next_eligible_at: string | null;
+  current_closes_at: string | null;
+  missing_scopes: string[];
+  effective_window_ids: string[];
+  occurrences: MaintenanceWindowOccurrence[];
 }

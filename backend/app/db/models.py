@@ -3,7 +3,7 @@
 import uuid
 from app.core.datetime_utils import utcnow
 from typing import Optional, List
-from sqlalchemy import Column, String, DateTime, Boolean, Numeric, Float, JSON, ForeignKey, ForeignKeyConstraint, Text, BigInteger, Integer, ARRAY, Date, UUID, UniqueConstraint, CheckConstraint, Index, func, text
+from sqlalchemy import Column, String, DateTime, Time, Boolean, Numeric, Float, JSON, ForeignKey, ForeignKeyConstraint, Text, BigInteger, Integer, ARRAY, Date, UUID, UniqueConstraint, CheckConstraint, Index, func, text
 from sqlalchemy.dialects.postgresql import INET, JSONB
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.types import TypeDecorator
@@ -346,6 +346,79 @@ class Site(Base):
     name = Column(String(255), nullable=False)
     description = Column(Text)
     is_active = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    created_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        server_default=func.now(),
+    )
+
+
+class MaintenanceWindow(Base):
+    """Tenant-owned recurring local-time dispatch window."""
+
+    __tablename__ = "maintenance_windows"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "name",
+            name="uq_maintenance_windows_org_name",
+        ),
+        UniqueConstraint(
+            "id",
+            "organization_id",
+            name="uq_maintenance_windows_id_org",
+        ),
+        ForeignKeyConstraint(
+            ["site_id", "organization_id"],
+            ["sites.id", "sites.organization_id"],
+            name="fk_maintenance_windows_site_org",
+        ),
+        CheckConstraint(
+            "length(btrim(name)) > 0",
+            name="ck_maintenance_windows_name_nonempty",
+        ),
+        CheckConstraint(
+            "length(btrim(timezone)) > 0",
+            name="ck_maintenance_windows_timezone_nonempty",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(weekdays) = 'array' "
+            "AND jsonb_array_length(weekdays) BETWEEN 1 AND 7 "
+            "AND weekdays <@ '[0, 1, 2, 3, 4, 5, 6]'::jsonb",
+            name="ck_maintenance_windows_weekdays",
+        ),
+        CheckConstraint(
+            "local_start_time <> local_end_time",
+            name="ck_maintenance_windows_nonzero_duration",
+        ),
+        Index(
+            "idx_maintenance_windows_org_site_enabled",
+            "organization_id",
+            "site_id",
+            "enabled",
+        ),
+    )
+
+    id = UUIDColumn()
+    organization_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    site_id = Column(UUID(as_uuid=True), nullable=True)
+    name = Column(String(255), nullable=False)
+    timezone = Column(String(100), nullable=False)
+    weekdays = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False)
+    local_start_time = Column(Time, nullable=False)
+    local_end_time = Column(Time, nullable=False)
+    enabled = Column(Boolean, nullable=False, default=True, server_default=text("true"))
     created_by = Column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),
@@ -2023,6 +2096,21 @@ class AgentRollout(Base):
             unique=True,
             postgresql_where=text("target_preview_id IS NOT NULL"),
         ),
+        CheckConstraint(
+            "pause_reason IS NULL "
+            "OR pause_reason IN ('manual', 'maintenance_window')",
+            name="ck_agent_rollouts_pause_reason",
+        ),
+        Index(
+            "idx_agent_rollouts_schedule_due",
+            "organization_id",
+            "status",
+            "next_eligible_at",
+            "scheduled_start_at",
+            postgresql_where=text(
+                "status IN ('pending', 'running', 'paused')"
+            ),
+        ),
     )
 
     id = UUIDColumn()
@@ -2042,6 +2130,15 @@ class AgentRollout(Base):
     status = Column(String(30), nullable=False, default="pending", server_default="pending")
     target_preview_id = Column(UUID(as_uuid=True), nullable=True)
     target_membership_hash = Column(String(64))
+    scheduled_start_at = Column(DateTime(timezone=True))
+    enforce_maintenance_windows = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false"),
+    )
+    pause_reason = Column(String(40))
+    next_eligible_at = Column(DateTime(timezone=True))
     created_by = Column(
         UUIDString(),
         ForeignKey("users.id", ondelete="SET NULL"),
@@ -2086,6 +2183,18 @@ class AgentRolloutTarget(Base):
             ondelete="RESTRICT",
             name="fk_agent_rollout_targets_route_asset_org",
         ),
+        ForeignKeyConstraint(
+            ["site_id", "organization_id"],
+            ["sites.id", "sites.organization_id"],
+            ondelete="RESTRICT",
+            name="fk_agent_rollout_targets_site_org",
+        ),
+        Index(
+            "idx_agent_rollout_targets_site",
+            "rollout_id",
+            "site_id",
+            "wave_index",
+        ),
     )
 
     id = UUIDColumn()
@@ -2106,6 +2215,7 @@ class AgentRolloutTarget(Base):
     )
     agent_id = Column(String(255))
     route_asset_id = Column(UUID(as_uuid=True), nullable=True)
+    site_id = Column(UUID(as_uuid=True), nullable=True)
     wave_index = Column(Integer, nullable=False, default=0, server_default="0")
     status = Column(String(30), nullable=False, default="pending", server_default="pending")
     current_version = Column(String(100))
