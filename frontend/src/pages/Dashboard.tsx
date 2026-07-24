@@ -89,7 +89,9 @@ const Widget: FC<{
   >
     <div className="flex items-start justify-between px-4 py-3 border-b border-opsgrid-border">
       <div>
-        <h3 className="text-base font-semibold text-opsgrid-text">{title}</h3>
+        {/* h2, not h3: the page title is the h1, and skipping a level is an
+            axe `heading-order` violation for screen-reader navigation. */}
+        <h2 className="text-base font-semibold text-opsgrid-text">{title}</h2>
         {subtitle && (
           <p className="text-xs text-opsgrid-text-secondary mt-0.5">{subtitle}</p>
         )}
