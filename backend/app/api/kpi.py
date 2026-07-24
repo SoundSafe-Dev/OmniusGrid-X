@@ -19,7 +19,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_active_user
@@ -213,37 +213,47 @@ async def get_on_time_performance(
     db: AsyncSession = Depends(get_tenant_db),
 ):
     since = _range_start(range)
-    rows = (await db.execute(
-        select(Shipment).where(
+    # Count on-time vs total per carrier in SQL (GROUP BY) instead of loading
+    # every delivered shipment. The WHERE already excludes actual_delivery IS
+    # NULL, so the on-time rule reduces to "no schedule, or delivered on/before
+    # it" — the same test the Python code applied.
+    on_time_expr = case(
+        (
+            or_(
+                Shipment.scheduled_delivery.is_(None),
+                Shipment.actual_delivery <= Shipment.scheduled_delivery,
+            ),
+            1,
+        ),
+        else_=0,
+    )
+    grouped = (await db.execute(
+        select(
+            Shipment.carrier_id,
+            func.count(),
+            func.coalesce(func.sum(on_time_expr), 0),
+        ).where(
             Shipment.organization_id == org_id,
             Shipment.status == "delivered",
             Shipment.actual_delivery.isnot(None),
             Shipment.updated_at >= since,
-        )
-    )).scalars().all()
+        ).group_by(Shipment.carrier_id)
+    )).all()
 
     on_time = late = 0
-    by_carrier_on = defaultdict(int)
-    by_carrier_total = defaultdict(int)
-    for s in rows:
-        is_on_time = (
-            s.scheduled_delivery is None
-            or (s.actual_delivery and s.actual_delivery <= s.scheduled_delivery)
-        )
-        if is_on_time:
-            on_time += 1
-        else:
-            late += 1
-        if s.carrier_id:
-            by_carrier_total[str(s.carrier_id)] += 1
-            if is_on_time:
-                by_carrier_on[str(s.carrier_id)] += 1
+    by_carrier = {}
+    for cid, group_total, group_on in grouped:
+        group_total = int(group_total or 0)
+        group_on = int(group_on or 0)
+        on_time += group_on
+        late += group_total - group_on
+        # The NULL-carrier group feeds the totals above but not the breakdown.
+        if cid:
+            by_carrier[str(cid)] = (
+                round(group_on / group_total * 100, 1) if group_total else 0.0
+            )
 
     total = on_time + late
-    by_carrier = {
-        cid: round(by_carrier_on[cid] / by_carrier_total[cid] * 100, 1)
-        for cid in by_carrier_total
-    }
     return {
         "overall_percentage": round(on_time / total * 100, 1) if total else 0.0,
         "on_time_count": on_time,
