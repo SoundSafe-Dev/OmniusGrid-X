@@ -444,7 +444,7 @@ flowchart TB
 
     MR -. "signed model/agent bundles<br/>mTLS" .-> CG
 
-    subgraph EDGE["Factory Floor — Edge Rack (K3s / Patroni HA)"]
+    subgraph EDGE["Factory Floor — Edge Rack (K3s / CloudNativePG HA)"]
         direction TB
         subgraph OBS["Observability"]
             PROM["Prometheus"]
@@ -483,7 +483,23 @@ flowchart TB
     TSDB --> HIST
 ```
 
-### 4. Page → API wiring
+### 4. Production reliability & operations
+
+The Kubernetes stack (`infrastructure/k8s/`) is built for multi-pod, no-single-
+point-of-failure operation. Beyond the app Deployments, these are the enterprise
+reliability layers (each with its own README):
+
+| Concern | Implementation | Where |
+|---------|----------------|-------|
+| **Database HA** | 3-instance CloudNativePG — automatic failover, synchronous replication (RPO≈0), continuous WAL archiving to S3 for PITR, PgBouncer pooler | [`database-ha/`](infrastructure/k8s/database-ha/) |
+| **Worker autoscaling** | KEDA scales ingestion / export / compliance workers on Redpanda consumer-group **lag** (export + compliance scale to zero when idle) | [`autoscaling/`](infrastructure/k8s/autoscaling/) |
+| **Observability** | Prometheus + Alertmanager + kube-state-metrics + Grafana, in-cluster; canonical alert rules shared with docker-compose; a "Platform / Infra" dashboard for HA-DB / autoscaling / backups | [`monitoring/`](infrastructure/k8s/monitoring/) |
+| **Object storage** | Generated exports & compliance reports go to SeaweedFS (S3) so a worker on one pod and the API on another share one bucket — fixes cross-pod download | [`base/object-store.yaml`](infrastructure/k8s/base/object-store.yaml) |
+| **Secrets** | Sealed Secrets (encrypted, safe-in-git) **or** External Secrets Operator (Vault / AWS SM / GCP SM) — no plaintext secrets committed | [`secrets/`](infrastructure/k8s/secrets/) |
+| **CI safety** | Two blocking gates: `k8s-manifests` (build + kubeconform every kustomization) and `k8s-smoke` (kind: apply monitoring, validate CNPG + KEDA CRs against the real operators) | `.github/workflows/quality-gates.yml` |
+| **Load / failover testing** | Kafka ingestion load generator (drives KEDA scaling + DB writes) + a runbook for driving throughput and DB-failover-under-load | [`tests/load/`](tests/load/) |
+
+### 5. Page → API wiring
 
 How each frontend page is wired to the backend (primary endpoints; all under
 `/api/v1`, JWT-gated, live updates over `/ws`):
@@ -1870,6 +1886,8 @@ The correlation AI model seamlessly integrates with OmniusGrid's Kanban task man
 | Identity | Unique cryptographic identity per device |
 | API | JWT Bearer token authentication |
 | Audit | Hash-chained tamper-evident command logging |
+| Secrets | No plaintext secrets in git — Sealed Secrets (encrypted) or External Secrets Operator (Vault / AWS SM / GCP SM); see [`infrastructure/k8s/secrets/`](infrastructure/k8s/secrets/) |
+| Workloads | Containers run non-root with read-only root filesystem and all Linux capabilities dropped |
 
 ---
 
@@ -2262,6 +2280,14 @@ The ERP integration system correlates ERP data with operational telemetry to pro
 - [Hybrid Architecture](HYBRID_ARCHITECTURE.md) - Human-in-the-Loop + Lights Out modes
 - [Gold Standard Architecture](GOLD_STANDARD_ARCHITECTURE.md) - Edge AI + Cloud Training
 - [Implementation Summary](IMPLEMENTATION_SUMMARY.md) - Complete feature inventory
+
+**Infrastructure & operations**
+- [Kubernetes deployment](infrastructure/k8s/README.md) - Canonical k8s stack, required secrets, deploy flow
+- [Database HA (CloudNativePG)](infrastructure/k8s/database-ha/README.md) - Auto-failover, PITR, cutover + failover runbook
+- [Worker autoscaling (KEDA)](infrastructure/k8s/autoscaling/README.md) - Lag-based scaling, partition/threshold tuning
+- [Observability stack](infrastructure/k8s/monitoring/) - Prometheus + Alertmanager + kube-state-metrics + Grafana
+- [Secrets management](infrastructure/k8s/secrets/README.md) - Sealed Secrets + External Secrets Operator
+- [Load & failover testing](tests/load/README.md) - Ingestion load generator, autoscaling + DB-failover validation
 
 ---
 
