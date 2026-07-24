@@ -183,6 +183,68 @@ jobs:
             echo "::endgroup::"
           done
 
+  # --- k8s live smoke test on kind (advisory) ------------------------------
+  k8s-smoke:
+    runs-on: ubuntu-latest
+    # ADVISORY until observed green in CI (same pattern as api-contract /
+    # pre-commit). k8s-manifests above proves the manifests BUILD and are
+    # schema-valid; this proves the operator stacks actually RUN and that the
+    # custom resources pass the REAL admission webhooks — which kubeconform
+    # can't check because it skips CRD schemas. Flip to blocking once green.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create kind cluster
+        uses: helm/kind-action@v1.10.0
+        with:
+          cluster_name: omniusgrid-smoke
+      - name: Setup kustomize
+        run: |
+          curl -sL "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.4.3/kustomize_v5.4.3_linux_amd64.tar.gz" \
+            | sudo tar xz -C /usr/local/bin kustomize
+
+      # --- Monitoring: full apply + wait Ready (public images, no CRDs) ------
+      - name: Smoke-test the monitoring stack (real apply)
+        run: |
+          set -euo pipefail
+          kubectl create namespace omniusgrid
+          kustomize build --load-restrictor LoadRestrictionsNone infrastructure/k8s/monitoring \
+            | kubectl apply -f -
+          # Prove each component actually schedules and becomes Ready.
+          kubectl -n omniusgrid rollout status statefulset/prometheus --timeout=180s
+          kubectl -n omniusgrid rollout status statefulset/alertmanager --timeout=180s
+          kubectl -n omniusgrid rollout status deployment/kube-state-metrics --timeout=180s
+
+      # --- CloudNativePG: install operator, validate the Cluster CR ----------
+      - name: Install CloudNativePG operator
+        run: |
+          kubectl apply --server-side -f \
+            https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.24/releases/cnpg-1.24.0.yaml
+          kubectl -n cnpg-system rollout status deployment/cnpg-controller-manager --timeout=180s
+      - name: Validate the HA database CR against the real CNPG webhook
+        run: |
+          set -euo pipefail
+          # Server dry-run runs the operator's validating webhook — catches CR
+          # field errors kubeconform skipped. No pods are pulled/started.
+          kustomize build --load-restrictor LoadRestrictionsNone infrastructure/k8s/database-ha \
+            | kubectl apply --dry-run=server -f -
+
+      # --- KEDA: install operator, validate the ScaledObjects ----------------
+      - name: Install KEDA operator
+        run: |
+          kubectl apply --server-side -f \
+            https://github.com/kedacore/keda/releases/download/v2.15.1/keda-2.15.1.yaml
+          kubectl -n keda rollout status deployment/keda-operator --timeout=180s
+      - name: Validate the worker ScaledObjects against the real KEDA webhook
+        run: |
+          set -euo pipefail
+          # The ScaledObjects reference worker Deployments via scaleTargetRef, so
+          # create those objects first (they ImagePullBackOff — we never wait on
+          # them; only their existence is needed for the target check).
+          kustomize build infrastructure/k8s/base | kubectl apply -f - || true
+          kustomize build infrastructure/k8s/autoscaling \
+            | kubectl apply --dry-run=server -f -
+
   # --- task 1: frontend unit tests (Vitest) --------------------------------
   frontend-unit:
     runs-on: ubuntu-latest
