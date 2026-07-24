@@ -119,19 +119,25 @@ def _dtc_out(d: GeoTabDiagnostic) -> dict:
     }
 
 
-async def _active_diagnostics(db, org_id):
-    return (await db.execute(
-        select(GeoTabDiagnostic).where(
-            GeoTabDiagnostic.organization_id == org_id,
-            GeoTabDiagnostic.status == "active",
-        )
-    )).scalars().all()
+async def _active_diagnostics(db, org_id, vehicle_id=None):
+    stmt = select(GeoTabDiagnostic).where(
+        GeoTabDiagnostic.organization_id == org_id,
+        GeoTabDiagnostic.status == "active",
+    )
+    # Single-vehicle callers push the filter into SQL rather than loading the
+    # whole org and linear-searching in Python.
+    if vehicle_id is not None:
+        stmt = stmt.where(GeoTabDiagnostic.vehicle_id == vehicle_id)
+    return (await db.execute(stmt)).scalars().all()
 
 
-async def _exceptions(db, org_id):
-    return (await db.execute(
-        select(GeoTabException).where(GeoTabException.organization_id == org_id)
-    )).scalars().all()
+async def _exceptions(db, org_id, device_id=None):
+    stmt = select(GeoTabException).where(GeoTabException.organization_id == org_id)
+    # Exceptions key on device_id (the single-vehicle security endpoint passes
+    # the path's vehicle_id here, matching the previous Python filter exactly).
+    if device_id is not None:
+        stmt = stmt.where(GeoTabException.device_id == device_id)
+    return (await db.execute(stmt)).scalars().all()
 
 
 # ---------------------------------------------------------------- health / DTCs
@@ -202,8 +208,8 @@ async def all_dtcs(org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession =
 
 @router.get("/vehicles/{vehicle_id}/dtcs", response_model=List[DtcItem])
 async def vehicle_dtcs(vehicle_id: str, org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
-    diags = await _active_diagnostics(db, org_id)
-    return [_dtc_out(d) for d in diags if d.vehicle_id == vehicle_id]
+    diags = await _active_diagnostics(db, org_id, vehicle_id=vehicle_id)
+    return [_dtc_out(d) for d in diags]
 
 
 # ------------------------------------------------------------------- security
@@ -236,8 +242,8 @@ async def security_events(
 
 @router.get("/vehicles/{vehicle_id}/security")
 async def vehicle_security(vehicle_id: str, org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
-    excs = await _exceptions(db, org_id)
-    return [_security_out(e) for e in excs if e.device_id == vehicle_id]
+    excs = await _exceptions(db, org_id, device_id=vehicle_id)
+    return [_security_out(e) for e in excs]
 
 
 # --------------------------------------------------------------- driver safety
