@@ -61,8 +61,8 @@ OmniusGrid is a resilient manufacturing operations platform designed for Industr
 | **Edge AI** | <100ms inference loops, TorchScript models, automated model lifecycle, graceful fallback |
 | **Observability** | Prometheus metrics, Loki logs, Grafana dashboards, TimescaleDB |
 | **Security** | Agent enrollment with CA pinning, mTLS + proof-of-possession request signing, Redpanda broker mTLS, route-walk auth enforcement test, tamper-evident audit trails |
-| **DevOps** | GitHub Actions CI/CD with blocking gates (tsc/eslint/pytest/vitest + supply-chain: pip-audit/npm-audit/Trivy), kustomize deploys, Kubernetes base incl. workers + db-migrate Job, checksum-tracked SQL migration runner |
-| **Operations** | K3s-orchestrated, Patroni HA, automatic disaster recovery |
+| **DevOps** | GitHub Actions CI/CD with blocking gates (tsc/eslint/pytest/vitest, supply-chain: pip-audit/npm-audit/Trivy, and four Kubernetes gates: manifest validation, NetworkPolicy simulation, kind smoke test, Calico policy-enforcement test), kustomize deploys, Kubernetes base incl. workers + db-migrate Job, checksum-tracked SQL migration runner |
+| **Operations** | K3s-orchestrated, CloudNativePG HA (auto-failover + PITR), KEDA lag-based worker autoscaling, automatic disaster recovery |
 | **Logistics** | YMS/TMS with GeoTab telematics, detention billing, HOS compliance, dock-production sync, webhook processing |
 | **Task Management** | Kanban board with task grouping, assignment, approval workflows |
 | **Compliance** | Actionable registries (OSHA, ISO, internal), data correlation mapping, scoring |
@@ -496,7 +496,7 @@ reliability layers (each with its own README):
 | **Observability** | Prometheus + Alertmanager + kube-state-metrics + Grafana, in-cluster; canonical alert rules shared with docker-compose; a "Platform / Infra" dashboard for HA-DB / autoscaling / backups | [`monitoring/`](infrastructure/k8s/monitoring/) |
 | **Object storage** | Generated exports & compliance reports go to SeaweedFS (S3) so a worker on one pod and the API on another share one bucket — fixes cross-pod download | [`base/object-store.yaml`](infrastructure/k8s/base/object-store.yaml) |
 | **Secrets** | Sealed Secrets (encrypted, safe-in-git) **or** External Secrets Operator (Vault / AWS SM / GCP SM) — no plaintext secrets committed | [`secrets/`](infrastructure/k8s/secrets/) |
-| **CI safety** | Two blocking gates: `k8s-manifests` (build + kubeconform every kustomization) and `k8s-smoke` (kind: apply monitoring, validate CNPG + KEDA CRs against the real operators) | `.github/workflows/quality-gates.yml` |
+| **CI safety** | Four blocking gates: `k8s-manifests` (build + kubeconform every kustomization), `netpol-simulate` (evaluate the NetworkPolicy matrix against the YAML, no cluster), `k8s-smoke` (kind: apply monitoring, validate CNPG + KEDA CRs against the real operators), `k8s-netpol` (kind + **Calico**: assert policies are genuinely enforced, 9 allow/deny cases) | `.github/workflows/quality-gates.yml` |
 | **Load / failover testing** | Kafka ingestion load generator (drives KEDA scaling + DB writes) + a runbook for driving throughput and DB-failover-under-load | [`tests/load/`](tests/load/) |
 
 ### 5. Page → API wiring
@@ -1887,7 +1887,7 @@ The correlation AI model seamlessly integrates with OmniusGrid's Kanban task man
 | API | JWT Bearer token authentication |
 | Audit | Hash-chained tamper-evident command logging |
 | Secrets | No plaintext secrets in git — Sealed Secrets (encrypted) or External Secrets Operator (Vault / AWS SM / GCP SM); see [`infrastructure/k8s/secrets/`](infrastructure/k8s/secrets/) |
-| Cluster network | Zero-trust: `default-deny-all` NetworkPolicy + per-workload allow-lists (covers every stack); see [`infrastructure/k8s/NETWORK_SECURITY.md`](infrastructure/k8s/NETWORK_SECURITY.md) |
+| Cluster network | Zero-trust: `default-deny-all` NetworkPolicy + per-workload allow-lists across every stack, with enforcement verified in CI on Calico (9 allow/deny cases); see [`infrastructure/k8s/NETWORK_SECURITY.md`](infrastructure/k8s/NETWORK_SECURITY.md) |
 | Workloads | Containers run non-root with read-only root filesystem and all Linux capabilities dropped |
 
 ---
@@ -2288,6 +2288,7 @@ The ERP integration system correlates ERP data with operational telemetry to pro
 - [Worker autoscaling (KEDA)](infrastructure/k8s/autoscaling/README.md) - Lag-based scaling, partition/threshold tuning
 - [Observability stack](infrastructure/k8s/monitoring/) - Prometheus + Alertmanager + kube-state-metrics + Grafana
 - [Secrets management](infrastructure/k8s/secrets/README.md) - Sealed Secrets + External Secrets Operator
+- [Network & pod security](infrastructure/k8s/NETWORK_SECURITY.md) - Zero-trust model, policy audit findings, CI enforcement matrix
 - [Load & failover testing](tests/load/README.md) - Ingestion load generator, autoscaling + DB-failover validation
 
 ---
