@@ -496,7 +496,7 @@ reliability layers (each with its own README):
 | **Observability** | Prometheus + Alertmanager + kube-state-metrics + Grafana, in-cluster; canonical alert rules shared with docker-compose; a "Platform / Infra" dashboard for HA-DB / autoscaling / backups | [`monitoring/`](infrastructure/k8s/monitoring/) |
 | **Object storage** | Generated exports & compliance reports go to SeaweedFS (S3) so a worker on one pod and the API on another share one bucket — fixes cross-pod download | [`base/object-store.yaml`](infrastructure/k8s/base/object-store.yaml) |
 | **Secrets** | Sealed Secrets (encrypted, safe-in-git) **or** External Secrets Operator (Vault / AWS SM / GCP SM) — no plaintext secrets committed | [`secrets/`](infrastructure/k8s/secrets/) |
-| **CI safety** | Four blocking gates: `k8s-manifests` (build + kubeconform every kustomization), `netpol-simulate` (evaluate the NetworkPolicy matrix against the YAML, no cluster), `k8s-smoke` (kind: apply monitoring, validate CNPG + KEDA CRs against the real operators), `k8s-netpol` (kind + **Calico**: assert policies are genuinely enforced, 9 allow/deny cases) | `.github/workflows/quality-gates.yml` |
+| **CI safety** | Blocking gates: `backend-realdb` (schema parity, tenant isolation + RLS, timestamp defaults, dashboard tenancy — all against an ephemeral TimescaleDB, because RLS is a no-op on SQLite), `migration-hygiene`, `k8s-manifests` (build + kubeconform every kustomization), `netpol-simulate` (NetworkPolicy matrix vs the YAML, no cluster), `k8s-smoke` (kind: apply monitoring, validate CNPG + KEDA CRs against the real operators), `k8s-netpol` (kind + **Calico**: policies genuinely enforced, 9 allow/deny cases) | `.github/workflows/quality-gates.yml` |
 | **Load / failover testing** | Kafka ingestion load generator (drives KEDA scaling + DB writes) + a runbook for driving throughput and DB-failover-under-load | [`tests/load/`](tests/load/) |
 
 ### 5. Page → API wiring
@@ -2283,6 +2283,7 @@ The ERP integration system correlates ERP data with operational telemetry to pro
 - [Implementation Summary](IMPLEMENTATION_SUMMARY.md) - Complete feature inventory
 
 **Infrastructure & operations**
+- [Database migrations](database/migrations/README.md) - Runner rules (never edit or rename an applied migration), the 019 gap, grandfathered duplicate prefixes, demo-data gating
 - [Kubernetes deployment](infrastructure/k8s/README.md) - Canonical k8s stack, required secrets, deploy flow
 - [Database HA (CloudNativePG)](infrastructure/k8s/database-ha/README.md) - Auto-failover, PITR, cutover + failover runbook
 - [Worker autoscaling (KEDA)](infrastructure/k8s/autoscaling/README.md) - Lag-based scaling, partition/threshold tuning

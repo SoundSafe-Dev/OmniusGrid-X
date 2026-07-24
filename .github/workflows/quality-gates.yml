@@ -114,7 +114,14 @@ jobs:
             tests/test_dashboard_tenancy.py \
             tests/test_dashboard_analytics.py \
             tests/test_raw_insert_timestamps.py \
-            tests/test_timestamp_backfill.py
+            tests/test_timestamp_backfill.py \
+            tests/test_tenant_isolation_api.py \
+            tests/test_tenant_isolation_rls.py \
+            tests/test_tenant_isolation_dependency.py \
+            tests/test_compliance_tenant_isolation_api.py \
+            tests/test_historian_retention_rls.py \
+            tests/test_model_registry_rls.py \
+            tests/test_kanban_tenant_scope.py
 
   # --- FS-203: migration chain hygiene (blocking) ---------------------------
   migration-hygiene:
@@ -132,6 +139,41 @@ jobs:
       - name: No new duplicate migration prefixes
         working-directory: ./backend
         run: python scripts/check_migrations.py
+
+  # --- FS-205: the rest of the backend suite (advisory) ---------------------
+  backend-full:
+    runs-on: ubuntu-latest
+    # ADVISORY, and it should not stay that way. ci-cd.yml runs the full backend
+    # suite but triggers only on `main` and v* tags, while quality-gates.yml is
+    # the ONLY workflow that runs on hamad/** — and it ran a 10-file list. So
+    # roughly 700 backend tests, including the entire tenant-isolation suite,
+    # executed nowhere on the working branch.
+    #
+    # The isolation suites are now BLOCKING in backend-realdb above. This job
+    # surfaces everything else. It is advisory because the suite carries ~11
+    # known failures (other lanes' intake/parsing tests, plus container-contention
+    # flakes in the Redpanda/compliance e2e files that pass in isolation) — making
+    # it blocking today would just be red. Flip it once those are addressed.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install dev deps
+        working-directory: ./backend
+        run: pip install -r requirements-dev.txt
+      - name: Full backend suite
+        working-directory: ./backend
+        # The three excluded files fail at COLLECTION (the intake/parsing lane's
+        # scenario builders don't import); they are excluded in ci-cd.yml for the
+        # same reason.
+        run: |
+          pytest -q \
+            --ignore=tests/test_document_scenario_builder.py \
+            --ignore=tests/test_image_scenario_builder.py \
+            --ignore=tests/test_cross_file_scenario_builder.py
 
   # --- FS-107: Prometheus alert rules — lint + unit test -------------------
   prometheus-rules:
