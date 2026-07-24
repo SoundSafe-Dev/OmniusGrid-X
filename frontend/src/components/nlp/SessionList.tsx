@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { analysisSessionsApi, AnalysisSession } from '../../api/analysisSessions';
 import { Plus, Trash2, Clock, FileText, MessageSquare, RefreshCw } from 'lucide-react';
 import { Button } from '../ui/Button';
+import { useDialog } from '../ui';
 
 interface SessionListProps {
   onSessionSelect: (session: AnalysisSession) => void;
@@ -18,6 +19,7 @@ export const SessionList: React.FC<SessionListProps> = ({
   className = '',
   refreshTrigger
 }) => {
+  const { confirm, alert } = useDialog();
   const [sessions, setSessions] = useState<AnalysisSession[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -62,18 +64,28 @@ export const SessionList: React.FC<SessionListProps> = ({
   };
 
   const handleCleanupOrphaned = async () => {
-    if (!confirm('This will delete ALL sessions to fix database corruption. Continue?')) {
-      return;
-    }
-    
+    const ok = await confirm({
+      title: 'Delete all sessions',
+      message: 'This will delete ALL sessions to fix database corruption. Continue?',
+      confirmLabel: 'Delete all',
+      destructive: true,
+    });
+    if (!ok) return;
+
     try {
       const result = await analysisSessionsApi.cleanupOrphanedSessions();
       console.log('[SessionList] Cleanup result:', result);
-      alert(`Cleaned up ${result.deleted_count} orphaned sessions`);
+      await alert({
+        title: 'Cleanup complete',
+        message: `Cleaned up ${result.deleted_count} orphaned sessions.`,
+      });
       await loadSessions();
     } catch (error) {
       console.error('[SessionList] Error cleaning up orphaned sessions:', error);
-      alert('Failed to clean up orphaned sessions. Check console for details.');
+      await alert({
+        title: 'Cleanup failed',
+        message: 'Failed to clean up orphaned sessions. Check the console for details.',
+      });
     }
   };
 
