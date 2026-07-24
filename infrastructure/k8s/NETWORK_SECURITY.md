@@ -24,6 +24,20 @@ traffic that `default-deny-all` blocks. Findings and fixes:
 | 5 | CNPG instance pods were denied (SQL clients, replication, exporter scrape, WAL archiving). | `database-ha/networkpolicies.yaml`: ingress from clients/pooler/peers/Prometheus, egress to peers + SeaweedFS/S3 + DNS + API. |
 | 6 | **KEDA (in the `keda` namespace) couldn't reach `redpanda:9092`** to read consumer-group lag → every ScaledObject silently fails to scale. | Added the `keda` namespace to `allow-redpanda-ingress` on 9092. |
 
+## CI coverage
+
+| Job | CNI | What it proves |
+|-----|-----|----------------|
+| `k8s-manifests` | — | Every kustomization builds; policies are schema-valid (blocking) |
+| `k8s-smoke` | kindnet | Manifests apply to a real API server; operator CRs pass admission (blocking) |
+| `k8s-netpol` | **Calico** | Policies are actually **enforced** — asserts `export-worker → seaweedfs:8333` is reachable (the S3 path, finding #1) and `ingestion-worker → seaweedfs:8333` is blocked (proves enforcement is real, not vacuous) |
+
+`k8s-netpol` exists because finding #1 was invisible to every other gate: the
+policies were valid and applied cleanly, they just denied traffic the app needed.
+Probe pods carry the real workload labels (including the `commonLabels`
+`part-of`/`managed-by` that kustomize bakes into every podSelector) so the real
+policies select them.
+
 ## Caveats operators must know
 
 - **CNPG cutover egress.** The backend/worker egress policies open `:5432` to the
@@ -32,9 +46,9 @@ traffic that `default-deny-all` blocks. Findings and fixes:
   `cnpg.io/cluster` to those egress selectors — otherwise the app can't reach the
   HA database. Called out in `database-ha/README.md`.
 - **Enforcement needs a real CNI.** kind's default `kindnet` **ignores**
-  NetworkPolicies, so the `k8s-smoke` CI job validates them structurally
-  (kubeconform) but does not enforce them. Staging/production must run an
-  enforcing CNI (Calico / Cilium) for these to take effect.
+  NetworkPolicies, so `k8s-smoke` validates them structurally but cannot prove
+  they work. Staging/production must run an enforcing CNI (Calico / Cilium) for
+  these to take effect at all.
 - **kubelet health probes.** These policies follow the existing convention and do
   not special-case node-sourced liveness/readiness probes; verify probe traffic
   on your chosen CNI (most treat host→pod specially).
