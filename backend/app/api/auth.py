@@ -531,16 +531,16 @@ async def resolve_websocket_user(token: Optional[str]) -> Optional[User]:
             return user
 
         try:
-            payload = jwt.decode(
-                token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM]
-            )
-            user_id = payload.get("sub")
-            if user_id is None:
+            # Same checks as core.security.get_current_user_ws — the previous
+            # raw jwt.decode enforced neither, so a REFRESH token or a REVOKED
+            # (logged-out) access token could open a socket. expected_type
+            # rejects a refresh token used as an access token; is_token_revoked
+            # rejects a revoked one.
+            payload = decode_local_token(token, expected_type="access")
+            user_id = payload["sub"]
+            if await SessionManager.is_token_revoked(payload["jti"], db):
                 return None
-            exp = payload.get("exp")
-            if exp and datetime.now(timezone.utc).timestamp() > exp:
-                return None
-        except JWTError:
+        except (JWTError, LocalTokenClaimsError, KeyError, ValueError):
             return None
 
         result = await db.execute(select(User).where(User.id == user_id))
