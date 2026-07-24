@@ -4,7 +4,7 @@ Kept in a separate module (reusing the shared Base) to avoid touching the large
 shared models.py.
 """
 
-from datetime import datetime
+from app.core.datetime_utils import utcnow
 
 from app.db.models import UUIDString
 from sqlalchemy import Column, String, Boolean, Text, DateTime
@@ -24,7 +24,7 @@ class NotificationSubscription(Base):
     domain = Column(String(100))                          # optional filter
     asset_id = Column(UUIDString(), nullable=True)        # optional filter
     enabled = Column(Boolean, default=True)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 class NotificationDelivery(Base):
@@ -39,4 +39,4 @@ class NotificationDelivery(Base):
     message = Column(Text)
     delivered = Column(Boolean, default=False)
     detail = Column(Text)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
