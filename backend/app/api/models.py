@@ -222,7 +222,6 @@ async def train_model(
         seed=payload.seed,
     )
     await db.commit()
-    await db.refresh(run)
     if run.status == "failed":
         raise HTTPException(status_code=422, detail=run.error or "Training failed")
     return _run_response(run)
@@ -242,7 +241,6 @@ async def publish_model(
         raise HTTPException(status_code=400, detail="Yanked models cannot be published")
     entry.status = "published"
     await db.commit()
-    await db.refresh(entry)
     return _model_response(entry)
 
 
@@ -258,7 +256,6 @@ async def yank_model(
     entry = await _get_model(model_id, org_id, db)
     entry.status = "yanked"
     await db.commit()
-    await db.refresh(entry)
     return _model_response(entry)
 
 

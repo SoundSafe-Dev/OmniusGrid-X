@@ -169,7 +169,6 @@ async def update_trailer(
     
     trailer.updated_at = datetime.now(timezone.utc)
     await db.commit()
-    await db.refresh(trailer)
     return trailer
 
 
@@ -184,7 +183,6 @@ async def create_dock_door(
     door = DockDoor(**data.model_dump())
     db.add(door)
     await db.commit()
-    await db.refresh(door)
     return door
 
 

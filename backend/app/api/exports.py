@@ -569,7 +569,6 @@ async def create_scheduled_export(
     )
     db.add(schedule)
     await db.commit()
-    await db.refresh(schedule)
     return _schedule_dict(schedule)
 
 
@@ -643,7 +642,6 @@ async def update_scheduled_export(
     schedule.is_active = is_active
     schedule.updated_at = datetime.now(timezone.utc)
     await db.commit()
-    await db.refresh(schedule)
     return _schedule_dict(schedule)
 
 

@@ -104,7 +104,6 @@ async def create_asset(
 
     db.add(asset)
     await db.commit()
-    await db.refresh(asset)
 
     return asset
 
@@ -136,7 +135,6 @@ async def update_asset(
         setattr(asset, field, value)
 
     await db.commit()
-    await db.refresh(asset)
 
     return asset
 

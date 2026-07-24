@@ -108,6 +108,20 @@ async def get_tenant_db(
     Lives here rather than in ``app.db.database`` to avoid an import cycle
     (``database`` -> ``tenant`` -> ``api.auth`` -> ``database``).
     """
+    # DO NOT `await db.refresh(obj)` AFTER `await db.commit()` IN AN ENDPOINT
+    # THAT USES THIS DEPENDENCY.
+    #
+    # The GUC below is session-scoped (is_local=false) so it survives an
+    # endpoint's mid-request commits — but commit() also returns the connection
+    # to the pool, and the refresh's SELECT may then run on a *different*
+    # connection that never had the GUC set. RLS hides the row and refresh
+    # raises "Could not refresh instance". It is load-dependent, so it surfaces
+    # intermittently rather than deterministically.
+    #
+    # AsyncSessionLocal sets expire_on_commit=False, so the object is fully
+    # populated after commit and the refresh is redundant anyway. Twenty such
+    # calls were removed across the tenant-scoped routers; don't reintroduce
+    # them. If you need a DB-side default back, read it explicitly.
     async with AsyncSessionLocal() as session:
         # set_config/RLS are Postgres features; on other dialects (SQLite dev,
         # smoke tests) tenant scoping falls back to the endpoints' explicit
