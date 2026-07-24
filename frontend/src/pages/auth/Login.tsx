@@ -2,7 +2,11 @@ import { FC, useState, FormEvent } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Eye, EyeOff, AlertCircle, Zap } from 'lucide-react';
 import { useAuthStore } from '../../stores';
-import { Input, Button } from '../../components';
+// Import from components/ui directly, not the top-level ./components barrel:
+// Login is on the eager path (App imports it), and that barrel re-exports the
+// leaflet-backed fleet components whose CSS side-effect import can't tree-shake,
+// so going through it would pull leaflet into the initial bundle.
+import { Input, Button } from '../../components/ui';
 import { Tooltip, TooltipTrigger, TooltipContent, Wordmark } from '../../components/ui';
 
 // Dev login bypass is OFF unless explicitly enabled (VITE_DEV_MODE=true), and

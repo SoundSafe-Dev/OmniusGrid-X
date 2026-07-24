@@ -23,6 +23,29 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    sourcemap: true,
+    // Was `true`, which shipped a ~13.6MB .map alongside the bundle. There is no
+    // error-tracking pipeline consuming maps, so don't generate/ship them. If
+    // one is added later, switch to 'hidden' and upload the maps out-of-band.
+    sourcemap: false,
+    rollupOptions: {
+      output: {
+        // Split the heavy vendors into their own chunks so they load on demand
+        // (with the lazy routes that use them) instead of inflating the main
+        // entry chunk. plotly.js-dist-min and leaflet in particular are large
+        // and only used by a few chart/map routes.
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return undefined
+          if (id.includes('plotly')) return 'plotly'
+          if (id.includes('leaflet')) return 'leaflet'
+          if (id.includes('recharts') || id.includes('/d3-') || id.includes('/d3/')) {
+            return 'charts'
+          }
+          if (id.includes('/react-dom/') || id.includes('/react/') || id.includes('/scheduler/')) {
+            return 'react-vendor'
+          }
+          return 'vendor'
+        },
+      },
+    },
   },
 })
