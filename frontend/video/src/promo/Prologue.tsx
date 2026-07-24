@@ -17,7 +17,7 @@ const QUOTE = (
   </>
 );
 const ATTRIB_NAME = 'Hamad Dada';
-const ATTRIB_ROLE = 'Founder · SoundSafe.ai';
+const ATTRIB_ROLE = 'SoundSafe.ai';
 
 type Pal = {
   bg: string;
