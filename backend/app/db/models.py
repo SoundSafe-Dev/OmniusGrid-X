@@ -251,6 +251,63 @@ class Alarm(Base):
     meta_data = Column(JSON, default={})
 
 
+class AlarmRule(Base):
+    """An operator-defined threshold rule evaluated against incoming telemetry.
+
+    Before this existed, alarm severity was whatever the edge agent sent and only
+    the edge decided when an alarm existed at all — nothing on the server
+    evaluated telemetry, so "alert when temperature > 80 for 5 minutes" was
+    unexpressible. See app/services/alarm_rules.py for evaluation.
+
+    Targeting is most-specific-wins across asset_id / asset_type_id /
+    workcell_id; all three NULL means every asset in the organization.
+    """
+
+    __tablename__ = "alarm_rules"
+
+    id = UUIDColumn()
+    organization_id = UUIDForeignKey("organizations.id", ondelete="CASCADE")
+
+    name = Column(String(255), nullable=False)
+    description = Column(Text)
+
+    metric_name = Column(String(255), nullable=False)
+    # One of gt/gte/lt/lte/eq/ne, enforced by a CHECK constraint in migration 047
+    # so a typo cannot create a rule that silently never matches.
+    comparator = Column(String(4), nullable=False)
+    threshold = Column(Float, nullable=False)
+
+    # 0 = fire on the first breaching sample. Anything higher requires the breach
+    # to persist, which is why evaluation keeps per-(rule, asset) state.
+    duration_seconds = Column(Integer, nullable=False, default=0)
+    # Clear band in the metric's own units: the value must come back past the
+    # threshold by this much before the breach counts as over, so a reading
+    # sitting on the threshold does not flap on sensor noise.
+    hysteresis = Column(Float, nullable=False, default=0.0)
+
+    severity = Column(String(20), nullable=False)
+    alarm_code = Column(String(100), nullable=False)
+    message_template = Column(Text)
+
+    asset_id = UUIDForeignKey("assets.id", nullable=True, ondelete="CASCADE")
+    asset_type_id = UUIDForeignKey("asset_types.id", nullable=True, ondelete="CASCADE")
+    workcell_id = UUIDForeignKey("workcells.id", nullable=True, ondelete="CASCADE")
+
+    is_enabled = Column(Boolean, nullable=False, default=True)
+
+    created_by = UUIDForeignKey("users.id", nullable=True, ondelete="SET NULL")
+    created_at = Column(
+        DateTime(timezone=True), default=utcnow, server_default=func.now(), nullable=False
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=utcnow,
+        onupdate=utcnow,
+        server_default=func.now(),
+        nullable=False,
+    )
+
+
 class Operation(Base):
     __tablename__ = "operations"
     

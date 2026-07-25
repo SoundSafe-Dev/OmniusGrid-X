@@ -16,6 +16,7 @@ const Dashboard = lazy(() => import('./pages/Dashboard'))
 const Assets = lazy(() => import('./pages/Assets'))
 const AssetDetail = lazy(() => import('./pages/AssetDetail'))
 const Alarms = lazy(() => import('./pages/Alarms'))
+const AlarmRules = lazy(() => import('./pages/AlarmRules'))
 const OEE = lazy(() => import('./pages/OEE'))
 const Kanban = lazy(() => import('./pages/Kanban'))
 
@@ -90,6 +91,7 @@ const App: FC = () => {
 
                 {/* Alarms */}
                 <Route path="/alarms" element={<Alarms />} />
+                <Route path="/alarms/rules" element={<AlarmRules />} />
 
                 {/* OEE */}
                 <Route path="/oee" element={<OEE />} />

@@ -35,7 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import get_current_active_user
 from app.core.pagination import PaginatedResponse, paginate
 from app.db.models import Alarm, Asset, User
-from app.models.schemas import AlarmCreate, AlarmResponse, AlarmAcknowledge
+from app.models.schemas import AlarmResponse, AlarmAcknowledge
 from app.core.tenant import get_tenant_db, get_tenant_org_id
 from app.middleware.rbac import require_operator_or_admin
 

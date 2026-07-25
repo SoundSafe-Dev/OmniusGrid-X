@@ -45,10 +45,15 @@ export const alarmsApi = {
     };
   },
 
-  getActive: async (organizationId?: string, severity?: string): Promise<ActiveAlarmsResponse> => {
+  // No organizationId parameter: the server derives the tenant from the JWT.
+  // It used to accept `organization_id` as an optional query param, which meant
+  // omitting it returned EVERY tenant's alarms and supplying another org's id was
+  // obeyed (FS-216). Sending it now would be silently ignored, so the argument is
+  // gone rather than left as a misleading no-op.
+  getActive: async (severity?: string): Promise<ActiveAlarmsResponse> => {
     if (USE_MOCK) return mockApi.getActiveAlarms();
     const response = await api.get<ActiveAlarmsResponse>('/api/v1/alarms/active', {
-      params: { organization_id: organizationId, severity },
+      params: { severity },
     });
     return response.data;
   },

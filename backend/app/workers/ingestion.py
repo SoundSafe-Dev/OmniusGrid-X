@@ -23,6 +23,11 @@ from app.db.models import Telemetry, PackMLState, Asset, Alarm
 from app.services.data_shedding import data_shedder
 from app.services.websocket_manager import websocket_manager
 from app.services.oee_calculator import oee_calculator
+from app.services.alarm_rules import (
+    evaluate_metric,
+    load_rules_for_metrics,
+    make_breach_store,
+)
 
 structlog.configure(
     processors=[
@@ -68,6 +73,9 @@ class IngestionWorker:
             settings.AGENT_STATUS_TOPIC,
         )
         self.dlq_topic = settings.REDPANDA_INGESTION_DLQ_TOPIC
+        # Built on first use so constructing the worker needs no Redis connection
+        # (tests and the offline demo path construct it freely).
+        self._breach_store = None
         # Heartbeat for the liveness probe (see workers/health_server.py).
         # Telemetry is continuous, so a 5-minute gap means wedged, not idle.
         self._health = start_health_server(
@@ -240,6 +248,9 @@ class IngestionWorker:
         # Extract telemetry fields from payload
         telemetry_data = payload.get('telemetry', payload)
         
+        # Numeric readings actually written this message, for rule evaluation below.
+        evaluated: list[tuple[str, float]] = []
+
         if isinstance(telemetry_data, dict):
             for metric_name, value in telemetry_data.items():
                 if value is not None:
@@ -257,17 +268,30 @@ class IngestionWorker:
                         )
                         continue
                     
+                    numeric = float(value) if isinstance(value, (int, float)) else 0
                     telemetry = Telemetry(
                         time=timestamp,
                         asset_id=asset_uuid,
                         metric_name=metric_name,
-                        value=float(value) if isinstance(value, (int, float)) else 0,
+                        value=numeric,
                         unit=self._infer_unit(metric_name),
                         packml_state=packml_state,
                         meta_data=payload,
                         sequence_num=data.get('sequence_num', 0)
                     )
                     session.add(telemetry)
+                    # Only genuinely numeric readings are worth thresholding; a
+                    # non-numeric value coerced to 0 above would otherwise trip
+                    # every "< threshold" rule for free.
+                    if isinstance(value, (int, float)):
+                        evaluated.append((metric_name, numeric))
+
+        # Server-side alarm rules (FS-219). Shedded metrics are deliberately NOT
+        # evaluated: if the system is dropping the reading it must not raise an
+        # alarm about a value it chose not to record.
+        await self._evaluate_alarm_rules(
+            session, asset_uuid, organization_id, evaluated
+        )
         
         # Update asset last_seen
         await session.execute(
@@ -364,6 +388,60 @@ class IngestionWorker:
             updated_assets=result.rowcount,
         )
     
+    async def _evaluate_alarm_rules(
+        self,
+        session: AsyncSession,
+        asset_uuid,
+        organization_id: str,
+        readings: list,
+    ) -> None:
+        """Evaluate server-side alarm rules for this message's readings (FS-219).
+
+        Cost discipline matters here — this is per telemetry message. The common
+        case is an organization with no rules for these metrics, and that costs
+        exactly ONE indexed query against
+        (organization_id, metric_name, is_enabled) and no asset fetch. The asset
+        row is only loaded when there is at least one candidate rule, because
+        targeting needs its asset_type_id/workcell_id.
+
+        Never raises. A bug in rule evaluation must not fail the telemetry write
+        or dead-letter a message whose data was perfectly good — the reading is
+        the durable fact, the alarm is derived from it.
+        """
+        if not readings:
+            return
+        try:
+            metric_names = {name for name, _ in readings}
+            rules = await load_rules_for_metrics(session, organization_id, metric_names)
+            if not rules:
+                return
+
+            asset = (
+                await session.execute(select(Asset).where(Asset.id == asset_uuid))
+            ).scalars().first()
+            if asset is None:
+                return
+
+            if self._breach_store is None:
+                self._breach_store = make_breach_store()
+
+            for metric_name, value in readings:
+                await evaluate_metric(
+                    session,
+                    self._breach_store,
+                    organization_id=organization_id,
+                    asset=asset,
+                    metric_name=metric_name,
+                    value=value,
+                    rules=rules,
+                )
+        except Exception as exc:  # noqa: BLE001 — see docstring
+            logger.error(
+                "alarm_rule_evaluation_failed",
+                asset_id=str(asset_uuid),
+                error=str(exc),
+            )
+
     async def _process_state(self, session: AsyncSession, asset_id: str, data: Dict, organization_id: str):
         """Process PackML state transitions"""
         new_state = data.get('packml_state')

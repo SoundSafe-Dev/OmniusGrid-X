@@ -24,6 +24,7 @@ import {
   Bug,
   UploadCloud,
   HeartPulse,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { useUIStore, useAuthStore } from '../../stores';
 import { cn } from '../../utils';
@@ -43,6 +44,7 @@ const navItems: NavItem[] = [
   { path: '/', label: 'Dashboard', icon: LayoutDashboard, description: 'Overview of fleet status, assets, and active alarms' },
   { path: '/assets', label: 'Assets', icon: Box, description: 'Manage and monitor manufacturing equipment' },
   { path: '/alarms', label: 'Alarms', icon: Bell, description: 'View and acknowledge system alarms' },
+  { path: '/alarms/rules', label: 'Alarm Rules', icon: SlidersHorizontal, description: 'Define thresholds evaluated against incoming telemetry' },
   { path: '/oee', label: 'OEE', icon: BarChart3, description: 'Overall Equipment Effectiveness analytics' },
   { path: '/kanban', label: 'Kanban Board', icon: KanbanIcon, description: 'Task management and workflow tracking' },
   { path: '/nlp', label: 'Correlation AI', icon: MessageSquare, description: 'AI-powered cross-domain analysis' },

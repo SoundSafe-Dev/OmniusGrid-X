@@ -1,7 +1,7 @@
 """Pydantic Schemas for API"""
 
 from datetime import datetime
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Literal
 from uuid import UUID
 from pydantic import ConfigDict, AliasChoices, BaseModel, Field
 
@@ -1191,6 +1191,82 @@ class DataCorrelationResponse(DataCorrelationBase):
     id: UUID
     organization_id: UUID
     created_by: Optional[UUID]
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ---------------------------------------------------------------------------
+# Alarm rules (FS-218)
+# ---------------------------------------------------------------------------
+
+COMPARATORS = ("gt", "gte", "lt", "lte", "eq", "ne")
+SEVERITIES = ("critical", "high", "medium", "low", "info")
+
+
+class AlarmRuleBase(BaseModel):
+    """Shared fields. Validation mirrors the CHECK constraints in migration 047 so
+    a bad rule is rejected at the edge of the API with a 422 naming the field,
+    rather than as an opaque IntegrityError from Postgres.
+    """
+
+    name: str = Field(min_length=1, max_length=255)
+    description: Optional[str] = None
+
+    metric_name: str = Field(min_length=1, max_length=255)
+    comparator: Literal["gt", "gte", "lt", "lte", "eq", "ne"]
+    threshold: float
+
+    duration_seconds: int = Field(default=0, ge=0)
+    hysteresis: float = Field(default=0.0, ge=0)
+
+    severity: Literal["critical", "high", "medium", "low", "info"]
+    alarm_code: str = Field(min_length=1, max_length=100)
+    # Rendered with {asset_id}, {metric_name}, {value}, {threshold}. Left None to
+    # get a generated message.
+    message_template: Optional[str] = None
+
+    # Targeting: most specific wins. All None = every asset in the organization.
+    asset_id: Optional[UUID] = None
+    asset_type_id: Optional[UUID] = None
+    workcell_id: Optional[UUID] = None
+
+    is_enabled: bool = True
+
+
+class AlarmRuleCreate(AlarmRuleBase):
+    pass
+
+
+class AlarmRuleUpdate(BaseModel):
+    """All fields optional — PATCH semantics.
+
+    Deliberately NOT `AlarmRuleBase` with defaults: that would make omitting a
+    field indistinguishable from resetting it to the default, so a PATCH that only
+    changed `threshold` would silently re-enable a disabled rule.
+    """
+
+    name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    description: Optional[str] = None
+    metric_name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    comparator: Optional[Literal["gt", "gte", "lt", "lte", "eq", "ne"]] = None
+    threshold: Optional[float] = None
+    duration_seconds: Optional[int] = Field(default=None, ge=0)
+    hysteresis: Optional[float] = Field(default=None, ge=0)
+    severity: Optional[Literal["critical", "high", "medium", "low", "info"]] = None
+    alarm_code: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    message_template: Optional[str] = None
+    asset_id: Optional[UUID] = None
+    asset_type_id: Optional[UUID] = None
+    workcell_id: Optional[UUID] = None
+    is_enabled: Optional[bool] = None
+
+
+class AlarmRuleResponse(AlarmRuleBase):
+    id: UUID
+    organization_id: UUID
+    created_by: Optional[UUID] = None
     created_at: datetime
     updated_at: datetime
 

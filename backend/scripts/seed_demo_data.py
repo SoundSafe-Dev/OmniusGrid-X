@@ -177,7 +177,7 @@ async def main(verify: bool = False) -> int:
     from sqlalchemy import delete, select
     from app.db.database import AsyncSessionLocal, init_db
     from app.db.models import (
-        Alarm, AnalysisSession, Asset, AssetType, Carrier, DockAppointment,
+        Alarm, AlarmRule, AnalysisSession, Asset, AssetType, Carrier, DockAppointment,
         DockDoor, Driver, DriverWaitTime, ERPCorrelation, ERPDataMapping,
         ERPEntity, ERPIntegrationEvent, ERPSyncStatus, GeoTabDiagnostic,
         GeoTabException, GeoTabTrip, IntegrationConfiguration,
@@ -403,6 +403,34 @@ async def main(verify: bool = False) -> int:
                 acknowledged_by=USER if acked else None,
                 acknowledged_at=(NOW - timedelta(hours=h_ago - 0.2)) if acked else None,
                 cleared_at=(NOW - timedelta(hours=cleared_h)) if cleared_h is not None else None))
+
+        # ---- ALARM RULES ------------------------------------------------------
+        # Seeded so the Alarm Rules page is not empty in the demo, and so the
+        # thresholds visibly correspond to the alarms above rather than looking
+        # like unrelated sample data. One instant rule, one with a duration +
+        # hysteresis, one disabled — the three shapes the page renders differently.
+        db.add(AlarmRule(
+            organization_id=ORG, name="Spindle temperature critical",
+            description="Bearing temperature above the ISO limit",
+            metric_name="temperature", comparator="gt", threshold=75.0,
+            duration_seconds=300, hysteresis=2.0,
+            severity="critical", alarm_code="SPINDLE_TEMP_HIGH",
+            message_template="Spindle temperature {value}C exceeds {threshold}C",
+            asset_id=A_CNC, is_enabled=True, created_by=USER))
+        db.add(AlarmRule(
+            organization_id=ORG, name="Coolant reservoir low",
+            description="Refill before the next long run",
+            metric_name="coolant_level", comparator="lt", threshold=20.0,
+            duration_seconds=0, hysteresis=1.0,
+            severity="medium", alarm_code="COOLANT_LOW",
+            asset_id=A_CNC, is_enabled=True, created_by=USER))
+        db.add(AlarmRule(
+            organization_id=ORG, name="Conveyor load sustained high",
+            description="Disabled while the drive is being re-tuned",
+            metric_name="load", comparator="gte", threshold=90.0,
+            duration_seconds=600, hysteresis=5.0,
+            severity="high", alarm_code="CONVEYOR_LOAD_HIGH",
+            asset_id=A_CONVEYOR, is_enabled=False, created_by=USER))
 
         # ---- SIMULATED FULLY-SYNCED ERP INTEGRATION ---------------------------
         db.add(IntegrationConfiguration(
