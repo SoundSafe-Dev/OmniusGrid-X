@@ -114,6 +114,9 @@ class ExportScheduler:
 
     def __init__(self) -> None:
         self._producer: Optional[AIOKafkaProducer] = None
+        # Bootstrap address the cached producer was built for (see
+        # _ensure_producer): a changed REDPANDA_URL must force a rebuild.
+        self._producer_bootstrap: Optional[str] = None
         self._task: Optional[asyncio.Task] = None
         self._running = False
 
@@ -133,6 +136,14 @@ class ExportScheduler:
         drops mid-run) self-heals on a later tick instead of leaving the producer
         permanently None with jobs piling up in the outbox.
         """
+        # Rebuild if REDPANDA_URL has changed since this producer was created.
+        # A cached producer was previously returned unconditionally, so once built
+        # it kept talking to whatever address it was born with — forever. In
+        # long-lived workers a reconfigured broker address was never picked up, and
+        # in tests the singleton leaked a connection to a torn-down broker across
+        # modules (the residual state behind the "flaky" Kafka e2e).
+        if self._producer is not None and self._producer_bootstrap != settings.REDPANDA_URL:
+            await self._reset_producer()
         if self._producer is not None:
             return True
         try:
@@ -147,12 +158,14 @@ class ExportScheduler:
             logger.error("export_scheduler_redpanda_unavailable", error=str(exc))
             return False
         self._producer = producer
+        self._producer_bootstrap = settings.REDPANDA_URL
         logger.info("export_scheduler_redpanda_connected")
         return True
 
     async def _reset_producer(self) -> None:
         """Drop the current producer so the next publish pass reconnects."""
         producer, self._producer = self._producer, None
+        self._producer_bootstrap = None
         if producer is not None:
             try:
                 await producer.stop()
