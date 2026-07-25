@@ -23,6 +23,16 @@ const MOCK_DELAY = 500;
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+// Real-mode adapter: the backend stores po_number/contents inside the opaque
+// `metadata` blob (whose inner keys the casing seam deliberately does not
+// rename), but the trailer components read top-level trailer.contents /
+// trailer.poNumber. Lift them onto each trailer.
+const adaptTrailer = (t: any): YardTrailer => ({
+  ...t,
+  contents: t?.contents ?? t?.metadata?.contents,
+  poNumber: t?.poNumber ?? t?.metadata?.po_number,
+});
+
 // Mock Data
 const mockTrailers: YardTrailer[] = [
   {
@@ -272,7 +282,7 @@ export const yardApi = {
     }>('/api/v1/yard/trailers', { params: filters ?? {} });
     const { items, meta } = response.data;
     return {
-      items,
+      items: (items ?? []).map(adaptTrailer),
       total: meta.total,
       skip: meta.skip,
       limit: meta.limit,
@@ -288,7 +298,7 @@ export const yardApi = {
       return trailer;
     }
     const response = await api.get<YardTrailer>(`/api/v1/yard/trailers/${id}`);
-    return response.data;
+    return adaptTrailer(response.data);
   },
 
   checkInTrailer: async (data: Partial<YardTrailer>): Promise<YardTrailer> => {

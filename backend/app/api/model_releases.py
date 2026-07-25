@@ -117,7 +117,6 @@ async def create_model_release(
     )
     db.add(release)
     await db.commit()
-    await db.refresh(release)
 
     bundle_url, _ = issue_release_bundle_url(release.id, org_id)
     return ModelReleaseResponse(

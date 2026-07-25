@@ -108,8 +108,26 @@ def _insert_telemetry(
         conn.close()
 
 
-def _asset_names(response_json: list) -> set[str]:
-    return {row["name"] for row in response_json}
+def _items(response_json) -> list:
+    """Rows out of a list response, envelope or not.
+
+    The assets and telemetry list endpoints return the FS-82 ``Page[T]``
+    envelope (``{"items": [...], "meta": {...}}``). These assertions were
+    written against the older bare-list shape and were never updated, so they
+    iterated the envelope's two keys instead of its rows — `len(...) == 2` and
+    `string indices must be integers`. The failures were invisible because this
+    whole module errored at collection until the testcontainers pin was fixed.
+
+    Accepts both shapes so an endpoint that has not adopted the envelope still
+    works here.
+    """
+    if isinstance(response_json, dict) and "items" in response_json:
+        return response_json["items"]
+    return response_json
+
+
+def _asset_names(response_json) -> set[str]:
+    return {row["name"] for row in _items(response_json)}
 
 
 async def _create_asset_for(
@@ -198,8 +216,8 @@ class TestAssetsCrossTenantAccess:
         a_listing = await client_a.get("/api/v1/assets/")
         b_listing = await client_b.get("/api/v1/assets/")
 
-        a_names = {row["name"] for row in a_listing.json()}
-        b_names = {row["name"] for row in b_listing.json()}
+        a_names = {row["name"] for row in _items(a_listing.json())}
+        b_names = {row["name"] for row in _items(b_listing.json())}
 
         assert "A asset" in a_names
         assert "B asset" not in a_names
@@ -350,14 +368,14 @@ class TestListAssetsFilters:
             "/api/v1/assets/", params={"workcell_id": str(seeded_orgs["workcell_a_id"])}
         )
         assert list_wc1.status_code == 200
-        ids_wc1 = {row["id"] for row in list_wc1.json()}
+        ids_wc1 = {row["id"] for row in _items(list_wc1.json())}
         assert asset_wc1["id"] in ids_wc1
         assert asset_wc2["id"] not in ids_wc1
         assert f"wc-b-{suffix}" not in _asset_names(list_wc1.json())
 
         list_wc2 = await client_a.get("/api/v1/assets/", params={"workcell_id": wc_a2})
         assert list_wc2.status_code == 200
-        ids_wc2 = {row["id"] for row in list_wc2.json()}
+        ids_wc2 = {row["id"] for row in _items(list_wc2.json())}
         assert asset_wc2["id"] in ids_wc2
         assert asset_wc1["id"] not in ids_wc2
 
@@ -380,14 +398,14 @@ class TestListAssetsFilters:
 
         list_a = await client_a.get("/api/v1/assets/", params={"asset_type_id": type_a})
         assert list_a.status_code == 200
-        ids = {row["id"] for row in list_a.json()}
+        ids = {row["id"] for row in _items(list_a.json())}
         assert asset_type_a["id"] in ids
         assert asset_type_b["id"] not in ids
         assert f"type-foreign-{suffix}" not in _asset_names(list_a.json())
 
         list_b = await client_a.get("/api/v1/assets/", params={"asset_type_id": type_b})
         assert list_b.status_code == 200
-        ids_b = {row["id"] for row in list_b.json()}
+        ids_b = {row["id"] for row in _items(list_b.json())}
         assert asset_type_b["id"] in ids_b
         assert asset_type_a["id"] not in ids_b
 
@@ -416,7 +434,7 @@ class TestListAssetsFilters:
         assert f"active-a-{suffix}" in active_names
         assert f"inactive-a-{suffix}" not in active_names
         assert f"active-b-{suffix}" not in active_names
-        assert active_asset["id"] in {row["id"] for row in active_list.json()}
+        assert active_asset["id"] in {row["id"] for row in _items(active_list.json())}
 
         inactive_list = await client_a.get(
             "/api/v1/assets/", params={"is_active": "false"}
@@ -458,7 +476,7 @@ class TestListAssetsFilters:
             },
         )
         assert response.status_code == 200
-        rows = response.json()
+        rows = _items(response.json())
         assert len(rows) == 1
         assert rows[0]["id"] == target["id"]
         assert rows[0]["name"] == f"combo-target-{suffix}"
@@ -646,7 +664,7 @@ class TestTelemetryPositivePath:
             },
         )
         assert response.status_code == 200
-        rows = response.json()
+        rows = _items(response.json())
         assert len(rows) == 3
         assert [row["value"] for row in rows] == [3.0, 2.0, 1.0]
         assert rows[0]["metadata"] == {"point": "end"}
@@ -682,7 +700,7 @@ class TestTelemetryPositivePath:
             },
         )
         assert response.status_code == 200
-        rows = response.json()
+        rows = _items(response.json())
         assert len(rows) == 1
         assert rows[0]["metric_name"] == temp_metric
 
@@ -741,7 +759,7 @@ class TestTelemetryPositivePath:
 
         history_a = await client_a.get(f"/api/v1/telemetry/{asset_a['id']}/history")
         assert history_a.status_code == 200
-        assert all(row["metric_name"] == metric_a for row in history_a.json())
+        assert all(row["metric_name"] == metric_a for row in _items(history_a.json()))
 
         metrics_a = await client_a.get(f"/api/v1/telemetry/{asset_a['id']}/metrics")
         assert metrics_a.status_code == 200

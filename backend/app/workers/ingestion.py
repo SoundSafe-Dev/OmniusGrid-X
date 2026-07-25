@@ -8,14 +8,16 @@ from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 from uuid import UUID
 import structlog
-from aiokafka import AIOKafkaConsumer
-from sqlalchemy import text, update
+from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
+from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import sys
 sys.path.insert(0, '/app')
 
 from app.core.config import settings
+from app.workers.health_server import start_health_server
+from app.core.datetime_utils import aware_utc
 from app.db.database import AsyncSessionLocal
 from app.db.models import Telemetry, PackMLState, Asset, Alarm
 from app.services.data_shedding import data_shedder
@@ -38,6 +40,12 @@ structlog.configure(
 logger = structlog.get_logger()
 
 
+def _health_port():
+    """WORKER_HEALTH_PORT, or None outside Kubernetes (tests/local runs)."""
+    raw = os.getenv('WORKER_HEALTH_PORT')
+    return int(raw) if raw else None
+
+
 class IngestionWorker:
     """
     Consumes messages from Redpanda/Kafka and writes to TimescaleDB.
@@ -52,11 +60,18 @@ class IngestionWorker:
     def __init__(self):
         self.broker_url = os.getenv('REDPANDA_URL', 'redpanda:29092')
         self.consumer: Optional[AIOKafkaConsumer] = None
+        self._producer: Optional[AIOKafkaProducer] = None
         self._running = False
         self._topics = ['telemetry', 'state', 'alarms']
         self.agent_status_topic = os.getenv(
             'AGENT_STATUS_TOPIC',
             settings.AGENT_STATUS_TOPIC,
+        )
+        self.dlq_topic = settings.REDPANDA_INGESTION_DLQ_TOPIC
+        # Heartbeat for the liveness probe (see workers/health_server.py).
+        # Telemetry is continuous, so a 5-minute gap means wedged, not idle.
+        self._health = start_health_server(
+            'ingestion', port=_health_port(), stale_after_seconds=300.0
         )
     
     async def start(self):
@@ -72,6 +87,15 @@ class IngestionWorker:
             auto_commit_interval_ms=5000,
         )
         
+        # Producer for the dead-letter topic: a message this worker can't process
+        # is published here (best-effort) before its offset advances, so poison
+        # data is preserved for inspection/replay instead of vanishing.
+        self._producer = AIOKafkaProducer(
+            bootstrap_servers=self.broker_url,
+            value_serializer=lambda v: json.dumps(v).encode('utf-8'),
+        )
+        await self._producer.start()
+
         # Subscribe to all relevant topics
         await self.consumer.start()
         
@@ -81,6 +105,8 @@ class IngestionWorker:
         self.consumer.subscribe(pattern='|'.join(topic_patterns))
         
         logger.info("consumer_started", topics=self._topics)
+        if self._health:
+            self._health.ready()
         
         self._running = True
         
@@ -91,16 +117,62 @@ class IngestionWorker:
                 
                 try:
                     await self._process_message(msg)
+                    if self._health:
+                        self._health.beat()
                 except Exception as e:
                     logger.error(
                         "message_processing_failed",
                         topic=msg.topic,
                         error=str(e)
                     )
-        
+                    # Preserve the poison message in the DLQ before the offset
+                    # auto-commits past it — otherwise it is silently lost.
+                    await self._dead_letter(msg, e)
+
         finally:
             await self.consumer.stop()
+            if self._producer is not None:
+                await self._producer.stop()
             logger.info("ingestion_worker_stopped")
+
+    async def _dead_letter(self, msg, error: Exception) -> None:
+        """Publish an unprocessable message to the ingestion DLQ (best-effort).
+
+        Best-effort by design: if the DLQ publish itself fails we log loudly but
+        don't crash the worker or block the partition. The envelope carries the
+        original payload plus enough provenance (topic/partition/offset) to
+        replay it after the underlying bug is fixed.
+        """
+        if self._producer is None:
+            return
+        try:
+            envelope = {
+                "schema_version": 1,
+                "message_type": "dead_letter",
+                "reason": str(error),
+                "error_type": type(error).__name__,
+                "source_topic": msg.topic,
+                "source_partition": msg.partition,
+                "source_offset": msg.offset,
+                "consumer": "opsgrid-ingestion-workers",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "payload": msg.value,
+            }
+            key = (msg.key if isinstance(msg.key, (bytes, bytearray)) else None)
+            await self._producer.send_and_wait(self.dlq_topic, envelope, key=key)
+            logger.warning(
+                "ingestion_dead_lettered",
+                source_topic=msg.topic,
+                source_offset=msg.offset,
+                error=str(error),
+            )
+        except Exception as dlq_error:  # noqa: BLE001 — DLQ failure must not crash the worker
+            logger.error(
+                "ingestion_dead_letter_failed",
+                source_topic=getattr(msg, "topic", None),
+                error=str(dlq_error),
+                original_error=str(error),
+            )
     
     async def _process_message(self, msg):
         """Process a single message"""
@@ -305,39 +377,54 @@ class IngestionWorker:
         
         if not new_state:
             return
-        
-        # Close previous state if exists
+
+        asset_uuid = UUID(asset_id)
+
+        # Close previous state if exists.
+        #
+        # Both statements here used to be f-strings passed bare to
+        # session.execute(). SQLAlchemy 2.x refuses a plain str, so this raised
+        # ObjectNotExecutableError before any SQL ran — and since _handle_message
+        # rolls back and re-raises, *every* state message failed and no PackML
+        # row was ever written by this worker. Done via the ORM (as the telemetry
+        # and alarm paths already do) so it is both parameterised and portable:
+        # the old EXTRACT(EPOCH FROM ...::timestamp) was Postgres-only.
         if previous_state:
-            await session.execute(
-                f"""
-                UPDATE packml_states 
-                SET state_exited_at = '{timestamp.isoformat()}',
-                    duration_seconds = EXTRACT(EPOCH FROM ('{timestamp.isoformat()}'::timestamp - state_entered_at))
-                WHERE asset_id = '{asset_id}'
-                AND state = '{previous_state}'
-                AND state_exited_at IS NULL
-                """
-            )
-        
+            open_states = (
+                await session.execute(
+                    select(PackMLState).where(
+                        PackMLState.asset_id == asset_uuid,
+                        PackMLState.state == previous_state,
+                        PackMLState.state_exited_at.is_(None),
+                    )
+                )
+            ).scalars().all()
+
+            for record in open_states:
+                # state_entered_at reads back naive on SQLite; comparing it to an
+                # aware timestamp raises TypeError, which the caller would turn
+                # into a dropped message.
+                entered_at = aware_utc(record.state_entered_at)
+                record.state_exited_at = timestamp
+                record.duration_seconds = (timestamp - entered_at).total_seconds()
+
         # Create new state entry
         state_record = PackMLState(
-            asset_id=asset_id,
+            asset_id=asset_uuid,
             state=new_state,
             previous_state=previous_state,
             state_entered_at=timestamp,
             meta_data=data.get('metadata', {})
         )
         session.add(state_record)
-        
+
         # Update asset current state
         await session.execute(
-            f"""
-            UPDATE assets 
-            SET current_packml_state = '{new_state}'
-            WHERE id = '{asset_id}'
-            """
+            update(Asset)
+            .where(Asset.id == asset_uuid)
+            .values(current_packml_state=new_state)
         )
-        
+
         logger.info(
             "state_transition",
             asset_id=asset_id,

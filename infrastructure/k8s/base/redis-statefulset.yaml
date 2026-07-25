@@ -1,0 +1,130 @@
+# Redis — rate limiting, idempotency, and the export job store (FS-196).
+#
+# This did not exist. `redis` appeared ONLY as a destination in the base
+# NetworkPolicies (allow-backend-egress, allow-export-worker-egress), so the
+# policies permitted traffic to a Service that was never created. Meanwhile the
+# app hard-depends on it:
+#
+#   * app/middleware/rate_limit.py  — the AUTH limiter is enabled=True always
+#   * app/middleware/idempotency.py — RedisIdempotencyStore (multi-worker dedup)
+#   * app/services/export_processor.py — async export job store
+#   * feature flags, bulk processor
+#
+# It was not theoretical: with Redis unreachable the always-on auth limiter raised
+# on every /auth request, so login and register returned 500. That is a total
+# authentication outage, and an undeployed Redis was the DEFAULT state. The
+# limiters now degrade to per-process counters (see rate_limit.py), but degraded
+# is not the same as deployed — fleet-wide limits and cross-worker idempotency
+# both need this.
+#
+# StatefulSet + PVC rather than a Deployment with emptyDir: the export job store
+# holds in-flight job state, and losing it on a pod restart orphans jobs the API
+# has already handed back a job id for. `appendonly yes` makes that durable
+# across restarts rather than only across scrapes.
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: omniusgrid
+  labels:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/component: cache
+    app.kubernetes.io/part-of: omniusgrid
+spec:
+  # Headless: single replica, and clients resolve it by name (REDIS_URL default
+  # is redis://redis:6379/0, which is what config.py already expects).
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+  namespace: omniusgrid
+  labels:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/component: cache
+    app.kubernetes.io/part-of: omniusgrid
+spec:
+  serviceName: redis
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: redis
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: redis
+        app.kubernetes.io/component: cache
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999      # redis
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          imagePullPolicy: IfNotPresent
+          # appendonly: the export job store must survive a restart (see header).
+          # maxmemory-policy noeviction: silently evicting an idempotency key
+          # would let a retried request execute twice, which is the exact thing
+          # the key exists to prevent — better to fail the write loudly.
+          args:
+            - "redis-server"
+            - "--appendonly"
+            - "yes"
+            - "--maxmemory"
+            - "256mb"
+            - "--maxmemory-policy"
+            - "noeviction"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: redis
+              containerPort: 6379
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "50m"
+            limits:
+              # Above maxmemory (256mb) so Redis hits its own limit and refuses
+              # writes rather than being OOM-killed by the kubelet.
+              memory: "384Mi"
+              cpu: "500m"
+      terminationGracePeriodSeconds: 30
+  # No PodDisruptionBudget on purpose: at replicas: 1 a `minAvailable: 1` PDB can
+  # never allow an eviction, so it would silently BLOCK every node drain — the
+  # opposite of the availability it looks like it provides. If Redis is scaled to a
+  # replicated topology (Sentinel/Cluster), add a PDB then.
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi

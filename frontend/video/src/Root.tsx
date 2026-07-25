@@ -3,6 +3,8 @@ import { Composition, Sequence, Still } from 'remotion';
 import { Route, Routes } from 'react-router-dom';
 import AssetDetail from '../../src/pages/AssetDetail';
 import { AppFrame } from './AppFrame';
+import { ExplainerAssembly, EXPLAINER_DURATION } from './explainer/Assembly';
+import { PrologueDark45, PrologueLight45, PrologueDarkStory, PrologueLightStory } from './promo/Prologue';
 import { PanZoom } from './components/PanZoom';
 import { TransitionSeries, linearTiming } from '@remotion/transitions';
 import { fade } from '@remotion/transitions/fade';
@@ -345,6 +347,45 @@ export const RemotionRoot: React.FC = () => (
         height={2160}
       />
     ))}
+    {/* 4:5 portrait editions of every square card (2160x2700 → 1080x1350) */}
+    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].flatMap((i) => {
+      const dark = [
+        Marketing1, Marketing2, Marketing3, Marketing4, Marketing5,
+        Marketing6, Marketing7, Marketing8, Marketing9, Marketing10,
+      ][i - 1];
+      const lightC = [
+        Marketing1Light, Marketing2Light, Marketing3Light, Marketing4Light, Marketing5Light,
+        Marketing6Light, Marketing7Light, Marketing8Light, Marketing9Light, Marketing10Light,
+      ][i - 1];
+      return [
+        <Still key={`mkt45-${i}`} id={`Marketing${i}-4x5`} component={dark} width={2160} height={2700} />,
+        <Still key={`mkt45l-${i}`} id={`Marketing${i}Light-4x5`} component={lightC} width={2160} height={2700} />,
+      ];
+    })}
+    {[1, 2, 3, 4, 5, 6, 7, 8].flatMap((i) => {
+      const comps = RS as Record<string, React.FC>;
+      return ['', 'Light'].map((suffix) => (
+        <Still
+          key={`rs45-${i}${suffix}`}
+          id={`RealScreen${i}${suffix}-4x5`}
+          component={comps[`RealScreen${i}${suffix}`]}
+          width={2160}
+          height={2700}
+        />
+      ));
+    })}
+    {[1, 2, 3, 4, 5, 6].flatMap((i) => {
+      const comps = CAR as Record<string, React.FC>;
+      return ['', 'Light'].map((suffix) => (
+        <Still
+          key={`car45-${i}${suffix}`}
+          id={`CarouselS${i}${suffix}-4x5`}
+          component={comps[`CarouselS${i}${suffix}`]}
+          width={2160}
+          height={2700}
+        />
+      ));
+    })}
     {/* 9:16 story variants */}
     {[
       Marketing1Tall,
@@ -398,6 +439,18 @@ export const RemotionRoot: React.FC = () => (
       ));
     })}
     {/* micro-demo clips (9:16 video) */}
+    <Still id="PrologueDark45" component={PrologueDark45} width={2160} height={2700} />
+    <Still id="PrologueLight45" component={PrologueLight45} width={2160} height={2700} />
+    <Still id="PrologueDarkStory" component={PrologueDarkStory} width={2160} height={3840} />
+    <Still id="PrologueLightStory" component={PrologueLightStory} width={2160} height={3840} />
+    <Composition
+      id="Explainer"
+      component={ExplainerAssembly}
+      durationInFrames={EXPLAINER_DURATION}
+      fps={30}
+      width={1080}
+      height={1920}
+    />
     <Composition id="ClipAsk" component={ClipAsk} durationInFrames={CLIP_ASK_DURATION} fps={FPS} width={2160} height={3840} />
     <Composition id="ClipDetention" component={ClipDetention} durationInFrames={CLIP_DETENTION_DURATION} fps={FPS} width={2160} height={3840} />
     <Composition id="ClipTherapy" component={ClipTherapy} durationInFrames={CLIP_THERAPY_DURATION} fps={FPS} width={2160} height={3840} />

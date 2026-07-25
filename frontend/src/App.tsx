@@ -1,8 +1,12 @@
 import { FC, lazy, Suspense } from 'react'
 import { Routes, Route } from 'react-router-dom'
-import { Layout, ProtectedRoute } from './components'
+// Import from the layout module directly, not the top-level ./components barrel:
+// that barrel re-exports the fleet map + charts (leaflet/plotly side-effect
+// imports that don't tree-shake), and App is the eager root, so going through
+// it would pull those heavy libs into the initial bundle.
+import { AdminRoute, Layout, ProtectedRoute } from './components/layout'
 import { Login } from './pages/auth'
-import { TooltipProvider } from './components/ui'
+import { TooltipProvider, DialogProvider } from './components/ui'
 import ErrorBoundary from './components/ErrorBoundary'
 
 // Route-level code splitting (task 4): each page is fetched on demand instead of
@@ -67,6 +71,7 @@ const RouteFallback = () => (
 const App: FC = () => {
   return (
     <TooltipProvider>
+      <DialogProvider>
       <ErrorBoundary>
         <Suspense fallback={<RouteFallback />}>
           <Routes>
@@ -122,16 +127,20 @@ const App: FC = () => {
                 <Route path="/nlp" element={<CorrelationAIPane />} />
                 <Route path="/intake" element={<IntakeInbox />} />
 
-                {/* Admin */}
-                <Route path="/admin/users" element={<Users />} />
-                <Route path="/admin/collectors" element={<Collectors />} />
-                <Route path="/admin/health" element={<SystemHealth />} />
-                <Route path="/admin/settings" element={<Settings />} />
-                <Route path="/admin/notifications" element={<Notifications />} />
-                <Route path="/admin/errors" element={<ErrorTriage />} />
-                <Route path="/admin/errors/:fingerprint" element={<ErrorTriageDetail />} />
-                <Route path="/admin/fleet" element={<Fleet />} />
-                <Route path="/admin/fleet/rollouts/:rolloutId" element={<FleetRolloutDetail />} />
+                {/* Admin — AdminRoute exists and was exported but was wired to
+                    no route, so every page below sat behind ProtectedRoute
+                    alone and any authenticated user could reach it. */}
+                <Route element={<AdminRoute />}>
+                  <Route path="/admin/users" element={<Users />} />
+                  <Route path="/admin/collectors" element={<Collectors />} />
+                  <Route path="/admin/health" element={<SystemHealth />} />
+                  <Route path="/admin/settings" element={<Settings />} />
+                  <Route path="/admin/notifications" element={<Notifications />} />
+                  <Route path="/admin/errors" element={<ErrorTriage />} />
+                  <Route path="/admin/errors/:fingerprint" element={<ErrorTriageDetail />} />
+                  <Route path="/admin/fleet" element={<Fleet />} />
+                  <Route path="/admin/fleet/rollouts/:rolloutId" element={<FleetRolloutDetail />} />
+                </Route>
               </Route>
             </Route>
 
@@ -148,6 +157,7 @@ const App: FC = () => {
           </Routes>
         </Suspense>
       </ErrorBoundary>
+      </DialogProvider>
     </TooltipProvider>
   )
 }

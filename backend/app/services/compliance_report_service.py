@@ -20,6 +20,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.services.export_store import get_export_store
 from app.db.models import (
     ConsentRecord,
     DataProcessingRecord,
@@ -330,6 +331,21 @@ async def generate_and_store_report(
         _write_json_atomic(payload, output_path)
 
     filename, media_type, file_size, file_sha256 = _file_metadata(output_path, report_format)
+    # When object storage is on, the download is served by a different pod than the
+    # worker that generated this, so push the artifact to S3 keyed by its relative
+    # path. The local file remains as a same-pod fast path. A store failure must not
+    # lose the report — it still exists on local disk.
+    store = get_export_store()
+    if store.enabled:
+        try:
+            await store.ensure_bucket()
+            await store.upload_file(relative_path, str(output_path))
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "compliance_report_object_upload_failed",
+                job_id=str(job_id),
+                error=str(exc),
+            )
     logger.info(
         "compliance_report_stored",
         job_id=str(job_id),

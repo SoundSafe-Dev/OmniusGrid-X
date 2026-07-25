@@ -19,6 +19,20 @@ from app.db.models import User
 from app.middleware.rbac import require_admin
 from app.middleware.tenant_isolation import get_tenant_db, get_tenant_org_id
 
+# `router` is DELIBERATELY NOT MOUNTED (only `tenant_router` is, in main.py).
+#
+# Its routes are a GLOBAL, system-operator surface: they read/write
+# data_retention_config (keyed by table_name, no organization_id — one config
+# for the whole database) and trigger the archive_to_cold_storage() /
+# purge_old_data() DB functions, which act across every table and every tenant.
+# The only gate here is `require_admin`, which is a PER-ORG admin — so mounting
+# this as-is would let any tenant's admin read global retention config and
+# purge/archive all tenants' data. That is why it is unmounted.
+#
+# To expose it, gate it behind a super-admin / operator role (not per-org
+# require_admin) and mount it on an ops-only path. Until then it stays dark.
+# A guard (tests/test_data_retention_router_unmounted.py) fails if it is mounted
+# without that change. The tenant-scoped retention surface is `tenant_router`.
 router = APIRouter()
 tenant_router = APIRouter()
 

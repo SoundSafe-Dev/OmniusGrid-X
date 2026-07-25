@@ -1,0 +1,157 @@
+# SeaweedFS — S3-compatible object store for generated artifacts (scheduled
+# exports, compliance reports) and the RAG document store. It is the shared,
+# multi-pod-safe home for files that a worker generates on one pod and the
+# backend API serves from another: an emptyDir/PVC-per-pod cannot do that.
+#
+# All-in-one server (master+volume+filer+s3), matching the local docker-compose
+# service, but backed by a PersistentVolumeClaim so data survives pod restarts.
+# Identities come from a Secret-mounted s3config.json; the DEV credentials shipped
+# here MUST be overridden per environment (see the s3-credentials Secret below).
+apiVersion: v1
+kind: Service
+metadata:
+  name: seaweedfs
+  namespace: omniusgrid
+  labels:
+    app.kubernetes.io/name: seaweedfs
+    app.kubernetes.io/component: object-store
+    app.kubernetes.io/part-of: omniusgrid
+spec:
+  clusterIP: None  # headless — stable DNS for the single S3 endpoint
+  selector:
+    app.kubernetes.io/name: seaweedfs
+  ports:
+    - name: s3
+      port: 8333
+      targetPort: 8333
+    - name: master
+      port: 9333
+      targetPort: 9333
+    - name: filer
+      port: 8888
+      targetPort: 8888
+---
+# DEV/CI-ONLY placeholder credentials so base/ applies on a throwaway cluster.
+# Do NOT ship these to staging/production — provision the real s3-credentials via
+# Sealed Secrets or the External Secrets Operator: see infrastructure/k8s/secrets/.
+# Ad-hoc override for a quick cluster:
+#   kubectl create secret generic s3-credentials -n omniusgrid \
+#     --from-literal=access-key=... --from-literal=secret-key=... \
+#     --from-file=s3config.json=./infra/seaweedfs/s3config.json
+apiVersion: v1
+kind: Secret
+metadata:
+  name: s3-credentials
+  namespace: omniusgrid
+  labels:
+    app.kubernetes.io/part-of: omniusgrid
+type: Opaque
+stringData:
+  access-key: "omniusgrid"
+  secret-key: "omniusgrid_dev_secret"
+  s3config.json: |
+    {
+      "identities": [
+        {
+          "name": "omniusgrid",
+          "credentials": [
+            { "accessKey": "omniusgrid", "secretKey": "omniusgrid_dev_secret" }
+          ],
+          "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+        }
+      ]
+    }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: seaweedfs
+  namespace: omniusgrid
+  labels:
+    app.kubernetes.io/name: seaweedfs
+    app.kubernetes.io/component: object-store
+    app.kubernetes.io/part-of: omniusgrid
+spec:
+  serviceName: seaweedfs
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: seaweedfs
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: seaweedfs
+        app.kubernetes.io/component: object-store
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: seaweedfs
+          image: chrislusf/seaweedfs:3.68
+          imagePullPolicy: IfNotPresent
+          args:
+            - "server"
+            - "-dir=/data"
+            - "-s3"
+            - "-s3.config=/etc/seaweedfs/s3config.json"
+            - "-s3.port=8333"
+            - "-ip.bind=0.0.0.0"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - name: s3
+              containerPort: 8333
+            - name: master
+              containerPort: 9333
+            - name: filer
+              containerPort: 8888
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: s3config
+              mountPath: /etc/seaweedfs
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /status
+              port: 8333
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /status
+              port: 8333
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+      volumes:
+        - name: s3config
+          secret:
+            secretName: s3-credentials
+            items:
+              - key: s3config.json
+                path: s3config.json
+      terminationGracePeriodSeconds: 30
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 20Gi

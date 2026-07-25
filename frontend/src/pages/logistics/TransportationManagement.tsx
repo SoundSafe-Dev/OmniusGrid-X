@@ -44,8 +44,9 @@ const TRANSPORT_QUERY_KEY = 'transportation';
 export const TransportationManagement: FC = () => {
   const [selectedShipment, setSelectedShipment] = useState<Shipment | null>(null);
   const [selectedDriver, setSelectedDriver] = useState<Driver | null>(null);
-  const [, setSelectedVehicle] = useState<Vehicle | null>(null);
+  const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
   const [filters, setFilters] = useState<ShipmentFilters>({});
+  const [searchTerm, setSearchTerm] = useState('');
   const [activeTab, setActiveTab] = useState<'shipments' | 'fleet' | 'carriers' | 'compliance' | 'geofencing' | 'health' | 'maintenance' | 'performance'>('shipments');
   const [fleetLocation, setFleetLocation] = useState<GeoLocation | null>(null);
   const [selectedMapVehicle, setSelectedMapVehicle] = useState<string | null>(null);
@@ -71,22 +72,29 @@ export const TransportationManagement: FC = () => {
     queryFn: () => transportationApi.getVehicles(),
   });
 
-  const { data: fleetSummary } = useQuery({
+  const { data: fleetSummary, isError: fleetSummaryError } = useQuery({
     queryKey: [TRANSPORT_QUERY_KEY, 'fleet-summary'],
     queryFn: () => geoTabApi.getFleetSummary(),
   });
 
-  const { data: deliveryEfficiency } = useQuery({
+  const { data: deliveryEfficiency, isError: deliveryEfficiencyError } = useQuery({
     queryKey: [TRANSPORT_QUERY_KEY, 'efficiency'],
     queryFn: () => transportationApi.getDeliveryEfficiency(),
   });
 
-  const { data: complianceSummary } = useQuery({
+  const { data: complianceSummary, isError: complianceSummaryError } = useQuery({
     queryKey: [TRANSPORT_QUERY_KEY, 'compliance'],
     queryFn: () => transportationApi.getComplianceSummary(),
   });
 
-  const shipments = shipmentsData?.items || [];
+  const allShipments = shipmentsData?.items || [];
+  const shipments = searchTerm
+    ? allShipments.filter((s) =>
+        [s.shipmentNumber, s.poNumber, s.carrierName, s.driverName]
+          .filter(Boolean)
+          .some((v) => String(v).toLowerCase().includes(searchTerm.toLowerCase()))
+      )
+    : allShipments;
   const carriers = carriersData?.items || [];
   const drivers = driversData?.items || [];
   const vehicles = vehiclesData?.items || [];
@@ -254,6 +262,11 @@ export const TransportationManagement: FC = () => {
       />
 
       {/* Fleet Summary from GeoTab */}
+      {fleetSummaryError && (
+        <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-4">
+          <p className="text-status-alarm text-sm">Failed to load GeoTab fleet status.</p>
+        </div>
+      )}
       {fleetSummary && (
         <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-4">
           <h3 className="font-semibold mb-4 flex items-center gap-2">
@@ -290,6 +303,11 @@ export const TransportationManagement: FC = () => {
       )}
 
       {/* Delivery Efficiency */}
+      {deliveryEfficiencyError && (
+        <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-4">
+          <p className="text-status-alarm text-sm">Failed to load delivery efficiency metrics.</p>
+        </div>
+      )}
       {deliveryEfficiency && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-4">
@@ -369,6 +387,8 @@ export const TransportationManagement: FC = () => {
             <input
               type="text"
               placeholder="Search shipment..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
               className="bg-transparent text-sm focus:outline-none w-40"
             />
           </div>
@@ -411,7 +431,7 @@ export const TransportationManagement: FC = () => {
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
                           <span className={`w-2 h-2 rounded-full ${getStatusColor(shipment.status)}`} />
-                          <span className="capitalize">{shipment.status.replace('_', ' ')}</span>
+                          <span className="capitalize">{shipment.status?.replace('_', ' ')}</span>
                         </div>
                       </td>
                       <td className="px-4 py-3 text-sm">{shipment.carrierName}</td>
@@ -486,6 +506,8 @@ export const TransportationManagement: FC = () => {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {vehiclesLoading ? (
                 <div className="col-span-full p-8 text-center text-opsgrid-text-secondary">Loading vehicles...</div>
+              ) : vehicles.length === 0 ? (
+                <div className="col-span-full p-8 text-center text-opsgrid-text-secondary">No vehicles found</div>
               ) : vehicles.map(vehicle => (
                 <div 
                   key={vehicle.id}
@@ -532,6 +554,8 @@ export const TransportationManagement: FC = () => {
             <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg overflow-hidden">
               {driversLoading ? (
                 <div className="p-8 text-center text-opsgrid-text-secondary">Loading drivers...</div>
+              ) : drivers.length === 0 ? (
+                <div className="p-8 text-center text-opsgrid-text-secondary">No drivers found</div>
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full">
@@ -569,7 +593,7 @@ export const TransportationManagement: FC = () => {
                               driver.currentHosStatus === 'on_duty' ? 'bg-blue-500/20 text-blue-500' :
                               'bg-gray-500/20 text-gray-500'
                             }`}>
-                              {driver.currentHosStatus.replace('_', ' ')}
+                              {driver.currentHosStatus?.replace('_', ' ')}
                             </span>
                           </td>
                           <td className={`px-4 py-3 font-medium ${getHosColor(driver.hosDriveHoursRemaining)}`}>
@@ -602,6 +626,8 @@ export const TransportationManagement: FC = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {carriersLoading ? (
             <div className="col-span-full p-8 text-center text-opsgrid-text-secondary">Loading carriers...</div>
+          ) : carriers.length === 0 ? (
+            <div className="col-span-full p-8 text-center text-opsgrid-text-secondary">No carriers found</div>
           ) : carriers.map(carrier => (
             <div key={carrier.id} className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-4">
               <div className="flex items-start justify-between mb-3">
@@ -638,7 +664,7 @@ export const TransportationManagement: FC = () => {
                 </div>
                 <div className="flex justify-between">
                   <span className="text-opsgrid-text-secondary">Authority:</span>
-                  <span className="capitalize">{carrier.operatingAuthority.replace('_', ' ')}</span>
+                  <span className="capitalize">{carrier.operatingAuthority?.replace('_', ' ')}</span>
                 </div>
               </div>
               <div className="mt-4 pt-3 border-t border-opsgrid-border">
@@ -653,6 +679,11 @@ export const TransportationManagement: FC = () => {
 
       {activeTab === 'compliance' && (
         <div className="space-y-6">
+          {complianceSummaryError && (
+            <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-4">
+              <p className="text-status-alarm text-sm">Failed to load compliance summary.</p>
+            </div>
+          )}
           {complianceSummary && (
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-4">
@@ -794,9 +825,17 @@ export const TransportationManagement: FC = () => {
 
       {/* Driver Detail Modal */}
       {selectedDriver && (
-        <DriverDetailModal 
-          driver={selectedDriver} 
-          onClose={() => setSelectedDriver(null)} 
+        <DriverDetailModal
+          driver={selectedDriver}
+          onClose={() => setSelectedDriver(null)}
+        />
+      )}
+
+      {/* Vehicle Detail Modal */}
+      {selectedVehicle && (
+        <VehicleDetailModal
+          vehicle={selectedVehicle}
+          onClose={() => setSelectedVehicle(null)}
         />
       )}
     </div>
@@ -876,7 +915,7 @@ const ShipmentDetailModal: FC<{
           <div className="grid grid-cols-2 gap-4">
             <div>
               <p className="text-sm text-opsgrid-text-secondary">Status</p>
-              <p className="font-medium capitalize">{shipment.status.replace('_', ' ')}</p>
+              <p className="font-medium capitalize">{shipment.status?.replace('_', ' ')}</p>
             </div>
             <div>
               <p className="text-sm text-opsgrid-text-secondary">Carrier</p>
@@ -1089,7 +1128,7 @@ const DriverDetailModal: FC<{ driver: Driver; onClose: () => void }> = ({ driver
             </div>
             <div>
               <p className="text-sm text-opsgrid-text-secondary">Endorsements</p>
-              <p className="font-medium">{driver.endorsements.join(', ') || 'None'}</p>
+              <p className="font-medium">{driver.endorsements?.join(', ') || 'None'}</p>
             </div>
             <div>
               <p className="text-sm text-opsgrid-text-secondary">Hazmat Certified</p>
@@ -1097,7 +1136,7 @@ const DriverDetailModal: FC<{ driver: Driver; onClose: () => void }> = ({ driver
             </div>
             <div>
               <p className="text-sm text-opsgrid-text-secondary">License Expires</p>
-              <p className="font-medium">{new Date(driver.licenseExpiry).toLocaleDateString()}</p>
+              <p className="font-medium">{driver.licenseExpiry ? new Date(driver.licenseExpiry).toLocaleDateString() : 'N/A'}</p>
             </div>
           </div>
 
@@ -1106,23 +1145,23 @@ const DriverDetailModal: FC<{ driver: Driver; onClose: () => void }> = ({ driver
             <div className="space-y-2">
               <div className="flex justify-between">
                 <span className="text-sm text-opsgrid-text-secondary">Current Status</span>
-                <span className="text-sm capitalize">{driver.currentHosStatus.replace('_', ' ')}</span>
+                <span className="text-sm capitalize">{driver.currentHosStatus?.replace('_', ' ')}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-sm text-opsgrid-text-secondary">Drive Hours Remaining</span>
                 <span className={`font-medium ${driver.hosDriveHoursRemaining === 0 ? 'text-red-500' : driver.hosDriveHoursRemaining < 2 ? 'text-yellow-500' : 'text-green-500'}`}>
-                  {driver.hosDriveHoursRemaining.toFixed(1)}h
+                  {driver.hosDriveHoursRemaining?.toFixed(1) ?? 'N/A'}h
                 </span>
               </div>
               <div className="flex justify-between">
                 <span className="text-sm text-opsgrid-text-secondary">Duty Hours Remaining</span>
                 <span className={`font-medium ${driver.hosDutyHoursRemaining === 0 ? 'text-red-500' : driver.hosDutyHoursRemaining < 2 ? 'text-yellow-500' : 'text-green-500'}`}>
-                  {driver.hosDutyHoursRemaining.toFixed(1)}h
+                  {driver.hosDutyHoursRemaining?.toFixed(1) ?? 'N/A'}h
                 </span>
               </div>
               <div className="flex justify-between">
                 <span className="text-sm text-opsgrid-text-secondary">Cycle Hours Used</span>
-                <span className="font-medium">{driver.hosCycleHoursUsed.toFixed(1)}h / 70h</span>
+                <span className="font-medium">{driver.hosCycleHoursUsed?.toFixed(1) ?? 'N/A'}h / 70h</span>
               </div>
             </div>
           </div>
@@ -1138,6 +1177,141 @@ const DriverDetailModal: FC<{ driver: Driver; onClose: () => void }> = ({ driver
             <div className="bg-opsgrid-bg rounded-lg p-3">
               <p className="text-xs text-opsgrid-text-secondary">GeoTab Device ID</p>
               <p className="text-sm font-mono">{driver.geoTabDeviceId}</p>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const VehicleDetailModal: FC<{ vehicle: Vehicle; onClose: () => void }> = ({ vehicle, onClose }) => {
+  return (
+    <div
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-opsgrid-panel border border-opsgrid-border rounded-lg max-w-2xl w-full max-h-[90vh] overflow-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="p-6 border-b border-opsgrid-border flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Truck className="w-6 h-6 text-opsgrid-primary" />
+            <div>
+              <h2 className="text-xl font-bold">{vehicle.vehicleNumber}</h2>
+              <p className="text-sm text-opsgrid-text-secondary">
+                {[vehicle.year, vehicle.make, vehicle.model].filter(Boolean).join(' ') || 'Vehicle details'}
+              </p>
+            </div>
+          </div>
+          <button onClick={onClose} className="text-opsgrid-text-secondary hover:text-opsgrid-text">
+            ✕
+          </button>
+        </div>
+        <div className="p-6 space-y-6">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <p className="text-sm text-opsgrid-text-secondary">Status</p>
+              <p className="font-medium">{vehicle.currentDriverId ? 'Active' : 'Idle'}</p>
+            </div>
+            <div>
+              <p className="text-sm text-opsgrid-text-secondary">Carrier</p>
+              <p className="font-medium">{vehicle.carrierName || 'N/A'}</p>
+            </div>
+            <div>
+              <p className="text-sm text-opsgrid-text-secondary">Type</p>
+              <p className="font-medium capitalize">{vehicle.vehicleType?.replace('_', ' ') || 'N/A'}</p>
+            </div>
+            <div>
+              <p className="text-sm text-opsgrid-text-secondary">Fuel Type</p>
+              <p className="font-medium capitalize">{vehicle.fuelType || 'N/A'}</p>
+            </div>
+            <div>
+              <p className="text-sm text-opsgrid-text-secondary">License Plate</p>
+              <p className="font-medium">{vehicle.licensePlate || 'N/A'}</p>
+            </div>
+            <div>
+              <p className="text-sm text-opsgrid-text-secondary">VIN</p>
+              <p className="font-medium">{vehicle.vin || 'N/A'}</p>
+            </div>
+            <div>
+              <p className="text-sm text-opsgrid-text-secondary">DOT Number</p>
+              <p className="font-medium">{vehicle.dotNumber || 'N/A'}</p>
+            </div>
+            <div>
+              <p className="text-sm text-opsgrid-text-secondary">Gross Vehicle Weight</p>
+              <p className="font-medium">{vehicle.grossVehicleWeight?.toLocaleString() ?? 'N/A'} kg</p>
+            </div>
+          </div>
+
+          <div className="bg-opsgrid-bg rounded-lg p-4">
+            <h4 className="font-medium mb-3 flex items-center gap-2">
+              <Activity className="w-4 h-4 text-opsgrid-primary" />
+              Telematics
+            </h4>
+            <div className="grid grid-cols-3 gap-4 text-sm">
+              <div>
+                <p className="text-opsgrid-text-secondary flex items-center gap-1">
+                  <Fuel className="w-3 h-3" /> Fuel Level
+                </p>
+                <p className="font-medium">{vehicle.fuelLevel ?? 'N/A'}%</p>
+              </div>
+              <div>
+                <p className="text-opsgrid-text-secondary flex items-center gap-1">
+                  <Gauge className="w-3 h-3" /> Odometer
+                </p>
+                <p className="font-medium">{vehicle.odometer?.toLocaleString() ?? 'N/A'} mi</p>
+              </div>
+              <div>
+                <p className="text-opsgrid-text-secondary">Engine Hours</p>
+                <p className="font-medium">{vehicle.engineHours?.toLocaleString() ?? 'N/A'}</p>
+              </div>
+            </div>
+          </div>
+
+          {vehicle.currentLocation && (
+            <div className="bg-opsgrid-bg rounded-lg p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <MapPin className="w-4 h-4 text-opsgrid-primary" />
+                <h4 className="font-medium">Current Location (GeoTab)</h4>
+              </div>
+              <div className="grid grid-cols-3 gap-4 text-sm">
+                <div>
+                  <p className="text-opsgrid-text-secondary">Latitude</p>
+                  <p>{vehicle.currentLocation.latitude.toFixed(4)}</p>
+                </div>
+                <div>
+                  <p className="text-opsgrid-text-secondary">Longitude</p>
+                  <p>{vehicle.currentLocation.longitude.toFixed(4)}</p>
+                </div>
+                <div>
+                  <p className="text-opsgrid-text-secondary">Speed</p>
+                  <p>{vehicle.currentLocation.speed?.toFixed(0) || 0} mph</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <p className="text-sm text-opsgrid-text-secondary">Registration Expires</p>
+              <p className="font-medium">
+                {vehicle.registrationExpiry ? new Date(vehicle.registrationExpiry).toLocaleDateString() : 'N/A'}
+              </p>
+            </div>
+            <div>
+              <p className="text-sm text-opsgrid-text-secondary">Inspection Due</p>
+              <p className="font-medium">
+                {vehicle.inspectionDue ? new Date(vehicle.inspectionDue).toLocaleDateString() : 'N/A'}
+              </p>
+            </div>
+          </div>
+
+          {vehicle.geoTabDeviceId && (
+            <div className="bg-opsgrid-bg rounded-lg p-3">
+              <p className="text-xs text-opsgrid-text-secondary">GeoTab Device ID</p>
+              <p className="text-sm font-mono">{vehicle.geoTabDeviceId}</p>
             </div>
           )}
         </div>

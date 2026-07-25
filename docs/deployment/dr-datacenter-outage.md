@@ -442,8 +442,8 @@ echo "Data consistency check complete"
 6. Verify primary site stability
 
 ## Related Documentation
-- [DR Site Configuration](../../infra/k8s/overlays/dr/)
-- [DNS Configuration](../../infra/k8s/base/ingress.yaml)
+- DR Site Configuration — **not implemented**: there is no `overlays/dr` kustomize overlay. Only `overlays/staging` and `overlays/production` exist, so the DR-site steps above have no manifests to apply yet.
+- [DNS Configuration](../../infrastructure/k8s/base/ingress.yaml)
 - [Cross-Region Replication](../../infra/pgbackrest/pgbackrest.conf)
 - [Monitoring Setup](../../infra/grafana/provisioning/)
 

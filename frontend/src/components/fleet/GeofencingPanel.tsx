@@ -5,8 +5,29 @@ import {
   MapPin, CheckCircle, XCircle, Clock, X
 } from 'lucide-react';
 import { geofencingApi } from '../../api';
-import type { GeofenceZoneExtended, GeofenceAlertExtended } from '../../types';
+import { SkeletonCard } from '../ui/Skeleton';
+import { useDialog } from '../ui';
+import type { GeofenceZoneExtended, GeofenceAlertExtended, GeoLocation } from '../../types';
 import 'leaflet/dist/leaflet.css';
+
+// A leaflet <Circle> needs a center and a radius. center/radius are optional on
+// a zone (polygon zones and malformed data have neither), so rendering every
+// active zone as a Circle via `zone.center!.latitude` threw on the first
+// centerless zone — and with only the app-root ErrorBoundary, that blanked the
+// entire app. This narrows to the zones that can actually be drawn as circles,
+// so the map skips the others instead of crashing.
+export type CircleZone = GeofenceZoneExtended & { center: GeoLocation; radius: number };
+
+export function circleRenderableZones(zones: GeofenceZoneExtended[]): CircleZone[] {
+  return zones.filter(
+    (z): z is CircleZone =>
+      Boolean(z.isActive) &&
+      z.center != null &&
+      typeof z.center.latitude === 'number' &&
+      typeof z.center.longitude === 'number' &&
+      typeof z.radius === 'number'
+  );
+}
 
 const getZoneColor = (color: string) => {
   switch (color) {
@@ -36,12 +57,16 @@ interface GeofencingPanelProps {
 }
 
 export const GeofencingPanel: FC<GeofencingPanelProps> = ({ onAlert }) => {
+  const { confirm } = useDialog();
   const [zones, setZones] = useState<GeofenceZoneExtended[]>([]);
   const [alerts, setAlerts] = useState<GeofenceAlertExtended[]>([]);
   const [selectedZone, setSelectedZone] = useState<GeofenceZoneExtended | null>(null);
-  const [, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [showAlertPanel, setShowAlertPanel] = useState(true);
+  const [showZoneForm, setShowZoneForm] = useState(false);
+  const [editingZone, setEditingZone] = useState<GeofenceZoneExtended | null>(null);
 
   useEffect(() => {
     loadData();
@@ -58,18 +83,43 @@ export const GeofencingPanel: FC<GeofencingPanelProps> = ({ onAlert }) => {
 
   const loadData = async () => {
     setIsLoading(true);
-    const [zonesData, alertsData] = await Promise.all([
-      geofencingApi.getZones(),
-      geofencingApi.getAlerts(),
-    ]);
-    setZones(zonesData);
-    setAlerts(alertsData);
-    setIsLoading(false);
+    setError(null);
+    try {
+      const [zonesData, alertsData] = await Promise.all([
+        geofencingApi.getZones(),
+        geofencingApi.getAlerts(),
+      ]);
+      setZones(zonesData);
+      setAlerts(alertsData);
+    } catch (err) {
+      console.error('Failed to load geofencing data:', err);
+      setError('Failed to load geofence zones and alerts. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleAcknowledge = async (alertId: string) => {
     await geofencingApi.acknowledgeAlert(alertId);
     setAlerts(prev => prev.map(a => a.id === alertId ? { ...a, acknowledged: true } : a));
+  };
+
+  const handleDeleteZone = async (zone: GeofenceZoneExtended) => {
+    const ok = await confirm({
+      title: 'Delete geofence zone',
+      message: `Delete geofence zone "${zone.name}"? This cannot be undone.`,
+      confirmLabel: 'Delete',
+      destructive: true,
+    });
+    if (!ok) return;
+    try {
+      await geofencingApi.deleteZone(zone.id);
+      setZones(prev => prev.filter(z => z.id !== zone.id));
+      if (selectedZone?.id === zone.id) setSelectedZone(null);
+    } catch (err) {
+      console.error('Failed to delete zone:', err);
+      setError('Failed to delete zone. Please try again.');
+    }
   };
 
   const unacknowledgedAlerts = alerts.filter(a => !a.acknowledged);
@@ -93,6 +143,13 @@ export const GeofencingPanel: FC<GeofencingPanelProps> = ({ onAlert }) => {
         </div>
       )}
 
+      {/* Error banner */}
+      {error && (
+        <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-4">
+          <p className="text-status-alarm text-sm">{error}</p>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Map */}
         <div className="lg:col-span-2 bg-opsgrid-panel border border-opsgrid-border rounded-lg overflow-hidden">
@@ -106,10 +163,10 @@ export const GeofencingPanel: FC<GeofencingPanelProps> = ({ onAlert }) => {
                 attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
               />
-              {zones.filter(z => z.isActive).map(zone => (
+              {circleRenderableZones(zones).map(zone => (
                 <Circle
                   key={zone.id}
-                  center={[zone.center!.latitude, zone.center!.longitude]}
+                  center={[zone.center.latitude, zone.center.longitude]}
                   radius={zone.radius}
                   pathOptions={{
                     color: getZoneColor(zone.color),
@@ -143,7 +200,11 @@ export const GeofencingPanel: FC<GeofencingPanelProps> = ({ onAlert }) => {
               >
                 <Volume2 className="w-4 h-4" />
               </button>
-              <button className="p-2 bg-opsgrid-primary text-white rounded hover:bg-opsgrid-accent">
+              <button
+                onClick={() => { setEditingZone(null); setShowZoneForm(true); }}
+                className="p-2 bg-opsgrid-primary text-white rounded hover:bg-opsgrid-accent"
+                title="Add geofence zone"
+              >
                 <Plus className="w-4 h-4" />
               </button>
             </div>
@@ -152,7 +213,11 @@ export const GeofencingPanel: FC<GeofencingPanelProps> = ({ onAlert }) => {
           {/* Zone List */}
           <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg">
             <div className="max-h-[200px] overflow-y-auto">
-              {zones.map(zone => (
+              {isLoading ? (
+                <SkeletonCard lines={3} />
+              ) : zones.length === 0 ? (
+                <p className="p-4 text-sm text-gray-500 text-center">No geofence zones. Use + to create one.</p>
+              ) : zones.map(zone => (
                 <div 
                   key={zone.id}
                   className={`p-3 border-b border-opsgrid-border cursor-pointer hover:bg-opsgrid-bg ${
@@ -182,10 +247,18 @@ export const GeofencingPanel: FC<GeofencingPanelProps> = ({ onAlert }) => {
               <div className="flex items-center justify-between mb-2">
                 <span className="font-semibold">{selectedZone.name}</span>
                 <div className="flex gap-1">
-                  <button className="p-1 text-gray-600 hover:text-opsgrid-primary">
+                  <button
+                    onClick={() => { setEditingZone(selectedZone); setShowZoneForm(true); }}
+                    className="p-1 text-gray-600 hover:text-opsgrid-primary"
+                    title="Edit zone"
+                  >
                     <Edit2 className="w-4 h-4" />
                   </button>
-                  <button className="p-1 text-gray-600 hover:text-red-600">
+                  <button
+                    onClick={() => handleDeleteZone(selectedZone)}
+                    className="p-1 text-gray-600 hover:text-red-600"
+                    title="Delete zone"
+                  >
                     <Trash2 className="w-4 h-4" />
                   </button>
                   <button 
@@ -209,6 +282,22 @@ export const GeofencingPanel: FC<GeofencingPanelProps> = ({ onAlert }) => {
         </div>
       </div>
 
+      {/* Reopen control for the alert history panel */}
+      {!showAlertPanel && (
+        <button
+          onClick={() => setShowAlertPanel(true)}
+          className="flex items-center gap-2 text-sm bg-opsgrid-panel border border-opsgrid-border rounded-lg px-3 py-2 hover:bg-opsgrid-bg"
+        >
+          <Bell className="w-4 h-4 text-opsgrid-primary" />
+          Show Alert History
+          {unacknowledgedAlerts.length > 0 && (
+            <span className="bg-red-500 text-white text-xs px-2 py-0.5 rounded-full">
+              {unacknowledgedAlerts.length}
+            </span>
+          )}
+        </button>
+      )}
+
       {/* Alert Panel */}
       {showAlertPanel && (
         <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg">
@@ -222,11 +311,14 @@ export const GeofencingPanel: FC<GeofencingPanelProps> = ({ onAlert }) => {
                 </span>
               )}
             </div>
-            <button onClick={() => setShowAlertPanel(false)}>
+            <button onClick={() => setShowAlertPanel(false)} title="Hide alert history">
               <XCircle className="w-5 h-5 text-gray-400" />
             </button>
           </div>
           <div className="max-h-[250px] overflow-y-auto">
+            {!isLoading && alerts.length === 0 && (
+              <p className="p-4 text-sm text-gray-500 text-center">No geofence alerts.</p>
+            )}
             {alerts.slice(0, 20).map(alert => (
               <div 
                 key={alert.id}
@@ -262,6 +354,164 @@ export const GeofencingPanel: FC<GeofencingPanelProps> = ({ onAlert }) => {
           </div>
         </div>
       )}
+
+      {showZoneForm && (
+        <ZoneFormModal
+          zone={editingZone}
+          onClose={() => { setShowZoneForm(false); setEditingZone(null); }}
+          onSaved={(saved) => {
+            setShowZoneForm(false);
+            setEditingZone(null);
+            if (selectedZone && saved.id === selectedZone.id) setSelectedZone(saved);
+            loadData();
+          }}
+        />
+      )}
+    </div>
+  );
+};
+
+// Create or edit a geofence zone, wired to geofencingApi.createZone / updateZone.
+const ZoneFormModal: FC<{
+  zone: GeofenceZoneExtended | null;
+  onClose: () => void;
+  onSaved: (zone: GeofenceZoneExtended) => void;
+}> = ({ zone, onClose, onSaved }) => {
+  const isEdit = zone !== null;
+  const [name, setName] = useState(zone?.name ?? '');
+  const [description, setDescription] = useState(zone?.description ?? '');
+  const [color, setColor] = useState<GeofenceZoneExtended['color']>(zone?.color ?? 'green');
+  const [latitude, setLatitude] = useState(zone?.center?.latitude?.toString() ?? '');
+  const [longitude, setLongitude] = useState(zone?.center?.longitude?.toString() ?? '');
+  const [radiusKm, setRadiusKm] = useState(zone ? ((zone.radius ?? 0) / 1000).toString() : '');
+  const [onEntry, setOnEntry] = useState(zone?.alertRules?.onEntry ?? true);
+  const [onExit, setOnExit] = useState(zone?.alertRules?.onExit ?? false);
+  const [busy, setBusy] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const submit = async () => {
+    if (!name.trim()) {
+      setFormError('Zone name is required');
+      return;
+    }
+    const lat = Number(latitude);
+    const lng = Number(longitude);
+    const radiusMeters = Number(radiusKm) * 1000;
+    if (Number.isNaN(lat) || Number.isNaN(lng) || !radiusMeters) {
+      setFormError('Valid latitude, longitude, and radius are required');
+      return;
+    }
+    setBusy(true);
+    setFormError(null);
+    try {
+      const payload: Partial<GeofenceZoneExtended> = {
+        name: name.trim(),
+        description: description.trim(),
+        type: 'circle',
+        color,
+        center: { latitude: lat, longitude: lng, timestamp: new Date().toISOString() },
+        radius: radiusMeters,
+        alertRules: {
+          onEntry,
+          onExit,
+          notifyRoles: zone?.alertRules?.notifyRoles ?? [],
+        },
+      };
+      const saved = isEdit
+        ? await geofencingApi.updateZone(zone!.id, payload)
+        : await geofencingApi.createZone(payload);
+      onSaved(saved);
+    } catch (e: any) {
+      setFormError(e?.response?.data?.detail || 'Failed to save zone');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000] p-4" role="dialog" aria-modal="true">
+      <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg max-w-md w-full p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-bold">{isEdit ? 'Edit Geofence Zone' : 'Create Geofence Zone'}</h2>
+          <button onClick={onClose} aria-label="Close" className="text-gray-400 hover:text-gray-600">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <div>
+          <label className="block text-sm text-gray-600 mb-1">Name</label>
+          <input
+            className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
+            value={name} onChange={(e) => setName(e.target.value)} placeholder="Downtown Depot"
+          />
+        </div>
+        <div>
+          <label className="block text-sm text-gray-600 mb-1">Description</label>
+          <input
+            className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
+            value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional details"
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-sm text-gray-600 mb-1">Latitude</label>
+            <input
+              type="number"
+              className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
+              value={latitude} onChange={(e) => setLatitude(e.target.value)} placeholder="39.8283"
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-gray-600 mb-1">Longitude</label>
+            <input
+              type="number"
+              className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
+              value={longitude} onChange={(e) => setLongitude(e.target.value)} placeholder="-98.5795"
+            />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-sm text-gray-600 mb-1">Radius (km)</label>
+            <input
+              type="number"
+              className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
+              value={radiusKm} onChange={(e) => setRadiusKm(e.target.value)} placeholder="5"
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-gray-600 mb-1">Color</label>
+            <select
+              className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
+              value={color} onChange={(e) => setColor(e.target.value as GeofenceZoneExtended['color'])}
+            >
+              <option value="green">Green</option>
+              <option value="yellow">Yellow</option>
+              <option value="red">Red</option>
+            </select>
+          </div>
+        </div>
+        <div className="flex gap-4">
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={onEntry} onChange={(e) => setOnEntry(e.target.checked)} />
+            Alert on Entry
+          </label>
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={onExit} onChange={(e) => setOnExit(e.target.checked)} />
+            Alert on Exit
+          </label>
+        </div>
+        {formError && <p className="text-sm text-status-alarm">{formError}</p>}
+        <div className="flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 border border-opsgrid-border rounded-lg text-sm">Cancel</button>
+          <button
+            onClick={submit}
+            disabled={busy}
+            className="px-4 py-2 bg-opsgrid-primary text-white rounded-lg text-sm disabled:opacity-50"
+          >
+            {busy ? 'Saving…' : isEdit ? 'Save Changes' : 'Create Zone'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 };

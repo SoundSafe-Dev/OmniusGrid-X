@@ -108,8 +108,10 @@ This runbook covers the recovery procedures for network partition events in the 
    # Restart CNI plugin (if applicable)
    kubectl delete pod -n kube-system -l k8s-app=<cni-plugin>
    
-   # Restart network policies
-   kubectl apply -f infra/k8s/base/network-policies.yaml
+   # Reapply network policies. They live in ingress.yaml — there is no
+   # network-policies.yaml, and infra/k8s/ was archived to
+   # infrastructure/k8s/legacy-patroni/.
+   kubectl apply -f infrastructure/k8s/base/ingress.yaml
    ```
 
 2. **Check and Fix Network Policies:**
@@ -379,8 +381,8 @@ kubectl logs edge-agent-0 -n omniusgrid --tail=50
 | 30+ minutes | Escalate to CTO, SoundSafe, and network provider |
 
 ## Related Documentation
-- [Network Policies](../../infra/k8s/base/network-policies.yaml)
-- [Service Configuration](../../infra/k8s/base/backend-service.yaml)
+- [Network Policies](../../infrastructure/k8s/base/ingress.yaml) (the NetworkPolicy objects live in `ingress.yaml`; there is no `network-policies.yaml`)
+- [Service Configuration](../../infrastructure/k8s/base/backend-service.yaml)
 - [Patroni Configuration](../../infra/pgbackrest/pgbackrest.conf)
 - [Redpanda Configuration](../../docker-compose.yml)
 

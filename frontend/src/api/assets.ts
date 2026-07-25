@@ -99,11 +99,13 @@ export const assetsApi = {
 };
 
 export const dashboardApi = {
-  getOverview: async (organizationId?: string): Promise<DashboardOverview> => {
+  // The organization is always derived from the authenticated user server-side.
+  // This used to accept an `organizationId` that became an `organization_id`
+  // query param; the backend no longer honours it (it let a caller aim the
+  // query at another tenant), so passing it would have been silently ignored.
+  getOverview: async (): Promise<DashboardOverview> => {
     if (USE_MOCK) return mockApi.getDashboardOverview();
-    const response = await api.get<DashboardOverview>('/api/v1/dashboard/overview', {
-      params: organizationId ? { organization_id: organizationId } : undefined,
-    });
+    const response = await api.get<DashboardOverview>('/api/v1/dashboard/overview');
     return response.data;
   },
 
@@ -124,10 +126,11 @@ export const dashboardApi = {
     return response.data;
   },
 
-  getFleetOEE: async (organizationId?: string, hours: number = 24): Promise<FleetOEE> => {
+  // Org is derived server-side from the authenticated user (see getOverview).
+  getFleetOEE: async (hours: number = 24): Promise<FleetOEE> => {
     if (USE_MOCK) return mockApi.getFleetOEE();
     const response = await api.get<FleetOEE>('/api/v1/dashboard/fleet/oee', {
-      params: { organization_id: organizationId, hours },
+      params: { hours },
     });
     return response.data;
   },

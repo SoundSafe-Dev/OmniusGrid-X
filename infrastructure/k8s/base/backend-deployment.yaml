@@ -86,6 +86,25 @@ spec:
                 secretKeyRef:
                   name: signed-url-secret
                   key: secret
+            # Object storage for export/compliance artifacts. With multiple pods,
+            # a worker generates the file on its pod and the backend serves the
+            # download from another — so both must read/write the SAME S3 bucket.
+            - name: EXPORT_USE_S3
+              value: "true"
+            - name: S3_ENDPOINT_URL
+              value: "http://seaweedfs:8333"
+            - name: S3_EXPORT_BUCKET
+              value: "omniusgrid-exports"
+            - name: S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: s3-credentials
+                  key: access-key
+            - name: S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: s3-credentials
+                  key: secret-key
             - name: MTLS_ENABLED
               value: "true"
             - name: CA_CERT_PATH

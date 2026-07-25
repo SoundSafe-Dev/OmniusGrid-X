@@ -34,10 +34,15 @@
 | Term | Definition | Backend/Frontend |
 |------|------------|------------------|
 | **OmniusGrid** | Universal Manufacturing Data Feed Dashboard - Production-grade IIoT platform with edge AI inference, cloud training, and comprehensive observability | Both |
-| **Edge Rack** | Factory floor deployment environment running K3s/Patroni for high availability | Backend |
+| **Edge Rack** | Factory floor deployment environment running K3s with CloudNativePG for high availability | Backend |
 | **Cloud Environment** | Remote infrastructure for model training, Monte Carlo simulations, and digital twin simulations | Backend |
 | **K3s** | Lightweight Kubernetes distribution for edge deployment | Backend |
-| **Patroni** | High availability PostgreSQL solution with automatic failover | Backend |
+| **CloudNativePG** | Kubernetes operator running the HA TimescaleDB cluster (3 instances, automatic failover, synchronous replication, S3 WAL archiving for PITR). Supersedes the earlier Patroni approach. See `infrastructure/k8s/database-ha/` | Backend |
+| **Patroni** | Earlier HA PostgreSQL approach (archived under `infrastructure/k8s/legacy-patroni/`), superseded by CloudNativePG | Backend |
+| **KEDA** | Kubernetes Event-Driven Autoscaler — scales the ingestion/export/compliance workers on Redpanda consumer-group lag rather than CPU. See `infrastructure/k8s/autoscaling/` | Backend |
+| **SeaweedFS** | S3-compatible object store; shared, multi-pod-safe home for generated export/compliance artifacts and the RAG document store (a worker writes on one pod, the API serves the download from another) | Backend |
+| **Sealed Secrets** | Bitnami controller that decrypts committed, encrypted `SealedSecret` CRs into real Secrets in-cluster — lets secrets live safely in git | Backend |
+| **External Secrets Operator (ESO)** | Syncs in-cluster Secrets from a central store (Vault / AWS Secrets Manager / GCP SM) via `ExternalSecret` CRs — no secret material in git | Backend |
 | **Redpanda** | Kafka-compatible streaming platform for real-time data pipelines | Backend |
 | **TimescaleDB** | PostgreSQL extension for time-series data storage | Backend |
 | **mTLS** | Mutual TLS authentication for secure device-to-cloud communication | Both |
@@ -520,9 +525,17 @@
 | Term | Definition | Backend/Frontend |
 |------|------------|------------------|
 | **Offline Demo Seeder** | `backend/scripts/seed_demo_data.py` — populates every page with correlated demo data so the whole platform runs with no live edge/cloud/services (idempotent). Only Correlation-AI *inference* still needs its model. See `docs/DEMO.md` | Backend |
-| **Schema-parity check** | Guard that ORM `Base.metadata` matches the migrated Postgres schema (columns, nullability, types) — prevents the ORM↔migration drift that only surfaces on a real DB (SQLite `create_all` hides it) | Backend |
-| **k6** | Modern load testing tool for performance testing | Backend |
+| **Schema-parity check** | Guard that ORM `Base.metadata` matches the migrated Postgres schema (columns, nullability, types **and server defaults**) — prevents the ORM↔migration drift that only surfaces on a real DB (SQLite `create_all` hides it) | Backend |
+| **Tenant session (`get_tenant_db`)** | The FastAPI dependency that opens a session AND sets the `app.current_org_id` GUC that RLS policies read. Using plain `get_db` on an RLS-protected table returns ZERO rows without erroring — the failure mode behind the empty dashboard and the silently empty audit trail. Enforced by `test_tenant_session_guard.py` | Backend |
+| **Quiet-failure bug class** | A defect that returns empty/NULL instead of raising, so tests and UIs look healthy: RLS filtering every row when the tenant GUC is unset, or a raw INSERT writing NULL `created_at` so the row drops out of time-ordered queries. Both are now guarded | Backend |
+| **Server default (timestamps)** | `DEFAULT NOW()` in the DATABASE, as opposed to an ORM-side `default=utcnow` that only fires through SQLAlchemy. Migrations 044/045 added the defaults and back-filled existing NULLs from each row's own event timestamp | Backend |
+| **Demo-data gating** | Four `*_populate_*` migrations insert sample rows and used to run on every deployment; `migrate.py` now skips them unless `--with-dev-fixtures`. `backend/scripts/seed_demo_data.py` is the sanctioned source of demo data | Backend |
+| **k6** | Modern load testing tool for HTTP API performance testing | Backend |
+| **Ingestion Load Generator** | `tests/load/ingestion_load.py` — async Kafka producer that floods the telemetry topics (the ingestion worker's exact contract) to drive KEDA ingestion-worker scaling and the TimescaleDB write path under load | Backend |
 | **Load Test** | Performance test simulating high user load (1000 concurrent users, 10k req/sec) | Backend |
+| **backend-realdb** | The blocking CI gate that runs the real-DB guards against an ephemeral TimescaleDB (testcontainers): schema parity, tenant isolation + RLS, dashboard tenancy, timestamp defaults, backup/restore drill. Exists because RLS and server defaults are no-ops on SQLite, so a green SQLite run proves nothing | Backend |
+| **migration-hygiene** | Blocking CI gate running `check_migrations.py` (no new duplicate prefixes) plus the chain guards: no data-only migrations, the 019 gap pinned, demo fixtures still gated | Backend |
+| **k8s-manifests / k8s-smoke** | Blocking CI gates: `k8s-manifests` builds + kubeconform-validates every kustomization; `k8s-smoke` spins a kind cluster, applies the monitoring stack, and validates the CNPG + KEDA custom resources against the real operators' webhooks | Backend |
 | **Concurrent Users** | Number of simultaneous users during load test | Backend |
 | **Requests Per Second** | Target throughput metric for load testing | Backend |
 | **Response Time Threshold** | Performance target (95% under 500ms, 99% under 1s) | Backend |
@@ -546,14 +559,21 @@
 
 | Term | Definition | Backend/Frontend |
 |------|------------|------------------|
-| **Prometheus** | Time-series database for metrics collection and alerting | Backend |
-| **Grafana** | Visualization platform for metrics dashboards | Backend |
+| **Prometheus** | Time-series database for metrics collection and alerting. In-cluster it discovers targets via the Kubernetes API (backend `/metrics`, the four background workers on :9109, Redpanda, kube-state-metrics, CloudNativePG) | Backend |
+| **Grafana** | Visualization platform for metrics dashboards; deployed in the k8s monitoring stack with a provisioned "Platform / Infra" dashboard (HA-DB / autoscaling / backups) | Backend |
+| **kube-state-metrics** | Exposes Kubernetes object state (pod/replica/HPA/PVC status, Job/CronJob success, restart counts) as Prometheus metrics — the source for autoscaling and backup alerts | Backend |
+| **Platform / Infra Dashboard** | Grafana dashboard for the enterprise stacks: CNPG instances/replication lag, worker replicas current-vs-max, consumer lag, backup age + failures | Backend |
 | **Loki** | Log aggregation system for centralized logging | Backend |
-| **Alertmanager** | Alert routing and notification management for Prometheus | Backend |
+| **Alertmanager** | Alert routing and notification management for Prometheus; k8s secrets (Slack/PagerDuty) injected via `*_file` refs, routing by severity | Backend |
 | **Metrics** | Numerical measurements of system behavior (request rate, error rate, latency) | Backend |
 | **Structured Logging** | JSON-formatted logs with consistent schema for parsing and analysis | Backend |
 | **Structlog** | Python library for structured logging | Backend |
 | **Health Probe** | HTTP endpoint for service liveness and readiness checks | Backend |
+| **Heartbeat Liveness** | Liveness judged by whether a worker is still *doing work*, not whether its process exists. A worker records a beat per completed unit of work and `/healthz` fails once the last beat exceeds its staleness window — the only way to detect a wedged consumer (process alive, loop dead) | Backend |
+| **Worker Health Endpoint** | `/metrics`, `/healthz` and `/readyz` served on port 9109 by each background worker (`app/workers/health_server.py`). Before it existed the workers exposed nothing, so probes had no path to hit and Prometheus scraped nothing | Backend |
+| **Staleness Window** | Per-worker `stale_after_seconds`. Set to 300s for ingestion (continuous telemetry, so a gap is genuinely wrong) and **disabled** for the event-driven export / compliance / OTA workers, which can legitimately idle for hours | Backend |
+| **`opsgrid_worker_heartbeat_age_seconds`** | Gauge of seconds since a worker last completed a unit of work, labelled by `worker` so one scrape job covers all four. Drives the `WorkerStalled` alert | Backend |
+| **`opsgrid_workers` (alert group)** | `WorkerStalled` (ingestion heartbeat > 10m — the probe's restart has failed to cure it), `WorkerDown` (metrics endpoint unreachable), `WorkerCrashLooping` (> 2 restarts in 30m). See [kafka-consumer-lag.md](docs/runbooks/kafka-consumer-lag.md) | Backend |
 | **Systemd Watchdog** | Linux service monitoring and automatic restart on failure | Backend |
 | **HA Failover** | High availability automatic failover to standby instance | Backend |
 | **Disaster Recovery** | Process of restoring service after catastrophic failure | Backend |
@@ -681,9 +701,11 @@
 
 | Component | Purpose |
 |-----------|---------|
-| **Button** | Clickable action trigger with variants (primary, secondary, ghost) |
+| **Button** | Clickable action trigger with variants (primary, secondary, danger, ghost, outline) |
 | **Card** | Container for grouped content with elevation |
-| **Input** | Text input field with validation |
+| **Input** | Text input field with validation; label/error auto-associated via `useId` + `aria-describedby` |
+| **Modal** | Accessible dialog primitive — `role="dialog"` + `aria-modal`, focus trap, Escape/backdrop close, focus restore, scroll-lock. Base for all app modals |
+| **DialogProvider / useDialog** | Promise-based, accessible replacements for native `alert`/`confirm`/`prompt`, rendered via `Modal`; mounted at the app root |
 | **Select** | Dropdown selection from options |
 | **Badge** | Small status indicator with color coding |
 | **Table** | Data grid with sorting and pagination |
@@ -709,6 +731,6 @@
 
 ---
 
-**Document Version:** 1.1  
-**Last Updated:** 2026-05-20  
+**Document Version:** 1.3  
+**Last Updated:** 2026-07-24  
 **System:** OmniusGrid v0.1.0  

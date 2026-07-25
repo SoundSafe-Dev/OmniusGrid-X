@@ -1,0 +1,11 @@
+Serial #,Machine Name,Inspection Date,Quantity,Plant Location,Operator Notes
+SN-1001,Mixer 101,2026-07-01,15,Dallas DC,OK
+sn1002,Packaging Cell 204,07/02/2026,12 units,Dallas DC,
+SN 1003,Conveyor 17,"July 3, 2026",,Dallas,Belt vibration detected
+1004,Laser Cutter,2026/07/04,eight,Dallas DC,Maintenance required
+SERIAL-1005,,04-07-2026,10,Dallas,Missing machine name
+SN-1006,Mixer 101,2026-07-06,15,Dallas DC,ok
+SN1007,Packaging Cell 204,7/7/26,N/A,Dallas DC,Sensor issue
+SN-1008,Conveyor 17,,18,Dallas DC,
+1009,Laser Cutter,2026-07-09,18 pcs,Dallas,Normal
+SN-1010,Mixer 101,July 10 2026,17,Dallas DC,Operator forgot signature

@@ -41,6 +41,26 @@ DEFAULT_DIR = Path(__file__).resolve().parents[2] / "database" / "migrations"
 # excluded from --baseline so adopted databases still run them.
 CONVERGENCE_PREFIXES = ("032_", "033_")
 
+# DEMO/SAMPLE DATA masquerading as schema migrations (FS-203). These four INSERT
+# fixture rows — test kanban cards, sample registries, a "dev floor" of assets —
+# and were in the production chain, so every real deployment silently received
+# fake operational data. They are skipped unless explicitly requested.
+#
+# They are NOT deleted: databases that already ran them have the versions
+# recorded, and removing the files would look like checksum/history tampering.
+# Gating is the reversible fix; `backend/scripts/seed_demo_data.py` is the
+# sanctioned way to get demo data now.
+DEV_FIXTURE_PREFIXES = (
+    "005_populate_test_kanban_data",
+    "006_populate_extended_kanban_data",
+    "008_populate_actionable_registries",
+    "009_dev_floor_sample_data",
+)
+
+
+def _is_dev_fixture(name: str) -> bool:
+    return name.startswith(DEV_FIXTURE_PREFIXES)
+
 
 def _pg_dsn() -> str:
     """Return a psycopg2 DSN from DATABASE_URL (env first, app settings second).
@@ -111,6 +131,12 @@ def main() -> int:
              "(the FS-56 batch edited 12 files; see --status for the list)",
     )
     ap.add_argument("--dir", default=str(DEFAULT_DIR), help="migrations directory")
+    ap.add_argument(
+        "--with-dev-fixtures",
+        action="store_true",
+        help="also apply the demo/sample-data migrations (005/006/008/009 "
+             "populate_*). Off by default: they insert fake operational rows.",
+    )
     args = ap.parse_args()
 
     mdir = Path(args.dir)
@@ -233,6 +259,21 @@ def main() -> int:
             return 1
 
         pending = [f for f in files if f.name not in applied]
+
+        # Demo/sample-data fixtures are opt-in. Without this, a production
+        # migrate run inserts fake kanban cards and a "dev floor" of assets.
+        if not args.with_dev_fixtures:
+            held = [f.name for f in pending if _is_dev_fixture(f.name)]
+            pending = [f for f in pending if not _is_dev_fixture(f.name)]
+            if held:
+                print(
+                    "SKIPPING demo-data fixtures (not schema): "
+                    + ", ".join(held)
+                    + "\n  These insert sample rows and are excluded from real "
+                    "deployments. Use --with-dev-fixtures to apply them, or "
+                    "backend/scripts/seed_demo_data.py for demo data."
+                )
+
         if not pending:
             print("database is up to date; nothing to apply")
             return 0

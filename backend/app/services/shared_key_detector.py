@@ -51,11 +51,21 @@ def normalize_key(value: Any) -> str:
         return ""
     text = str(value).strip().upper()
     # Collapse separators around a hyphen: "PO - 123" -> "PO-123"
-    text = re.sub(r"[\s_]*-[\s_]*", "-", text)
-    # Normalize internal separators between an alpha prefix and digits.
-    text = re.sub(r"^([A-Z]+)[\s_]+(\d)", r"\1-\2", text)
-    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"[\s_-]+", "-", text)
+    text = text.strip("-")
     return text
+
+def normalize_column_header(value: Any) -> str:
+    """Normalize spreadsheet column headers."""
+    if value is None:
+        return ""
+
+    text = str(value).strip().lower()
+    text = text.replace("#", " number ")
+    text = re.sub(r"[^a-z0-9]+", "_", text)
+    text = re.sub(r"_+", "_", text)
+
+    return text.strip("_")
 
 
 def _dedupe(items: Iterable[str]) -> List[str]:

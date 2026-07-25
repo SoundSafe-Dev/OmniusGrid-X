@@ -2,13 +2,18 @@ import { FC, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Activity, HardDrive, X, Plus, Edit, Trash2 } from 'lucide-react';
 import { Card, Badge, Button, Table, SkeletonCard, Input, Select } from '../../components';
-import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
+import { Tooltip, TooltipTrigger, TooltipContent, useDialog } from '../../components/ui';
 import { authApi, api } from '../../api';
 import { User, UserRole } from '../../types';
 
 export const UsersPage: FC = () => {
   const queryClient = useQueryClient();
-  const { data: users, isLoading } = useQuery({ queryKey: ['users'], queryFn: () => authApi.getUsers() });
+  const { confirm, alert } = useDialog();
+  const { data: users, isLoading, isError } = useQuery({ queryKey: ['users'], queryFn: () => authApi.getUsers() });
+  // The backend exposes GET /users but no POST/PUT/DELETE /users routes yet, so
+  // create/edit/delete would 404. Hide those write affordances until the
+  // endpoints land (flip to true then) instead of shipping dead buttons.
+  const USER_MGMT_ENABLED = false;
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
@@ -46,9 +51,12 @@ export const UsersPage: FC = () => {
     },
   });
 
-  const handleAddUser = () => {
+  const handleAddUser = async () => {
     if (!formData.name || !formData.email || !formData.password) {
-      alert('Please fill in all required fields');
+      await alert({
+        title: 'Missing information',
+        message: 'Please fill in all required fields.',
+      });
       return;
     }
     createMutation.mutate(formData);
@@ -67,8 +75,14 @@ export const UsersPage: FC = () => {
     });
   };
 
-  const handleDeleteUser = (userId: string) => {
-    if (confirm('Are you sure you want to delete this user?')) {
+  const handleDeleteUser = async (userId: string) => {
+    const ok = await confirm({
+      title: 'Delete user',
+      message: 'Are you sure you want to delete this user? This cannot be undone.',
+      confirmLabel: 'Delete',
+      destructive: true,
+    });
+    if (ok) {
       deleteMutation.mutate(userId);
     }
   };
@@ -86,20 +100,37 @@ export const UsersPage: FC = () => {
   };
 
   if (isLoading) return <SkeletonCard lines={5} />;
+  if (isError) {
+    return (
+      <Card className="p-4">
+        <p className="text-status-alarm text-sm">Failed to load users. Try again.</p>
+      </Card>
+    );
+  }
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">User Management</h2>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button variant="primary" onClick={() => setShowAddModal(true)}>
-              <Plus className="w-4 h-4 mr-2" />
-              Add User
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>Create a new user account</TooltipContent>
-        </Tooltip>
+        <div>
+          <h2 className="text-xl font-semibold">User Management</h2>
+          {!USER_MGMT_ENABLED && (
+            <p className="text-sm text-opsgrid-text-secondary mt-1">
+              User accounts are provisioned by an administrator on the backend —
+              self-serve create/edit/delete isn't available yet.
+            </p>
+          )}
+        </div>
+        {USER_MGMT_ENABLED && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="primary" onClick={() => setShowAddModal(true)}>
+                <Plus className="w-4 h-4 mr-2" />
+                Add User
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Create a new user account</TooltipContent>
+          </Tooltip>
+        )}
       </div>
 
       <Card>
@@ -114,6 +145,13 @@ export const UsersPage: FC = () => {
             </Table.Row>
           </Table.Head>
           <Table.Body>
+            {users?.items.length === 0 && (
+              <Table.Row>
+                <Table.Cell colSpan={5} className="text-center text-opsgrid-text-secondary">
+                  No users found.
+                </Table.Cell>
+              </Table.Row>
+            )}
             {users?.items.map((user: User) => (
               <Table.Row key={user.id}>
                 <Table.Cell className="font-medium">{user.name}</Table.Cell>
@@ -137,24 +175,28 @@ export const UsersPage: FC = () => {
                   </Tooltip>
                 </Table.Cell>
                 <Table.Cell className="text-right">
-                  <div className="flex items-center justify-end gap-2">
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button variant="ghost" size="sm" onClick={() => openEditModal(user)}>
-                          <Edit className="w-4 h-4" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>Modify user details and permissions</TooltipContent>
-                    </Tooltip>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button variant="ghost" size="sm" onClick={() => handleDeleteUser(user.id)}>
-                          <Trash2 className="w-4 h-4 text-red-500" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>Delete this user account</TooltipContent>
-                    </Tooltip>
-                  </div>
+                  {USER_MGMT_ENABLED ? (
+                    <div className="flex items-center justify-end gap-2">
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button variant="ghost" size="sm" onClick={() => openEditModal(user)}>
+                            <Edit className="w-4 h-4" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Modify user details and permissions</TooltipContent>
+                      </Tooltip>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button variant="ghost" size="sm" onClick={() => handleDeleteUser(user.id)}>
+                            <Trash2 className="w-4 h-4 text-red-500" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Delete this user account</TooltipContent>
+                      </Tooltip>
+                    </div>
+                  ) : (
+                    <span className="text-opsgrid-text-secondary">—</span>
+                  )}
                 </Table.Cell>
               </Table.Row>
             ))}

@@ -5,7 +5,10 @@ Authentication limits use a separate always-enabled limiter keyed by client
 IP so disabling the global limiter cannot disable brute-force protection.
 """
 
+import hashlib
 import re
+
+import jwt
 from typing import Callable, get_type_hints
 from uuid import UUID
 
@@ -41,10 +44,22 @@ def get_user_id_from_request(request: Request) -> str:
             token = auth_header[7:]
             if token == "dev-token":
                 return "user:dev-user"
-            # Token prefix is sufficient for keying without decoding the
-            # JWT on every request. The full identity check still happens
-            # in the auth dependency on the endpoint itself.
-            return f"user:{token[:16]}"
+            # Key by the token's `sub` (the user id). The previous `token[:16]`
+            # was the base64 of the JWT header, which is IDENTICAL for every
+            # HS256 token — so all authenticated users shared one bucket and any
+            # one of them could throttle everyone. Decode is unverified on
+            # purpose: this is only for bucketing, and the real identity/signature
+            # check happens in the endpoint's auth dependency. Fall back to a hash
+            # of the token (still per-token, never a shared constant) if the
+            # token can't be parsed.
+            try:
+                claims = jwt.decode(token, options={"verify_signature": False})
+                sub = claims.get("sub")
+                if sub:
+                    return f"user:{sub}"
+            except Exception:
+                pass
+            return f"user:{hashlib.sha256(token.encode()).hexdigest()[:32]}"
     except Exception:
         pass
 
@@ -56,9 +71,15 @@ def get_auth_client_key(request: Request) -> str:
     return f"auth-ip:{get_remote_address(request)}"
 
 
+# in_memory_fallback_enabled: if Redis is unreachable, fall back to per-process
+# counters instead of raising. Fleet-wide limits become per-worker limits, which
+# is weaker — but a rate limiter must never convert a cache outage into an API
+# outage. swallow_errors covers transient storage errors mid-request the same way.
 limiter = Limiter(
     key_func=get_user_id_from_request,
     storage_uri=settings.REDIS_URL,
+    in_memory_fallback_enabled=True,
+    swallow_errors=True,
     default_limits=[settings.RATE_LIMIT_GLOBAL],
     # headers_enabled=False: slowapi would otherwise require every decorated
     # endpoint to accept a ``response: Response`` kwarg for header injection.
@@ -71,9 +92,17 @@ limiter = Limiter(
 # This limiter is intentionally independent from RATE_LIMIT_ENABLED. Auth
 # decorators execute their own checks, so they do not require the optional
 # application-wide SlowAPI middleware.
+# This one matters most: it is deliberately enabled=True always, so before the
+# fallback below an unreachable Redis raised on EVERY /auth request — turning a
+# Redis outage into a total authentication outage (login and register 500). Redis
+# also has no Deployment in the k8s stack yet (FS-196), so that was the default
+# state, not an edge case. Brute-force protection now degrades to per-process
+# counters rather than locking everyone out.
 auth_limiter = Limiter(
     key_func=get_auth_client_key,
     storage_uri=settings.REDIS_URL,
+    in_memory_fallback_enabled=True,
+    swallow_errors=True,
     headers_enabled=False,
     enabled=True,
 )

@@ -195,7 +195,6 @@ async def create_integration(
     
     db.add(integration)
     await db.commit()
-    await db.refresh(integration)
     
     logger.info(
         "erp_integration_created",
@@ -346,7 +345,6 @@ async def update_integration(
     integration.updated_at = datetime.now(timezone.utc)
     
     await db.commit()
-    await db.refresh(integration)
     
     logger.info(
         "erp_integration_updated",
@@ -699,7 +697,6 @@ async def create_field_mapping(
     
     db.add(mapping)
     await db.commit()
-    await db.refresh(mapping)
     
     logger.info(
         "field_mapping_created",
@@ -797,7 +794,6 @@ async def update_field_mapping(
     mapping.updated_at = datetime.now(timezone.utc)
     
     await db.commit()
-    await db.refresh(mapping)
     
     logger.info(
         "field_mapping_updated",

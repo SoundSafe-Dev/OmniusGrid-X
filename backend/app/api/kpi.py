@@ -19,7 +19,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_active_user
@@ -131,20 +131,15 @@ async def get_fuel_efficiency(
     db: AsyncSession = Depends(get_tenant_db),
 ):
     since = _range_start(range)
-    rows = (await db.execute(
-        select(GeoTabTrip).where(
+    # Only the total distance is used below (per-vehicle fuel isn't collected
+    # yet, so by_vehicle is empty), so sum it in SQL instead of loading every
+    # trip row. coalesce keeps an all-NULL/no-rows range at 0.0.
+    total_distance = float((await db.execute(
+        select(func.coalesce(func.sum(GeoTabTrip.distance_miles), 0)).where(
             GeoTabTrip.organization_id == org_id,
             GeoTabTrip.start_time >= since,
         )
-    )).scalars().all()
-
-    dist_by_vehicle: dict = defaultdict(float)
-    total_distance = 0.0
-    for t in rows:
-        miles = float(t.distance_miles or 0)
-        total_distance += miles
-        if t.vehicle_id:
-            dist_by_vehicle[t.vehicle_id] += miles
+    )).scalar() or 0)
 
     # Fuel consumption is not collected yet, so efficiency cannot be computed.
     return {
@@ -166,38 +161,41 @@ async def get_idle_time(
     db: AsyncSession = Depends(get_tenant_db),
 ):
     since = _range_start(range)
-    rows = (await db.execute(
-        select(GeoTabTrip).where(
+    # One GROUP BY vehicle_id in SQL instead of loading every trip and summing in
+    # Python. The dict is still rebuilt Python-side with the same rounding, so
+    # the numbers are byte-identical. The NULL-vehicle group is returned too and
+    # feeds the totals (as before) but is excluded from the per-vehicle
+    # breakdown.
+    grouped = (await db.execute(
+        select(
+            GeoTabTrip.vehicle_id,
+            func.coalesce(func.sum(GeoTabTrip.idle_time_seconds), 0),
+            func.coalesce(func.sum(GeoTabTrip.duration_seconds), 0),
+        ).where(
             GeoTabTrip.organization_id == org_id,
             GeoTabTrip.start_time >= since,
-        )
-    )).scalars().all()
+        ).group_by(GeoTabTrip.vehicle_id)
+    )).all()
 
-    idle_by_vehicle: dict = defaultdict(float)
-    run_by_vehicle: dict = defaultdict(float)
     total_idle_s = 0.0
     total_run_s = 0.0
-    for t in rows:
-        idle_s = float(t.idle_time_seconds or 0)
-        run_s = float(t.duration_seconds or 0)
+    by_vehicle = {}
+    for vid, idle_sum, run_sum in grouped:
+        idle_s = float(idle_sum or 0)
+        run_s = float(run_sum or 0)
         total_idle_s += idle_s
         total_run_s += run_s
-        if t.vehicle_id:
-            idle_by_vehicle[t.vehicle_id] += idle_s
-            run_by_vehicle[t.vehicle_id] += run_s
+        if vid:
+            denom = run_s or 1
+            by_vehicle[vid] = {
+                "hours": round(idle_s / 3600, 2),
+                "percentage": round(idle_s / denom * 100, 1),
+                "cost": round((idle_s / 3600) * _COST_PER_MILE_USD, 2),
+            }
 
     idle_hours = total_idle_s / 3600
     pct = (total_idle_s / total_run_s * 100) if total_run_s else 0.0
     cost = idle_hours * _COST_PER_MILE_USD  # idle cost proxy (per idle hour)
-
-    by_vehicle = {}
-    for vid, idle_s in idle_by_vehicle.items():
-        run_s = run_by_vehicle[vid] or 1
-        by_vehicle[vid] = {
-            "hours": round(idle_s / 3600, 2),
-            "percentage": round(idle_s / run_s * 100, 1),
-            "cost": round((idle_s / 3600) * _COST_PER_MILE_USD, 2),
-        }
 
     return {
         "total_hours": round(idle_hours, 2),
@@ -215,37 +213,47 @@ async def get_on_time_performance(
     db: AsyncSession = Depends(get_tenant_db),
 ):
     since = _range_start(range)
-    rows = (await db.execute(
-        select(Shipment).where(
+    # Count on-time vs total per carrier in SQL (GROUP BY) instead of loading
+    # every delivered shipment. The WHERE already excludes actual_delivery IS
+    # NULL, so the on-time rule reduces to "no schedule, or delivered on/before
+    # it" — the same test the Python code applied.
+    on_time_expr = case(
+        (
+            or_(
+                Shipment.scheduled_delivery.is_(None),
+                Shipment.actual_delivery <= Shipment.scheduled_delivery,
+            ),
+            1,
+        ),
+        else_=0,
+    )
+    grouped = (await db.execute(
+        select(
+            Shipment.carrier_id,
+            func.count(),
+            func.coalesce(func.sum(on_time_expr), 0),
+        ).where(
             Shipment.organization_id == org_id,
             Shipment.status == "delivered",
             Shipment.actual_delivery.isnot(None),
             Shipment.updated_at >= since,
-        )
-    )).scalars().all()
+        ).group_by(Shipment.carrier_id)
+    )).all()
 
     on_time = late = 0
-    by_carrier_on = defaultdict(int)
-    by_carrier_total = defaultdict(int)
-    for s in rows:
-        is_on_time = (
-            s.scheduled_delivery is None
-            or (s.actual_delivery and s.actual_delivery <= s.scheduled_delivery)
-        )
-        if is_on_time:
-            on_time += 1
-        else:
-            late += 1
-        if s.carrier_id:
-            by_carrier_total[str(s.carrier_id)] += 1
-            if is_on_time:
-                by_carrier_on[str(s.carrier_id)] += 1
+    by_carrier = {}
+    for cid, group_total, group_on in grouped:
+        group_total = int(group_total or 0)
+        group_on = int(group_on or 0)
+        on_time += group_on
+        late += group_total - group_on
+        # The NULL-carrier group feeds the totals above but not the breakdown.
+        if cid:
+            by_carrier[str(cid)] = (
+                round(group_on / group_total * 100, 1) if group_total else 0.0
+            )
 
     total = on_time + late
-    by_carrier = {
-        cid: round(by_carrier_on[cid] / by_carrier_total[cid] * 100, 1)
-        for cid in by_carrier_total
-    }
     return {
         "overall_percentage": round(on_time / total * 100, 1) if total else 0.0,
         "on_time_count": on_time,
@@ -299,13 +307,13 @@ async def get_cost_per_mile(
     db: AsyncSession = Depends(get_tenant_db),
 ):
     since = _range_start(range)
-    rows = (await db.execute(
-        select(GeoTabTrip).where(
+    # Sum in SQL rather than loading every trip row just to add up distances.
+    total_miles = round(float((await db.execute(
+        select(func.coalesce(func.sum(GeoTabTrip.distance_miles), 0)).where(
             GeoTabTrip.organization_id == org_id,
             GeoTabTrip.start_time >= since,
         )
-    )).scalars().all()
-    total_miles = round(sum(float(t.distance_miles or 0) for t in rows), 1)
+    )).scalar() or 0), 1)
     total_cost = round(total_miles * _COST_PER_MILE_USD, 2)
     return {
         "total_cost": total_cost,

@@ -1,0 +1,42 @@
+# PodDisruptionBudgets: cap how many pods a VOLUNTARY disruption (node drain,
+# cluster upgrade, autoscaler compaction) can remove at once. Without these, a
+# single `kubectl drain` could evict every backend replica or every Redpanda
+# broker simultaneously — an availability/durability outage during routine
+# maintenance. (PDBs only bound voluntary disruptions; they don't help with node
+# crashes — that's what replicas + anti-affinity + RF are for.)
+#
+# Only multi-replica workloads get a PDB. Single-replica stateful pods
+# (timescaledb) are deliberately excluded: a maxUnavailable=0 PDB there would
+# block node drains entirely, and minAvailable=1 gives no protection with one
+# replica — HA for the DB needs a real replica/failover, tracked separately.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: backend-pdb
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: backend
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: frontend-pdb
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: frontend
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: redpanda-pdb
+spec:
+  # At most one broker down at a time keeps quorum (2 of 3) and keeps RF=3
+  # partitions available through a rolling node drain.
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: redpanda

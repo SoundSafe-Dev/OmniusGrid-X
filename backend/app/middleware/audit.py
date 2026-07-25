@@ -10,7 +10,7 @@ from typing import Optional, Dict, Any
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, insert
+from sqlalchemy import insert, select, text
 import structlog
 
 from app.db.database import AsyncSessionLocal
@@ -208,6 +208,28 @@ class AuditLoggingMiddleware(BaseHTTPMiddleware):
             from app.db.models import AuditLog
             
             async with AsyncSessionLocal() as session:
+                # audit_logs is ENABLE + FORCE ROW LEVEL SECURITY (migrations
+                # 011/033), and FORCE means the policy applies even to the table
+                # owner — so this INSERT is rejected unless app.current_org_id is
+                # set on the connection. AsyncSessionLocal never sets it, so
+                # every audit write failed with InsufficientPrivilegeError and
+                # was swallowed by the handler below: the audit trail has been
+                # silently empty on real deployments while every request
+                # appeared to succeed.
+                #
+                # is_local=true (transaction-scoped), NOT false. get_tenant_db
+                # uses false but pairs it with an explicit reset in a finally
+                # block, precisely so the value can't ride a pooled connection
+                # into someone else's request. This writer has no such teardown,
+                # so it uses the transaction-scoped form the ingestion worker
+                # already uses: the setting reverts when the commit below ends
+                # the transaction, and there is nothing to leak.
+                if organization_id and session.bind.dialect.name == "postgresql":
+                    await session.execute(
+                        text("SELECT set_config('app.current_org_id', :org_id, true)"),
+                        {"org_id": str(organization_id)},
+                    )
+
                 # Insert audit log (hash chain is calculated by database trigger)
                 await session.execute(
                     insert(AuditLog).values(

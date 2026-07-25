@@ -45,7 +45,7 @@ kubectl logs deployment/prod-backend -n omniusgrid --tail=1000 > /tmp/backend-ba
 
 ## Docker Compose rollback
 
-Compose services are defined in [`docker-compose.yml`](../../../docker-compose.yml)
+Compose services are defined in [`docker-compose.yml`](../../docker-compose.yml)
 (`backend`, `ingestion-worker`, `frontend`, `edge-agent-sim`).
 
 ### Step 1 — Identify the target version
@@ -156,7 +156,7 @@ Application code rolls back instantly; **schema changes do not**. If the bad rel
 applied a forward migration, rolling back code alone can leave old code running
 against a new schema.
 
-Migrations live in [`database/migrations/`](../../../database/migrations/).
+Migrations live in [`database/migrations/`](../../database/migrations/).
 
 Decision guide:
 
@@ -172,7 +172,7 @@ deploy:
 # Pick a target time just BEFORE the bad deploy
 infra/scripts/disaster_recovery.sh pitr "YYYY-MM-DD HH:MM:SS"
 ```
-See [dr-timescaledb-failure.md](../dr-timescaledb-failure.md) for full restore
+See [dr-timescaledb-failure.md](../deployment/dr-timescaledb-failure.md) for full restore
 procedures and `infra/scripts/disaster_recovery.sh` for backup/restore commands.
 
 ---
@@ -200,10 +200,10 @@ procedures and `infra/scripts/disaster_recovery.sh` for backup/restore commands.
 
 ## Related documentation
 - [Runbook index](README.md)
-- [Backend crash runbook](../dr-backend-crash.md)
+- [Backend crash runbook](../deployment/dr-backend-crash.md)
 - [RTO/RPO verification checklist](rto-rpo-checklist.md)
 - [Communication templates](incident-communication-templates.md)
-- [docker-compose.yml](../../../docker-compose.yml)
+- [docker-compose.yml](../../docker-compose.yml)
 - [infrastructure/k8s/base/backend-deployment.yaml](../../infrastructure/k8s/base/backend-deployment.yaml)
 
 ---

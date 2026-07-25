@@ -220,10 +220,22 @@ def decode_signed_download_token(
 def verify_signed_download_token(
     token: str,
     expected_purpose: str,
-    job_id: UUID,
+    job_id: UUID | str,
 ) -> VerifiedDownloadToken:
+    """Verify a signed download token and bind it to ``job_id``.
+
+    ``job_id`` accepts a ``UUID`` or its canonical string form. That tolerance is
+    deliberate rather than sloppy: the token payload round-trips through JSON, so
+    ``verified.job_id`` is always a ``UUID``, while the ORM's ``UUIDString`` type
+    reads ids back as dashed STRINGS on every dialect (FS-55, so JSON output is
+    uniform). Any caller that pulls an id off a model — a worker, a background
+    task — therefore holds a str, and a bare ``!=`` rejected a token that was in
+    fact valid. Comparing canonically removes the footgun without weakening the
+    check: the strings are the same length and format, so this is not a loosened
+    match, just a type-agnostic one.
+    """
     verified = decode_signed_download_token(token, expected_purpose)
-    if verified.job_id != job_id:
+    if str(verified.job_id) != str(job_id):
         raise SignedTokenError("job_id_mismatch")
     return verified
 

@@ -14,6 +14,7 @@ from app.db.models import Operation, Asset, PackMLState
 from app.models.schemas import OperationCreate, OperationResponse
 
 from app.api.auth import get_current_active_user
+from app.core.tenant import get_tenant_db
 from app.middleware.rbac import require_operator_or_admin
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
@@ -60,7 +61,7 @@ async def list_operations(
     start_time: Optional[datetime] = None,
     end_time: Optional[datetime] = None,
     page: PageParams = Depends(),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """List operations with filtering (paginated).
 
@@ -100,7 +101,7 @@ async def list_operations(
 async def get_active_operations(
     organization_id: Optional[UUID] = None,
     workcell_id: Optional[UUID] = None,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get currently running operations"""
     query = select(Operation).where(Operation.status == 'running')
@@ -138,7 +139,7 @@ async def get_active_operations(
 @router.get("/{operation_id}", response_model=OperationResponse)
 async def get_operation(
     operation_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get a single operation by ID"""
     result = await db.execute(
@@ -155,7 +156,7 @@ async def get_operation(
 @router.post("/", response_model=OperationResponse, dependencies=[Depends(require_operator_or_admin)])
 async def create_operation(
     operation_data: OperationCreate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Start a new operation"""
     # Verify asset exists
@@ -182,7 +183,7 @@ async def complete_operation(
     operation_id: UUID,
     success: bool = True,
     metadata: Optional[dict] = None,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Mark an operation as completed"""
     result = await db.execute(
@@ -257,7 +258,7 @@ async def _calculate_state_durations(operation: Operation, db: AsyncSession):
 @router.get("/{operation_id}/packml-summary", response_model=PackMLSummaryResponse)
 async def get_operation_packml_summary(
     operation_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get PackML state breakdown for an operation"""
     result = await db.execute(

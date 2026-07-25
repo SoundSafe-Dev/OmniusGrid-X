@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     REDPANDA_COMMAND_TOPIC: str = "opsgrid.commands"
     REDPANDA_COMMAND_ACK_TOPIC: str = "opsgrid.commands.acks"
     REDPANDA_COMMAND_DLQ_TOPIC: str = "opsgrid.commands.dlq"
+    # Poison telemetry/state/alarm messages the ingestion worker can't process
+    # go here instead of being silently dropped as the offset auto-commits past
+    # them. Lets them be inspected/replayed rather than lost.
+    REDPANDA_INGESTION_DLQ_TOPIC: str = "opsgrid.ingestion.dlq"
     REDPANDA_EXPORT_TOPIC: str = "opsgrid.exports"
     REDPANDA_COMPLIANCE_REPORTS_TOPIC: str = "opsgrid.compliance-reports"
     AGENT_STATUS_TOPIC: str = "opsgrid.agent-status"
@@ -122,6 +126,14 @@ class Settings(BaseSettings):
     EXPORT_SCHEDULER_ENABLED: bool = True
     EXPORT_SCHEDULER_INTERVAL_SECONDS: int = 30
     EXPORT_STORAGE_PATH: str = "/var/lib/omniusgrid/exports"
+    # When true, generated export/compliance artifacts are stored in object
+    # storage (S3/SeaweedFS) instead of the pod's local disk, and downloads
+    # stream from there. This is required in any multi-pod deployment: a worker
+    # generates the file on its own node while the API serves the download from a
+    # DIFFERENT pod, so a pod-local file is invisible to the API and the download
+    # 404s. Off by default so dev/single-node keeps the simple local path.
+    EXPORT_USE_S3: bool = False
+    S3_EXPORT_BUCKET: str = "omniusgrid-exports"
     EXPORT_PUBLIC_BASE_URL: str = "http://localhost:8002"
     EXPORT_LINK_EXPIRE_MINUTES: int = 1440
     SIGNED_URL_SECRET_KEY: str = ""
@@ -232,6 +244,16 @@ class Settings(BaseSettings):
     RAG_CHARS_PER_TOKEN: float = 4.0  # heuristic used to convert tokens<->chars
     RAG_MIN_CHUNK_CHARS: int = 40  # merge a trailing chunk shorter than this
     RAG_EMBED_BATCH: int = 32  # chunks embedded per rag-inference request
+    # Ingestion guardrails (durability). Upload cap matches the k8s ingress
+    # proxy-body-size so local and prod reject the same files; the per-doc chunk
+    # cap stops a pathological document from exploding embeddings/Qdrant/memory.
+    RAG_MAX_UPLOAD_BYTES: int = 50 * 1024 * 1024  # 50 MiB, mirrors ingress
+    RAG_MAX_CHUNKS_PER_DOC: int = 2000  # hard cap; larger docs are truncated + flagged
+    # Per-citation snippet preview length. A citation shows a window of its source
+    # chunk; too short and the cited fact falls outside the preview (e.g. a long
+    # table row or an unstructured .txt chunk whose match sits past the cutoff).
+    RAG_CITATION_SNIPPET_CHARS: int = 600
+    RAG_TABLE_ROWS_PER_BLOCK: int = 1  # table rows per citable block (1 = one row/block)
 
     # Retrieval (query path). Hybrid search returns RAG_RETRIEVE_LIMIT fused
     # candidates; the reranker cuts them to RAG_RERANK_TOP_N passages, capped at

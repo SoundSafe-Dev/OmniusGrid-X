@@ -388,7 +388,7 @@ export const YardManagement: FC = () => {
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
                           <span className={`w-2 h-2 rounded-full ${getStatusColor(trailer.status)}`} />
-                          <span className="capitalize">{trailer.status.replace('_', ' ')}</span>
+                          <span className="capitalize">{trailer.status?.replace('_', ' ')}</span>
                         </div>
                       </td>
                       <td className="px-4 py-3 text-sm">{trailer.carrierName}</td>
@@ -443,7 +443,7 @@ export const YardManagement: FC = () => {
                 <span className={`w-3 h-3 rounded-full ${getDoorStatusColor(door.status)}`} />
               </div>
               <p className="text-sm text-opsgrid-text-secondary mb-2">{door.workcellName}</p>
-              <p className="text-sm capitalize">{door.status.replace('_', ' ')}</p>
+              <p className="text-sm capitalize">{door.status?.replace('_', ' ')}</p>
               {door.currentTrailerId && (
                 <div className="mt-3 pt-3 border-t border-opsgrid-border">
                   <p className="text-sm font-medium">Occupied by:</p>
@@ -502,7 +502,7 @@ export const YardManagement: FC = () => {
                           appt.status === 'complete' ? 'bg-gray-500/20 text-gray-500' :
                           'bg-yellow-500/20 text-yellow-500'
                         }`}>
-                          {appt.status.replace('_', ' ')}
+                          {appt.status?.replace('_', ' ')}
                         </span>
                       </td>
                       <td className="px-4 py-3">
@@ -753,11 +753,11 @@ const TrailerDetailModal: FC<{
             </div>
             <div>
               <p className="text-sm text-opsgrid-text-secondary">Type</p>
-              <p className="font-medium capitalize">{trailer.trailerType.replace('_', ' ')}</p>
+              <p className="font-medium capitalize">{trailer.trailerType?.replace('_', ' ')}</p>
             </div>
             <div>
               <p className="text-sm text-opsgrid-text-secondary">Status</p>
-              <p className="font-medium capitalize">{trailer.status.replace('_', ' ')}</p>
+              <p className="font-medium capitalize">{trailer.status?.replace('_', ' ')}</p>
             </div>
             <div>
               <p className="text-sm text-opsgrid-text-secondary">Current Location</p>

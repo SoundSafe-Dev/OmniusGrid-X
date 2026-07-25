@@ -502,6 +502,28 @@ class GeoTabService:
             stmt = stmt.where(GeoTabTrip.organization_id == organization_id)
         rows = (await db.execute(stmt)).scalars().all()
 
+        # Exceptions for the event counts, fetched ONCE rather than per trip
+        # (was an N+1: one SELECT on geotab_exceptions per trip). Every trip's
+        # window starts at or after the earliest trip start, so a single fetch of
+        # this device's exceptions from that point captures everything any trip
+        # could match; each trip then filters this list in Python with the exact
+        # same predicate as before (timestamp >= start [and <= end]), preserving
+        # the original semantics including overlap double-counting and the
+        # no-upper-bound case when a trip has no end_time. Not org-filtered —
+        # matching the original query, which keyed only on device_id + timestamp.
+        device_exceptions: list = []
+        if rows:
+            earliest_start = min(t.start_time for t in rows)
+            exc_stmt = (
+                select(GeoTabException)
+                .where(
+                    GeoTabException.device_id == device_id,
+                    GeoTabException.timestamp >= earliest_start,
+                )
+                .order_by(GeoTabException.timestamp)
+            )
+            device_exceptions = list((await db.execute(exc_stmt)).scalars().all())
+
         for trip in rows:
             distance_km = (
                 round(float(trip.distance_miles) * 1.60934, 1)
@@ -513,13 +535,11 @@ class GeoTabService:
 
             # Event counts come from exceptions recorded during the trip window.
             counts = {"harsh_braking": 0, "harsh_acceleration": 0, "speeding": 0}
-            exc_stmt = select(GeoTabException).where(
-                GeoTabException.device_id == device_id,
-                GeoTabException.timestamp >= trip.start_time,
-            )
-            if trip.end_time:
-                exc_stmt = exc_stmt.where(GeoTabException.timestamp <= trip.end_time)
-            for exc in (await db.execute(exc_stmt)).scalars().all():
+            for exc in device_exceptions:
+                if exc.timestamp < trip.start_time:
+                    continue
+                if trip.end_time and exc.timestamp > trip.end_time:
+                    continue
                 if exc.exception_type in counts:
                     counts[exc.exception_type] += 1
 

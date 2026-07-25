@@ -1,0 +1,38 @@
+# Repo-root build context is used by backend/Dockerfile (it needs both
+# backend/ and database/migrations). Keep the context small: exclude
+# everything the backend image doesn't COPY. frontend/ and edge-agent/
+# keep their own build contexts, so this file does not affect them.
+.git
+.github
+.claude
+.vscode
+.DS_Store
+*.pem
+
+# Big non-build trees
+frontend
+edge-agent
+infrastructure
+infra
+docs
+dataset_synthesis
+Stress Test Workbooks
+*.csv
+*.numbers
+*.xlsx
+*.png
+*.jpg
+*.md
+
+# Python cruft (applies inside backend/ too)
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.mypy_cache
+**/.venv
+**/venv
+
+# Local env files must never be baked into images
+**/.env
+**/.env.*
+!**/.env.example

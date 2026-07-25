@@ -1,8 +1,12 @@
 import { FC, useState, FormEvent } from 'react';
-import { useNavigate, useLocation, Link } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { Eye, EyeOff, AlertCircle, Zap } from 'lucide-react';
 import { useAuthStore } from '../../stores';
-import { Input, Button } from '../../components';
+// Import from components/ui directly, not the top-level ./components barrel:
+// Login is on the eager path (App imports it), and that barrel re-exports the
+// leaflet-backed fleet components whose CSS side-effect import can't tree-shake,
+// so going through it would pull leaflet into the initial bundle.
+import { Input, Button } from '../../components/ui';
 import { Tooltip, TooltipTrigger, TooltipContent, Wordmark } from '../../components/ui';
 
 // Dev login bypass is OFF unless explicitly enabled (VITE_DEV_MODE=true), and
@@ -34,6 +38,10 @@ export const Login: FC = () => {
         name: 'Dev Admin',
         role: 'admin',
         isActive: true,
+        // The seeded demo org (== the dev-token org, see seed_demo_data.py). The
+        // real login path gets this from /auth/me; devLogin must set it so
+        // org-scoped endpoints (transportation/geotab) work in the offline demo.
+        organizationId: '00000000-0000-0000-0000-000000000001',
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       }, 'dev-token');
@@ -148,14 +156,14 @@ export const Login: FC = () => {
                 </Tooltip>
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <Link
-                      to="/forgot-password"
-                      className="text-sm text-opsgrid-primary hover:underline"
-                    >
+                    <span className="text-sm text-opsgrid-text-secondary cursor-help">
                       Forgot password?
-                    </Link>
+                    </span>
                   </TooltipTrigger>
-                  <TooltipContent>Reset your password</TooltipContent>
+                  <TooltipContent>
+                    Password resets are handled by your administrator — there is no
+                    self-serve reset.
+                  </TooltipContent>
                 </Tooltip>
               </div>
 
@@ -174,9 +182,7 @@ export const Login: FC = () => {
           <div className="px-6 py-4 bg-opsgrid-bg/50 border-t border-opsgrid-border">
             <p className="text-center text-sm text-opsgrid-text-secondary">
               Don't have an account?{' '}
-              <Link to="/register" className="text-opsgrid-primary hover:underline">
-                Contact administrator
-              </Link>
+              <span className="text-opsgrid-primary">Contact your administrator</span>
             </p>
           </div>
         </div>

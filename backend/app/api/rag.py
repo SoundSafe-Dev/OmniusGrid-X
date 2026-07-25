@@ -19,6 +19,7 @@ from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel, Field
 
+from app.core.config import settings
 from app.api.auth import get_current_active_user
 from app.db.models import User
 from app.services.rag_ingestion import get_ingestion_pipeline, IngestionResult
@@ -56,6 +57,14 @@ async def ingest(
     content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Empty file.")
+    if len(content) > settings.RAG_MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"File too large ({len(content)} bytes); the limit is "
+                f"{settings.RAG_MAX_UPLOAD_BYTES} bytes."
+            ),
+        )
     try:
         return await get_ingestion_pipeline().ingest_document(
             content=content,

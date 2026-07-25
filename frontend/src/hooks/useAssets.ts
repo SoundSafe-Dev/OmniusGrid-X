@@ -95,19 +95,20 @@ export function useOrganizations() {
   });
 }
 
-// Dashboard
-export function useDashboardOverview(organizationId?: string) {
+// Dashboard — the organization always comes from the authenticated user
+// server-side, so there is no org argument to thread through.
+export function useDashboardOverview() {
   return useQuery<DashboardOverview, Error>({
-    queryKey: [DASHBOARD_QUERY_KEY, 'overview', organizationId],
-    queryFn: () => dashboardApi.getOverview(organizationId),
+    queryKey: [DASHBOARD_QUERY_KEY, 'overview'],
+    queryFn: () => dashboardApi.getOverview(),
     refetchInterval: 30000, // Refresh every 30 seconds
   });
 }
 
-export function useFleetOEE(organizationId?: string, hours: number = 24) {
+export function useFleetOEE(hours: number = 24) {
   return useQuery<FleetOEE, Error>({
-    queryKey: [DASHBOARD_QUERY_KEY, 'fleet-oee', organizationId, hours],
-    queryFn: () => dashboardApi.getFleetOEE(organizationId, hours),
+    queryKey: [DASHBOARD_QUERY_KEY, 'fleet-oee', hours],
+    queryFn: () => dashboardApi.getFleetOEE(hours),
     refetchInterval: 60000, // Refresh every minute
   });
 }

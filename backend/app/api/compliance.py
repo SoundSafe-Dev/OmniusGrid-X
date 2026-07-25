@@ -95,7 +95,6 @@ async def create_vendor_assessment(
 
     db.add(assessment)
     await db.commit()
-    await db.refresh(assessment)
 
     logger.info(
         "vendor_assessment_created",
@@ -231,7 +230,6 @@ async def create_security_asset(
 
     db.add(asset)
     await db.commit()
-    await db.refresh(asset)
 
     logger.info(
         "security_asset_created",

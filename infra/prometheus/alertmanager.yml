@@ -26,6 +26,15 @@ route:
         severity: high
       receiver: 'slack-high'
 
+    # Warning: actionable operational signals (elevated API error rate,
+    # unhandled-exception spikes, ingestion lag, notification/error-tracker
+    # delivery failing). ~11 alert rules use this severity; without a route they
+    # matched nothing and fell through to the general catch-all receiver instead
+    # of the alerts channel. Route to the same #opsgrid-alerts as high.
+    - match:
+        severity: warning
+      receiver: 'slack-high'
+
     # Medium severity to Slack #opsgrid-info
     - match:
         severity: medium

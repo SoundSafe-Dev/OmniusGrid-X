@@ -426,20 +426,15 @@ class YardManagementService:
     ) -> List[Dict[str, Any]]:
         """Get dwell time analytics for date range"""
         async with (db or AsyncSessionLocal()) as session:
+            # dwell_hours used Postgres-only EXTRACT(EPOCH ...) / NOW(), which
+            # errors on SQLite (the offline demo). Select raw columns and compute
+            # the interval in Python so this is dialect-portable.
             query = text("""
-                SELECT 
+                SELECT
                     yt.id as trailer_id,
                     yt.trailer_number,
                     yt.check_in_at,
                     yt.check_out_at,
-                    COALESCE(
-                        EXTRACT(EPOCH FROM (yt.check_out_at - yt.check_in_at)) / 3600,
-                        EXTRACT(EPOCH FROM (NOW() - yt.check_in_at)) / 3600
-                    ) as dwell_hours,
-                    CASE 
-                        WHEN dwt.detention_charge > 0 THEN true 
-                        ELSE false 
-                    END as is_detention,
                     dwt.detention_charge
                 FROM yard_trailers yt
                 LEFT JOIN driver_wait_times dwt ON dwt.trailer_id = yt.id
@@ -448,7 +443,7 @@ class YardManagementService:
                 AND yt.check_in_at <= :end_date
                 ORDER BY yt.check_in_at DESC
             """)
-            
+
             result = await session.execute(
                 query,
                 {
@@ -457,20 +452,34 @@ class YardManagementService:
                     'end_date': end_date
                 }
             )
-            
-            rows = result.fetchall()
-            return [
-                {
+
+            def _aware(d):
+                if d is None:
+                    return None
+                # Raw text() over SQLite returns datetimes as ISO strings (no ORM
+                # type coercion); asyncpg/Postgres returns real datetimes. Handle both.
+                if isinstance(d, str):
+                    d = datetime.fromisoformat(d)
+                return d if d.tzinfo is not None else d.replace(tzinfo=timezone.utc)
+
+            now = datetime.now(timezone.utc)
+            out = []
+            for row in result.fetchall():
+                check_in = _aware(row.check_in_at)
+                check_out = _aware(row.check_out_at)
+                end = check_out or now
+                dwell_hours = (end - check_in).total_seconds() / 3600 if check_in else 0.0
+                detention = float(row.detention_charge or 0)
+                out.append({
                     'trailer_id': row.trailer_id,
                     'trailer_number': row.trailer_number,
                     'check_in_at': row.check_in_at,
                     'check_out_at': row.check_out_at,
-                    'dwell_hours': round(float(row.dwell_hours or 0), 2),
-                    'is_detention': row.is_detention,
-                    'detention_charge': float(row.detention_charge or 0)
-                }
-                for row in rows
-            ]
+                    'dwell_hours': round(dwell_hours, 2),
+                    'is_detention': detention > 0,
+                    'detention_charge': detention,
+                })
+            return out
     
     async def create_driver_wait_time(
         self,

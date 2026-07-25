@@ -147,7 +147,7 @@ export default function AuditLogs() {
   }, [skip, actionFilter, resourceTypeFilter, dateFrom, dateTo]);
 
   const filteredLogs = logs.filter(log =>
-    log.action.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    log.action?.toLowerCase().includes(searchTerm.toLowerCase()) ||
     log.resource_type?.toLowerCase().includes(searchTerm.toLowerCase()) ||
     log.user_id?.toLowerCase().includes(searchTerm.toLowerCase())
   );

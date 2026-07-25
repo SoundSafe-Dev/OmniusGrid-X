@@ -4,6 +4,7 @@ import {
   Wrench, CheckCircle
 } from 'lucide-react';
 import { fleetHealthApi } from '../../api';
+import { SkeletonCard } from '../ui/Skeleton';
 import type { VehicleHealthStatus, DiagnosticTroubleCode, SecurityEvent, DriverSafetyMetrics } from '../../types';
 
 const getStatusColor = (status: string) => {
@@ -44,24 +45,35 @@ export const HealthSecurityPanel: FC = () => {
     total: 0, online: 0, offline: 0, maintenance: 0, warning: 0,
     avgSafetyScore: 0, totalActiveDTCs: 0, criticalDTCs: 0,
   });
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     loadData();
   }, []);
 
   const loadData = async () => {
-    const [vehiclesData, dtcsData, securityData, metricsData, statsData] = await Promise.all([
-      fleetHealthApi.getAllVehicleHealth(),
-      fleetHealthApi.getAllDTCs(),
-      fleetHealthApi.getSecurityEvents(),
-      fleetHealthApi.getDriverSafetyMetrics(),
-      fleetHealthApi.getHealthStatistics(),
-    ]);
-    setVehicles(vehiclesData);
-    setDtcs(dtcsData);
-    setSecurityEvents(securityData);
-    setDriverMetrics(metricsData);
-    setStats(statsData);
+    setIsLoading(true);
+    setError(null);
+    try {
+      const [vehiclesData, dtcsData, securityData, metricsData, statsData] = await Promise.all([
+        fleetHealthApi.getAllVehicleHealth(),
+        fleetHealthApi.getAllDTCs(),
+        fleetHealthApi.getSecurityEvents(),
+        fleetHealthApi.getDriverSafetyMetrics(),
+        fleetHealthApi.getHealthStatistics(),
+      ]);
+      setVehicles(vehiclesData);
+      setDtcs(dtcsData);
+      setSecurityEvents(securityData);
+      setDriverMetrics(metricsData);
+      setStats(statsData);
+    } catch (err) {
+      console.error('Failed to load fleet health data:', err);
+      setError('Failed to load fleet health & security data. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleAcknowledgeSecurity = async (eventId: string) => {
@@ -90,6 +102,20 @@ export const HealthSecurityPanel: FC = () => {
         </div>
       )}
 
+      {isLoading ? (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="bg-opsgrid-panel border border-opsgrid-border rounded-lg">
+              <SkeletonCard lines={5} />
+            </div>
+          ))}
+        </div>
+      ) : error ? (
+        <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-4">
+          <p className="text-status-alarm text-sm">{error}</p>
+        </div>
+      ) : (
+      <>
       {/* Stats Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-4">
@@ -137,6 +163,9 @@ export const HealthSecurityPanel: FC = () => {
             </h3>
           </div>
           <div className="p-3 grid grid-cols-1 gap-2 max-h-[400px] overflow-y-auto">
+            {vehicles.length === 0 && (
+              <p className="p-4 text-sm text-gray-500 text-center">No vehicles reporting.</p>
+            )}
             {vehicles.map(vehicle => (
               <div 
                 key={vehicle.vehicleId}
@@ -195,6 +224,9 @@ export const HealthSecurityPanel: FC = () => {
               </h3>
             </div>
             <div className="max-h-[200px] overflow-y-auto">
+              {dtcs.length === 0 && (
+                <p className="p-4 text-sm text-gray-500 text-center">No active diagnostic codes.</p>
+              )}
               {dtcs.slice(0, 10).map(dtc => (
                 <div key={`${dtc.code}-${dtc.vehicleId}`} className="p-3 border-b border-opsgrid-border">
                   <div className="flex items-start gap-2">
@@ -219,6 +251,9 @@ export const HealthSecurityPanel: FC = () => {
               </h3>
             </div>
             <div className="max-h-[200px] overflow-y-auto">
+              {unacknowledgedSecurity.length === 0 && (
+                <p className="p-4 text-sm text-gray-500 text-center">No unacknowledged security events.</p>
+              )}
               {securityEvents.filter(e => !e.acknowledged).slice(0, 5).map(event => (
                 <div key={event.id} className="p-3 border-b border-opsgrid-border">
                   <div className="flex items-start gap-2">
@@ -226,7 +261,7 @@ export const HealthSecurityPanel: FC = () => {
                       <AlertTriangle className="w-4 h-4" />
                     </div>
                     <div className="flex-1">
-                      <p className="font-medium text-sm">{event.eventType.replace(/_/g, ' ')}</p>
+                      <p className="font-medium text-sm">{event.eventType?.replace(/_/g, ' ')}</p>
                       <p className="text-xs text-gray-600">{event.description}</p>
                       <p className="text-xs text-gray-500 mt-1">{event.vehicleNumber} • {new Date(event.timestamp).toLocaleString()}</p>
                     </div>
@@ -251,6 +286,9 @@ export const HealthSecurityPanel: FC = () => {
               </h3>
             </div>
             <div className="max-h-[150px] overflow-y-auto">
+              {driverMetrics.length === 0 && (
+                <p className="p-4 text-sm text-gray-500 text-center">No driver safety data.</p>
+              )}
               {driverMetrics.sort((a, b) => b.overallScore - a.overallScore).slice(0, 5).map(driver => (
                 <div key={driver.driverId} className="p-3 border-b border-opsgrid-border flex items-center justify-between">
                   <div>
@@ -274,6 +312,8 @@ export const HealthSecurityPanel: FC = () => {
           </div>
         </div>
       </div>
+      </>
+      )}
     </div>
   );
 };

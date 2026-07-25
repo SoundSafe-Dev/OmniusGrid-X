@@ -1,15 +1,25 @@
 import { FC } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Cloud, Upload, Wifi, Shield, Clock } from 'lucide-react';
+import { Cloud, Upload, Shield, Clock, Server } from 'lucide-react';
 import { Card, Badge, Button, SkeletonCard } from '../../components';
 import { enginesApi } from '../../api';
-import { formatBytes, formatDateTime, formatDuration } from '../../utils';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
+
+// The backend `/cloud/status` (cloud_gateway.get_stats) returns only these
+// fields — connection flag, queue size, endpoint host and the mTLS flag.
+// Anything else (egress totals, compression, bandwidth, cert expiry, uptime)
+// is not sent, so we render strictly from what actually arrives.
+interface CloudStatus {
+  connected: boolean;
+  queueSize: number;
+  endpoint: string;
+  mtlsEnabled: boolean;
+}
 
 export const CloudGateway: FC = () => {
   const queryClient = useQueryClient();
 
-  const { data: status, isLoading } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ['cloud-gateway-status'],
     queryFn: () => enginesApi.getCloudGatewayStatus(),
     refetchInterval: 10000,
@@ -29,11 +39,27 @@ export const CloudGateway: FC = () => {
     );
   }
 
+  const status = data as unknown as CloudStatus | undefined;
   const isConnected = status?.connected || false;
-  const egress = status?.egressStats;
 
   return (
     <div className="space-y-6">
+      {isError && (
+        <Card className="p-4">
+          <p className="text-status-alarm text-sm">
+            Failed to load gateway status. Retrying automatically…
+          </p>
+        </Card>
+      )}
+
+      {flushMutation.isError && (
+        <Card className="p-4">
+          <p className="text-status-alarm text-sm">
+            Flush failed. The queued data could not be sent — please try again.
+          </p>
+        </Card>
+      )}
+
       {/* Connection Status */}
       <Card className="p-6">
         <div className="flex items-center justify-between">
@@ -41,25 +67,17 @@ export const CloudGateway: FC = () => {
             <TooltipTrigger asChild>
               <div className="flex items-center gap-4">
                 <div className={`p-4 rounded-xl ${isConnected ? 'bg-status-running/20' : 'bg-status-offline/20'}`}>
-                  {isConnected ? (
-                    <Cloud className="w-10 h-10 text-status-running" />
-                  ) : (
-                    <Cloud className="w-10 h-10 text-status-offline" />
-                  )}
+                  <Cloud className={`w-10 h-10 ${isConnected ? 'text-status-running' : 'text-status-offline'}`} />
                 </div>
                 <div>
                   <h2 className="text-2xl font-bold">{isConnected ? 'Connected' : 'Disconnected'}</h2>
                   <p className="text-opsgrid-text-secondary">
-                    {isConnected
-                      ? `Last sync: ${status?.lastSyncAt ? formatDateTime(status.lastSyncAt) : 'Never'}`
-                      : status?.lastDisconnectedAt
-                      ? `Disconnected at: ${formatDateTime(status.lastDisconnectedAt)}`
-                      : 'Connection status unknown'}
+                    {status?.endpoint ? `Endpoint: ${status.endpoint}` : 'Endpoint unknown'}
                   </p>
                 </div>
               </div>
             </TooltipTrigger>
-            <TooltipContent>Cloud gateway connection status and sync information</TooltipContent>
+            <TooltipContent>Cloud gateway connection status</TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -73,20 +91,20 @@ export const CloudGateway: FC = () => {
       </Card>
 
       {/* Quick Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Tooltip>
           <TooltipTrigger asChild>
             <Card className="p-4">
               <div className="flex items-center gap-3">
-                <Upload className="w-5 h-5 text-opsgrid-primary" />
+                <Clock className="w-5 h-5 text-opsgrid-primary" />
                 <div>
-                  <p className="text-sm text-opsgrid-text-secondary">Data Sent</p>
-                  <p className="font-medium">{egress ? formatBytes(egress.totalBytesSent) : '—'}</p>
+                  <p className="text-sm text-opsgrid-text-secondary">Queue Depth</p>
+                  <p className="font-medium">{status?.queueSize ?? 0} items</p>
                 </div>
               </div>
             </Card>
           </TooltipTrigger>
-          <TooltipContent>Total data sent to cloud</TooltipContent>
+          <TooltipContent>Number of items awaiting upload to the cloud</TooltipContent>
         </Tooltip>
 
         <Tooltip>
@@ -95,47 +113,28 @@ export const CloudGateway: FC = () => {
               <div className="flex items-center gap-3">
                 <Shield className="w-5 h-5 text-opsgrid-primary" />
                 <div>
-                  <p className="text-sm text-opsgrid-text-secondary">Compression</p>
-                  <p className="font-medium">
-                    {egress ? `${(egress.compressionRatio * 100).toFixed(0)}%` : '—'}
-                  </p>
+                  <p className="text-sm text-opsgrid-text-secondary">mTLS</p>
+                  <p className="font-medium">{status?.mtlsEnabled ? 'Enabled' : 'Disabled'}</p>
                 </div>
               </div>
             </Card>
           </TooltipTrigger>
-          <TooltipContent>Data compression ratio</TooltipContent>
+          <TooltipContent>Whether mutual TLS is enabled on the gateway connection</TooltipContent>
         </Tooltip>
 
         <Tooltip>
           <TooltipTrigger asChild>
             <Card className="p-4">
               <div className="flex items-center gap-3">
-                <Wifi className="w-5 h-5 text-opsgrid-primary" />
+                <Server className="w-5 h-5 text-opsgrid-primary" />
                 <div>
-                  <p className="text-sm text-opsgrid-text-secondary">Bandwidth</p>
-                  <p className="font-medium">
-                    {egress ? `${egress.averageBandwidthKbps.toFixed(1)} Kbps` : '—'}
-                  </p>
+                  <p className="text-sm text-opsgrid-text-secondary">Endpoint</p>
+                  <p className="font-medium truncate">{status?.endpoint || '—'}</p>
                 </div>
               </div>
             </Card>
           </TooltipTrigger>
-          <TooltipContent>Average bandwidth usage</TooltipContent>
-        </Tooltip>
-
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Card className="p-4">
-              <div className="flex items-center gap-3">
-                <Clock className="w-5 h-5 text-opsgrid-primary" />
-                <div>
-                  <p className="text-sm text-opsgrid-text-secondary">Queue Depth</p>
-                  <p className="font-medium">{egress?.queueDepth || 0} items</p>
-                </div>
-              </div>
-            </Card>
-          </TooltipTrigger>
-          <TooltipContent>Number of items in upload queue</TooltipContent>
+          <TooltipContent>Cloud endpoint host the gateway targets</TooltipContent>
         </Tooltip>
       </div>
 
@@ -167,42 +166,18 @@ export const CloudGateway: FC = () => {
 
       {/* Security Info */}
       <Card title="Security" subtitle="Connection encryption details">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="p-4 bg-opsgrid-bg rounded-lg">
-            <div className="flex items-center gap-3 mb-2">
-              <Shield className="w-5 h-5 text-status-running" />
-              <p className="font-medium">mTLS Enabled</p>
-            </div>
-            <p className="text-sm text-opsgrid-text-secondary">
-              Mutual TLS authentication ensures secure bidirectional communication
-            </p>
+        <div className="p-4 bg-opsgrid-bg rounded-lg">
+          <div className="flex items-center gap-3 mb-2">
+            <Shield className={`w-5 h-5 ${status?.mtlsEnabled ? 'text-status-running' : 'text-status-offline'}`} />
+            <p className="font-medium">{status?.mtlsEnabled ? 'mTLS Enabled' : 'mTLS Disabled'}</p>
           </div>
-
-          <div className="p-4 bg-opsgrid-bg rounded-lg">
-            <p className="text-sm text-opsgrid-text-secondary mb-1">Certificate Expiry</p>
-            <p className="font-medium">
-              {status?.mTlsCertificateExpiry
-                ? formatDateTime(status.mTlsCertificateExpiry)
-                : 'Unknown'}
-            </p>
-          </div>
+          <p className="text-sm text-opsgrid-text-secondary">
+            {status?.mtlsEnabled
+              ? 'Mutual TLS authentication secures bidirectional communication with the cloud.'
+              : 'Mutual TLS is not enabled on this gateway connection.'}
+          </p>
         </div>
       </Card>
-
-      {/* Uptime */}
-      {status?.connectionUptimeSeconds !== undefined && (
-        <Card className="p-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Wifi className="w-5 h-5 text-opsgrid-primary" />
-              <span className="font-medium">Connection Uptime</span>
-            </div>
-            <span className="text-opsgrid-text-secondary">
-              {formatDuration(status.connectionUptimeSeconds)}
-            </span>
-          </div>
-        </Card>
-      )}
     </div>
   );
 };

@@ -5,6 +5,7 @@ Unit tests for shared_key_detector.
 import pytest
 from app.services.shared_key_detector import (
     normalize_key,
+    normalize_column_header,
     extract_keys_from_text,
     extract_keys_from_filename,
     extract_keys_from_metadata,
@@ -96,3 +97,14 @@ def test_auto_detect_with_manual_keys():
         manual_keys=["MANUAL-KEY"],
     )
     assert len(groups2) == 1
+def test_normalize_key_with_extra_spaces():
+    """
+    normalize_key should clean up extra whitespace and
+    produce the same canonical key.
+    """
+    assert normalize_key("   po   999   ") == "PO-999"
+
+def test_normalize_column_header():
+    assert normalize_column_header("Serial #") == "serial_number"
+    assert normalize_column_header("Asset ID") == "asset_id"
+    assert normalize_column_header("  Work Order  ") == "work_order"
