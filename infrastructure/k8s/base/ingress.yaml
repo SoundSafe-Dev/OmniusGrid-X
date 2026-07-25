@@ -626,3 +626,59 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
+---
+# Redis (base/redis-statefulset.yaml). Under default-deny-all it needs an explicit
+# ingress allow-list; the workload egress rules already permit :6379 outbound, but
+# nothing allowed it INBOUND because the Service did not exist until FS-196.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-redis-ingress
+  namespace: omniusgrid
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: redis
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - backend
+                  - export-worker
+                  - compliance-reports-worker
+                  - ingestion-worker
+                  - ota-rollout-worker
+      ports:
+        - protocol: TCP
+          port: 6379
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-redis-egress
+  namespace: omniusgrid
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: redis
+  policyTypes:
+    - Egress
+  egress:
+    # Cluster DNS only — Redis initiates nothing else.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
