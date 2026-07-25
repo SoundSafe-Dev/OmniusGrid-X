@@ -461,6 +461,10 @@ class IngestionWorker:
         """Process alarm events"""
         alarm = Alarm(
             asset_id=asset_id,
+            # Required since migration 046 (FS-217) and checked by the RLS
+            # WITH CHECK against app.current_org_id, which _process_message set
+            # on this session before dispatching here.
+            organization_id=organization_id,
             alarm_code=data.get('alarm_code', 'UNKNOWN'),
             severity=data.get('severity', 'medium'),
             message=data.get('message', 'Unknown alarm'),

@@ -883,13 +883,25 @@ async def execute_completion_actions(task_id: str, actions: Dict[str, Any], orga
         if not task:
             return
         
-        # Clear alarm if linked
+        # Clear alarm if linked.
+        #
+        # The org join is load-bearing (FS-216). `task` is org-scoped above, but
+        # `alarm_id` is accepted verbatim from the request body on task creation
+        # (see `alarm_id=task_data.alarm_id` above) and is never validated against
+        # the caller's organization. Without this join, org A could create a task
+        # referencing org B's alarm and clear it by completing the task.
+        # `alarms` has no RLS policy, so nothing else would stop it.
         if actions.get("clear_alarm") and task.alarm_id:
             try:
                 result = await session.execute(
-                    select(Alarm).where(Alarm.id == task.alarm_id)
+                    select(Alarm)
+                    .join(Asset, Alarm.asset_id == Asset.id)
+                    .where(
+                        Alarm.id == task.alarm_id,
+                        Asset.organization_id == organization_id,
+                    )
                 )
-                alarm = result.scalar_one_or_none()
+                alarm = result.scalars().first()
                 if alarm and alarm.is_active:
                     alarm.is_active = False
                     alarm.cleared_at = datetime.now(timezone.utc)

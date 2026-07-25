@@ -228,9 +228,13 @@ class HistorianRetentionPolicy(Base):
 
 class Alarm(Base):
     __tablename__ = "alarms"
-    
+
     id = UUIDColumn()
     asset_id = UUIDForeignKey("assets.id")
+    # Added by migration 046 (FS-217). This table previously had NO tenant column,
+    # so RLS could not protect it and tenancy depended entirely on every query
+    # joining `assets` — five of six endpoints did not. Now RLS-enforced.
+    organization_id = UUIDForeignKey("organizations.id")
     alarm_code = Column(String(100), nullable=False)
     severity = Column(String(20), nullable=False)
     message = Column(Text, nullable=False)

@@ -358,12 +358,12 @@ async def main(verify: bool = False) -> int:
         print(f"  telemetry: {rows} rows across 5 assets")
 
         # Vibration alarm at the spike; cleared when the WO completed.
-        db.add(Alarm(asset_id=A_VIB, alarm_code="VIB_HIGH", severity="high",
+        db.add(Alarm(asset_id=A_VIB, organization_id=ORG, alarm_code="VIB_HIGH", severity="high",
                      message="Spindle vibration exceeded ISO zone C (7.1 mm/s)",
                      occurred_at=days_ago(ALARM_D), cleared_at=days_ago(FIXED_D),
                      is_active=False, is_acknowledged=True, acknowledged_by=USER,
                      acknowledged_at=days_ago(1.9)))
-        db.add(Alarm(asset_id=A_AUDIO, alarm_code="ACOUSTIC_ANOMALY", severity="medium",
+        db.add(Alarm(asset_id=A_AUDIO, organization_id=ORG, alarm_code="ACOUSTIC_ANOMALY", severity="medium",
                      message="High-frequency band energy trending up (bearing-wear signature)",
                      occurred_at=days_ago(3.5), is_active=False, is_acknowledged=True,
                      acknowledged_by=USER, acknowledged_at=days_ago(3.4)))
@@ -397,7 +397,7 @@ async def main(verify: bool = False) -> int:
         ]
         for aid, code, sev, msg, h_ago, active, acked, cleared_h in recent_alarms:
             db.add(Alarm(
-                asset_id=aid, alarm_code=code, severity=sev, message=msg,
+                asset_id=aid, organization_id=ORG, alarm_code=code, severity=sev, message=msg,
                 occurred_at=NOW - timedelta(hours=h_ago), is_active=active,
                 is_acknowledged=acked,
                 acknowledged_by=USER if acked else None,
