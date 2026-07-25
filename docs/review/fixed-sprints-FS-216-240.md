@@ -1,5 +1,20 @@
 # Next 25 fixed-sprints — FS-216..240 (Hamad's lane)
 
+> **STATUS as of 2026-07-25.** AN, AO, AP and AQ are complete and pushed. AR is
+> partial. Several premises in this plan turned out to be WRONG once the work
+> started — they are corrected inline below rather than quietly edited away,
+> because the pattern (a plan asserting a defect that had already been fixed, or
+> mis-stating one that had not) is itself worth seeing.
+>
+> | Sprint | Commit | State |
+> |---|---|---|
+> | AN — alarms | `f7a1ce1c`, `ac788ecc` | done |
+> | AO — users/roles | `def2bd05` | done, minus FS-223 (see note) |
+> | AP — tracing/netpol/alerts/DR | `c933eaf8` | done |
+> | AQ — ERP honesty | `84ad7cb3` | done |
+> | AR — proof & contract | `71c46518`, `dcd34992` | FS-237/238/240 done; FS-236 pending evidence; FS-239 not started |
+
+
 Branch: `hamad/converged-pre-main`. Written 2026-07-24. Sprint letters **AN..AR**.
 Mix: **product depth first**, ERP integrity in-lane. Other lanes PARKED.
 
@@ -61,7 +76,7 @@ are prerequisites, not neighbours.
   Extend the FS-201 guard so an RLS-unprotected table queried without an org
   predicate fails CI — the guard currently only catches `get_db` misuse.
 
-- **FS-217 — Migration 049: `alarms.organization_id` + RLS.** Add the column,
+- **FS-217 — Migration 046 (this plan said 049): `alarms.organization_id` + RLS.** Add the column,
   backfill from `assets`, `NOT NULL`, index `(organization_id, occurred_at DESC)`,
   then `ENABLE`/`FORCE ROW LEVEL SECURITY` with the standard
   `app.current_org_id` policy. This makes FS-216 defence-in-depth rather than the
@@ -100,7 +115,17 @@ are prerequisites, not neighbours.
   a typo'd role silently grants nothing. Enumerate roles, add a CHECK constraint,
   centralise the permission matrix, and resolve the **super-admin** role that
   `data_retention.router` is blocked on.
-- **FS-223 — Organization management.** Org CRUD + settings, super-admin only.
+  **Outcome:** done except super-admin, which was NOT invented. Adding the string
+  is the easy 10%; RLS scopes every query to `app.current_org_id`, so a
+  cross-tenant operator needs a deliberate, separately-audited path around it.
+  Defining the role now would make `data_retention` look mountable while the
+  isolation question stayed open. Reasoned out in `app/core/roles.py`.
+  **Also found:** the vocabulary existed in three drifted copies, and two
+  READ-ONLY compliance endpoints were gated `require_roles('admin','viewer')` —
+  which DENIES `operator`, the default role every registered user gets.
+- **FS-223 — Organization management. NOT DONE.** Blocked on the same
+  super-admin question as FS-222 — the useful version of org CRUD is cross-tenant.
+  Own-org settings editing is straightforward and could be done independently.
   Also fix `ORGANIZATION_ID: "dev-org"` hardcoded at
   `base/edge-agent-statefulset.yaml:62,64` (carry-forward FS-184).
 - **FS-224 — Enable the admin UI.** Flip `USER_MGMT_ENABLED`, build the user list
@@ -151,11 +176,20 @@ do** is worse than code that fails, because nothing surfaces it.
   the current success log. Audit the file for siblings.
 - **FS-232 — `erp_database_replication.py` no-ops.** Bare `pass` at `:396`, `:416`.
   Make each either functional or loudly unavailable; no silent success.
-- **FS-233 — GeoTab is 36 `random.*` calls.** No live client. Most serious part:
+- **FS-233 — GeoTab. PREMISE PARTLY WRONG.** The gate this item assumed was
+  missing already existed: FS-25 added `_require_simulated`, and
+  `get_device_location` refuses to invent a position in live mode. The real gap was
+  that the PAYLOADS never declared themselves simulated. Original text follows.
+  36 `random.*` calls, no live client. Most serious part:
   **DOT-regulated HOS numbers are fabricated**. Gate behind an explicit
   `simulated: true` in every response and a startup warning, or implement the
   client. Never present fabricated compliance data as measured.
-- **FS-234 — Finish OEE.** FS-192 made it *honest* (`availability_only: true` at
+- **FS-234 — Finish OEE. LARGELY ALREADY DONE.** FS-192 had already moved the
+  per-asset endpoint onto `oee_calculator`, which computes all three factors for
+  real. The residual was `quality = ... else 1.0`: an asset with no part counters
+  reported "Quality 100%". Fixed with `quality_measured` flags rather than by
+  changing the number, which must stay a neutral multiplier. Original text follows.
+  FS-192 made it *honest* (`availability_only: true` at
   `dashboard.py:226,241`) but performance and quality are still uncomputed, so
   every OEE number is Availability. Compute both from `Telemetry` (cycle-time vs
   ideal, good-vs-total counts) and drop the flag where genuinely computed.
@@ -172,12 +206,21 @@ do** is worse than code that fails, because nothing surfaces it.
   and deselects 3 tests. The code is HARSH's lane — do not fix it here — but give
   the quarantine a named marker and a test that **fails once the expiry passes**,
   so it cannot silently become permanent.
-- **FS-238 — Test the real client path.** `frontend/src/test/setup.ts:9` does
+- **FS-238 — Test the real client path. PREMISE PARTLY WRONG.** Playwright does
+  NOT run in mock mode — `npm run dev` sets no `VITE_USE_MOCK` and it defaults off,
+  so the e2e suite already drives the real client. Only VITEST forces mock mode.
+  Foundation landed (`src/test/realMode.ts` + real-mode tests for the alarms
+  client); the remaining ~200 `USE_MOCK` forks are unconverted. Original text
+  follows. `frontend/src/test/setup.ts:9` does
   `vi.stubEnv('VITE_USE_MOCK','true')`, so **every** unit and Playwright test runs
   against mocks and all **201** `USE_MOCK` references can drift from the real API
   undetected. Add real-mode tests (MSW against the OpenAPI schema), starting with
   the dashboard and the FS-220 alarm-rules page.
-- **FS-239 — An e2e that actually authenticates.** `frontend/e2e/smoke.spec.ts` has
+- **FS-239 — An e2e that actually authenticates. NOT DONE.** The blocker is not
+  the spec: the `frontend-e2e` CI job has no backend, no database and no seed, so an
+  authenticated journey has nothing to authenticate against. That infrastructure has
+  to come first or the spec is a test that cannot run. Original text follows.
+  `frontend/e2e/smoke.spec.ts` has
   3 tests; they assert the login page *renders* and that a protected route
   redirects — nothing ever logs in. Add: login → dashboard shows populated data →
   asset detail → acknowledge alarm → export. This is the test that would have
