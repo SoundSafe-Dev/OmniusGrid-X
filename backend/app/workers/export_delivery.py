@@ -10,6 +10,7 @@ from aiokafka import AIOKafkaConsumer
 from sqlalchemy import select, text
 
 from app.core.config import settings
+from app.workers.health_server import start_health_server
 from app.db.database import AsyncSessionLocal
 from app.db.models import ExportDeliveryJob, ExportTemplate, ScheduledExport
 from app.services.export_delivery import (
@@ -19,6 +20,12 @@ from app.services.export_delivery import (
 from app.services.export_processor import export_processor
 
 logger = structlog.get_logger()
+
+def _health_port():
+    """WORKER_HEALTH_PORT, or None outside Kubernetes (tests/local runs)."""
+    raw = os.getenv("WORKER_HEALTH_PORT")
+    return int(raw) if raw else None
+
 
 
 async def _load_job(job_id: UUID, org_id: UUID):
@@ -180,6 +187,12 @@ async def run() -> None:
         auto_offset_reset="earliest",
     )
     await consumer.start()
+    # stale_after=0: scheduled exports are BURSTY — the topic can be idle for
+    # hours between due runs, so a staleness deadline would restart a perfectly
+    # healthy worker. Readiness-only is the correct liveness semantic here.
+    health = start_health_server("export-delivery", port=_health_port(), stale_after_seconds=0)
+    if health:
+        health.ready()
     try:
         async for message in consumer:
             for attempt in range(1, 4):
@@ -198,6 +211,8 @@ async def run() -> None:
                     if attempt < 3:
                         await asyncio.sleep(5 * attempt)
             await consumer.commit()
+            if health:
+                health.beat()
     finally:
         await export_processor.close()
         await consumer.stop()

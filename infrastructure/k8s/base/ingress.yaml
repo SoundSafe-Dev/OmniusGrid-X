@@ -682,3 +682,40 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
+---
+# Prometheus -> worker /metrics and the kubelet -> worker probes (FS-213/214).
+#
+# The four workers had NO ingress policy at all, because nothing ever routed to
+# them — they are Kafka consumers with no Service. Now that they expose
+# /metrics, /healthz and /readyz on 9109, default-deny-all would block the scrape
+# outright, and the whole point of adding worker metrics is that they leave the
+# pod. This is the same gap that hid the backend and Redpanda scrapes before.
+#
+# Probe traffic originates from the NODE, not a pod, so it is not matched by a
+# podSelector. Most CNIs (Calico included) permit kubelet health checks
+# regardless; if a stricter CNI drops them, add the node CIDR as an ipBlock here.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-worker-metrics-ingress
+  namespace: omniusgrid
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values:
+          - ingestion-worker
+          - export-worker
+          - compliance-reports-worker
+          - ota-rollout-worker
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 9109

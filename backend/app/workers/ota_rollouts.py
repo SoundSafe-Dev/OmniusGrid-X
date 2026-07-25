@@ -3,14 +3,22 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import signal
 
 import structlog
 
 from app.services.command_executor import command_executor
 from app.services.rollout_orchestrator import rollout_orchestrator
+from app.workers.health_server import start_health_server
 
 logger = structlog.get_logger()
+
+
+def _health_port():
+    """WORKER_HEALTH_PORT, or None outside Kubernetes (tests/local runs)."""
+    raw = os.getenv("WORKER_HEALTH_PORT")
+    return int(raw) if raw else None
 
 
 async def run(
@@ -42,6 +50,13 @@ async def run(
         await command_service.start()
         rollout_start_attempted = True
         await rollout_service.start()
+        # stale_after=0: this worker ORCHESTRATES (command executor + rollout
+        # dispatcher run as their own tasks) and then idles on stop_event, so it
+        # has no unit-of-work loop to heartbeat. Readiness is the honest signal —
+        # claiming staleness-based liveness here would be theatre.
+        health = start_health_server("ota-rollouts", port=_health_port(), stale_after_seconds=0)
+        if health:
+            health.ready()
         await stop_event.wait()
     finally:
         try:

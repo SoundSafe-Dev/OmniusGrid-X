@@ -46,6 +46,11 @@ spec:
           port: 9644
         - protocol: TCP
           port: 9187
+        # Worker /metrics (FS-213). Missing this made the worker ingress rule
+        # useless — the scrape was blocked on Prometheus's own egress, which the
+        # enforcement simulator caught before it could reach a cluster.
+        - protocol: TCP
+          port: 9109
         - protocol: TCP
           port: 9093
     # Kubernetes API server (service discovery). The apiserver is off the pod

@@ -16,6 +16,7 @@ import sys
 sys.path.insert(0, '/app')
 
 from app.core.config import settings
+from app.workers.health_server import start_health_server
 from app.core.datetime_utils import aware_utc
 from app.db.database import AsyncSessionLocal
 from app.db.models import Telemetry, PackMLState, Asset, Alarm
@@ -37,6 +38,12 @@ structlog.configure(
 )
 
 logger = structlog.get_logger()
+
+
+def _health_port():
+    """WORKER_HEALTH_PORT, or None outside Kubernetes (tests/local runs)."""
+    raw = os.getenv('WORKER_HEALTH_PORT')
+    return int(raw) if raw else None
 
 
 class IngestionWorker:
@@ -61,6 +68,11 @@ class IngestionWorker:
             settings.AGENT_STATUS_TOPIC,
         )
         self.dlq_topic = settings.REDPANDA_INGESTION_DLQ_TOPIC
+        # Heartbeat for the liveness probe (see workers/health_server.py).
+        # Telemetry is continuous, so a 5-minute gap means wedged, not idle.
+        self._health = start_health_server(
+            'ingestion', port=_health_port(), stale_after_seconds=300.0
+        )
     
     async def start(self):
         """Start the ingestion worker"""
@@ -93,6 +105,8 @@ class IngestionWorker:
         self.consumer.subscribe(pattern='|'.join(topic_patterns))
         
         logger.info("consumer_started", topics=self._topics)
+        if self._health:
+            self._health.ready()
         
         self._running = True
         
@@ -103,6 +117,8 @@ class IngestionWorker:
                 
                 try:
                     await self._process_message(msg)
+                    if self._health:
+                        self._health.beat()
                 except Exception as e:
                     logger.error(
                         "message_processing_failed",
