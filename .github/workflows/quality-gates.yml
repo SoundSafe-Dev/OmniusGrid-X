@@ -530,6 +530,89 @@ jobs:
         working-directory: ./frontend
         run: npm run e2e
 
+  # --- FS-239: authenticated E2E against a LIVE backend ---------------------
+  frontend-e2e-authenticated:
+    runs-on: ubuntu-latest
+    # Separate from frontend-e2e on purpose. That job needs nothing but a browser
+    # and stays fast; this one stands up Postgres, migrations, demo data and
+    # uvicorn, so keeping them together would make every smoke run pay for
+    # infrastructure it does not use.
+    #
+    # This is the test that would have caught FS-191, where the dashboard rendered
+    # every tile as 0 because RLS filtered every row and nothing errored. It can
+    # only catch that against real data, which is why the whole stack is here.
+    services:
+      postgres:
+        image: timescale/timescaledb:latest-pg15
+        env:
+          # The role name matters: migration 004 does
+          # `GRANT SELECT ON pg_stat_statements TO omniusgrid`, so any other
+          # username fails the chain partway through.
+          POSTGRES_USER: omniusgrid
+          POSTGRES_PASSWORD: omniusgrid_dev_password
+          POSTGRES_DB: omniusgrid_test
+        options: >-
+          --health-cmd pg_isready --health-interval 10s
+          --health-timeout 5s --health-retries 5
+        ports: ['5432:5432']
+    env:
+      DATABASE_URL: postgresql+asyncpg://omniusgrid:omniusgrid_dev_password@localhost:5432/omniusgrid_test
+      JWT_SECRET_KEY: e2e-test-secret-key
+      ALLOW_DEV_TOKEN: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install backend deps
+        working-directory: ./backend
+        run: pip install -r requirements.txt
+      - name: Migrate
+        working-directory: ./backend
+        run: python scripts/migrate.py
+      - name: Seed demo data
+        working-directory: ./backend
+        # The dashboard assertions are about NON-ZERO values, so the org this user
+        # lands on has to contain assets, alarms and telemetry. Logging in to an
+        # empty org would pass against a blank page.
+        run: python scripts/seed_demo_data.py
+      - name: Seed the e2e user
+        working-directory: ./backend
+        # seed_demo_data.py's admin carries a placeholder bcrypt hash matching no
+        # known plaintext, so it cannot be logged in as — the demo relies on the
+        # VITE_DEV_MODE bypass instead. This creates a user whose password is
+        # hashed by the application itself.
+        run: python scripts/seed_e2e_user.py
+      - name: Start the backend
+        working-directory: ./backend
+        run: |
+          uvicorn app.main:app --host 127.0.0.1 --port 8000 &
+          for i in $(seq 1 60); do
+            curl -sf http://127.0.0.1:8000/health >/dev/null && break
+            sleep 2
+          done
+          curl -sf http://127.0.0.1:8000/health || { echo "backend did not start"; exit 1; }
+      - name: Install frontend deps
+        working-directory: ./frontend
+        run: npm ci
+      - name: Install Playwright browser
+        working-directory: ./frontend
+        run: npx playwright install --with-deps chromium
+      - name: Authenticated journey
+        working-directory: ./frontend
+        env:
+          E2E_LIVE_BACKEND: "1"
+          # Points the SPA at the backend started above; without it the dev build
+          # guesses http://<hostname>:8000, which is right here but only by luck.
+          VITE_API_URL: http://127.0.0.1:8000
+        run: npx playwright test e2e/authenticated.spec.ts
+
   # --- task 19: pre-commit hooks as a CI gate ------------------------------
   pre-commit:
     runs-on: ubuntu-latest
