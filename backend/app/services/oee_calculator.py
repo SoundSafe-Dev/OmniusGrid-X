@@ -43,6 +43,13 @@ class OEEMetrics:
     good_parts: int = 0
     rejected_parts: int = 0
     ideal_cycle_time_seconds: float = 0.0
+    # Which factors were actually MEASURABLE (FS-234). Quality falls back to 1.0
+    # when there are no part counters, because it has to be a neutral multiplier
+    # for OEE — but reporting "Quality 100%" for a line with no quality
+    # instrumentation is a fabricated figure on a dashboard tile. These flags let
+    # a consumer render "—" instead of a number nobody measured.
+    quality_measured: bool = True
+    performance_measured: bool = True
     actual_cycle_time_seconds: float = 0.0
 
 
@@ -353,16 +360,22 @@ class OEECalculator:
             production_seconds, part_counts['total']
         )
         
+        performance_measured = actual_cycle_time > 0
         performance = (
             ideal_cycle_time / actual_cycle_time
-            if actual_cycle_time > 0 else 0.0
+            if performance_measured else 0.0
         )
-        
+
         # Calculate Quality
         total_parts = part_counts['total']
         good_parts = part_counts['good']
-        quality = good_parts / total_parts if total_parts > 0 else 1.0
-        
+        # 1.0 when there is no part data: quality has to stay a neutral multiplier
+        # so OEE is not zeroed by missing instrumentation. But the flag records
+        # that nothing was measured, because "Quality 100%" on a line with no
+        # part counters is a number the platform invented.
+        quality_measured = total_parts > 0
+        quality = good_parts / total_parts if quality_measured else 1.0
+
         # Calculate OEE
         oee = availability * performance * quality
         
@@ -378,7 +391,9 @@ class OEECalculator:
             good_parts=good_parts,
             rejected_parts=part_counts['rejected'],
             ideal_cycle_time_seconds=ideal_cycle_time,
-            actual_cycle_time_seconds=round(actual_cycle_time, 2)
+            actual_cycle_time_seconds=round(actual_cycle_time, 2),
+            quality_measured=quality_measured,
+            performance_measured=performance_measured,
         )
     
     def _get_state_category(self, state: str) -> OEEStateCategory:

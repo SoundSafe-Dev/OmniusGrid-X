@@ -466,15 +466,27 @@ class KeycloakService:
                 detail="Failed to retrieve organization users"
             )
     
-    async def sync_user_from_keycloak(self, keycloak_user_id: str) -> Dict[str, Any]:
-        """
-        Sync user from Keycloak to local database (SCIM-like).
-        
+    async def fetch_user_from_keycloak(self, keycloak_user_id: str) -> Dict[str, Any]:
+        """Read a user from Keycloak and normalise it for local persistence.
+
+        RENAMED, because the old name and docstring were false (FS-235). It was
+        `sync_user_from_keycloak`, documented as "Sync user from Keycloak to local
+        database (SCIM-like)", and it logged `keycloak_user_synced` on success — but
+        it only ever built a dict and returned it. Nothing was written to the local
+        database, and the method has no session with which to do so.
+
+        The honest fix is the name, not an invented write: the caller decides where
+        this data lands, and there are currently no callers, so inferring the
+        upsert semantics (create vs update, which organization, what to do about a
+        changed email) would be guessing at SSO provisioning behaviour nobody has
+        specified. When a real SCIM sync is built it should take a session and do
+        the write, at which point `*_synced` becomes an accurate event name.
+
         Args:
             keycloak_user_id: Keycloak user ID
-            
+
         Returns:
-            Synced user data
+            Normalised user data, NOT persisted.
         """
         try:
             # Get user from Keycloak
@@ -496,22 +508,22 @@ class KeycloakService:
             }
             
             logger.info(
-                "keycloak_user_synced",
+                "keycloak_user_fetched",
                 keycloak_user_id=keycloak_user_id,
-                username=keycloak_user["username"]
+                username=keycloak_user["username"],
             )
             
             return user_data
             
         except KeycloakError as e:
             logger.error(
-                "keycloak_user_sync_failed",
+                "keycloak_user_fetch_failed",
                 keycloak_user_id=keycloak_user_id,
                 error=str(e)
             )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to sync user from Keycloak"
+                detail="Failed to fetch user from Keycloak"
             )
 
 

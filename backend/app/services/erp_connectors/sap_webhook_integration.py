@@ -299,10 +299,14 @@ class SAPWebhookIntegration:
             )
             
             # Create registry item for production domain
+            # organization_id is required (FS-231): without it the function could
+            # not resolve which tenant's registry to attach to, which is why it
+            # silently created nothing while logging success.
             await self.correlation_patterns.create_registry_items_for_sap(
                 db,
                 "PRODUCTION_OEE",
-                normalized_mo
+                normalized_mo,
+                self.organization_id,
             )
             
         finally:
@@ -344,7 +348,8 @@ class SAPWebhookIntegration:
             await self.correlation_patterns.create_registry_items_for_sap(
                 db,
                 "MAINTENANCE",
-                normalized_wo
+                normalized_wo,
+                self.organization_id,
             )
             
             # High priority WOs should create immediate tasks

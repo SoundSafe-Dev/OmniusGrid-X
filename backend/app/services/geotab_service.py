@@ -33,6 +33,30 @@ def _require_simulated(feature: str) -> None:
             f"client (GEOTAB_DATABASE/USERNAME/PASSWORD)."
         )
 
+
+def _simulated_provenance() -> Dict[str, Any]:
+    """Provenance stamped into every simulated GeoTab payload (FS-233).
+
+    `_require_simulated` already stops fabricated telematics reaching a live
+    deployment — that gate landed in FS-25. What was still missing is that the
+    payloads themselves did not SAY they were simulated, so nothing downstream
+    could tell. That matters most for HOS: `drive_hours_today`, `cycle_hours` and
+    `violations_today` are DOT-regulated figures, and a dashboard, an export or an
+    audit response carrying them looked identical whether they were measured or
+    invented.
+
+    A consumer can now check one field instead of having to know which service
+    produced the data and what mode it was in.
+    """
+    return {
+        "simulated": True,
+        "data_source": "geotab_simulator",
+        "warning": (
+            "Simulated telematics. Not measured from a device and not valid for "
+            "DOT/ELD compliance reporting."
+        ),
+    }
+
 logger = structlog.get_logger()
 
 
@@ -335,17 +359,39 @@ class GeoTabService:
         if not driver:
             raise ValueError(f"Driver {driver_id} not found")
         
-        # Mock HOS data
+        # Simulated HOS. Two things were wrong beyond the data being fake.
+        #
+        # 1. `violations_today` was computed from the REAL
+        #    `driver.hos_drive_hours_today` while every other field was random, so
+        #    the response could report 11.9 simulated drive hours and 0 violations.
+        #    Internally inconsistent numbers are worse than obviously fake ones:
+        #    they look plausible and cannot be reconciled.
+        # 2. Nothing in the payload said it was simulated.
+        #
+        # The remaining figures are now DERIVED from one another, so the response is
+        # at least self-consistent: remaining = limit - used, and the violation flag
+        # reflects the hours actually returned.
+        drive_hours = round(random.uniform(0, 11), 2)
+        on_duty_hours = round(max(drive_hours, random.uniform(0, 14)), 2)
+        cycle_hours = round(random.uniform(on_duty_hours, 70), 2)
+
+        # 49 CFR 395: 11h driving, 14h on-duty window, 70h/8-day cycle.
+        DRIVE_LIMIT, CYCLE_LIMIT = 11.0, 70.0
+
         return {
             "driver_id": str(driver_id),
             "current_status": random.choice(["on_duty", "driving", "off_duty", "sleeper"]),
-            "drive_hours_today": round(random.uniform(0, 11), 2),
-            "on_duty_hours_today": round(random.uniform(0, 14), 2),
-            "cycle_hours": round(random.uniform(0, 70), 2),
-            "drive_hours_remaining": round(random.uniform(0, 11), 2),
-            "cycle_hours_remaining": round(random.uniform(0, 70), 2),
-            "violations_today": 1 if driver.hos_drive_hours_today > 11 else 0,
-            "next_break_required": (datetime.now(timezone.utc) + timedelta(hours=random.randint(0, 8))).isoformat()
+            "drive_hours_today": drive_hours,
+            "on_duty_hours_today": on_duty_hours,
+            "cycle_hours": cycle_hours,
+            "drive_hours_remaining": round(max(0.0, DRIVE_LIMIT - drive_hours), 2),
+            "cycle_hours_remaining": round(max(0.0, CYCLE_LIMIT - cycle_hours), 2),
+            # Derived from the hours in THIS response, not from a different source.
+            "violations_today": int(drive_hours > DRIVE_LIMIT or cycle_hours > CYCLE_LIMIT),
+            "next_break_required": (
+                datetime.now(timezone.utc) + timedelta(hours=random.randint(0, 8))
+            ).isoformat(),
+            **_simulated_provenance(),
         }
     
     async def get_devices(
@@ -595,7 +641,8 @@ class GeoTabService:
             "exceptions_today": random.randint(0, 20),
             "hos_violations_today": random.randint(0, 5),
             "average_fuel_efficiency": round(random.uniform(6, 12), 1),
-            "total_miles_today": round(random.uniform(1000, 10000), 0)
+            "total_miles_today": round(random.uniform(1000, 10000), 0),
+            **_simulated_provenance(),
         }
 
 

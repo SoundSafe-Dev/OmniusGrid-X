@@ -569,6 +569,9 @@
 | **Structured Logging** | JSON-formatted logs with consistent schema for parsing and analysis | Backend |
 | **Structlog** | Python library for structured logging | Backend |
 | **Health Probe** | HTTP endpoint for service liveness and readiness checks | Backend |
+| **False success** | Code that logs a `*_created` / `*_synced` success event for work it never performed. Worse than a crash or a silent no-op: the logs say it worked, so nobody looks. `tests/test_reporting_honesty.py` scans for the shape | Backend |
+| **Simulated provenance** | `simulated: true` + a compliance warning stamped into every simulated GeoTab payload. HOS figures are DOT-regulated, so an invented `drive_hours_today` must not be indistinguishable from a measured one | Backend |
+| **`quality_measured` / `performance_measured`** | Flags recording whether an OEE factor was actually measured. Quality falls back to 1.0 as a neutral multiplier when an asset has no part counters — reporting that as "Quality 100%" is a number the platform invented | Backend |
 | **Deployed-but-dead** | A workload that starts, reports healthy and does nothing, because `default-deny-all` blocks it and no policy grants an exception. otel-collector and jaeger shipped this way; the coverage gate found four more instances on its first run | Backend |
 | **NetworkPolicy coverage gate** | `tests/k8s/check_netpol_coverage.py` — asserts every workload in a default-deny namespace is selected by at least one ingress AND one egress policy. Broad and shallow; the enforcement matrix is narrow and exact. Neither replaces the other | Backend |
 | **`opsgrid_auth_attempts_total`** | Auth outcomes by (outcome, reason). Deliberately NOT labelled by user or IP — an enumeration attack would create one series per attempt and the metric would become the outage | Backend |

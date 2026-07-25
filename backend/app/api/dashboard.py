@@ -166,6 +166,12 @@ async def get_asset_oee(
         "performance": round(metrics.performance / 100, 4),
         "quality": round(metrics.quality / 100, 4),
         "oee": round(metrics.oee / 100, 4),
+        # Whether each factor was actually measured (FS-234). Quality reads 1.0
+        # when an asset has no part counters — a neutral multiplier for OEE, but not
+        # a measurement. A consumer should render "—" rather than "100%" when this
+        # is false.
+        "quality_measured": metrics.quality_measured,
+        "performance_measured": metrics.performance_measured,
         "total_parts": metrics.total_parts,
         "good_parts": metrics.good_parts,
         "state_durations": state_durations,
