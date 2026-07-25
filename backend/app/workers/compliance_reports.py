@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Callable
 from uuid import UUID
@@ -12,6 +13,7 @@ from aiokafka import AIOKafkaConsumer
 from sqlalchemy import select, text
 
 from app.core.config import settings
+from app.workers.health_server import start_health_server
 from app.db.database import AsyncSessionLocal
 from app.db.models import ComplianceReportJob, Organization, ScheduledComplianceReport
 from app.services.compliance_report_queue import MESSAGE_SCHEMA_VERSION
@@ -28,6 +30,12 @@ from app.services.email_service import (
 from app.utils.signed_urls import build_compliance_signed_download_url
 
 logger = structlog.get_logger()
+
+def _health_port():
+    """WORKER_HEALTH_PORT, or None outside Kubernetes (tests/local runs)."""
+    raw = os.getenv("WORKER_HEALTH_PORT")
+    return int(raw) if raw else None
+
 
 DownloadUrlFactory = Callable[[UUID, UUID, datetime], tuple[str, datetime]]
 
@@ -540,6 +548,11 @@ async def run(max_messages: int | None = None) -> None:
         auto_offset_reset="earliest",
     )
     await consumer.start()
+    # stale_after=0 for the same reason as export delivery: compliance report jobs
+    # arrive on a schedule, not continuously.
+    health = start_health_server("compliance-reports", port=_health_port(), stale_after_seconds=0)
+    if health:
+        health.ready()
     try:
         await recover_stale_jobs()
         processed = 0
@@ -555,6 +568,8 @@ async def run(max_messages: int | None = None) -> None:
                 logger.exception("compliance_report_worker_stopping_for_redelivery")
                 raise
             await consumer.commit()
+            if health:
+                health.beat()
             processed += 1
             if max_messages is not None and processed >= max_messages:
                 return

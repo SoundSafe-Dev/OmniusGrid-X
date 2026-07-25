@@ -14,6 +14,13 @@ spec:
       app.kubernetes.io/name: ota-rollout-worker
   template:
     metadata:
+      annotations:
+        # Picked up by the monitoring stack's generic `kubernetes-pods` job, so no
+        # per-worker scrape config is needed. Workers exposed NO metrics before
+        # FS-213 — adding a scrape target would have scraped nothing.
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9109"
+        prometheus.io/path: "/metrics"
       labels:
         app.kubernetes.io/name: ota-rollout-worker
         app.kubernetes.io/component: worker
@@ -80,12 +87,34 @@ spec:
               value: "300"
             - name: OTA_ROLLOUT_DEFAULT_MIN_SUCCESS_RATIO
               value: "1.0"
+            - name: WORKER_HEALTH_PORT
+              value: "9109"
             - name: LOG_LEVEL
               value: "info"
             - name: PYTHONDONTWRITEBYTECODE
               value: "1"
             - name: PYTHONUNBUFFERED
               value: "1"
+          ports:
+            - name: health
+              containerPort: 9109
+          # These Deployments carried NO probes because the workers exposed no
+          # health signal at all (FS-214). A wedged consumer — process alive, loop
+          # dead — ran forever while its queue backed up. /readyz reports startup;
+          # /healthz reports the heartbeat (see app/workers/health_server.py).
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 3
           volumeMounts:
             - name: tmp
               mountPath: /tmp
