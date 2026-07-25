@@ -81,3 +81,14 @@ Stress Test Workbooks/
 dataset_synthesis/output/
 dataset_synthesis/output_smoke/
 dataset_synthesis/**/__pycache__/
+
+# Test + coverage artifacts. These are produced by running the suites locally and
+# were showing up as untracked noise on every `git status`, which is how a real
+# untracked file gets missed.
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/

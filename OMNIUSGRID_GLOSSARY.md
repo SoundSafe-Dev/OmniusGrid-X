@@ -569,6 +569,10 @@
 | **Structured Logging** | JSON-formatted logs with consistent schema for parsing and analysis | Backend |
 | **Structlog** | Python library for structured logging | Backend |
 | **Health Probe** | HTTP endpoint for service liveness and readiness checks | Backend |
+| **Quarantine register** | `backend/tests/test_quarantine.py` — every CI test exclusion carries an owner, a diagnosis and an EXPIRY, and the suite fails when a window lapses, when a quarantined test starts passing, or when the register and the CI flags drift apart | Backend |
+| **Real-mode test** | A frontend test that loads an API module with `VITE_USE_MOCK=false` (`src/test/realMode.ts`). Every other unit test runs against the mock branch, so the ~200 `if (USE_MOCK)` forks could drift from the real request shape undetected | Frontend |
+| **Coverage ratchet** | Thresholds set from a MEASURED baseline rather than an aspiration, so they cannot be met by deleting tests and they fail when new untested code dilutes the total. Frontend 19/15/14/19, backend `--cov-fail-under=54` | Both |
+| **Authenticated journey** | `frontend/e2e/authenticated.spec.ts` — the e2e that logs in and asserts the dashboard shows NON-ZERO values. An "element is visible" assertion would have passed against the FS-191 bug, where every tile rendered 0 with no error | Frontend |
 | **False success** | Code that logs a `*_created` / `*_synced` success event for work it never performed. Worse than a crash or a silent no-op: the logs say it worked, so nobody looks. `tests/test_reporting_honesty.py` scans for the shape | Backend |
 | **Simulated provenance** | `simulated: true` + a compliance warning stamped into every simulated GeoTab payload. HOS figures are DOT-regulated, so an invented `drive_hours_today` must not be indistinguishable from a measured one | Backend |
 | **`quality_measured` / `performance_measured`** | Flags recording whether an OEE factor was actually measured. Quality falls back to 1.0 as a neutral multiplier when an asset has no part counters — reporting that as "Quality 100%" is a number the platform invented | Backend |
