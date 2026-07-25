@@ -62,3 +62,16 @@ patches:
           - api-staging.omniusgrid.local
       - op: remove
         path: /metadata/annotations/cert-manager.io~1cluster-issuer
+  # Same reasoning as the production overlay: staging is a real deployed
+  # environment, so shipping `omniusgrid_dev_secret` there undermines the point of
+  # having a staging environment at all. Provision real staging credentials via
+  # ../../secrets/. base/ keeps its placeholder so a throwaway cluster still works.
+  - target:
+      kind: Secret
+      name: s3-credentials
+    patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: s3-credentials

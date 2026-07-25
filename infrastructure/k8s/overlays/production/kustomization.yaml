@@ -62,3 +62,19 @@ patches:
         value:
           - omniusgrid.local
           - api.omniusgrid.local
+
+  # Drop the DEV placeholder Secret that base ships so base/ stays applyable on a
+  # throwaway cluster. Production must supply the real s3-credentials out-of-band
+  # (Sealed Secrets or ESO — see ../../secrets/). Leaving it in meant the prod
+  # overlay literally carried `omniusgrid_dev_secret`, and "don't apply the
+  # placeholders in prod" was documentation rather than something enforced.
+  # tests/k8s/check_placeholder_secrets.py now fails CI if one comes back.
+  - target:
+      kind: Secret
+      name: s3-credentials
+    patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: s3-credentials

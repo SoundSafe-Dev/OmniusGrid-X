@@ -58,10 +58,28 @@ spec:
           env:
             - name: REDPANDA_URL
               value: "redpanda:9092"
+            # ORGANIZATION_ID must be supplied per environment — it is NOT
+            # defaulted here on purpose. The telemetry topic is
+            # telemetry.{org}.{asset}, so a wrong org publishes into a tenant that
+            # does not exist; the ingestion worker then rejects it (or RLS hides
+            # the rows) and the data is silently lost. This used to be hardcoded
+            # "dev-org", which every real deployment would have inherited.
+            # A missing key stops the pod with CreateContainerConfigError —
+            # deliberately louder than shipping telemetry to a dead tenant.
             - name: ORGANIZATION_ID
-              value: "dev-org"
+              valueFrom:
+                configMapKeyRef:
+                  name: edge-agent-config
+                  key: organization_id
+            # Derived from the pod name so StatefulSet replicas get distinct ids
+            # (edge-agent-0, edge-agent-1, …). It was hardcoded "edge-agent-001",
+            # which is fine at replicas: 1 but silently gives every replica the
+            # same identity the moment this is scaled — and agent id is how the
+            # backend attributes telemetry and enrollment.
             - name: AGENT_ID
-              value: "edge-agent-001"
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
             - name: BUFFER_PATH
               value: "/var/lib/opsgrid-agent/buffer.db"
             - name: BUFFER_RETENTION_HOURS
