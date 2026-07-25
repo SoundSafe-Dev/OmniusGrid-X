@@ -90,7 +90,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                     </td>
                     <td className="px-4 py-3">
                       <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
-                        {task.task_type.replace('_', ' ')}
+                        {task.task_type?.replace('_', ' ')}
                       </span>
                     </td>
                     <td className="px-4 py-3">
@@ -203,7 +203,7 @@ const StatusBadge: React.FC<{ status: string }> = ({ status }) => {
     <Tooltip>
       <TooltipTrigger asChild>
         <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${colors[status] || colors.draft}`}>
-          {status.replace('_', ' ')}
+          {status?.replace('_', ' ')}
         </span>
       </TooltipTrigger>
       <TooltipContent>{getStatusDescription(status)}</TooltipContent>

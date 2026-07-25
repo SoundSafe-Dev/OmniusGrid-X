@@ -218,7 +218,6 @@ async def publish_release(
         raise HTTPException(status_code=400, detail="Yanked releases cannot be published")
     release.status = "published"
     await db.commit()
-    await db.refresh(release)
     return _release_response(release, include_url=True)
 
 
@@ -234,7 +233,6 @@ async def yank_release(
     release = await _get_release(release_id, org_id, db)
     release.status = "yanked"
     await db.commit()
-    await db.refresh(release)
     return _release_response(release)
 
 

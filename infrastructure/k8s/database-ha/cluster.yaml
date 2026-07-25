@@ -1,0 +1,138 @@
+# High-availability TimescaleDB via the CloudNativePG operator.
+#
+# This replaces the single-replica base/timescaledb-statefulset.yaml with a
+# 3-instance cluster that has SYNCHRONOUS streaming replication, AUTOMATIC
+# failover (the operator promotes a standby and repoints the -rw Service when
+# the primary dies), and CONTINUOUS WAL archiving to S3 for point-in-time
+# recovery — none of which the hand-rolled StatefulSet had.
+#
+# Why an operator and not a hand-rolled standby: automatic failover needs leader
+# election, fencing, and Service repointing that a plain StatefulSet cannot do
+# safely. CloudNativePG (like the archived legacy-patroni it supersedes) owns all
+# of that declaratively. See README.md for the operator install, the required
+# TimescaleDB-enabled image, and the cutover from the single-node StatefulSet.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: omniusgrid-db
+  namespace: omniusgrid
+  labels:
+    app.kubernetes.io/name: omniusgrid-db
+    app.kubernetes.io/component: database
+    app.kubernetes.io/part-of: omniusgrid
+spec:
+  instances: 3
+
+  # Stamp the platform labels onto the pods/PVCs the OPERATOR creates. Without
+  # this they carry only the operator's own labels (cnpg.io/*) — kustomize's
+  # commonLabels can't reach runtime-created objects, it only labels the Cluster
+  # CR itself. That matters because every NetworkPolicy podSelector generated
+  # here matches on all THREE labels (kustomize bakes part-of/managed-by in), so
+  # without inheritance allow-cnpg-ingress/-egress and the SeaweedFS ingress rule
+  # would select NOTHING: the instance pods would fall under default-deny-all
+  # with no allow rules and the database would be unreachable.
+  inheritedMetadata:
+    labels:
+      app.kubernetes.io/part-of: omniusgrid
+      app.kubernetes.io/managed-by: kustomize
+
+  # TimescaleDB is NOT in the stock CloudNativePG image — this must be a
+  # PostgreSQL 15 image with the timescaledb extension built in and preloaded.
+  # Build from the CNPG image + timescaledb, or use a maintained community image;
+  # pin a digest in production. See README.md. The tag MUST encode a parseable
+  # PostgreSQL version (CNPG's webhook rejects a bare "pg15") — hence 15.x.
+  imageName: ghcr.io/omniusgrid/cnpg-timescaledb:15.4
+  imagePullPolicy: IfNotPresent
+
+  # Survive a node failure: never schedule two instances on the same node.
+  affinity:
+    enablePodAntiAffinity: true
+    topologyKey: kubernetes.io/hostname
+    podAntiAffinityType: required
+
+  postgresql:
+    shared_preload_libraries:
+      - timescaledb
+    # Only tunables here. CNPG OWNS the replication parameters (wal_level,
+    # max_wal_senders, max_replication_slots, hot_standby, archive_mode…) and
+    # rejects any attempt to set them — the operator configures streaming
+    # replication + WAL archiving itself.
+    parameters:
+      max_connections: "200"
+      shared_buffers: "1GB"
+      effective_cache_size: "3GB"
+      work_mem: "16MB"
+      maintenance_work_mem: "256MB"
+    pg_hba:
+      # App connects with the generated role over TLS inside the namespace.
+      - host omniusgrid omniusgrid 10.0.0.0/8 scram-sha-256
+
+  # At least one standby must confirm each commit before it returns — no
+  # acknowledged write is lost if the primary is then lost (RPO ~= 0). With
+  # 3 instances this still tolerates one standby being down.
+  minSyncReplicas: 1
+  maxSyncReplicas: 1
+
+  storage:
+    size: 100Gi
+    storageClass: fast-ssd
+
+  walStorage:
+    size: 20Gi
+    storageClass: fast-ssd
+
+  resources:
+    requests:
+      memory: "1Gi"
+      cpu: "500m"
+    limits:
+      memory: "4Gi"
+      cpu: "2000m"
+
+  # Continuous WAL archiving + base backups to S3 → point-in-time recovery.
+  # This is the PITR the pg_dump CronJob explicitly could not provide.
+  backup:
+    barmanObjectStore:
+      destinationPath: "s3://opsgrid-backups/cnpg"
+      endpointURL: "http://seaweedfs:8333"
+      s3Credentials:
+        accessKeyId:
+          name: cnpg-backup-credentials
+          key: ACCESS_KEY_ID
+        secretAccessKey:
+          name: cnpg-backup-credentials
+          key: ACCESS_SECRET_KEY
+      wal:
+        compression: gzip
+      data:
+        compression: gzip
+    retentionPolicy: "30d"
+
+  # Bootstrap a fresh, empty database. The db-migrate Job still owns the schema
+  # (unchanged), so this only creates the role + empty database.
+  bootstrap:
+    initdb:
+      database: omniusgrid
+      owner: omniusgrid
+      secret:
+        name: cnpg-app-credentials
+
+  # Prometheus scraping of the CNPG exporter (the monitoring/ stack picks this up
+  # via the pod annotations the operator adds).
+  monitoring:
+    enablePodMonitor: false  # set true if you run the Prometheus Operator
+---
+# Scheduled base backups (in addition to continuous WAL archiving). Weekly full
+# backup; WAL archiving gives PITR to any point in the retention window.
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: omniusgrid-db-weekly
+  namespace: omniusgrid
+  labels:
+    app.kubernetes.io/part-of: omniusgrid
+spec:
+  schedule: "0 0 2 * * 0"   # 02:00 every Sunday (6-field cron: sec min hour dom mon dow)
+  backupOwnerReference: self
+  cluster:
+    name: omniusgrid-db

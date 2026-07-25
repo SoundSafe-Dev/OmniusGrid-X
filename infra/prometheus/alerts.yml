@@ -444,3 +444,135 @@ groups:
           summary: "Ingestion lag above 2 minutes"
           description: "Topic {{ $labels.topic }} has an event-to-write lag above 120s for 10 minutes. Telemetry is landing late; check the ingestion worker throughput and TimescaleDB write path."
           runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/subsystems.md#ingestion"
+
+  # Platform/infra alerts for the enterprise stacks (HA database, worker
+  # autoscaling, backups). Metrics come from the CloudNativePG exporter and from
+  # kube-state-metrics — both are only present once those stacks are deployed, so
+  # these rules simply stay silent until then (no series -> no firing).
+  - name: opsgrid_platform
+    rules:
+      # CRITICAL: a CloudNativePG standby has fallen far behind the primary. Above
+      # 30s of replication lag a failover would lose that much data — the whole
+      # point of synchronous replication is defeated.
+      - alert: CNPGReplicationLagHigh
+        expr: max by (cnpg_cluster) (cnpg_pg_replication_lag) > 30
+        for: 5m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Postgres replication lag above 30s"
+          description: "CloudNativePG cluster {{ $labels.cnpg_cluster }} has a standby lagging the primary by more than 30s for 5 minutes. A failover now would lose data; check standby health, network, and write volume."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/infrastructure/k8s/database-ha/README.md#failover--recovery"
+
+      # HIGH: the CNPG metrics exporter for an instance is down — we are blind to
+      # that instance's replication/health.
+      - alert: CNPGInstanceExporterDown
+        expr: cnpg_collector_up == 0
+        for: 10m
+        labels:
+          severity: high
+          team: platform
+        annotations:
+          summary: "CloudNativePG exporter down on {{ $labels.pod }}"
+          description: "The CloudNativePG metrics collector on {{ $labels.pod }} has been down for 10 minutes — replication and health metrics for this instance are missing. Check the instance pod."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/infrastructure/k8s/database-ha/README.md"
+
+      # CRITICAL: no successful nightly database backup within the expected window
+      # (daily schedule -> allow 26h before alerting). WITHOUT backups a data-loss
+      # event is unrecoverable, so this is the highest-signal infra alert.
+      - alert: DatabaseBackupStale
+        expr: time() - max(kube_cronjob_status_last_successful_time{cronjob=~".*db-backup"}) > 93600
+        for: 15m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "No successful database backup in over 26h"
+          description: "The db-backup CronJob has not completed successfully in more than 26 hours. Restores would fall back to an older backup (higher RPO). Check the CronJob and the backup bucket credentials."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/database-backup-restore.md"
+
+      # HIGH: the most recent backup Job actually failed (distinct from "stale" —
+      # this catches an active, repeating failure sooner).
+      - alert: DatabaseBackupJobFailed
+        expr: max(kube_job_status_failed{job_name=~".*db-backup.*"}) > 0
+        for: 5m
+        labels:
+          severity: high
+          team: platform
+        annotations:
+          summary: "Database backup Job failed"
+          description: "A db-backup Job reported a failed pod. The nightly logical backup did not complete; check the Job logs and DatabaseBackupStale."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/database-backup-restore.md"
+
+      # WARNING: a KEDA-autoscaled worker has been pinned at its max replica count
+      # for a sustained period — it can't keep up and the queue is likely growing.
+      - alert: WorkerAutoscalerAtMax
+        expr: |
+          kube_horizontalpodautoscaler_status_current_replicas{horizontalpodautoscaler=~"keda-hpa-.*"}
+            >= on (horizontalpodautoscaler, namespace)
+          kube_horizontalpodautoscaler_spec_max_replicas{horizontalpodautoscaler=~"keda-hpa-.*"}
+        for: 15m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Worker {{ $labels.horizontalpodautoscaler }} pinned at max replicas"
+          description: "{{ $labels.horizontalpodautoscaler }} has sat at its maximum replica count for 15 minutes — sustained backlog it cannot drain. Raise maxReplicaCount (and the topic's partition count) or investigate the slowdown."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/infrastructure/k8s/autoscaling/README.md#tuning"
+
+  # Background workers. Every rule here was unwritable before the workers grew a
+  # health/metrics endpoint (app/workers/health_server.py): they served no metrics,
+  # so there was no `up` target to be down and no heartbeat to go stale, and their
+  # Deployments carried no probes, so a pod was trivially "Ready" forever and never
+  # restarted. These alerts are the monitoring half of that change.
+  - name: opsgrid_workers
+    rules:
+      # CRITICAL: the ingestion worker has stopped consuming. Its liveness probe
+      # already restarts the pod at 300s of heartbeat age, so reaching 600s means
+      # restarting is NOT curing it — a crash loop, an unreachable broker, or a
+      # consumer-group problem. The probe handles the transient case; this alert is
+      # for when the probe's remedy has failed, which is the case that needs a human.
+      #
+      # Scoped to `worker="ingestion"` on purpose. It is the only worker with a
+      # bounded idle gap (continuous telemetry); export/compliance/OTA are
+      # event-driven, run with staleness disabled, and can legitimately idle for
+      # hours — alerting on their heartbeat age would page for nothing.
+      - alert: WorkerStalled
+        expr: opsgrid_worker_heartbeat_age_seconds{worker="ingestion"} > 600
+        for: 5m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Ingestion worker has not processed a message in over 10 minutes"
+          description: "The ingestion worker's last completed unit of work is more than 10 minutes old and its liveness probe has not recovered it. Telemetry is not being persisted and the topic is backing up. Check the pod's restart count, the Redpanda connection, and consumer-group state."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/kafka-consumer-lag.md"
+
+      # HIGH: a worker's metrics endpoint is unreachable — either the process is
+      # gone or its health server never came up. Distinct from WorkerStalled, which
+      # requires a REACHABLE worker reporting a stale heartbeat.
+      - alert: WorkerDown
+        expr: up{job="opsgrid-workers"} == 0
+        for: 5m
+        labels:
+          severity: high
+          team: platform
+        annotations:
+          summary: "Worker {{ $labels.worker }} is not reachable"
+          description: "Prometheus cannot scrape {{ $labels.instance }} ({{ $labels.worker }}) — the worker process or its health server is down. Whatever queue it drains is not being drained."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/kafka-consumer-lag.md"
+
+      # HIGH: a worker pod is restarting repeatedly. Only observable now that the
+      # workers have liveness probes — before, a wedged worker sat at 0 restarts
+      # forever, so a flat restart count meant nothing.
+      - alert: WorkerCrashLooping
+        expr: increase(kube_pod_container_status_restarts_total{container=~".*worker"}[30m]) > 2
+        for: 5m
+        labels:
+          severity: high
+          team: platform
+        annotations:
+          summary: "Worker {{ $labels.container }} restarting repeatedly"
+          description: "{{ $labels.pod }} has restarted more than twice in 30 minutes. Its liveness probe keeps failing — the worker starts, wedges, and gets killed. Check the container logs from the previous run."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/kafka-consumer-lag.md"

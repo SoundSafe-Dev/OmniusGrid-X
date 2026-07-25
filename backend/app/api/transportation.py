@@ -34,6 +34,22 @@ from app.middleware.rbac import require_operator_or_admin
 router = APIRouter(tags=["transportation_management"], dependencies=[Depends(get_current_active_user)])
 
 
+def _iso(dt):
+    """ISO-8601 string for a datetime, or None."""
+    return dt.isoformat() if dt else None
+
+
+async def _resolve_carrier_names(carrier_ids, db: AsyncSession) -> Dict[str, Any]:
+    """Map {carrier_id -> carrier_name} in one query (the UI shows names)."""
+    ids = {c for c in carrier_ids if c}
+    if not ids:
+        return {}
+    rows = (await db.execute(
+        select(Carrier.id, Carrier.carrier_name).where(Carrier.id.in_(ids))
+    )).all()
+    return {str(cid): name for cid, name in rows}
+
+
 # ---- Small response schemas for stable dict-shaped endpoints (FS-100). ----
 # Shapes are unchanged; these only document/type what the handlers already return.
 
@@ -176,14 +192,14 @@ async def create_driver(
     return driver
 
 
-@router.get("/drivers", response_model=List[DriverResponse])
+@router.get("/drivers", response_model=List[Dict[str, Any]])
 async def get_drivers(
     organization_id: UUID,
     carrier_id: Optional[UUID] = None,
     is_active: Optional[bool] = Query(True),
     db: AsyncSession = Depends(get_db)
 ):
-    """Get drivers for organization"""
+    """Get drivers for organization (adds carrierName + MISSING UI columns)."""
     query = select(Driver).where(
         Driver.organization_id == organization_id
     )
@@ -191,9 +207,25 @@ async def get_drivers(
         query = query.where(Driver.carrier_id == carrier_id)
     if is_active is not None:
         query = query.where(Driver.is_active == is_active)
-    
-    result = await db.execute(query)
-    return result.scalars().all()
+
+    drivers = (await db.execute(query)).scalars().all()
+
+    # Resolve carrier names for the listed drivers in one query (the UI shows
+    # the carrier, not just its id) — mirrors get_vehicles.
+    carrier_names = await _resolve_carrier_names(
+        {d.carrier_id for d in drivers if d.carrier_id}, db
+    )
+
+    items: List[Dict[str, Any]] = []
+    for d in drivers:
+        row = DriverResponse.model_validate(d).model_dump(mode="json", by_alias=True)
+        row["carrierName"] = carrier_names.get(str(d.carrier_id))
+        row["endorsements"] = d.endorsements or []
+        row["licenseExpiry"] = _iso(d.license_expiry)
+        row["hosDriveHoursRemaining"] = d.hos_drive_hours_remaining
+        row["hosDutyHoursRemaining"] = d.hos_duty_hours_remaining
+        items.append(row)
+    return items
 
 
 @router.get("/drivers/{driver_id}", response_model=DriverResponse)
@@ -280,7 +312,7 @@ async def create_shipment(
     return shipment
 
 
-@router.get("/shipments", response_model=PaginatedResponse[ShipmentResponse])
+@router.get("/shipments", response_model=PaginatedResponse[Dict[str, Any]])
 async def get_shipments(
     organization_id: UUID,
     status: Optional[str] = Query(None),
@@ -289,7 +321,10 @@ async def get_shipments(
     limit: int = Query(100, ge=1, le=1000),
     db: AsyncSession = Depends(get_db)
 ):
-    """Get shipments for organization (FS-99: {items, meta} envelope with a real total)."""
+    """Get shipments for organization (FS-99: {items, meta} envelope with a real total).
+
+    Adds carrierName/driverName joins + the MISSING UI columns.
+    """
     query = select(Shipment).where(
         Shipment.organization_id == organization_id
     )
@@ -304,7 +339,31 @@ async def get_shipments(
     result = await db.execute(
         query.order_by(Shipment.created_at.desc()).offset(skip).limit(limit)
     )
-    return paginate(result.scalars().all(), total, SimpleNamespace(skip=skip, limit=limit))
+    shipments = result.scalars().all()
+
+    # Resolve carrier + driver names for the listed shipments in one query each.
+    carrier_names = await _resolve_carrier_names(
+        {s.carrier_id for s in shipments if s.carrier_id}, db
+    )
+    driver_ids = {s.driver_id for s in shipments if s.driver_id}
+    driver_names: Dict[str, Any] = {}
+    if driver_ids:
+        rows = (await db.execute(
+            select(Driver.id, Driver.first_name, Driver.last_name)
+            .where(Driver.id.in_(driver_ids))
+        )).all()
+        driver_names = {str(did): f"{first} {last}".strip() for did, first, last in rows}
+
+    items: List[Dict[str, Any]] = []
+    for s in shipments:
+        row = ShipmentResponse.model_validate(s).model_dump(mode="json", by_alias=True)
+        row["carrierName"] = carrier_names.get(str(s.carrier_id))
+        row["driverName"] = driver_names.get(str(s.driver_id))
+        row["poNumber"] = s.po_number
+        row["freightCharge"] = s.freight_charge
+        row["palletCount"] = s.pallet_count
+        items.append(row)
+    return paginate(items, total, SimpleNamespace(skip=skip, limit=limit))
 
 
 @router.get("/shipments/{shipment_id}", response_model=ShipmentResponse)
@@ -544,15 +603,39 @@ async def get_vehicles(
         select(func.count()).select_from(query.subquery())
     )).scalar_one()
     vehicles = (await db.execute(query.offset(skip).limit(limit))).scalars().all()
+
+    # Resolve carrier names for the listed vehicles in one query (the UI shows
+    # the carrier, not just its id).
+    carrier_ids = {v.carrier_id for v in vehicles if v.carrier_id}
+    carrier_names: Dict[str, Any] = {}
+    if carrier_ids:
+        rows = (await db.execute(
+            select(Carrier.id, Carrier.carrier_name).where(Carrier.id.in_(carrier_ids))
+        )).all()
+        carrier_names = {str(cid): name for cid, name in rows}
+
+    def _iso(dt):
+        return dt.isoformat() if dt else None
+
     items = [
         {
             "id": str(v.id),
             "vehicleNumber": v.vehicle_number,
+            "carrierId": v.carrier_id,
+            "carrierName": carrier_names.get(str(v.carrier_id)),
             "vin": v.vin,
             "make": v.make,
             "model": v.model,
             "year": v.year,
             "status": v.status,
+            "vehicleType": v.vehicle_type,
+            "fuelType": v.fuel_type,
+            "licensePlate": v.license_plate,
+            "dotNumber": v.dot_number,
+            "grossVehicleWeight": v.gross_vehicle_weight_kg,
+            "engineHours": v.engine_hours,
+            "registrationExpiry": _iso(v.registration_expiry),
+            "inspectionDue": _iso(v.inspection_due),
             "fuelLevel": v.fuel_level_percent,
             "odometer": v.odometer_miles,
             "geotabDeviceId": v.geotab_device_id,

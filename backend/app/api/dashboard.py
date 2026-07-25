@@ -8,50 +8,59 @@ from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_active_user
-from app.db.database import get_db
+from app.core.tenant import get_tenant_db, get_tenant_org_id
 from app.db.models import Asset, Alarm, PackMLState, Organization, Telemetry
-from app.api.auth import get_current_active_user
 from app.models.schemas import DashboardOverview, OEEMetrics
+from app.services.oee_calculator import oee_calculator
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
 
 @router.get("/overview", response_model=DashboardOverview)
 async def get_dashboard_overview(
-    organization_id: Optional[UUID] = None,
-    db: AsyncSession = Depends(get_db),
+    org_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
-    """Get dashboard overview metrics"""
-    # Base query
-    base_query = select(Asset)
-    if organization_id:
-        base_query = base_query.where(Asset.organization_id == organization_id)
-    
+    """Get dashboard overview metrics for the authenticated user's organization.
+
+    The org comes from the JWT, never from the query string: an earlier version
+    took an optional ``organization_id`` query param, which let a caller aim the
+    query at another tenant. Scoping is explicit here AND enforced by RLS —
+    ``get_tenant_db`` sets the ``app.current_org_id`` GUC the policies read.
+    Using ``get_db`` here (which sets no GUC) is what made every tile render 0.
+    """
+    # Base query — explicit org filter on top of the RLS predicate.
+    base_query = select(Asset).where(Asset.organization_id == org_id)
+
     # Total assets
     result = await db.execute(
         select(func.count()).select_from(base_query.subquery())
     )
     total_assets = result.scalar()
-    
+
     # Active assets
     result = await db.execute(
         select(func.count())
         .select_from(base_query.where(Asset.is_active == True).subquery())
     )
     active_assets = result.scalar()
-    
-    # Assets by PackML state (scoped to org when filtering)
-    state_query = select(Asset.current_packml_state, func.count()).group_by(Asset.current_packml_state)
-    if organization_id:
-        state_query = state_query.where(Asset.organization_id == organization_id)
+
+    # Assets by PackML state
+    state_query = (
+        select(Asset.current_packml_state, func.count())
+        .where(Asset.organization_id == org_id)
+        .group_by(Asset.current_packml_state)
+    )
     result = await db.execute(state_query)
     assets_by_state = {state: count for state, count in result.all()}
-    
+
     # Active alarms
-    alarms_query = select(Alarm).where(Alarm.is_active == True)
-    if organization_id:
-        alarms_query = alarms_query.join(Asset).where(Asset.organization_id == organization_id)
-    
+    alarms_query = (
+        select(Alarm)
+        .join(Asset, Alarm.asset_id == Asset.id)
+        .where(Alarm.is_active == True, Asset.organization_id == org_id)
+    )
+
     result = await db.execute(
         select(func.count()).select_from(alarms_query.subquery())
     )
@@ -78,7 +87,7 @@ async def get_dashboard_overview(
 @router.get("/workcells/{workcell_id}/status")
 async def get_workcell_status(
     workcell_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     """Get status for all assets in a workcell"""
     result = await db.execute(
@@ -109,7 +118,7 @@ async def get_workcell_status(
 async def get_asset_oee(
     asset_id: UUID,
     hours: int = Query(24, ge=1, le=168),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     """Calculate OEE for an asset over a time period"""
     # Verify asset exists
@@ -139,88 +148,96 @@ async def get_asset_oee(
         .group_by(PackMLState.state)
     )
     state_durations = {state: duration or 0 for state, duration in result.all()}
-    
-    # Calculate OEE components
     total_time = hours * 3600
-    execute_time = state_durations.get('Execute', 0)
-    
-    # Availability = Execute time / Planned production time
-    availability = execute_time / total_time if total_time > 0 else 0
-    
-    # Performance and Quality would need additional data
-    # Placeholder: assume ideal performance and 100% quality for now
-    performance = 1.0
-    quality = 1.0
-    
-    # OEE = Availability × Performance × Quality
-    oee = availability * performance * quality
-    
+
+    # Delegate to the real calculator instead of recomputing a crippled version.
+    # This endpoint used to hardcode `performance = quality = 1.0` and return
+    # availability under the name "oee" — inflating every figure it served.
+    # oee_calculator derives performance from the asset's ideal cycle time and
+    # quality from good/total part counters, so the three factors are real.
+    metrics = await oee_calculator.calculate_oee(str(asset_id), time_window_hours=float(hours))
+
     return {
         "asset_id": str(asset_id),
         "asset_name": asset.name,
         "time_range": f"Last {hours} hours",
-        "availability": round(availability, 4),
-        "performance": round(performance, 4),
-        "quality": round(quality, 4),
-        "oee": round(oee, 4),
+        # calculate_oee returns percentages; keep this endpoint's 0–1 ratios.
+        "availability": round(metrics.availability / 100, 4),
+        "performance": round(metrics.performance / 100, 4),
+        "quality": round(metrics.quality / 100, 4),
+        "oee": round(metrics.oee / 100, 4),
+        "total_parts": metrics.total_parts,
+        "good_parts": metrics.good_parts,
         "state_durations": state_durations,
-        "total_planned_time_seconds": total_time
+        "total_planned_time_seconds": total_time,
     }
 
 
 @router.get("/fleet/oee")
 async def get_fleet_oee(
-    organization_id: Optional[UUID] = None,
     hours: int = Query(24, ge=1, le=168),
-    db: AsyncSession = Depends(get_db),
+    org_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
-    """Get OEE metrics for entire fleet"""
-    # Get all assets
-    query = select(Asset).where(Asset.is_active == True)
-    if organization_id:
-        query = query.where(Asset.organization_id == organization_id)
-    
+    """Get OEE metrics for the authenticated user's fleet.
+
+    Org comes from the JWT — the old optional ``organization_id`` query param
+    let a caller read another tenant's fleet.
+    """
+    query = select(Asset).where(
+        Asset.is_active == True, Asset.organization_id == org_id
+    )
+
     result = await db.execute(query)
     assets = result.scalars().all()
-    
+
     end_time = datetime.now(timezone.utc)
     start_time = end_time - timedelta(hours=hours)
-    
-    oee_results = []
-    
-    for asset in assets:
-        # Query state durations for this asset
-        result = await db.execute(
-            select(
-                func.sum(PackMLState.duration_seconds)
-            )
-            .where(
-                PackMLState.asset_id == asset.id,
-                PackMLState.state == 'Execute',
-                PackMLState.state_entered_at >= start_time,
-                PackMLState.state_entered_at <= end_time
-            )
+    total_time = hours * 3600
+
+    # One grouped query for the whole fleet. This used to run a SELECT per asset
+    # inside the loop below — an N+1 that grew with the fleet.
+    run_rows = await db.execute(
+        select(PackMLState.asset_id, func.sum(PackMLState.duration_seconds))
+        .where(
+            PackMLState.asset_id.in_([a.id for a in assets]) if assets else False,
+            PackMLState.state == 'Execute',
+            PackMLState.state_entered_at >= start_time,
+            PackMLState.state_entered_at <= end_time,
         )
-        execute_time = result.scalar() or 0
-        
-        total_time = hours * 3600
-        availability = execute_time / total_time if total_time > 0 else 0
-        
+        .group_by(PackMLState.asset_id)
+    ) if assets else None
+    run_seconds = {r[0]: float(r[1] or 0) for r in run_rows.all()} if run_rows else {}
+
+    oee_results = []
+    for asset in assets:
+        availability = (
+            run_seconds.get(asset.id, 0.0) / total_time if total_time > 0 else 0
+        )
         oee_results.append({
             "asset_id": str(asset.id),
             "asset_name": asset.name,
             "availability": round(availability, 4),
-            "oee": round(availability, 4)  # Simplified: availability = OEE for now
+            # Availability only — NOT full OEE. Performance needs each asset's
+            # ideal cycle time and quality needs part counters, neither of which
+            # fits one grouped query. Use /api/v1/dashboard/assets/{id}/oee for
+            # the real three-factor figure. The old code returned this value
+            # under the key "oee", which overstated every asset.
+            "availability_only": True,
         })
-    
-    # Calculate fleet averages
-    avg_availability = sum(r["availability"] for r in oee_results) / len(oee_results) if oee_results else 0
-    avg_oee = sum(r["oee"] for r in oee_results) / len(oee_results) if oee_results else 0
-    
+
+    avg_availability = (
+        sum(r["availability"] for r in oee_results) / len(oee_results)
+        if oee_results else 0
+    )
+
     return {
         "time_range": f"Last {hours} hours",
         "asset_count": len(assets),
         "fleet_average_availability": round(avg_availability, 4),
-        "fleet_average_oee": round(avg_oee, 4),
-        "assets": oee_results
+        # `fleet_average_oee` used to be this same availability number. Callers
+        # wanting a fleet OEE trend should use /api/v1/dashboard/oee/trend,
+        # which is explicit about being availability-only.
+        "availability_only": True,
+        "assets": oee_results,
     }

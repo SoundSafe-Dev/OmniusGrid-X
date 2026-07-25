@@ -5,7 +5,16 @@ name: Quality Gates
 
 on:
   push:
-    branches: [main, develop, 'hamad/**']
+    # Every namespace that actually exists on the remotes. `develop` was listed
+    # here for a long time but has never existed, so it gated nothing; the dev
+    # branches below ran zero CI as a result.
+    branches:
+      - main
+      - 'hamad/**'
+      - 'hridyansh/**'
+      - 'feature/**'
+      - htreinen
+      - HARSH-CONTRIBUTION
     # Docs/media-only pushes don't need the gates — skip them so a README or
     # demo-video commit doesn't run (and fail-email) the whole pipeline.
     paths-ignore:
@@ -16,7 +25,7 @@ on:
       - '**/*.jpg'
       - '**/*.jpeg'
   pull_request:
-    branches: [main, develop]
+    branches: [main]
     paths-ignore:
       - '**/*.md'
       - 'docs/**'
@@ -100,7 +109,126 @@ jobs:
             tests/test_realdb_endpoint_smoke.py \
             tests/test_realdb_write_smoke.py \
             tests/test_no_naive_utcnow.py \
-            tests/test_demo_seeder_smoke.py
+            tests/test_demo_seeder_smoke.py \
+            tests/test_backup_restore_drill.py \
+            tests/test_dashboard_tenancy.py \
+            tests/test_dashboard_analytics.py \
+            tests/test_raw_insert_timestamps.py \
+            tests/test_timestamp_backfill.py \
+            tests/test_tenant_isolation_api.py \
+            tests/test_tenant_isolation_rls.py \
+            tests/test_tenant_isolation_dependency.py \
+            tests/test_compliance_tenant_isolation_api.py \
+            tests/test_historian_retention_rls.py \
+            tests/test_model_registry_rls.py \
+            tests/test_kanban_tenant_scope.py
+
+  # --- FS-203: migration chain hygiene (blocking) ---------------------------
+  migration-hygiene:
+    runs-on: ubuntu-latest
+    # BLOCKING and cheap. check_migrations.py has existed for a while but ran in
+    # NO workflow — only as a Makefile target — so a duplicate migration prefix
+    # could land unnoticed. Two migrations sharing a prefix apply in an
+    # order that depends on the full filename, which is not obvious to whoever
+    # wrote them.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: No new duplicate migration prefixes
+        working-directory: ./backend
+        run: python scripts/check_migrations.py
+
+  # --- FS-205: the rest of the backend suite (blocking) ---------------------
+  backend-full:
+    runs-on: ubuntu-latest
+    # BLOCKING. ci-cd.yml runs the full backend suite but triggers only on `main`
+    # and v* tags, while quality-gates.yml is the ONLY workflow that runs on
+    # hamad/** — and it ran a 10-file list. So roughly 700 backend tests,
+    # including the entire tenant-isolation suite, executed nowhere on the working
+    # branch.
+    #
+    # This started advisory against 11 known failures. Five were real defects in
+    # this lane and are fixed (str-vs-UUID comparisons, a Referrer-Policy that
+    # middleware silently downgraded on signed downloads, and an always-on auth
+    # rate limiter that 500'd every login when Redis was unreachable). What
+    # remains is deselected BY NAME below, in two groups, so this can be blocking
+    # without hiding anything:
+    #
+    #   other lanes  — the intake/parsing domain mappers (HARSH) and an OTA
+    #                  rollout-creation 404 (Hridyansh). Real bugs, not mine.
+    #   Kafka-dependent e2e — the three files that need a live Redpanda broker.
+    #                  Each spins its own container and they cannot reliably
+    #                  coexist inside one suite run; every one passes in ISOLATION.
+    #                  These belong in `nightly-e2e.yml`, which already stands up
+    #                  real infrastructure (`docker compose up timescaledb redpanda
+    #                  redis`) instead of racing containers inside pytest. Moving
+    #                  them there is the right split, not a dodge.
+    #   one flake    — test_invalid_tokens_return_uniform_403 passes 15/15 in
+    #                  isolation and was already flaking before this batch, so it
+    #                  is pre-existing order-dependence, not a regression. Fixing
+    #                  that isolation is its own task; a blocking gate that fails at
+    #                  random is worse than one with named exclusions.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install dev deps
+        working-directory: ./backend
+        run: pip install -r requirements-dev.txt
+      - name: Full backend suite
+        working-directory: ./backend
+        # The three excluded files fail at COLLECTION (the intake/parsing lane's
+        # scenario builders don't import); they are excluded in ci-cd.yml for the
+        # same reason.
+        run: |
+          pytest -q \
+            --ignore=tests/test_document_scenario_builder.py \
+            --ignore=tests/test_image_scenario_builder.py \
+            --ignore=tests/test_cross_file_scenario_builder.py \
+            --deselect tests/test_document_domain_mapper.py::test_map_section_to_domain_table_content \
+            --deselect tests/test_image_domain_mapper.py::test_map_image_domains \
+            --deselect tests/test_agent_ota_api.py::test_rollout_creation_resolves_only_tenant_targets \
+            --ignore=tests/test_compliance_reports_e2e.py \
+            --ignore=tests/test_ingestion_redpanda_e2e.py \
+            --ignore=tests/test_compliance_report_scheduling_e2e.py \
+            --deselect tests/test_signed_report_downloads.py::test_invalid_tokens_return_uniform_403
+
+  # --- FS-205c: Kafka-dependent e2e, in their own process (blocking) --------
+  backend-kafka-e2e:
+    runs-on: ubuntu-latest
+    # BLOCKING. These three files stand up a real Redpanda broker via
+    # testcontainers. Interleaved with the other ~715 tests they were flaky; run
+    # as their own pytest process they are reliable (6/6 across three runs).
+    #
+    # The root cause of the original flakiness IS fixed: _RedpandaContainer was
+    # duplicated across two modules — one session-scoped, one module-scoped and
+    # imported by a third — so a single run started several brokers that
+    # interfered. conftest.py now owns ONE session-scoped broker. That took the
+    # in-suite failures from 4 to 1, but the last one still churned run-to-run
+    # (residual cross-module producer state), so the honest split is to give the
+    # container-spinning tests their own process rather than pretend the fast
+    # suite tolerates them. This keeps per-push coverage — they are NOT demoted
+    # to nightly.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install dev deps
+        working-directory: ./backend
+        run: pip install -r requirements-dev.txt
+      - name: Kafka e2e
+        working-directory: ./backend
+        run: |
+          pytest -q \
+            tests/test_compliance_reports_e2e.py \
+            tests/test_ingestion_redpanda_e2e.py \
+            tests/test_compliance_report_scheduling_e2e.py
 
   # --- FS-107: Prometheus alert rules — lint + unit test -------------------
   prometheus-rules:
@@ -122,10 +250,229 @@ jobs:
           promtool --version
       - name: Lint alert rules
         working-directory: ./infra/prometheus
-        run: promtool check rules alerts.yml
+        run: promtool check rules alerts.yml slo_rules.yml
+      # `check rules` validates rule files; it does NOT read prometheus.yml, so a
+      # broken scrape_config or a rule_files path pointing at nothing stayed
+      # invisible. Both configs reference their rule files by absolute in-container
+      # path, so stage them where each expects: compose reads /etc/prometheus/*.yml,
+      # the in-cluster ConfigMap reads /etc/prometheus/rules/*.yml.
+      - name: Stage rule files at their runtime paths
+        run: |
+          sudo mkdir -p /etc/prometheus/rules
+          sudo cp infra/prometheus/alerts.yml infra/prometheus/slo_rules.yml /etc/prometheus/
+          sudo cp infra/prometheus/alerts.yml infra/prometheus/slo_rules.yml /etc/prometheus/rules/
+      - name: Check Prometheus configs (compose + in-cluster)
+        run: |
+          promtool check config infra/prometheus/prometheus.yml
+          promtool check config infrastructure/k8s/monitoring/prometheus-config.yml
       - name: Run alert unit tests
         working-directory: ./infra/prometheus
-        run: promtool test rules tests/error_alerts_test.yml tests/subsystems_alerts_test.yml
+        run: |
+          promtool test rules \
+            tests/error_alerts_test.yml \
+            tests/subsystems_alerts_test.yml \
+            tests/platform_alerts_test.yml \
+            tests/worker_alerts_test.yml
+
+  # --- k8s manifest validation (blocking) ----------------------------------
+  k8s-manifests:
+    runs-on: ubuntu-latest
+    # BLOCKING. Deploy jobs in ci-cd.yml only build the staging/production
+    # overlays — nothing validated base/ or the operator-managed stacks
+    # (monitoring, database-ha, autoscaling), so a broken kustomization or an
+    # invalid manifest in any of them would only surface at apply time (or never,
+    # for the opt-in stacks). This builds EVERY kustomization and schema-validates
+    # the output, so a typo'd field or an unbuildable overlay fails the merge.
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup kustomize
+        run: |
+          curl -sL "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.4.3/kustomize_v5.4.3_linux_amd64.tar.gz" \
+            | sudo tar xz -C /usr/local/bin kustomize
+          kustomize version
+      - name: Install kubeconform
+        run: |
+          curl -sSL -o /tmp/kc.tar.gz \
+            "https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz"
+          sudo tar xz -C /usr/local/bin -f /tmp/kc.tar.gz kubeconform
+          kubeconform -v
+      - name: Build + validate app manifests (base + overlays)
+        run: |
+          set -euo pipefail
+          for t in base overlays/staging overlays/production; do
+            echo "::group::$t"
+            kustomize build "infrastructure/k8s/$t" \
+              | kubeconform -strict -summary -ignore-missing-schemas \
+                  -kubernetes-version 1.29.0
+            echo "::endgroup::"
+          done
+      - name: No placeholder credentials reachable in staging or production
+        run: |
+          pip install pyyaml
+          ./tests/k8s/check_placeholder_secrets.py
+          ./tests/k8s/check_placeholder_secrets.py --staging
+      - name: Build + validate operator stacks (monitoring, database-ha, autoscaling)
+        # These reference operator CRDs (Prometheus rules from outside the tree,
+        # CloudNativePG Cluster/Pooler, KEDA ScaledObject) — build with the None
+        # load-restrictor and let kubeconform skip the CRD schemas it can't know.
+        run: |
+          set -euo pipefail
+          for t in monitoring database-ha autoscaling; do
+            echo "::group::$t"
+            kustomize build --load-restrictor LoadRestrictionsNone "infrastructure/k8s/$t" \
+              | kubeconform -summary -ignore-missing-schemas \
+                  -kubernetes-version 1.29.0
+            echo "::endgroup::"
+          done
+
+  # --- k8s live smoke test on kind (blocking) ------------------------------
+  k8s-smoke:
+    runs-on: ubuntu-latest
+    # BLOCKING. k8s-manifests above proves the manifests BUILD and are
+    # schema-valid; this proves the operator stacks actually RUN and that the
+    # custom resources pass the REAL admission webhooks — which kubeconform
+    # can't check because it skips CRD schemas. Promoted to blocking after
+    # observing it green end-to-end (monitoring applies + goes Ready; the CNPG
+    # Cluster and KEDA ScaledObjects pass their operators' validating webhooks).
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create kind cluster
+        uses: helm/kind-action@v1.10.0
+        with:
+          cluster_name: omniusgrid-smoke
+      - name: Setup kustomize
+        run: |
+          curl -sL "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.4.3/kustomize_v5.4.3_linux_amd64.tar.gz" \
+            | sudo tar xz -C /usr/local/bin kustomize
+
+      # --- Monitoring: full apply + wait Ready (public images, no CRDs) ------
+      - name: Smoke-test the monitoring stack (real apply)
+        run: |
+          set -euo pipefail
+          kubectl create namespace omniusgrid
+          kustomize build --load-restrictor LoadRestrictionsNone infrastructure/k8s/monitoring \
+            | kubectl apply -f -
+          # Prove each component actually schedules and becomes Ready.
+          kubectl -n omniusgrid rollout status statefulset/prometheus --timeout=180s
+          kubectl -n omniusgrid rollout status statefulset/alertmanager --timeout=180s
+          kubectl -n omniusgrid rollout status deployment/kube-state-metrics --timeout=180s
+          kubectl -n omniusgrid rollout status deployment/grafana --timeout=180s
+
+      # --- CloudNativePG: install operator, validate the Cluster CR ----------
+      - name: Install CloudNativePG operator
+        run: |
+          kubectl apply --server-side -f \
+            https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.24/releases/cnpg-1.24.0.yaml
+          kubectl -n cnpg-system rollout status deployment/cnpg-controller-manager --timeout=180s
+      - name: Validate the HA database CR against the real CNPG webhook
+        run: |
+          set -euo pipefail
+          # Server dry-run runs the operator's validating webhook — catches CR
+          # field errors kubeconform skipped. No pods are pulled/started.
+          kustomize build --load-restrictor LoadRestrictionsNone infrastructure/k8s/database-ha \
+            | kubectl apply --dry-run=server -f -
+
+      # --- KEDA: install operator, validate the ScaledObjects ----------------
+      - name: Install KEDA operator
+        run: |
+          kubectl apply --server-side -f \
+            https://github.com/kedacore/keda/releases/download/v2.15.1/keda-2.15.1.yaml
+          kubectl -n keda rollout status deployment/keda-operator --timeout=180s
+      - name: Validate the worker ScaledObjects against the real KEDA webhook
+        run: |
+          set -euo pipefail
+          # The ScaledObjects reference worker Deployments via scaleTargetRef, so
+          # create those objects first (they ImagePullBackOff — we never wait on
+          # them; only their existence is needed for the target check).
+          kustomize build infrastructure/k8s/base | kubectl apply -f - || true
+          kustomize build infrastructure/k8s/autoscaling \
+            | kubectl apply --dry-run=server -f -
+
+  # --- NetworkPolicy enforcement on Calico (blocking) ----------------------
+  k8s-netpol:
+    runs-on: ubuntu-latest
+    # BLOCKING. k8s-smoke runs on kind's default CNI (kindnet), which IGNORES
+    # NetworkPolicies — so it proves the policies parse and apply, never that they
+    # work. This runs the same base manifests on Calico, where policy is enforced,
+    # and asserts real connectivity both ways:
+    #   ALLOW export-worker -> seaweedfs:8333  (the S3 export path; this exact rule
+    #         was missing when the object store shipped, silently breaking every
+    #         export upload/download under an enforcing CNI)
+    #   DENY  ingestion-worker -> seaweedfs:8333  (proves policy is really enforced;
+    #         without this the ALLOW assertion would pass even with no CNI at all)
+    # Promoted to blocking after observing both assertions execute and pass under
+    # Calico ("OK (reachable)" / "OK (blocked)").
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create kind cluster (no default CNI)
+        uses: helm/kind-action@v1.10.0
+        with:
+          cluster_name: omniusgrid-netpol
+          config: tests/k8s/kind-calico.yaml
+      - name: Install Calico
+        run: |
+          set -euo pipefail
+          kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.28.1/manifests/calico.yaml
+          # Nodes stay NotReady until the CNI is up.
+          kubectl -n kube-system rollout status daemonset/calico-node --timeout=300s
+          kubectl wait --for=condition=Ready nodes --all --timeout=300s
+      - name: Setup kustomize
+        run: |
+          curl -sL "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.4.3/kustomize_v5.4.3_linux_amd64.tar.gz" \
+            | sudo tar xz -C /usr/local/bin kustomize
+      - name: Apply NetworkPolicies (base + monitoring + database-ha)
+        run: |
+          set -euo pipefail
+          kubectl create namespace omniusgrid
+          kubectl create namespace keda              # cross-namespace: KEDA scalers
+          kubectl create namespace netpol-outsider   # negative control
+          # Apply ONLY the policies (not the whole app) — the probe pods stand in
+          # for the real workloads, so no application images need to pull.
+          {
+            kustomize build infrastructure/k8s/base
+            kustomize build --load-restrictor LoadRestrictionsNone infrastructure/k8s/monitoring
+            kustomize build --load-restrictor LoadRestrictionsNone infrastructure/k8s/database-ha
+          } | ./tests/k8s/extract-netpols.py | kubectl apply -f -
+          kubectl -n omniusgrid get networkpolicy
+      - name: Deploy probe pods
+        run: kubectl apply -f tests/k8s/netpol-probe.yaml
+      - name: Assert NetworkPolicy enforcement
+        run: ./tests/k8s/netpol-test.sh
+      - name: Debug on failure
+        if: failure()
+        run: |
+          kubectl -n omniusgrid get pods -o wide || true
+          kubectl -n keda get pods -o wide || true
+          kubectl -n netpol-outsider get pods -o wide || true
+          kubectl -n omniusgrid describe networkpolicy || true
+
+  # --- NetworkPolicy matrix simulation (blocking, no cluster) --------------
+  netpol-simulate:
+    runs-on: ubuntu-latest
+    # BLOCKING and cheap (seconds, no cluster). Evaluates the SAME client->server
+    # matrix that k8s-netpol asserts, but directly against the policy YAML — so a
+    # policy change that breaks an expected path fails in ~20s instead of after a
+    # 5-minute kind+Calico spin-up. k8s-netpol remains the source of truth (it
+    # proves a real CNI agrees with this model); this is the fast feedback loop.
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup kustomize
+        run: |
+          curl -sL "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.4.3/kustomize_v5.4.3_linux_amd64.tar.gz" \
+            | sudo tar xz -C /usr/local/bin kustomize
+      - name: Simulate the enforcement matrix
+        run: |
+          set -euo pipefail
+          pip install pyyaml
+          {
+            kustomize build infrastructure/k8s/base
+            kustomize build --load-restrictor LoadRestrictionsNone infrastructure/k8s/monitoring
+            kustomize build --load-restrictor LoadRestrictionsNone infrastructure/k8s/database-ha
+          } | ./tests/k8s/extract-netpols.py > /tmp/netpols.yaml
+          # Derive the matrix from the shell script so the two can't drift.
+          grep -oE '^  "[^"]+"' tests/k8s/netpol-test.sh | tr -d ' "' \
+            | awk -F'|' 'NF>=6{print $1"\t"$3"\t"$4"\t"$5"\t"$6}' > /tmp/matrix.tsv
+          ./tests/k8s/simulate-netpols.py /tmp/netpols.yaml tests/k8s/netpol-probe.yaml /tmp/matrix.tsv
 
   # --- task 1: frontend unit tests (Vitest) --------------------------------
   frontend-unit:
@@ -211,6 +558,44 @@ jobs:
           severity: HIGH,CRITICAL
           exit-code: "1"
           trivyignores: .trivyignore
+
+  # --- FS-144/145: repo hygiene (blocking) ----------------------------------
+  # Both of these were real regressions, not hypotheticals:
+  #   * the root .dockerignore existed only in Hamad's working tree, so every CI
+  #     backend build (context: .) shipped frontend/, backend/venv, .git and
+  #     *.pem into the build context.
+  #   * frontend/node_modules was committed before .gitignore listed it, so the
+  #     ignore rule was inert and 19k darwin-built files were tracked.
+  repo-hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Root .dockerignore must be tracked
+        run: |
+          if ! git ls-files --error-unmatch .dockerignore >/dev/null 2>&1; then
+            echo "::error::.dockerignore is not tracked — CI image builds will" \
+                 "include frontend/, venv, .git and *.pem in the build context."
+            exit 1
+          fi
+
+      - name: No dependency or build output may be tracked
+        run: |
+          offenders=$(git ls-files | grep -E '(^|/)(node_modules|venv|\.venv)/' || true)
+          if [ -n "$offenders" ]; then
+            echo "::error::$(echo "$offenders" | wc -l) dependency files are tracked in git."
+            echo "$offenders" | head -20
+            exit 1
+          fi
+
+      - name: No private key material may be tracked
+        run: |
+          offenders=$(git ls-files | grep -E '\.(pem|key|p12|pfx)$' || true)
+          if [ -n "$offenders" ]; then
+            echo "::error::private key material is tracked in git:"
+            echo "$offenders"
+            exit 1
+          fi
 
   # --- task 20: k6 load test (non-blocking) --------------------------------
   load-test:

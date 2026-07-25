@@ -42,8 +42,18 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # X-XSS-Protection (enable XSS filter)
         response.headers["X-XSS-Protection"] = "1; mode=block"
         
-        # Referrer-Policy
-        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        # Referrer-Policy — a DEFAULT, not an override.
+        #
+        # This middleware runs after the endpoint, so assigning unconditionally
+        # clobbered any stricter policy a handler had already chosen. Signed
+        # download responses (compliance reports, exports) deliberately set
+        # `no-referrer` because the signing token travels in the query string and
+        # must never reach a Referer header; that hardening was being silently
+        # downgraded on every one of them. Only fill in the default when the
+        # handler has not expressed an opinion.
+        response.headers.setdefault(
+            "Referrer-Policy", "strict-origin-when-cross-origin"
+        )
         
         # Permissions-Policy (restrict browser features)
         permissions_policy = (

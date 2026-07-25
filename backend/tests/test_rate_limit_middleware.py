@@ -131,9 +131,16 @@ async def test_rate_limit_keys_authenticated_users_separately_on_same_ip(
     app = _limited_app()
     transport = ASGITransport(app=app, client=("203.0.113.12", 1234))
 
+    # Real JWTs — keying is by the `sub` claim (the earlier version used plain
+    # strings like "user-a-token", which only worked because their first 16
+    # chars happened to differ under the old token[:16] key).
+    import jwt
+    token_a = jwt.encode({"sub": "user-a", "type": "access"}, "s", algorithm="HS256")
+    token_b = jwt.encode({"sub": "user-b", "type": "access"}, "s", algorithm="HS256")
+
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        user_a_headers = {"Authorization": "Bearer user-a-token"}
-        user_b_headers = {"Authorization": "Bearer user-b-token"}
+        user_a_headers = {"Authorization": f"Bearer {token_a}"}
+        user_b_headers = {"Authorization": f"Bearer {token_b}"}
 
         assert (await client.get("/limited", headers=user_a_headers)).status_code == 200
         assert (await client.get("/limited", headers=user_a_headers)).status_code == 200
@@ -142,7 +149,7 @@ async def test_rate_limit_keys_authenticated_users_separately_on_same_ip(
         user_b_response = await client.get("/limited", headers=user_b_headers)
 
     assert user_b_response.status_code == 200
-    assert user_b_response.json()["key"] == "user:user-b-token"
+    assert user_b_response.json()["key"] == "user:user-b"
 
 
 @pytest.mark.asyncio
@@ -180,3 +187,38 @@ async def test_auth_limit_stays_active_when_global_limiter_is_disabled(
 
     assert [response.status_code for response in responses] == [200, 200, 429]
     assert responses[0].json()["key"] == "auth-ip:203.0.113.14"
+
+
+def _bearer_request(token: str):
+    """Minimal Request with an Authorization header for keying tests."""
+    from starlette.requests import Request as StarletteRequest
+    scope = {
+        "type": "http", "method": "GET", "path": "/", "headers":
+        [(b"authorization", f"Bearer {token}".encode())],
+        "client": ("1.2.3.4", 0), "query_string": b"",
+    }
+    return StarletteRequest(scope)
+
+
+def test_rate_limit_key_is_per_user_not_shared():
+    """Two different users must get different rate-limit keys.
+
+    The old key was `user:{token[:16]}` — for HS256 the first 16 chars are the
+    base64 of the identical header, so every authenticated user collapsed into
+    ONE shared bucket (one user could throttle everyone).
+    """
+    import jwt
+    t1 = jwt.encode({"sub": "user-aaaaaaaa", "type": "access"}, "s", algorithm="HS256")
+    t2 = jwt.encode({"sub": "user-bbbbbbbb", "type": "access"}, "s", algorithm="HS256")
+    k1 = get_user_id_from_request(_bearer_request(t1))
+    k2 = get_user_id_from_request(_bearer_request(t2))
+    assert k1 != k2, f"distinct users share a rate-limit bucket: {k1} == {k2}"
+    assert k1.startswith("user:") and "user-aaaaaaaa" in k1
+
+
+def test_rate_limit_key_stable_across_a_users_tokens():
+    """The same user's budget should travel with them (keyed by identity)."""
+    import jwt
+    a = jwt.encode({"sub": "user-x", "type": "access", "jti": "1"}, "s", algorithm="HS256")
+    b = jwt.encode({"sub": "user-x", "type": "access", "jti": "2"}, "s", algorithm="HS256")
+    assert get_user_id_from_request(_bearer_request(a)) == get_user_id_from_request(_bearer_request(b))

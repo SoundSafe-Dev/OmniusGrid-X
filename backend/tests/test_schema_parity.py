@@ -161,3 +161,128 @@ def test_id_column_type_parity(admin_sync_url):
         "uuid-vs-text drift on id columns (binds/joins break on real Postgres "
         f"— the pre-032 class): {sorted(drift)}"
     )
+
+
+def test_column_type_category_parity(admin_sync_url):
+    """Type-class drift on ANY column, not just ids.
+
+    test_id_column_type_parity only inspects id/*_id columns and only the
+    uuid-vs-text pair, so audit_logs.ip_address — INET in migrations 001/009,
+    String(45) in the ORM — was invisible to it. Every audit insert bound
+    $n::VARCHAR against an inet column, Postgres rejected it, and the audit
+    middleware swallowed the failure as `audit_log_failed`: the tamper-evident
+    audit trail was silently empty on real deployments while every request
+    reported success.
+
+    Compares the ORM's Postgres-compiled type category against the database's,
+    so a mismatch fails here instead of at the first insert in production.
+    """
+    db = _db_columns(admin_sync_url)
+    drift = []
+    for tname, tbl in Base.metadata.tables.items():
+        for col in tbl.columns:
+            key = (tname, col.name)
+            if key not in db or key in TYPE_ALLOWLIST:
+                continue
+            orm_cat = _orm_type_category(col)
+            db_cat = _db_type_category(db[key]["udt"])
+            # "other" on either side means a type this categoriser doesn't model
+            # (enums, inet, ranges...). Only compare when the DB side is known,
+            # so an ORM type we can't classify doesn't produce noise — but an
+            # ORM "text" against a DB type we *can't* classify is exactly the
+            # ip_address bug, so that pairing is reported.
+            if orm_cat == db_cat:
+                continue
+            if db_cat == "other" and orm_cat != "text":
+                continue
+            drift.append(f"{tname}.{col.name}: ORM={orm_cat} DB={db[key]['udt']}")
+    assert not drift, (
+        "column type-class drift between the ORM and the migrated schema "
+        "(binds fail at insert/read time on real Postgres): " + str(sorted(drift))
+    )
+
+
+def test_org_scoped_tables_have_org_index(admin_sync_url):
+    """Every org-scoped base table must have an index leading with organization_id.
+
+    RLS (011/033) makes organization_id a predicate on every query against these
+    tables, so a missing index means a sequential scan per tenant query. 27 base
+    tables were missing one (migration 043 added composite
+    (organization_id, <time>) indexes). This keeps the gap closed: a new
+    org-scoped table without a covering index fails here.
+
+    A composite index counts as long as organization_id is its LEADING column —
+    that is what the RLS equality predicate needs.
+    """
+    import psycopg2
+
+    conn = psycopg2.connect(admin_sync_url)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT c.table_name
+            FROM information_schema.columns c
+            JOIN information_schema.tables t
+              ON t.table_name = c.table_name AND t.table_schema = c.table_schema
+            WHERE c.table_schema = 'public'
+              AND c.column_name = 'organization_id'
+              AND t.table_type = 'BASE TABLE';
+            """
+        )
+        org_tables = {r[0] for r in cur.fetchall()}
+        cur.execute(
+            """
+            SELECT DISTINCT t.relname
+            FROM pg_index ix
+            JOIN pg_class t ON t.oid = ix.indrelid
+            JOIN pg_attribute a
+              ON a.attrelid = t.oid AND a.attnum = ix.indkey[0]
+            WHERE a.attname = 'organization_id';
+            """
+        )
+        indexed = {r[0] for r in cur.fetchall()}
+    finally:
+        conn.close()
+
+    missing = sorted(org_tables - indexed)
+    assert not missing, (
+        "org-scoped base tables with no organization_id-leading index (RLS "
+        "predicate forces a seq scan per query — add a composite "
+        "(organization_id, <time>) index, see migration 043): " + str(missing)
+    )
+
+
+# Columns that legitimately have no server default. Timestamps that record when
+# something *happened* (rather than when the row was written) must stay NULL
+# until the event occurs — defaulting them to NOW() would invent an event.
+TIMESTAMP_DEFAULT_EXEMPT: set[tuple[str, str]] = set()
+
+
+def test_timestamp_columns_have_server_defaults(admin_sync_url):
+    """created_at/updated_at must default server-side, not only in the ORM.
+
+    ~30 columns were declared as ``Column(DateTime(timezone=True),
+    default=utcnow)`` — a PYTHON-side default that only fires through
+    SQLAlchemy. Migration 030 was generated from that metadata, so it emitted
+    them as plain nullable TIMESTAMPTZ. Any raw-SQL INSERT (seed script, COPY,
+    worker bulk insert, psql fix-up) therefore wrote NULL, and those rows then
+    vanished from every time-ordered query and trend.
+
+    Nothing checked this before: the parity suite compared existence,
+    nullability and type, but never defaults — so the whole class was invisible.
+    Migration 044 sets the defaults; this keeps them set.
+    """
+    db_cols = _db_columns(admin_sync_url)
+    missing = sorted(
+        f"{t}.{c}"
+        for (t, c), meta in db_cols.items()
+        if c in ("created_at", "updated_at")
+        and meta["default"] is None
+        and (t, c) not in TIMESTAMP_DEFAULT_EXEMPT
+    )
+    assert not missing, (
+        "these created_at/updated_at columns have no SERVER default, so a raw "
+        "INSERT writes NULL and the row disappears from time-ordered queries "
+        "(see migration 044): " + ", ".join(missing)
+    )

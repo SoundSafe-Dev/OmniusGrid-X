@@ -89,6 +89,14 @@ spec:
       ports:
         - protocol: TCP
           port: 8000
+    # Prometheus (monitoring stack) scraping the backend /metrics endpoint.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 8000
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -169,6 +177,24 @@ spec:
           port: 9094   # FS-66 mTLS listener
         - protocol: TCP
           port: 9644
+    # KEDA (keda namespace) reads consumer-group lag over the Kafka API to drive
+    # worker autoscaling. Without this the scalers can't reach the broker and
+    # every ScaledObject silently fails to scale.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: keda
+      ports:
+        - protocol: TCP
+          port: 9092
+    # Prometheus scraping Redpanda's metrics endpoint.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 9644
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -198,6 +224,12 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: timescaledb
+        # The CloudNativePG HA cluster (database-ha). Listed alongside timescaledb
+        # so adopting the HA database does not require editing every egress policy
+        # — before that stack is deployed this selector simply matches nothing.
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: omniusgrid-db
       ports:
         - protocol: TCP
           port: 5432
@@ -251,6 +283,12 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: timescaledb
+        # The CloudNativePG HA cluster (database-ha). Listed alongside timescaledb
+        # so adopting the HA database does not require editing every egress policy
+        # — before that stack is deployed this selector simply matches nothing.
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: omniusgrid-db
       ports:
         - protocol: TCP
           port: 5432
@@ -272,6 +310,16 @@ spec:
       ports:
         - protocol: TCP
           port: 6379
+    # SeaweedFS object store (8333) — serving export/compliance downloads that a
+    # worker generated on another pod (EXPORT_USE_S3). Without this the S3
+    # download path is denied and falls back to the pod-local file it can't see.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: seaweedfs
+      ports:
+        - protocol: TCP
+          port: 8333
     # Outbound HTTPS to the cloud gateway / external services (no podSelector
     # restriction; egress to any destination on 443).
     - to: []
@@ -311,6 +359,12 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: timescaledb
+        # The CloudNativePG HA cluster (database-ha). Listed alongside timescaledb
+        # so adopting the HA database does not require editing every egress policy
+        # — before that stack is deployed this selector simply matches nothing.
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: omniusgrid-db
       ports:
         - protocol: TCP
           port: 5432
@@ -359,6 +413,12 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: timescaledb
+        # The CloudNativePG HA cluster (database-ha). Listed alongside timescaledb
+        # so adopting the HA database does not require editing every egress policy
+        # — before that stack is deployed this selector simply matches nothing.
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: omniusgrid-db
       ports:
         - protocol: TCP
           port: 5432
@@ -380,6 +440,15 @@ spec:
       ports:
         - protocol: TCP
           port: 6379
+    # SeaweedFS object store (8333) — the generated export is uploaded here
+    # (EXPORT_USE_S3) so the API pod can serve the download. Denied without this.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: seaweedfs
+      ports:
+        - protocol: TCP
+          port: 8333
 ---
 # compliance-reports-worker: consumes report jobs from Redpanda, reads
 # TimescaleDB, and writes generated reports to local storage. SMTP email
@@ -415,6 +484,12 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: timescaledb
+        # The CloudNativePG HA cluster (database-ha). Listed alongside timescaledb
+        # so adopting the HA database does not require editing every egress policy
+        # — before that stack is deployed this selector simply matches nothing.
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: omniusgrid-db
       ports:
         - protocol: TCP
           port: 5432
@@ -428,3 +503,219 @@ spec:
           port: 9092
         - protocol: TCP
           port: 9094
+    # SeaweedFS object store (8333) — generated compliance reports are uploaded
+    # here (EXPORT_USE_S3) so the API pod can serve the download. Denied otherwise.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: seaweedfs
+      ports:
+        - protocol: TCP
+          port: 8333
+---
+# Egress for the nightly logical backup Job (FS-151). Without this the Job is
+# caught by default-deny-all and hangs on DNS, then fails — which is worse than
+# no CronJob, because the schedule makes it look like backups are running.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-db-backup-egress
+  namespace: omniusgrid
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: db-backup
+  policyTypes:
+    - Egress
+  egress:
+    # Cluster DNS resolution (kube-dns in kube-system).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # TimescaleDB — pg_dump source.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: timescaledb
+        # The CloudNativePG HA cluster (database-ha). Listed alongside timescaledb
+        # so adopting the HA database does not require editing every egress policy
+        # — before that stack is deployed this selector simply matches nothing.
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: omniusgrid-db
+      ports:
+        - protocol: TCP
+          port: 5432
+    # S3 upload. Cannot be narrowed to a podSelector (it is off-cluster); scope
+    # it with a bucket policy / VPC endpoint rather than here.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+---
+# SeaweedFS object store (base/object-store.yaml). Under default-deny-all it
+# needs both an ingress allow-list (who may reach the S3 API on 8333) and its own
+# egress (DNS). Reached by the backend + export/compliance workers for the S3
+# export/compliance download path, and by Prometheus for scraping.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-seaweedfs-ingress
+  namespace: omniusgrid
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: seaweedfs
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - backend
+                  - export-worker
+                  - compliance-reports-worker
+        # CloudNativePG (database-ha) archives WAL / base backups to SeaweedFS.
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: omniusgrid-db
+      ports:
+        - protocol: TCP
+          port: 8333
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-seaweedfs-egress
+  namespace: omniusgrid
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: seaweedfs
+  policyTypes:
+    - Egress
+  egress:
+    # Cluster DNS resolution (kube-dns in kube-system).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+# Redis (base/redis-statefulset.yaml). Under default-deny-all it needs an explicit
+# ingress allow-list; the workload egress rules already permit :6379 outbound, but
+# nothing allowed it INBOUND because the Service did not exist until FS-196.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-redis-ingress
+  namespace: omniusgrid
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: redis
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - backend
+                  - export-worker
+                  - compliance-reports-worker
+                  - ingestion-worker
+                  - ota-rollout-worker
+      ports:
+        - protocol: TCP
+          port: 6379
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-redis-egress
+  namespace: omniusgrid
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: redis
+  policyTypes:
+    - Egress
+  egress:
+    # Cluster DNS only — Redis initiates nothing else.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+# Prometheus -> worker /metrics and the kubelet -> worker probes (FS-213/214).
+#
+# The four workers had NO ingress policy at all, because nothing ever routed to
+# them — they are Kafka consumers with no Service. Now that they expose
+# /metrics, /healthz and /readyz on 9109, default-deny-all would block the scrape
+# outright, and the whole point of adding worker metrics is that they leave the
+# pod. This is the same gap that hid the backend and Redpanda scrapes before.
+#
+# Probe traffic originates from the NODE, not a pod, so it is not matched by a
+# podSelector. Most CNIs (Calico included) permit kubelet health checks
+# regardless; if a stricter CNI drops them, add the node CIDR as an ipBlock here.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-worker-metrics-ingress
+  namespace: omniusgrid
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values:
+          - ingestion-worker
+          - export-worker
+          - compliance-reports-worker
+          - ota-rollout-worker
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 9109

@@ -5,6 +5,8 @@
 import React, { useState, useEffect } from 'react';
 import { useKanban, Task, TaskColumn } from '../../stores/kanbanStore';
 import { Button } from '../ui/Button';
+import { useDialog } from '../ui';
+import { api } from '../../api/client';
 import { X, Play, CheckCircle, AlertCircle, User, Clock, Calendar, ArrowRightLeft, ChevronDown } from 'lucide-react';
 
 interface TaskDetailModalProps {
@@ -28,6 +30,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
   columns,
 }) => {
   const { updateTask, approveTask, startTask, completeTask, deleteTask, moveTask } = useKanban();
+  const { prompt: promptDialog } = useDialog();
   const [isEditing, setIsEditing] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formData, setFormData] = useState<Partial<Task>>({});
@@ -42,16 +45,13 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
       if (!isOpen) return;
       setIsLoadingUsers(true);
       try {
-        const token = localStorage.getItem('token') || 'dev-token';
-        const response = await fetch('http://localhost:8000/api/v1/auth/users', {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-          },
-        });
-        if (response.ok) {
-          const data = await response.json();
-          setUsers(data.items || []);
-        }
+        // Use the shared API client: it resolves the base URL per environment
+        // (same-origin in prod, not a hardcoded localhost:8000) and attaches the
+        // real access token via its interceptor — the old inline fetch pointed
+        // at localhost and read a nonexistent `token` key, so it broke outside
+        // local dev.
+        const response = await api.get('/api/v1/auth/users');
+        setUsers(response.data.items || []);
       } catch (error) {
         console.error('Failed to fetch users:', error);
       } finally {
@@ -111,9 +111,15 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
   };
 
   const handleReject = async () => {
-    const reason = prompt('Enter rejection reason:');
+    const reason = await promptDialog({
+      title: 'Reject task',
+      inputLabel: 'Rejection reason',
+      placeholder: 'Why is this task being rejected?',
+      required: true,
+      confirmLabel: 'Reject',
+    });
     if (!reason) return;
-    
+
     setIsSubmitting(true);
     try {
       await approveTask(task.id, 'reject', reason);
@@ -263,7 +269,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
             <div className="flex items-center gap-1 text-gray-600 dark:text-gray-400">
               <span>Status:</span>
               <span className="font-medium text-gray-900 dark:text-white capitalize">
-                {task.status.replace('_', ' ')}
+                {task.status?.replace('_', ' ')}
               </span>
             </div>
           </div>

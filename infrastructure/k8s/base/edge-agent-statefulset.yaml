@@ -1,0 +1,146 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: edge-agent
+  namespace: omniusgrid
+  labels:
+    app.kubernetes.io/name: edge-agent
+    app.kubernetes.io/component: edge
+    app.kubernetes.io/part-of: omniusgrid
+spec:
+  # Single collector process per deployment; scale per site, not per replica
+  # (multiple replicas would double-collect the same sources).
+  replicas: 1
+  # Now a StatefulSet (was a Deployment) so the store-and-forward SQLite buffer
+  # gets a PVC that SURVIVES pod reschedule. As a Deployment the buffer was an
+  # emptyDir, so a reschedule discarded up to BUFFER_RETENTION_HOURS (24h) of
+  # offline telemetry — defeating the entire purpose of store-and-forward. The
+  # default RollingUpdate strategy terminates the single pod before the
+  # replacement starts, so the ReadWriteOnce PVC is never contended.
+  serviceName: edge-agent
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: edge-agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: edge-agent
+        app.kubernetes.io/component: edge
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9108"
+        prometheus.io/path: "/metrics"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: edge-agent
+          image: omniusgrid/edge-agent:latest
+          imagePullPolicy: Always
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+
+          ports:
+            - name: metrics
+              containerPort: 9108
+              protocol: TCP
+
+          env:
+            - name: REDPANDA_URL
+              value: "redpanda:9092"
+            # ORGANIZATION_ID must be supplied per environment — it is NOT
+            # defaulted here on purpose. The telemetry topic is
+            # telemetry.{org}.{asset}, so a wrong org publishes into a tenant that
+            # does not exist; the ingestion worker then rejects it (or RLS hides
+            # the rows) and the data is silently lost. This used to be hardcoded
+            # "dev-org", which every real deployment would have inherited.
+            # A missing key stops the pod with CreateContainerConfigError —
+            # deliberately louder than shipping telemetry to a dead tenant.
+            - name: ORGANIZATION_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: edge-agent-config
+                  key: organization_id
+            # Derived from the pod name so StatefulSet replicas get distinct ids
+            # (edge-agent-0, edge-agent-1, …). It was hardcoded "edge-agent-001",
+            # which is fine at replicas: 1 but silently gives every replica the
+            # same identity the moment this is scaled — and agent id is how the
+            # backend attributes telemetry and enrollment.
+            - name: AGENT_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: BUFFER_PATH
+              value: "/var/lib/opsgrid-agent/buffer.db"
+            - name: BUFFER_RETENTION_HOURS
+              value: "24"
+            - name: METRICS_PORT
+              value: "9108"
+            # Mount a collector config and point COLLECTORS_FILE at it, or set
+            # COLLECTORS to a JSON array via a ConfigMap.
+            # - name: COLLECTORS_FILE
+            #   value: "/etc/opsgrid/collectors.yml"
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+            - name: PYTHONUNBUFFERED
+              value: "1"
+
+          volumeMounts:
+            - name: buffer
+              mountPath: /var/lib/opsgrid-agent
+            - name: tmp
+              mountPath: /tmp
+
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 9108
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 9108
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+      volumes:
+        # buffer is a persistent volumeClaimTemplate (below), not emptyDir.
+        - name: tmp
+          emptyDir: {}
+
+      terminationGracePeriodSeconds: 30
+
+  volumeClaimTemplates:
+    - metadata:
+        name: buffer
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            # Sized for the 24h store-and-forward backlog plus WAL/quarantine
+            # headroom; the buffer enforces its own 1GB ring-buffer cap in-app.
+            storage: 5Gi

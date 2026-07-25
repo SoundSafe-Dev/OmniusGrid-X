@@ -9,14 +9,18 @@ resources:
   - backend-service.yaml
   - ota-rollout-worker-deployment.yaml
   - frontend-deployment.yaml
-  - edge-agent-deployment.yaml
+  - edge-agent-statefulset.yaml
   - edge-agent-service.yaml
   - ingestion-worker-deployment.yaml
   - export-worker-deployment.yaml
   - compliance-reports-worker-deployment.yaml
   - migration-job.yaml
+  - db-backup-cronjob.yaml
   - timescaledb-statefulset.yaml
   - redpanda-statefulset.yaml
+  - redis-statefulset.yaml
+  - object-store.yaml
+  - pod-disruption-budgets.yaml
   - ingress.yaml
   - otel-collector.yaml
 

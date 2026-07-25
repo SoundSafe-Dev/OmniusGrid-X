@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { Badge } from '../ui/Badge';
-import { Tooltip, TooltipTrigger, TooltipContent } from '../ui';
+import { Tooltip, TooltipTrigger, TooltipContent, useDialog } from '../ui';
 import { analysisSessionsApi, AnalysisSession, SessionMessage } from '../../api/analysisSessions';
 import { SessionList } from './SessionList';
 import { DataSourcesPanel, DataSourcesPanelHandle } from './DataSourcesPanel';
@@ -129,6 +129,7 @@ const FormattedMessageContent = ({ content, isAssistant }: { content: string; is
 };
 
 export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className }) => {
+  const { alert } = useDialog();
   const [currentSession, setCurrentSession] = useState<AnalysisSession | null>(null);
   const [messages, setMessages] = useState<SessionMessage[]>([]);
   const [input, setInput] = useState('');
@@ -273,7 +274,7 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
       setMessages([]);
     } catch (error) {
       console.error('[CorrelationAIPane] Error creating session:', error);
-      alert('Failed to create session. Check console for details.');
+      await alert({ title: 'Could not create session', message: 'Failed to create session. Check the console for details.' });
     }
   };
 
@@ -308,7 +309,7 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
       }
     } catch (error) {
       console.error('Error preparing session for upload:', error);
-      alert('Could not start a session for upload. Check backend/tunnel and try again.');
+      await alert({ title: 'Upload unavailable', message: 'Could not start a session for upload. Check the backend/tunnel and try again.' });
     }
   };
 
@@ -353,7 +354,7 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
       activeSession = await ensureActiveSession();
     } catch (error) {
       console.error('Error ensuring session before chat:', error);
-      alert('Could not create or load a session. Check backend/tunnel and try again.');
+      await alert({ title: 'Session unavailable', message: 'Could not create or load a session. Check the backend/tunnel and try again.' });
       return;
     }
 

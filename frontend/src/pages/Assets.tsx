@@ -8,7 +8,7 @@ const Assets: FC = () => {
   // FS-127: page through the FS-82 envelope. Page size comes from the limit the
   // backend echoes back; skip is part of the queryKey via the hook's params.
   const [skip, setSkip] = useState(0)
-  const { data: assetsData, isLoading } = useAssets({ skip })
+  const { data: assetsData, isLoading, isError } = useAssets({ skip })
   const assets = assetsData?.items || []
   const total = assetsData?.total ?? 0
   const limit = assetsData?.limit || assets.length || 1
@@ -53,6 +53,21 @@ const Assets: FC = () => {
     )
   }
 
+  // Without this, a failed fetch rendered the header over an empty grid — a
+  // blank screen with no indication anything went wrong.
+  if (isError) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-center">
+          <p className="text-status-alarm">Failed to load assets.</p>
+          <p className="text-sm text-opsgrid-text-secondary mt-1">
+            Check your connection and try again.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -71,6 +86,17 @@ const Assets: FC = () => {
           <TooltipContent>Total number of registered assets in the system</TooltipContent>
         </Tooltip>
       </div>
+
+      {assets.length === 0 && (
+        <div className="flex items-center justify-center h-48 border border-dashed border-opsgrid-border rounded-lg">
+          <div className="text-center">
+            <p className="text-opsgrid-text-secondary">No assets registered yet.</p>
+            <p className="text-sm text-opsgrid-text-secondary mt-1">
+              Assets appear here once an edge agent enrolls and reports.
+            </p>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {assets?.map((asset: any) => (

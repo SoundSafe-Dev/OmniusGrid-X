@@ -7,7 +7,7 @@ const Alarms: FC = () => {
   // FS-127: page through the FS-82 envelope. Page size comes from the limit the
   // backend echoes back; skip is part of the queryKey via the hook's filters.
   const [skip, setSkip] = useState(0)
-  const { data: alarmsData, isLoading } = useAlarms({ skip })
+  const { data: alarmsData, isLoading, isError } = useAlarms({ skip })
   const alarms = alarmsData?.items || []
   const total = alarmsData?.total ?? 0
   const limit = alarmsData?.limit || alarms.length || 1
@@ -46,6 +46,21 @@ const Alarms: FC = () => {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="text-opsgrid-text-secondary">Loading...</div>
+      </div>
+    )
+  }
+
+  // A failed fetch previously rendered the header over an empty list — a blank
+  // screen with no error indication.
+  if (isError) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-center">
+          <p className="text-status-alarm">Failed to load alarms.</p>
+          <p className="text-sm text-opsgrid-text-secondary mt-1">
+            Check your connection and try again.
+          </p>
+        </div>
       </div>
     )
   }

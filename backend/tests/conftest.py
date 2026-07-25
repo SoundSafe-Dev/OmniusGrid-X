@@ -22,6 +22,10 @@ from __future__ import annotations
 
 import os
 import sys
+import tarfile
+import time
+from io import BytesIO
+from textwrap import dedent
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import AsyncIterator
@@ -200,9 +204,12 @@ def pg_container():
     """Start an ephemeral TimescaleDB container for the whole test session."""
     from testcontainers.postgres import PostgresContainer
 
+    # testcontainers 4.x renamed the `user` kwarg to `username` (it raises
+    # ValueError on the old spelling); `dbname` and get_connection_url() are
+    # unchanged.
     container = PostgresContainer(
         image="timescale/timescaledb:latest-pg15",
-        user="omniusgrid",
+        username="omniusgrid",
         password="omniusgrid_dev_password",
         dbname="omniusgrid_test",
     )
@@ -259,27 +266,51 @@ async def app(tenant_async_url):
     from app.db import database as db_module
     from app.main import app as fastapi_app
     from app.middleware.tenant_isolation import get_tenant_db, get_tenant_org_id
-    import app.api.agent_releases as agent_releases_api
-    import app.api.models as models_api
-    import app.services.rollout_orchestrator as rollout_orchestrator_service
-    import app.api.compliance_reports as compliance_reports_api
-    import app.api.erp_integrations as erp_integrations_api
-    import app.api.exports as exports_api
-    import app.services.report_download_audit as report_download_audit
+    # These look unused but are load-bearing: they guarantee the modules are in
+    # sys.modules before the AsyncSessionLocal sweep below runs. Importing
+    # app.main pulls in the mounted routers, but these are reached lazily in
+    # places, so keep the explicit imports. noqa: F401 — do not "clean up".
+    import app.api.agent_releases as agent_releases_api  # noqa: F401
+    import app.api.models as models_api  # noqa: F401
+    import app.services.rollout_orchestrator as rollout_orchestrator_service  # noqa: F401
+    import app.api.compliance_reports as compliance_reports_api  # noqa: F401
+    import app.api.erp_integrations as erp_integrations_api  # noqa: F401
+    import app.api.exports as exports_api  # noqa: F401
+    import app.services.report_download_audit as report_download_audit  # noqa: F401
+    import app.api.notifications  # noqa: F401
+    import app.api.edge_fleet  # noqa: F401
+    import app.api.oee  # noqa: F401
+    import app.api.commands  # noqa: F401
+    import app.api.kanban  # noqa: F401
 
     test_engine = create_async_engine(tenant_async_url, future=True)
     test_session_maker = async_sessionmaker(
         test_engine, expire_on_commit=False, autoflush=False
     )
-    original_async_session_local = db_module.AsyncSessionLocal
-    db_module.AsyncSessionLocal = test_session_maker
-    agent_releases_api.AsyncSessionLocal = test_session_maker
-    models_api.AsyncSessionLocal = test_session_maker
-    rollout_orchestrator_service.AsyncSessionLocal = test_session_maker
-    compliance_reports_api.AsyncSessionLocal = test_session_maker
-    erp_integrations_api.AsyncSessionLocal = test_session_maker
-    exports_api.AsyncSessionLocal = test_session_maker
-    report_download_audit.AsyncSessionLocal = test_session_maker
+
+    # Modules do `from app.db.database import AsyncSessionLocal`, so each binds
+    # its own reference at import time and patching app.db.database alone never
+    # reaches them. This used to patch a hardcoded list of 8 modules while 41
+    # bind the name, so anything newer (notifications, edge_fleet, oee, kanban,
+    # commands, …) still pointed at the placeholder DATABASE_URL set at the top
+    # of this file — surfacing as `role "placeholder" does not exist` 500s in the
+    # real-DB smoke rather than as a missing fixture. The teardown also restored
+    # only 7 of the 8. Sweeping sys.modules keeps both directions complete and
+    # self-maintaining as routers are added.
+    patched_modules = [
+        module
+        for name, module in list(sys.modules.items())
+        if name.startswith("app.")
+        and getattr(module, "AsyncSessionLocal", None) is not None
+    ]
+    original_session_locals = {
+        module: module.AsyncSessionLocal for module in patched_modules
+    }
+    for module in patched_modules:
+        module.AsyncSessionLocal = test_session_maker
+    original_async_session_local = original_session_locals.get(
+        db_module, db_module.AsyncSessionLocal
+    )
 
     async def _override_get_db() -> AsyncIterator:
         async with test_session_maker() as session:
@@ -326,13 +357,8 @@ async def app(tenant_async_url):
     yield fastapi_app
 
     fastapi_app.dependency_overrides.clear()
-    db_module.AsyncSessionLocal = original_async_session_local
-    agent_releases_api.AsyncSessionLocal = original_async_session_local
-    rollout_orchestrator_service.AsyncSessionLocal = original_async_session_local
-    compliance_reports_api.AsyncSessionLocal = original_async_session_local
-    erp_integrations_api.AsyncSessionLocal = original_async_session_local
-    exports_api.AsyncSessionLocal = original_async_session_local
-    report_download_audit.AsyncSessionLocal = original_async_session_local
+    for module, original in original_session_locals.items():
+        module.AsyncSessionLocal = original
     await test_engine.dispose()
 
 
@@ -444,3 +470,92 @@ async def client_b(app, jwt_for_user):
         headers={"Authorization": f"Bearer {jwt_for_user['b']}"},
     ) as client:
         yield client
+
+
+# --- Kafka / Redpanda (shared by the e2e modules) --------------------------
+class _RedpandaContainer:
+    """Run Redpanda through testcontainers' generic Docker container API."""
+
+    _START_SCRIPT = "/var/lib/redpanda/tc-start.sh"
+    _KAFKA_PORT = 9092
+
+    def __init__(self, image: str):
+        from testcontainers.core.container import DockerContainer
+
+        self._container = DockerContainer(image, entrypoint="sh")
+        self._container.with_exposed_ports(self._KAFKA_PORT)
+
+    def get_bootstrap_server(self) -> str:
+        host = self._container.get_container_host_ip()
+        port = self._container.get_exposed_port(self._KAFKA_PORT)
+        return f"{host}:{port}"
+
+    def start(self):
+        from testcontainers.core.waiting_utils import wait_for_logs
+
+        script = self._START_SCRIPT
+        self._container.with_command(
+            f'-c "while [ ! -f {script} ]; do sleep 0.1; done; sh {script}"'
+        )
+        self._container.start()
+
+        host = self._container.get_container_host_ip()
+        port = self._container.get_exposed_port(self._KAFKA_PORT)
+        contents = dedent(
+            f"""
+            #!/bin/bash
+            /usr/bin/rpk redpanda start --mode dev-container --smp 1 --memory 1G \
+              --kafka-addr PLAINTEXT://0.0.0.0:29092,OUTSIDE://0.0.0.0:9092 \
+              --advertise-kafka-addr \
+                PLAINTEXT://127.0.0.1:29092,OUTSIDE://{host}:{port}
+            """
+        ).strip().encode("utf-8")
+
+        with BytesIO() as archive:
+            with tarfile.TarFile(fileobj=archive, mode="w") as tar:
+                dirname, basename = os.path.split(script)
+                info = tarfile.TarInfo(name=basename)
+                info.size = len(contents)
+                info.mtime = time.time()
+                tar.addfile(info, BytesIO(contents))
+            archive.seek(0)
+            self._container.get_wrapped_container().put_archive(dirname, archive)
+
+        wait_for_logs(
+            self._container,
+            r".*Started Kafka API server.*",
+            timeout=15,
+        )
+        return self
+
+    def stop(self):
+        self._container.stop()
+
+
+@pytest.fixture(scope="session")
+def redpanda_container():
+    """ONE broker per test session, shared by every Kafka-dependent e2e module.
+
+    This used to be duplicated: an identical _RedpandaContainer lived in both
+    test_ingestion_redpanda_e2e and test_compliance_reports_e2e, the latter
+    MODULE-scoped and imported by a third module — so a single pytest run started
+    several brokers, and they interfered. Those files then appeared "flaky" while
+    each passed in isolation. One session-scoped container fixes it at the root
+    rather than excluding the tests.
+
+    Still isolated per RUN (fresh container), so consumer offsets cannot leak
+    between runs.
+    """
+    container = _RedpandaContainer(
+        image="docker.redpanda.com/redpandadata/redpanda:v23.3.5"
+    )
+    container.start()
+    try:
+        yield container
+    finally:
+        container.stop()
+
+
+@pytest.fixture(scope="session")
+def redpanda_bootstrap_server(redpanda_container) -> str:
+    return redpanda_container.get_bootstrap_server()

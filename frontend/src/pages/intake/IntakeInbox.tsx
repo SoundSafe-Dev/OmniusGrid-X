@@ -117,8 +117,8 @@ export const IntakeInbox: React.FC = () => {
   };
 
   const filteredItems = items.filter(item =>
-    item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    item.description.toLowerCase().includes(searchQuery.toLowerCase())
+    (item.title ?? '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+    (item.description ?? '').toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   return (

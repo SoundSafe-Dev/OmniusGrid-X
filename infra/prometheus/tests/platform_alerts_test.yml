@@ -1,0 +1,84 @@
+# promtool unit tests for the opsgrid_platform alert group (HA database, worker
+# autoscaling, backups). Run from infra/prometheus/:
+#   promtool test rules tests/platform_alerts_test.yml
+#
+# Scope: the deterministic gauge/threshold alerts where the expected firing is
+# exactly reasoned. CNPGInstanceExporterDown and DatabaseBackupJobFailed are
+# simple `== 0` / `> 0` gauges covered by `promtool check rules`. DatabaseBackupStale
+# is `time() - ts > 26h`; promtool's time() is relative to test start (0) so it
+# can't be exercised in a short window — left to `check rules` like the histogram
+# alerts elsewhere in this suite.
+rule_files:
+  - ../alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ---------------------------------------------------------------------------
+  # Replication lag climbs to 45s (> 30s threshold) -> fires after the 5m window.
+  # ---------------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'cnpg_pg_replication_lag{cnpg_cluster="omniusgrid-db",pod="omniusgrid-db-2"}'
+        values: '45x10'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: CNPGReplicationLagHigh
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              team: platform
+              cnpg_cluster: omniusgrid-db
+            exp_annotations:
+              summary: "Postgres replication lag above 30s"
+              description: "CloudNativePG cluster omniusgrid-db has a standby lagging the primary by more than 30s for 5 minutes. A failover now would lose data; check standby health, network, and write volume."
+              runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/infrastructure/k8s/database-ha/README.md#failover--recovery"
+
+  # ---------------------------------------------------------------------------
+  # Lag stays healthy (2s) -> no alert.
+  # ---------------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'cnpg_pg_replication_lag{cnpg_cluster="omniusgrid-db",pod="omniusgrid-db-2"}'
+        values: '2x10'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: CNPGReplicationLagHigh
+        exp_alerts: []
+
+  # ---------------------------------------------------------------------------
+  # Worker HPA current == max for 15m -> WorkerAutoscalerAtMax fires.
+  # ---------------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'kube_horizontalpodautoscaler_status_current_replicas{horizontalpodautoscaler="keda-hpa-ingestion-worker",namespace="omniusgrid"}'
+        values: '12x20'
+      - series: 'kube_horizontalpodautoscaler_spec_max_replicas{horizontalpodautoscaler="keda-hpa-ingestion-worker",namespace="omniusgrid"}'
+        values: '12x20'
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: WorkerAutoscalerAtMax
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              team: platform
+              horizontalpodautoscaler: keda-hpa-ingestion-worker
+              namespace: omniusgrid
+            exp_annotations:
+              summary: "Worker keda-hpa-ingestion-worker pinned at max replicas"
+              description: "keda-hpa-ingestion-worker has sat at its maximum replica count for 15 minutes — sustained backlog it cannot drain. Raise maxReplicaCount (and the topic's partition count) or investigate the slowdown."
+              runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/infrastructure/k8s/autoscaling/README.md#tuning"
+
+  # ---------------------------------------------------------------------------
+  # Worker below max (5 of 12) -> no alert.
+  # ---------------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'kube_horizontalpodautoscaler_status_current_replicas{horizontalpodautoscaler="keda-hpa-export-worker",namespace="omniusgrid"}'
+        values: '5x20'
+      - series: 'kube_horizontalpodautoscaler_spec_max_replicas{horizontalpodautoscaler="keda-hpa-export-worker",namespace="omniusgrid"}'
+        values: '8x20'
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: WorkerAutoscalerAtMax
+        exp_alerts: []

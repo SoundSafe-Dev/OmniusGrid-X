@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db, AsyncSessionLocal
+from app.core.tenant import get_tenant_db
 from app.db.models import Asset
 from app.api.auth import get_current_active_user
 from app.services.oee_calculator import oee_calculator, OEEMetrics
@@ -129,7 +130,7 @@ async def get_historical_oee(
 @router.get("/dashboard/summary")
 async def get_oee_dashboard_summary(
     current_user = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """
     Get OEE summary for all assets in organization.

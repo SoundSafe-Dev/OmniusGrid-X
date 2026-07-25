@@ -1,14 +1,14 @@
 import { FC, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Building2, MapPin, Users, ChevronRight, ChevronDown, Factory, Box, Activity } from 'lucide-react';
-import { Card, Badge } from '../../components';
+import { Card, Badge, SkeletonCard } from '../../components';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
 import { GeoTabIntegration } from '../../components/fleet/GeoTabIntegration';
 import { workcellsApi, assetsApi, organizationsApi } from '../../api';
 
 export const FleetOverview: FC = () => {
-  const { data: workcells } = useQuery({ queryKey: ['fleet-workcells'], queryFn: () => workcellsApi.list() });
-  const { data: assetsPage } = useQuery({ queryKey: ['fleet-assets'], queryFn: () => assetsApi.list({ limit: 500 }) });
+  const { data: workcells, isLoading: workcellsLoading, isError: workcellsError } = useQuery({ queryKey: ['fleet-workcells'], queryFn: () => workcellsApi.list() });
+  const { data: assetsPage, isLoading: assetsLoading, isError: assetsError } = useQuery({ queryKey: ['fleet-assets'], queryFn: () => assetsApi.list({ limit: 500 }) });
   const { data: orgs } = useQuery({ queryKey: ['fleet-orgs'], queryFn: () => organizationsApi.list() });
   const orgId = orgs?.[0]?.id;
 
@@ -22,6 +22,26 @@ export const FleetOverview: FC = () => {
     { icon: Users, value: assetsPage?.total ?? assets.length, label: 'Total Assets', tip: 'Total assets across the fleet' },
     { icon: Activity, value: onlineCount, label: 'Executing', tip: 'Assets currently in the PackML Execute state' },
   ];
+
+  if (workcellsLoading || assetsLoading) {
+    return (
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <SkeletonCard />
+        <SkeletonCard />
+        <SkeletonCard />
+      </div>
+    );
+  }
+
+  if (workcellsError || assetsError) {
+    return (
+      <Card className="p-4">
+        <p className="text-status-alarm text-sm">
+          Failed to load fleet data. Please try again.
+        </p>
+      </Card>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -83,9 +103,9 @@ const packmlStatus = (state?: string): string => {
 };
 
 export const OrganizationTree: FC = () => {
-  const { data: orgs } = useQuery({ queryKey: ['orgtree-orgs'], queryFn: () => organizationsApi.list() });
-  const { data: workcells } = useQuery({ queryKey: ['orgtree-workcells'], queryFn: () => workcellsApi.list() });
-  const { data: assetsPage } = useQuery({ queryKey: ['orgtree-assets'], queryFn: () => assetsApi.list({ limit: 500 }) });
+  const { data: orgs, isLoading: orgsLoading, isError: orgsError } = useQuery({ queryKey: ['orgtree-orgs'], queryFn: () => organizationsApi.list() });
+  const { data: workcells, isLoading: workcellsLoading, isError: workcellsError } = useQuery({ queryKey: ['orgtree-workcells'], queryFn: () => workcellsApi.list() });
+  const { data: assetsPage, isLoading: assetsLoading, isError: assetsError } = useQuery({ queryKey: ['orgtree-assets'], queryFn: () => assetsApi.list({ limit: 500 }) });
 
   const org = orgs?.[0];
   // Constant root node id so the default-expanded set stays valid once the org
@@ -184,10 +204,21 @@ export const OrganizationTree: FC = () => {
     );
   };
 
+  const isLoading = orgsLoading || workcellsLoading || assetsLoading;
+  const isError = orgsError || workcellsError || assetsError;
+
   return (
     <Card title="Organization Structure" subtitle="Hierarchical view of assets">
       <div className="p-4 bg-opsgrid-bg rounded-lg h-[calc(100vh-250px)] overflow-y-auto">
-        {renderNode(orgData)}
+        {isLoading ? (
+          <SkeletonCard lines={6} />
+        ) : isError ? (
+          <p className="text-status-alarm text-sm">
+            Failed to load organization structure. Please try again.
+          </p>
+        ) : (
+          renderNode(orgData)
+        )}
       </div>
     </Card>
   );

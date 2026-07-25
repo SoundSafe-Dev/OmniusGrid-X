@@ -138,32 +138,14 @@ export const fleetHealthApi = {
     const response = await api.get('/api/v1/fleet/health/statistics');
     return response.data;
   },
-
-  subscribeToHealthUpdates: (onUpdate: (update: VehicleHealthStatus) => void): (() => void) => {
-    if (USE_MOCK) {
-      const interval = setInterval(async () => {
-        const vehicles = await fleetHealthApi.getAllVehicleHealth();
-        if (Math.random() > 0.8 && vehicles.length > 0) {
-          const randomVehicle = vehicles[Math.floor(Math.random() * vehicles.length)];
-          onUpdate({
-            ...randomVehicle,
-            lastCommunication: new Date().toISOString(),
-          });
-        }
-      }, 20000);
-      return () => clearInterval(interval);
-    }
-    const wsUrl = `${import.meta.env.VITE_WS_URL || 'ws://localhost:8000'}/ws/fleet-health`;
-    const ws = new WebSocket(wsUrl);
-    ws.onmessage = (event) => {
-      try {
-        const update: VehicleHealthStatus = JSON.parse(event.data);
-        onUpdate(update);
-      } catch (error) {
-        console.error('Failed to parse WebSocket message:', error);
-      }
-    };
-    ws.onerror = (error) => console.error('Fleet Health WebSocket error:', error);
-    return () => ws.close();
-  },
 };
+
+// NOTE: a `subscribeToHealthUpdates` helper used to live here. It opened a
+// WebSocket to `/ws/fleet-health`, which the backend does not serve — the only
+// socket route is `/ws` — so in real mode it never delivered an update; it just
+// logged an onerror. It also defaulted to `ws://`, so it would have failed on any
+// HTTPS deployment even if the route had existed. Nothing in the app called it.
+// Removed rather than rewired: the same dead-socket pattern was already replaced
+// with REST polling for geofencing and fleetTracker. If live vehicle-health
+// updates are wanted, poll `getAllVehicleHealth()` (or add a real server route
+// first) instead of resurrecting this.

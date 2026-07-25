@@ -4,6 +4,7 @@ import {
   Clock, Truck
 } from 'lucide-react';
 import { maintenanceApi } from '../../api';
+import { SkeletonCard } from '../ui/Skeleton';
 import type { MaintenanceSchedule, RepairOrder, MaintenanceCosts } from '../../types';
 
 const getStatusColor = (status: string) => {
@@ -32,25 +33,57 @@ export const MaintenancePanel: FC = () => {
   const [costs, setCosts] = useState<MaintenanceCosts | null>(null);
   const [stats, setStats] = useState({ totalSchedules: 0, overdue: 0, activeROs: 0, urgentROs: 0 });
   const [activeTab, setActiveTab] = useState<'schedule' | 'repairs' | 'costs'>('schedule');
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
 
   useEffect(() => {
     loadData();
   }, []);
 
   const loadData = async () => {
-    const [schedulesData, repairData, costsData, statsData] = await Promise.all([
-      maintenanceApi.getSchedules(),
-      maintenanceApi.getActiveRepairOrders(),
-      maintenanceApi.getMaintenanceCosts(),
-      maintenanceApi.getMaintenanceStatistics(),
-    ]);
-    setSchedules(schedulesData);
-    setRepairOrders(repairData);
-    setCosts(costsData);
-    setStats(statsData);
+    setIsLoading(true);
+    setError(null);
+    try {
+      const [schedulesData, repairData, costsData, statsData] = await Promise.all([
+        maintenanceApi.getSchedules(),
+        maintenanceApi.getActiveRepairOrders(),
+        maintenanceApi.getMaintenanceCosts(),
+        maintenanceApi.getMaintenanceStatistics(),
+      ]);
+      setSchedules(schedulesData);
+      setRepairOrders(repairData);
+      setCosts(costsData);
+      setStats(statsData);
+    } catch (err) {
+      console.error('Failed to load maintenance data:', err);
+      setError('Failed to load maintenance data. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const overdueMaintenance = schedules.filter(s => s.status === 'overdue');
+
+  if (isLoading) {
+    return (
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="bg-opsgrid-panel border border-opsgrid-border rounded-lg">
+            <SkeletonCard lines={5} />
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-4">
+        <p className="text-status-alarm text-sm">{error}</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -117,7 +150,7 @@ export const MaintenancePanel: FC = () => {
                 {overdueMaintenance.map(item => (
                   <div key={item.id} className="bg-white rounded-lg p-3 flex items-center justify-between">
                     <div>
-                      <p className="font-medium">{item.vehicleNumber} - {item.serviceType.replace(/_/g, ' ')}</p>
+                      <p className="font-medium">{item.vehicleNumber} - {item.serviceType?.replace(/_/g, ' ')}</p>
                       <p className="text-sm text-gray-600">{item.description}</p>
                       <p className="text-xs text-red-500 mt-1">
                         Due: {new Date(item.scheduledDate).toLocaleDateString()}
@@ -139,11 +172,18 @@ export const MaintenancePanel: FC = () => {
                 <Calendar className="w-5 h-5 text-opsgrid-primary" />
                 Upcoming Maintenance (Next 30 Days)
               </h3>
-              <button className="p-2 bg-opsgrid-primary text-white rounded hover:bg-opsgrid-accent">
+              <button
+                onClick={() => setShowCreate(true)}
+                className="p-2 bg-opsgrid-primary text-white rounded hover:bg-opsgrid-accent"
+                title="Add maintenance schedule"
+              >
                 <Plus className="w-4 h-4" />
               </button>
             </div>
             <div className="max-h-[400px] overflow-y-auto">
+              {schedules.filter(s => s.status === 'scheduled').length === 0 && (
+                <p className="p-4 text-sm text-gray-500 text-center">No upcoming maintenance scheduled.</p>
+              )}
               {schedules.filter(s => s.status === 'scheduled').map(item => (
                 <div key={item.id} className="p-3 border-b border-opsgrid-border hover:bg-opsgrid-bg">
                   <div className="flex items-start justify-between">
@@ -192,6 +232,9 @@ export const MaintenancePanel: FC = () => {
             </h3>
           </div>
           <div className="max-h-[500px] overflow-y-auto">
+            {repairOrders.length === 0 && (
+              <p className="p-4 text-sm text-gray-500 text-center">No active repair orders.</p>
+            )}
             {repairOrders.map(order => (
               <div key={order.id} className="p-4 border-b border-opsgrid-border hover:bg-opsgrid-bg">
                 <div className="flex items-start justify-between">
@@ -199,7 +242,7 @@ export const MaintenancePanel: FC = () => {
                     <div className="flex items-center gap-2">
                       <span className="font-semibold">{order.workOrderNumber}</span>
                       <span className={`px-2 py-0.5 rounded text-xs ${getStatusColor(order.status)}`}>
-                        {order.status.replace(/_/g, ' ')}
+                        {order.status?.replace(/_/g, ' ')}
                       </span>
                       <span className={`text-xs ${getPriorityColor(order.priority)}`}>
                         {order.priority}
@@ -322,6 +365,137 @@ export const MaintenancePanel: FC = () => {
           </div>
         </div>
       )}
+
+      {showCreate && (
+        <CreateScheduleModal
+          onClose={() => setShowCreate(false)}
+          onCreated={() => {
+            setShowCreate(false);
+            loadData();
+          }}
+        />
+      )}
+    </div>
+  );
+};
+
+// Create a new maintenance schedule, wired to maintenanceApi.createSchedule.
+const CreateScheduleModal: FC<{ onClose: () => void; onCreated: () => void }> = ({ onClose, onCreated }) => {
+  const [vehicleNumber, setVehicleNumber] = useState('');
+  const [serviceType, setServiceType] = useState<MaintenanceSchedule['serviceType']>('oil_change');
+  const [description, setDescription] = useState('');
+  const [scheduledDate, setScheduledDate] = useState('');
+  const [priority, setPriority] = useState<MaintenanceSchedule['priority']>('normal');
+  const [currentMileage, setCurrentMileage] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const submit = async () => {
+    if (!vehicleNumber.trim()) {
+      setFormError('Vehicle number is required');
+      return;
+    }
+    if (!scheduledDate) {
+      setFormError('Scheduled date is required');
+      return;
+    }
+    setBusy(true);
+    setFormError(null);
+    try {
+      await maintenanceApi.createSchedule({
+        vehicleNumber: vehicleNumber.trim(),
+        serviceType,
+        description: description.trim() || serviceType?.replace(/_/g, ' '),
+        scheduledDate: new Date(scheduledDate).toISOString(),
+        priority,
+        currentMileage: Number(currentMileage) || 0,
+      } as Partial<MaintenanceSchedule>);
+      onCreated();
+    } catch (e: any) {
+      setFormError(e?.response?.data?.detail || 'Failed to create schedule');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" role="dialog" aria-modal="true">
+      <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg max-w-md w-full p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-bold">Schedule Maintenance</h2>
+          <button onClick={onClose} aria-label="Close" className="text-gray-400 hover:text-gray-600">✕</button>
+        </div>
+        <div>
+          <label className="block text-sm text-gray-600 mb-1">Vehicle Number</label>
+          <input
+            className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
+            value={vehicleNumber} onChange={(e) => setVehicleNumber(e.target.value)} placeholder="TRK-104"
+          />
+        </div>
+        <div>
+          <label className="block text-sm text-gray-600 mb-1">Service Type</label>
+          <select
+            className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
+            value={serviceType} onChange={(e) => setServiceType(e.target.value as MaintenanceSchedule['serviceType'])}
+          >
+            <option value="oil_change">Oil Change</option>
+            <option value="tire_rotation">Tire Rotation</option>
+            <option value="brake_inspection">Brake Inspection</option>
+            <option value="engine_tuneup">Engine Tune-up</option>
+            <option value="transmission_service">Transmission Service</option>
+            <option value="annual_inspection">Annual Inspection</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div>
+          <label className="block text-sm text-gray-600 mb-1">Description</label>
+          <input
+            className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
+            value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional details"
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-sm text-gray-600 mb-1">Scheduled Date</label>
+            <input
+              type="date"
+              className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
+              value={scheduledDate} onChange={(e) => setScheduledDate(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-gray-600 mb-1">Priority</label>
+            <select
+              className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
+              value={priority} onChange={(e) => setPriority(e.target.value as MaintenanceSchedule['priority'])}
+            >
+              <option value="low">Low</option>
+              <option value="normal">Normal</option>
+              <option value="high">High</option>
+              <option value="urgent">Urgent</option>
+            </select>
+          </div>
+        </div>
+        <div>
+          <label className="block text-sm text-gray-600 mb-1">Current Mileage</label>
+          <input
+            type="number"
+            className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
+            value={currentMileage} onChange={(e) => setCurrentMileage(e.target.value)} placeholder="0"
+          />
+        </div>
+        {formError && <p className="text-sm text-status-alarm">{formError}</p>}
+        <div className="flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 border border-opsgrid-border rounded-lg text-sm">Cancel</button>
+          <button
+            onClick={submit}
+            disabled={busy}
+            className="px-4 py-2 bg-opsgrid-primary text-white rounded-lg text-sm disabled:opacity-50"
+          >
+            {busy ? 'Saving…' : 'Create Schedule'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 };

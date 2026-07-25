@@ -365,8 +365,8 @@ class ERPDataTransformer:
             # Try ISO format
             try:
                 return datetime.fromisoformat(date_value.replace("Z", "+00:00")).isoformat()
-            except:
-                pass
+            except (ValueError, TypeError):
+                pass  # not ISO — try the next format
             
             # Try SAP timestamp format
             try:
@@ -374,8 +374,8 @@ class ERPDataTransformer:
                 if date_value.startswith("/Date("):
                     timestamp = int(date_value[6:-2])
                     return datetime.fromtimestamp(timestamp / 1000).isoformat()
-            except:
-                pass
+            except (ValueError, TypeError, OverflowError, OSError):
+                pass  # not a SAP /Date(...)/ — fall through to None
         
         return None
     
@@ -391,12 +391,22 @@ class ERPDataTransformer:
         """
         if value is None:
             return None
-        
+
         try:
             return float(value)
-        except:
+        except (ValueError, TypeError) as exc:
+            # A present-but-unparseable currency (e.g. "1,234.56", "$100") used
+            # to become a silent NULL in financial records via a bare `except:`.
+            # Surface it; the bare form also swallowed KeyboardInterrupt.
+            logger.warning(
+                "erp_currency_parse_failed",
+                value=repr(value),
+                organization_id=self.organization_id,
+                integration_id=self.integration_id,
+                error=str(exc),
+            )
             return None
-    
+
     def _parse_number(self, value: Any) -> Optional[float]:
         """
         Parse numeric value.
@@ -409,12 +419,19 @@ class ERPDataTransformer:
         """
         if value is None:
             return None
-        
+
         try:
             return float(value)
-        except:
+        except (ValueError, TypeError) as exc:
+            logger.warning(
+                "erp_number_parse_failed",
+                value=repr(value),
+                organization_id=self.organization_id,
+                integration_id=self.integration_id,
+                error=str(exc),
+            )
             return None
-    
+
     def _map_po_status(self, sap_status: str) -> str:
         """
         Map SAP PO status to normalized status.

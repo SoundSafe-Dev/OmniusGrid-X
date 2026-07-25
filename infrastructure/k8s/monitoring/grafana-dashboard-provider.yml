@@ -1,0 +1,13 @@
+# Grafana dashboard provider — loads JSON dashboards from the mounted directory.
+apiVersion: 1
+providers:
+  - name: 'OpsGrid Platform'
+    orgId: 1
+    folder: 'OpsGrid'
+    type: file
+    disableDeletion: false
+    editable: true
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards

@@ -1,0 +1,82 @@
+# Alertmanager routing for the k8s cluster. Mirrors the route/severity/inhibit
+# structure of infra/prometheus/alertmanager.yml, but secrets are injected via
+# `*_file` fields mounted from the `alertmanager-secrets` Secret rather than the
+# compose config's `${ENV}` placeholders — Alertmanager does NOT expand env vars
+# in its config, so file refs are the correct k8s mechanism.
+global:
+  resolve_timeout: 5m
+
+route:
+  group_by: ['alertname', 'cluster', 'service']
+  group_wait: 10s
+  group_interval: 5m
+  repeat_interval: 12h
+  receiver: 'default'
+  routes:
+    - match:
+        severity: critical
+      receiver: 'pagerduty-critical'
+      continue: true
+    - match:
+        severity: high
+      receiver: 'slack-high'
+    # Warning: actionable operational signals — routed to the same alerts channel
+    # as high (without a route they would fall through to the catch-all).
+    - match:
+        severity: warning
+      receiver: 'slack-high'
+    - match:
+        severity: medium
+      receiver: 'slack-medium'
+    - match:
+        severity: low
+      receiver: 'null'
+
+receivers:
+  - name: 'default'
+    slack_configs:
+      - api_url_file: /etc/alertmanager/secrets/slack-webhook-url
+        channel: '#opsgrid-general'
+        title: '{{ .GroupLabels.alertname }}'
+        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+
+  - name: 'null'
+
+  - name: 'pagerduty-critical'
+    pagerduty_configs:
+      - service_key_file: /etc/alertmanager/secrets/pagerduty-service-key
+        description: '{{ .CommonAnnotations.summary }}'
+        severity: critical
+
+  - name: 'slack-high'
+    slack_configs:
+      - api_url_file: /etc/alertmanager/secrets/slack-webhook-url
+        channel: '#opsgrid-alerts'
+        title: '⚠️ HIGH: {{ .GroupLabels.alertname }}'
+        text: |
+          {{ range .Alerts }}
+          *Summary:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Runbook:* {{ .Annotations.runbook_url }}
+          {{ end }}
+        send_resolved: true
+
+  - name: 'slack-medium'
+    slack_configs:
+      - api_url_file: /etc/alertmanager/secrets/slack-webhook-url
+        channel: '#opsgrid-info'
+        title: '{{ .GroupLabels.alertname }}'
+        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+        send_resolved: false
+
+inhibit_rules:
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'high'
+    equal: ['alertname', 'cluster', 'service']
+  - source_match:
+      severity: 'high'
+    target_match:
+      severity: 'medium'
+    equal: ['alertname', 'cluster', 'service']

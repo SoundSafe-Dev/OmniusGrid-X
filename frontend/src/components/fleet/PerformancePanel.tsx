@@ -4,6 +4,7 @@ import {
   Wrench, TrendingUp, Truck
 } from 'lucide-react';
 import { kpiApi } from '../../api';
+import { SkeletonCard } from '../ui/Skeleton';
 import type {
   FuelEfficiencyData, IdleTimeData, OnTimePerformanceData,
   VehicleHealthScoreData, CostPerMileData, DTCCountData
@@ -45,6 +46,8 @@ export const PerformancePanel: FC = () => {
   const [healthData, setHealthData] = useState<VehicleHealthScoreData | null>(null);
   const [costData, setCostData] = useState<CostPerMileData | null>(null);
   const [dtcData, setDtcData] = useState<DTCCountData | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     loadData();
@@ -52,21 +55,30 @@ export const PerformancePanel: FC = () => {
   }, [timeRange]);
 
   const loadData = async () => {
-    const range = timeRange;
-    const [fuel, idle, performance, health, cost, dtc] = await Promise.all([
-      kpiApi.getFuelEfficiency(range),
-      kpiApi.getIdleTime(range),
-      kpiApi.getOnTimePerformance(range),
-      kpiApi.getVehicleHealthScore(),
-      kpiApi.getCostPerMile(range),
-      kpiApi.getDTCCount(),
-    ]);
-    setFuelData(fuel);
-    setIdleData(idle);
-    setPerformanceData(performance);
-    setHealthData(health);
-    setCostData(cost);
-    setDtcData(dtc);
+    setIsLoading(true);
+    setError(null);
+    try {
+      const range = timeRange;
+      const [fuel, idle, performance, health, cost, dtc] = await Promise.all([
+        kpiApi.getFuelEfficiency(range),
+        kpiApi.getIdleTime(range),
+        kpiApi.getOnTimePerformance(range),
+        kpiApi.getVehicleHealthScore(),
+        kpiApi.getCostPerMile(range),
+        kpiApi.getDTCCount(),
+      ]);
+      setFuelData(fuel);
+      setIdleData(idle);
+      setPerformanceData(performance);
+      setHealthData(health);
+      setCostData(cost);
+      setDtcData(dtc);
+    } catch (err) {
+      console.error('Failed to load performance data:', err);
+      setError('Failed to load performance metrics. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -77,6 +89,20 @@ export const PerformancePanel: FC = () => {
         <TimeRangeSelector value={timeRange} onChange={setTimeRange} />
       </div>
 
+      {isLoading ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="bg-opsgrid-panel border border-opsgrid-border rounded-lg">
+              <SkeletonCard lines={4} />
+            </div>
+          ))}
+        </div>
+      ) : error ? (
+        <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-4">
+          <p className="text-status-alarm text-sm">{error}</p>
+        </div>
+      ) : (
+      <>
       {/* KPI Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {/* Fuel Efficiency */}
@@ -319,6 +345,8 @@ export const PerformancePanel: FC = () => {
           </div>
         )}
       </div>
+      </>
+      )}
     </div>
   );
 };

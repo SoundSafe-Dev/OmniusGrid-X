@@ -1,0 +1,35 @@
+# PgBouncer connection pooler in front of the read/write endpoint. At scale the
+# API + workers open far more connections than Postgres should handle directly;
+# the pooler multiplexes them (transaction pooling) so max_connections isn't the
+# ceiling. The app points DATABASE_URL at this Service instead of the raw -rw one.
+apiVersion: postgresql.cnpg.io/v1
+kind: Pooler
+metadata:
+  name: omniusgrid-db-pooler-rw
+  namespace: omniusgrid
+  labels:
+    app.kubernetes.io/name: omniusgrid-db-pooler
+    app.kubernetes.io/component: database
+    app.kubernetes.io/part-of: omniusgrid
+spec:
+  cluster:
+    name: omniusgrid-db
+  instances: 2
+  type: rw
+  pgbouncer:
+    poolMode: transaction
+    parameters:
+      max_client_conn: "1000"
+      default_pool_size: "50"
+  template:
+    spec:
+      containers: []
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    cnpg.io/poolerName: omniusgrid-db-pooler-rw

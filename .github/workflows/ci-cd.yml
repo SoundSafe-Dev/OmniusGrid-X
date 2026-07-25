@@ -2,7 +2,7 @@ name: OmniusGrid CI/CD Pipeline
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main]
     tags: ['v*']
     # Docs/media-only pushes skip the pipeline (no image builds / deploys for a
     # README or demo-video change).
@@ -14,7 +14,7 @@ on:
       - '**/*.jpg'
       - '**/*.jpeg'
   pull_request:
-    branches: [main, develop]
+    branches: [main]
     paths-ignore:
       - '**/*.md'
       - 'docs/**'
@@ -247,7 +247,7 @@ jobs:
       - name: Resolve image tag
         id: tag
         # metadata-action never publishes a bare-SHA tag; scan the branch tag
-        # (develop/main) or the semver tag for releases.
+        # (main) or the semver tag for releases.
         run: |
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             echo "tag=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
@@ -274,7 +274,12 @@ jobs:
   deploy-staging:
     runs-on: ubuntu-latest
     needs: [build-images, security-scan]
-    if: github.ref == 'refs/heads/develop'
+    # Was gated on `develop`, which has never existed — so staging has never
+    # been deployed by CI. Staging now tracks main, but behind an explicit
+    # opt-in repo variable so enabling it is a deliberate act (the job needs
+    # KUBE_CONFIG_STAGING and a reachable cluster; without those it just fails).
+    # Set STAGING_DEPLOY_ENABLED=true in repo variables to turn it on.
+    if: github.ref == 'refs/heads/main' && vars.STAGING_DEPLOY_ENABLED == 'true'
     environment:
       name: staging
       url: https://staging.omniusgrid.local
@@ -302,18 +307,71 @@ jobs:
           # targeted *-deployment.yaml files that don't exist in the overlay).
           cd infrastructure/k8s/overlays/staging
           kustomize edit set image \
-            omniusgrid/backend=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/backend:develop-${{ github.sha }} \
-            omniusgrid/frontend=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/frontend:develop-${{ github.sha }}
+            omniusgrid/backend=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/backend:${{ github.ref_name }}-${{ github.sha }} \
+            omniusgrid/frontend=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/frontend:${{ github.ref_name }}-${{ github.sha }}
           cd -
+
+          # Migrations must COMPLETE before the Deployments are updated. A single
+          # `apply -k` creates the Job and rolls the Deployments simultaneously,
+          # so new pods would serve traffic against the old schema for as long
+          # as the migration runs. Build once, apply the Job alone, wait, then
+          # apply the rest.
+          kustomize build infrastructure/k8s/overlays/staging/ > /tmp/staging-manifests.yaml
+          python3 scripts/split_manifests.py /tmp/staging-manifests.yaml \
+            --kind Job --name staging-db-migrate --out /tmp/staging-migrate.yaml
 
           # Jobs are immutable once created: delete last deploy's migration
           # Job so the freshly image-pinned one can be applied.
           kubectl delete job staging-db-migrate -n omniusgrid-staging --ignore-not-found
-          kubectl apply -k infrastructure/k8s/overlays/staging/
+          kubectl apply -f /tmp/staging-migrate.yaml
           kubectl wait --for=condition=complete job/staging-db-migrate -n omniusgrid-staging --timeout=300s
+
+          kubectl apply -f /tmp/staging-manifests.yaml
 
           kubectl rollout status deployment/staging-backend -n omniusgrid-staging --timeout=300s
           kubectl rollout status deployment/staging-frontend -n omniusgrid-staging --timeout=300s
+
+      - name: Deploy platform stacks (monitoring / autoscaling / HA db)
+        run: |
+          export KUBECONFIG=kubeconfig
+          set -euo pipefail
+
+          # These live OUTSIDE the overlays on purpose and could not simply be
+          # referenced from them: autoscaling/ and database-ha/ emit operator
+          # custom resources (KEDA, CloudNativePG) that fail to apply when the
+          # operator is absent, and monitoring/ pulls the canonical alert rules
+          # from infra/prometheus, which needs --load-restrictor
+          # LoadRestrictionsNone. Referencing either from an overlay would break
+          # the overlay build that pins images above. So they are applied here,
+          # explicitly, and each operator-dependent stack is gated on its CRD
+          # actually being installed rather than failing the deploy.
+
+          echo "::group::monitoring (no operator required)"
+          kustomize build --load-restrictor LoadRestrictionsNone \
+            infrastructure/k8s/monitoring \
+            | python3 tests/k8s/strip_placeholder_secrets.py | kubectl apply -n omniusgrid-staging -f -
+          echo "::endgroup::"
+
+          if kubectl get crd scaledobjects.keda.sh >/dev/null 2>&1; then
+            echo "::group::autoscaling (KEDA present)"
+            kustomize build --load-restrictor LoadRestrictionsNone \
+              infrastructure/k8s/autoscaling | kubectl apply -n omniusgrid-staging -f -
+            echo "::endgroup::"
+          else
+            echo "SKIP autoscaling: KEDA CRDs not installed in this cluster."
+            echo "  install: see infrastructure/k8s/autoscaling/README.md"
+          fi
+
+          if kubectl get crd clusters.postgresql.cnpg.io >/dev/null 2>&1; then
+            echo "::group::database-ha (CloudNativePG present)"
+            kustomize build --load-restrictor LoadRestrictionsNone \
+              infrastructure/k8s/database-ha \
+              | python3 tests/k8s/strip_placeholder_secrets.py | kubectl apply -n omniusgrid-staging -f -
+            echo "::endgroup::"
+          else
+            echo "SKIP database-ha: CloudNativePG CRDs not installed in this cluster."
+            echo "  install + cutover: see infrastructure/k8s/database-ha/README.md"
+          fi
 
       - name: Run smoke tests
         env:
@@ -363,12 +421,57 @@ jobs:
             omniusgrid/frontend=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/frontend:${VERSION}
           cd -
 
+          # Migrations must COMPLETE before the Deployments are updated — see the
+          # staging job for the rationale (apply -k would roll pods onto the new
+          # image while the migration is still running).
+          kustomize build infrastructure/k8s/overlays/production/ > /tmp/prod-manifests.yaml
+          python3 scripts/split_manifests.py /tmp/prod-manifests.yaml \
+            --kind Job --name prod-db-migrate --out /tmp/prod-migrate.yaml
+
           kubectl delete job prod-db-migrate -n omniusgrid --ignore-not-found
-          kubectl apply -k infrastructure/k8s/overlays/production/
+          kubectl apply -f /tmp/prod-migrate.yaml
           kubectl wait --for=condition=complete job/prod-db-migrate -n omniusgrid --timeout=300s
+
+          kubectl apply -f /tmp/prod-manifests.yaml
 
           kubectl rollout status deployment/prod-backend -n omniusgrid --timeout=600s
           kubectl rollout status deployment/prod-frontend -n omniusgrid --timeout=600s
+
+      - name: Deploy platform stacks (monitoring / autoscaling / HA db)
+        run: |
+          export KUBECONFIG=kubeconfig
+          set -euo pipefail
+
+          # See the staging job for why these are applied here rather than being
+          # referenced from the overlay: operator CRs and a cross-tree rule
+          # reference make them incompatible with the image-pinned overlay build.
+
+          echo "::group::monitoring (no operator required)"
+          kustomize build --load-restrictor LoadRestrictionsNone \
+            infrastructure/k8s/monitoring \
+            | python3 tests/k8s/strip_placeholder_secrets.py | kubectl apply -n omniusgrid -f -
+          echo "::endgroup::"
+
+          if kubectl get crd scaledobjects.keda.sh >/dev/null 2>&1; then
+            echo "::group::autoscaling (KEDA present)"
+            kustomize build --load-restrictor LoadRestrictionsNone \
+              infrastructure/k8s/autoscaling | kubectl apply -n omniusgrid -f -
+            echo "::endgroup::"
+          else
+            echo "SKIP autoscaling: KEDA CRDs not installed in this cluster."
+            echo "  install: see infrastructure/k8s/autoscaling/README.md"
+          fi
+
+          if kubectl get crd clusters.postgresql.cnpg.io >/dev/null 2>&1; then
+            echo "::group::database-ha (CloudNativePG present)"
+            kustomize build --load-restrictor LoadRestrictionsNone \
+              infrastructure/k8s/database-ha \
+              | python3 tests/k8s/strip_placeholder_secrets.py | kubectl apply -n omniusgrid -f -
+            echo "::endgroup::"
+          else
+            echo "SKIP database-ha: CloudNativePG CRDs not installed in this cluster."
+            echo "  install + cutover: see infrastructure/k8s/database-ha/README.md"
+          fi
 
       - name: Verify deployment
         env:
@@ -388,29 +491,12 @@ jobs:
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
 
-  # ============================================================================
-  # DATABASE MIGRATIONS
-  # ============================================================================
-  database-migrations:
-    runs-on: ubuntu-latest
-    needs: deploy-staging
-    if: github.ref == 'refs/heads/develop'
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Run migrations
-        env:
-          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
-        run: |
-          # scripts/migrate.py is the real runner (there is no alembic setup):
-          # applies pending database/migrations/*.sql tracked in
-          # schema_migrations, refusing on initdb-built DBs and checksum drift.
-          pip install psycopg2-binary sqlparse
-          cd backend
-          python scripts/migrate.py --status
-          python scripts/migrate.py
+  # NOTE: there is deliberately no separate `database-migrations` job. Both
+  # deploy jobs apply the image-pinned db-migrate Job from the overlay and wait
+  # for it to complete before rolling the Deployments, so migrations run in the
+  # cluster with the same image as the code that will read the schema. The old
+  # job here ran migrate.py from the runner against STAGING_DATABASE_URL, was
+  # gated on a `develop` branch that never existed, and so never executed.
 
   # ============================================================================
   # RELEASE

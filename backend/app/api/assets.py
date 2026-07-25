@@ -20,6 +20,7 @@ from app.api.auth import get_current_active_user
 from app.core.pagination import PaginatedResponse, paginate
 from app.middleware.rbac import require_admin
 from app.middleware.rate_limit import rate_limit
+from app.core.tenant import get_tenant_db
 from app.models.schemas import (
     AssetCreate, AssetResponse, AssetUpdate,
     AssetTypeCreate, AssetTypeResponse
@@ -104,7 +105,6 @@ async def create_asset(
 
     db.add(asset)
     await db.commit()
-    await db.refresh(asset)
 
     return asset
 
@@ -136,7 +136,6 @@ async def update_asset(
         setattr(asset, field, value)
 
     await db.commit()
-    await db.refresh(asset)
 
     return asset
 
@@ -173,7 +172,7 @@ async def delete_asset(
 async def list_asset_types(
     request: Request,
     category: Optional[str] = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """List asset types (global catalog, not tenant-scoped)."""
@@ -225,7 +224,7 @@ async def get_asset_status(
 )
 async def get_sensor_feeds(
     asset_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """Summarize what this asset's sensors feed into the platform (task B16)."""

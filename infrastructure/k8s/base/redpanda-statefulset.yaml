@@ -23,12 +23,32 @@ spec:
         runAsUser: 101
         runAsGroup: 101
         fsGroup: 101
-      
+
+      # Spread brokers across nodes so RF=3 actually survives a node loss —
+      # otherwise all 3 replicas could land on one node and a single node failure
+      # takes the whole cluster. Preferred (not required) so bring-up doesn't
+      # block on clusters with fewer than 3 nodes; production should run >=3
+      # nodes and can promote this to requiredDuringSchedulingIgnoredDuringExecution.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: redpanda
+                topologyKey: kubernetes.io/hostname
+
       containers:
         - name: redpanda
           image: redpandadata/redpanda:latest
           imagePullPolicy: IfNotPresent
           
+          # default_topic_replications=3 replicates every topic across all 3
+          # brokers. Without it, topics auto-create at the cluster default (RF=1)
+          # and losing the broker holding a partition loses that data — 3 brokers
+          # would then buy throughput, not durability. (Shell comments can't live
+          # inside the backslash-continued command below, so this note is here.)
           command:
             - /bin/sh
             - -c
@@ -40,6 +60,9 @@ spec:
                 --reserve-memory 200M \
                 --node-id ${HOSTNAME##*-} \
                 --check=false \
+                --set redpanda.default_topic_replications=3 \
+                --set redpanda.transaction_coordinator_replication=3 \
+                --set redpanda.id_allocator_replication=3 \
                 --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:29092,tls://0.0.0.0:9094 \
                 --advertise-kafka-addr internal://redpanda-${HOSTNAME##*-}.redpanda.omniusgrid.svc.cluster.local:9092,external://localhost:29092,tls://redpanda-${HOSTNAME##*-}.redpanda.omniusgrid.svc.cluster.local:9094 \
                 --set 'redpanda.kafka_api_tls=[{"name":"tls","enabled":true,"cert_file":"/etc/redpanda/tls/broker.crt","key_file":"/etc/redpanda/tls/broker.key","truststore_file":"/etc/redpanda/tls/ca.crt","require_client_auth":true}]' \

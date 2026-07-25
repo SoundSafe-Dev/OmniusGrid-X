@@ -119,18 +119,22 @@ class ERPWebhookReceiver:
             )
             raise HTTPException(status_code=403, detail="IP not allowed")
         
-        # Validate signature if secret is configured
-        if self._webhook_secret:
-            if not self._validate_signature(
-                event_data,
-                x_webhook_signature,
-                x_webhook_timestamp
-            ):
-                logger.warning(
-                    "webhook_signature_invalid",
-                    integration_id=self.integration_id
-                )
-                raise HTTPException(status_code=401, detail="Invalid signature")
+        # Always validate. This was guarded by `if self._webhook_secret:`, so an
+        # integration with no configured secret skipped verification entirely.
+        # _validate_signature now fails closed on both a missing secret and a
+        # missing signature.
+        if not self._validate_signature(
+            event_data,
+            x_webhook_signature,
+            x_webhook_timestamp
+        ):
+            logger.warning(
+                "webhook_signature_invalid",
+                integration_id=self.integration_id,
+                has_secret=bool(self._webhook_secret),
+                has_signature=bool(x_webhook_signature),
+            )
+            raise HTTPException(status_code=401, detail="Invalid signature")
         
         # Validate timestamp to prevent replay attacks
         if x_webhook_timestamp:
@@ -294,9 +298,14 @@ class ERPWebhookReceiver:
         Returns:
             bool: True if signature is valid
         """
+        # Fails closed. This returned True when the signature header was absent,
+        # so a caller could bypass verification entirely by simply omitting
+        # X-Webhook-Signature — even with a secret configured. Nothing currently
+        # routes to this class (sap_webhook_integration.py is unreferenced), but
+        # app/api/erp_webhooks.py cites it as the reference implementation.
         if not signature or not self._webhook_secret:
-            return True
-        
+            return False
+
         # Create payload for signature
         import json
         payload = json.dumps(event_data, sort_keys=True)

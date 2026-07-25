@@ -18,7 +18,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_active_user
@@ -119,19 +119,56 @@ def _dtc_out(d: GeoTabDiagnostic) -> dict:
     }
 
 
-async def _active_diagnostics(db, org_id):
-    return (await db.execute(
-        select(GeoTabDiagnostic).where(
-            GeoTabDiagnostic.organization_id == org_id,
-            GeoTabDiagnostic.status == "active",
+async def _active_diagnostics(db, org_id, vehicle_id=None):
+    stmt = select(GeoTabDiagnostic).where(
+        GeoTabDiagnostic.organization_id == org_id,
+        GeoTabDiagnostic.status == "active",
+    )
+    # Single-vehicle callers push the filter into SQL rather than loading the
+    # whole org and linear-searching in Python.
+    if vehicle_id is not None:
+        stmt = stmt.where(GeoTabDiagnostic.vehicle_id == vehicle_id)
+    return (await db.execute(stmt)).scalars().all()
+
+
+async def _exceptions(db, org_id, device_id=None):
+    stmt = select(GeoTabException).where(GeoTabException.organization_id == org_id)
+    # Exceptions key on device_id (the single-vehicle security endpoint passes
+    # the path's vehicle_id here, matching the previous Python filter exactly).
+    if device_id is not None:
+        stmt = stmt.where(GeoTabException.device_id == device_id)
+    return (await db.execute(stmt)).scalars().all()
+
+
+async def _exception_count(db, org_id, device_ids) -> int:
+    """Count this org's exceptions on any of ``device_ids`` (SQL count, no rows)."""
+    if not device_ids:
+        return 0
+    return int((await db.execute(
+        select(func.count()).select_from(GeoTabException).where(
+            GeoTabException.organization_id == org_id,
+            GeoTabException.device_id.in_(list(device_ids)),
         )
-    )).scalars().all()
+    )).scalar() or 0)
 
 
-async def _exceptions(db, org_id):
-    return (await db.execute(
-        select(GeoTabException).where(GeoTabException.organization_id == org_id)
-    )).scalars().all()
+def _vehicle_row(vid, dtcs, exc_count: int) -> dict:
+    """The per-vehicle health dict, shared by the fleet list and the single-
+    vehicle endpoint so they can't drift. ``_vehicle_row(vid, [], 0)`` is exactly
+    the old 'unknown vehicle' default (online / secure / safetyScore 100)."""
+    crit = any(d.severity == "critical" for d in dtcs)
+    return {
+        "vehicleId": vid, "vehicleNumber": vid,
+        "status": "warning" if dtcs else "online",
+        "lastCommunication": max(
+            (d.last_seen_at for d in dtcs if d.last_seen_at),
+            default=datetime.now(timezone.utc),
+        ).isoformat(),
+        "dtcs": [_dtc_out(d) for d in dtcs],
+        "safetyScore": max(0, 100 - exc_count * 5),
+        "securityStatus": "alert" if crit else ("warning" if dtcs else "secure"),
+        "engineHours": 0, "odometer": 0,
+    }
 
 
 # ---------------------------------------------------------------- health / DTCs
@@ -154,20 +191,10 @@ async def fleet_health(org_id: UUID = Depends(get_tenant_org_id), db: AsyncSessi
         vehicle = device_to_vehicle.get(e.device_id, e.device_id)
         exc_by_vehicle[vehicle] += 1
 
-    out = []
-    for vid, dtcs in by_vehicle_dtc.items():
-        penalty = {"critical": 30, "high": 20, "medium": 10, "low": 5}
-        score = max(0, 100 - sum(penalty.get(d.severity, 10) for d in dtcs))
-        crit = any(d.severity == "critical" for d in dtcs)
-        out.append({
-            "vehicleId": vid, "vehicleNumber": vid, "status": "warning" if dtcs else "online",
-            "lastCommunication": max((d.last_seen_at for d in dtcs if d.last_seen_at), default=datetime.now(timezone.utc)).isoformat(),
-            "dtcs": [_dtc_out(d) for d in dtcs],
-            "safetyScore": max(0, 100 - exc_by_vehicle.get(vid, 0) * 5),
-            "securityStatus": "alert" if crit else ("warning" if dtcs else "secure"),
-            "engineHours": 0, "odometer": 0,
-        })
-    return out
+    return [
+        _vehicle_row(vid, dtcs, exc_by_vehicle.get(vid, 0))
+        for vid, dtcs in by_vehicle_dtc.items()
+    ]
 
 
 @router.get("/health/statistics", response_model=FleetHealthStatsResponse)
@@ -184,15 +211,20 @@ async def fleet_health_stats(org_id: UUID = Depends(get_tenant_org_id), db: Asyn
 
 @router.get("/health/{vehicle_id}")
 async def vehicle_health(vehicle_id: str, org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
-    all_health = await fleet_health(org_id, db)
-    for v in all_health:
-        if v["vehicleId"] == vehicle_id:
-            return v
-    return {
-        "vehicleId": vehicle_id, "vehicleNumber": vehicle_id, "status": "online",
-        "lastCommunication": datetime.now(timezone.utc).isoformat(), "dtcs": [],
-        "safetyScore": 100, "securityStatus": "secure", "engineHours": 0, "odometer": 0,
-    }
+    # Scoped instead of building the whole fleet aggregation and linear-searching
+    # it. A vehicle with no active diagnostics returns the default row (exactly
+    # the old fallback), and — matching the old code — its exceptions are not
+    # even consulted in that case.
+    dtcs = await _active_diagnostics(db, org_id, vehicle_id=vehicle_id)
+    exc_count = 0
+    if dtcs:
+        # fleet_health maps an exception to a vehicle by device_id via the
+        # diagnostics device set, falling back to device_id == vehicle_id. Scope
+        # the count to that same identifier set (the vehicle's devices plus the
+        # vehicle_id itself) so the score matches the full-fleet computation.
+        device_ids = {d.device_id for d in dtcs if d.device_id} | {vehicle_id}
+        exc_count = await _exception_count(db, org_id, device_ids)
+    return _vehicle_row(vehicle_id, dtcs, exc_count)
 
 
 @router.get("/dtcs", response_model=List[DtcItem])
@@ -202,8 +234,8 @@ async def all_dtcs(org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession =
 
 @router.get("/vehicles/{vehicle_id}/dtcs", response_model=List[DtcItem])
 async def vehicle_dtcs(vehicle_id: str, org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
-    diags = await _active_diagnostics(db, org_id)
-    return [_dtc_out(d) for d in diags if d.vehicle_id == vehicle_id]
+    diags = await _active_diagnostics(db, org_id, vehicle_id=vehicle_id)
+    return [_dtc_out(d) for d in diags]
 
 
 # ------------------------------------------------------------------- security
@@ -236,8 +268,8 @@ async def security_events(
 
 @router.get("/vehicles/{vehicle_id}/security")
 async def vehicle_security(vehicle_id: str, org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
-    excs = await _exceptions(db, org_id)
-    return [_security_out(e) for e in excs if e.device_id == vehicle_id]
+    excs = await _exceptions(db, org_id, device_id=vehicle_id)
+    return [_security_out(e) for e in excs]
 
 
 # --------------------------------------------------------------- driver safety
