@@ -22,6 +22,10 @@ from __future__ import annotations
 
 import os
 import sys
+import tarfile
+import time
+from io import BytesIO
+from textwrap import dedent
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import AsyncIterator
@@ -466,3 +470,92 @@ async def client_b(app, jwt_for_user):
         headers={"Authorization": f"Bearer {jwt_for_user['b']}"},
     ) as client:
         yield client
+
+
+# --- Kafka / Redpanda (shared by the e2e modules) --------------------------
+class _RedpandaContainer:
+    """Run Redpanda through testcontainers' generic Docker container API."""
+
+    _START_SCRIPT = "/var/lib/redpanda/tc-start.sh"
+    _KAFKA_PORT = 9092
+
+    def __init__(self, image: str):
+        from testcontainers.core.container import DockerContainer
+
+        self._container = DockerContainer(image, entrypoint="sh")
+        self._container.with_exposed_ports(self._KAFKA_PORT)
+
+    def get_bootstrap_server(self) -> str:
+        host = self._container.get_container_host_ip()
+        port = self._container.get_exposed_port(self._KAFKA_PORT)
+        return f"{host}:{port}"
+
+    def start(self):
+        from testcontainers.core.waiting_utils import wait_for_logs
+
+        script = self._START_SCRIPT
+        self._container.with_command(
+            f'-c "while [ ! -f {script} ]; do sleep 0.1; done; sh {script}"'
+        )
+        self._container.start()
+
+        host = self._container.get_container_host_ip()
+        port = self._container.get_exposed_port(self._KAFKA_PORT)
+        contents = dedent(
+            f"""
+            #!/bin/bash
+            /usr/bin/rpk redpanda start --mode dev-container --smp 1 --memory 1G \
+              --kafka-addr PLAINTEXT://0.0.0.0:29092,OUTSIDE://0.0.0.0:9092 \
+              --advertise-kafka-addr \
+                PLAINTEXT://127.0.0.1:29092,OUTSIDE://{host}:{port}
+            """
+        ).strip().encode("utf-8")
+
+        with BytesIO() as archive:
+            with tarfile.TarFile(fileobj=archive, mode="w") as tar:
+                dirname, basename = os.path.split(script)
+                info = tarfile.TarInfo(name=basename)
+                info.size = len(contents)
+                info.mtime = time.time()
+                tar.addfile(info, BytesIO(contents))
+            archive.seek(0)
+            self._container.get_wrapped_container().put_archive(dirname, archive)
+
+        wait_for_logs(
+            self._container,
+            r".*Started Kafka API server.*",
+            timeout=15,
+        )
+        return self
+
+    def stop(self):
+        self._container.stop()
+
+
+@pytest.fixture(scope="session")
+def redpanda_container():
+    """ONE broker per test session, shared by every Kafka-dependent e2e module.
+
+    This used to be duplicated: an identical _RedpandaContainer lived in both
+    test_ingestion_redpanda_e2e and test_compliance_reports_e2e, the latter
+    MODULE-scoped and imported by a third module — so a single pytest run started
+    several brokers, and they interfered. Those files then appeared "flaky" while
+    each passed in isolation. One session-scoped container fixes it at the root
+    rather than excluding the tests.
+
+    Still isolated per RUN (fresh container), so consumer offsets cannot leak
+    between runs.
+    """
+    container = _RedpandaContainer(
+        image="docker.redpanda.com/redpandadata/redpanda:v23.3.5"
+    )
+    container.start()
+    try:
+        yield container
+    finally:
+        container.stop()
+
+
+@pytest.fixture(scope="session")
+def redpanda_bootstrap_server(redpanda_container) -> str:
+    return redpanda_container.get_bootstrap_server()

@@ -197,6 +197,39 @@ jobs:
             --ignore=tests/test_compliance_report_scheduling_e2e.py \
             --deselect tests/test_signed_report_downloads.py::test_invalid_tokens_return_uniform_403
 
+  # --- FS-205c: Kafka-dependent e2e, in their own process (blocking) --------
+  backend-kafka-e2e:
+    runs-on: ubuntu-latest
+    # BLOCKING. These three files stand up a real Redpanda broker via
+    # testcontainers. Interleaved with the other ~715 tests they were flaky; run
+    # as their own pytest process they are reliable (6/6 across three runs).
+    #
+    # The root cause of the original flakiness IS fixed: _RedpandaContainer was
+    # duplicated across two modules — one session-scoped, one module-scoped and
+    # imported by a third — so a single run started several brokers that
+    # interfered. conftest.py now owns ONE session-scoped broker. That took the
+    # in-suite failures from 4 to 1, but the last one still churned run-to-run
+    # (residual cross-module producer state), so the honest split is to give the
+    # container-spinning tests their own process rather than pretend the fast
+    # suite tolerates them. This keeps per-push coverage — they are NOT demoted
+    # to nightly.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install dev deps
+        working-directory: ./backend
+        run: pip install -r requirements-dev.txt
+      - name: Kafka e2e
+        working-directory: ./backend
+        run: |
+          pytest -q \
+            tests/test_compliance_reports_e2e.py \
+            tests/test_ingestion_redpanda_e2e.py \
+            tests/test_compliance_report_scheduling_e2e.py
+
   # --- FS-107: Prometheus alert rules — lint + unit test -------------------
   prometheus-rules:
     runs-on: ubuntu-latest
