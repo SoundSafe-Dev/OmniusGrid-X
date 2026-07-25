@@ -174,10 +174,14 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     container_name: omniusgrid-ingestion
+    # Was the ONLY worker without a restart policy — the one carrying continuous
+    # telemetry was also the one that stayed down after a crash.
+    restart: unless-stopped
     environment:
       DATABASE_URL: postgresql://omniusgrid:${POSTGRES_PASSWORD:-omniusgrid_dev_password}@timescaledb:5432/omniusgrid
       REDPANDA_URL: redpanda:29092
       WORKER_MODE: ingestion
+      WORKER_HEALTH_PORT: "9109"
     volumes:
       - ./backend:/app
     depends_on:
@@ -189,6 +193,15 @@ services:
         condition: service_healthy
     networks:
       - omniusgrid-network
+    # The workers exposed no health signal at all until FS-213, so compose had no
+    # way to tell a wedged consumer from a working one. /healthz is heartbeat-based:
+    # it fails when the loop stops, not merely when the process dies.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9109/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     command: python -m app.workers.ingestion
 
   # Durable scheduled export generation and company SMTP delivery
@@ -217,6 +230,7 @@ services:
       SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-reports@omniusgrid.local}
       SMTP_USE_TLS: ${SMTP_USE_TLS:-false}
       SMTP_START_TLS: ${SMTP_START_TLS:-true}
+      WORKER_HEALTH_PORT: "9109"
     volumes:
       - ./backend:/app
       - export-data:/var/lib/omniusgrid/exports
@@ -229,6 +243,15 @@ services:
         condition: service_healthy
     networks:
       - omniusgrid-network
+    # The workers exposed no health signal at all until FS-213, so compose had no
+    # way to tell a wedged consumer from a working one. /healthz is heartbeat-based:
+    # it fails when the loop stops, not merely when the process dies.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9109/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     command: python -m app.workers.export_delivery
 
   # Async compliance report generation and email delivery
@@ -258,6 +281,7 @@ services:
       SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-reports@omniusgrid.local}
       SMTP_USE_TLS: ${SMTP_USE_TLS:-false}
       SMTP_START_TLS: ${SMTP_START_TLS:-true}
+      WORKER_HEALTH_PORT: "9109"
     volumes:
       - ./backend:/app
       - export-data:/var/lib/omniusgrid/exports
@@ -270,6 +294,15 @@ services:
         condition: service_healthy
     networks:
       - omniusgrid-network
+    # The workers exposed no health signal at all until FS-213, so compose had no
+    # way to tell a wedged consumer from a working one. /healthz is heartbeat-based:
+    # it fails when the loop stops, not merely when the process dies.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9109/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     command: python -m app.workers.compliance_reports
 
   # OTA staged rollout orchestration and health-gated rollback
@@ -297,6 +330,7 @@ services:
       OTA_ROLLOUT_DEFAULT_COMMAND_TIMEOUT_SECONDS: ${OTA_ROLLOUT_DEFAULT_COMMAND_TIMEOUT_SECONDS:-120}
       OTA_ROLLOUT_DEFAULT_HEALTH_TIMEOUT_SECONDS: ${OTA_ROLLOUT_DEFAULT_HEALTH_TIMEOUT_SECONDS:-300}
       OTA_ROLLOUT_DEFAULT_MIN_SUCCESS_RATIO: ${OTA_ROLLOUT_DEFAULT_MIN_SUCCESS_RATIO:-1.0}
+      WORKER_HEALTH_PORT: "9109"
     volumes:
       - ./backend:/app
       - export-data:/var/lib/omniusgrid/exports
@@ -309,6 +343,15 @@ services:
         condition: service_healthy
     networks:
       - omniusgrid-network
+    # The workers exposed no health signal at all until FS-213, so compose had no
+    # way to tell a wedged consumer from a working one. /healthz is heartbeat-based:
+    # it fails when the loop stops, not merely when the process dies.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9109/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     command: python -m app.workers.ota_rollouts
 
   # Frontend - React Dashboard

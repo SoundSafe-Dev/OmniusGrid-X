@@ -559,7 +559,7 @@
 
 | Term | Definition | Backend/Frontend |
 |------|------------|------------------|
-| **Prometheus** | Time-series database for metrics collection and alerting. In-cluster it discovers targets via the Kubernetes API (backend `/metrics`, Redpanda, kube-state-metrics, CloudNativePG) | Backend |
+| **Prometheus** | Time-series database for metrics collection and alerting. In-cluster it discovers targets via the Kubernetes API (backend `/metrics`, the four background workers on :9109, Redpanda, kube-state-metrics, CloudNativePG) | Backend |
 | **Grafana** | Visualization platform for metrics dashboards; deployed in the k8s monitoring stack with a provisioned "Platform / Infra" dashboard (HA-DB / autoscaling / backups) | Backend |
 | **kube-state-metrics** | Exposes Kubernetes object state (pod/replica/HPA/PVC status, Job/CronJob success, restart counts) as Prometheus metrics — the source for autoscaling and backup alerts | Backend |
 | **Platform / Infra Dashboard** | Grafana dashboard for the enterprise stacks: CNPG instances/replication lag, worker replicas current-vs-max, consumer lag, backup age + failures | Backend |
@@ -569,6 +569,11 @@
 | **Structured Logging** | JSON-formatted logs with consistent schema for parsing and analysis | Backend |
 | **Structlog** | Python library for structured logging | Backend |
 | **Health Probe** | HTTP endpoint for service liveness and readiness checks | Backend |
+| **Heartbeat Liveness** | Liveness judged by whether a worker is still *doing work*, not whether its process exists. A worker records a beat per completed unit of work and `/healthz` fails once the last beat exceeds its staleness window — the only way to detect a wedged consumer (process alive, loop dead) | Backend |
+| **Worker Health Endpoint** | `/metrics`, `/healthz` and `/readyz` served on port 9109 by each background worker (`app/workers/health_server.py`). Before it existed the workers exposed nothing, so probes had no path to hit and Prometheus scraped nothing | Backend |
+| **Staleness Window** | Per-worker `stale_after_seconds`. Set to 300s for ingestion (continuous telemetry, so a gap is genuinely wrong) and **disabled** for the event-driven export / compliance / OTA workers, which can legitimately idle for hours | Backend |
+| **`opsgrid_worker_heartbeat_age_seconds`** | Gauge of seconds since a worker last completed a unit of work, labelled by `worker` so one scrape job covers all four. Drives the `WorkerStalled` alert | Backend |
+| **`opsgrid_workers` (alert group)** | `WorkerStalled` (ingestion heartbeat > 10m — the probe's restart has failed to cure it), `WorkerDown` (metrics endpoint unreachable), `WorkerCrashLooping` (> 2 restarts in 30m). See [kafka-consumer-lag.md](docs/runbooks/kafka-consumer-lag.md) | Backend |
 | **Systemd Watchdog** | Linux service monitoring and automatic restart on failure | Backend |
 | **HA Failover** | High availability automatic failover to standby instance | Backend |
 | **Disaster Recovery** | Process of restoring service after catastrophic failure | Backend |

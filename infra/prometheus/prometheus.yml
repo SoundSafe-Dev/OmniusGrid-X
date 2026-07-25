@@ -42,6 +42,24 @@ scrape_configs:
     static_configs:
       - targets: ['redpanda:9644']
 
+  # Background workers (FS-213). These four ran unscraped because they exposed no
+  # metrics endpoint at all — adding a job earlier would have created four
+  # permanently-DOWN targets, the same masking problem noted below. They now serve
+  # /metrics on 9109 (app/workers/health_server.py). Compose has no service
+  # discovery, so targets are static and `worker` is set here; in Kubernetes the
+  # `kubernetes-pods` job picks the same port up from the pod annotations instead.
+  - job_name: 'opsgrid-workers'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['ingestion-worker:9109']
+        labels: {worker: ingestion}
+      - targets: ['export-worker:9109']
+        labels: {worker: export_delivery}
+      - targets: ['compliance-reports-worker:9109']
+        labels: {worker: compliance_reports}
+      - targets: ['ota-rollout-worker:9109']
+        labels: {worker: ota_rollouts}
+
   # TimescaleDB / container metrics: add postgres_exporter and cadvisor
   # services before scraping them — the previous raw targets (timescaledb:5432
   # speaks the postgres wire protocol, cadvisor never existed in compose) sat
