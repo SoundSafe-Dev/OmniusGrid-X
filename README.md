@@ -1,4 +1,10 @@
-# OmniusGrid
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/brand/omniusgrid-lockup-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/brand/omniusgrid-lockup-light.png">
+    <img src="docs/assets/brand/omniusgrid-lockup-light.png" alt="OmniusGrid" width="440">
+  </picture>
+</p>
 
 <p align="center">
   <strong>Data Correlation for Industry 4.0</strong><br>
@@ -2293,6 +2299,42 @@ The ERP integration system correlates ERP data with operational telemetry to pro
 - [Secrets management](infrastructure/k8s/secrets/README.md) - Sealed Secrets + External Secrets Operator
 - [Network & pod security](infrastructure/k8s/NETWORK_SECURITY.md) - Zero-trust model, policy audit findings, CI enforcement matrix
 - [Load & failover testing](tests/load/README.md) - Ingestion load generator, autoscaling + DB-failover validation
+
+---
+
+## Brand
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/brand/omniusgrid-mark-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/brand/omniusgrid-mark-light.png">
+    <img src="docs/assets/brand/omniusgrid-mark-light.png" alt="OmniusGrid mark" width="96">
+  </picture>
+</p>
+
+The mark is a gear fused with an open ring — the machine and the data loop around
+it. Full spec (canvases, paddings, radii, component metrics, tints) lives in
+[`frontend/video/BRAND.md`](frontend/video/BRAND.md); the render-ready assets are in
+[`docs/assets/brand/`](docs/assets/brand/).
+
+**Typeface — native system faces only.** No licensed display fonts, so the product,
+the docs and the collateral all render identically without shipping a webfont:
+
+```
+UI  : -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+      'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif
+Data: ui-monospace, 'SF Mono', Menlo, monospace
+```
+
+The wordmark uses that same UI stack — **Omnius** at weight 800, Grid at 400,
+tracking −2 px (−5 px above 200 px). Data speaks monospace: file names, IDs and
+line names (`material-forecast_q3.xlsx`, `SHP-2214`, `Line 3`) are never set in the
+UI face.
+
+**Colour — one accent.** Brand blue `#3b82f6` (deep `#2563eb` on light, soft
+`#93c5fd` on dark). Green `#4ade80`/`#16a34a` is reserved for live streams and GO
+scores, red `#ef4444` for risk — neither is ever decoration. If a layout needs a
+second accent colour, the layout is wrong.
 
 ---
 
