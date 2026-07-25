@@ -15,71 +15,13 @@ from uuid import uuid4
 import pytest
 
 
-class _RedpandaContainer:
-    _START_SCRIPT = "/var/lib/redpanda/tc-start.sh"
-    _KAFKA_PORT = 9092
-
-    def __init__(self, image: str):
-        from testcontainers.core.container import DockerContainer
-
-        self._container = DockerContainer(image, entrypoint="sh")
-        self._container.with_exposed_ports(self._KAFKA_PORT)
-
-    def get_bootstrap_server(self) -> str:
-        host = self._container.get_container_host_ip()
-        port = self._container.get_exposed_port(self._KAFKA_PORT)
-        return f"{host}:{port}"
-
-    def start(self):
-        from testcontainers.core.waiting_utils import wait_for_logs
-
-        script = self._START_SCRIPT
-        self._container.with_command(
-            f'-c "while [ ! -f {script} ]; do sleep 0.1; done; sh {script}"'
-        )
-        self._container.start()
-        host = self._container.get_container_host_ip()
-        port = self._container.get_exposed_port(self._KAFKA_PORT)
-        contents = dedent(
-            f"""
-            #!/bin/bash
-            /usr/bin/rpk redpanda start --mode dev-container --smp 1 --memory 1G \
-              --kafka-addr PLAINTEXT://0.0.0.0:29092,OUTSIDE://0.0.0.0:9092 \
-              --advertise-kafka-addr \
-                PLAINTEXT://127.0.0.1:29092,OUTSIDE://{host}:{port}
-            """
-        ).strip().encode("utf-8")
-        with BytesIO() as archive:
-            with tarfile.TarFile(fileobj=archive, mode="w") as tar:
-                dirname, basename = os.path.split(script)
-                info = tarfile.TarInfo(name=basename)
-                info.size = len(contents)
-                info.mtime = time.time()
-                tar.addfile(info, BytesIO(contents))
-            archive.seek(0)
-            self._container.get_wrapped_container().put_archive(dirname, archive)
-        wait_for_logs(self._container, r".*Started Kafka API server.*", timeout=30)
-        return self
-
-    def stop(self):
-        self._container.stop()
-
-
-@pytest.fixture(scope="module")
-def compliance_redpanda():
-    try:
-        container = _RedpandaContainer(
-            image="docker.redpanda.com/redpandadata/redpanda:v23.3.5"
-        )
-        container.start()
-        yield container.get_bootstrap_server()
-    except Exception as exc:  # noqa: BLE001
-        pytest.skip(f"Docker/Redpanda unavailable: {exc}")
-    finally:
-        try:
-            container.stop()
-        except Exception:  # noqa: BLE001
-            pass
+# Uses the SESSION-scoped redpanda fixture from conftest.py. This module used
+# to carry its own copy of _RedpandaContainer with a MODULE-scoped fixture,
+# which a third module then imported — so one pytest run started multiple
+# brokers that interfered with each other.
+@pytest.fixture()
+def compliance_redpanda(redpanda_bootstrap_server) -> str:
+    return redpanda_bootstrap_server
 
 
 @pytest.mark.asyncio
