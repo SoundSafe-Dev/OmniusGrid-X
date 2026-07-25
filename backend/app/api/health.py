@@ -349,8 +349,13 @@ async def detailed_health(
     return report
 
 
-@router.get("/health/system")
-@router.get("/api/v1/health/system")
+# Explicit, distinct operation_ids (FS-215). These endpoints are exposed at
+# BOTH an unprefixed path (for probes that predate the /api/v1 convention) and
+# the versioned one. Stacked decorators on one function make FastAPI derive the
+# same operationId for both, which collides in the generated SDK and warns at
+# import. The paths stay as they are; only the ids are disambiguated.
+@router.get("/health/system", operation_id="health_system_metrics_unversioned")
+@router.get("/api/v1/health/system", operation_id="health_system_metrics_v1")
 async def system_metrics(current_user=Depends(get_current_active_user)):
     """Real host resource utilization (psutil) for the admin SystemHealth page.
 
@@ -372,8 +377,8 @@ async def system_metrics(current_user=Depends(get_current_active_user)):
     }
 
 
-@router.get("/health/db")
-@router.get("/api/v1/health/db")
+@router.get("/health/db", operation_id="health_health_database_unversioned")
+@router.get("/api/v1/health/db", operation_id="health_health_database_v1")
 async def health_database(db: AsyncSession = Depends(get_db)):
     """Database connectivity check."""
     status, details = await _check_database(db)
@@ -382,8 +387,8 @@ async def health_database(db: AsyncSession = Depends(get_db)):
     return {"status": status, **details}
 
 
-@router.get("/health/redis")
-@router.get("/api/v1/health/redis")
+@router.get("/health/redis", operation_id="health_health_redis_unversioned")
+@router.get("/api/v1/health/redis", operation_id="health_health_redis_v1")
 async def health_redis():
     """Redis connectivity check (required when rate limiting is enabled)."""
     status, details = await _check_redis()
@@ -392,8 +397,8 @@ async def health_redis():
     return {"status": status, **details}
 
 
-@router.get("/health/kafka")
-@router.get("/api/v1/health/kafka")
+@router.get("/health/kafka", operation_id="health_health_kafka_unversioned")
+@router.get("/api/v1/health/kafka", operation_id="health_health_kafka_v1")
 async def health_kafka():
     """Message broker (Redpanda/Kafka) connectivity check."""
     status, details = await _check_message_broker()
