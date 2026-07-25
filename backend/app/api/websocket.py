@@ -1,6 +1,8 @@
 """WebSocket API endpoints for real-time updates"""
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, Query
+
+from app.core.http_metrics import record_websocket_event
 from typing import Optional, Set
 import json
 import structlog
@@ -99,6 +101,10 @@ async def _serve_websocket(
     # Connect client
     await websocket_manager.connect_client(websocket, organization_id,
                                            subprotocol=negotiated_subprotocol)
+    # Instrumented for FS-229. There were no WebSocket metrics at all, so a
+    # "drop rate" alert had nothing to measure — realtime could degrade to zero
+    # connected clients with no signal anywhere.
+    record_websocket_event("connect", +1)
     
     # Parse asset filter
     subscribed_assets: Set[str] = set()
@@ -118,7 +124,12 @@ async def _serve_websocket(
         asset_filter=list(subscribed_assets) if subscribed_assets else "all",
         user_id=str(user.id) if user else "anonymous"
     )
-    
+
+    # Default to the error classification: if we somehow leave this handler
+    # without passing through a known branch, that IS an abnormal teardown and
+    # should be counted as one rather than flattering the drop-rate metric.
+    disconnect_reason = "disconnect_error"
+
     try:
         while True:
             # Receive messages from client
@@ -183,6 +194,16 @@ async def _serve_websocket(
     
     except WebSocketDisconnect:
         logger.info("websocket_client_disconnected", organization_id=organization_id)
-    
+        disconnect_reason = "disconnect_clean"
+
+    except Exception as exc:  # noqa: BLE001 — classify, then re-raise
+        # A clean client close and a server-side teardown are different signals.
+        # Counting both as "disconnect" would make the drop-rate alert useless,
+        # since a busy system produces clean closes constantly.
+        logger.warning("websocket_closed_with_error", error=str(exc))
+        disconnect_reason = "disconnect_error"
+        raise
+
     finally:
+        record_websocket_event(disconnect_reason, -1)
         websocket_manager.disconnect_client(websocket, organization_id)

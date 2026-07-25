@@ -104,6 +104,14 @@ services:
       # NOT also run them (avoids two pollers racing the same queues).
       SCHEDULERS_IN_API: ${SCHEDULERS_IN_API:-false}
       REDIS_URL: redis://redis:6379/0
+      # Tracing. The otel-collector and jaeger services below sit behind the
+      # `tracing` profile, but the backend never set OTEL_ENABLED — so `make
+      # tracing` brought up a collector and a Jaeger UI that received nothing,
+      # with no indication of why. Off by default because the profile is opt-in;
+      # the make target sets it to true.
+      OTEL_ENABLED: ${OTEL_ENABLED:-false}
+      OTEL_SERVICE_NAME: omniusgrid-backend
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
       EXPORT_STORAGE_PATH: /var/lib/omniusgrid/exports
       EXPORT_PUBLIC_BASE_URL: http://localhost:8002
       SMTP_HOST: ${SMTP_HOST:-}

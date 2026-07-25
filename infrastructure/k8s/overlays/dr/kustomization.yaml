@@ -1,0 +1,96 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Disaster-recovery site overlay (FS-230).
+#
+# docs/deployment/dr-datacenter-outage.md documented a 60-minute RTO built on
+# "activate DR site" steps that had NOTHING to apply — the runbook itself said so
+# in its Related Documentation section. A DR plan whose first action is
+# unimplemented is not a plan, and the gap only surfaced if you read to the end.
+#
+# WHAT THIS IS, AND WHAT IT IS NOT. This makes the runbook executable against a
+# second cluster: a distinct namespace, DR hostnames, and replica counts sized for
+# a site that is normally cold. It does NOT create cross-region data replication —
+# that is pgBackRest's job (infra/pgbackrest/pgbackrest.conf) and it is what
+# actually determines the RPO. Applying this overlay to an empty cluster gives you
+# running pods with no data. The runbook's restore step is the one that matters and
+# this overlay does not replace it.
+#
+# UNVERIFIED AGAINST A REAL CLUSTER. There is no second cluster to try it on, so
+# what is proven here is that it builds, that every resource is valid, and that the
+# NetworkPolicy coverage gate passes. Whether a real failover meets 60 minutes is
+# unmeasured — docs/runbooks/rto-rpo-checklist.md is still a template.
+
+namespace: omniusgrid-dr
+
+resources:
+  - ../../base
+
+namePrefix: dr-
+
+commonLabels:
+  environment: dr
+  # Marks pods as belonging to the standby site, so a Grafana or Alertmanager
+  # query can tell "the DR site is serving traffic" (expected only during an
+  # incident) from the primary.
+  site-role: standby
+
+# Cold standby: enough capacity to accept traffic immediately on failover, but not
+# a duplicate of production sitting idle. The runbook's activation step scales
+# these up; starting at 0 would add pod-start time to the RTO.
+replicas:
+  - name: backend
+    count: 2
+  - name: frontend
+    count: 2
+  - name: ingestion-worker
+    count: 1
+
+images:
+  - name: omniusgrid/backend
+    newName: ghcr.io/omniusgrid/backend
+    newTag: main
+  - name: omniusgrid/frontend
+    newName: ghcr.io/omniusgrid/frontend
+    newTag: main
+
+configMapGenerator:
+  - name: backend-config
+    literals:
+      - LOG_LEVEL=info
+      - MTLS_ENABLED=true
+      - DEBUG=false
+      # Surfaced in logs and traces so an operator reading them during an incident
+      # can tell which site produced them. Confusing DR logs for primary logs
+      # during a failover is a real and expensive mistake.
+      - DEPLOYMENT_SITE=dr
+
+patches:
+  - target:
+      kind: Ingress
+      name: omniusgrid-ingress
+    patch: |-
+      - op: replace
+        path: /spec/rules/0/host
+        value: dr.omniusgrid.local
+      - op: replace
+        path: /spec/rules/1/host
+        value: api-dr.omniusgrid.local
+      - op: replace
+        path: /spec/tls/0/hosts
+        value:
+          - dr.omniusgrid.local
+          - api-dr.omniusgrid.local
+  # Same reasoning as staging and production: the base placeholder credentials must
+  # not reach a deployed environment, and the DR site is a deployed environment —
+  # arguably the one where using dev credentials would be least noticed. Provision
+  # real ones via ../../secrets/. The placeholder-credential gate enforces this.
+  - target:
+      kind: Secret
+      name: s3-credentials
+    patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: s3-credentials

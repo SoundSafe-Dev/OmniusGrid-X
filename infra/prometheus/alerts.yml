@@ -526,6 +526,82 @@ groups:
   # so there was no `up` target to be down and no heartbeat to go stale, and their
   # Deployments carried no probes, so a pod was trivially "Ready" forever and never
   # restarted. These alerts are the monitoring half of that change.
+  # Security + realtime signals. Every rule here needed a METRIC added first
+  # (app/core/http_metrics.py): auth failures and WebSocket lifecycle events were
+  # only structlog lines, which Prometheus never sees. Writing these rules against
+  # the old code would have produced alerts that lint green and can never fire.
+  - name: opsgrid_security
+    rules:
+      # HIGH: a sustained burst of failed logins. Rate-based, not a raw count, so
+      # it scales with fleet size instead of firing on a busy morning.
+      - alert: AuthBruteForceSuspected
+        expr: sum(rate(opsgrid_auth_attempts_total{outcome="failure"}[5m])) > 5
+        for: 5m
+        labels:
+          severity: high
+          team: security
+        annotations:
+          summary: "Sustained authentication failures"
+          description: "More than 5 failed logins per second over 5 minutes. The metric is deliberately not labelled by user or IP (that would let an enumeration attack create unbounded series), so identify the source from the access logs or the audit trail."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/error-triage.md"
+
+      # WARNING: most login attempts are failing. Catches a broken auth dependency
+      # — an expired SSO signing key, an unreachable Redis behind the limiter —
+      # which AuthBruteForceSuspected would miss on a low-traffic deployment
+      # because the absolute rate stays small.
+      - alert: AuthFailureRatioHigh
+        expr: |
+          sum(rate(opsgrid_auth_attempts_total{outcome="failure"}[10m]))
+            /
+          clamp_min(sum(rate(opsgrid_auth_attempts_total[10m])), 0.001)
+            > 0.5
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Over half of login attempts are failing"
+          description: "The failure RATIO exceeds 50% for 10 minutes. On a quiet deployment a broken auth path produces a low absolute failure rate, so the ratio is what surfaces it. Check the SSO signing keys, the auth limiter's Redis, and recent auth deploys."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/error-triage.md"
+
+      # HIGH: a client certificate is close to expiry. `edge_agent_cert_expiring`
+      # already covers the 2-day emergency; this is the 14-day window where
+      # rotation can still be scheduled rather than scrambled.
+      - alert: EdgeAgentCertExpiryApproaching
+        expr: min by (agent_id) (edge_agent_cert_expiry_seconds) < 1209600
+        for: 1h
+        labels:
+          severity: warning
+          team: edge
+        annotations:
+          summary: "Edge agent certificate expires within 14 days"
+          description: "Agent {{ $labels.agent_id }} has under 14 days of certificate validity. Rotate now; at under 2 days EdgeAgentCertExpiringSoon escalates this to high."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/scripts/certificate-rotation.sh"
+
+  # Realtime delivery. The dashboard and alarm views are WebSocket-driven, so a
+  # silent collapse here looks like "nothing is happening in the factory".
+  - name: opsgrid_realtime
+    rules:
+      # HIGH: connections are being torn down abnormally rather than closed by the
+      # client. A ratio, because a busy system produces clean closes constantly and
+      # an absolute count of disconnects is meaningless.
+      - alert: WebSocketDropRateHigh
+        expr: |
+          sum(rate(opsgrid_websocket_events_total{event="disconnect_error"}[10m]))
+            /
+          clamp_min(
+            sum(rate(opsgrid_websocket_events_total{event=~"disconnect_.*"}[10m])),
+            0.001
+          ) > 0.25
+        for: 10m
+        labels:
+          severity: high
+          team: platform
+        annotations:
+          summary: "Over a quarter of WebSocket closes are abnormal"
+          description: "More than 25% of WebSocket disconnects over 10 minutes ended in an error rather than a clean client close. Live telemetry, alarm and PackML updates are degrading. Check backend logs for websocket_closed_with_error and the ingress idle timeout."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/subsystems.md"
+
   - name: opsgrid_workers
     rules:
       # CRITICAL: the ingestion worker has stopped consuming. Its liveness probe

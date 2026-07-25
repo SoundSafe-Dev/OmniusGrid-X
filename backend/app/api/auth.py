@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.database import get_db
 from app.db.models import User, Organization
 from app.models.schemas import Token, UserCreate
+from app.core.http_metrics import record_auth_attempt
 from app.core.config import settings
 from app.core.security import (
     LocalTokenClaimsError,
@@ -256,17 +257,29 @@ async def login(
     result = await db.execute(select(User).where(User.email == form_data.username))
     user = result.scalar_one_or_none()
     if not user or not verify_password(form_data.password, user.hashed_password):
+        # Counted so brute-force is detectable (FS-229). Previously failures were
+        # only a log line, which Prometheus never sees — an AuthBruteForce alert
+        # would have been unfirable. Deliberately NOT labelled by email or IP:
+        # an attacker enumerating accounts would create one series per attempt and
+        # the metric would become the outage.
+        record_auth_attempt("failure", "bad_credentials")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
     if not user.is_active:
+        # Distinguished from bad credentials in the METRIC while the response stays
+        # identical — the uniform 401 is what stops account enumeration, and that
+        # must not change just because we now measure the difference.
+        record_auth_attempt("failure", "inactive_user")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    record_auth_attempt("success")
 
     access_token, _, refresh_token, refresh_payload = _create_token_pair(user)
     await SessionManager.create_session(

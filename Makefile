@@ -23,7 +23,10 @@ logs: ## Tail stack logs
 	docker-compose logs -f
 
 tracing: ## Start the stack with the tracing profile (OTel collector + Jaeger)
-	docker-compose --profile tracing up -d
+	# OTEL_ENABLED=true is the part that was missing: the profile started a
+	# collector and a Jaeger UI, but the backend never enabled export, so the
+	# UI was permanently empty and nothing indicated why.
+	OTEL_ENABLED=true docker-compose --profile tracing up -d
 
 test: test-backend test-edge test-frontend ## Run all test suites
 

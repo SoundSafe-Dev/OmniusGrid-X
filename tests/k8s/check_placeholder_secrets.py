@@ -75,8 +75,12 @@ def offenders(docs: list[dict], source: str) -> list[str]:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--staging", action="store_true", help="check staging instead")
+    # The DR site is a DEPLOYED environment — arguably the one where dev
+    # credentials would go unnoticed longest, since it only serves traffic during
+    # an incident. It was outside this gate until overlays/dr existed (FS-230).
+    ap.add_argument("--dr", action="store_true", help="check the DR overlay instead")
     args = ap.parse_args()
-    env = "staging" if args.staging else "production"
+    env = "staging" if args.staging else ("dr" if args.dr else "production")
 
     # The overlay must be clean on its own — nothing filters it at apply time.
     problems: list[str] = offenders(

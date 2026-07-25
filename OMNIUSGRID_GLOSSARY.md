@@ -569,6 +569,11 @@
 | **Structured Logging** | JSON-formatted logs with consistent schema for parsing and analysis | Backend |
 | **Structlog** | Python library for structured logging | Backend |
 | **Health Probe** | HTTP endpoint for service liveness and readiness checks | Backend |
+| **Deployed-but-dead** | A workload that starts, reports healthy and does nothing, because `default-deny-all` blocks it and no policy grants an exception. otel-collector and jaeger shipped this way; the coverage gate found four more instances on its first run | Backend |
+| **NetworkPolicy coverage gate** | `tests/k8s/check_netpol_coverage.py` — asserts every workload in a default-deny namespace is selected by at least one ingress AND one egress policy. Broad and shallow; the enforcement matrix is narrow and exact. Neither replaces the other | Backend |
+| **`opsgrid_auth_attempts_total`** | Auth outcomes by (outcome, reason). Deliberately NOT labelled by user or IP — an enumeration attack would create one series per attempt and the metric would become the outage | Backend |
+| **`opsgrid_websocket_events_total`** | WebSocket lifecycle by event, separating a clean client close from an error teardown. The distinction is what makes a drop-RATIO alert meaningful; a busy system produces clean closes constantly | Backend |
+| **`overlays/dr`** | The DR-site kustomize overlay. Brings up pods in a standby namespace; it does NOT replicate data (pgBackRest does), so applying it to an empty cluster yields a running platform with no data | Backend |
 | **Role vocabulary** | The ordered set viewer < operator < admin, defined once in `app/core/roles.py` and enforced by a CHECK constraint (migration 048). Previously a bare `String(50)` with no constraint and three duplicated copies of the list, so a typo stored fine and then matched no permission check | Backend |
 | **`require_at_least`** | Dependency expressing a privilege FLOOR rather than an enumerated set. An enumerated set has no ordering, which is how two read-only endpoints ended up denying `operator` while allowing `viewer` | Backend |
 | **Last-admin guard** | Refuses to demote or deactivate the final active admin in an organization. Losing it is unrecoverable through the product — nobody left can manage users | Backend |

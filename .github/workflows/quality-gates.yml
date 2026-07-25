@@ -275,7 +275,8 @@ jobs:
             tests/error_alerts_test.yml \
             tests/subsystems_alerts_test.yml \
             tests/platform_alerts_test.yml \
-            tests/worker_alerts_test.yml
+            tests/worker_alerts_test.yml \
+            tests/security_alerts_test.yml
 
   # --- k8s manifest validation (blocking) ----------------------------------
   k8s-manifests:
@@ -302,7 +303,7 @@ jobs:
       - name: Build + validate app manifests (base + overlays)
         run: |
           set -euo pipefail
-          for t in base overlays/staging overlays/production; do
+          for t in base overlays/staging overlays/production overlays/dr; do
             echo "::group::$t"
             kustomize build "infrastructure/k8s/$t" \
               | kubeconform -strict -summary -ignore-missing-schemas \
@@ -314,6 +315,7 @@ jobs:
           pip install pyyaml
           ./tests/k8s/check_placeholder_secrets.py
           ./tests/k8s/check_placeholder_secrets.py --staging
+          ./tests/k8s/check_placeholder_secrets.py --dr
       - name: Build + validate operator stacks (monitoring, database-ha, autoscaling)
         # These reference operator CRDs (Prometheus rules from outside the tree,
         # CloudNativePG Cluster/Pooler, KEDA ScaledObject) — build with the None
@@ -476,6 +478,18 @@ jobs:
           grep -oE '^  "[^"]+"' tests/k8s/netpol-test.sh | tr -d ' "' \
             | awk -F'|' 'NF>=6{print $1"\t"$3"\t"$4"\t"$5"\t"$6}' > /tmp/matrix.tsv
           ./tests/k8s/simulate-netpols.py /tmp/netpols.yaml tests/k8s/netpol-probe.yaml /tmp/matrix.tsv
+      - name: Every workload in a default-deny namespace has a policy
+        run: |
+          set -euo pipefail
+          # Complements the matrix above rather than duplicating it. The matrix
+          # proves the paths someone wrote a case for; this proves no workload is
+          # entirely cut off — the gap that killed otel/jaeger and, on the guard's
+          # first run, edge-agent / redpanda / timescaledb / frontend too.
+          for overlay in base overlays/staging overlays/production overlays/dr; do
+            echo "--- $overlay ---"
+            kustomize build "infrastructure/k8s/$overlay" \
+              | ./tests/k8s/check_netpol_coverage.py
+          done
 
   # --- task 1: frontend unit tests (Vitest) --------------------------------
   frontend-unit:

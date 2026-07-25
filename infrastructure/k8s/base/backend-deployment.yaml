@@ -113,6 +113,16 @@ spec:
               value: "/etc/tls/server/server.crt"
             - name: SERVER_KEY_PATH
               value: "/etc/tls/server/server.key"
+            # Trace export (FS-226). The collector was deployed but the backend set
+            # no OTEL env at all, so it exported nothing even once the network path
+            # existed. Enabled here rather than left to an overlay so the default
+            # deployment actually traces.
+            - name: OTEL_ENABLED
+              value: "true"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://otel-collector:4317"
+            - name: OTEL_SERVICE_NAME
+              value: "omniusgrid-backend"
             - name: LOG_LEVEL
               value: "info"
             - name: PYTHONDONTWRITEBYTECODE

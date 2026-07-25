@@ -30,6 +30,11 @@ MATRIX=(
   "outsider->redis|netpol-outsider|np-outsider-client|np-redis-stub|6379|DENY|cache must not be namespace-open"
   "prometheus->worker|omniusgrid|np-prometheus-client|np-worker-stub|9109|ALLOW|worker /metrics scrape (FS-213)"
   "outsider->worker|netpol-outsider|np-outsider-client|np-worker-stub|9109|DENY|worker metrics must not be namespace-open"
+  "backend->otel|omniusgrid|np-backend-client|np-otel-stub|4317|ALLOW|API trace export (FS-226)"
+  "ingestion->otel|omniusgrid|np-ingestion-client|np-otel-stub|4317|ALLOW|worker trace export (FS-226)"
+  "otel->jaeger|omniusgrid|np-otel-client|np-jaeger-stub|4317|ALLOW|collector forwards spans to jaeger"
+  "outsider->otel|netpol-outsider|np-outsider-client|np-otel-stub|4317|DENY|collector must not be namespace-open"
+  "outsider->jaeger|netpol-outsider|np-outsider-client|np-jaeger-stub|4317|DENY|jaeger must not accept spans from anywhere"
 )
 
 fail() { echo "::error::$*"; exit 1; }

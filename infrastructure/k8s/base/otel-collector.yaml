@@ -1,6 +1,21 @@
-# OpenTelemetry Collector + Jaeger for the cluster (task 14).
-# Backend enables export by setting OTEL_ENABLED=true and
-# OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317.
+# OpenTelemetry Collector + Jaeger for the cluster.
+#
+# THIS STACK WAS DEPLOYED AND DEAD (FS-226). Three independent reasons, each
+# sufficient on its own, and none of them produced an error anywhere:
+#
+#  1. `base` ships `default-deny-all` with `podSelector: {}`, which covers every
+#     pod in the namespace. Neither of these workloads had ANY NetworkPolicy, so
+#     nothing could reach the collector, the collector could not reach jaeger, and
+#     the UI was unreachable. Policies are now in base/ingress.yaml.
+#  2. The backend Deployment set no OTEL env at all, so it exported nothing
+#     regardless of whether the collector was reachable. Now wired.
+#  3. There were no probes, so a wedged collector stayed in the Service's
+#     endpoints and silently blackholed spans. The collector's `health_check`
+#     extension is enabled below specifically to give the probes something real
+#     to hit — a TCP check on 4317 would pass while the pipeline was broken.
+#
+# Backend export is controlled by OTEL_ENABLED / OTEL_EXPORTER_OTLP_ENDPOINT
+# (app/core/config.py).
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -26,7 +41,14 @@ data:
         endpoint: jaeger:4317
         tls:
           insecure: true
+    extensions:
+      # Reports pipeline health, not just "the process is listening". This is what
+      # the probes below target; without it the only option is a TCP check on the
+      # OTLP port, which succeeds while the export pipeline is failing.
+      health_check:
+        endpoint: 0.0.0.0:13133
     service:
+      extensions: [health_check]
       pipelines:
         traces:
           receivers: [otlp]
@@ -38,23 +60,74 @@ kind: Deployment
 metadata:
   name: otel-collector
   namespace: omniusgrid
+  labels:
+    app.kubernetes.io/name: otel-collector
+    app.kubernetes.io/component: tracing
+    app.kubernetes.io/part-of: omniusgrid
 spec:
   replicas: 1
   selector:
     matchLabels:
+      # `app`, not app.kubernetes.io/name. spec.selector is IMMUTABLE on an
+      # existing Deployment, so changing it would require deleting and recreating
+      # the workload. The conventional labels are added alongside on the pod
+      # template instead, and the NetworkPolicies below select on this one.
       app: otel-collector
   template:
     metadata:
       labels:
         app: otel-collector
+        app.kubernetes.io/name: otel-collector
+        app.kubernetes.io/component: tracing
     spec:
+      securityContext:
+        runAsNonRoot: true
+        # The upstream collector image runs as uid 10001.
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: otel-collector
           image: otel/opentelemetry-collector-contrib:0.109.0
           args: ["--config=/etc/otel/otel-collector-config.yaml"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
           ports:
-            - containerPort: 4317
-            - containerPort: 4318
+            - name: otlp-grpc
+              containerPort: 4317
+            - name: otlp-http
+              containerPort: 4318
+            - name: health
+              containerPort: 13133
+          # memory_limiter is configured with limit_percentage, which the collector
+          # resolves against its CGROUP limit — so without a memory limit set here
+          # the processor has nothing to compute a budget from and the backpressure
+          # it exists to apply never engages.
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "50m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          readinessProbe:
+            httpGet:
+              path: /
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 3
           volumeMounts:
             - name: config
               mountPath: /etc/otel
@@ -68,6 +141,8 @@ kind: Service
 metadata:
   name: otel-collector
   namespace: omniusgrid
+  labels:
+    app.kubernetes.io/name: otel-collector
 spec:
   selector:
     app: otel-collector
@@ -84,6 +159,10 @@ kind: Deployment
 metadata:
   name: jaeger
   namespace: omniusgrid
+  labels:
+    app.kubernetes.io/name: jaeger
+    app.kubernetes.io/component: tracing
+    app.kubernetes.io/part-of: omniusgrid
 spec:
   replicas: 1
   selector:
@@ -93,22 +172,71 @@ spec:
     metadata:
       labels:
         app: jaeger
+        app.kubernetes.io/name: jaeger
+        app.kubernetes.io/component: tracing
     spec:
+      securityContext:
+        runAsNonRoot: true
+        # jaegertracing/all-in-one runs as uid 10001.
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: jaeger
           image: jaegertracing/all-in-one:1.60
+          securityContext:
+            allowPrivilegeEscalation: false
+            # NOT read-only: all-in-one uses in-memory (badger) storage that writes
+            # to a working directory. Forcing a read-only rootfs here would
+            # crash-loop the pod, so it is left writable deliberately rather than
+            # copied from the other workloads. Recorded as accepted debt — a real
+            # deployment should move to a persistent backend, at which point the
+            # rootfs can be locked down.
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
           env:
             - name: COLLECTOR_OTLP_ENABLED
               value: "true"
           ports:
-            - containerPort: 16686
-            - containerPort: 4317
+            - name: ui
+              containerPort: 16686
+            - name: otlp-grpc
+              containerPort: 4317
+            - name: admin
+              containerPort: 14269
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+          # all-in-one exposes its own health endpoint on the admin port; the UI
+          # port answers before the collector is accepting spans.
+          readinessProbe:
+            httpGet:
+              path: /
+              port: admin
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: admin
+            initialDelaySeconds: 20
+            periodSeconds: 30
+            failureThreshold: 3
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: jaeger
   namespace: omniusgrid
+  labels:
+    app.kubernetes.io/name: jaeger
 spec:
   selector:
     app: jaeger
