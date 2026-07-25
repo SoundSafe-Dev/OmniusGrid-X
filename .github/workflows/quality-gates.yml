@@ -250,10 +250,29 @@ jobs:
           promtool --version
       - name: Lint alert rules
         working-directory: ./infra/prometheus
-        run: promtool check rules alerts.yml
+        run: promtool check rules alerts.yml slo_rules.yml
+      # `check rules` validates rule files; it does NOT read prometheus.yml, so a
+      # broken scrape_config or a rule_files path pointing at nothing stayed
+      # invisible. Both configs reference their rule files by absolute in-container
+      # path, so stage them where each expects: compose reads /etc/prometheus/*.yml,
+      # the in-cluster ConfigMap reads /etc/prometheus/rules/*.yml.
+      - name: Stage rule files at their runtime paths
+        run: |
+          sudo mkdir -p /etc/prometheus/rules
+          sudo cp infra/prometheus/alerts.yml infra/prometheus/slo_rules.yml /etc/prometheus/
+          sudo cp infra/prometheus/alerts.yml infra/prometheus/slo_rules.yml /etc/prometheus/rules/
+      - name: Check Prometheus configs (compose + in-cluster)
+        run: |
+          promtool check config infra/prometheus/prometheus.yml
+          promtool check config infrastructure/k8s/monitoring/prometheus-config.yml
       - name: Run alert unit tests
         working-directory: ./infra/prometheus
-        run: promtool test rules tests/error_alerts_test.yml tests/subsystems_alerts_test.yml tests/platform_alerts_test.yml
+        run: |
+          promtool test rules \
+            tests/error_alerts_test.yml \
+            tests/subsystems_alerts_test.yml \
+            tests/platform_alerts_test.yml \
+            tests/worker_alerts_test.yml
 
   # --- k8s manifest validation (blocking) ----------------------------------
   k8s-manifests:

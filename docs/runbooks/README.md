@@ -39,6 +39,7 @@ OmniusGrid component failures. Start here during any incident.
 | [incident-communication-templates.md](incident-communication-templates.md) | Copy-paste templates for internal, customer, and status-page comms |
 | [compliance-tenant-data-cleanup.md](compliance-tenant-data-cleanup.md) | Review and resolve legacy compliance rows before enforcing tenant ownership |
 | [leaked-key-rotation.md](leaked-key-rotation.md) | Rotate the private key committed in `acc35f92`; deferred history purge (**rotation outstanding**) |
+| [kafka-consumer-lag.md](kafka-consumer-lag.md) | Background workers: stalled / down / crash-looping consumers and Redpanda consumer lag (`opsgrid_workers` alerts) |
 | [database-backup-restore.md](database-backup-restore.md) | Nightly logical backup + restore procedure. **Read before trusting any pgBackRest instructions in `docs/deployment/dr-*.md` — that path is not yet operational.** |
 
 ## Post-recovery validation
