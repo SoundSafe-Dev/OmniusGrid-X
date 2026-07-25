@@ -1271,3 +1271,60 @@ class AlarmRuleResponse(AlarmRuleBase):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# ---------------------------------------------------------------------------
+# Admin user management (FS-221)
+# ---------------------------------------------------------------------------
+
+class UserAdminCreate(BaseModel):
+    """Deliberately has NO organization_id field.
+
+    The endpoint derives it from the caller's token, so a client cannot place a
+    user into another tenant — the tenant-trust shape already fixed in yard,
+    dashboard and alarms.
+    """
+
+    # `str` with a pattern, not pydantic's EmailStr: that requires the
+    # `email-validator` package, which is not a dependency of this project, and
+    # every other schema here (UserLogin, UserCreate) uses a plain str. A new
+    # runtime dependency for one field is not worth it; a pattern still rejects
+    # the mistakes that matter (missing @, whitespace, no domain).
+    email: str = Field(min_length=3, max_length=255, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    full_name: Optional[str] = Field(default=None, max_length=255)
+    password: str = Field(min_length=12, max_length=128)
+    # Literal, not str: an unconstrained role stored fine and then matched no
+    # require_* dependency, leaving the account with no permissions at all.
+    role: Literal["viewer", "operator", "admin"] = "operator"
+    department: Optional[str] = Field(default=None, max_length=100)
+
+
+class UserAdminUpdate(BaseModel):
+    """PATCH semantics — every field optional.
+
+    Not `UserAdminCreate` with defaults: that would make omitting `is_active`
+    indistinguishable from setting it, so an edit to someone's department could
+    silently reactivate a deactivated account.
+    """
+
+    full_name: Optional[str] = Field(default=None, max_length=255)
+    role: Optional[Literal["viewer", "operator", "admin"]] = None
+    department: Optional[str] = Field(default=None, max_length=100)
+    is_active: Optional[bool] = None
+
+
+class UserAdminResponse(BaseModel):
+    id: UUID
+    email: str
+    full_name: Optional[str] = None
+    role: str
+    department: Optional[str] = None
+    organization_id: Optional[UUID] = None
+    is_active: bool
+    last_login: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    # No hashed_password field: response_model filtering is what keeps the hash
+    # out of the payload, so this class is a security boundary, not just a shape.
+    model_config = ConfigDict(from_attributes=True)

@@ -10,10 +10,10 @@ export const UsersPage: FC = () => {
   const queryClient = useQueryClient();
   const { confirm, alert } = useDialog();
   const { data: users, isLoading, isError } = useQuery({ queryKey: ['users'], queryFn: () => authApi.getUsers() });
-  // The backend exposes GET /users but no POST/PUT/DELETE /users routes yet, so
-  // create/edit/delete would 404. Hide those write affordances until the
-  // endpoints land (flip to true then) instead of shipping dead buttons.
-  const USER_MGMT_ENABLED = false;
+  // Enabled in FS-221/224: the admin router at /api/v1/users now provides
+  // create / update / deactivate, all admin-gated and tenant-scoped. These
+  // affordances were hidden (not merely disabled) while the endpoints 404'd.
+  const USER_MGMT_ENABLED = true;
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
@@ -76,10 +76,15 @@ export const UsersPage: FC = () => {
   };
 
   const handleDeleteUser = async (userId: string) => {
+    // Wording matches what the server actually does. DELETE /users/{id}
+    // DEACTIVATES: the row is kept because alarms.acknowledged_by and
+    // alarm_rules.created_by reference it, so "this cannot be undone" was false
+    // and would have discouraged a reversible, recoverable action.
     const ok = await confirm({
-      title: 'Delete user',
-      message: 'Are you sure you want to delete this user? This cannot be undone.',
-      confirmLabel: 'Delete',
+      title: 'Deactivate user',
+      message:
+        'They will lose access immediately. The account and its history are kept, and an administrator can reactivate it.',
+      confirmLabel: 'Deactivate',
       destructive: true,
     });
     if (ok) {
@@ -179,19 +184,33 @@ export const UsersPage: FC = () => {
                     <div className="flex items-center justify-end gap-2">
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <Button variant="ghost" size="sm" onClick={() => openEditModal(user)}>
-                            <Edit className="w-4 h-4" />
+                          {/* aria-label, not just a Tooltip: these are icon-only
+                              buttons, so without it a screen reader announces
+                              "button" with no indication of what it does or which
+                              row it belongs to. axe flags it as button-name. */}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            aria-label={`Edit ${user.name || user.email}`}
+                            onClick={() => openEditModal(user)}
+                          >
+                            <Edit className="w-4 h-4" aria-hidden="true" />
                           </Button>
                         </TooltipTrigger>
                         <TooltipContent>Modify user details and permissions</TooltipContent>
                       </Tooltip>
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <Button variant="ghost" size="sm" onClick={() => handleDeleteUser(user.id)}>
-                            <Trash2 className="w-4 h-4 text-red-500" />
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            aria-label={`Deactivate ${user.name || user.email}`}
+                            onClick={() => handleDeleteUser(user.id)}
+                          >
+                            <Trash2 className="w-4 h-4 text-red-500" aria-hidden="true" />
                           </Button>
                         </TooltipTrigger>
-                        <TooltipContent>Delete this user account</TooltipContent>
+                        <TooltipContent>Deactivate this user — their history is kept</TooltipContent>
                       </Tooltip>
                     </div>
                   ) : (

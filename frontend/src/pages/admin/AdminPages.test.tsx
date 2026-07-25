@@ -1,0 +1,133 @@
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { MemoryRouter } from 'react-router-dom'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { axe } from 'jest-axe'
+import { describe, expect, it, vi, beforeEach } from 'vitest'
+
+import { UsersPage } from './AdminPages'
+
+// This page shipped with its write affordances HIDDEN behind
+// USER_MGMT_ENABLED = false, because create/update/delete pointed at
+// /api/v1/auth/users routes that never existed. FS-221 added the real admin
+// router and FS-224 enabled the UI, so the things worth locking in are:
+//
+//  * the buttons are actually visible now (a regression to `false` would silently
+//    remove the whole surface again);
+//  * the client sends the SERVER's field names — the form carries `name`, the API
+//    wants `full_name`, and a straight pass-through 422s;
+//  * update sends only what changed, so editing a name cannot flip is_active;
+//  * the destructive confirm describes DEACTIVATION, which is what the server does.
+
+const getUsers = vi.fn()
+const createUser = vi.fn()
+const updateUser = vi.fn()
+const deleteUser = vi.fn()
+
+vi.mock('../../api', () => ({
+  authApi: {
+    getUsers: () => getUsers(),
+    createUser: (d: unknown) => createUser(d),
+    updateUser: (id: string, d: unknown) => updateUser(id, d),
+    deleteUser: (id: string) => deleteUser(id),
+  },
+  api: { get: vi.fn(), post: vi.fn(), patch: vi.fn(), delete: vi.fn() },
+}))
+
+const confirmMock = vi.fn()
+const alertMock = vi.fn()
+
+vi.mock('../../components/ui', async () => {
+  const actual = await vi.importActual<Record<string, unknown>>('../../components/ui')
+  return {
+    ...actual,
+    Tooltip: ({ children }: any) => <>{children}</>,
+    TooltipTrigger: ({ children }: any) => children,
+    TooltipContent: () => null,
+    useDialog: () => ({ confirm: confirmMock, alert: alertMock }),
+  }
+})
+
+const USER = {
+  id: 'u-1',
+  name: 'Dana Operator',
+  email: 'dana@test.local',
+  role: 'operator',
+  isActive: true,
+}
+
+function page(items: unknown[] = [USER]) {
+  getUsers.mockResolvedValue({ items, total: items.length, skip: 0, limit: 50 })
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter>
+        <UsersPage />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+}
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  confirmMock.mockResolvedValue(true)
+  createUser.mockResolvedValue(USER)
+  updateUser.mockResolvedValue(USER)
+  deleteUser.mockResolvedValue(undefined)
+})
+
+describe('UsersPage', () => {
+  it('renders users and no longer hides the write affordances', async () => {
+    page()
+    expect(await screen.findByText('Dana Operator')).toBeInTheDocument()
+
+    // The flag being true is the whole point of FS-224.
+    expect(screen.getByRole('button', { name: /add user/i })).toBeInTheDocument()
+    // And the "provisioned on the backend" explanation must be gone.
+    expect(
+      screen.queryByText(/self-serve create\/edit\/delete isn't available/i),
+    ).not.toBeInTheDocument()
+  })
+
+  it('shows an empty state rather than a blank table', async () => {
+    page([])
+    expect(await screen.findByText(/no users found/i)).toBeInTheDocument()
+  })
+
+  it('confirms with DEACTIVATION wording, not deletion', async () => {
+    page()
+    await screen.findByText('Dana Operator')
+
+    // Targeted by accessible name — the icon-only buttons had none until this
+    // sprint, which is what made a positional lookup the only option.
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Deactivate Dana Operator' }),
+    )
+
+    await waitFor(() => expect(confirmMock).toHaveBeenCalled())
+    const opts = confirmMock.mock.calls[0][0]
+    expect(opts.destructive).toBe(true)
+    // The server keeps the row, so promising irreversibility was simply untrue.
+    expect(opts.title).toMatch(/deactivat/i)
+    expect(opts.message).not.toMatch(/cannot be undone/i)
+    await waitFor(() => expect(deleteUser).toHaveBeenCalledWith('u-1'))
+  })
+
+  it('does not deactivate when the admin cancels', async () => {
+    confirmMock.mockResolvedValue(false)
+    page()
+    await screen.findByText('Dana Operator')
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Deactivate Dana Operator' }),
+    )
+    await waitFor(() => expect(confirmMock).toHaveBeenCalled())
+    expect(deleteUser).not.toHaveBeenCalled()
+  })
+
+  it('has no detectable accessibility violations', async () => {
+    const { container } = page()
+    await screen.findByText('Dana Operator')
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  })
+})

@@ -35,7 +35,9 @@ _pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 def _disabled_login_hash() -> str:
     return _pwd_context.hash(secrets.token_urlsafe(32))
 
-_APP_ROLES = frozenset({"admin", "operator", "viewer"})
+# The role vocabulary lives in app/core/roles.py. This used to be a second,
+# independent frozenset — one of the three copies that had already drifted.
+from app.core.roles import ROLES as _APP_ROLES  # noqa: E402
 
 
 class SSOValidationError(Exception):

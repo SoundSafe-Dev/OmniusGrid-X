@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 
 from app.api import assets, telemetry, alarms, operations, auth, dashboard, health, engines
 from app.api import alarm_rules
+from app.api import user_management
 from app.api import dashboard_analytics
 from app.api import yard, transportation, logistics_correlation, websocket, commands, oee, kanban, registries, geotab, correlation_integration, nlp_correlation, analysis_sessions, user_context, audit, api_keys, gdpr, compliance, compliance_reports, data_residency, feature_flags, sso, bulk_operations, exports, error_tracking, erp_integrations
 from app.api import health_index, simulation, notifications
@@ -274,6 +275,7 @@ app.add_middleware(
         "/api/v1/assets",
         "/api/v1/alarms",
         "/api/v1/alarm-rules",
+        "/api/v1/users",
         "/api/v1/telemetry",
         "/api/v1/maintenance",
         "/api/v1/notifications",
@@ -308,6 +310,9 @@ app.include_router(alarms.router, prefix="/api/v1/alarms", tags=["Alarms"], resp
 # Server-side threshold rules (FS-218). Mounted on its own prefix rather than
 # under /alarms so the collection routes do not collide with /alarms/{alarm_id}.
 app.include_router(alarm_rules.router, prefix="/api/v1/alarm-rules", tags=["Alarm Rules"], responses=common_responses)
+# Admin user management (FS-221). Its own prefix rather than under /auth so the
+# admin-only gate on the router cannot be confused with the public auth routes.
+app.include_router(user_management.router, prefix="/api/v1/users", tags=["User Management"], responses=common_responses)
 app.include_router(operations.router, prefix="/api/v1/operations", tags=["Operations"], responses=common_responses)
 app.include_router(dashboard.router, prefix="/api/v1/dashboard", tags=["Dashboard"], responses=common_responses)
 # Fleet-wide trends/aggregates for the operations dashboard (FS-192). Same

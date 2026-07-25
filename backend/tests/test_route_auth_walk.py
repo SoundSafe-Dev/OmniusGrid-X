@@ -80,6 +80,9 @@ ADMIN_ROUTE_INVENTORY = {
     ("DELETE", "/api/v1/exports/schedules/{schedule_id}"),
     ("DELETE", "/api/v1/exports/templates/{template_id}"),
     ("DELETE", "/api/v1/feature-flags/{key}"),
+    # Admin user management (FS-221). Every route on the router carries
+    # require_admin; these entries are the deliberate review of that.
+    ("DELETE", "/api/v1/users/{user_id}"),
     ("DELETE", "/api/v1/gdpr/admin/users/{user_id}/data-delete"),
     ("DELETE", "/api/v1/kanban/rules/{rule_id}"),
     ("DELETE", "/api/v1/registries/correlations/{correlation_id}"),
@@ -132,6 +135,8 @@ ADMIN_ROUTE_INVENTORY = {
     ("GET", "/api/v1/exports/templates/{template_id}"),
     ("GET", "/api/v1/feature-flags/"),
     ("GET", "/api/v1/feature-flags/{key}"),
+    ("GET", "/api/v1/users/"),
+    ("GET", "/api/v1/users/{user_id}"),
     ("GET", "/api/v1/gdpr/admin/users/{user_id}/data-export"),
     ("GET", "/api/v1/registries/{registry_id}/score"),
     ("PATCH", "/api/v1/admin/errors/{fingerprint}"),
@@ -160,6 +165,8 @@ ADMIN_ROUTE_INVENTORY = {
     ("POST", "/api/v1/exports/schedules"),
     ("POST", "/api/v1/exports/templates"),
     ("POST", "/api/v1/feature-flags/"),
+    ("PATCH", "/api/v1/users/{user_id}"),
+    ("POST", "/api/v1/users/"),
     ("POST", "/api/v1/fleet/model-releases"),
     ("POST", "/api/v1/fleet/releases"),
     ("POST", "/api/v1/fleet/releases/{release_id}/publish"),

@@ -697,7 +697,13 @@ class User(Base):
     hashed_password = Column(String(255), nullable=False)
     full_name = Column(String(255))
     organization_id = UUIDForeignKey("organizations.id")
-    role = Column(String(50), default="operator")
+    # Vocabulary + ordering: app/core/roles.py. Migration 048 adds a CHECK
+    # constraint and a server default — an unconstrained role column let a
+    # typo store fine and then match no require_* dependency, so the account
+    # silently had no permissions instead of failing at the point of the typo.
+    role = Column(
+        String(50), nullable=False, default="operator", server_default="operator"
+    )
     department = Column(String(100))
     priorities = Column(JSON, default=[])
     user_context = Column(JSON, default={})

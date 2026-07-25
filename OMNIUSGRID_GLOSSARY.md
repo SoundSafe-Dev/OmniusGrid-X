@@ -569,6 +569,10 @@
 | **Structured Logging** | JSON-formatted logs with consistent schema for parsing and analysis | Backend |
 | **Structlog** | Python library for structured logging | Backend |
 | **Health Probe** | HTTP endpoint for service liveness and readiness checks | Backend |
+| **Role vocabulary** | The ordered set viewer < operator < admin, defined once in `app/core/roles.py` and enforced by a CHECK constraint (migration 048). Previously a bare `String(50)` with no constraint and three duplicated copies of the list, so a typo stored fine and then matched no permission check | Backend |
+| **`require_at_least`** | Dependency expressing a privilege FLOOR rather than an enumerated set. An enumerated set has no ordering, which is how two read-only endpoints ended up denying `operator` while allowing `viewer` | Backend |
+| **Last-admin guard** | Refuses to demote or deactivate the final active admin in an organization. Losing it is unrecoverable through the product — nobody left can manage users | Backend |
+| **Deactivate (not delete)** | `DELETE /users/{id}` sets `is_active = false`. Users are referenced by `alarms.acknowledged_by` and `alarm_rules.created_by`, so removing the row would break those references or erase who did what | Both |
 | **Alarm Rule** | An operator-defined threshold evaluated server-side against incoming telemetry (metric, comparator, threshold, duration, hysteresis, severity, target). Before these existed, severity was whatever the edge agent sent and nothing evaluated telemetry, so "alert when temperature > 80 for 5 minutes" was unexpressible | Both |
 | **Duration window** | How long a breach must persist before a rule fires. 0 fires on the first breaching reading. Non-zero makes a rule a statement about a window rather than one sample, which is why evaluation keeps per-(rule, asset) state in Redis | Backend |
 | **Hysteresis** | Clear band in the metric's own units. The value must return past the threshold by this much before the breach counts as over, so a reading sitting on the threshold does not raise and clear an alarm on every sample | Backend |
