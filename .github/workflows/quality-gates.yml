@@ -287,6 +287,11 @@ jobs:
                   -kubernetes-version 1.29.0
             echo "::endgroup::"
           done
+      - name: No placeholder credentials reachable in staging or production
+        run: |
+          pip install pyyaml
+          ./tests/k8s/check_placeholder_secrets.py
+          ./tests/k8s/check_placeholder_secrets.py --staging
       - name: Build + validate operator stacks (monitoring, database-ha, autoscaling)
         # These reference operator CRDs (Prometheus rules from outside the tree,
         # CloudNativePG Cluster/Pooler, KEDA ScaledObject) — build with the None

@@ -331,6 +331,48 @@ jobs:
           kubectl rollout status deployment/staging-backend -n omniusgrid-staging --timeout=300s
           kubectl rollout status deployment/staging-frontend -n omniusgrid-staging --timeout=300s
 
+      - name: Deploy platform stacks (monitoring / autoscaling / HA db)
+        run: |
+          export KUBECONFIG=kubeconfig
+          set -euo pipefail
+
+          # These live OUTSIDE the overlays on purpose and could not simply be
+          # referenced from them: autoscaling/ and database-ha/ emit operator
+          # custom resources (KEDA, CloudNativePG) that fail to apply when the
+          # operator is absent, and monitoring/ pulls the canonical alert rules
+          # from infra/prometheus, which needs --load-restrictor
+          # LoadRestrictionsNone. Referencing either from an overlay would break
+          # the overlay build that pins images above. So they are applied here,
+          # explicitly, and each operator-dependent stack is gated on its CRD
+          # actually being installed rather than failing the deploy.
+
+          echo "::group::monitoring (no operator required)"
+          kustomize build --load-restrictor LoadRestrictionsNone \
+            infrastructure/k8s/monitoring \
+            | python3 tests/k8s/strip_placeholder_secrets.py | kubectl apply -n omniusgrid-staging -f -
+          echo "::endgroup::"
+
+          if kubectl get crd scaledobjects.keda.sh >/dev/null 2>&1; then
+            echo "::group::autoscaling (KEDA present)"
+            kustomize build --load-restrictor LoadRestrictionsNone \
+              infrastructure/k8s/autoscaling | kubectl apply -n omniusgrid-staging -f -
+            echo "::endgroup::"
+          else
+            echo "SKIP autoscaling: KEDA CRDs not installed in this cluster."
+            echo "  install: see infrastructure/k8s/autoscaling/README.md"
+          fi
+
+          if kubectl get crd clusters.postgresql.cnpg.io >/dev/null 2>&1; then
+            echo "::group::database-ha (CloudNativePG present)"
+            kustomize build --load-restrictor LoadRestrictionsNone \
+              infrastructure/k8s/database-ha \
+              | python3 tests/k8s/strip_placeholder_secrets.py | kubectl apply -n omniusgrid-staging -f -
+            echo "::endgroup::"
+          else
+            echo "SKIP database-ha: CloudNativePG CRDs not installed in this cluster."
+            echo "  install + cutover: see infrastructure/k8s/database-ha/README.md"
+          fi
+
       - name: Run smoke tests
         env:
           STAGING_BASE_URL: ${{ vars.STAGING_BASE_URL || 'https://staging.omniusgrid.local' }}
@@ -394,6 +436,42 @@ jobs:
 
           kubectl rollout status deployment/prod-backend -n omniusgrid --timeout=600s
           kubectl rollout status deployment/prod-frontend -n omniusgrid --timeout=600s
+
+      - name: Deploy platform stacks (monitoring / autoscaling / HA db)
+        run: |
+          export KUBECONFIG=kubeconfig
+          set -euo pipefail
+
+          # See the staging job for why these are applied here rather than being
+          # referenced from the overlay: operator CRs and a cross-tree rule
+          # reference make them incompatible with the image-pinned overlay build.
+
+          echo "::group::monitoring (no operator required)"
+          kustomize build --load-restrictor LoadRestrictionsNone \
+            infrastructure/k8s/monitoring \
+            | python3 tests/k8s/strip_placeholder_secrets.py | kubectl apply -n omniusgrid -f -
+          echo "::endgroup::"
+
+          if kubectl get crd scaledobjects.keda.sh >/dev/null 2>&1; then
+            echo "::group::autoscaling (KEDA present)"
+            kustomize build --load-restrictor LoadRestrictionsNone \
+              infrastructure/k8s/autoscaling | kubectl apply -n omniusgrid -f -
+            echo "::endgroup::"
+          else
+            echo "SKIP autoscaling: KEDA CRDs not installed in this cluster."
+            echo "  install: see infrastructure/k8s/autoscaling/README.md"
+          fi
+
+          if kubectl get crd clusters.postgresql.cnpg.io >/dev/null 2>&1; then
+            echo "::group::database-ha (CloudNativePG present)"
+            kustomize build --load-restrictor LoadRestrictionsNone \
+              infrastructure/k8s/database-ha \
+              | python3 tests/k8s/strip_placeholder_secrets.py | kubectl apply -n omniusgrid -f -
+            echo "::endgroup::"
+          else
+            echo "SKIP database-ha: CloudNativePG CRDs not installed in this cluster."
+            echo "  install + cutover: see infrastructure/k8s/database-ha/README.md"
+          fi
 
       - name: Verify deployment
         env:

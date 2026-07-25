@@ -76,6 +76,30 @@ the deployments read.
 > placeholder Secrets in `base/object-store.yaml`, `monitoring/alertmanager.yaml`
 > and `database-ha/secrets.yaml` are **dev/CI-only** — don't apply them to prod.
 
+> **Required ConfigMap: `edge-agent-config`.** The edge agent's
+> `ORGANIZATION_ID` is no longer defaulted in the manifest. It used to be
+> hardcoded `dev-org`, which every real deployment would have inherited — and
+> since the telemetry topic is `telemetry.{org}.{asset}`, a wrong org publishes
+> into a tenant that does not exist and the data is silently lost. A missing key
+> now stops the pod instead:
+>
+> ```bash
+> kubectl -n omniusgrid create configmap edge-agent-config \
+>   --from-literal=organization_id='<real org uuid>'
+> ```
+>
+> `AGENT_ID` is derived from the pod name, so StatefulSet replicas get distinct
+> identities automatically.
+
+> **Placeholder credentials are enforced, not just documented.** `base/`,
+> `monitoring/` and `database-ha/` ship dev placeholders so a throwaway cluster
+> runs. Both overlays now `$patch: delete` the placeholder `s3-credentials`, and
+> the platform-stack applies in `ci-cd.yml` pipe through
+> `tests/k8s/strip_placeholder_secrets.py`. The blocking `k8s-manifests` gate runs
+> `tests/k8s/check_placeholder_secrets.py`, which fails if a placeholder becomes
+> reachable in staging or production **or** if the workflow stops piping through
+> the stripper — a filter nobody calls is not enforcement.
+
 For a quick throwaway cluster you can still create them by hand per namespace:
 
 ```bash
