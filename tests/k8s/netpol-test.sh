@@ -25,6 +25,9 @@ MATRIX=(
   "keda->redpanda|keda|np-keda-client|np-redpanda-stub|9092|ALLOW|KEDA reads consumer-group lag (finding #6)"
   "outsider->redpanda|netpol-outsider|np-outsider-client|np-redpanda-stub|9092|DENY|KEDA allowance must be namespace-scoped"
   "outsider->s3|netpol-outsider|np-outsider-client|np-seaweedfs-stub|8333|DENY|object store must not be namespace-open"
+  "backend->redis|omniusgrid|np-backend-client|np-redis-stub|6379|ALLOW|rate limiting + idempotency + export job store (FS-196)"
+  "export->redis|omniusgrid|np-export-client|np-redis-stub|6379|ALLOW|export job store"
+  "outsider->redis|netpol-outsider|np-outsider-client|np-redis-stub|6379|DENY|cache must not be namespace-open"
 )
 
 fail() { echo "::error::$*"; exit 1; }
@@ -36,7 +39,7 @@ probe() { # <client-ns> <client-pod> <target-ip:port>
 
 echo "Waiting for probe pods..."
 kubectl -n "$NS" wait --for=condition=Ready \
-  pod/np-seaweedfs-stub pod/np-redpanda-stub pod/np-cnpg-stub \
+  pod/np-seaweedfs-stub pod/np-redpanda-stub pod/np-cnpg-stub pod/np-redis-stub \
   pod/np-export-client pod/np-backend-client pod/np-ingestion-client --timeout=180s
 kubectl -n keda wait --for=condition=Ready pod/np-keda-client --timeout=180s
 kubectl -n netpol-outsider wait --for=condition=Ready pod/np-outsider-client --timeout=180s
@@ -44,7 +47,7 @@ kubectl -n netpol-outsider wait --for=condition=Ready pod/np-outsider-client --t
 # Resolve server pod IPs. Dialing the pod IP (not the Service name) isolates the
 # NetworkPolicy verdict from DNS reachability, which is a separate rule.
 declare -A IP
-for p in np-seaweedfs-stub np-redpanda-stub np-cnpg-stub; do
+for p in np-seaweedfs-stub np-redpanda-stub np-cnpg-stub np-redis-stub; do
   IP[$p]=$(kubectl -n "$NS" get pod "$p" -o jsonpath='{.status.podIP}')
   [ -n "${IP[$p]}" ] || fail "could not resolve pod IP for $p"
 done

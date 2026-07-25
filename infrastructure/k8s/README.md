@@ -41,6 +41,14 @@ applied by CI and drift from the base names.
 > otel-collector + Jaeger (tracing) remain in `base/`. This is the stack that
 > makes backup-failure and migration-failure alerts actually fire.
 
+> **Redis (FS-196).** `base/redis-statefulset.yaml` deploys Redis, which the
+> platform hard-depends on for rate limiting, idempotency and the async export job
+> store. It previously appeared ONLY as a NetworkPolicy destination — the policies
+> permitted traffic to a Service that was never created. With Redis unreachable the
+> always-on auth limiter raised on every `/auth` request, so login and register
+> returned 500: an undeployed Redis meant a total authentication outage. The
+> limiters now also degrade to per-process counters, but degraded is not deployed.
+
 > **Worker autoscaling.** The base worker Deployments are fixed at `replicas: 1`.
 > `autoscaling/` adds KEDA `ScaledObject`s that scale ingestion / export /
 > compliance-reports workers on Redpanda consumer-group **lag** (export +
