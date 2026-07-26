@@ -636,6 +636,40 @@ jobs:
         # stale credential is distinguishable from an unconfigured one.
         run: pytest tests/test_erp_dynamics_sandbox.py -q -rs
 
+  # --- ERP end to end: live vendor -> real sync -> RLS-protected Postgres -----
+  erp-sync-e2e:
+    runs-on: ubuntu-latest
+    # The only test that proves the WHOLE path rather than one link: data fetched
+    # from a live ERP landing in this database, scoped to the right tenant and
+    # invisible to every other one.
+    #
+    # Needs Docker (testcontainers Postgres) and the Dataverse secrets. Skips
+    # cleanly without the secrets.
+    #
+    # It runs as a NOSUPERUSER NOBYPASSRLS role that does not own the tables, which
+    # is the only configuration where RLS actually applies. As the owner every
+    # assertion here passes with the bug present -- verified by mutation: removing
+    # the sync's tenant GUC makes it report {'error': 'integration not found'} for
+    # an integration that plainly exists.
+    if: ${{ github.event_name == 'push' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install backend deps
+        working-directory: ./backend
+        run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: ERP sync end-to-end
+        working-directory: ./backend
+        env:
+          DATAVERSE_ORG: ${{ secrets.DATAVERSE_ORG }}
+          DATAVERSE_TENANT_ID: ${{ secrets.DATAVERSE_TENANT_ID }}
+          DATAVERSE_CLIENT_ID: ${{ secrets.DATAVERSE_CLIENT_ID }}
+          DATAVERSE_CLIENT_SECRET: ${{ secrets.DATAVERSE_CLIENT_SECRET }}
+        run: pytest tests/test_erp_sync_e2e_realdb.py -q -rs
+
   # --- ERP Tier 3: the Odoo connector against a REAL Odoo -------------------
   erp-odoo-integration:
     runs-on: ubuntu-latest

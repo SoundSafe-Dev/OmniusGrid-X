@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 import structlog
 
 from app.core.tenant import get_tenant_db
+from app.services.erp_sync_correlation import correlate_synced_records
 # NOTE (FS-56, for HARSH's review): ERP routes now use get_tenant_db — 020's
 # RLS policies were rewritten onto the canonical app.current_org_id GUC, and a
 # session that never sets it would read zero rows under any non-owner DB role.
@@ -536,6 +537,23 @@ def extract_entity_id(record: Dict[str, Any], index: int) -> str:
     return f"row-{index}"
 
 
+async def _set_tenant_guc(db, organization_id: str) -> None:
+    """Set `app.current_org_id` for a session that has no request behind it.
+
+    Silently a no-op on non-Postgres dialects (the SQLite offline demo path), where
+    RLS does not exist -- which is also why a green isolation suite on SQLite proves
+    nothing about this.
+    """
+    from sqlalchemy import text
+
+    if db.bind is None or db.bind.dialect.name != "postgresql":
+        return
+    await db.execute(
+        text("SELECT set_config('app.current_org_id', :org_id, true)"),
+        {"org_id": str(organization_id)},
+    )
+
+
 async def run_erp_sync(integration_id: str, organization_id: str, entity_types: List[str]) -> Dict[str, Any]:
     """Fetch each entity type via the connector, upsert erp_entities, and record
     per-entity sync status. Runs in its own DB session (background task)."""
@@ -544,6 +562,23 @@ async def run_erp_sync(integration_id: str, organization_id: str, entity_types: 
 
     summary: Dict[str, Any] = {}
     async with AsyncSessionLocal() as db:
+        # THE TENANT GUC. Every erp_* table carries
+        #   FOR ALL USING (organization_id = NULLIF(current_setting(
+        #       'app.current_org_id', true), '')::uuid)
+        # and Postgres applies a FOR ALL policy's USING clause as the WITH CHECK for
+        # INSERT when none is given. With the GUC unset that predicate is NULL, so
+        # every insert in this function is rejected.
+        #
+        # It appeared to work only because no ERP table has FORCE ROW LEVEL SECURITY
+        # and the dev connection owns them -- owners bypass RLS. On any deployment
+        # where the app connects as a non-owner role, this background sync wrote
+        # nothing while reporting success.
+        #
+        # The HTTP routes above get this from `get_tenant_db`; a background task has
+        # no request to derive it from, so it is set explicitly here. `true` scopes
+        # it to the transaction, matching exports.py and compliance_reports.py.
+        await _set_tenant_guc(db, organization_id)
+
         integration = (
             await db.execute(
                 _select(IntegrationConfiguration).where(IntegrationConfiguration.id == integration_id)
@@ -560,6 +595,7 @@ async def run_erp_sync(integration_id: str, organization_id: str, entity_types: 
 
         source_system = str(integration.erp_type or "erp")
         any_success = False
+        correlation_summary: Dict[str, Any] = {}
         for etype in entity_types:
             started = datetime.now(timezone.utc)
             synced = failed = 0
@@ -588,6 +624,25 @@ async def run_erp_sync(integration_id: str, organization_id: str, entity_types: 
                         existing.updated_at = datetime.now(timezone.utc)
                     synced += 1
                 any_success = True
+
+                # Correlate what was just fetched. Previously only the SAP WEBHOOK
+                # path produced correlations, so a polled sync filled erp_entities
+                # and left erp_correlations empty -- and /correlations/recent read a
+                # table nothing in this path ever wrote.
+                #
+                # Never allowed to fail the sync: the entities are already useful
+                # without it. But the outcome is recorded rather than assumed, and an
+                # unrouted erp_type/entity_type is reported as skipped instead of
+                # being analysed with another vendor's field mapping.
+                correlation = await correlate_synced_records(
+                    db,
+                    organization_id=organization_id,
+                    integration_id=integration_id,
+                    erp_type=source_system,
+                    entity_type=etype,
+                    records=records,
+                )
+                correlation_summary[etype] = correlation
             except Exception as exc:
                 status, failed = "failed", 1
                 logger.error("erp_sync_entity_failed", entity_type=etype, error=str(exc))
@@ -611,7 +666,14 @@ async def run_erp_sync(integration_id: str, organization_id: str, entity_types: 
             sync_row.records_synced = synced
             sync_row.records_failed = failed
             sync_row.sync_duration_seconds = int(duration)
-            summary[etype] = {"status": status, "records_synced": synced, "records_failed": failed}
+            entry = {"status": status, "records_synced": synced, "records_failed": failed}
+            # Surface the correlation outcome rather than leaving it in the logs.
+            # An operator looking at a sync that produced no correlations needs to
+            # tell "nothing anomalous was found" from "this vendor has no correlation
+            # rules yet" -- the counts and `reason` distinguish them.
+            if etype in correlation_summary:
+                entry["correlation"] = correlation_summary[etype]
+            summary[etype] = entry
 
         if any_success:
             integration.last_successful_sync = datetime.now(timezone.utc)
