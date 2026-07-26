@@ -2306,6 +2306,7 @@ The ERP integration system correlates ERP data with operational telemetry to pro
 - [Secrets management](infrastructure/k8s/secrets/README.md) - Sealed Secrets + External Secrets Operator
 - [Network & pod security](infrastructure/k8s/NETWORK_SECURITY.md) - Zero-trust model, policy audit findings, CI enforcement matrix
 - [Load & failover testing](tests/load/README.md) - Ingestion load generator, autoscaling + DB-failover validation
+- [Validating ERP connectors without an ERP](docs/erp/validating-connectors-without-an-erp.md) - Tiered strategy: static guards, request-shape assertions, spec-driven mocks, a self-hosted Odoo, vendor sandboxes, record/replay — and what none of it catches
 
 ---
 
