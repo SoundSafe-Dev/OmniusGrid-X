@@ -238,7 +238,7 @@ five would just move the false report to a different tenant.
 | Vendor | Route | Cost |
 |---|---|---|
 | SAP | **Business Accelerator Hub sandbox** — live OData endpoints with test data, just an API key | **Free — DONE** |
-| **Intuit / QuickBooks** | **Developer account → a sandbox company, issued instantly** | **Free — next** |
+| **Intuit / QuickBooks** | **Developer account → sandbox company. Client credentials VERIFIED; needs the one-time consent (`scripts/intuit_authorize.py`)** | **Free — in progress** |
 | SAP | BTP trial account | Free, time-limited |
 | Dynamics 365 | Developer plan / 30-day trial with a Dataverse environment | Free |
 | NetSuite | Partner or developer account (`TSTDRV*`) | Requires partner registration |
@@ -320,11 +320,13 @@ Worth stating plainly so the confidence is not overclaimed:
 3. ~~**Register for the SAP Business Accelerator Hub sandbox.**~~ **DONE** — see
    Tier 4. The `$batch` parser is now validated against genuine SAP output, and the
    sandbox corrected two assumptions in the probe itself.
-4. **Stand up the Intuit sandbox.** It is free and issued instantly — no approval
-   queue, unlike NetSuite, Infor and Epicor. QuickBooks is also the connector with
-   the most to gain from a real server: refresh-token rotation is its most likely
-   production failure and cannot be proven against a fixture, because only Intuit
-   decides when to rotate.
+4. **Finish the Intuit authorization.** The client credentials are **verified
+   working** — the token endpoint moved from `401 invalid_client` to
+   `400 invalid_grant`, which means Intuit authenticated the client and rejected only
+   a deliberately-bad refresh token. What remains is the one-time consent that yields
+   a refresh token and realm id: `python backend/scripts/intuit_authorize.py`.
+   QuickBooks has the most to gain from a real server, because refresh-token rotation
+   is its most likely production failure and only Intuit decides when to rotate.
 5. **Adopt cassettes now**, so that whenever a tenant appears the traffic is captured
    rather than lost.
 

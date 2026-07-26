@@ -49,3 +49,21 @@ Vendors routinely diverge from their own published specs — undocumented requir
 headers, stricter validation than the schema states, error bodies with a different
 shape. A green run here means "we conform to the documented contract", not "the
 vendor will accept this". Only a sandbox or a real tenant closes that gap.
+
+## Intuit / QuickBooks — not a mock, and not a spec download
+
+QuickBooks needs neither. A **sandbox company is free and issued instantly** with a
+developer account, so the real thing is available where SAP needed a key and NetSuite
+needs approval.
+
+The catch is authorization, not access. Intuit's discovery document advertises
+`response_types_supported: ["code"]` and **no client-credentials grant**, so a client
+id and secret cannot mint a token: a human must approve access to a company once.
+`backend/scripts/intuit_authorize.py` does that in one command and prints the
+`refresh_token` and `realm_id`.
+
+What can be checked without any consent: the client credentials themselves. Valid
+ones return `400 invalid_grant` for a bad refresh token; invalid ones return
+`401 invalid_client`. The redirect URI **cannot** be checked in advance — Intuit
+returns byte-identical sign-in pages for registered and unregistered URIs and only
+validates after authentication.

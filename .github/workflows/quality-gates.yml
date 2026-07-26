@@ -560,6 +560,47 @@ jobs:
         # so an expired credential is distinguishable from an unconfigured one.
         run: pytest tests/test_erp_sap_sandbox.py -q -rs
 
+  # --- ERP Tier 4: the Intuit connector against a REAL QuickBooks company ------
+  erp-intuit-sandbox:
+    runs-on: ubuntu-latest
+    # Runs only when the repository has the four Intuit secrets. They cannot be
+    # provisioned from CI: QuickBooks advertises no client-credentials grant, so the
+    # refresh token comes from a ONE-TIME interactive authorization by a human
+    # (backend/scripts/intuit_authorize.py). Without them the job is a no-op rather
+    # than a red build.
+    #
+    # Worth having for one assertion above all: Intuit decides when to ROTATE the
+    # refresh token, retiring the previous one. No fixture can prove we handle that,
+    # because a fixture's rotation behaviour is whatever we wrote. Mishandle it and
+    # the integration works exactly once, then fails forever with invalid_grant.
+    #
+    # NOTE ON THE ROTATING CREDENTIAL. If Intuit rotates during a run, the stored
+    # INTUIT_REFRESH_TOKEN secret becomes STALE and later runs fail with
+    # invalid_grant -- correctly, since that is exactly the failure being guarded
+    # against. Re-run scripts/intuit_authorize.py and update the secret when it
+    # happens; a red build here is real information, not flakiness.
+    if: ${{ github.event_name == 'push' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install backend deps
+        working-directory: ./backend
+        run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Intuit sandbox tests
+        working-directory: ./backend
+        env:
+          INTUIT_CLIENT_ID: ${{ secrets.INTUIT_CLIENT_ID }}
+          INTUIT_CLIENT_SECRET: ${{ secrets.INTUIT_CLIENT_SECRET }}
+          INTUIT_REFRESH_TOKEN: ${{ secrets.INTUIT_REFRESH_TOKEN }}
+          INTUIT_REALM_ID: ${{ secrets.INTUIT_REALM_ID }}
+          INTUIT_ENVIRONMENT: sandbox
+        # Skips cleanly when the secrets are absent; fails loudly on a stale
+        # credential, so an expired token is distinguishable from an unconfigured one.
+        run: pytest tests/test_erp_intuit_sandbox.py -q -rs
+
   # --- ERP Tier 3: the Odoo connector against a REAL Odoo -------------------
   erp-odoo-integration:
     runs-on: ubuntu-latest
