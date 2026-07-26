@@ -13,6 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, Field
 import structlog
 
+from sqlalchemy.exc import IntegrityError
+
 from app.core.tenant import get_tenant_db
 from app.services.erp_sync_correlation import correlate_synced_records
 # NOTE (FS-56, for HARSH's review): ERP routes now use get_tenant_db — 020's
@@ -161,6 +163,43 @@ class SyncStatusResponse(BaseModel):
 
 # ==================== Endpoints ====================
 
+WEBHOOK_SECRET_UNIQUE_INDEX = "uq_erp_integration_webhook_secret"
+
+
+def _webhook_secret_collision(exc: Exception) -> bool:
+    """Is this IntegrityError the shared-webhook-secret constraint?
+
+    Matched on the index name so an unrelated constraint violation is not
+    mis-reported as a secret collision -- that would send someone chasing the wrong
+    problem entirely.
+    """
+    return WEBHOOK_SECRET_UNIQUE_INDEX in str(getattr(exc, "orig", exc))
+
+
+def _webhook_secret_conflict() -> HTTPException:
+    """409 for a webhook secret already in use.
+
+    Says nothing about WHICH integration or organisation holds it. The collision is
+    detected by a unique index precisely because the requesting session cannot see
+    another tenant's rows under RLS, and the response must not undo that: confirming
+    "some other tenant uses this secret" is itself a disclosure.
+
+    The rule is not arbitrary. The inbound webhook path carries only the erp_type, so
+    the tenant is resolved by whichever integration's secret verifies the request
+    bytes. Two integrations sharing a secret means both verify and attribution becomes
+    whichever was tried first -- one tenant's events filed against another's records.
+    """
+    return HTTPException(
+        status_code=409,
+        detail=(
+            "That webhook secret is already in use. Each ERP integration needs its "
+            "own: inbound webhooks are attributed to the integration whose secret "
+            "verifies the request, so a shared secret makes attribution ambiguous. "
+            "Generate a distinct value (e.g. `openssl rand -hex 32`)."
+        ),
+    )
+
+
 @router.post("", response_model=ERPIntegrationResponse)
 async def create_integration(
     request: ERPIntegrationCreate,
@@ -223,7 +262,13 @@ async def create_integration(
     integration.sync_frequency_minutes = request.sync_frequency_minutes
     
     db.add(integration)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        if _webhook_secret_collision(exc):
+            raise _webhook_secret_conflict()
+        raise
     
     logger.info(
         "erp_integration_created",
@@ -357,8 +402,23 @@ async def update_integration(
     if request.is_active is not None:
         integration.is_active = request.is_active
     
-    # Update configuration
-    config = integration.configuration
+    # Update configuration.
+    #
+    # `dict(...)` IS LOAD-BEARING. This read `integration.configuration` directly,
+    # mutated that dict in place, and assigned the same object back. SQLAlchemy
+    # detects changes to a JSON column by identity, so re-assigning the identical
+    # object left the attribute clean and **no UPDATE was emitted for this column at
+    # all** -- while the endpoint returned 200 and logged `erp_integration_updated`.
+    #
+    # Every PUT therefore silently discarded auth_config, rate_limit, timeout,
+    # webhook_secret and ip_whitelist. An operator rotating a webhook secret or
+    # correcting ERP credentials saw success and got nothing. Found by a test that
+    # expected a 409 on a colliding secret update and got a 200 because the write
+    # never happened.
+    #
+    # Copying makes the assignment a genuinely new object, which marks the attribute
+    # dirty. (`flag_modified` would also work; a copy is harder to remove by accident.)
+    config = dict(integration.configuration or {})
     if request.auth_config:
         config["auth_config"] = request.auth_config
     if request.rate_limit:
@@ -372,8 +432,14 @@ async def update_integration(
     
     integration.configuration = config
     integration.updated_at = datetime.now(timezone.utc)
-    
-    await db.commit()
+
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        if _webhook_secret_collision(exc):
+            raise _webhook_secret_conflict()
+        raise
     
     logger.info(
         "erp_integration_updated",

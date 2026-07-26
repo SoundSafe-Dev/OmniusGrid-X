@@ -88,7 +88,11 @@ class CorrelationAIEngine:
         logger.info(
             "correlation_analysis_complete",
             scenario_id=scenario.scenario_id,
-            risk_score=analysis["risk_score"]
+            risk_score=analysis["risk_score"],
+            # In the log line too: "analysis_complete" with a risk score reads as a
+            # model result, and was emitted for heuristics as well.
+            simulated=analysis.get("simulated", False),
+            model_version=analysis.get("model_version"),
         )
         
         # Auto-integrate with registries and kanban if requested
@@ -171,6 +175,9 @@ class CorrelationAIEngine:
                         "compliance_implications": None,
                         "model_version": f"{settings.CORRELATION_BASE_MODEL}+{settings.CORRELATION_ADAPTER_PATH}",
                         "confidence": 0.85,
+                        # Always present, so a consumer can rely on the key rather
+                        # than inferring "real" from its absence.
+                        "simulated": False,
                         "response_type": "conversational",
                         "follow_up_questions": follow_up_questions,
                     }
@@ -187,6 +194,8 @@ class CorrelationAIEngine:
             "compliance_implications": None,
             "model_version": "fallback-chat",
             "confidence": 0.4,
+            "simulated": True,
+            "simulation_reason": "heuristic chat fallback, not a model inference",
             "response_type": "conversational_fallback",
             "follow_up_questions": self._generate_chat_follow_ups(message, context),
         }
@@ -196,8 +205,30 @@ class CorrelationAIEngine:
         scenario: CorrelationScenario,
         domain_names: List[str]
     ) -> Dict[str, Any]:
-        """Fallback analysis used when the Gemma adapter is unavailable."""
+        """Fallback analysis used when the Gemma adapter is unavailable.
+
+        MARKED AS SIMULATED, deliberately.
+
+        This output was previously indistinguishable from a real inference: it carried
+        `confidence: 0.85` and a `model_version` of "gemma-4-placeholder", and the
+        caller then logged `correlation_analysis_complete` with a risk score. So with
+        CORRELATION_MODEL_ENABLED false (the default) -- or whenever inference threw --
+        every correlation in the product was a heuristic presented as a model result,
+        with no way for a caller, a UI, or a reader of the logs to tell.
+
+        The heuristic itself is fine and useful. Presenting it as an inference is not.
+        `simulated: True` and a lowered confidence let consumers label it honestly;
+        no analysis or scoring logic is changed here.
+
+        (Cross-lane note: this file is Harsh's area. This is the minimum change that
+        makes the output falsifiable -- a flag and a confidence value.)
+        """
         return {
+            "simulated": True,
+            "simulation_reason": (
+                "heuristic fallback: the Gemma correlation adapter was disabled or "
+                "unavailable, so this is not a model inference"
+            ),
             "scenario_id": scenario.scenario_id,
             "analysis_timestamp": datetime.now(timezone.utc).isoformat(),
             "predicted_root_cause": self._simulate_root_cause(domain_names, scenario.domain_links),
@@ -206,7 +237,9 @@ class CorrelationAIEngine:
             "remediation_commands": self._generate_commands(domain_names),
             "compliance_implications": self._identify_compliance(domain_names),
             "model_version": self._model_version,
-            "confidence": 0.85,
+            # NOT 0.85: that is what the real inference path reports, so a heuristic
+            # was claiming model-grade confidence.
+            "confidence": 0.4,
             "response_text": self._format_business_response(
                 self._simulate_root_cause(domain_names, scenario.domain_links),
                 self._calculate_risk_score(scenario.domain_links),
