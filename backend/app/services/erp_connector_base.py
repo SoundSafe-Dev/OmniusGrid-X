@@ -442,10 +442,45 @@ class ERPConnectorBase(ABC):
         logger.info("config_validation_passed")
         return True
     
+    #: Used only when a connector cannot tell us the real lifetime. Deliberately
+    #: short: over-refreshing costs one extra token request, while over-trusting a
+    #: guessed lifetime serves dead credentials until it expires.
+    DEFAULT_TOKEN_LIFETIME_SECONDS = 3600
+
+    #: Refresh this many seconds BEFORE the provider's stated expiry. A token that
+    #: expires mid-flight produces a 401 on a request that was valid when it was
+    #: built, which surfaces as a random intermittent failure rather than an auth
+    #: problem.
+    TOKEN_REFRESH_SKEW_SECONDS = 60
+
+    def _set_token(self, token: str, expires_in: Optional[float] = None) -> None:
+        """Cache a token against the provider's OWN expiry.
+
+        ``expires_in`` is the lifetime in seconds as reported by the token
+        endpoint. Connectors that authenticate with a non-expiring credential
+        (NetSuite TBA signs each request rather than issuing a token) pass None and
+        get the conservative default.
+        """
+        self._auth_token = token
+        lifetime = self.DEFAULT_TOKEN_LIFETIME_SECONDS if expires_in is None else float(expires_in)
+        # Never let the skew produce an already-expired token for a short-lived one.
+        effective = max(lifetime - self.TOKEN_REFRESH_SKEW_SECONDS, lifetime * 0.5)
+        self._token_expiry = datetime.now(timezone.utc) + timedelta(seconds=effective)
+
+    def invalidate_token(self) -> None:
+        """Drop the cached token so the next call re-authenticates.
+
+        Call this on a 401: the provider has decided the token is dead regardless
+        of what its stated expiry claimed, and retrying with the same token just
+        burns the retry budget.
+        """
+        self._auth_token = None
+        self._token_expiry = None
+
     async def get_auth_token(self) -> str:
         """
         Get valid authentication token, refreshing if necessary.
-        
+
         Returns:
             str: Valid authentication token
         """
@@ -453,14 +488,29 @@ class ERPConnectorBase(ABC):
         if self._auth_token and self._token_expiry:
             if datetime.now(timezone.utc) < self._token_expiry:
                 return self._auth_token
-        
-        # Authenticate to get new token
-        self._auth_token = await self.authenticate()
-        
-        # Set expiry (default 1 hour from now)
-        self._token_expiry = datetime.now(timezone.utc) + timedelta(hours=1)
-        
-        return self._auth_token
+
+        # Authenticate to get new token.
+        #
+        # `authenticate()` may record the real expiry via _set_token (which is what
+        # an OAuth2 flow returning `expires_in` should do). If it only returns a
+        # string, fall back to the conservative default below. This used to
+        # hardcode one hour unconditionally: a provider issuing a 20-minute token
+        # meant 40 minutes of serving a dead credential from cache, and every
+        # request in that window failed with a 401 that looked like a permissions
+        # problem.
+        # Clear first so an authenticate() that calls _set_token wins, and one that
+        # only returns a string still lands in the cache below.
+        self._auth_token = None
+        self._token_expiry = None
+
+        token = await self.authenticate()
+        if self._token_expiry is None:
+            self._set_token(token)
+        else:
+            # authenticate() recorded the provider's real expiry via _set_token.
+            self._auth_token = token
+
+        return token
     
     async def close(self):
         """Clean up resources when closing connector"""

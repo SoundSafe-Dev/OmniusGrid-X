@@ -12,7 +12,6 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime, timezone
 import structlog
 import aiohttp
-import msal
 
 from app.services.erp_connector_base import (
     ERPConnectorBase,
@@ -20,6 +19,8 @@ from app.services.erp_connector_base import (
     ERPType,
     AuthType
 )
+
+from app.services.erp_connectors.oauth2 import fetch_client_credentials_token
 
 logger = structlog.get_logger()
 
@@ -46,8 +47,6 @@ class DynamicsConnector(ERPConnectorBase):
             self.api_url = "https://graph.microsoft.com/v1.0/"
         
         # MSAL application
-        self.msal_app = None
-        self._init_msal_app()
         
         logger.info(
             "dynamics_connector_initialized",
@@ -56,43 +55,47 @@ class DynamicsConnector(ERPConnectorBase):
             environment=self.environment
         )
     
-    def _init_msal_app(self):
-        """Initialize MSAL application for Azure AD authentication."""
-        auth_config = self.config.auth_config
-        
-        self.msal_app = msal.ConfidentialClientApplication(
-            client_id=auth_config.get("client_id"),
-            client_credential=auth_config.get("client_secret"),
-            authority=f"https://login.microsoftonline.com/{auth_config.get('tenant_id')}"
-        )
-    
     async def authenticate(self) -> str:
+        """Acquire an Azure AD token via the client-credentials grant.
+
+        REPLACES MSAL. `import msal` was never a declared dependency, so this
+        module raised ImportError and the Dynamics connector could not be
+        constructed — `erp_connector_factory` maps ERPType.DYNAMICS straight at it.
+
+        MSAL is also synchronous: `acquire_token_for_client` blocks, so calling it
+        from an async connector stalls the event loop for a full Azure AD round
+        trip. Azure AD's v2.0 client-credentials endpoint is a plain form POST, so
+        this needs no SDK.
         """
-        Authenticate with Microsoft using Azure AD.
-        
-        Returns:
-            str: Access token
-        """
-        # Acquire token for the appropriate scope
+        auth_config = self.config.auth_config
+        tenant_id = auth_config.get("tenant_id")
+        if not tenant_id:
+            raise ValueError("Dynamics requires `tenant_id` in auth_config")
+
+        # `.default` is required for client-credentials: Azure AD grants the app's
+        # configured application permissions rather than an ad-hoc scope list.
         if self.api_type == "dataverse":
-            scope = [f"https://{self.environment}.api.crm.dynamics.com/.default"]
+            scope = f"https://{self.environment}.api.crm.dynamics.com/.default"
         else:
-            scope = ["https://graph.microsoft.com/.default"]
-        
-        result = self.msal_app.acquire_token_for_client(scopes=scope)
-        
-        if "access_token" in result:
-            access_token = result["access_token"]
-            
-            logger.info(
-                "dynamics_authentication_success",
-                api_type=self.api_type
-            )
-            
-            return access_token
-        else:
-            raise Exception(f"Authentication failed: {result.get('error_description')}")
-    
+            scope = "https://graph.microsoft.com/.default"
+
+        token, expires_in = await fetch_client_credentials_token(
+            token_url=f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token",
+            client_id=auth_config.get("client_id"),
+            client_secret=auth_config.get("client_secret"),
+            scope=scope,
+            timeout_seconds=self.config.timeout,
+        )
+
+        self._set_token(token, expires_in)
+
+        logger.info(
+            "dynamics_authentication_success",
+            api_type=self.api_type,
+            expires_in=expires_in,
+        )
+        return token
+
     async def fetch_data(
         self,
         entity_type: str,

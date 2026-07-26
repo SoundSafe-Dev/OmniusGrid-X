@@ -47,24 +47,115 @@ class InforConnector(ERPConnectorBase):
             app_name=self.app_name
         )
     
-    async def authenticate(self) -> str:
-        """
-        Authenticate with Infor using OAuth2.
-        
-        Returns:
-            str: Access token
-        """
-        auth_config = self.config.auth_config
-        
-        # OAuth2 authentication
-        # In production, this would use OAuth2 flow
-        access_token = auth_config.get("access_token")
-        
-        logger.info(
-            "infor_authentication_success"
+    def _http_session(self) -> aiohttp.ClientSession:
+        """One session factory, so timeouts are configured in a single place."""
+        return aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=self.config.timeout)
         )
-        
-        return access_token
+
+    def _token_endpoint(self) -> str:
+        """ION's OAuth2 token URL.
+
+        Infor issues a `.ionapi` credentials document per service account; its `pu`
+        (portal URL) and `ot` (OAuth token path) fields compose the token endpoint.
+        `token_url` may be supplied directly for deployments that do not hand the
+        raw document to the integration.
+        """
+        auth = self.config.auth_config
+        explicit = auth.get("token_url")
+        if explicit:
+            return explicit
+
+        portal = (auth.get("pu") or auth.get("portal_url") or "").rstrip("/")
+        token_path = (auth.get("ot") or auth.get("oauth_token_path") or "").lstrip("/")
+        if portal and token_path:
+            return f"{portal}/{token_path}"
+
+        raise ValueError(
+            "Infor ION OAuth2 needs a token endpoint: supply `token_url`, or the "
+            "`pu` and `ot` fields from the service account's .ionapi document."
+        )
+
+    async def authenticate(self) -> str:
+        """Obtain an ION access token via OAuth2.
+
+        WHAT THIS REPLACES. The previous implementation read a static
+        `access_token` out of config and returned it, under a comment saying "In
+        production, this would use OAuth2 flow". ION tokens are short-lived, so a
+        pre-shared one works until it expires and then every request 401s with no
+        refresh path and nothing pointing at the cause.
+
+        Supports both grants ION issues for service accounts:
+          * `password` — the .ionapi document's `saak`/`sask` service-account keys,
+            which is what ION generates by default;
+          * `client_credentials` — where the tenant has been configured for it.
+        """
+        auth = self.config.auth_config
+
+        client_id = auth.get("ci") or auth.get("client_id")
+        client_secret = auth.get("cs") or auth.get("client_secret")
+        if not (client_id and client_secret):
+            raise ValueError(
+                "Infor ION OAuth2 needs client credentials: `ci`/`cs` from the "
+                ".ionapi document, or client_id/client_secret. A pre-shared "
+                "`access_token` is not supported — it cannot be refreshed, so it "
+                "fails silently once it expires."
+            )
+
+        saak = auth.get("saak") or auth.get("service_account_key")
+        sask = auth.get("sask") or auth.get("service_account_secret")
+
+        form = {"client_id": client_id, "client_secret": client_secret}
+        if saak and sask:
+            # ION's default service-account grant.
+            form.update({"grant_type": "password", "username": saak, "password": sask})
+            grant = "password"
+        else:
+            form["grant_type"] = "client_credentials"
+            grant = "client_credentials"
+        if auth.get("scope"):
+            form["scope"] = auth["scope"]
+
+        token_url = self._token_endpoint()
+
+        async def _token():
+            async with self._http_session() as session:
+                async with session.post(
+                    token_url,
+                    data=form,
+                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                ) as response:
+                    body = await response.text()
+                    if response.status != 200:
+                        raise Exception(
+                            f"Infor ION token request failed: {response.status} - {body}"
+                        )
+                    import json as _json
+                    return _json.loads(body)
+
+        payload = await self.execute_with_retry(_token)
+
+        token = payload.get("access_token")
+        if not token:
+            raise ValueError(
+                f"Infor ION token response has no access_token: {sorted(payload)}"
+            )
+
+        # Cache against ION's OWN lifetime rather than the base class's old
+        # hardcoded hour.
+        expires_in = payload.get("expires_in")
+        try:
+            expires_in = float(expires_in) if expires_in is not None else None
+        except (TypeError, ValueError):
+            expires_in = None
+        self._set_token(token, expires_in)
+
+        logger.info(
+            "infor_authentication_success",
+            grant_type=grant,
+            expires_in=expires_in,
+        )
+        return token
     
     async def fetch_data(
         self,

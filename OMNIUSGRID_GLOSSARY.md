@@ -569,6 +569,10 @@
 | **Structured Logging** | JSON-formatted logs with consistent schema for parsing and analysis | Backend |
 | **Structlog** | Python library for structured logging | Backend |
 | **Health Probe** | HTTP endpoint for service liveness and readiness checks | Backend |
+| **TBA (Token-Based Auth)** | NetSuite's server-to-server mechanism: OAuth 1.0a with HMAC-SHA256, where EVERY request is individually signed over its own method, URL and query string. There is no token to cache and a `Bearer` header is rejected | Backend |
+| **`$batch` (OData)** | A multipart/mixed request bundling several OData operations. The response carries a per-operation HTTP status, so a batch can return 202 overall while individual operations fail — parsing must read each part's status or a partial failure looks like a smaller success | Backend |
+| **Changeset** | A nested `multipart/mixed` block inside a `$batch` response, with its own boundary, wrapping write operations. A single-level split walks straight past them | Backend |
+| **client_credentials** | The correct OAuth2 grant for a scheduled server-to-server ERP sync. The authorization-code grant needs a browser redirect carrying a code, which a background job does not have | Backend |
 | **Quarantine register** | `backend/tests/test_quarantine.py` — every CI test exclusion carries an owner, a diagnosis and an EXPIRY, and the suite fails when a window lapses, when a quarantined test starts passing, or when the register and the CI flags drift apart | Backend |
 | **Real-mode test** | A frontend test that loads an API module with `VITE_USE_MOCK=false` (`src/test/realMode.ts`). Every other unit test runs against the mock branch, so the ~200 `if (USE_MOCK)` forks could drift from the real request shape undetected | Frontend |
 | **Coverage ratchet** | Thresholds set from a MEASURED baseline rather than an aspiration, so they cannot be met by deleting tests and they fail when new untested code dilutes the total. Frontend 19/15/14/19, backend `--cov-fail-under=54` | Both |

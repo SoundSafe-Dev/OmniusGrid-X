@@ -121,6 +121,8 @@ jobs:
             tests/test_user_management_api.py \
             tests/test_reporting_honesty.py \
             tests/test_openapi_quality.py \
+            tests/test_erp_connectors.py \
+            tests/test_erp_netsuite_connector.py \
             tests/test_tenant_isolation_rls.py \
             tests/test_tenant_isolation_dependency.py \
             tests/test_compliance_tenant_isolation_api.py \
