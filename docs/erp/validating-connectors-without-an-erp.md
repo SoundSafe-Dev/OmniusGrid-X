@@ -165,11 +165,38 @@ as success turns an access-rights failure into an empty result set.
 | NetSuite | Partner or developer account (`TSTDRV*`) | Requires partner registration |
 | Infor / Epicor | Partner programme | Commercial |
 
-The SAP sandbox is the standout: it answers real OData, including `$batch`, so it
-would exercise the multipart parser against genuine SAP output rather than the
-fixture I wrote.
+### DONE for SAP — and it corrected two of my assumptions
 
-**Cannot tell us:** how a *customer's* system behaves — see below.
+`backend/tests/test_erp_sap_sandbox.py` runs against the live sandbox
+(`https://sandbox.api.sap.com/s4hanacloud/sap/opu/odata/sap`). Three tests, all
+green. Auth is an `apikey:` **request header** — not OAuth, not Bearer; the
+sandbox's 401 body names the variable it could not resolve, which is how that was
+established rather than guessed.
+
+**The valuable one passed:** `$batch` multipart parsing against **genuine SAP
+bytes** rather than the fixture I wrote for it. `sap_batch.py` encoded my own
+assumptions about boundary style, line endings, Content-ID presence and HTTP-part
+framing; real SAP confirms them. It also confirmed the assumption the parser most
+depends on — SAP picks its **own response boundary**, different from the one we
+sent, so parsing with the sent boundary would match nothing and look exactly like
+an empty result.
+
+Two things real SAP taught that the documentation did not:
+
+- **`$metadata` returns 406 for `Accept: application/json`.** The document is EDMX;
+  SAP refuses rather than negotiating. `application/xml` and `*/*` both return 200.
+  No connector fetches `$metadata`, so this is a property of the probe, not a
+  connector defect — but it would bite immediately if metadata discovery is added.
+- **Query options are rejected on the service root.** `$top` against the service
+  document returns 400, "System query options ... are not allowed in the requested
+  URI". They must target an entity set.
+
+Both were errors in my *test*, found only because a real server got a vote — which
+is the entire argument for this tier.
+
+**Cannot tell us:** the OAuth2 flow (the sandbox uses an API key where a real
+S/4HANA system uses client-credentials), nor how a *customer's* system behaves —
+see below.
 
 ---
 
@@ -211,12 +238,19 @@ Worth stating plainly so the confidence is not overclaimed:
 2. **Add Prism mocks driven by the SAP and Dynamics `$metadata`/OpenAPI specs**, with
    `--errors` on so invalid requests are rejected. Highest coverage per unit of
    effort for the vendors we cannot host.
-3. **Register for the SAP Business Accelerator Hub sandbox** — free, and it exercises
-   the `$batch` parser against genuine SAP output.
+3. ~~**Register for the SAP Business Accelerator Hub sandbox.**~~ **DONE** — see
+   Tier 4. The `$batch` parser is now validated against genuine SAP output, and the
+   sandbox corrected two assumptions in the probe itself.
 4. **Adopt cassettes now**, so that whenever a tenant appears the traffic is captured
    rather than lost.
 
-Tiers 0, 1 and 3 (Odoo) are done. Tier 2 — spec-driven Prism mocks for the vendors
-we cannot host — is the next highest-value step, because the health-check defect
-Odoo exposed almost certainly exists in the other six and nothing currently proves
-otherwise.
+Tiers 0, 1, 3 (Odoo) and 4 (SAP) are done. Tier 2 — spec-driven Prism mocks for the
+vendors we cannot host — is the next highest-value step, because the health-check
+defect Odoo exposed almost certainly exists in the other six and nothing currently
+proves otherwise.
+
+**Scoreboard: every tier we have stood up found a defect on its first run.** Tier 0
+found three unimportable connectors; Tier 1 found a non-existent NetSuite host and
+four wrong auth schemes; Tier 3 found the health check that reported a missing
+module as an outage; Tier 4 found two wrong assumptions in the SAP probe. That is
+the return on building the lower tiers instead of waiting for tenant access.

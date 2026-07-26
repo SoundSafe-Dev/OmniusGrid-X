@@ -52,29 +52,47 @@ SERVICE = os.environ.get("SAP_SANDBOX_SERVICE", "API_PURCHASEORDER_PROCESS_SRV")
 ENTITY_SET = os.environ.get("SAP_SANDBOX_ENTITY_SET", "A_PurchaseOrder")
 
 
-def _headers() -> dict:
+def _headers(accept: str = "application/json") -> dict:
     # `apikey`, lowercase, as a request header — established by probing the
     # sandbox's 401 body, which names the variable it could not resolve.
-    return {"apikey": API_KEY, "Accept": "application/json"}
+    return {"apikey": API_KEY, "Accept": accept}
 
 
-async def _get(path: str, params: dict | None = None):
+async def _get(path: str, params: dict | None = None, accept: str = "application/json"):
     async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as session:
-        async with session.get(f"{SANDBOX}/{SERVICE}/{path}", headers=_headers(), params=params) as r:
+        async with session.get(
+            f"{SANDBOX}/{SERVICE}/{path}", headers=_headers(accept), params=params
+        ) as r:
             return r.status, dict(r.headers), await r.text()
 
 
 class TestSandboxReachability:
     async def test_metadata_is_reachable_with_the_key(self):
         """Fails loudly on 401 rather than skipping, so a stale or wrong key is
-        distinguishable from an absent one."""
-        status, _, body = await _get("$metadata")
+        distinguishable from an absent one.
+
+        `Accept: application/xml` is required. Real SAP returns 406 for
+        `application/json` on $metadata — the document is EDMX, and SAP refuses
+        rather than negotiating. Learned from the sandbox: my first version of this
+        test sent JSON and got
+        "only capable of generating response entities which have content
+        characteristics not acceptable according to the accept headers sent".
+        No connector fetches $metadata, so this is a property of the probe, not a
+        connector defect.
+        """
+        status, _, body = await _get("$metadata", accept="application/xml")
         assert status == 200, f"sandbox rejected the key ({status}): {body[:300]}"
         assert "EntityType" in body, "response does not look like OData metadata"
 
     async def test_entity_set_returns_real_rows(self):
-        status, _, body = await _get("", params={"$top": "2", "$format": "json"})
-        assert status == 200, body[:300]
+        """Query options must target an ENTITY SET, not the service root.
+
+        Requesting the service document with `$top` returns 400: "System query
+        options ... are not allowed in the requested URI". Another thing the
+        sandbox taught rather than the documentation.
+        """
+        status, _, body = await _get(ENTITY_SET, params={"$top": "2", "$format": "json"})
+        assert status == 200, body[:400]
         assert '"d"' in body or '"value"' in body
 
 
