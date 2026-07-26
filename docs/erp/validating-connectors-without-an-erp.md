@@ -240,7 +240,7 @@ five would just move the false report to a different tenant.
 | SAP | **Business Accelerator Hub sandbox** — live OData endpoints with test data, just an API key | **Free — DONE** |
 | **Intuit / QuickBooks** | **Developer account → sandbox company. Client credentials VERIFIED; needs the one-time consent (`scripts/intuit_authorize.py`)** | **Free — in progress** |
 | SAP | BTP trial account | Free, time-limited |
-| Dynamics 365 | Developer plan / 30-day trial with a Dataverse environment | Free |
+| Dynamics 365 | **Power Apps Developer Plan** — 3 Dataverse environments, no approval queue. See [dynamics-dataverse-setup.md](dynamics-dataverse-setup.md) | Free |
 | NetSuite | Partner or developer account (`TSTDRV*`) | Requires partner registration |
 | Infor / Epicor | Partner programme | Commercial |
 
