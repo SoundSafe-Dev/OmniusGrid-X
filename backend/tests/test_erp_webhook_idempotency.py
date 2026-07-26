@@ -17,6 +17,7 @@ idempotent insert that treats a conflict as a duplicate.
 import asyncio
 from uuid import uuid4
 
+import json
 import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -76,10 +77,32 @@ def test_model_declares_unique_event_constraint():
     run(scenario())
 
 
+class _FakeRequest:
+    """Minimal stand-in for Starlette's Request.
+
+    The route now verifies the signature over `await request.body()` — the RAW bytes
+    the vendor signed — rather than over a re-serialisation of the parsed payload, so
+    a test must supply those bytes. `request=None` used to be enough precisely
+    because the raw body was never consulted.
+    """
+
+    def __init__(self, raw: bytes):
+        self._raw = raw
+
+    async def body(self) -> bytes:
+        return self._raw
+
+    @property
+    def client(self):
+        return None
+
+
 def _call(session, event_id, event_data):
-    sig = erp_webhooks.compute_signature(SECRET, event_data)
+    # Bytes first, then the parsed form — the direction a real delivery travels.
+    raw = json.dumps(event_data).encode()
+    sig = erp_webhooks.compute_signature(SECRET, raw)
     return erp_webhooks.receive_erp_webhook(
-        erp_type="sap", event_data=event_data, request=None,
+        erp_type="sap", event_data=event_data, request=_FakeRequest(raw),
         x_webhook_signature=sig, x_event_type="po.created",
         x_event_id=event_id, x_source_system="sap", db=session,
     )

@@ -197,7 +197,7 @@ const SyncStatusPanel: FC<{ id: string }> = ({ id }) => {
               <span className="text-opsgrid-text">{s.entity_type}</span>
               <span className="text-opsgrid-text-secondary">
                 <Badge variant={s.last_sync_status === 'success' ? 'success' : 'error'}>{s.last_sync_status}</Badge>
-                {' '}{s.records_synced}✓ {s.records_failed}✗
+                {' '}{s.records_synced ?? 0}✓ {s.records_failed ?? 0}✗
               </span>
             </div>
           ))

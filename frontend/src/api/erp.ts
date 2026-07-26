@@ -7,16 +7,22 @@ const delay = (ms: number) => new Promise((r) => setTimeout(r, ms))
 export interface ERPIntegration {
   id: string
   integration_name: string
-  erp_type: string
+  // Nullable to match the columns. `erp_type`, `sync_schedule` and
+  // `sync_frequency_minutes` are all nullable on integration_configurations, and the
+  // API response model used to declare them required -- which meant a row holding
+  // NULL in any of them returned 500 from create, list, get AND update rather than
+  // being rendered. The backend now mirrors the columns, so these can genuinely
+  // arrive as null and the UI has to cope.
+  erp_type?: string | null
   erp_version?: string | null
   auth_type: string
   base_url: string
   is_active: boolean
-  sync_schedule: string
-  sync_frequency_minutes: number
+  sync_schedule?: string | null
+  sync_frequency_minutes?: number | null
   last_successful_sync?: string | null
-  created_at: string
-  updated_at: string
+  created_at?: string | null
+  updated_at?: string | null
 }
 
 export interface ERPIntegrationCreate {
@@ -36,8 +42,10 @@ export interface SyncStatus {
   entity_type: string
   last_sync_at?: string | null
   last_sync_status?: string | null
-  records_synced: number
-  records_failed: number
+  // Also nullable: `records_synced` / `records_failed` carry only a Python-side
+  // default, which does not apply to rows written by a migration or a raw insert.
+  records_synced?: number | null
+  records_failed?: number | null
   sync_duration_seconds?: number | null
   next_sync_at?: string | null
 }
