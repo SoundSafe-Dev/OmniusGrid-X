@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.erp_webhook_receiver import ERPWebhookReceiver
 from app.services.erp_correlation_patterns import ERPCorrelationPatterns
+from app.db.database import AsyncSessionLocal
 from app.db.models import ERPIntegrationEvent
 
 logger = structlog.get_logger()
@@ -158,8 +159,7 @@ class SAPWebhookIntegration:
         normalized_po = transformer.transform_purchase_order(event_data)
         
         # Store in database
-        db = next(get_db())
-        try:
+        async with AsyncSessionLocal() as db:
             await self._store_entity(
                 db,
                 "PurchaseOrder",
@@ -177,9 +177,6 @@ class SAPWebhookIntegration:
             if anomaly_result.get("requires_action"):
                 # Create alert or task
                 await self._create_alert_for_po_anomaly(db, normalized_po, anomaly_result)
-            
-        finally:
-            await db.close()
     
     async def _process_po_changed(
         self,
@@ -204,8 +201,7 @@ class SAPWebhookIntegration:
         
         normalized_po = transformer.transform_purchase_order(event_data)
         
-        db = next(get_db())
-        try:
+        async with AsyncSessionLocal() as db:
             await self._store_entity(
                 db,
                 "PurchaseOrder",
@@ -217,9 +213,6 @@ class SAPWebhookIntegration:
             # Check for status changes that require attention
             if normalized_po.get("status") in ["rejected", "cancelled"]:
                 await self._create_alert_for_po_status_change(db, normalized_po)
-            
-        finally:
-            await db.close()
     
     async def _process_inventory_changed(
         self,
@@ -243,8 +236,7 @@ class SAPWebhookIntegration:
         
         normalized_inventory = transformer.transform_inventory(event_data)
         
-        db = next(get_db())
-        try:
+        async with AsyncSessionLocal() as db:
             await self._store_entity(
                 db,
                 "Inventory",
@@ -256,9 +248,6 @@ class SAPWebhookIntegration:
             # Check for low inventory
             if normalized_inventory.get("quantity", 0) < 100:  # Threshold
                 await self._create_alert_for_low_inventory(db, normalized_inventory)
-            
-        finally:
-            await db.close()
     
     async def _process_mo_created(
         self,
@@ -282,8 +271,7 @@ class SAPWebhookIntegration:
         
         normalized_mo = transformer.transform_manufacturing_order(event_data)
         
-        db = next(get_db())
-        try:
+        async with AsyncSessionLocal() as db:
             await self._store_entity(
                 db,
                 "ManufacturingOrder",
@@ -308,9 +296,6 @@ class SAPWebhookIntegration:
                 normalized_mo,
                 self.organization_id,
             )
-            
-        finally:
-            await db.close()
     
     async def _process_wo_created(
         self,
@@ -334,8 +319,7 @@ class SAPWebhookIntegration:
         
         normalized_wo = transformer.transform_work_order(event_data)
         
-        db = next(get_db())
-        try:
+        async with AsyncSessionLocal() as db:
             await self._store_entity(
                 db,
                 "WorkOrder",
@@ -355,9 +339,6 @@ class SAPWebhookIntegration:
             # High priority WOs should create immediate tasks
             if normalized_wo.get("priority") in ["critical", "high"]:
                 await self._create_task_for_work_order(db, normalized_wo)
-            
-        finally:
-            await db.close()
     
     def _extract_entity_type(self, event_type: str) -> str:
         """Extract entity type from SAP event type."""

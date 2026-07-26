@@ -19,6 +19,8 @@ from app.services.erp_connector_base import (
     AuthType
 )
 
+from app.services.erp_connectors.oauth2 import fetch_client_credentials_token
+
 logger = structlog.get_logger()
 
 
@@ -48,28 +50,84 @@ class EpicorConnector(ERPConnectorBase):
         )
     
     async def authenticate(self) -> str:
-        """
-        Authenticate with Epicor using OAuth2 or Basic auth.
-        
-        Returns:
-            str: Access token
+        """Authenticate with Epicor Kinetic.
+
+        The API-KEY and BASIC paths are legitimate: Epicor Kinetic genuinely
+        accepts a long-lived API key (`X-API-Key`) and HTTP Basic credentials, so
+        those are static by design and there is nothing to refresh.
+
+        The OAuth2 path was NOT. It read a pre-shared `access_token` out of config
+        and returned it, so it worked until the token expired and then every
+        request 401'd with no refresh path. That now runs client_credentials.
         """
         auth_config = self.config.auth_config
         auth_type = self.config.auth_type
-        
+
         if auth_type == AuthType.OAUTH2:
-            # OAuth2 authentication
-            access_token = auth_config.get("access_token")
+            token, expires_in = await fetch_client_credentials_token(
+                token_url=auth_config.get("token_url"),
+                client_id=auth_config.get("client_id"),
+                client_secret=auth_config.get("client_secret"),
+                scope=auth_config.get("scope"),
+                timeout_seconds=self.config.timeout,
+            )
+            self._set_token(token, expires_in)
+            logger.info(
+                "epicor_authentication_success",
+                auth_type=auth_type.value,
+                expires_in=expires_in,
+            )
+            return token
+
+        # Static credential: API key or Basic. Nothing expires, so no lifetime.
+        credential = auth_config.get("api_key") or auth_config.get("password")
+        if not credential:
+            raise ValueError(
+                "Epicor needs `api_key` (or Basic `username`/`password`) in "
+                "auth_config, or OAuth2 client_id/client_secret/token_url."
+            )
+        logger.info("epicor_authentication_success", auth_type=auth_type.value)
+        return credential
+
+    def _auth_headers(self, token: str) -> Dict[str, str]:
+        """Headers for one Epicor request.
+
+        TWO FIXES HERE. `X-API-Key` was being set to `self.company_id` — the
+        COMPANY IDENTIFIER, not a credential. Epicor uses that header for the API
+        key; the company is scoping metadata and belongs in CallSettings.
+
+        And a static API key was being sent as `Authorization: Bearer <key>`.
+        Epicor expects the key in `X-API-Key` and Basic credentials in
+        `Authorization: Basic`; a bearer header carrying an API key is rejected.
+        """
+        import base64
+        import json as _json
+
+        auth_config = self.config.auth_config
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+
+        if self.config.auth_type == AuthType.OAUTH2:
+            headers["Authorization"] = f"Bearer {token}"
+        elif auth_config.get("username"):
+            raw = f"{auth_config['username']}:{auth_config.get('password', '')}".encode()
+            headers["Authorization"] = f"Basic {base64.b64encode(raw).decode()}"
         else:
-            # Basic authentication
-            access_token = auth_config.get("api_key")
-        
-        logger.info(
-            "epicor_authentication_success",
-            auth_type=auth_type.value
-        )
-        
-        return access_token
+            headers["X-API-Key"] = token
+
+        # Company/site scoping travels in CallSettings, which is where Epicor
+        # looks for it — not in the API-key header.
+        call_settings = {}
+        if self.company_id:
+            call_settings["Company"] = self.company_id
+        if self.site_id:
+            call_settings["Plant"] = self.site_id
+        if call_settings:
+            headers["CallSettings"] = _json.dumps(call_settings)
+
+        return headers
     
     async def fetch_data(
         self,
@@ -105,12 +163,7 @@ class EpicorConnector(ERPConnectorBase):
         
         # Execute request with retry
         async def _fetch():
-            headers = {
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/json",
-                "Content-Type": "application/json",
-                "X-API-Key": self.company_id
-            }
+            headers = self._auth_headers(token)
             
             async with aiohttp.ClientSession() as session:
                 async with session.get(entity_url, headers=headers, params=params) as response:
@@ -160,11 +213,7 @@ class EpicorConnector(ERPConnectorBase):
             }
             
             async def _subscribe():
-                headers = {
-                    "Authorization": f"Bearer {token}",
-                    "Content-Type": "application/json",
-                    "X-API-Key": self.company_id
-                }
+                headers = self._auth_headers(token)
                 
                 async with aiohttp.ClientSession() as session:
                     async with session.post(

@@ -272,3 +272,102 @@ class TestSapBatchParsing:
 
     def test_empty_body_yields_no_parts_rather_than_raising(self):
         assert parse_batch_response("", "b") == []
+
+
+# ---------------------------------------------------------------------------
+# Epicor + Odoo
+# ---------------------------------------------------------------------------
+
+def _cfg(erp_type, auth_type, auth, configuration):
+    return ERPConfig(
+        erp_type=erp_type,
+        base_url="https://erp.example.com",
+        auth_type=auth_type,
+        auth_config=auth,
+        rate_limit={"requests_per_minute": 600},
+        configuration=configuration,
+    )
+
+
+class TestEpicorHeaders:
+    def test_api_key_header_no_longer_carries_the_company_id(self):
+        """`X-API-Key` was set to `self.company_id` — the company IDENTIFIER, not a
+        credential — so Epicor received the wrong value in the API-key header and
+        the real key was sent as a Bearer token it does not accept."""
+        from app.services.erp_connectors.epicor_connector import EpicorConnector
+
+        conn = EpicorConnector(
+            _cfg(ERPType.EPICOR, AuthType.API_KEY, {"api_key": "real-key"},
+                 {"company_id": "EPIC01", "site_id": "MAIN"}),
+            "org", "int",
+        )
+        headers = conn._auth_headers("real-key")
+
+        assert headers["X-API-Key"] == "real-key"
+        assert headers["X-API-Key"] != "EPIC01"
+        # Company/site scoping belongs in CallSettings, which is where Epicor reads it.
+        assert "EPIC01" in headers["CallSettings"]
+        assert "Authorization" not in headers, "an API key must not be sent as a bearer"
+
+    def test_basic_auth_builds_a_basic_header(self):
+        from app.services.erp_connectors.epicor_connector import EpicorConnector
+
+        conn = EpicorConnector(
+            _cfg(ERPType.EPICOR, AuthType.BASIC, {"username": "u", "password": "p"},
+                 {"company_id": "EPIC01"}),
+            "org", "int",
+        )
+        headers = conn._auth_headers("unused")
+        assert headers["Authorization"].startswith("Basic ")
+
+    def test_oauth2_uses_a_bearer(self):
+        from app.services.erp_connectors.epicor_connector import EpicorConnector
+
+        conn = EpicorConnector(
+            _cfg(ERPType.EPICOR, AuthType.OAUTH2, {"client_id": "c"}, {"company_id": "E"}),
+            "org", "int",
+        )
+        assert conn._auth_headers("tok")["Authorization"] == "Bearer tok"
+
+
+class TestOdooRpc:
+    def test_filters_become_an_odoo_domain(self):
+        """RPC needs (field, op, value) triples. Passing the REST filter STRING
+        would raise a server-side fault."""
+        from app.services.erp_connectors.odoo_connector import OdooConnector
+
+        conn = OdooConnector(
+            _cfg(ERPType.ODOO, AuthType.API_KEY, {"api_key": "k", "username": "u"},
+                 {"db_name": "db", "api_type": "jsonrpc"}),
+            "org", "int",
+        )
+        assert conn._build_rpc_domain({"state": "done"}) == [("state", "=", "done")]
+        assert conn._build_rpc_domain(None) == []
+
+    async def test_rpc_fault_in_a_200_body_is_raised(self):
+        """JSON-RPC reports application errors with HTTP 200. Treating 200 as
+        success turns an Odoo access-rights failure into an empty result set."""
+        from app.services.erp_connectors.odoo_connector import OdooConnector
+
+        conn = OdooConnector(
+            _cfg(ERPType.ODOO, AuthType.API_KEY, {"api_key": "k", "username": "u"},
+                 {"db_name": "db", "api_type": "jsonrpc"}),
+            "org", "int",
+        )
+
+        class _S:
+            def post(self, *a, **kw):
+                return _Resp(200, '{"error":{"data":{"message":"Access Denied"}}}')
+
+            async def close(self):
+                return None
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *e):
+                return False
+
+        with patch("aiohttp.ClientSession", return_value=_S()):
+            with pytest.raises(Exception, match="Access Denied"):
+                await conn._jsonrpc("object", "execute_kw", [])
