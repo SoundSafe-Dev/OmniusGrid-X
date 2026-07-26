@@ -8,14 +8,12 @@ Connector for Odoo using XML-RPC or REST API:
 """
 
 from typing import Dict, Any, Optional, List
-from datetime import datetime, timezone
 import structlog
 import aiohttp
 
 from app.services.erp_connector_base import (
     ERPConnectorBase,
     ERPConfig,
-    ERPType,
     AuthType
 )
 
@@ -31,6 +29,19 @@ class OdooConnector(ERPConnectorBase):
     Connects to Odoo via XML-RPC or REST API to fetch
     sales data, inventory data, and accounting data.
     """
+
+    #: VERIFIED against a live Odoo 17: `POST /webhooks` is 404, and the URL this
+    #: connector used (`/xmlrpc/2/webhooks`) returns HTTP 200 with an XML-RPC fault
+    #: body -- which is exactly why the old implementation reported success.
+    #: Odoo core has no webhook REST endpoint. Odoo 17 sends outgoing webhooks from
+    #: `base.automation` automated-action records, which are created through the ORM
+    #: (execute_kw on `base.automation`), not through a REST call.
+    EVENT_SUBSCRIPTION_MECHANISM = (
+        "Odoo has no webhook REST endpoint (verified: /webhooks 404s and "
+        "/xmlrpc/2/webhooks returns HTTP 200 with an XML-RPC fault). Create a "
+        "base.automation automated action with an outgoing-webhook action via the "
+        "ORM, or poll with fetch_data."
+    )
     
     def __init__(self, config: ERPConfig, organization_id: str, integration_id: str):
         super().__init__(config, organization_id, integration_id)
@@ -278,59 +289,7 @@ class OdooConnector(ERPConnectorBase):
             return []
         return [(field, "=", value) for field, value in filters.items()]
 
-    async def subscribe_to_events(self, event_types: List[str]) -> bool:
-        """
-        Subscribe to Odoo events via webhooks.
-        
-        Args:
-            event_types: List of event types to subscribe to
-            
-        Returns:
-            bool: Success status
-        """
-        # Odoo uses webhooks for event subscriptions
-        webhook_url = self.config.configuration.get("webhook_url")
-        if not webhook_url:
-            logger.warning("odoo_webhook_not_configured")
-            return False
-        
-        token = await self.get_auth_token()
-        
-        # Register webhook for each event type
-        for event_type in event_types:
-            subscription_url = f"{self.api_url}/webhooks"
-            
-            subscription_data = {
-                "name": f"OmniusGrid_{event_type}",
-                "url": webhook_url,
-                "model": event_type
-            }
-            
-            async def _subscribe():
-                headers = {
-                    "Authorization": f"Bearer {token}",
-                    "Content-Type": "application/json"
-                }
-                
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(
-                        subscription_url,
-                        headers=headers,
-                        json=subscription_data
-                    ) as response:
-                        if response.status not in [200, 201]:
-                            error_text = await response.text()
-                            raise Exception(f"Odoo webhook subscription error: {response.status} - {error_text}")
-            
-            await self.execute_with_retry(_subscribe)
-        
-        logger.info(
-            "odoo_event_subscriptions_created",
-            event_types=event_types
-        )
-        
-        return True
-    
+
     async def verify_credentials(self) -> None:
         """Round-trip the credential against Odoo.
 

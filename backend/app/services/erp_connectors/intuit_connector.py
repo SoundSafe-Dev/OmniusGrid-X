@@ -75,6 +75,18 @@ class IntuitConnector(ERPConnectorBase):
     #: access to them.
     HEALTH_PROBE_ENTITY = "CompanyInfo"
 
+    #: QuickBooks webhooks are configured per-app in the Intuit developer portal
+    #: (endpoint URL, entity list, verifier token). There is no create-subscription
+    #: API, so the base class's honest default applies. Inbound notifications are
+    #: verified with verify_webhook_notification() below.
+    EVENT_SUBSCRIPTION_MECHANISM = (
+        "QuickBooks webhooks are configured in the Intuit developer portal "
+        "(app -> Webhooks: endpoint URL, entities, verifier token). There is no API "
+        "to create them. Verify inbound notifications with "
+        "verify_webhook_notification()."
+    )
+
+
     def __init__(self, config: ERPConfig, organization_id: str, integration_id: str):
         super().__init__(config, organization_id, integration_id)
 
@@ -217,7 +229,11 @@ class IntuitConnector(ERPConnectorBase):
 
         try:
             self._refresh_token_sink(rotated)
-            logger.info("intuit_refresh_token_persisted", realm_id=self.realm_id)
+            # Named for what is actually known. The sink returned without raising --
+            # that is not the same as a durable write, which only the sink can
+            # confirm. `_persisted` would be a claim we cannot support, and the
+            # reporting-honesty guard correctly rejected it.
+            logger.info("intuit_refresh_token_handed_to_sink", realm_id=self.realm_id)
         except Exception as exc:
             # A sink that throws must not be mistaken for a successful save.
             logger.error(
@@ -334,29 +350,6 @@ class IntuitConnector(ERPConnectorBase):
 
     # ------------------------------------------------------------- events
 
-    async def subscribe_to_events(self, event_types: List[str]) -> bool:
-        """QuickBooks webhooks CANNOT be created through the API.
-
-        They are configured per app in the Intuit developer portal, where the
-        endpoint URL and the entity list are set and a verifier token is issued.
-        There is no create-subscription endpoint to call.
-
-        So this returns False and says why, rather than POSTing to a plausible URL
-        that does not exist. Inbound notifications are verified with
-        `verify_webhook_notification` below.
-        """
-        logger.warning(
-            "intuit_event_subscription_not_available_via_api",
-            requested=event_types,
-            realm_id=self.realm_id,
-            detail=(
-                "QuickBooks webhooks are configured in the Intuit developer portal "
-                "(app -> Webhooks: endpoint URL, entities, verifier token). There is "
-                "no API to create them. Inbound notifications are verified with the "
-                "verifier token via verify_webhook_notification()."
-            ),
-        )
-        return False
 
     def verify_webhook_notification(self, raw_body: bytes, signature_header: str) -> bool:
         """Verify an inbound QuickBooks webhook.

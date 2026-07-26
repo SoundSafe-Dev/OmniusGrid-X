@@ -1,6 +1,6 @@
 # Validating ERP connectors without a connected ERP
 
-We have seven ERP connectors and access to none of the systems. This is how to get
+We have eight ERP connectors and, at the outset, access to none of the systems. This is how to get
 real confidence anyway, ordered by value-per-effort, with an honest note on what
 each tier cannot tell us.
 
@@ -17,9 +17,16 @@ The framing matters: every defect found while building these connectors was a
 | `$batch` parser reading HTTP headers as the body | No |
 | Odoo doing REST against an RPC endpoint | No |
 | SAP/Oracle/Dynamics not importable at all | No |
+| A trailing slash on `base_url` breaking every request | No |
+| Permanent auth failures retried 4x with backoff | No |
+| `subscribe_to_events` reporting success for nothing | **Odoo proved it; no** |
+| Intuit having no client-credentials grant at all | No |
 
-Not one of them needed a live system. That is the argument for investing in the
-lower tiers before chasing tenant access.
+Not one of them *required* a live system to be catchable. One of them —
+`subscribe_to_events` returning `True` for a subscription that was never created —
+was nonetheless only *actually found* by pointing the code at a real Odoo, because
+nothing in the hermetic suite exercised that path at all. Both halves of that matter:
+build the cheap tiers, and then still get a real server to vote.
 
 ---
 
@@ -47,7 +54,7 @@ against our reading of the documentation.
 
 ---
 
-## Tier 2 — Spec-driven mock servers ← **highest value next step**
+## Tier 2 — Spec-driven mock servers (**DONE for SAP** — and it found a defect)
 
 Run a mock server generated **from the vendor's own API specification**, and point
 the connector at it. The important property is that a good spec-driven mock
@@ -73,6 +80,37 @@ Where the specs come from — none of these need a tenant:
 
 We already have **schemathesis** as a dependency (it drives `test_api_contract.py`).
 The same tool can drive a vendor spec against a mock, so this needs no new stack.
+
+### Built and proven for SAP
+
+`tools/erp-mocks/fetch-spec.sh` pulls each vendor's spec **from the vendor's own
+system**. It is a script rather than a doc because every vendor needs a DIFFERENT
+`Accept` header, and getting it wrong returns 406 or HTML instead of a spec:
+
+| Vendor | Metadata endpoint | Required `Accept` |
+|---|---|---|
+| SAP S/4HANA | `{service}/$metadata` | `application/xml` (**JSON returns 406**) |
+| NetSuite | `/services/rest/record/v1/metadata-catalog` | `application/swagger+json` |
+| Dataverse | `/api/data/v9.2/$metadata` (CSDL) | `application/xml` |
+| Dataverse | `/api/data/v9.2/EntityDefinitions` (JSON) | `application/json` + `OData-MaxVersion: 4.0` + `OData-Version: 4.0` |
+| Epicor | `/api/swagger/v1/swagger.json` | `application/json` |
+
+The SAP path is **verified end to end**: 168KB of real EDMX → OpenAPI 3 via
+`odata-openapi3` (29 paths, 28 schemas) → Prism with `--errors`. It also needs
+`--compressed`: SAP gzips `$metadata` whether or not you ask, and `curl` only inflates
+when told to, so without it you get gzip in a file named `.xml` and every converter
+rejects it with an error mentioning nothing about compression.
+
+**It found a defect on its first run, as every tier has.** Pointed at the mock, the
+SAP connector's request arrived as `//A_PurchaseOrder` and matched no route. Cause: a
+trailing slash on `base_url` — one of the most common ways a human writes a URL. Five
+connectors build endpoints by concatenating `f"{base_url}/api/v1"`, yarl preserves the
+empty segment, and the server answers 404 in a way that reads as a wrong entity or an
+unactivated service rather than a stray character in configuration. Normalized once in
+`ERPConfig.__post_init__`; 34 tests, mutation-verified.
+
+Specs are gitignored — vendor material, large, and a per-tenant spec embeds that
+tenant's custom fields.
 
 **Cannot tell us:** whether the vendor's real behaviour matches its own spec. It
 frequently does not — undocumented required headers, stricter validation, error
@@ -124,8 +162,12 @@ because "that module is not installed" and "the connection is broken" produced t
 same answer. It now probes authentication plus `res.users`, which exists in every
 Odoo database.
 
-**This was systemic, and it is now fixed for all seven** — without needing each
-vendor's sandbox. Rather than guess at every vendor's universally-present entity,
+**This was systemic, and the fix was claimed for all seven — which was wrong.**
+Six connectors adopted `probe_health`; **Dynamics did not**, and kept the two-state
+version that mapped any exception to `unhealthy`. The claim went unchecked for a
+commit because nothing asserted it. `test_erp_no_invented_endpoints.py` now asserts
+that every registered connector's `health_check` uses the shared probe, so the claim
+is checkable rather than asserted in prose. Dynamics is fixed and covered. Rather than guess at every vendor's universally-present entity,
 `ERPConnectorBase.probe_health` reports WHICH failure occurred:
 
 | State | Meaning | Should it page? |
@@ -151,6 +193,42 @@ classifier as a backstop. A mock could not have surfaced that.
 application faults in the response BODY with **HTTP 200**. A connector treating 200
 as success turns an access-rights failure into an empty result set.
 
+### The same Odoo container then found the worst defect in the ERP layer
+
+All seven connectors carried the same copy-pasted `subscribe_to_events`: POST to a
+`/webhooks`-shaped URL with a `{name, url, event_type}` body. The payloads were
+**byte-identical across seven unrelated vendors**, so at most one could have been
+right. None was.
+
+Run against the live Odoo, it returned **`True`**. `POST /webhooks` is a 404 on Odoo.
+What actually happened is worse: the connector's URL resolved to `/xmlrpc/2/webhooks`,
+Odoo's `/xmlrpc/2/<...>` route matches anything, and it answered **HTTP 200 with an
+XML-RPC fault body containing a traceback**. The connector checked only
+`status not in (200, 201)`, saw 200, and reported success for a subscription that was
+never created — the same HTTP-200-fault trap noted above, surviving in a code path
+nobody had exercised.
+
+That is the worst failure shape available: an operator enables real-time ERP events,
+the platform confirms it, and no event ever arrives, with no error anywhere to look
+at. Nothing consumed `subscribe_to_events` yet, so it was latent rather than shipped.
+
+**379 lines of fiction removed.** Connectors now DECLARE the real mechanism
+(`EVENT_SUBSCRIPTION_MECHANISM`) and the base class returns False honestly. Returning
+False is not a regression: there was never a working subscription to lose. Three
+independent guards keep it out — the return value, an assertion that no HTTP request
+is attempted at all, and a source-level check that no `/webhooks`-shaped URL is
+constructed.
+
+**One remaining weakness, recorded rather than papered over.** Five connectors (SAP,
+Oracle, NetSuite, Infor, Epicor) still probe a *business* table for health, so a
+least-privilege service account reports `degraded` forever. The three-state probe
+means this is no longer a false **outage** — nobody is paged — but a
+permanently-degraded healthy integration is still wrong. Each is listed in
+`KNOWN_BUSINESS_TABLE_PROBES` with the specific vendor fact that is missing, and the
+list is asserted not to grow. Resolved for the three where the answer is known: Odoo
+(`res.users`), Dynamics (`systemusers`), Intuit (`CompanyInfo`). Guessing the other
+five would just move the false report to a different tenant.
+
 **Cannot tell us:** anything vendor-specific about the other six.
 
 ---
@@ -159,7 +237,8 @@ as success turns an access-rights failure into an empty result set.
 
 | Vendor | Route | Cost |
 |---|---|---|
-| SAP | **Business Accelerator Hub sandbox** — live OData endpoints with test data, just an API key | Free |
+| SAP | **Business Accelerator Hub sandbox** — live OData endpoints with test data, just an API key | **Free — DONE** |
+| **Intuit / QuickBooks** | **Developer account → a sandbox company, issued instantly** | **Free — next** |
 | SAP | BTP trial account | Free, time-limited |
 | Dynamics 365 | Developer plan / 30-day trial with a Dataverse environment | Free |
 | NetSuite | Partner or developer account (`TSTDRV*`) | Requires partner registration |
@@ -241,7 +320,12 @@ Worth stating plainly so the confidence is not overclaimed:
 3. ~~**Register for the SAP Business Accelerator Hub sandbox.**~~ **DONE** — see
    Tier 4. The `$batch` parser is now validated against genuine SAP output, and the
    sandbox corrected two assumptions in the probe itself.
-4. **Adopt cassettes now**, so that whenever a tenant appears the traffic is captured
+4. **Stand up the Intuit sandbox.** It is free and issued instantly — no approval
+   queue, unlike NetSuite, Infor and Epicor. QuickBooks is also the connector with
+   the most to gain from a real server: refresh-token rotation is its most likely
+   production failure and cannot be proven against a fixture, because only Intuit
+   decides when to rotate.
+5. **Adopt cassettes now**, so that whenever a tenant appears the traffic is captured
    rather than lost.
 
 Tiers 0, 1, 3 (Odoo) and 4 (SAP) are done. Tier 2 — spec-driven Prism mocks for the

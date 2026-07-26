@@ -22,15 +22,12 @@ Signing lives in `netsuite_auth.py` so it can be tested as a pure function.
 """
 
 from typing import Any, Dict, List, Optional
-from datetime import datetime, timezone
 import structlog
 import aiohttp
 
 from app.services.erp_connector_base import (
     ERPConnectorBase,
     ERPConfig,
-    ERPType,
-    AuthType
 )
 from app.services.erp_connectors.netsuite_auth import (
     build_tba_header,
@@ -49,6 +46,14 @@ class NetSuiteConnector(ERPConnectorBase):
     Connects to NetSuite via SuiteTalk REST API to fetch
     financial data, inventory data, and CRM data.
     """
+
+    #: NetSuite has no outbound-webhook REST API; the old implementation POSTed to
+    #: `/rest/webhooks/v1`, which does not exist. Outbound notifications come from
+    #: SuiteScript.
+    EVENT_SUBSCRIPTION_MECHANISM = (
+        "NetSuite exposes no webhook REST API. Use a SuiteScript user-event or "
+        "scheduled script that calls out with N/https, or poll with fetch_data."
+    )
     
     def __init__(self, config: ERPConfig, organization_id: str, integration_id: str):
         super().__init__(config, organization_id, integration_id)
@@ -269,59 +274,7 @@ class NetSuiteConnector(ERPConnectorBase):
 
         return results
 
-    async def subscribe_to_events(self, event_types: List[str]) -> bool:
-        """
-        Subscribe to NetSuite events via saved search webhooks.
-        
-        Args:
-            event_types: List of event types to subscribe to
-            
-        Returns:
-            bool: Success status
-        """
-        # NetSuite uses saved search webhooks for event subscriptions
-        webhook_url = self.config.configuration.get("webhook_url")
-        if not webhook_url:
-            logger.warning("netsuite_webhook_not_configured")
-            return False
-        
-        token = await self.get_auth_token()
-        
-        # Register webhook for each event type
-        for event_type in event_types:
-            subscription_url = f"{self.api_url}/rest/webhooks/v1"
-            
-            subscription_data = {
-                "name": f"OmniusGrid_{event_type}",
-                "url": webhook_url,
-                "event_type": event_type
-            }
-            
-            async def _subscribe():
-                headers = {
-                    "Authorization": f"Bearer {token}",
-                    "Content-Type": "application/json"
-                }
-                
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(
-                        subscription_url,
-                        headers=headers,
-                        json=subscription_data
-                    ) as response:
-                        if response.status not in [200, 201]:
-                            error_text = await response.text()
-                            raise Exception(f"NetSuite webhook subscription error: {response.status} - {error_text}")
-            
-            await self.execute_with_retry(_subscribe)
-        
-        logger.info(
-            "netsuite_event_subscriptions_created",
-            event_types=event_types
-        )
-        
-        return True
-    
+
     async def health_check(self) -> Dict[str, Any]:
         """Health check that distinguishes a broken connection from a
         missing module. See ERPConnectorBase.probe_health.

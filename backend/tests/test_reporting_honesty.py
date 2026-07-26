@@ -42,6 +42,16 @@ SERVICES = Path(__file__).resolve().parents[1] / "app"
 # add exemptions rather than read them.
 SUCCESS_SUFFIXES = ("_synced", "_sent", "_persisted", "_saved", "_created")
 
+# Markers that make an event name a NEGATION, not a success claim. A suffix match
+# alone fires on `..._rotated_but_not_persisted`, which is a warning stating that the
+# work did NOT happen -- the precise opposite of the dishonesty this scans for.
+#
+# Found when the Intuit connector's "the rotated refresh token was NOT saved" warning
+# was reported as a false success claim. Renaming the event to dodge the substring
+# would have been the wrong fix: the next honest `..._not_saved` warning would trip
+# it again, and the pressure would be to stop writing clear warnings.
+NEGATION_MARKERS = ("_not_", "_never_", "_failed", "_unsaved", "_skipped", "_missing")
+
 # Calls that constitute doing the work. `add` / `execute` / `commit` cover
 # SQLAlchemy; `send`/`publish` cover Kafka and notifications; `record_audit` is the
 # shared audit writer.
@@ -98,7 +108,9 @@ def _logged_success_events(fn) -> list[str]:
             continue
         first = node.args[0]
         if isinstance(first, ast.Constant) and isinstance(first.value, str):
-            if first.value.endswith(SUCCESS_SUFFIXES):
+            if first.value.endswith(SUCCESS_SUFFIXES) and not any(
+                marker in first.value for marker in NEGATION_MARKERS
+            ):
                 events.append(first.value)
     return events
 

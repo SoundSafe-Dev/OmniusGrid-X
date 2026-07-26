@@ -166,19 +166,52 @@ class ERPConnectorBase(ABC):
         """
         pass
     
-    @abstractmethod
+    #: How real-time events are ACTUALLY subscribed to for this vendor, when it is
+    #: not something this connector can do over the API. Prose, aimed at whoever has
+    #: to set it up. `None` means the connector implements a verified subscription.
+    EVENT_SUBSCRIPTION_MECHANISM: Optional[str] = (
+        "no verified event-subscription path for this connector"
+    )
+
     async def subscribe_to_events(self, event_types: List[str]) -> bool:
+        """Report honestly that no verified subscription path exists.
+
+        THE DEFECT THIS REPLACES, PROVEN AGAINST A REAL SERVER.
+
+        All seven original connectors carried the same copy-pasted implementation:
+        POST to a `/webhooks`-shaped URL with a `{name, url, event_type}` body. The
+        payloads were byte-identical across seven unrelated vendors, so at most one
+        of them could have been right. None was.
+
+        Run against the live Odoo container, `subscribe_to_events` returned **True**.
+        `POST /webhooks` is a 404 on Odoo. What actually happened is worse: the
+        connector's URL resolved to `/xmlrpc/2/webhooks`, Odoo's `/xmlrpc/2/<...>`
+        route matches anything, and it answered **HTTP 200 with an XML-RPC fault
+        body containing a traceback**. The connector checked only
+        `status not in (200, 201)`, saw 200, and reported success for a subscription
+        that was never created.
+
+        That is the same Odoo trap already fixed on the read path -- application
+        faults arrive in the BODY with HTTP 200 -- surviving in a code path nobody
+        had exercised, and it is the worst failure shape available: an operator
+        enables real-time ERP events, the platform confirms it, and no event ever
+        arrives, with no error anywhere to look at.
+
+        So connectors now DECLARE the real mechanism instead of inventing an
+        endpoint. Returning False is not a regression: there was never a working
+        subscription to lose. A connector that gains a verified implementation
+        overrides this method and sets EVENT_SUBSCRIPTION_MECHANISM to None.
         """
-        Subscribe to real-time events from ERP system.
-        
-        Args:
-            event_types: List of event types to subscribe to
-            
-        Returns:
-            bool: Success status
-        """
-        pass
-    
+        logger.warning(
+            "erp_event_subscription_not_available_via_api",
+            erp_type=self.config.erp_type.value,
+            integration_id=self.integration_id,
+            requested=event_types,
+            mechanism=self.EVENT_SUBSCRIPTION_MECHANISM,
+        )
+        return False
+
+
     @abstractmethod
     async def health_check(self) -> Dict[str, Any]:
         """

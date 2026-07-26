@@ -16,8 +16,6 @@ import aiohttp
 from app.services.erp_connector_base import (
     ERPConnectorBase,
     ERPConfig,
-    ERPType,
-    AuthType
 )
 
 from app.services.erp_connectors.oauth2 import fetch_client_credentials_token
@@ -37,6 +35,18 @@ class SAPConnector(ERPConnectorBase):
     Connects to SAP systems via OData API to fetch
     purchase orders, manufacturing orders, inventory, vendors, and work orders.
     """
+
+    #: SAP Event Mesh subscriptions are managed through the Event Mesh service
+    #: instance (its management API or the BTP cockpit), not by POSTing
+    #: `{eventType, webhookUrl, filter}` to `{event_mesh_url}/subscriptions` as the
+    #: old implementation did. That payload was the same one used for six other
+    #: vendors, so it was never validated against Event Mesh.
+    EVENT_SUBSCRIPTION_MECHANISM = (
+        "SAP Event Mesh / Advanced Event Mesh subscriptions are configured on the "
+        "service instance (management API or BTP cockpit). The previous request "
+        "shape here was unvalidated; use polling via fetch_data until a real Event "
+        "Mesh instance is available to verify against."
+    )
     
     def __init__(self, config: ERPConfig, organization_id: str, integration_id: str):
         super().__init__(config, organization_id, integration_id)
@@ -273,61 +283,7 @@ class SAPConnector(ERPConnectorBase):
         
         return results
     
-    async def subscribe_to_events(self, event_types: List[str]) -> bool:
-        """
-        Subscribe to SAP Event Mesh for real-time events.
-        
-        Args:
-            event_types: List of event types to subscribe to
-            
-        Returns:
-            bool: Success status
-        """
-        # SAP Event Mesh integration
-        # This would typically involve registering a webhook endpoint with SAP Event Mesh
-        
-        event_mesh_url = self.config.configuration.get("event_mesh_url")
-        if not event_mesh_url:
-            logger.warning("sap_event_mesh_not_configured")
-            return False
-        
-        token = await self.get_auth_token()
-        
-        # Register subscription for each event type
-        for event_type in event_types:
-            subscription_url = f"{event_mesh_url}/subscriptions"
-            
-            subscription_data = {
-                "eventType": event_type,
-                "webhookUrl": self.config.configuration.get("webhook_url"),
-                "filter": self.config.configuration.get("event_filter", {})
-            }
-            
-            async def _subscribe():
-                headers = {
-                    "Authorization": f"Bearer {token}",
-                    "Content-Type": "application/json"
-                }
-                
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(
-                        subscription_url,
-                        headers=headers,
-                        json=subscription_data
-                    ) as response:
-                        if response.status not in [200, 201]:
-                            error_text = await response.text()
-                            raise Exception(f"Event Mesh subscription error: {response.status} - {error_text}")
-            
-            await self.execute_with_retry(_subscribe)
-        
-        logger.info(
-            "sap_event_subscriptions_created",
-            event_types=event_types
-        )
-        
-        return True
-    
+
     async def health_check(self) -> Dict[str, Any]:
         """Health check that distinguishes a broken connection from a
         missing module. See ERPConnectorBase.probe_health.

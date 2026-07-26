@@ -8,15 +8,12 @@ Connector for Infor using ION API:
 """
 
 from typing import Dict, Any, Optional, List
-from datetime import datetime, timezone
 import structlog
 import aiohttp
 
 from app.services.erp_connector_base import (
     ERPConnectorBase,
     ERPConfig,
-    ERPType,
-    AuthType
 )
 
 logger = structlog.get_logger()
@@ -29,6 +26,13 @@ class InforConnector(ERPConnectorBase):
     Connects to Infor via ION API to fetch
     financial data, supply chain data, and HR data.
     """
+
+    #: Infor ION event subscriptions are configured in ION Desk / the ION API
+    #: portal, not created by POSTing to `{api_url}/webhooks`.
+    EVENT_SUBSCRIPTION_MECHANISM = (
+        "Infor ION event subscriptions are configured in ION Desk / the ION API "
+        "portal, not through the data API. Poll with fetch_data meanwhile."
+    )
     
     def __init__(self, config: ERPConfig, organization_id: str, integration_id: str):
         super().__init__(config, organization_id, integration_id)
@@ -217,60 +221,7 @@ class InforConnector(ERPConnectorBase):
         
         return results
     
-    async def subscribe_to_events(self, event_types: List[str]) -> bool:
-        """
-        Subscribe to Infor events via ION webhooks.
-        
-        Args:
-            event_types: List of event types to subscribe to
-            
-        Returns:
-            bool: Success status
-        """
-        # Infor uses ION webhooks for event subscriptions
-        webhook_url = self.config.configuration.get("webhook_url")
-        if not webhook_url:
-            logger.warning("infor_webhook_not_configured")
-            return False
-        
-        token = await self.get_auth_token()
-        
-        # Register webhook for each event type
-        for event_type in event_types:
-            subscription_url = f"{self.api_url}/webhooks"
-            
-            subscription_data = {
-                "name": f"OmniusGrid_{event_type}",
-                "url": webhook_url,
-                "event_type": event_type
-            }
-            
-            async def _subscribe():
-                headers = {
-                    "Authorization": f"Bearer {token}",
-                    "Content-Type": "application/json",
-                    "Infor-Tenant-ID": self.tenant_id
-                }
-                
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(
-                        subscription_url,
-                        headers=headers,
-                        json=subscription_data
-                    ) as response:
-                        if response.status not in [200, 201]:
-                            error_text = await response.text()
-                            raise Exception(f"Infor webhook subscription error: {response.status} - {error_text}")
-            
-            await self.execute_with_retry(_subscribe)
-        
-        logger.info(
-            "infor_event_subscriptions_created",
-            event_types=event_types
-        )
-        
-        return True
-    
+
     async def health_check(self) -> Dict[str, Any]:
         """Health check that distinguishes a broken connection from a
         missing module. See ERPConnectorBase.probe_health.

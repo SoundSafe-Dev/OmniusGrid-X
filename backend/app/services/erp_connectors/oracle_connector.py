@@ -9,15 +9,12 @@ Connector for Oracle Cloud ERP using REST API:
 """
 
 from typing import Dict, Any, Optional, List
-from datetime import datetime, timezone
 import structlog
 import aiohttp
 
 from app.services.erp_connector_base import (
     ERPConnectorBase,
     ERPConfig,
-    ERPType,
-    AuthType
 )
 
 from app.services.erp_connectors.oauth2 import fetch_client_credentials_token
@@ -32,6 +29,13 @@ class OracleConnector(ERPConnectorBase):
     Connects to Oracle Fusion Cloud ERP via REST API to fetch
     financial data, supply chain data, HR data, and project data.
     """
+
+    #: Oracle Fusion has no generic `/eventSubscriptions` endpoint. Real-time
+    #: integration uses Business Events and REST Atom feeds.
+    EVENT_SUBSCRIPTION_MECHANISM = (
+        "Oracle Fusion exposes no generic /eventSubscriptions endpoint. Use Business "
+        "Events (Integration Cloud) or the REST Atom feeds, or poll with fetch_data."
+    )
     
     def __init__(self, config: ERPConfig, organization_id: str, integration_id: str):
         super().__init__(config, organization_id, integration_id)
@@ -189,59 +193,7 @@ class OracleConnector(ERPConnectorBase):
         
         return result
     
-    async def subscribe_to_events(self, event_types: List[str]) -> bool:
-        """
-        Subscribe to Oracle events for real-time updates.
-        
-        Args:
-            event_types: List of event types to subscribe to
-            
-        Returns:
-            bool: Success status
-        """
-        # Oracle event subscription via webhook registration
-        webhook_url = self.config.configuration.get("webhook_url")
-        if not webhook_url:
-            logger.warning("oracle_webhook_not_configured")
-            return False
-        
-        token = await self.get_auth_token()
-        
-        # Register webhook for each event type
-        for event_type in event_types:
-            subscription_url = f"{self.api_url}/eventSubscriptions"
-            
-            subscription_data = {
-                "eventType": event_type,
-                "webhookUrl": webhook_url,
-                "filter": self.config.configuration.get("event_filter", {})
-            }
-            
-            async def _subscribe():
-                headers = {
-                    "Authorization": f"Bearer {token}",
-                    "Content-Type": "application/json"
-                }
-                
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(
-                        subscription_url,
-                        headers=headers,
-                        json=subscription_data
-                    ) as response:
-                        if response.status not in [200, 201]:
-                            error_text = await response.text()
-                            raise Exception(f"Oracle event subscription error: {response.status} - {error_text}")
-            
-            await self.execute_with_retry(_subscribe)
-        
-        logger.info(
-            "oracle_event_subscriptions_created",
-            event_types=event_types
-        )
-        
-        return True
-    
+
     async def health_check(self) -> Dict[str, Any]:
         """Health check that distinguishes a broken connection from a
         missing module. See ERPConnectorBase.probe_health.

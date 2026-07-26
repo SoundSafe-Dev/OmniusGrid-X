@@ -8,14 +8,12 @@ Connector for Epicor Kinetic using REST API:
 """
 
 from typing import Dict, Any, Optional, List
-from datetime import datetime, timezone
 import structlog
 import aiohttp
 
 from app.services.erp_connector_base import (
     ERPConnectorBase,
     ERPConfig,
-    ERPType,
     AuthType
 )
 
@@ -31,6 +29,15 @@ class EpicorConnector(ERPConnectorBase):
     Connects to Epicor Kinetic via REST API to fetch
     financial data, supply chain data, and manufacturing data.
     """
+
+    #: Epicor Kinetic webhook configuration is environment-side; the old
+    #: `{api_url}/webhooks` POST used the same unvalidated shape as six other
+    #: vendors.
+    EVENT_SUBSCRIPTION_MECHANISM = (
+        "Epicor Kinetic webhooks are configured in the environment, not created via "
+        "this API with the shape previously used here. Poll with fetch_data until "
+        "verified against a real Kinetic environment."
+    )
     
     def __init__(self, config: ERPConfig, organization_id: str, integration_id: str):
         super().__init__(config, organization_id, integration_id)
@@ -184,56 +191,7 @@ class EpicorConnector(ERPConnectorBase):
         
         return results
     
-    async def subscribe_to_events(self, event_types: List[str]) -> bool:
-        """
-        Subscribe to Epicor events via webhooks.
-        
-        Args:
-            event_types: List of event types to subscribe to
-            
-        Returns:
-            bool: Success status
-        """
-        # Epicor uses webhooks for event subscriptions
-        webhook_url = self.config.configuration.get("webhook_url")
-        if not webhook_url:
-            logger.warning("epicor_webhook_not_configured")
-            return False
-        
-        token = await self.get_auth_token()
-        
-        # Register webhook for each event type
-        for event_type in event_types:
-            subscription_url = f"{self.api_url}/webhooks"
-            
-            subscription_data = {
-                "name": f"OmniusGrid_{event_type}",
-                "url": webhook_url,
-                "event_type": event_type
-            }
-            
-            async def _subscribe():
-                headers = self._auth_headers(token)
-                
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(
-                        subscription_url,
-                        headers=headers,
-                        json=subscription_data
-                    ) as response:
-                        if response.status not in [200, 201]:
-                            error_text = await response.text()
-                            raise Exception(f"Epicor webhook subscription error: {response.status} - {error_text}")
-            
-            await self.execute_with_retry(_subscribe)
-        
-        logger.info(
-            "epicor_event_subscriptions_created",
-            event_types=event_types
-        )
-        
-        return True
-    
+
     async def health_check(self) -> Dict[str, Any]:
         """Health check that distinguishes a broken connection from a
         missing module. See ERPConnectorBase.probe_health.

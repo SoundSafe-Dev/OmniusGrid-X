@@ -9,15 +9,12 @@ Connector for Microsoft Dynamics 365 using Dataverse API and Graph API:
 """
 
 from typing import Dict, Any, Optional, List
-from datetime import datetime, timezone
 import structlog
 import aiohttp
 
 from app.services.erp_connector_base import (
     ERPConnectorBase,
     ERPConfig,
-    ERPType,
-    AuthType
 )
 
 from app.services.erp_connectors.oauth2 import fetch_client_credentials_token
@@ -32,6 +29,24 @@ class DynamicsConnector(ERPConnectorBase):
     Connects to Dynamics 365 via Dataverse API and Graph API to fetch
     financial data, supply chain data, project data, and CRM data.
     """
+
+    #: Dataverse has NO `webhooks` entity set -- the old implementation POSTed to
+    #: `/api/data/v9.2/webhooks`, which is not part of the Web API. (Its docstring
+    #: said "Power Automate", which is a different mechanism again.) Real webhook
+    #: registration means creating a `serviceendpoint` record with contract=Webhook
+    #: plus an `sdkmessageprocessingstep`, normally through the Plug-in Registration
+    #: Tool. Not implemented here because it is unverified without a Dataverse org.
+    EVENT_SUBSCRIPTION_MECHANISM = (
+        "Dataverse has no 'webhooks' entity set. Register a serviceendpoint record "
+        "(contract=Webhook) plus an sdkmessageprocessingstep -- normally via the "
+        "Plug-in Registration Tool -- or use a Power Automate cloud flow."
+    )
+
+    #: `systemusers` exists in every Dataverse environment and is readable by
+    #: anything that can authenticate, which is what a health probe needs. Probing a
+    #: business table (`accounts`, `contacts`) reports a permissions gap as an
+    #: outage.
+    HEALTH_PROBE_ENTITY = "systemusers"
     
     def __init__(self, config: ERPConfig, organization_id: str, integration_id: str):
         super().__init__(config, organization_id, integration_id)
@@ -159,90 +174,28 @@ class DynamicsConnector(ERPConnectorBase):
         
         return results
     
-    async def subscribe_to_events(self, event_types: List[str]) -> bool:
-        """
-        Subscribe to Dynamics events via Power Automate webhooks.
-        
-        Args:
-            event_types: List of event types to subscribe to
-            
-        Returns:
-            bool: Success status
-        """
-        # Dynamics 365 uses Power Automate for webhook subscriptions
-        webhook_url = self.config.configuration.get("webhook_url")
-        if not webhook_url:
-            logger.warning("dynamics_webhook_not_configured")
-            return False
-        
-        token = await self.get_auth_token()
-        
-        # Register webhook for each event type
-        for event_type in event_types:
-            subscription_url = f"{self.api_url}webhooks"
-            
-            subscription_data = {
-                "name": f"OmniusGrid_{event_type}",
-                "webhookUrl": webhook_url,
-                "filter": self.config.configuration.get("event_filter", {}),
-                "event_type": event_type
-            }
-            
-            async def _subscribe():
-                headers = {
-                    "Authorization": f"Bearer {token}",
-                    "Content-Type": "application/json"
-                }
-                
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(
-                        subscription_url,
-                        headers=headers,
-                        json=subscription_data
-                    ) as response:
-                        if response.status not in [200, 201]:
-                            error_text = await response.text()
-                            raise Exception(f"Dynamics webhook subscription error: {response.status} - {error_text}")
-            
-            await self.execute_with_retry(_subscribe)
-        
-        logger.info(
-            "dynamics_event_subscriptions_created",
-            event_types=event_types
-        )
-        
-        return True
-    
+
     async def health_check(self) -> Dict[str, Any]:
+        """Health check via the shared three-state probe.
+
+        THIS CONNECTOR WAS THE ONE MISSED. When probe_health was introduced, six of
+        the seven connectors adopted it; Dynamics kept the old two-state version that
+        mapped ANY exception to `unhealthy`. So the systemic fix was not in fact
+        systemic, and a Dynamics tenant whose service principal cannot read the
+        probed table had a working integration reported as an outage.
+
+        The probe entity matters as much as the states. It used to be `accounts` (or
+        `contacts` on the Graph path) -- business tables that a least-privilege
+        application user is routinely not granted. `systemusers` is the Dataverse
+        analogue of Odoo's `res.users`: present in every environment, and readable by
+        anything that can authenticate at all. Same reasoning that replaced Odoo's
+        `sale.order` probe after a real Odoo proved it wrong.
         """
-        Perform health check on Dynamics connection.
-        
-        Returns:
-            Dict with health status and details
-        """
-        try:
-            # Try to fetch a small amount of data
-            if self.api_type == "dataverse":
-                results = await self.fetch_data("accounts", limit=1)
-            else:
-                results = await self.fetch_data("contacts", limit=1)
-            
-            return {
-                "status": "healthy",
-                "message": "Dynamics connection successful",
-                "environment": self.environment,
-                "api_type": self.api_type,
-                "checked_at": datetime.now(timezone.utc).isoformat()
-            }
-        except Exception as e:
-            return {
-                "status": "unhealthy",
-                "message": str(e),
-                "environment": self.environment,
-                "api_type": self.api_type,
-                "checked_at": datetime.now(timezone.utc).isoformat()
-            }
-    
+        return await self.probe_health(
+            self.HEALTH_PROBE_ENTITY,
+            details={"environment": self.environment, "api_type": self.api_type},
+        )
+
     def _build_filter_string(self, filters: Dict[str, Any]) -> str:
         """
         Build Dynamics OData filter string.
