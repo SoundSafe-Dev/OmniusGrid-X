@@ -31,6 +31,7 @@ class ERPType(Enum):
     ODOO = "odoo"
     INFOR = "infor"
     EPICOR = "epicor"
+    INTUIT = "intuit"        # QuickBooks Online
     GENERIC = "generic"
 
 
@@ -66,6 +67,24 @@ class ERPConfig:
     # Connector-specific settings bag (company_id, account_id, realm, tenant_id,
     # service_path, ...). Each concrete connector reads the keys it needs.
     configuration: Dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self):
+        """Normalize `base_url` so a trailing slash cannot break every request.
+
+        Five connectors build their endpoint by concatenating `base_url` with a
+        path (`f"{config.base_url}/api/v1"`), so a configured value of
+        `https://host/` yields `https://host//api/v1`. yarl preserves the empty
+        segment verbatim, the server sees `//api/v1`, and the result is a 404 that
+        looks like a wrong entity or a missing service — not like a stray slash in
+        configuration. Trailing slashes on a base URL are one of the most common
+        ways a human writes one, so this is normalized once here rather than
+        remembered at six call sites.
+
+        Found by pointing the SAP connector at a Prism mock generated from real
+        SAP EDMX: the request arrived as `//A_PurchaseOrder` and matched no route.
+        """
+        if isinstance(self.base_url, str):
+            self.base_url = self.base_url.strip().rstrip("/")
 
 
 @dataclass
@@ -374,15 +393,45 @@ class ERPConnectorBase(ABC):
         if "503" in error_msg or "service unavailable" in error_msg:
             return True
         
-        # Authentication errors are not transient
-        if "401" in error_msg or "unauthorized" in error_msg:
+        # Authentication and authorization failures are PERMANENT.
+        #
+        # This list used to be just 401/unauthorized, while AUTH_ERROR_MARKERS a few
+        # lines above already knew about 403, invalid_client and friends -- so the
+        # health probe classified an error as an auth failure while the retry loop
+        # classified the same error as transient and retried it three times with
+        # exponential backoff.
+        #
+        # Two reasons that is worse than merely wasteful:
+        #
+        #   - Retrying cannot help. The token is captured in the operation's closure
+        #     before the retry loop runs, so every attempt replays the SAME rejected
+        #     credential. Seven seconds to reach the identical answer.
+        #   - It hammers the provider's token endpoint with a credential that will
+        #     never work, which is how an integration earns a rate-limit block on top
+        #     of its original problem.
+        #
+        # `invalid_grant` specifically is what a lost rotated refresh token looks
+        # like on Intuit, where refresh tokens rotate on every use and the previous
+        # one is retired. It is as permanent as a failure gets.
+        permanent_auth_markers = (
+            "401", "unauthorized",
+            "403", "forbidden", "access denied",
+            "invalid_grant", "invalid_client", "invalid_token",
+            "invalid credentials", "invalid apikey",
+        )
+        if any(marker in error_msg for marker in permanent_auth_markers):
             return False
-        
+
         # Not found errors are not transient
         if "404" in error_msg or "not found" in error_msg:
             return False
-        
-        # Default to transient for unknown errors
+
+        # Default to transient for unknown errors.
+        #
+        # Deliberately NOT including 400 here: a malformed query is permanent, but
+        # some vendors return 400 for conditions that do clear, and defaulting a
+        # whole status class to permanent would stop retrying things that should be
+        # retried. The auth markers above are the cases that are unambiguously final.
         return True
     
     def log_request(self, request: Dict[str, Any], response: Optional[Dict[str, Any]] = None):
@@ -412,11 +461,13 @@ class ERPConnectorBase(ABC):
         """
         required_fields = ["base_url", "auth_type"]
         
-        for field in required_fields:
-            if not hasattr(self.config, field) or not getattr(self.config, field):
+        # `field_name`, not `field`: the latter shadows dataclasses.field, imported
+        # at module scope and used by ERPConfig.
+        for field_name in required_fields:
+            if not hasattr(self.config, field_name) or not getattr(self.config, field_name):
                 logger.error(
                     "config_validation_failed",
-                    missing_field=field
+                    missing_field=field_name
                 )
                 return False
         
@@ -430,11 +481,11 @@ class ERPConnectorBase(ABC):
         else:
             required_auth_fields = []
         
-        for field in required_auth_fields:
-            if field not in self.config.auth_config:
+        for field_name in required_auth_fields:
+            if field_name not in self.config.auth_config:
                 logger.error(
                     "auth_config_validation_failed",
-                    missing_field=field,
+                    missing_field=field_name,
                     auth_type=self.config.auth_type.value
                 )
                 return False

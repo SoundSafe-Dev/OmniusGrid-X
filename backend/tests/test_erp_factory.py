@@ -20,6 +20,17 @@ def _config(erp_type="netsuite"):
         "auth_config": {"api_key": "k"},
         "rate_limit": {"requests_per_minute": 30, "burst_limit": 5},
         "timeout": 20,
+        # Per-connector settings live at the TOP LEVEL here, because
+        # build_erp_config passes the whole stored dict through as the settings bag
+        # (`configuration=configuration`). Nesting them under a "configuration" key
+        # would put them one level too deep and the connector would not see them.
+        #
+        # Harmless to the connectors that ignore these, and required by the ones
+        # that refuse to be constructed without them -- Intuit rejects a missing
+        # realm_id at construction, since every QuickBooks path is company-scoped
+        # and it cannot be inferred later.
+        "realm_id": "4620816365",
+        "environment": "sandbox",
     }
 
 
@@ -30,10 +41,18 @@ class _FakeIntegration:
     configuration = _config()
 
 
-def test_supported_types_covers_seven_connectors():
-    assert set(supported_types()) == {
-        "sap", "oracle", "dynamics", "netsuite", "odoo", "infor", "epicor"
-    }
+def test_supported_types_matches_the_registry():
+    """Derived from the registry, not hand-listed.
+
+    This was the THIRD hardcoded connector list found in the test suite, all of
+    which silently failed to cover a newly added connector. Adding Intuit changed
+    nothing in any of them -- which is the same blind spot that let three
+    unimportable connectors ship.
+    """
+    from app.services.erp_connector_factory import _REGISTRY
+
+    assert set(supported_types()) == {t.value for t in _REGISTRY}
+    assert "intuit" in supported_types()
 
 
 def test_build_erp_config_maps_fields():
@@ -52,7 +71,7 @@ def test_create_from_orm_row_instantiates_connector():
     assert connector.organization_id == "org-1"
 
 
-@pytest.mark.parametrize("erp_type", ["sap", "oracle", "dynamics", "netsuite", "odoo", "infor", "epicor"])
+@pytest.mark.parametrize("erp_type", sorted(supported_types()))
 def test_every_registered_type_builds(erp_type):
     cfg = build_erp_config(_config(erp_type))
     try:

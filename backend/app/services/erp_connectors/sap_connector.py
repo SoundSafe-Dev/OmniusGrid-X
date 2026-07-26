@@ -47,8 +47,21 @@ class SAPConnector(ERPConnectorBase):
         self.system_id = config.configuration.get("system_id")
         self.client = config.configuration.get("client", "001")
         
-        # Build base URL for OData service
-        self.odata_url = f"{config.base_url}{self.service_path}/{self.service_name}"
+        # Build base URL for OData service.
+        #
+        # Joined from non-empty segments rather than interpolated, because the naive
+        # f"{base_url}{service_path}/{service_name}" produced an empty path segment
+        # whenever service_path carried a trailing slash or service_name was blank.
+        # `fetch_data` then appends "/{entity_type}", so a single stray slash reached
+        # SAP as "//A_PurchaseOrder" and 404'd in a way that reads as a bad entity
+        # name. `base_url` is already normalized by ERPConfig.__post_init__.
+        self.odata_url = "/".join(
+            part for part in (
+                config.base_url,
+                self.service_path.strip("/"),
+                self.service_name.strip("/"),
+            ) if part
+        )
         
         # OAuth2 session for authentication
         

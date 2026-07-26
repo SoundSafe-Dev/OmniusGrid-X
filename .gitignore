@@ -92,3 +92,11 @@ coverage.xml
 frontend/test-results/
 frontend/playwright-report/
 frontend/blob-report/
+
+# Vendor ERP API specifications fetched by tools/erp-mocks/fetch-spec.sh.
+# Not committed: they are vendor material, they are large (SAP's is 168KB for ONE
+# service), and a per-tenant spec embeds that tenant's custom fields and records.
+# Re-fetch them instead -- fetch-spec.sh encodes each vendor's exact endpoint,
+# Accept header and compression requirements.
+tools/erp-mocks/specs/*
+!tools/erp-mocks/specs/.gitkeep

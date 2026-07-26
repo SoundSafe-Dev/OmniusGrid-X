@@ -37,15 +37,24 @@ from app.services.erp_connectors.sap_batch import (
 # Importability
 # ---------------------------------------------------------------------------
 
-CONNECTOR_MODULES = [
-    "app.services.erp_connectors.sap_connector",
-    "app.services.erp_connectors.oracle_connector",
-    "app.services.erp_connectors.dynamics_connector",
-    "app.services.erp_connectors.netsuite_connector",
-    "app.services.erp_connectors.infor_connector",
-    "app.services.erp_connectors.epicor_connector",
-    "app.services.erp_connectors.odoo_connector",
-]
+# Derived from the factory registry, NOT hand-listed.
+#
+# This list used to be hardcoded, and the two guards below iterated their own
+# hardcoded tuples -- which meant the guard silently failed to cover anything new.
+# Adding the Intuit connector changed the test count by zero: a brand-new
+# integration arrived with no importability check and no factory-resolution check,
+# which is precisely the hole that let three unimportable connectors ship. Driving
+# both off _REGISTRY makes coverage automatic and makes a registry entry pointing at
+# a class that does not exist fail immediately.
+from app.services.erp_connector_factory import _REGISTRY  # noqa: E402
+
+CONNECTOR_MODULES = sorted({module for module, _cls in _REGISTRY.values()})
+
+# Proof the derivation is not vacuous: an empty or truncated registry would make
+# every parametrized test below silently pass by never running.
+assert len(CONNECTOR_MODULES) >= 8, (
+    f"expected at least 8 registered connectors, found {CONNECTOR_MODULES}"
+)
 
 
 class TestImportability:
@@ -64,9 +73,23 @@ class TestImportability:
         from app.services.erp_connector_factory import _resolve_class
         from app.services.erp_connector_base import ERPType as T
 
-        for erp_type in (T.SAP, T.ORACLE, T.DYNAMICS, T.NETSUITE, T.INFOR):
+        # EVERY registered type, not a hand-picked subset. The previous tuple
+        # omitted ODOO and EPICOR, so the two connectors most likely to be
+        # exercised first were the two this guard did not check.
+        for erp_type in _REGISTRY:
             cls = _resolve_class(erp_type)
             assert isinstance(cls, type), f"{erp_type} did not resolve to a class"
+
+    def test_every_erp_type_is_either_registered_or_deliberately_not(self):
+        """A member of ERPType with no registry entry is an integration the product
+        appears to offer and cannot deliver. GENERIC is the one intentional
+        exception -- it has no vendor to connect to."""
+        from app.services.erp_connector_base import ERPType as T
+
+        unregistered = {t for t in T if t not in _REGISTRY} - {T.GENERIC}
+        assert not unregistered, (
+            f"ERPType members with no connector: {sorted(t.value for t in unregistered)}"
+        )
 
     def test_connectors_do_not_import_blocking_oauth_libraries(self):
         """`requests_oauthlib` and `msal` are synchronous.
