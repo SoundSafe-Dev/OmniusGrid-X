@@ -132,12 +132,38 @@ class TestFetching:
 
 
 class TestHealthCheck:
-    async def test_health_check_reports_healthy_against_a_live_server(self):
-        conn = _connector()
-        health = await conn.health_check()
+    """The three states must be distinguishable, verified against a real server.
+
+    Every connector's health check used to map ANY exception to `unhealthy`, so
+    "the credential is wrong", "the host is unreachable" and "that module is not
+    installed" were indistinguishable — and a tenant without the probed module had
+    a working integration reported as an outage.
+    """
+
+    async def test_healthy_against_a_live_server(self):
+        health = await _connector().health_check()
         assert health["status"] == "healthy", health
 
-    async def test_health_check_reports_unhealthy_when_the_server_is_wrong(self):
+    async def test_missing_module_is_DEGRADED_not_unhealthy(self):
+        """`sale.order` needs the Sales module, which this database does not have.
+        A monitor must not page for that — the integration is fine."""
+        health = await _connector().probe_health("sale.order")
+        assert health["status"] == "degraded", health
+        assert health["failure"] == "probe_entity"
+
+    async def test_bad_credential_is_UNHEALTHY(self):
+        """This is what caught a flaw in the probe's own design: Odoo's API-key path
+        returns the key straight from config without contacting anything, so
+        `get_auth_token()` "succeeded" and a wrong key was reported DEGRADED. Odoo
+        now overrides verify_credentials() with a real round trip."""
+        conn = _connector()
+        conn.config.auth_config["api_key"] = "definitely-wrong"
+        conn.invalidate_token()
+        health = await conn.health_check()
+        assert health["status"] == "unhealthy", health
+        assert health["failure"] == "authentication"
+
+    async def test_unreachable_server_is_UNHEALTHY(self):
         """A health check that cannot go red is not a health check."""
         conn = _connector()
         conn.config.base_url = "http://localhost:1"  # nothing listening

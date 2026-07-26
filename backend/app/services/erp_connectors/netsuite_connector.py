@@ -323,30 +323,16 @@ class NetSuiteConnector(ERPConnectorBase):
         return True
     
     async def health_check(self) -> Dict[str, Any]:
+        """Health check that distinguishes a broken connection from a
+        missing module. See ERPConnectorBase.probe_health.
+
+        The probe entity 'invoice' is business-module dependent, so a tenant
+        without it is reported DEGRADED rather than unhealthy — previously any
+        exception here mapped to unhealthy, so a working integration on a
+        tenant that had not licensed that module looked like an outage.
         """
-        Perform health check on NetSuite connection.
-        
-        Returns:
-            Dict with health status and details
-        """
-        try:
-            # Try to fetch a small amount of data
-            results = await self.fetch_data("invoice", limit=1)
-            
-            return {
-                "status": "healthy",
-                "message": "NetSuite connection successful",
-                "account_id": self.account_id,
-                "checked_at": datetime.now(timezone.utc).isoformat()
-            }
-        except Exception as e:
-            return {
-                "status": "unhealthy",
-                "message": str(e),
-                "account_id": self.account_id,
-                "checked_at": datetime.now(timezone.utc).isoformat()
-            }
-    
+        return await self.probe_health('invoice', details={"account_id": self.account_id})
+
     def _build_filter_string(self, filters: Dict[str, Any]) -> str:
         """
         Build NetSuite SuiteTalk filter string.

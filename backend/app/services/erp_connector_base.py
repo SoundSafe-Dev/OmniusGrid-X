@@ -477,6 +477,121 @@ class ERPConnectorBase(ABC):
         self._auth_token = None
         self._token_expiry = None
 
+    async def verify_credentials(self) -> None:
+        """Prove the credential actually works, raising if it does not.
+
+        The default delegates to `get_auth_token()`, which is a real round trip for
+        OAuth2 connectors — a bad client_secret fails at the token endpoint.
+
+        It is NOT sufficient for STATIC-credential connectors. Odoo and Epicor
+        accept a long-lived API key, and for those `authenticate()` simply returns
+        the value out of config without contacting anything, so a wrong key
+        "authenticates" fine and only fails later on the first real call. Those
+        connectors override this with something that round-trips.
+
+        Found empirically: a deliberately wrong Odoo API key was reported DEGRADED
+        rather than UNHEALTHY, because the probe below trusted get_auth_token().
+        """
+        await self.get_auth_token()
+
+    #: Substrings that mark a fetch failure as an AUTH problem rather than a
+    #: missing entity. Used as a backstop for static-credential connectors whose
+    #: verify_credentials cannot round-trip: a 401 on the probe is an outage, not a
+    #: module that is not installed.
+    AUTH_ERROR_MARKERS = (
+        "401", "403", "unauthorized", "forbidden", "invalid apikey", "invalid_client",
+        "access denied", "authentication", "invalid credentials", "expired",
+    )
+
+    def _looks_like_auth_failure(self, error: str) -> bool:
+        lowered = error.lower()
+        return any(marker in lowered for marker in self.AUTH_ERROR_MARKERS)
+
+    async def probe_health(
+        self,
+        entity_type: str,
+        *,
+        details: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Health check that separates "broken" from "that module is not installed".
+
+        THE DEFECT THIS FIXES. Every connector's health check did
+        `fetch_data(<business entity>, limit=1)` and mapped ANY exception to
+        `unhealthy` — Epicor probed `Erp.BO.InvoiceSvc`, NetSuite `invoice`, SAP
+        `PurchaseOrder`, Oracle `invoices`, Infor `invoice`. So a tenant that has
+        not licensed or enabled that module had a perfectly working integration
+        reported permanently unhealthy, because "the credential is wrong", "the host
+        is unreachable" and "that entity does not exist here" all produced the same
+        answer.
+
+        Confirmed empirically against a real Odoo, where probing `sale.order` failed
+        purely because the Sales module was not installed.
+
+        The fix does not require knowing each vendor's universally-present entity —
+        which we cannot know without their sandboxes. It reports WHICH failure
+        happened:
+
+            unhealthy  cannot reach the system or cannot authenticate. The
+                       integration is broken and needs attention.
+            degraded   authenticated fine, but the probe entity was unavailable.
+                       The connection works; that entity/module may simply not be
+                       present. Not an outage.
+            healthy    authenticated and the entity answered.
+
+        A monitor should page on `unhealthy`, not on `degraded`.
+        """
+        base: Dict[str, Any] = {
+            "erp_type": self.config.erp_type.value,
+            "integration_id": self.integration_id,
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+            **(details or {}),
+        }
+
+        # Step 1: can we authenticate at all? This is the question that actually
+        # determines whether the integration is broken.
+        try:
+            await self.verify_credentials()
+        except Exception as exc:  # noqa: BLE001
+            return {
+                **base,
+                "status": "unhealthy",
+                "message": f"authentication failed: {exc}",
+                "failure": "authentication",
+            }
+
+        # Step 2: probe an entity. A failure here is NOT necessarily an outage.
+        try:
+            await self.fetch_data(entity_type, limit=1)
+        except Exception as exc:  # noqa: BLE001
+            # Backstop for static-credential connectors: if the probe failed for an
+            # AUTH reason, that is an outage regardless of which step surfaced it.
+            # Without this a wrong API key reads as "that module is missing".
+            if self._looks_like_auth_failure(str(exc)):
+                return {
+                    **base,
+                    "status": "unhealthy",
+                    "message": f"authentication rejected on probe: {exc}",
+                    "failure": "authentication",
+                }
+            return {
+                **base,
+                "status": "degraded",
+                "message": (
+                    f"authenticated, but probe entity {entity_type!r} was not "
+                    f"readable: {exc}. This is often a module that is not "
+                    f"installed or licensed rather than a connection fault."
+                ),
+                "failure": "probe_entity",
+                "probe_entity": entity_type,
+            }
+
+        return {
+            **base,
+            "status": "healthy",
+            "message": f"{self.config.erp_type.value} connection successful",
+            "probe_entity": entity_type,
+        }
+
     async def get_auth_token(self) -> str:
         """
         Get valid authentication token, refreshing if necessary.

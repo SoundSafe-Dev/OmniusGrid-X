@@ -331,44 +331,28 @@ class OdooConnector(ERPConnectorBase):
         
         return True
     
+    async def verify_credentials(self) -> None:
+        """Round-trip the credential against Odoo.
+
+        The base default calls `get_auth_token()`, which for the API-key path just
+        returns the value out of config — a wrong key would pass. `_rpc_uid()`
+        actually calls `common.authenticate`, so a bad key fails here where it
+        belongs rather than being misreported as a missing module.
+        """
+        await self._rpc_uid()
+
     async def health_check(self) -> Dict[str, Any]:
+        """Health check via the shared three-state probe.
+
+        `res.users` exists in every Odoo database, so a failure here really is a
+        connection or credential fault rather than a missing module. This used to
+        probe `sale.order`, which only exists with the Sales module installed —
+        found by running against a real Odoo, and the reason
+        ERPConnectorBase.probe_health now separates degraded from unhealthy for
+        every connector.
         """
-        Perform health check on Odoo connection.
-        
-        Returns:
-            Dict with health status and details
-        """
-        try:
-            # Probe AUTHENTICATION and a core model, not a business module.
-            #
-            # This used to fetch `sale.order`, which only exists when the Sales
-            # module is installed. A customer running Odoo without Sales — an
-            # entirely normal configuration — had their working integration
-            # reported permanently unhealthy, because "that module is not
-            # installed" and "the connection is broken" produced the same result.
-            # Found by running this connector against a real Odoo, which is the
-            # kind of defect a request-shape test cannot surface.
-            #
-            # `res.users` exists in every Odoo database, so reaching it proves the
-            # transport, the credential and the database name are all good, and
-            # nothing else.
-            uid = await self._rpc_uid()
-            results = await self.fetch_data("res.users", limit=1)
-            
-            return {
-                "status": "healthy",
-                "message": "Odoo connection successful",
-                "db_name": self.db_name,
-                "checked_at": datetime.now(timezone.utc).isoformat()
-            }
-        except Exception as e:
-            return {
-                "status": "unhealthy",
-                "message": str(e),
-                "db_name": self.db_name,
-                "checked_at": datetime.now(timezone.utc).isoformat()
-            }
-    
+        return await self.probe_health("res.users", details={"db_name": self.db_name})
+
     def _build_filter_string(self, filters: Dict[str, Any]) -> str:
         """
         Build Odoo domain filter string.

@@ -124,12 +124,28 @@ because "that module is not installed" and "the connection is broken" produced t
 same answer. It now probes authentication plus `res.users`, which exists in every
 Odoo database.
 
-**This is systemic, and the harness only proves it for Odoo.** Every connector's
-health check probes a business-module entity: NetSuite `invoice`, SAP
-`PurchaseOrder`, Oracle `invoices`, Infor `invoice`, Epicor `Erp.BO.InvoiceSvc`.
-Each will misreport in exactly the same way against a tenant that has not licensed
-or enabled that module. Fixing them properly needs either their specs or their
-sandboxes — the six remaining are unverified.
+**This was systemic, and it is now fixed for all seven** — without needing each
+vendor's sandbox. Rather than guess at every vendor's universally-present entity,
+`ERPConnectorBase.probe_health` reports WHICH failure occurred:
+
+| State | Meaning | Should it page? |
+|---|---|---|
+| `unhealthy` | cannot reach the system, or the credential is rejected | **yes** |
+| `degraded` | authenticated fine; the probe entity was unavailable — often a module that is not installed | no |
+| `healthy` | authenticated and the entity answered | no |
+
+All four paths are verified empirically against the real Odoo (healthy, degraded on
+a missing module, unhealthy on a bad credential, unhealthy on an unreachable host).
+The other six inherit the same logic; their probe *entities* remain unverified,
+but a tenant lacking that module now reports `degraded` instead of an outage.
+
+**That fix's own first version was wrong, and the harness caught it.** The probe
+initially trusted `get_auth_token()` to prove the credential. For static-credential
+connectors — Odoo and Epicor accept a long-lived API key — `authenticate()` just
+returns the value out of config without contacting anything, so a deliberately
+wrong key "authenticated" and was reported `degraded`. Connectors now override
+`verify_credentials()` with something that round-trips, plus an auth-error
+classifier as a backstop. A mock could not have surfaced that.
 
 **Also empirically confirmed** (previously coded from documentation): Odoo reports
 application faults in the response BODY with **HTTP 200**. A connector treating 200
