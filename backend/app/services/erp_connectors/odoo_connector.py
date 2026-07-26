@@ -339,8 +339,21 @@ class OdooConnector(ERPConnectorBase):
             Dict with health status and details
         """
         try:
-            # Try to fetch a small amount of data
-            results = await self.fetch_data("sale.order", limit=1)
+            # Probe AUTHENTICATION and a core model, not a business module.
+            #
+            # This used to fetch `sale.order`, which only exists when the Sales
+            # module is installed. A customer running Odoo without Sales — an
+            # entirely normal configuration — had their working integration
+            # reported permanently unhealthy, because "that module is not
+            # installed" and "the connection is broken" produced the same result.
+            # Found by running this connector against a real Odoo, which is the
+            # kind of defect a request-shape test cannot surface.
+            #
+            # `res.users` exists in every Odoo database, so reaching it proves the
+            # transport, the credential and the database name are all good, and
+            # nothing else.
+            uid = await self._rpc_uid()
+            results = await self.fetch_data("res.users", limit=1)
             
             return {
                 "status": "healthy",

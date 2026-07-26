@@ -532,6 +532,55 @@ jobs:
         working-directory: ./frontend
         run: npm run e2e
 
+  # --- ERP Tier 3: the Odoo connector against a REAL Odoo -------------------
+  erp-odoo-integration:
+    runs-on: ubuntu-latest
+    # Every other ERP test asserts the request we BUILD, against our reading of the
+    # vendor docs — which cannot disconfirm a wrong assumption, because the fixture
+    # encodes the same assumption as the code. Odoo is the one ERP in the matrix
+    # that is self-hostable, so here the server gets a vote.
+    #
+    # It found a real defect on its first run: health_check probed `sale.order`,
+    # which only exists when the Sales module is installed, so a working Odoo
+    # without Sales reported permanently unhealthy.
+    services:
+      odoo-db:
+        image: postgres:15
+        env:
+          POSTGRES_USER: odoo
+          POSTGRES_PASSWORD: odoo
+          POSTGRES_DB: postgres
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 20
+      odoo:
+        image: odoo:17
+        env:
+          HOST: odoo-db
+          USER: odoo
+          PASSWORD: odoo
+        ports: ['8169:8069']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install backend deps
+        working-directory: ./backend
+        run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Provision the Odoo sandbox
+        # Creates the database WITH DEMO DATA. An empty Odoo would let every fetch
+        # test pass by returning nothing — the exact silent-empty-result failure
+        # these tests exist to catch.
+        run: python backend/scripts/setup_odoo_sandbox.py
+      - name: Odoo connector integration tests
+        working-directory: ./backend
+        env:
+          RUN_ODOO_INTEGRATION: "1"
+          ODOO_URL: http://localhost:8169
+        run: pytest tests/test_erp_odoo_integration.py -q
+
   # --- FS-239: authenticated E2E against a LIVE backend ---------------------
   frontend-e2e-authenticated:
     runs-on: ubuntu-latest

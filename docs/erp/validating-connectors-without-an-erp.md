@@ -80,7 +80,7 @@ bodies that differ from the schema.
 
 ---
 
-## Tier 3 — Run a real ERP locally
+## Tier 3 — Run a real ERP locally (**DONE** — and it found a defect immediately)
 
 **Odoo is self-hostable and free.** This is the one connector we can validate
 end-to-end today, at zero cost, in CI:
@@ -106,6 +106,34 @@ real access-rights errors and real pagination. It validates the whole path:
 Doing this for Odoo also de-risks the others, because it proves the *shared*
 machinery — token lifecycle, retry, circuit breaker, rate limiting — against a real
 server rather than a mock we wrote.
+
+### It is built, and it earned its keep on the first run
+
+- `docker-compose.erp-sandbox.yml` — Odoo 17 + Postgres
+- `backend/scripts/setup_odoo_sandbox.py` — waits, then creates a database **with
+  demo data** (an empty Odoo would let every fetch test pass by returning nothing,
+  which is the exact silent-empty-result failure these tests exist to catch)
+- `backend/tests/test_erp_odoo_integration.py` — 10 tests, all passing against a
+  real Odoo 17
+- CI job `erp-odoo-integration`
+
+**The defect it found:** `health_check` probed `sale.order`, which only exists when
+the Sales module is installed. A customer running Odoo without Sales — an entirely
+normal configuration — had a working integration reported permanently unhealthy,
+because "that module is not installed" and "the connection is broken" produced the
+same answer. It now probes authentication plus `res.users`, which exists in every
+Odoo database.
+
+**This is systemic, and the harness only proves it for Odoo.** Every connector's
+health check probes a business-module entity: NetSuite `invoice`, SAP
+`PurchaseOrder`, Oracle `invoices`, Infor `invoice`, Epicor `Erp.BO.InvoiceSvc`.
+Each will misreport in exactly the same way against a tenant that has not licensed
+or enabled that module. Fixing them properly needs either their specs or their
+sandboxes — the six remaining are unverified.
+
+**Also empirically confirmed** (previously coded from documentation): Odoo reports
+application faults in the response BODY with **HTTP 200**. A connector treating 200
+as success turns an access-rights failure into an empty result set.
 
 **Cannot tell us:** anything vendor-specific about the other six.
 
@@ -162,9 +190,8 @@ Worth stating plainly so the confidence is not overclaimed:
 
 ## Recommendation
 
-1. **Stand up Odoo in Docker and wire it into CI.** Free, immediate, and validates
-   the shared connector machinery against a real server. This is the only tier that
-   proves an end-to-end path today.
+1. ~~**Stand up Odoo in Docker and wire it into CI.**~~ **DONE** — see Tier 3. It
+   found a real defect on its first run.
 2. **Add Prism mocks driven by the SAP and Dynamics `$metadata`/OpenAPI specs**, with
    `--errors` on so invalid requests are rejected. Highest coverage per unit of
    effort for the vendors we cannot host.
@@ -173,5 +200,7 @@ Worth stating plainly so the confidence is not overclaimed:
 4. **Adopt cassettes now**, so that whenever a tenant appears the traffic is captured
    rather than lost.
 
-Tiers 0 and 1 are done. Tier 3 for Odoo is a day's work and is the one I would do
-next.
+Tiers 0, 1 and 3 (Odoo) are done. Tier 2 — spec-driven Prism mocks for the vendors
+we cannot host — is the next highest-value step, because the health-check defect
+Odoo exposed almost certainly exists in the other six and nothing currently proves
+otherwise.
