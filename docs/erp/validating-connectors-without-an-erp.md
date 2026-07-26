@@ -20,6 +20,8 @@ The framing matters: every defect found while building these connectors was a
 | A trailing slash on `base_url` breaking every request | No |
 | Dataverse pagination ignored past 5000 rows | **Dataverse proved it; no** |
 | An unreachable system reported `degraded`, not `unhealthy` | **Dataverse proved it; no** |
+| Token stampede: N concurrent callers, N token round trips | **Real Entra ID and real Odoo proved it; no** |
+| Rate limiter 10x permissive under concurrency | No |
 | Permanent auth failures retried 4x with backoff | No |
 | `subscribe_to_events` reporting success for nothing | **Odoo proved it; no** |
 | Intuit having no client-credentials grant at all | No |
@@ -315,6 +317,46 @@ new health probe entity: `systemuser` → `systemusers`.
 as a suspected defect. Entra ID issued a token for it, so the identity provider itself
 confirms it. Entra validates the client *before* the resource, so it was unprovable
 until a real secret existed.
+
+---
+
+## The shared machinery — a defect here is a defect in all eight
+
+Token cache, rate limiter and circuit breaker are inherited by every connector and
+were the least tested code in the subsystem. Going looking found three defects, all
+measured rather than reasoned about.
+
+**Token stampede.** `get_auth_token` checked the cache, found it empty, and called
+`authenticate()` with no serialisation — so every caller arriving while a token was in
+flight started its own. Measured: **20 concurrent callers, 20 token round trips**, and
+confirmed against **live Entra ID (15 for 15)** and **a real Odoo 17 (15
+`common.authenticate` RPCs for 15 fetches)**.
+
+Wasteful against SAP and Entra ID. **Actively destructive against Intuit**, where every
+refresh rotates the refresh token and retires the previous one: N concurrent refreshes
+create N competing rotations, N-1 discarded, leaving the stored credential invalid. The
+integration then fails with `invalid_grant`, which reads as a revoked authorization
+rather than a race we caused.
+
+Odoo needed a *second* fix. It resolves two credentials — the API key (returned
+straight from config, so the base lock never contends) and a uid from
+`common.authenticate` (a real round trip behind an unguarded check-then-fill). Every
+caller sailed past the base lock into the second stampede.
+
+**The rate limiter was ~10x permissive under concurrency.** Waiters all computed the
+same deadline from the same snapshot, slept in parallel, then proceeded together — no
+lock, no re-check. Measured: **100 operations against a 10-per-minute limit finished in
+60 seconds**. After the fix, 540 seconds. The component whose entire job is avoiding a
+vendor throttle was causing one.
+
+**It also recorded stale timestamps.** `now` was captured before sleeping and appended
+after, so a request that waited 60 seconds stamped itself as having happened 60 seconds
+ago — already outside its own window — making the limiter under-count its own traffic
+and compounding the above.
+
+All three are mutation-tested in `tests/test_erp_shared_machinery.py`, and the token
+stampede is additionally asserted against **live Dataverse and live Odoo**, where
+reverting the fix makes real vendors receive 15 token requests instead of 1.
 
 ---
 

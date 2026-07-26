@@ -24,6 +24,7 @@ convention, so the default suite stays hermetic.
 
 from __future__ import annotations
 
+import asyncio
 import os
 
 import pytest
@@ -170,3 +171,78 @@ class TestHealthCheck:
         conn.api_url = "http://localhost:1/api"
         health = await conn.health_check()
         assert health["status"] == "unhealthy", health
+
+class TestConcurrencyAgainstRealOdoo:
+    """Cache stampedes, proven against a real server rather than reasoned about.
+
+    Odoo has TWO credentials to resolve: the API key (returned straight from config,
+    so `get_auth_token` never blocks) and the uid from `common.authenticate` (a real
+    round trip). The base class lock covers the first and therefore never contends,
+    so every concurrent caller sailed past it into an unguarded check-then-fill on
+    the second.
+
+    Measured before the fix: 15 concurrent fetches produced 15 authentication RPCs.
+    """
+
+    async def test_concurrent_fetches_authenticate_once(self):
+        conn = _connector()
+
+        calls = {"n": 0}
+        original = conn._jsonrpc
+
+        async def _counting(service, method, args, **kwargs):
+            if method == "authenticate":
+                calls["n"] += 1
+            return await original(service, method, args, **kwargs)
+
+        conn._jsonrpc = _counting
+
+        await asyncio.gather(*[conn.fetch_data("res.partner", limit=1) for _ in range(15)])
+        assert calls["n"] == 1, (
+            f"15 concurrent fetches issued {calls['n']} common.authenticate RPCs"
+        )
+
+    async def test_concurrent_fetches_return_identical_rows(self):
+        """A shared uid and shared sessions are where cross-talk would show up: one
+        caller reading another's response. Identical queries must agree."""
+        conn = _connector()
+        results = await asyncio.gather(
+            *[conn.fetch_data("res.partner", limit=3) for _ in range(10)]
+        )
+        first = [r["id"] for r in results[0]]
+        for i, result in enumerate(results[1:], start=1):
+            assert [r["id"] for r in result] == first, (
+                f"concurrent fetch {i} returned different rows for an identical query"
+            )
+
+    async def test_concurrent_paginated_fetches_do_not_interleave(self):
+        """Paging keeps per-call offset state. If any of it leaked between
+        concurrent calls, rows would duplicate or vanish — and each caller's result
+        would still look plausible."""
+        conn = _connector(page_size=2)
+        results = await asyncio.gather(
+            *[conn.fetch_data("res.partner", limit=6) for _ in range(6)]
+        )
+        for i, rows in enumerate(results):
+            ids = [r["id"] for r in rows]
+            assert len(ids) == len(set(ids)), f"concurrent paged fetch {i} duplicated rows"
+        lengths = {len(r) for r in results}
+        assert len(lengths) == 1, f"identical paged queries returned different counts: {lengths}"
+
+    async def test_a_failed_authentication_does_not_wedge_the_connector(self):
+        """If the uid lock is not released on the error path, the connector is
+        bricked for the life of the process — worse than the stampede it fixes."""
+        conn = _connector()
+        conn.config.auth_config["api_key"] = "definitely-wrong"
+        conn.invalidate_token()
+
+        for _ in range(3):
+            with pytest.raises(Exception):
+                await conn._rpc_uid()
+
+        # Repairing the credential must recover, which proves the lock was freed.
+        conn.config.auth_config["api_key"] = ODOO_PASSWORD
+        conn.invalidate_token()
+        conn._odoo_uid = None
+        assert await conn._rpc_uid() > 0
+

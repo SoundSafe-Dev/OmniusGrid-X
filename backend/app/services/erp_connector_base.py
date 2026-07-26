@@ -124,6 +124,12 @@ class ERPConnectorBase(ABC):
             "recovery_timeout": 60
         }
         
+        # Serialises authentication and rate-limit bookkeeping. Created here rather
+        # than lazily: asyncio.Lock() no longer binds to a loop at construction
+        # (3.10+), so this is safe even though __init__ runs outside the loop.
+        self._auth_lock = asyncio.Lock()
+        self._rate_limit_lock = asyncio.Lock()
+
         # Rate limiting
         self._request_timestamps: List[float] = []
         self.rate_limit_per_minute = config.rate_limit.get("requests_per_minute", 60)
@@ -312,37 +318,57 @@ class ERPConnectorBase(ABC):
         raise last_exception
     
     async def _rate_limit_check(self):
-        """Check and enforce rate limiting"""
-        now = time.time()
-        
-        # Remove timestamps older than 1 minute
-        self._request_timestamps = [
-            ts for ts in self._request_timestamps
-            if now - ts < 60
-        ]
-        
-        # Check per-minute limit
-        if len(self._request_timestamps) >= self.rate_limit_per_minute:
-            wait_time = 60 - (now - self._request_timestamps[0])
-            logger.warning(
-                "rate_limit_exceeded",
-                wait_time=wait_time,
-                requests_in_minute=len(self._request_timestamps)
-            )
-            await asyncio.sleep(wait_time)
-        
-        # Check burst limit (requests in last second)
-        recent_requests = [
-            ts for ts in self._request_timestamps
-            if now - ts < 1
-        ]
-        if len(recent_requests) >= self.burst_limit:
-            wait_time = 1 - (now - recent_requests[0])
-            await asyncio.sleep(wait_time)
-        
-        # Record this request
-        self._request_timestamps.append(now)
-    
+        """Reserve a slot in the sliding window, waiting until one is free.
+
+        TWO DEFECTS THIS REPLACES, both measured rather than reasoned about.
+
+        1. CONCURRENT CALLERS STAMPEDED. The old version computed a wait, slept, and
+           proceeded -- with no lock and no re-check. So every waiting coroutine
+           computed the same deadline, slept in parallel, and then all fired at
+           once. Measured: 100 operations against a 10-per-minute limit completed in
+           60 seconds. Ten times the configured rate, which is how an integration
+           collects a vendor-side throttle from the component whose entire job is
+           preventing that.
+
+        2. THE RECORDED TIMESTAMP WAS STALE. `now` was captured before sleeping and
+           appended after, so a request that waited 60 seconds recorded itself as
+           having happened 60 seconds ago -- already outside its own window. The
+           limiter therefore under-counted its own traffic, compounding (1).
+
+        Now the check and the reservation happen together under a lock, the sleep
+        happens outside it (so a waiter never blocks a caller who could proceed),
+        and the loop re-checks rather than trusting a stale deadline.
+        """
+        while True:
+            async with self._rate_limit_lock:
+                now = time.time()
+                self._request_timestamps = [
+                    ts for ts in self._request_timestamps if now - ts < 60
+                ]
+
+                if len(self._request_timestamps) >= self.rate_limit_per_minute:
+                    wait_time = 60 - (now - self._request_timestamps[0])
+                    logger.warning(
+                        "rate_limit_exceeded",
+                        wait_time=wait_time,
+                        requests_in_minute=len(self._request_timestamps),
+                    )
+                else:
+                    recent_requests = [
+                        ts for ts in self._request_timestamps if now - ts < 1
+                    ]
+                    if len(recent_requests) < self.burst_limit:
+                        # Reserve the slot while still holding the lock, stamped
+                        # with the CURRENT time.
+                        self._request_timestamps.append(now)
+                        return
+                    wait_time = 1 - (now - recent_requests[0])
+
+            # Sleep outside the lock. The floor keeps a rounding error from
+            # spinning; the loop re-evaluates rather than assuming one wait is
+            # enough, because another coroutine may take the slot first.
+            await asyncio.sleep(max(wait_time, 0.001))
+
     def _circuit_breaker_check(self) -> bool:
         """Check if circuit breaker allows requests"""
         if self.circuit_breaker.state == "closed":
@@ -749,6 +775,21 @@ class ERPConnectorBase(ABC):
         # meant 40 minutes of serving a dead credential from cache, and every
         # request in that window failed with a 401 that looked like a permissions
         # problem.
+        # SERIALISED. Without this lock every concurrent caller that arrives with an
+        # empty cache authenticates: 20 simultaneous fetches produced 20 token
+        # round trips, measured. That is wasteful against SAP and Entra ID, and
+        # actively destructive against Intuit, where EVERY refresh rotates the
+        # refresh token and retires the previous one -- so N concurrent refreshes
+        # create N competing rotations, N-1 of which are discarded, leaving the
+        # stored credential invalid.
+        async with self._auth_lock:
+            # Double-check: whoever held the lock first may have just filled it.
+            if self._auth_token and self._token_expiry:
+                if datetime.now(timezone.utc) < self._token_expiry:
+                    return self._auth_token
+            return await self._authenticate_and_cache()
+
+    async def _authenticate_and_cache(self) -> str:
         # Clear first so an authenticate() that calls _set_token wins, and one that
         # only returns a string still lands in the cache below.
         self._auth_token = None

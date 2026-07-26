@@ -8,6 +8,7 @@ Connector for Odoo using XML-RPC or REST API:
 """
 
 from typing import Dict, Any, Optional, List
+import asyncio
 import structlog
 import aiohttp
 
@@ -144,9 +145,32 @@ class OdooConnector(ERPConnectorBase):
         return data.get("result")
 
     async def _rpc_uid(self) -> int:
-        """Resolve the Odoo user id, authenticating once per connector."""
+        """Resolve the Odoo user id, authenticating once per connector.
+
+        SERIALISED, for the same reason `get_auth_token` is. The unguarded
+        check-then-fill below is a classic cache stampede: every concurrent caller
+        arriving before the first one finishes misses the cache and issues its own
+        `common.authenticate`. Measured against a real Odoo 17: 15 concurrent
+        fetches produced 15 authentication RPCs.
+
+        The base class lock does not cover this, because Odoo's uid is a
+        SECOND credential resolved after `get_auth_token()` returns — for the
+        API-key path that returns immediately from config, so the base lock is
+        never contended and every caller sails through to here.
+        """
         if getattr(self, "_odoo_uid", None):
             return self._odoo_uid
+
+        if getattr(self, "_uid_lock", None) is None:
+            self._uid_lock = asyncio.Lock()
+
+        async with self._uid_lock:
+            # Double-check: the winner may have filled it while we waited.
+            if getattr(self, "_odoo_uid", None):
+                return self._odoo_uid
+            return await self._resolve_uid()
+
+    async def _resolve_uid(self) -> int:
         credential = await self.get_auth_token()
         login = self.config.auth_config.get("username") or self.config.auth_config.get("login")
         if not (self.db_name and login):

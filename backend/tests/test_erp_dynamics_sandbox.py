@@ -32,6 +32,7 @@ loudly, so an expired secret is distinguishable from an unconfigured one.
 
 from __future__ import annotations
 
+import asyncio
 import os
 
 import pytest
@@ -229,3 +230,78 @@ class TestHealthCheck:
         connector.retry_config["max_retries"] = 0
         health = await connector.health_check()
         assert health["status"] == "unhealthy", health
+
+class TestConcurrencyAgainstRealDataverse:
+    """The token-stampede fix, proven against Entra ID rather than a fake.
+
+    `get_auth_token` used to serialise nothing, so every concurrent caller arriving
+    with an empty cache started its own token round trip. Measured with a stub: 20
+    callers, 20 authentications. Here the same claim is checked against the real
+    identity provider, where the cost is real throttling.
+    """
+
+    async def test_concurrent_fetches_acquire_one_token(self):
+        connector = _connector()
+
+        calls = {"n": 0}
+        original = connector.authenticate
+
+        async def _counting():
+            calls["n"] += 1
+            return await original()
+
+        connector.authenticate = _counting
+
+        results = await asyncio.gather(
+            *[connector.fetch_data(UNIVERSAL_ENTITY_SET, limit=1) for _ in range(15)]
+        )
+
+        assert calls["n"] == 1, (
+            f"15 concurrent fetches triggered {calls['n']} token requests to Entra ID"
+        )
+        assert all(len(r) == 1 for r in results), "some concurrent fetch returned wrong data"
+
+    async def test_concurrent_fetches_all_return_the_same_data(self):
+        """A shared token plus a shared session is where cross-talk would appear:
+        one caller reading another's response. Same query, so all answers must
+        match."""
+        connector = _connector()
+        results = await asyncio.gather(
+            *[connector.fetch_data(UNIVERSAL_ENTITY_SET, limit=3) for _ in range(8)]
+        )
+        first = [r["systemuserid"] for r in results[0]]
+        for i, result in enumerate(results[1:], start=1):
+            assert [r["systemuserid"] for r in result] == first, (
+                f"concurrent fetch {i} returned different rows for an identical query"
+            )
+
+    async def test_concurrent_fetches_of_different_entities_do_not_cross_talk(self):
+        connector = _connector()
+        users, stringmaps = await asyncio.gather(
+            connector.fetch_data(UNIVERSAL_ENTITY_SET, limit=2),
+            connector.fetch_data(LARGE_ENTITY_SET, limit=2),
+        )
+        assert "systemuserid" in users[0], f"systemusers query returned {sorted(users[0])[:5]}"
+        assert "stringmapid" in stringmaps[0], f"stringmaps query returned {sorted(stringmaps[0])[:5]}"
+
+    async def test_an_expired_token_mid_flight_re_authenticates_once(self):
+        """The stampede window reopens on every expiry, so it is not a cold-start
+        edge case — it recurs for the life of a long-running worker."""
+        connector = _connector()
+        await connector.get_auth_token()
+
+        calls = {"n": 0}
+        original = connector.authenticate
+
+        async def _counting():
+            calls["n"] += 1
+            return await original()
+
+        connector.authenticate = _counting
+        connector.invalidate_token()
+
+        await asyncio.gather(
+            *[connector.fetch_data(UNIVERSAL_ENTITY_SET, limit=1) for _ in range(12)]
+        )
+        assert calls["n"] == 1, f"expiry caused {calls['n']} concurrent re-authentications"
+
