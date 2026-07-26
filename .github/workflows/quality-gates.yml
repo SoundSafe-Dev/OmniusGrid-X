@@ -532,6 +532,34 @@ jobs:
         working-directory: ./frontend
         run: npm run e2e
 
+  # --- ERP Tier 4: the SAP connector against SAP's public sandbox -----------
+  erp-sap-sandbox:
+    runs-on: ubuntu-latest
+    # Runs only when the repository has a SAP_SANDBOX_API_KEY secret. The key is
+    # free but is issued to a person at api.sap.com, so it cannot be provisioned
+    # from CI. Without it the job is a no-op rather than a red build.
+    #
+    # Worth having because the sandbox is a LIVE SAP OData service: it exercises
+    # the $batch multipart parser against genuine SAP bytes rather than the
+    # fixture we wrote, which is the one thing our own fixture cannot do.
+    if: ${{ github.event_name == 'push' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install backend deps
+        working-directory: ./backend
+        run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: SAP sandbox tests
+        working-directory: ./backend
+        env:
+          SAP_SANDBOX_API_KEY: ${{ secrets.SAP_SANDBOX_API_KEY }}
+        # Skips cleanly when the secret is absent; fails loudly on a STALE key,
+        # so an expired credential is distinguishable from an unconfigured one.
+        run: pytest tests/test_erp_sap_sandbox.py -q -rs
+
   # --- ERP Tier 3: the Odoo connector against a REAL Odoo -------------------
   erp-odoo-integration:
     runs-on: ubuntu-latest

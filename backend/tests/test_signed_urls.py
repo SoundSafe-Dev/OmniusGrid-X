@@ -71,10 +71,32 @@ def test_valid_compliance_token(signed_settings):
 
 
 def test_tampered_token_fails(signed_settings):
+    """Tampering must be rejected — with a tamper that is GUARANTEED to change the
+    signed bytes.
+
+    This used to flip the token's LAST character. That is unreliable: an
+    HMAC-SHA256 signature is 32 bytes, which base64url-encodes to 43 characters,
+    and 43 % 4 == 3 means the final character carries two "don't care" bits. Four
+    distinct final characters therefore decode to identical signature bytes, so the
+    flip was a no-op roughly 5% of the time, verification succeeded, and the test
+    failed intermittently in full-suite runs while passing in isolation.
+
+    Tampering the PAYLOAD segment instead always changes what was signed.
+    """
     job_id = uuid4()
     org_id = uuid4()
     token = create_signed_download_token(PURPOSE_COMPLIANCE_REPORT, job_id, org_id)
-    broken = token[:-1] + ("a" if token[-1] != "a" else "b")
+
+    header, payload, signature = token.split(".")
+    # Flip a character in the middle of the payload: base64url "don't care" bits
+    # only ever affect the FINAL character of a segment, so a middle byte always
+    # decodes differently.
+    index = len(payload) // 2
+    original = payload[index]
+    payload = payload[:index] + ("A" if original != "A" else "B") + payload[index + 1:]
+    broken = f"{header}.{payload}.{signature}"
+    assert broken != token
+
     with pytest.raises(SignedTokenError):
         verify_signed_download_token(broken, PURPOSE_COMPLIANCE_REPORT, job_id)
 
