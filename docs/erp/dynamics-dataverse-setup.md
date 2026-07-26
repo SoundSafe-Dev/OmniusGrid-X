@@ -119,7 +119,25 @@ Entra ID error codes are decoded rather than dumped. `AADSTS7000215` is a wrong 
 expired secret, `AADSTS500011` usually means the org name is wrong or the environment
 is in a different tenant, `AADSTS700016` means the client id is not registered here.
 
-**If step 1 passes and step 2 fails, you skipped step 3.** The script says so.
+**If step 1 passes and step 2 fails, you skipped step 3.** The script says so, and it
+recognises the exact signature — confirmed against a real environment:
+
+```
+403  0x80072560  "The user is not a member of the organization."
+```
+
+Note how misleading Dataverse's own wording is. Nothing in "the user is not a member"
+points at an application user, and it reads as though an account was removed from
+something. It is simply what a correct app registration with no application user
+returns.
+
+### Also settled empirically
+
+Step 1 succeeding proves more than the secret. Entra ID issued a token for scope
+`https://org<...>.api.crm.dynamics.com/.default`, so the **`.api.` infix resolves** —
+the connector's scope is confirmed by the identity provider, not just by
+documentation. Entra ID validates the client before the resource, so this only becomes
+provable once a real secret is in play.
 
 ---
 

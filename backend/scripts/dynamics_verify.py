@@ -214,10 +214,23 @@ def main() -> int:
 
     # THE FAILURE THIS SCRIPT EXISTS FOR.
     detail = json.dumps(payload)[:400] if isinstance(payload, dict) else str(payload)[:400]
+
+    # Dataverse's own wording for this is actively misleading: 403 with
+    # 0x80072560 "The user is not a member of the organization." Nothing in that
+    # points at an application user, and it reads like an account was removed from
+    # something. Confirmed against a real environment on 2026-07-26: this is
+    # precisely what a correct app registration with NO application user returns.
+    signature = "0x80072560" in detail or "not a member of the organization" in detail
+    certainty = (
+        "THIS IS THE MISSING APPLICATION USER -- confirmed by the error signature."
+        if signature
+        else "THIS IS ALMOST CERTAINLY THE MISSING APPLICATION USER."
+    )
+
     _fail(
         f"the token WORKED but Dataverse rejected the request ({status}).\n"
         f"  {detail}\n\n"
-        "  THIS IS ALMOST CERTAINLY THE MISSING APPLICATION USER.\n\n"
+        f"  {certainty}\n\n"
         "  A token proves only that Entra ID trusts the app registration. To read\n"
         "  data, the app also needs a Dataverse USER bound to it:\n\n"
         "    Power Platform admin center -> Environments -> your environment\n"
