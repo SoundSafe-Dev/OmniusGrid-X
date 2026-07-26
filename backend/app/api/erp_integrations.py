@@ -69,19 +69,37 @@ class ERPIntegrationUpdate(BaseModel):
 
 
 class ERPIntegrationResponse(BaseModel):
-    """Response with ERP integration details"""
+    """Response with ERP integration details.
+
+    OPTIONALITY HERE MIRRORS THE COLUMNS, deliberately.
+
+    `sync_schedule` and `erp_type` are `nullable=True` on
+    `integration_configurations`, and `sync_frequency_minutes` has only a
+    Python-side default — so a row written by anything other than the create
+    endpoint (the demo seeder, a migration, a direct insert, a fixture) can hold
+    NULL in all three.
+
+    They were declared non-optional here, which meant such a row could not be
+    serialised at all: pydantic raised inside the handler and FastAPI returned a
+    500. Not for one endpoint but for FOUR — create, list, get and update all build
+    this model — so a single NULL made the integration unreadable AND uneditable,
+    with a 500 that names a validation error rather than the data.
+
+    A response model must never be stricter than the columns behind it. Asserted by
+    tests/test_erp_response_schema.py.
+    """
     id: str
     integration_name: str
-    erp_type: str
-    erp_version: Optional[str]
+    erp_type: Optional[str] = None
+    erp_version: Optional[str] = None
     auth_type: str
     base_url: str
     is_active: bool
-    sync_schedule: str
-    sync_frequency_minutes: int
-    last_successful_sync: Optional[datetime]
-    created_at: datetime
-    updated_at: datetime
+    sync_schedule: Optional[str] = None
+    sync_frequency_minutes: Optional[int] = None
+    last_successful_sync: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
 
 class FieldMappingCreate(BaseModel):
@@ -119,16 +137,26 @@ class FieldMappingResponse(BaseModel):
 
 
 class SyncStatusResponse(BaseModel):
-    """Response with sync status"""
+    """Response with sync status.
+
+    Same rule as ERPIntegrationResponse: optionality mirrors the columns.
+    `records_synced` and `records_failed` carry a Python-side `default=0`, which does
+    NOT apply to rows written by anything but the ORM — a migration backfill or a raw
+    INSERT leaves them NULL, and a required `int` here turns that row into a 500 from
+    the sync-status endpoint. `updated_at` is likewise not `nullable=False`.
+
+    Found by tests/test_erp_response_schema.py, which was written for the identical
+    defect in ERPIntegrationResponse and then found this one on its first run.
+    """
     id: str
     entity_type: str
-    last_sync_at: Optional[datetime]
-    last_sync_status: Optional[str]
-    records_synced: int
-    records_failed: int
-    sync_duration_seconds: Optional[float]
-    next_sync_at: Optional[datetime]
-    updated_at: datetime
+    last_sync_at: Optional[datetime] = None
+    last_sync_status: Optional[str] = None
+    records_synced: Optional[int] = None
+    records_failed: Optional[int] = None
+    sync_duration_seconds: Optional[float] = None
+    next_sync_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
 
 # ==================== Endpoints ====================
