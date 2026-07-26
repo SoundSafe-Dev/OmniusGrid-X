@@ -713,6 +713,59 @@ async def run_erp_sync(integration_id: str, organization_id: str, entity_types: 
     return summary
 
 
+@router.get("/{integration_id}/webhook-config")
+async def get_webhook_config(
+    integration_id: UUID,
+    db: AsyncSession = Depends(get_tenant_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """What this integration expects an inbound webhook to look like.
+
+    WHY THIS ENDPOINT EXISTS. The webhook route answers a deliberately uninformative
+    401: telling an unauthenticated caller *why* verification failed would let them
+    discover whether an integration exists, which scheme it uses and whether a secret
+    is set. Correct, and it leaves the operator wiring up a vendor with nothing to
+    debug.
+
+    So the same information is available here, to an AUTHENTICATED user of the owning
+    tenant. It reports the URL to register with the vendor, the header the credential
+    must arrive in, the scheme, and whether a secret is configured at all -- which is
+    the single most common reason a webhook 401s.
+
+    Never returns the secret itself.
+    """
+    from sqlalchemy import select
+
+    from app.services.erp_webhook_auth import describe_scheme
+
+    integration = (
+        await db.execute(
+            select(IntegrationConfiguration).where(
+                IntegrationConfiguration.id == integration_id,
+                IntegrationConfiguration.organization_id == current_user.organization_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if not integration:
+        raise HTTPException(status_code=404, detail="Integration not found")
+
+    scheme = describe_scheme(integration.erp_type, integration.configuration)
+    scheme["endpoint_path"] = f"/api/v1/erp/webhooks/{integration.erp_type}"
+    scheme["ready"] = bool(scheme["secret_configured"])
+    if not scheme["secret_configured"]:
+        scheme["next_step"] = (
+            "Set configuration.webhook_secret on this integration. Until then every "
+            "inbound webhook is rejected -- deliberately, because an integration "
+            "without a secret would otherwise accept unauthenticated writes."
+        )
+    else:
+        scheme["next_step"] = (
+            f"Register {scheme['endpoint_path']} with the vendor and have it send the "
+            f"credential in the {scheme['signature_header']!r} header."
+        )
+    return scheme
+
+
 @router.get("/{integration_id}/sync-status", response_model=List[SyncStatusResponse])
 async def get_sync_status(
     integration_id: UUID,

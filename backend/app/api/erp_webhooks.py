@@ -15,6 +15,8 @@ so it doesn't touch the integrations CRUD router.
 import base64
 import hashlib
 import hmac
+import json
+import os
 from typing import Any, Dict, Optional
 
 import structlog
@@ -25,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db
 from app.db.models import ERPIntegrationEvent, IntegrationConfiguration
+from app.services.erp_webhook_auth import authenticate_webhook
 
 logger = structlog.get_logger()
 
@@ -91,6 +94,38 @@ def verify_signature(
     return hex_ok or b64_ok
 
 
+def _accept_legacy_signature() -> bool:
+    """Is the deprecated canonical-JSON signature still accepted?
+
+    Off unless ERP_WEBHOOK_ACCEPT_LEGACY_SIGNATURE is explicitly truthy. Read per
+    request rather than cached at import so it can be turned off without a restart --
+    the point of a transition switch is being able to close it promptly.
+    """
+    return os.environ.get("ERP_WEBHOOK_ACCEPT_LEGACY_SIGNATURE", "").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+def _verify_legacy_canonical(
+    secret: Optional[str], raw_body: Optional[bytes], signature: Optional[str]
+) -> bool:
+    """The pre-fix scheme: HMAC over `json.dumps(parsed, sort_keys=True)`.
+
+    Retained ONLY so an in-flight deployment keeps working during an upgrade. It is
+    not a security equivalent: because it hashes a canonical form, a body with
+    reordered keys or different whitespace verifies against the same signature, so the
+    signature does not bind the bytes received.
+    """
+    if not secret or not signature or raw_body is None:
+        return False
+    try:
+        canonical = json.dumps(json.loads(raw_body), sort_keys=True).encode()
+    except (ValueError, TypeError):
+        return False
+    expected = hmac.new(secret.encode(), canonical, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, signature.strip())
+
+
 @router.post("/{erp_type}")
 async def receive_erp_webhook(
     erp_type: str,
@@ -137,20 +172,61 @@ async def receive_erp_webhook(
         raise HTTPException(status_code=404, detail=f"no active ERP integration for '{erp_type}'")
 
     integration = None
+    rejection_reasons = []
     for candidate in candidates:
-        secret = (candidate.configuration or {}).get("webhook_secret")
-        if verify_signature(secret, raw_body, x_webhook_signature):
+        # Vendor-aware: which header carries the credential, and which scheme it uses,
+        # are per-integration configuration with per-vendor defaults. Intuit signs
+        # base64 into `intuit-signature`; Dataverse sends a static header and no HMAC
+        # at all. See app/services/erp_webhook_auth.py.
+        ok, reason = authenticate_webhook(
+            erp_type=candidate.erp_type,
+            configuration=candidate.configuration,
+            raw_body=raw_body,
+            headers=request.headers,
+        )
+        if ok:
             integration = candidate
             break
+        rejection_reasons.append(reason)
+
+        if _accept_legacy_signature():
+            # TRANSITION ONLY, off by default, and loud every single time.
+            #
+            # The pre-fix scheme hashed a key-sorted re-serialisation of the parsed
+            # payload. It cannot authenticate any real vendor, so the only senders it
+            # ever had were internal. This exists purely so an already-running
+            # deployment is not bricked by the upgrade, and it is deliberately noisy
+            # rather than silent: a quiet compatibility shim becomes permanent.
+            if _verify_legacy_canonical(
+                (candidate.configuration or {}).get("webhook_secret"),
+                raw_body,
+                request.headers.get("x-webhook-signature"),
+            ):
+                logger.warning(
+                    "erp_webhook_accepted_via_legacy_signature",
+                    erp_type=erp_type,
+                    integration_id=str(candidate.id),
+                    detail=(
+                        "authenticated with the DEPRECATED canonical-JSON signature. "
+                        "The sender must switch to HMAC over the raw request body; no "
+                        "real ERP vendor can produce the legacy form. Unset "
+                        "ERP_WEBHOOK_ACCEPT_LEGACY_SIGNATURE once senders are updated."
+                    ),
+                )
+                integration = candidate
+                break
 
     if integration is None:
         # Logged server-side; the response stays generic so an unauthenticated caller
         # cannot probe how many integrations exist or whether any has a secret.
+        # Reasons are logged server-side only. Returning them would let an
+        # unauthenticated caller discover whether an integration exists, which auth
+        # mode it uses and whether a secret is configured.
         logger.warning(
             "erp_webhook_signature_rejected",
             erp_type=erp_type,
             candidates=len(candidates),
-            has_signature=bool(x_webhook_signature),
+            reasons=rejection_reasons,
         )
         raise HTTPException(status_code=401, detail="invalid webhook signature")
 

@@ -86,8 +86,12 @@ class _FakeRequest:
     because the raw body was never consulted.
     """
 
-    def __init__(self, raw: bytes):
+    def __init__(self, raw: bytes, headers: dict | None = None):
         self._raw = raw
+        # The route reads the credential out of the full header map now, because
+        # which header carries it is per-vendor: Intuit uses `intuit-signature`,
+        # Dataverse a static header of the operator's choosing.
+        self.headers = headers or {}
 
     async def body(self) -> bytes:
         return self._raw
@@ -102,7 +106,8 @@ def _call(session, event_id, event_data):
     raw = json.dumps(event_data).encode()
     sig = erp_webhooks.compute_signature(SECRET, raw)
     return erp_webhooks.receive_erp_webhook(
-        erp_type="sap", event_data=event_data, request=_FakeRequest(raw),
+        erp_type="sap", event_data=event_data,
+        request=_FakeRequest(raw, {"x-webhook-signature": sig}),
         x_webhook_signature=sig, x_event_type="po.created",
         x_event_id=event_id, x_source_system="sap", db=session,
     )

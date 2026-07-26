@@ -12,6 +12,7 @@ credentials only for the tier you're actually working on.
 | Understand how we get confidence without owning these systems | [validating-connectors-without-an-erp.md](validating-connectors-without-an-erp.md) |
 | Set up Dynamics / Dataverse (free, ~20 min) | [dynamics-dataverse-setup.md](dynamics-dataverse-setup.md) |
 | Run a spec-driven mock of a vendor API | [../../tools/erp-mocks/README.md](../../tools/erp-mocks/README.md) |
+| **Wire a vendor's webhooks in** (what each vendor sends, and how to verify it) | [webhooks-vendor-setup.md](webhooks-vendor-setup.md) |
 | Copy the env var names | [`backend/.env.erp.example`](../../backend/.env.erp.example) |
 
 ---
@@ -133,6 +134,36 @@ the previous one, so a shared static value goes stale the moment anyone uses it.
 two people run the Intuit harness against the same company, the second gets
 `invalid_grant`. Use separate sandbox companies, or accept that the token needs
 re-issuing.
+
+---
+
+## Inbound webhooks — check your config before the vendor sends anything
+
+```
+GET /api/v1/erp/integrations/{id}/webhook-config
+```
+
+Reports the endpoint path, the header the credential must arrive in, the scheme, and
+whether a secret is set. Never the secret. It exists because the webhook route answers
+a deliberately uninformative 401 — telling an unauthenticated caller *why* it failed
+would let them probe your configuration — which leaves an operator with nothing to
+debug.
+
+**Vendors do not agree on any of this.** `X-Webhook-Signature` was a header *we*
+invented; no vendor sends it. Intuit sends base64 HMAC in `intuit-signature`; Dataverse
+sends a static header and has no HMAC option at all. Header and scheme are therefore
+per-integration configuration with per-vendor defaults, so wiring up Intuit needs only
+the verifier token. Full matrix in
+[webhooks-vendor-setup.md](webhooks-vendor-setup.md).
+
+**Sign the bytes you send.** The verifier used to hash a key-sorted re-serialisation of
+the parsed payload, which no vendor produces — so every genuine webhook was rejected,
+and the tests passed because they signed the same wrong way. If you write a sender,
+serialise once and sign those exact bytes.
+
+Upgrading a deployment with an old-scheme sender: `ERP_WEBHOOK_ACCEPT_LEGACY_SIGNATURE=true`
+accepts the legacy form during a transition, logging loudly every time. It weakens the
+binding between signature and body, so it should not live long.
 
 ---
 

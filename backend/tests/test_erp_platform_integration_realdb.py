@@ -262,3 +262,80 @@ class TestEventsTab:
         assert theirs.status_code in (200, 403, 404)
         if theirs.status_code == 200:
             assert theirs.json() == [], "org B can read org A's ERP integration events"
+
+
+class TestWebhookConfigForOperators:
+    """`GET /{id}/webhook-config` — what turns a silent 401 into something actionable.
+
+    The webhook route answers an uninformative 401 on purpose: telling an
+    unauthenticated caller why verification failed would let them probe whether an
+    integration exists and how it is configured. Correct, and it leaves the operator
+    wiring up a vendor with nothing to work from. This endpoint gives the same facts to
+    an authenticated user of the owning tenant.
+    """
+
+    async def test_it_reports_what_the_vendor_must_send(self, client_a, synced_integration):
+        response = await client_a.get(f"{ERP_BASE}/{synced_integration}/webhook-config")
+        assert response.status_code == 200, response.text
+
+        config = response.json()
+        assert config["endpoint_path"] == "/api/v1/erp/webhooks/dynamics"
+        # Dataverse serviceendpoint webhooks have no HMAC option -- they send a static
+        # header. Reporting an HMAC scheme here would send the operator down a path
+        # Dynamics cannot follow.
+        assert config["auth_mode"] == "shared_secret"
+        assert config["signature_header"]
+        assert config["next_step"]
+
+    async def test_it_says_plainly_when_no_secret_is_configured(
+        self, client_a, synced_integration
+    ):
+        """The single most common reason a webhook 401s, and the one the route cannot
+        tell you."""
+        response = await client_a.get(f"{ERP_BASE}/{synced_integration}/webhook-config")
+        config = response.json()
+        assert config["secret_configured"] is False
+        assert config["ready"] is False
+        assert "webhook_secret" in config["next_step"]
+
+    async def test_it_never_returns_the_secret(self, client_a, session_maker, seeded_orgs):
+        response = await client_a.get(f"{ERP_BASE}/{await _integration_with_secret(session_maker, seeded_orgs)}/webhook-config")
+        assert response.status_code == 200, response.text
+        assert "super-secret-webhook-value" not in response.text
+        assert response.json()["secret_configured"] is True
+
+    async def test_another_tenant_cannot_read_the_webhook_config(
+        self, client_b, synced_integration
+    ):
+        """It names the header and scheme, which is reconnaissance for forging a
+        webhook against someone else's integration."""
+        response = await client_b.get(f"{ERP_BASE}/{synced_integration}/webhook-config")
+        assert response.status_code in (403, 404), response.status_code
+
+
+async def _integration_with_secret(session_maker, seeded_orgs) -> str:
+    """An integration for org A that DOES have a webhook secret configured."""
+    org_a = str(seeded_orgs["org_a_id"])
+    integration_id = str(uuid.uuid4())
+    async with session_maker() as db:
+        await db.execute(
+            text("SELECT set_config('app.current_org_id', :org, false)"), {"org": org_a}
+        )
+        db.add(
+            IntegrationConfiguration(
+                id=integration_id,
+                integration_type="erp",
+                integration_name="with-webhook-secret",
+                organization_id=org_a,
+                erp_type="intuit",
+                is_active=True,
+                configuration={
+                    "erp_type": "intuit",
+                    "auth_type": "oauth2",
+                    "webhook_secret": "super-secret-webhook-value",
+                },
+            )
+        )
+        await db.commit()
+        await _clear_guc(db)
+    return integration_id

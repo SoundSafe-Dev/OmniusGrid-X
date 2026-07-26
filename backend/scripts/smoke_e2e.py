@@ -129,15 +129,38 @@ def main() -> int:
         ents = r.json() if r.status_code == 200 else []
         check("ERP hub entities list", any(e["entity_id"] == "PO-SMOKE-1" for e in ents), r.text[:200])
 
+        # SIGN THE EXACT BYTES SENT. The signature is an HMAC over the RAW request
+        # body, because that is what every ERP vendor signs. This used to hash
+        # `json.dumps(event, sort_keys=True)` while httpx serialised the dict with its
+        # own separators and key order -- two different byte strings, so once the
+        # server started verifying the real body this smoke check would have failed
+        # with a 401. Serialise ONCE, sign those bytes, send those bytes.
         event = {"event_type": "invoice.created", "event_id": "evt-1", "entity_type": "Invoice", "amount": 12}
-        sig = hmac.new(b"smoke-hmac", json.dumps(event, sort_keys=True).encode(), hashlib.sha256).hexdigest()
-        r = client.post("/api/v1/erp/webhooks/netsuite", json=event, headers={"X-Webhook-Signature": sig})
-        check("ERP webhook accepted (HMAC verified)", r.status_code == 200
+        body = json.dumps(event).encode()
+        sig = hmac.new(b"smoke-hmac", body, hashlib.sha256).hexdigest()
+        post_headers = {"X-Webhook-Signature": sig, "Content-Type": "application/json"}
+
+        r = client.post("/api/v1/erp/webhooks/netsuite", content=body, headers=post_headers)
+        check("ERP webhook accepted (HMAC over raw body)", r.status_code == 200
               and r.json().get("status") == "accepted", r.text[:200])
-        r = client.post("/api/v1/erp/webhooks/netsuite", json=event, headers={"X-Webhook-Signature": sig})
+        r = client.post("/api/v1/erp/webhooks/netsuite", content=body, headers=post_headers)
         check("ERP webhook dedupes replays", r.json().get("status") == "duplicate", r.text[:200])
-        r = client.post("/api/v1/erp/webhooks/netsuite", json=event, headers={"X-Webhook-Signature": "bad"})
+        r = client.post("/api/v1/erp/webhooks/netsuite", content=body,
+                        headers={**post_headers, "X-Webhook-Signature": "bad"})
         check("ERP webhook rejects bad signature", r.status_code == 401, r.text[:200])
+
+        # The regression that motivated all of this: a signature over a re-serialised,
+        # key-sorted rendering of the payload must NOT be accepted, because no vendor
+        # produces it. If this ever passes, the old scheme is back.
+        legacy_sig = hmac.new(
+            b"smoke-hmac", json.dumps(event, sort_keys=True).encode(), hashlib.sha256
+        ).hexdigest()
+        reordered = json.dumps({"amount": 12, "entity_type": "Invoice",
+                                "event_id": "evt-2", "event_type": "invoice.created"}).encode()
+        r = client.post("/api/v1/erp/webhooks/netsuite", content=reordered,
+                        headers={**post_headers, "X-Webhook-Signature": legacy_sig})
+        check("ERP webhook rejects the legacy canonical-JSON signature",
+              r.status_code == 401, r.text[:200])
 
         r = client.get(f"/api/v1/erp/integrations/{erp_id}/events", headers=AUTH)
         evs = r.json() if r.status_code == 200 else []

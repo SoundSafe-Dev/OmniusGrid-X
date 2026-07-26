@@ -150,3 +150,94 @@ class TestTenantResolutionIsBySignature:
         """Otherwise an integration with no secret configured would swallow every
         other tenant's events."""
         assert not verify_signature(None, RAW_BODY, _hex("anything", RAW_BODY))
+
+
+class TestTheLegacyTransitionWindow:
+    """The upgrade path, and its limits.
+
+    Changing the scheme to hash the raw body is a breaking change for any sender still
+    producing the canonical-JSON form. In this repository the only such sender was
+    `scripts/smoke_e2e.py`, now fixed — but a deployment may have others, and bricking
+    a running staging environment on upgrade is not acceptable.
+
+    So there is a switch. It is OFF by default, loud when used, and deliberately not a
+    security equivalent.
+    """
+
+    def test_it_is_off_by_default(self, monkeypatch):
+        """A compatibility shim that defaults ON becomes permanent."""
+        monkeypatch.delenv("ERP_WEBHOOK_ACCEPT_LEGACY_SIGNATURE", raising=False)
+        from app.api.erp_webhooks import _accept_legacy_signature
+
+        assert _accept_legacy_signature() is False
+
+    @pytest.mark.parametrize("value", ["1", "true", "TRUE", "yes", "on"])
+    def test_it_turns_on_for_the_usual_truthy_spellings(self, monkeypatch, value):
+        monkeypatch.setenv("ERP_WEBHOOK_ACCEPT_LEGACY_SIGNATURE", value)
+        from app.api.erp_webhooks import _accept_legacy_signature
+
+        assert _accept_legacy_signature() is True
+
+    @pytest.mark.parametrize("value", ["", "0", "false", "no", "off", "maybe"])
+    def test_anything_else_leaves_it_off(self, monkeypatch, value):
+        monkeypatch.setenv("ERP_WEBHOOK_ACCEPT_LEGACY_SIGNATURE", value)
+        from app.api.erp_webhooks import _accept_legacy_signature
+
+        assert _accept_legacy_signature() is False
+
+    def test_it_is_read_per_call_not_cached_at_import(self, monkeypatch):
+        """The point of a transition switch is being able to CLOSE it promptly. A value
+        captured at import would need a restart, which is exactly when someone leaves
+        it open."""
+        from app.api.erp_webhooks import _accept_legacy_signature
+
+        monkeypatch.setenv("ERP_WEBHOOK_ACCEPT_LEGACY_SIGNATURE", "true")
+        assert _accept_legacy_signature() is True
+        monkeypatch.setenv("ERP_WEBHOOK_ACCEPT_LEGACY_SIGNATURE", "false")
+        assert _accept_legacy_signature() is False
+
+    def test_the_legacy_verifier_accepts_the_old_scheme(self):
+        from app.api.erp_webhooks import _verify_legacy_canonical
+
+        body = b'{"b":2,"a":1}'
+        legacy = hmac.new(
+            SECRET.encode(), json.dumps(json.loads(body), sort_keys=True).encode(),
+            hashlib.sha256,
+        ).hexdigest()
+        assert _verify_legacy_canonical(SECRET, body, legacy)
+
+    def test_the_legacy_verifier_shows_why_it_is_weaker(self):
+        """Not a security equivalent, stated as a test so it is not mistaken for one.
+
+        Because it hashes a CANONICAL form, two different request bodies — the same
+        fields in a different order — verify against the SAME signature. The signature
+        therefore does not bind the bytes received, which is the entire property a
+        webhook signature exists to provide.
+        """
+        from app.api.erp_webhooks import _verify_legacy_canonical
+
+        one = b'{"a":1,"b":2}'
+        other = b'{"b":2,"a":1}'
+        signature = hmac.new(
+            SECRET.encode(), json.dumps({"a": 1, "b": 2}, sort_keys=True).encode(),
+            hashlib.sha256,
+        ).hexdigest()
+
+        assert _verify_legacy_canonical(SECRET, one, signature)
+        assert _verify_legacy_canonical(SECRET, other, signature), (
+            "expected the legacy scheme to accept a reordered body — that is precisely "
+            "the weakness being documented"
+        )
+        # The raw-body scheme does not.
+        assert not verify_signature(SECRET, other, compute_signature(SECRET, one))
+
+    def test_the_legacy_verifier_still_fails_closed(self):
+        from app.api.erp_webhooks import _verify_legacy_canonical
+
+        body = b'{"a":1}'
+        good = hmac.new(SECRET.encode(), json.dumps({"a": 1}, sort_keys=True).encode(),
+                        hashlib.sha256).hexdigest()
+        assert not _verify_legacy_canonical(None, body, good)      # no secret
+        assert not _verify_legacy_canonical(SECRET, body, None)    # no signature
+        assert not _verify_legacy_canonical(SECRET, b"not json", good)
+        assert not _verify_legacy_canonical(SECRET, body, "deadbeef")
