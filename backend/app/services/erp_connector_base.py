@@ -591,6 +591,40 @@ class ERPConnectorBase(ABC):
         lowered = error.lower()
         return any(marker in lowered for marker in self.AUTH_ERROR_MARKERS)
 
+    #: Exception types and message fragments that mean "we never reached the
+    #: system", as opposed to "the system answered and declined". The distinction is
+    #: the difference between paging someone and not.
+    TRANSPORT_ERROR_MARKERS = (
+        "cannot connect to host", "connection refused", "connection reset",
+        "connection aborted", "server disconnected", "timeout", "timed out",
+        "name or service not known", "temporary failure in name resolution",
+        "nodename nor servname", "network is unreachable", "no route to host",
+        "certificate verify failed", "ssl:",
+    )
+
+    def _looks_like_transport_failure(self, exc: Exception) -> bool:
+        """Did we fail to reach the system at all?
+
+        Checked by exception TYPE first, because aiohttp's connector errors carry
+        the most reliable signal, then by message as a backstop for connectors that
+        re-raise as a plain Exception (most of ours do).
+        """
+        import asyncio
+
+        try:
+            import aiohttp
+
+            if isinstance(exc, (aiohttp.ClientConnectionError, aiohttp.ServerTimeoutError)):
+                return True
+        except ImportError:  # pragma: no cover - aiohttp is a hard dependency
+            pass
+
+        if isinstance(exc, (asyncio.TimeoutError, OSError, ConnectionError)):
+            return True
+
+        message = str(exc).lower()
+        return any(marker in message for marker in self.TRANSPORT_ERROR_MARKERS)
+
     async def probe_health(
         self,
         entity_type: str,
@@ -656,6 +690,24 @@ class ERPConnectorBase(ABC):
                     "status": "unhealthy",
                     "message": f"authentication rejected on probe: {exc}",
                     "failure": "authentication",
+                }
+            # A TRANSPORT failure is an outage, not a missing module. Without this
+            # branch an unreachable system reports `degraded` and nobody is paged.
+            #
+            # Only visible once a connector had a DIFFERENT auth host and data host.
+            # Everywhere else an unreachable host also breaks authentication, so it
+            # exited at step 1 and reported unhealthy correctly. Dynamics
+            # authenticates against login.microsoftonline.com and reads from
+            # <org>.api.crm.dynamics.com, so with Dataverse unreachable it
+            # authenticated fine and then reported "the probe entity was not
+            # readable" -- i.e. a total outage as a non-paging condition.
+            # Caught against a real environment by pointing api_url at a dead port.
+            if self._looks_like_transport_failure(exc):
+                return {
+                    **base,
+                    "status": "unhealthy",
+                    "message": f"cannot reach {self.config.erp_type.value}: {exc}",
+                    "failure": "connection",
                 }
             return {
                 **base,

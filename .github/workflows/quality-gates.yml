@@ -601,6 +601,41 @@ jobs:
         # credential, so an expired token is distinguishable from an unconfigured one.
         run: pytest tests/test_erp_intuit_sandbox.py -q -rs
 
+  # --- ERP Tier 4: the Dynamics connector against a REAL Dataverse ------------
+  erp-dynamics-sandbox:
+    runs-on: ubuntu-latest
+    # Runs only when the four Dataverse secrets are present. A free Power Apps
+    # Developer Plan environment provides them; see
+    # docs/erp/dynamics-dataverse-setup.md. Without them the job is a no-op rather
+    # than a red build.
+    #
+    # Worth having because a real Dataverse found two defects a fixture could not:
+    # @odata.nextLink pagination (GET /stringmaps returns exactly 5000 rows AND a
+    # nextLink, so one request silently dropped the rest), and probe_health
+    # reporting an unreachable system as `degraded` instead of `unhealthy` --
+    # visible only because Dynamics is the first connector whose auth host differs
+    # from its data host.
+    if: ${{ github.event_name == 'push' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install backend deps
+        working-directory: ./backend
+        run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Dataverse sandbox tests
+        working-directory: ./backend
+        env:
+          DATAVERSE_ORG: ${{ secrets.DATAVERSE_ORG }}
+          DATAVERSE_TENANT_ID: ${{ secrets.DATAVERSE_TENANT_ID }}
+          DATAVERSE_CLIENT_ID: ${{ secrets.DATAVERSE_CLIENT_ID }}
+          DATAVERSE_CLIENT_SECRET: ${{ secrets.DATAVERSE_CLIENT_SECRET }}
+        # Skips cleanly when absent; fails loudly on an expired client secret, so a
+        # stale credential is distinguishable from an unconfigured one.
+        run: pytest tests/test_erp_dynamics_sandbox.py -q -rs
+
   # --- ERP Tier 3: the Odoo connector against a REAL Odoo -------------------
   erp-odoo-integration:
     runs-on: ubuntu-latest

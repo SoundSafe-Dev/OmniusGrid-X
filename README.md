@@ -329,7 +329,8 @@ thing that still needs its model is the Correlation-AI **inference** (a ready
 | RAG / compliance doc pipeline (SeaweedFS/S3 + Gemma inference) | **Hudson** (htreinen) | `htreinen`, `feature/RAG-Compliance-Doc-Pipeline`. `/api/v1/rag`; containerization seam in `docs/RAG_CONTAINERIZATION.md`. His `origin` is the SoundSafe-Dev mirror. |
 | Tenant isolation / RBAC / security hardening | **Hridyansh** | `hridyansh/tenant-isolation-middleware`. RLS enforced through the canonical `app.current_org_id` GUC everywhere (incl. ERP tables). |
 | OTA / edge command dispatch / agent releases | **Hridyansh** | `hridyansh/edge-command-dispatch`, `hridyansh/edge-agent-retry-logic`. Rollout orchestrator + agent-side executor; `ota-rollout-worker` runs in compose + k8s. |
-| ERP connector + integration / package layout | **Hridyansh** | `hridyansh/integration`, `hridyansh/integration-erp`, `hridyansh/package-renaming-fix`. |
+| ERP integration surface / package layout | **Hridyansh** | `hridyansh/integration`, `hridyansh/integration-erp`, `hridyansh/package-renaming-fix`. |
+| ERP **connector internals + validation harness** | **Hamad** | Reassigned during the convergence program. The 8 connectors, their auth/pagination/envelope handling, and the Tier 0–4 harness. **Read [`docs/erp/README.md`](docs/erp/README.md) before touching a connector** — the guards there encode defects that already shipped. |
 | Edge platform, backend platform, frontend/UI, deploy/CI, schema, observability, docs | **Hamad** | `hamad/converged-pre-main` (integration → `main`). The convergence program + the FS fixed-sprints above. |
 | *(ramp-up)* — under Harsh's lane | **Alex** | New contributor (joining the correlation/MLOps area under Harsh); not yet assigned a branch or task. |
 
@@ -338,6 +339,62 @@ thing that still needs its model is the Correlation-AI **inference** (a ready
 > `main`** (or from your own active branch after merging `origin/main` into it),
 > not from stale feature branches. A one-time `TEAM_UPDATE.md` heads-up was
 > pushed onto each active dev branch (safe to delete once read).
+
+## ERP integrations — 8 connectors, and how to work on them
+
+**SAP S/4HANA · Oracle Fusion · Dynamics 365 · NetSuite · Odoo · Infor ION · Epicor Kinetic · Intuit QuickBooks**
+
+📖 **[`docs/erp/README.md`](docs/erp/README.md) is the entry point.** Start there.
+
+**You need no credentials to work on ERP code.** ~300 tests are hermetic — no network,
+no Docker, no accounts:
+
+```bash
+cd backend && venv/bin/python -m pytest tests/test_erp_*.py -q
+```
+
+Everything needing a live system skips with a reason naming the variable it wants
+(`-rs` prints them). Copy [`backend/.env.erp.example`](backend/.env.erp.example) to
+`.env.erp` (gitignored) and fill in only the tier you're working on.
+
+### Validation tiers — what each proves, and what it costs
+
+| Tier | Proves | Cost | Status |
+|------|--------|------|--------|
+| 0 — static | every connector imports; factory targets resolve | free | ✅ |
+| 1 — request shape | the exact request we build | free | ✅ |
+| 2 — spec-driven mocks | the vendor's **own spec** rejects malformed requests | free | ✅ SAP · Dynamics |
+| 3 — real ERP locally | a real server gets a vote | free (Docker) | ✅ Odoo |
+| 4 — vendor sandbox | the actual vendor answers | free | ✅ SAP · Dynamics · ⬜ Intuit |
+
+**Every tier we stood up found a defect on its first run** — which is the argument for
+building the cheap ones rather than waiting for tenant access.
+
+Fastest real-server win, no account required:
+
+```bash
+docker compose -f docker-compose.erp-sandbox.yml up -d
+cd backend && venv/bin/python scripts/setup_odoo_sandbox.py
+RUN_ODOO_INTEGRATION=1 venv/bin/python -m pytest tests/test_erp_odoo_integration.py -q
+```
+
+### Two rules, both from defects that shipped
+
+**Never invent an endpoint.** All seven original connectors POSTed to a
+`/webhooks`-shaped URL with byte-identical payloads across seven unrelated vendors.
+Against a real Odoo it returned `True` for a subscription never created — Odoo's
+`/xmlrpc/2/<anything>` route matches, and it answers HTTP 200 with the fault in the
+*body*. If you can't verify a vendor's mechanism, declare it in
+`EVENT_SUBSCRIPTION_MECHANISM` and return `False`.
+
+**Never report zero rows for a response you didn't understand.** A missing envelope
+must raise, not return `[]`. "No results" and "we misread the response" are
+indistinguishable to a caller, and one of them is silent data loss. Related: **follow
+pagination to completion** — every connector that skipped this truncated silently, and
+it's the most repeated defect in the subsystem.
+
+Guards enforcing both live in `backend/tests/test_erp_no_invented_endpoints.py` and
+friends. Each is mutation-tested: revert the fix and the test fails.
 
 ## Architecture
 

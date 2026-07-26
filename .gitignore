@@ -100,3 +100,14 @@ frontend/blob-report/
 # Accept header and compression requirements.
 tools/erp-mocks/specs/*
 !tools/erp-mocks/specs/.gitkeep
+
+# ERP credential files. `.env.erp` holds live vendor credentials -- a SAP API key
+# issued to a person, Entra ID client secrets, Intuit refresh tokens. The generic
+# `.env` rule above does NOT match `.env.erp`, which is how a real credential could
+# have been committed by someone following the setup docs.
+# Templates (*.example) stay tracked.
+.env.erp
+.env.erp.*
+backend/.env.erp
+backend/.env.erp.*
+!*.example

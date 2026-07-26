@@ -18,6 +18,8 @@ The framing matters: every defect found while building these connectors was a
 | Odoo doing REST against an RPC endpoint | No |
 | SAP/Oracle/Dynamics not importable at all | No |
 | A trailing slash on `base_url` breaking every request | No |
+| Dataverse pagination ignored past 5000 rows | **Dataverse proved it; no** |
+| An unreachable system reported `degraded`, not `unhealthy` | **Dataverse proved it; no** |
 | Permanent auth failures retried 4x with backoff | No |
 | `subscribe_to_events` reporting success for nothing | **Odoo proved it; no** |
 | Intuit having no client-credentials grant at all | No |
@@ -240,7 +242,7 @@ five would just move the false report to a different tenant.
 | SAP | **Business Accelerator Hub sandbox** — live OData endpoints with test data, just an API key | **Free — DONE** |
 | **Intuit / QuickBooks** | **Developer account → sandbox company. Client credentials VERIFIED; needs the one-time consent (`scripts/intuit_authorize.py`)** | **Free — in progress** |
 | SAP | BTP trial account | Free, time-limited |
-| Dynamics 365 | **Power Apps Developer Plan** — 3 Dataverse environments, no approval queue. See [dynamics-dataverse-setup.md](dynamics-dataverse-setup.md) | Free |
+| Dynamics 365 | **Power Apps Developer Plan** — DONE, see below and [dynamics-dataverse-setup.md](dynamics-dataverse-setup.md) | **Free — DONE** |
 | NetSuite | Partner or developer account (`TSTDRV*`) | Requires partner registration |
 | Infor / Epicor | Partner programme | Commercial |
 
@@ -276,6 +278,43 @@ is the entire argument for this tier.
 **Cannot tell us:** the OAuth2 flow (the sandbox uses an API key where a real
 S/4HANA system uses client-credentials), nor how a *customer's* system behaves —
 see below.
+
+### DONE for Dynamics — and it found the worst kind of defect
+
+`backend/tests/test_erp_dynamics_sandbox.py`, 16 tests against a live Dataverse
+environment from a free Power Apps Developer Plan.
+
+**Silent truncation.** The connector issued ONE request and returned `value`.
+Dataverse caps a page at **5000 rows** and signals more with `@odata.nextLink`.
+Verified against the real environment: `GET /stringmaps` returns exactly 5000 rows
+*and* a nextLink. So "all string maps" was a plausible, wrong answer with no error
+anywhere — the most repeated defect in this subsystem, and one a fixture cannot
+disconfirm, because the fixture's page size is whatever we wrote.
+
+**A hole in `probe_health` itself**, and this one is subtle. An unreachable Dataverse
+reported **`degraded`** — "the probe entity was not readable, often a module that is
+not installed" — for a total outage. Nobody would be paged.
+
+Why it survived six connectors: everywhere else an unreachable host also breaks
+*authentication*, so the probe exits at step 1 and correctly says `unhealthy`.
+Dynamics is the first connector whose **auth host differs from its data host** — Entra
+ID at `login.microsoftonline.com`, data at `<org>.api.crm.dynamics.com`. With
+Dataverse unreachable, authentication succeeded and only the entity probe failed,
+which is indistinguishable from a missing module. `probe_health` now classifies
+transport failures (connection refused, DNS, TLS, timeout) as `unhealthy` with
+`failure: connection`.
+
+**Entity set names are not derivable.** Measured on the real environment: **197 of
+872** entity sets — **22.6%** — are not `logical + "s"`. `activityparty` is
+`activityparties`, `agentmemory` is `agentmemories`, and a long tail take a `...set`
+suffix. Guessing produces a 404 that reads as a missing table. It also confirmed the
+new health probe entity: `systemuser` → `systemusers`.
+
+**And it settled an open question.** The connector requests scope
+`https://{org}.api.crm.dynamics.com/.default` — that `.api.` infix was twice flagged
+as a suspected defect. Entra ID issued a token for it, so the identity provider itself
+confirms it. Entra validates the client *before* the resource, so it was unprovable
+until a real secret existed.
 
 ---
 
@@ -330,7 +369,7 @@ Worth stating plainly so the confidence is not overclaimed:
 5. **Adopt cassettes now**, so that whenever a tenant appears the traffic is captured
    rather than lost.
 
-Tiers 0, 1, 3 (Odoo) and 4 (SAP) are done. Tier 2 — spec-driven Prism mocks for the
+Tiers 0, 1, 3 (Odoo) and 4 (SAP + Dynamics) are done. Tier 2 — spec-driven Prism mocks for the
 vendors we cannot host — is the next highest-value step, because the health-check
 defect Odoo exposed almost certainly exists in the other six and nothing currently
 proves otherwise.

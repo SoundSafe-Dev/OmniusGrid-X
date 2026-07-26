@@ -117,63 +117,87 @@ class DynamicsConnector(ERPConnectorBase):
         filters: Optional[Dict[str, Any]] = None,
         limit: Optional[int] = None
     ) -> List[Dict[str, Any]]:
+        """Fetch rows for a Dataverse entity set, following pagination to completion.
+
+        `entity_type` is the ENTITY SET NAME (`accounts`), not the logical name
+        (`account`). The two differ for 197 of 872 entity sets in a stock
+        environment -- 22.6% -- so deriving one from the other by appending "s"
+        produces a 404 that reads as a missing table. `activityparty` is
+        `activityparties`, `agentmemory` is `agentmemories`, and a long tail take a
+        `...set` suffix. Use EntityDefinitions to resolve names; see
+        tools/erp-mocks/fetch-spec.sh.
+
+        PAGINATION, AND WHY THIS IS NOT COSMETIC. Dataverse returns at most 5000
+        rows per page and signals more with `@odata.nextLink`. This method used to
+        issue one request and return `value`, silently discarding everything past
+        the first page. Verified against a real environment: `GET /stringmaps`
+        returns exactly 5000 rows and a nextLink -- so a caller asking for "all
+        string maps" got a plausible, wrong answer with no error anywhere.
+
+        `@odata.nextLink` is an ABSOLUTE URL with its own query string, including an
+        opaque skip token. It must be requested verbatim; re-applying our own params
+        to it changes the cursor and either repeats or skips rows.
         """
-        Fetch data from Dynamics 365 API.
-        
-        Args:
-            entity_type: Dynamics entity type (e.g., 'invoices', 'accounts')
-            filters: Optional filters
-            limit: Optional limit
-            
-        Returns:
-            List of entity data dictionaries
-        """
-        # Get authentication token
         token = await self.get_auth_token()
-        
-        # Build API URL
-        entity_url = f"{self.api_url}{entity_type}"
-        
-        # Build query parameters
+
+        url = f"{self.api_url}{entity_type}"
         params = {}
         if filters:
-            filter_string = self._build_filter_string(filters)
-            params["$filter"] = filter_string
-        
+            params["$filter"] = self._build_filter_string(filters)
         if limit:
             params["$top"] = str(limit)
-        
-        params["$format"] = "json"
-        
-        # Execute request with retry
-        async def _fetch():
-            headers = {
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/json",
-                "Content-Type": "application/json",
-                "OData-MaxVersion": "4.0",
-                "OData-Version": "4.0"
-            }
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.get(entity_url, headers=headers, params=params) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        return data.get("value", [])
-                    else:
-                        error_text = await response.text()
-                        raise Exception(f"Dynamics API error: {response.status} - {error_text}")
-        
-        results = await self.execute_with_retry(_fetch)
-        
+
+        rows: List[Dict[str, Any]] = []
+        # `params` only on the FIRST request; nextLink already carries them.
+        next_params = params
+
+        while url:
+            async def _fetch(url=url, next_params=next_params):
+                headers = {
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                    "OData-MaxVersion": "4.0",
+                    "OData-Version": "4.0"
+                }
+                async with aiohttp.ClientSession(
+                    timeout=aiohttp.ClientTimeout(total=self.config.timeout)
+                ) as session:
+                    async with session.get(url, headers=headers, params=next_params) as response:
+                        if response.status == 401:
+                            # The token is dead whatever its stated expiry claimed.
+                            self.invalidate_token()
+                        if response.status != 200:
+                            error_text = await response.text()
+                            raise Exception(
+                                f"Dynamics API error: {response.status} - {error_text}"
+                            )
+                        return await response.json()
+
+            payload = await self.execute_with_retry(_fetch)
+
+            page = payload.get("value")
+            if page is None:
+                # Refuse to report zero rows for a response we do not understand.
+                raise Exception(
+                    f"Dynamics response has no 'value' array for {entity_type}; "
+                    f"keys were {sorted(payload)[:6]}"
+                )
+            rows.extend(page)
+
+            if limit is not None and len(rows) >= limit:
+                rows = rows[:limit]
+                break
+
+            url = payload.get("@odata.nextLink")
+            next_params = None  # never re-apply params to a cursor URL
+
         logger.info(
             "dynamics_data_fetched",
             entity_type=entity_type,
-            record_count=len(results)
+            record_count=len(rows),
         )
-        
-        return results
-    
+        return rows
 
     async def health_check(self) -> Dict[str, Any]:
         """Health check via the shared three-state probe.
