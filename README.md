@@ -91,6 +91,56 @@ OmniusGrid is a resilient manufacturing operations platform designed for Industr
 > listed it, which made the ignore rule inert and every `npm install` produce thousands of
 > spurious diffs. If `git status` still shows it after pulling, run `npm ci` in `frontend/`.
 
+### Hridyansh's six branches are already merged — do NOT merge them again
+
+Checked 2026-07-27, because the branch list makes it look like there is unmerged work.
+There is not, and merging them would be destructive. Recorded here so nobody redoes this
+analysis or acts on the appearance.
+
+| Branch | Unmerged commits (apparent) |
+|---|---|
+| `hridyansh/integration` | 112 |
+| `hridyansh/edge-command-dispatch` | 109 |
+| `hridyansh/integration-erp` | 110 |
+| `hridyansh/edge-agent-retry-logic` | 66 |
+| `hridyansh/tenant-isolation-middleware` | 65 |
+| `hridyansh/package-renaming-fix` | 45 |
+
+**Those counts are an artifact of rewritten history, not missing work.** The branches
+were force-pushed onto a different root at some point, so they now share **no common
+ancestor** with `converged-pre-main` — `git merge-base` returns nothing, and a merge
+would need `--allow-unrelated-histories`. The earlier `337c9329 Merge
+hridyansh/integration into converged-pre-main` merged a parent (`f27d5322`) that is no
+longer on the branch.
+
+**The content is all here.** Every file touched by the five most recent substantive
+commits on `integration` is present in `converged-pre-main`, identical or evolved
+further. Of the 82 files that exist only on his side, 67 are `__pycache__`/`.DS_Store`
+artifacts and the remaining 15 are superseded paths:
+
+| On his branch | In `converged-pre-main` |
+|---|---|
+| `backend/app/api/keycloak_auth.py` | `app/api/sso.py` + `app/services/keycloak_service.py` |
+| `backend/app/services/audit_trail.py` | `app/services/audit.py` + `app/api/audit.py` + `app/middleware/audit.py` |
+| `docs/deployment/runbooks/*` (4 files) | `docs/runbooks/*` — all four present |
+| `infra/k8s/timescaledb-patroni.yml` | `infrastructure/k8s/database-ha/` (CloudNativePG) + `legacy-patroni/` |
+| `infra/k8s/pgbackrest-backup.yml` | `infrastructure/k8s/legacy-patroni/pgbackrest-backup.yml` |
+| `frontend/.../RealtimeStreamChart.tsx` | absent — but referenced by nothing on his branch either |
+
+**What merging would actually do:** re-add **19,048 tracked `node_modules` files** (his
+branches predate that removal), restore `HAMAD_IDE.pem` — the leaked key FS-200 is still
+waiting to rotate — plus 57 `.pyc` and 10 `.DS_Store` files, and resurrect the superseded
+`infra/` and `docs/deployment/` trees alongside the current ones.
+
+**The four local stashes on his branches are also spent.** Two contain only artifacts;
+`stash@{2}`'s Sidebar tagline is already applied (`Sidebar.tsx:251`), and `stash@{0}` only
+drops the anonymous `node_modules` volume from `docker-compose.yml` — a local dev
+workaround, not a fix. They can be dropped whenever Hridyansh confirms.
+
+**If a future branch of his does need merging**, rebase or cherry-pick onto
+`converged-pre-main` rather than merging unrelated histories, and confirm
+`git ls-tree -r --name-only <ref> | grep -c node_modules/` is `0` first.
+
 ### Convergence branch — `hamad/converged-pre-main` (merge candidate)
 
 The integration branch for the next `main`: it merges every workstream
