@@ -1012,6 +1012,116 @@ class User(Base):
     updated_at = Column(DateTime(timezone=True), default=utcnow)
 
 
+class UserInvitation(Base):
+    """One-time tenant invitation whose raw bearer token is never persisted."""
+
+    __tablename__ = "user_invitations"
+    __table_args__ = (
+        UniqueConstraint(
+            "id",
+            "organization_id",
+            name="uq_user_invitations_id_org",
+        ),
+        CheckConstraint(
+            "length(trim(normalized_email)) > 0",
+            name="ck_user_invitations_email_nonempty",
+        ),
+        CheckConstraint(
+            "requested_role IN ('admin', 'operator', 'viewer')",
+            name="ck_user_invitations_role",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'accepted', 'revoked', 'expired')",
+            name="ck_user_invitations_status",
+        ),
+        CheckConstraint(
+            "delivery_status IN ('pending', 'sent', 'failed')",
+            name="ck_user_invitations_delivery_status",
+        ),
+        CheckConstraint(
+            "delivery_attempts >= 0",
+            name="ck_user_invitations_delivery_attempts",
+        ),
+        CheckConstraint(
+            "expires_at > created_at",
+            name="ck_user_invitations_expiry",
+        ),
+        Index(
+            "uq_user_invitations_pending_org_email",
+            "organization_id",
+            "normalized_email",
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
+        ),
+        Index(
+            "idx_user_invitations_org_status_created",
+            "organization_id",
+            "status",
+            text("created_at DESC"),
+        ),
+        Index(
+            "idx_user_invitations_pending_expiry",
+            "expires_at",
+            postgresql_where=text("status = 'pending'"),
+        ),
+    )
+
+    id = UUIDColumn()
+    organization_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    normalized_email = Column(String(320), nullable=False)
+    requested_role = Column(String(50), nullable=False)
+    token_hash = Column(String(64), nullable=False, unique=True)
+    status = Column(
+        String(20),
+        nullable=False,
+        default="pending",
+        server_default="pending",
+    )
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    delivery_status = Column(
+        String(20),
+        nullable=False,
+        default="pending",
+        server_default="pending",
+    )
+    delivery_attempts = Column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
+    last_delivery_attempt_at = Column(DateTime(timezone=True))
+    delivered_at = Column(DateTime(timezone=True))
+    delivery_error_code = Column(String(100))
+    created_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    accepted_user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    accepted_at = Column(DateTime(timezone=True))
+    revoked_at = Column(DateTime(timezone=True))
+    created_at = Column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        server_default=func.now(),
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        server_default=func.now(),
+    )
+
+
 class Command(Base):
     """Command execution log for actionable decisions"""
     __tablename__ = "commands"

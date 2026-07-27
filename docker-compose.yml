@@ -93,6 +93,9 @@ services:
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev_secret_key_change_in_production}
       JWT_ALGORITHM: HS256
       JWT_ACCESS_TOKEN_EXPIRE_MINUTES: 30
+      ALLOW_OPEN_REGISTRATION: "false"
+      USER_INVITE_PUBLIC_BASE_URL: ${USER_INVITE_PUBLIC_BASE_URL:-http://localhost:3000}
+      USER_INVITE_EXPIRE_HOURS: ${USER_INVITE_EXPIRE_HOURS:-72}
       SIGNED_URL_SECRET_KEY: ${SIGNED_URL_SECRET_KEY:-dev_signed_link_secret_change_in_production}
       SIGNED_URL_ALGORITHM: HS256
       SIGNED_URL_ISSUER: omniusgrid-signed-links

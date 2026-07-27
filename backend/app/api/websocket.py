@@ -1,9 +1,11 @@
 """WebSocket API endpoints for real-time updates"""
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, Query
-from typing import Optional, Set
+import asyncio
 import json
+from typing import Optional, Set
+
 import structlog
+from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 
 from app.services.websocket_manager import websocket_manager
 from app.api.auth import resolve_websocket_user
@@ -24,8 +26,8 @@ async def websocket_endpoint(
     WebSocket endpoint for real-time telemetry, state changes, and alarms.
     
     Query Parameters:
-    - token: JWT authentication token
-    - organization_id: Organization to subscribe to
+    - token: Required JWT authentication token
+    - organization_id: Optional organization assertion; must match the user
     - asset_ids: Optional comma-separated list of asset IDs to filter (empty = all)
     
     Message Types Received from Client:
@@ -75,26 +77,31 @@ async def _serve_websocket(
 ):
     # Validate authentication via the shared resolver (handles JWTs and the
     # dev-token bypass under ALLOW_DEV_TOKEN — one ws auth path, not two).
-    user = None
-    if token:
-        try:
-            user = await resolve_websocket_user(token)
-        except Exception as e:
-            await websocket.close(code=1008, reason="Authentication failed")
-            logger.warning("websocket_auth_failed", error=str(e))
-            return
-        if user is None:
-            await websocket.close(code=1008, reason="Authentication failed")
-            logger.warning("websocket_auth_failed", error="invalid token")
-            return
-
-    # Default to user's organization if not specified
-    if not organization_id and user:
-        organization_id = str(user.organization_id)
-
-    if not organization_id:
-        await websocket.close(code=1008, reason="Organization ID required")
+    if not token:
+        await websocket.close(code=1008, reason="Authentication required")
         return
+
+    try:
+        user = await resolve_websocket_user(token)
+    except Exception as exc:
+        await websocket.close(code=1008, reason="Authentication failed")
+        logger.warning(
+            "websocket_auth_failed",
+            error_type=type(exc).__name__,
+        )
+        return
+    if user is None:
+        await websocket.close(code=1008, reason="Authentication failed")
+        return
+    if user.organization_id is None:
+        await websocket.close(code=1008, reason="Organization required")
+        return
+
+    authenticated_org_id = str(user.organization_id)
+    if organization_id and organization_id != authenticated_org_id:
+        await websocket.close(code=1008, reason="Organization mismatch")
+        return
+    organization_id = authenticated_org_id
 
     # Connect client
     await websocket_manager.connect_client(websocket, organization_id,
@@ -122,7 +129,21 @@ async def _serve_websocket(
     try:
         while True:
             # Receive messages from client
-            data = await websocket.receive_text()
+            try:
+                data = await asyncio.wait_for(
+                    websocket.receive_text(),
+                    timeout=30,
+                )
+            except asyncio.TimeoutError:
+                # Re-read durable account/session state so role changes and
+                # deactivation close passive sockets on every API replica.
+                if await resolve_websocket_user(token) is None:
+                    await websocket.close(
+                        code=1008,
+                        reason="Authentication expired",
+                    )
+                    return
+                continue
             
             try:
                 message = json.loads(data)
