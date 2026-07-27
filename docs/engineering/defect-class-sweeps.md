@@ -567,6 +567,25 @@ routes the app serves (create, list, get, update, delete, sync, sync-status, ent
 events, mappings, webhook-config, test, correlations/recent) exercised against a real
 database. Every one responds correctly.
 
+**The core product surfaces were then swept for the same failure, and came back clean.**
+One organisation seeded with an asset, an alarm and an operation, then every main
+authenticated read exercised against a real database: `dashboard/overview` reports
+`total_assets: 1, active_alarms: 1`, `alarms/active` and `operations/active` each count 1,
+and the remaining zeros are tables that were not seeded. So the empty-page class does not
+extend past the routers already fixed — worth recording, because "swept and clean" and
+"never checked" are indistinguishable afterwards.
+
+**One honesty gap did come out of it, in `health.py`.** `_check_ingestion` read
+`MAX(assets.last_seen)` and published it as `latest_asset_seen_at`. It runs from the
+**public** readiness probe, which has no authenticated user and therefore no tenant
+context, so on a `NOBYPASSRLS` role that query returned NULL regardless of how much data
+existed. The report then said `latest_asset_seen_at: null` — which reads as "no asset has
+ever been seen", a different and false statement from "this figure is not obtainable
+here". A monitoring endpoint is the worst place to blur those. `telemetry` has no policy
+and was already the primary signal, so the asset read is gone and no verdict changes; a
+per-tenant asset figure belongs on an endpoint where a caller, and therefore a GUC,
+exists.
+
 **The audit trail and the GDPR records were blank for the same reason.** `audit_logs`
 and `data_processing_records` have carried tenant policies since migration 011, and every
 handler in `audit.py` and `gdpr.py` ran on `get_db` — so both surfaces returned **zero

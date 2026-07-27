@@ -454,7 +454,10 @@ changed nothing, because RLS had already removed the row. The same shape had mad
 every asset — and it had been rejecting **every inbound ERP webhook** — fixed by migration 052, which
 grants that one unauthenticated lookup a narrow SELECT-only policy (active ERP rows, only
 while a transaction-local flag is set) rather than abandoning signature-selects-tenant.
-All 12 ERP routes are now verified working end to end against a real database.
+All 12 ERP routes are now verified working end to end against a real database, and the
+core product surfaces were swept for the same failure and came back clean — a seeded
+organisation's asset, alarm and operation all appear in `dashboard/overview`,
+`alarms/active` and `operations/active`.
 
 **The frontend was the same problem at a larger scale.** `src/test/setup.ts` forces
 `VITE_USE_MOCK='true'` before any module evaluates, so every unit test takes the mock

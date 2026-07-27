@@ -96,21 +96,31 @@ async def _check_message_broker() -> tuple[str, dict[str, Any]]:
 
 
 async def _check_ingestion(db: AsyncSession) -> tuple[str, dict[str, Any]]:
-    """Verify telemetry has been ingested recently (when data exists)."""
-    try:
-        result = await db.execute(select(func.max(Asset.last_seen)))
-        latest_asset_seen = result.scalar()
+    """Verify telemetry has been ingested recently (when data exists).
 
+    READS `telemetry` ONLY, and deliberately no longer `MAX(assets.last_seen)`.
+
+    This runs from the PUBLIC readiness probe, which has no authenticated user and so
+    no tenant context. `assets` is FORCE ROW LEVEL SECURITY, so that query returned
+    NULL for a NOBYPASSRLS role no matter how much data existed — and the report then
+    published `latest_asset_seen_at: null`, which reads as "no asset has ever been
+    seen". That is a different and false statement from "this figure is not obtainable
+    here", and a monitoring endpoint is the worst place to blur the two.
+
+    `telemetry` has no policy and was already the primary signal
+    (`latest = latest_telemetry or latest_asset_seen`), so removing the asset read
+    changes no verdict: it only stops reporting a field that could never be populated.
+    A per-tenant asset figure belongs on a tenant-scoped endpoint, where a caller and
+    therefore a GUC exists.
+    """
+    try:
         result = await db.execute(text("SELECT MAX(time) FROM telemetry"))
         latest_telemetry = result.scalar()
 
-        latest = latest_telemetry or latest_asset_seen
+        latest = latest_telemetry
         details: dict[str, Any] = {
             "latest_telemetry_at": (
                 latest_telemetry.isoformat() if latest_telemetry else None
-            ),
-            "latest_asset_seen_at": (
-                latest_asset_seen.isoformat() if latest_asset_seen else None
             ),
         }
 
