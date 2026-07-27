@@ -14,7 +14,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The nine classes
+## The ten classes
 
 The first five were all originally found in ERP. The sixth came out of the fifth, the
 seventh out of two failing tests that turned out to share a cause, and the eighth out of
@@ -32,6 +32,7 @@ to the frontend/backend seam.
 | A test double that reimplements what it stands in for | every `get_tenant_db` override | **4 copies, hiding an RLS bug** | `test_tenant_guc_survives_commit_realdb.py` |
 | Frontend calling endpoints the backend does not serve | all 183 real-mode API calls | **4, one wired to a live button** | `test_frontend_calls_real_endpoints.py` |
 | Query parameters the endpoint does not declare | 37 param-sending calls | **2, plus 4 IDOR-shaped endpoints** | `test_frontend_query_params_are_declared.py` |
+| An org-scoped table with neither a filter nor RLS | `get_db` handlers on org tables | **1 live leak; ~23 more of the shape** | `test_vehicle_tenant_isolation_realdb.py` |
 
 ---
 
@@ -452,6 +453,51 @@ changes nothing in either direction.
 `INSERT` — the case a Python-side ORM default does not cover — made the endpoint return a
 live 500 on `equipment_capabilities`. That is what exposed the two holes in the class-1
 detector, and the reason its "clean" result above is now a correction.
+
+## 10. An org-scoped table with neither a filter nor RLS — **1 live cross-tenant leak**
+
+Tenant isolation here is meant to be two layers: an explicit `organization_id` filter in
+the handler, and RLS as defence in depth (`app/core/tenant.py` says so in as many words).
+This class is what happens when a table has **neither**.
+
+```python
+query = select(Vehicle).where(Vehicle.is_active == True)   # get_db, no org filter
+```
+
+`vehicles` carries `organization_id` but has no row-level security, so nothing caught it.
+**Every authenticated user listed every tenant's fleet.** Proven before fixing: a probe
+seeded one vehicle per org, and org A's client saw both.
+
+**Why the existing guards could not see it.** `test_route_auth_walk.py` asserts routes
+require authentication — this one does; authentication was never the issue. And the
+RLS-based isolation tests exercise policies, of which this table has none. A table
+outside RLS is outside their reach entirely, which is the part worth remembering: the
+absence of a policy silently removes a table from the suite that would otherwise cover
+it.
+
+**Swept:** every `get_db` handler touching a model with an `organization_id`, classified
+by whether its table has RLS and whether the query filters. Most hits were `User`
+appearing as a `Depends()` annotation rather than a cross-tenant query — a false-positive
+class worth naming, since a careless reading gives 68 "leaks".
+
+The real surface is three files: `transportation.get_vehicles` (**fixed** — filter added,
+`vehicles.organization_id` is a `String(36)`, so the comparison is against `str(org_id)`),
+`api_keys.verify_api_key` (**correct as written** — the key is the credential and the org
+comes from it), and **`fleet_logistics.py`, 23 handlers of the same shape** across
+`geofence_zones`, `geofence_alerts`, `maintenance_schedules` and `repair_orders` — all
+org-scoped, none under RLS. `create_zone` additionally takes `organization_id` **from the
+client payload**.
+
+`transportation.py` has two further variants beyond the one fixed: `get_carriers` and
+`get_drivers` take `organization_id` as a client-supplied query parameter, and
+`get_carrier` fetches by id with no org check at all.
+
+**Not fixed in the same pass, deliberately.** 23 handlers with mixed read and write paths,
+where the write paths also need their org moved to the token, is not a change to make
+quickly at the end of a sweep — and RLS on those four tables (the structural fix) needs
+its own migration and a check of every writer. The `get_db` debt list in
+`test_tenant_session_guard.py` now records what each remaining file actually is, so the
+next pass starts from evidence rather than a count.
 
 ---
 

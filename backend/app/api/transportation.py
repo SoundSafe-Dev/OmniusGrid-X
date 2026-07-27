@@ -15,6 +15,7 @@ from sqlalchemy import select, func
 from app.api.auth import get_current_active_user
 from app.core.pagination import PaginatedResponse, paginate
 from app.db.database import get_db
+from app.middleware.tenant_isolation import get_tenant_db, get_tenant_org_id
 from app.db.models import Carrier, Driver, Shipment, Route, LoadPlan, FreightCharge
 from app.models.schemas import (
     CarrierCreate, CarrierUpdate, CarrierResponse,
@@ -590,12 +591,26 @@ async def get_vehicles(
     carrier_id: Optional[UUID] = None,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
-    db: AsyncSession = Depends(get_db)
+    org_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db)
 ):
-    """List fleet vehicles (FS-99: {items, meta} envelope; items stay legacy-camelCase)."""
+    """List fleet vehicles (FS-99: {items, meta} envelope; items stay legacy-camelCase).
+
+    SCOPED TO THE CALLER'S ORG. This was `get_db` with no organization filter at all,
+    on a table that carries `organization_id` but has NO row-level security — so the
+    two mechanisms that normally catch this both missed. Verified against a real
+    database before the fix: org A's client listed org B's vehicle. That is a
+    cross-tenant read of live data, not a theoretical one.
+
+    `vehicles.organization_id` is a `String(36)`, not a UUID column, so the comparison
+    is made against `str(org_id)`.
+    """
     from app.db.logistics_models import Vehicle
 
-    query = select(Vehicle).where(Vehicle.is_active == True)  # noqa: E712
+    query = select(Vehicle).where(
+        Vehicle.organization_id == str(org_id),
+        Vehicle.is_active == True,  # noqa: E712
+    )
     if carrier_id:
         query = query.where(Vehicle.carrier_id == str(carrier_id))
 

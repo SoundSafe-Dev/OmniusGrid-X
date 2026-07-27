@@ -66,7 +66,17 @@ KNOWN_GET_DB_ON_RLS: dict[str, int] = {
     "logistics_correlation.py": 12,
     "nlp_correlation.py": 7,
     "platform_correlation.py": 1,
-    "transportation.py": 25,
+    # 24, not 25: `get_vehicles` moved to get_tenant_db. It was not merely on the
+    # wrong dependency — it queried `vehicles` with NO organization filter, on a table
+    # that has no RLS to fall back on, so org A listed org B's fleet. Confirmed against
+    # a real database, fixed, and pinned by
+    # tests/test_vehicle_tenant_isolation_realdb.py.
+    #
+    # The remaining 24 are NOT all benign: `get_carriers` and `get_drivers` take
+    # `organization_id` as a client-supplied query parameter (the shape removed from
+    # yard in migration-era FS work), and `get_carrier` fetches by id with no org check
+    # at all. Those need the same treatment.
+    "transportation.py": 24,
 }
 
 

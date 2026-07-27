@@ -327,7 +327,7 @@ operator sees "showing the most recent 10 of more than 10" instead of a confiden
 answer. Verified end to end: 149 rows synced from live Dataverse, `?limit=10` returns 10
 with `X-Result-Truncated: true`.
 
-**Nine defect classes have now been swept platform-wide** — recorded in
+**Ten defect classes have now been swept platform-wide** — recorded in
 [`docs/engineering/defect-class-sweeps.md`](docs/engineering/defect-class-sweeps.md) with
 what each found and which guard keeps it closed. Four started in ERP; the last four came
 out of the ones before them. Two came back clean, which is worth writing down: "proven
@@ -428,6 +428,17 @@ reintroduced bug, because with a normal pool `commit()` hands the same connectio
 back. It now uses `NullPool`, so every checkout is a fresh connection — the worst case a
 loaded server produces routinely.
 
+**A live cross-tenant read.** `GET /api/v1/transportation/vehicles` ran
+`select(Vehicle).where(Vehicle.is_active == True)` on `get_db` — no organization filter,
+on a table that carries `organization_id` but has no row-level security. Both layers that
+normally catch this were absent, so every authenticated user listed every tenant's fleet.
+Confirmed against a real database before fixing (org A's client saw org B's vehicle), and
+pinned by a mutation-tested guard. The existing auth-walk test could not see it — the
+route does require authentication; scoping was the problem — and the RLS isolation tests
+exercise policies this table does not have. **`fleet_logistics.py` has 23 handlers of the
+same shape**, recorded rather than rushed, since their write paths also take the org from
+the client.
+
 **The frontend was the same problem at a larger scale.** `src/test/setup.ts` forces
 `VITE_USE_MOCK='true'` before any module evaluates, so every unit test takes the mock
 branch of the 213 `if (USE_MOCK)` forks across 33 files — the real branch, the code that
@@ -440,7 +451,7 @@ the UI were all already there, only the write was missing — and the component 
 failures. The other three were uncalled and were removed. Notably a hand fix of this exact
 class had already run (FS-15, "routes that never existed") and left these behind.
 
-**Both suites are green: backend 1648 passed, frontend 142 passed, 0 failed** — across
+**Both suites are green: backend 1651 passed, frontend 142 passed, 0 failed** — across
 156 backend and 38 frontend test files. Every guard listed above is mutation-tested:
 reintroduce the defect and the test must fail, checked individually, because a guard that
 cannot fail is indistinguishable from one that passes.
