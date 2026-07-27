@@ -334,3 +334,69 @@ class TestOracleRunsEndToEnd:
 
         assert result["analyzed"] == 1
         assert seen[0]["po_number"] == "PO-1"
+
+
+class TestRegisteredAnalyzersTakeARecord:
+    """A registered analyzer must accept a normalized RECORD, not an id.
+
+    `correlate_synced_records` calls `analyze(db, normalized)` — it passes the
+    transformed record. But not every analyzer on these classes has that shape:
+
+        analyze_invoice_anomalies(db, invoice_data: Dict[str, Any])   ← routable
+        analyze_sales_velocity(db, account_id: str)                   ← NOT routable
+        analyze_churn_prediction(db, account_id: str)                 ← NOT routable
+        analyze_supply_chain_risk(db, supplier_id: str)               ← NOT routable
+        analyze_cash_flow_correlation(db, time_period: str)           ← NOT routable
+
+    Registering an id-taking analyzer would hand it a dict. It would not crash loudly:
+    the per-record `except` in `correlate_synced_records` catches it and counts a
+    failure, so a whole sync would report `failed: 500` and look like bad vendor data
+    rather than a wrong registry entry.
+
+    Found while evaluating Dynamics for routing — its field names line up, but two of
+    its five analyzers take an account id. Field alignment alone is not enough to make
+    a pair routable, and that is easy to miss because it looks like a matching name.
+    """
+
+    def test_every_registered_analyzer_takes_a_dict(self):
+        import importlib
+        import inspect
+        import typing
+
+        for (erp_type, entity), (_transformer, analyzer) in mod.CORRELATION_ROUTES.items():
+            module_path, class_name = mod.PATTERN_CLASSES[mod._normalize(erp_type)]
+            patterns_cls = getattr(importlib.import_module(module_path), class_name)
+            fn = getattr(patterns_cls, analyzer)
+
+            params = list(inspect.signature(fn).parameters.values())
+            # (self, db, record)
+            assert len(params) >= 3, f"{analyzer} has too few parameters to route"
+            record_param = params[2]
+            annotation = record_param.annotation
+
+            rendered = (
+                typing.get_origin(annotation).__name__
+                if typing.get_origin(annotation)
+                else getattr(annotation, "__name__", str(annotation))
+            )
+            assert "dict" in str(annotation).lower() or rendered.lower() == "dict", (
+                f"{erp_type}/{entity} registers {analyzer}, whose second argument is "
+                f"{record_param.name}: {annotation} — the router passes a normalized "
+                f"record, so this would receive a dict where it expects an id, and the "
+                f"failure would be counted as bad data rather than bad configuration"
+            )
+
+    def test_the_check_would_reject_a_known_id_taking_analyzer(self):
+        """Guards the guard: prove the assertion above can actually fail, using a real
+        analyzer that must never be registered."""
+        import inspect
+
+        from app.services.erp_connectors.dynamics_correlation_patterns import (
+            DynamicsCorrelationPatterns,
+        )
+
+        params = list(inspect.signature(DynamicsCorrelationPatterns.analyze_churn_prediction).parameters.values())
+        assert "dict" not in str(params[2].annotation).lower(), (
+            "analyze_churn_prediction now takes a dict; if that is deliberate it can be "
+            "routed, and this test should be updated rather than deleted"
+        )

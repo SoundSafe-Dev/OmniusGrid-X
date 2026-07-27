@@ -146,3 +146,29 @@ lookup and four registry lines. That closes most of task #33 in the current pool
 So the remaining dead code is ~2,900 lines across five modules, and the ticket should be
 *check each for finished-but-unwired work before deleting* rather than a straight delete —
 one in seven was worth wiring.
+
+**Dynamics was evaluated next and deliberately NOT registered.** Its transformers and
+analyzers exist and their field names line up, but two things stop it:
+
+- Its dict-taking analyzers cover `invoice`, `product` and `project`, and **none of those
+  tables exists in a base Dataverse environment** — they need the Sales and Project
+  modules. So the vendor field names (`invoiceid`, `duedate`, `customerid_account`,
+  `quantityonhand`) cannot be verified against a real system, and one of them —
+  `customerid_account` — looks wrong under Web API conventions, where a polymorphic
+  lookup surfaces as `_customerid_value`. This is the Odoo `sale.order` lesson again.
+- Its other two analyzers, `analyze_sales_velocity` and `analyze_churn_prediction`, take
+  an **account id, not a record**, so they cannot be routed at all.
+
+`transform_dynamics_account` *was* verified against the live environment — all six field
+names (`accountid`, `name`, `accountnumber`, `industrycode`, `revenue`, `statecode`) are
+real — but its analyzer is one of the id-taking pair. Registering a vendor whose mapping
+cannot be checked is exactly the "confident report of zero anomalies" failure the routing
+exists to prevent, so it stays out until someone has a Dataverse with those modules.
+
+**That evaluation exposed a hole in the registry itself.** Field alignment is necessary
+but not sufficient: the router calls `analyze(db, normalized_record)`, and an id-taking
+analyzer would receive a dict. It would not fail loudly — the per-record `except` catches
+it and counts a failure, so a whole sync would report `failed: 500` and look like bad
+vendor data rather than a wrong registry entry. `test_erp_sync_correlation.py` now asserts
+every registered analyzer's second parameter is a dict, and proves that check can fail by
+naming a real id-taking analyzer that must never be registered.
