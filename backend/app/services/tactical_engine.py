@@ -390,7 +390,7 @@ class LocalTacticalEngine:
         It is currently unreachable — `execute_decision` is only called from
         `_inference_loop`, and `start()` is absent from `main.py`'s startup list. That
         is the only reason this has never mattered. It is one line away from mattering:
-        the other six engines are all started there.
+        the other seven engines are all started there.
 
         WHY THIS REFUSES RATHER THAN DISPATCHES. The real sink exists and is already
         running — `command_executor` (started in `main.py`), backed by the `Command`

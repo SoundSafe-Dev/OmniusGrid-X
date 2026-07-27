@@ -78,7 +78,7 @@ OmniusGrid is a resilient manufacturing operations platform designed for Industr
 
 ## Active Development & Team Progress
 
-> **Snapshot: July 19, 2026.** Both remotes (`origin` = SoundSafe-ai, `backup` = SoundSafe-Dev)
+> **Snapshot: July 27, 2026.** Both remotes (`origin` = SoundSafe-ai, `backup` = SoundSafe-Dev)
 > are in sync. **`main` was promoted from `hamad/converged-pre-main` on 2026-07-17**; the
 > FS-141+ work described below has since landed on `hamad/converged-pre-main` and is **ahead of
 > `main`**, so start new work from `hamad/converged-pre-main` until the next promotion.
@@ -277,11 +277,16 @@ operator sees "showing the most recent 10 of more than 10" instead of a confiden
 answer. Verified end to end: 149 rows synced from live Dataverse, `?limit=10` returns 10
 with `X-Result-Truncated: true`.
 
-**Four defect classes found in ERP were then swept platform-wide** — recorded in
+**Seven defect classes have now been swept platform-wide** — recorded in
 [`docs/engineering/defect-class-sweeps.md`](docs/engineering/defect-class-sweeps.md) with
-what each found and which guard keeps it closed. Two came back clean, which is worth
-writing down: "proven clean" and "never checked" look identical afterwards, and only one
-justifies not looking again.
+what each found and which guard keeps it closed. Four started in ERP; the last three came
+out of the ones before them. Two came back clean, which is worth writing down: "proven
+clean" and "never checked" look identical afterwards, and only one justifies not looking
+again.
+
+The common shape is **code that looks wired and cannot work**. Every guard is
+mutation-tested — reintroduce the defect and the test must fail — because a guard that
+cannot fail is indistinguishable from one that passes.
 
 **A live dashboard was under-reporting its own metric.** Sweeping for handlers that
 swallow an exception and still report success turned up 12 candidates; 11 were legitimate
@@ -310,6 +315,53 @@ returned HTTP 200 instead of the predicted 500 — the detector checked
 `types.UnionType`, so every field in modern syntax was misread as required. The same flaw
 was in the ERP guard, where it would have failed a *correct* model. Both fixed, and both
 now test the detector before anything that depends on it.
+
+**A control command the platform reported as sent, and never sent.** Sweeping for helpers
+whose *name* claims a side effect — create/send/persist/store/publish — found 129 across
+`app/` and two whose body only logs. One is honest (emitting a warning *is* logging). The
+other was `tactical_engine._send_command`: it assembled a command dict, logged
+`command_queued` at DEBUG, and published nothing, while `execute_decision` — docstring
+*"Returns True if executed"* — logged `tactical_decision_executed` and returned `True`.
+The two safety gates directly above it are real and careful, and the maintenance check
+even fails safe under a comment reading *"a broken control command is worse than a skipped
+one"* — which is exactly what made the dispatch below it look trustworthy. It is
+unreachable today only because `start()` is missing from `main.py`, where the other seven
+engines all appear. It now refuses and reports it; wiring the real sink
+(`command_executor`, already running) switches on autonomous actuation of industrial
+assets, which is a decision with a safety review attached, not a side effect of a naming
+fix. The cloud training-feedback event now carries `dispatched`, since a decision that
+never reached the asset produced no outcome to learn from.
+
+**Quarantined edge readings were discarded, not quarantined.** `EdgeIngestGateway` passed
+each malformed reading to a sink whose default logged the agent and reason and dropped the
+payload — no table, no topic, not even the log line — and `POST /api/v1/edge/ingest` then
+answered `quarantined: 47`. The count was true and the word was not, for 47 readings that
+existed nowhere. Readings are now retained in `IngestResult.quarantined` (so it works
+without an injected sink, which is the API's actual configuration) and published to a real
+dead-letter topic, keyed on the certificate-verified `agent_id` — a reading that failed
+validation cannot be trusted for routing, and the malformed field may *be* `asset_id`.
+
+**The tenant RLS context was lost on every mid-request commit.** `get_tenant_db` set
+`app.current_org_id` once with `set_config(..., false)`, on the documented reasoning that
+a session-scoped value survives a mid-request commit. It does not: `commit()` returns the
+connection to the pool, the next statement gets an unconfigured one, and every RLS policy
+fails closed — so an endpoint that wrote a row and read it back got nothing.
+`create_rollout` returned **404 for a rollout sitting in the table**. The GUC is now
+re-established per transaction from an `after_begin` hook, and written transaction-locally
+so it also cannot leak onto a pooled connection.
+
+**Why no test caught that, which is the more useful finding.** `conftest` overrode
+`get_tenant_db` with a hand-copy of its body, under a comment reading *"Mirrors the
+production get_tenant_db."* It mirrored the bug too — and being a copy, it could not do
+otherwise. Sweeping every file that overrides it found **four copies**, so the RUL,
+twin-optimizer and historian suites were also asserting against the defect rather than
+against production. All four now delegate to a shared `tenant_session`. A test double that
+reimplements the thing it stands in for can only prove the double works.
+
+That guard needed a second pass too: written the obvious way it *passed* against the
+reintroduced bug, because with a normal pool `commit()` hands the same connection straight
+back. It now uses `NullPool`, so every checkout is a fresh connection — the worst case a
+loaded server produces routinely. **The backend suite is green: 1387 passed, 0 failed.**
 
 **Tenant isolation held everywhere it was pushed on** — entities, sync status,
 integration list/get, events, correlations, and the provider feeding AI analysis
@@ -2454,6 +2506,9 @@ The ERP integration system correlates ERP data with operational telemetry to pro
 - [Hybrid Architecture](HYBRID_ARCHITECTURE.md) - Human-in-the-Loop + Lights Out modes
 - [Gold Standard Architecture](GOLD_STANDARD_ARCHITECTURE.md) - Edge AI + Cloud Training
 - [Implementation Summary](IMPLEMENTATION_SUMMARY.md) - Complete feature inventory
+
+**Engineering practice**
+- [Defect-class sweeps](docs/engineering/defect-class-sweeps.md) - The seven classes of "code that looks wired and cannot work" found so far, what each sweep found (including the two that came back clean), which mutation-tested guard keeps each closed, and how to write a sweep worth trusting
 
 **Infrastructure & operations**
 - [Database migrations](database/migrations/README.md) - Runner rules (never edit or rename an applied migration), the 019 gap, grandfathered duplicate prefixes, demo-data gating

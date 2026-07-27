@@ -152,7 +152,7 @@ reading that had every reason to assume the dispatch below it was equally real.
 
 It is currently unreachable: `execute_decision` is only called from `_inference_loop`,
 and `start()` is absent from `main.py`'s startup list. That is the only reason it has
-never mattered, and it is one line from mattering — the other six engines are all
+never mattered, and it is one line from mattering — the other seven engines are all
 started there.
 
 **It now refuses instead of dispatching, and that is deliberate.** The real sink exists
