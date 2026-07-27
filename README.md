@@ -451,9 +451,10 @@ policies since migration 011, handlers on `get_db`, so both returned zero rows e
 the caller's own organization. `gdpr.py` filtered on the organization *correctly* and it
 changed nothing, because RLS had already removed the row. The same shape had made
 **command submission and the safety-critical emergency stop unreachable** — both 404'd for
-every asset — and it currently rejects **every inbound ERP webhook**, which needs a design
-decision rather than a dependency swap because that receiver is unauthenticated and must
-resolve its tenant by signature.
+every asset — and it had been rejecting **every inbound ERP webhook** — fixed by migration 052, which
+grants that one unauthenticated lookup a narrow SELECT-only policy (active ERP rows, only
+while a transaction-local flag is set) rather than abandoning signature-selects-tenant.
+All 12 ERP routes are now verified working end to end against a real database.
 
 **The frontend was the same problem at a larger scale.** `src/test/setup.ts` forces
 `VITE_USE_MOCK='true'` before any module evaluates, so every unit test takes the mock
@@ -467,7 +468,7 @@ the UI were all already there, only the write was missing — and the component 
 failures. The other three were uncalled and were removed. Notably a hand fix of this exact
 class had already run (FS-15, "routes that never existed") and left these behind.
 
-**Both suites are green: backend 1691 passed, frontend 142 passed, 0 failed** — across
+**Both suites are green: backend 1703 passed, frontend 142 passed, 0 failed** — across
 156 backend and 38 frontend test files. Every guard listed above is mutation-tested:
 reintroduce the defect and the test must fail, checked individually, because a guard that
 cannot fail is indistinguishable from one that passes.

@@ -528,16 +528,44 @@ reading ORM metadata instead of the schema, one level up. They now use
 `tenant_session(org_id)`, the context-manager form extracted earlier for exactly this
 case.
 
-**The ERP webhook receiver is broken and is NOT a dependency swap.** Verified against a
-real database: every inbound webhook is rejected 404, because
-`integration_configurations` has FORCE RLS and the candidate lookup returns nothing. But
-this endpoint is an unauthenticated vendor callback — there is no user to derive a tenant
-from, and by design the tenant is *whoever holds the secret that verifies these exact
-bytes*, so the lookup must span organizations. `get_tenant_db` cannot apply. Fixing it
-needs a decision — a privileged read path for the candidate query, or moving the tenant
-into the URL and abandoning signature-selects-tenant — so it is recorded here rather than
-patched. It is exempt from the `get_db` guard for the same reason, with the breakage noted
-in place so the exemption cannot be mistaken for health.
+**The ERP webhook receiver was broken, and needed a policy rather than a dependency
+swap.** Verified against a real database: every inbound webhook was rejected 404, because
+`integration_configurations` is FORCE RLS and the candidate lookup returned nothing. This
+endpoint is an unauthenticated vendor callback — there is no user to derive a tenant from,
+and by design the tenant is *whoever holds the secret that verifies these exact bytes*, so
+the lookup must span organizations before any tenant is known. `get_tenant_db` cannot
+apply, and moving the tenant into the URL would mean trusting a caller-supplied
+identifier to choose whose secret to check against — strictly worse than the design it
+would replace.
+
+**Fixed by migration 052**, which adds a second, deliberately narrow policy:
+`webhook_tenant_resolution` permits **SELECT only**, on **active ERP rows only**, **only
+while `app.erp_webhook_lookup = 'on'`**. The handler sets that GUC transaction-locally
+immediately before the candidate query and clears it in a `finally`, so it is off for the
+event INSERT and every other path. Postgres OR-s permissive policies, so this widens one
+flagged moment and changes nothing else — and it needs no superuser, which matters because
+the application connects as `NOSUPERUSER NOBYPASSRLS` on purpose and
+`SET row_security = off` would have required giving that up.
+
+The narrowness *is* the security argument, so it is tested rather than asserted: the flag
+cannot write, cannot see dormant or non-ERP rows, and does not leak into ordinary tenant
+sessions. Both halves are mutation-verified — removing the flag kills the webhook again
+(4 failures), widening the policy is caught as a security regression (2 failures).
+
+**One test of mine was wrong in a way worth recording:** it expected the disallowed UPDATE
+to raise. RLS does not raise on a write it disallows — it filters the rows the statement
+can see, so the UPDATE simply affects zero rows. The same "fails quiet" property that made
+every defect in this sweep hard to notice was present in the guard written against it.
+
+The residual risk is stated in the migration: anything able to set that GUC can list
+active ERP integrations across tenants, including the `configuration` JSON that holds
+webhook secrets. That is the same trust boundary as the database credentials themselves,
+and it is as narrow as a table-level policy can be — RLS cannot restrict columns.
+
+**The whole ERP surface was then verified end to end**, not just the webhook: all 12
+routes the app serves (create, list, get, update, delete, sync, sync-status, entities,
+events, mappings, webhook-config, test, correlations/recent) exercised against a real
+database. Every one responds correctly.
 
 **The audit trail and the GDPR records were blank for the same reason.** `audit_logs`
 and `data_processing_records` have carried tenant policies since migration 011, and every

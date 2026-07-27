@@ -158,15 +158,41 @@ async def receive_erp_webhook(
     # Resolving BY SIGNATURE is the correct answer for a shared path: the tenant is
     # whoever holds the secret that verifies these exact bytes. That is the same
     # evidence the signature already provides, so it grants nothing extra.
-    candidates = (
+    # THE LOOKUP NEEDS ITS OWN PERMISSION, and this is where it comes from.
+    #
+    # integration_configurations is FORCE ROW LEVEL SECURITY keyed on
+    # app.current_org_id, and at this point no tenant is known -- that is the whole
+    # problem this query exists to solve. With no GUC the policy matched nothing, so
+    # `candidates` was always empty and EVERY inbound webhook was rejected 404 with
+    # "no active ERP integration". Verified against a real database.
+    #
+    # Migration 052 adds a second, deliberately narrow policy:
+    # `webhook_tenant_resolution` permits SELECT of active ERP rows only while
+    # app.erp_webhook_lookup = 'on'. It is set transaction-locally here and cleared
+    # immediately after the query, so it is already off for the event INSERT below
+    # and for every other path in the process.
+    _is_postgres = db.bind is not None and db.bind.dialect.name == "postgresql"
+    if _is_postgres:
         await db.execute(
-            select(IntegrationConfiguration).where(
-                IntegrationConfiguration.integration_type == "erp",
-                IntegrationConfiguration.erp_type == erp_type,
-                IntegrationConfiguration.is_active == True,  # noqa: E712
-            )
+            text("SELECT set_config('app.erp_webhook_lookup', 'on', true)")
         )
-    ).scalars().all()
+    try:
+        candidates = (
+            await db.execute(
+                select(IntegrationConfiguration).where(
+                    IntegrationConfiguration.integration_type == "erp",
+                    IntegrationConfiguration.erp_type == erp_type,
+                    IntegrationConfiguration.is_active == True,  # noqa: E712
+                )
+            )
+        ).scalars().all()
+    finally:
+        # Cleared in a finally so an exception mid-lookup cannot leave the widened
+        # policy live for the rest of the transaction.
+        if _is_postgres:
+            await db.execute(
+                text("SELECT set_config('app.erp_webhook_lookup', '', true)")
+            )
 
     if not candidates:
         raise HTTPException(status_code=404, detail=f"no active ERP integration for '{erp_type}'")
@@ -236,7 +262,7 @@ async def receive_erp_webhook(
     # because a webhook has no authenticated user to derive a tenant from; the tenant
     # comes from the integration the signature just proved. Same defect, and same
     # fix, as the background sync in erp_integrations.run_erp_sync.
-    if db.bind is not None and db.bind.dialect.name == "postgresql":
+    if _is_postgres:
         await db.execute(
             text("SELECT set_config('app.current_org_id', :org_id, true)"),
             {"org_id": str(integration.organization_id)},
