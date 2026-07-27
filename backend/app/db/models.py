@@ -316,7 +316,7 @@ class Workcell(Base):
     
     id = UUIDColumn()
     organization_id = UUIDForeignKey("organizations.id")
-    site_id = Column(UUID(as_uuid=True), nullable=True)
+    site_id = Column(UUIDString(), nullable=True)
     name = Column(String(255), nullable=False)
     description = Column(Text)
     location = Column(String(255))
@@ -332,13 +332,13 @@ class Site(Base):
         UniqueConstraint("organization_id", "key", name="uq_sites_org_key"),
         UniqueConstraint("organization_id", "name", name="uq_sites_org_name"),
         UniqueConstraint("id", "organization_id", name="uq_sites_id_org"),
-        CheckConstraint("length(btrim(key)) > 0", name="ck_sites_key_nonempty"),
-        CheckConstraint("length(btrim(name)) > 0", name="ck_sites_name_nonempty"),
+        CheckConstraint("length(trim(key)) > 0", name="ck_sites_key_nonempty"),
+        CheckConstraint("length(trim(name)) > 0", name="ck_sites_name_nonempty"),
     )
 
     id = UUIDColumn()
     organization_id = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
     )
@@ -347,15 +347,15 @@ class Site(Base):
     description = Column(Text)
     is_active = Column(Boolean, nullable=False, default=True, server_default=text("true"))
     created_by = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=utcnow, server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True),
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=utcnow,
+        onupdate=utcnow,
         server_default=func.now(),
     )
 
@@ -381,11 +381,11 @@ class MaintenanceWindow(Base):
             name="fk_maintenance_windows_site_org",
         ),
         CheckConstraint(
-            "length(btrim(name)) > 0",
+            "length(trim(name)) > 0",
             name="ck_maintenance_windows_name_nonempty",
         ),
         CheckConstraint(
-            "length(btrim(timezone)) > 0",
+            "length(trim(timezone)) > 0",
             name="ck_maintenance_windows_timezone_nonempty",
         ),
         CheckConstraint(
@@ -393,7 +393,7 @@ class MaintenanceWindow(Base):
             "AND jsonb_array_length(weekdays) BETWEEN 1 AND 7 "
             "AND weekdays <@ '[0, 1, 2, 3, 4, 5, 6]'::jsonb",
             name="ck_maintenance_windows_weekdays",
-        ),
+        ).ddl_if(dialect="postgresql"),
         CheckConstraint(
             "local_start_time <> local_end_time",
             name="ck_maintenance_windows_nonzero_duration",
@@ -408,11 +408,11 @@ class MaintenanceWindow(Base):
 
     id = UUIDColumn()
     organization_id = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
     )
-    site_id = Column(UUID(as_uuid=True), nullable=True)
+    site_id = Column(UUIDString(), nullable=True)
     name = Column(String(255), nullable=False)
     timezone = Column(String(100), nullable=False)
     weekdays = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False)
@@ -420,15 +420,15 @@ class MaintenanceWindow(Base):
     local_end_time = Column(Time, nullable=False)
     enabled = Column(Boolean, nullable=False, default=True, server_default=text("true"))
     created_by = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=utcnow, server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True),
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=utcnow,
+        onupdate=utcnow,
         server_default=func.now(),
     )
 
@@ -445,17 +445,17 @@ class AssetAgentCollector(Base):
             name="fk_asset_agent_collectors_asset_org",
         ),
         CheckConstraint(
-            "length(btrim(collector_type)) > 0",
+            "length(trim(collector_type)) > 0",
             name="ck_asset_agent_collectors_type",
         ),
     )
 
     organization_id = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
     )
-    asset_id = Column(UUID(as_uuid=True), primary_key=True)
+    asset_id = Column(UUIDString(), primary_key=True)
     collector_type = Column(String(100), primary_key=True)
     enabled = Column(Boolean, nullable=False, default=True, server_default=text("true"))
     running = Column(Boolean, nullable=False, default=False, server_default=text("false"))
@@ -470,13 +470,13 @@ class FleetTag(Base):
         UniqueConstraint("organization_id", "key", name="uq_fleet_tags_org_key"),
         UniqueConstraint("organization_id", "name", name="uq_fleet_tags_org_name"),
         UniqueConstraint("id", "organization_id", name="uq_fleet_tags_id_org"),
-        CheckConstraint("length(btrim(key)) > 0", name="ck_fleet_tags_key_nonempty"),
-        CheckConstraint("length(btrim(name)) > 0", name="ck_fleet_tags_name_nonempty"),
+        CheckConstraint("length(trim(key)) > 0", name="ck_fleet_tags_key_nonempty"),
+        CheckConstraint("length(trim(name)) > 0", name="ck_fleet_tags_name_nonempty"),
     )
 
     id = UUIDColumn()
     organization_id = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
     )
@@ -486,15 +486,15 @@ class FleetTag(Base):
     color = Column(String(32))
     is_active = Column(Boolean, nullable=False, default=True, server_default=text("true"))
     created_by = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=utcnow, server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True),
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=utcnow,
+        onupdate=utcnow,
         server_default=func.now(),
     )
 
@@ -519,18 +519,18 @@ class AssetFleetTag(Base):
     )
 
     organization_id = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
     )
-    asset_id = Column(UUID(as_uuid=True), primary_key=True)
-    tag_id = Column(UUID(as_uuid=True), primary_key=True)
+    asset_id = Column(UUIDString(), primary_key=True)
+    tag_id = Column(UUIDString(), primary_key=True)
     assigned_by = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
-    assigned_at = Column(DateTime(timezone=True), default=datetime.utcnow, server_default=func.now())
+    assigned_at = Column(DateTime(timezone=True), default=utcnow, server_default=func.now())
 
 
 class FleetGroup(Base):
@@ -541,13 +541,13 @@ class FleetGroup(Base):
         UniqueConstraint("organization_id", "key", name="uq_fleet_groups_org_key"),
         UniqueConstraint("organization_id", "name", name="uq_fleet_groups_org_name"),
         UniqueConstraint("id", "organization_id", name="uq_fleet_groups_id_org"),
-        CheckConstraint("length(btrim(key)) > 0", name="ck_fleet_groups_key_nonempty"),
-        CheckConstraint("length(btrim(name)) > 0", name="ck_fleet_groups_name_nonempty"),
+        CheckConstraint("length(trim(key)) > 0", name="ck_fleet_groups_key_nonempty"),
+        CheckConstraint("length(trim(name)) > 0", name="ck_fleet_groups_name_nonempty"),
     )
 
     id = UUIDColumn()
     organization_id = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
     )
@@ -556,15 +556,15 @@ class FleetGroup(Base):
     description = Column(Text)
     is_active = Column(Boolean, nullable=False, default=True, server_default=text("true"))
     created_by = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=utcnow, server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True),
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=utcnow,
+        onupdate=utcnow,
         server_default=func.now(),
     )
 
@@ -589,18 +589,18 @@ class AssetFleetGroup(Base):
     )
 
     organization_id = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
     )
-    asset_id = Column(UUID(as_uuid=True), primary_key=True)
-    group_id = Column(UUID(as_uuid=True), primary_key=True)
+    asset_id = Column(UUIDString(), primary_key=True)
+    group_id = Column(UUIDString(), primary_key=True)
     assigned_by = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
-    assigned_at = Column(DateTime(timezone=True), default=datetime.utcnow, server_default=func.now())
+    assigned_at = Column(DateTime(timezone=True), default=utcnow, server_default=func.now())
 
 
 class FleetCohort(Base):
@@ -610,17 +610,17 @@ class FleetCohort(Base):
     __table_args__ = (
         UniqueConstraint("organization_id", "name", name="uq_fleet_cohorts_org_name"),
         UniqueConstraint("id", "organization_id", name="uq_fleet_cohorts_id_org"),
-        CheckConstraint("length(btrim(name)) > 0", name="ck_fleet_cohorts_name_nonempty"),
+        CheckConstraint("length(trim(name)) > 0", name="ck_fleet_cohorts_name_nonempty"),
         CheckConstraint("query_version = 1", name="ck_fleet_cohorts_query_version"),
         CheckConstraint(
             "jsonb_typeof(query) = 'object'",
             name="ck_fleet_cohorts_query_object",
-        ),
+        ).ddl_if(dialect="postgresql"),
     )
 
     id = UUIDColumn()
     organization_id = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
     )
@@ -630,15 +630,15 @@ class FleetCohort(Base):
     query = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False)
     is_active = Column(Boolean, nullable=False, default=True, server_default=text("true"))
     created_by = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=utcnow, server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True),
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=utcnow,
+        onupdate=utcnow,
         server_default=func.now(),
     )
 
@@ -1068,7 +1068,7 @@ class UserInvitation(Base):
 
     id = UUIDColumn()
     organization_id = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
     )
@@ -1098,12 +1098,12 @@ class UserInvitation(Base):
     delivered_at = Column(DateTime(timezone=True))
     delivery_error_code = Column(String(100))
     created_by = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
     accepted_user_id = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
@@ -1111,13 +1111,13 @@ class UserInvitation(Base):
     revoked_at = Column(DateTime(timezone=True))
     created_at = Column(
         DateTime(timezone=True),
-        default=datetime.utcnow,
+        default=utcnow,
         server_default=func.now(),
     )
     updated_at = Column(
         DateTime(timezone=True),
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=utcnow,
+        onupdate=utcnow,
         server_default=func.now(),
     )
 
@@ -2122,27 +2122,27 @@ class FleetTargetPreview(Base):
         CheckConstraint(
             "jsonb_typeof(selector) = 'object'",
             name="ck_fleet_target_previews_selector_object",
-        ),
+        ).ddl_if(dialect="postgresql"),
         CheckConstraint(
             "jsonb_typeof(ordered_asset_ids) = 'array'",
             name="ck_fleet_target_previews_assets_array",
-        ),
+        ).ddl_if(dialect="postgresql"),
         CheckConstraint(
             "jsonb_typeof(resolved_agents) = 'array'",
             name="ck_fleet_target_previews_agents_array",
-        ),
+        ).ddl_if(dialect="postgresql"),
         CheckConstraint(
             "jsonb_typeof(excluded_assets) = 'array'",
             name="ck_fleet_target_previews_excluded_array",
-        ),
+        ).ddl_if(dialect="postgresql"),
         CheckConstraint(
             "jsonb_typeof(warnings) = 'array'",
             name="ck_fleet_target_previews_warnings_array",
-        ),
+        ).ddl_if(dialect="postgresql"),
         CheckConstraint(
             "membership_hash ~ '^[0-9a-f]{64}$'",
             name="ck_fleet_target_previews_hash",
-        ),
+        ).ddl_if(dialect="postgresql"),
         UniqueConstraint("id", "organization_id", name="uq_fleet_target_previews_id_org"),
         ForeignKeyConstraint(
             ["release_id", "organization_id"],
@@ -2154,11 +2154,11 @@ class FleetTargetPreview(Base):
 
     id = UUIDColumn()
     organization_id = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
     )
-    release_id = Column(UUID(as_uuid=True), nullable=False)
+    release_id = Column(UUIDString(), nullable=False)
     selector = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False)
     ordered_asset_ids = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False)
     resolved_agents = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False)
@@ -2178,12 +2178,12 @@ class FleetTargetPreview(Base):
     asset_count = Column(Integer, nullable=False)
     agent_count = Column(Integer, nullable=False)
     created_by = Column(
-        UUID(as_uuid=True),
+        UUIDString(),
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
     )
     expires_at = Column(DateTime(timezone=True), nullable=False)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=utcnow, server_default=func.now())
 
 
 class AgentRollout(Base):
@@ -2238,7 +2238,7 @@ class AgentRollout(Base):
     target_selector = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False, default=dict)
     strategy = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False, default=dict)
     status = Column(String(30), nullable=False, default="pending", server_default="pending")
-    target_preview_id = Column(UUID(as_uuid=True), nullable=True)
+    target_preview_id = Column(UUIDString(), nullable=True)
     target_membership_hash = Column(String(64))
     scheduled_start_at = Column(DateTime(timezone=True))
     enforce_maintenance_windows = Column(
@@ -2324,8 +2324,8 @@ class AgentRolloutTarget(Base):
         nullable=False,
     )
     agent_id = Column(String(255))
-    route_asset_id = Column(UUID(as_uuid=True), nullable=True)
-    site_id = Column(UUID(as_uuid=True), nullable=True)
+    route_asset_id = Column(UUIDString(), nullable=True)
+    site_id = Column(UUIDString(), nullable=True)
     wave_index = Column(Integer, nullable=False, default=0, server_default="0")
     status = Column(String(30), nullable=False, default="pending", server_default="pending")
     current_version = Column(String(100))

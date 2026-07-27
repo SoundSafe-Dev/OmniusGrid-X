@@ -17,7 +17,6 @@ from app.api.auth import get_password_hash
 from app.core.config import settings
 from app.core.session import SessionManager
 from app.core.tenant import get_tenant_db, get_tenant_org_id
-from app.db.database import get_db
 from app.db.models import Organization, User, UserInvitation
 from app.middleware.rate_limit import auth_rate_limit
 from app.middleware.rbac import require_admin
@@ -25,6 +24,7 @@ from app.services.user_audit import add_user_audit
 from app.services.user_invitations import (
     InvitationTokenError,
     deliver_invitation,
+    get_invitation_tenant_db,
     invitation_token_hash,
     invitation_token_organization,
     issue_invitation_token,
@@ -51,6 +51,12 @@ def _validate_email(value: str) -> str:
 
 def _not_found(resource: str) -> HTTPException:
     return HTTPException(status_code=404, detail=f"{resource} not found")
+
+
+def _same_id(left: UUID | str | None, right: UUID | str | None) -> bool:
+    """Compare UUID identifiers independently of ORM result representation."""
+
+    return left is not None and right is not None and str(left) == str(right)
 
 
 def _invitation_invalid() -> HTTPException:
@@ -266,7 +272,10 @@ async def _locked_tenant_users(
         .with_for_update()
     )
     users = list(result.scalars().all())
-    target = next((candidate for candidate in users if candidate.id == user_id), None)
+    target = next(
+        (candidate for candidate in users if _same_id(candidate.id, user_id)),
+        None,
+    )
     if target is None:
         raise _not_found("User")
     return target, users
@@ -767,7 +776,7 @@ async def update_user(
         raise HTTPException(status_code=422, detail="Email may not be null")
     if "role" in supplied and body.role is None:
         raise HTTPException(status_code=422, detail="Role may not be null")
-    if target.id == current_user.id and new_role != target.role:
+    if _same_id(target.id, current_user.id) and new_role != target.role:
         raise HTTPException(
             status_code=409,
             detail="You cannot change your own role",
@@ -885,7 +894,7 @@ async def deactivate_user(
         organization_id,
         db,
     )
-    if target.id == current_user.id:
+    if _same_id(target.id, current_user.id):
         raise HTTPException(
             status_code=409,
             detail="You cannot deactivate your own account",
@@ -972,7 +981,7 @@ async def reactivate_user(
 async def validate_invitation(
     request: Request,
     body: InvitationTokenRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_invitation_tenant_db),
 ) -> InvitationValidationResponse:
     invitation = await _public_invitation(body.token, db, lock=True)
     if invitation.status != "pending":
@@ -1008,7 +1017,7 @@ async def validate_invitation(
 async def accept_invitation(
     request: Request,
     body: InvitationAcceptRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_invitation_tenant_db),
 ) -> InvitationAcceptanceResponse:
     invitation = await _public_invitation(body.token, db, lock=True)
     if invitation.status != "pending":

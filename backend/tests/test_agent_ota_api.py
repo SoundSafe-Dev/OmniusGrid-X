@@ -330,15 +330,23 @@ async def test_rollout_creation_resolves_only_tenant_targets(
     )
 
     cross_tenant = await client_a.post(
-        "/api/v1/fleet/rollouts",
+        "/api/v1/fleet/target-previews",
         json={
-            "name": "bad rollout",
             "release_id": release["id"],
-            "target_selector": {"asset_ids": [asset_a1["id"], asset_b["id"]]},
-            "strategy": {"canary_percentage": 50},
+            "selector": {"asset_ids": [asset_a1["id"], asset_b["id"]]},
         },
     )
-    assert cross_tenant.status_code == 404
+    assert cross_tenant.status_code == 422
+
+    preview_response = await client_a.post(
+        "/api/v1/fleet/target-previews",
+        json={
+            "release_id": release["id"],
+            "selector": {"asset_ids": [asset_a1["id"], asset_a2["id"]]},
+        },
+    )
+    assert preview_response.status_code == 201, preview_response.text
+    preview = preview_response.json()
 
     rollout = await client_a.post(
         "/api/v1/fleet/rollouts",
@@ -346,6 +354,8 @@ async def test_rollout_creation_resolves_only_tenant_targets(
             "name": "canary rollout",
             "release_id": release["id"],
             "target_selector": {"asset_ids": [asset_a1["id"], asset_a2["id"]]},
+            "preview_id": preview["id"],
+            "membership_hash": preview["membership_hash"],
             "strategy": {"canary_percentage": 50},
         },
     )

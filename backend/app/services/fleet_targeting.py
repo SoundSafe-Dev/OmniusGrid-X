@@ -567,14 +567,17 @@ async def validate_query_references(
         expected = references[field]
         if not expected:
             continue
-        found = set(
-            (
-                await db.execute(statement.where(column.in_(expected)))
+        found = {
+            str(value)
+            for value in (
+                (
+                    await db.execute(statement.where(column.in_(expected)))
+                )
+                .scalars()
+                .all()
             )
-            .scalars()
-            .all()
-        )
-        if found != expected:
+        }
+        if found != {str(value) for value in expected}:
             raise TargetingValidationError(
                 f"one or more referenced {field} values are unavailable"
             )
@@ -660,9 +663,9 @@ class FleetTargetResolver:
                 "asset_type_id": str(asset_type.id),
                 "asset_type_name": asset_type.name,
                 "asset_category": asset_type.category,
-                "collector_types": collectors.get(asset.id, []),
-                "tags": tags.get(asset.id, []),
-                "groups": groups.get(asset.id, []),
+                "collector_types": collectors.get(str(asset.id), []),
+                "tags": tags.get(str(asset.id), []),
+                "groups": groups.get(str(asset.id), []),
             }
             if release.artifact_type == "agent" and not asset.agent_id:
                 excluded.append(
@@ -738,8 +741,8 @@ class FleetTargetResolver:
         db: AsyncSession,
         organization_id: UUID,
         asset_ids: list[UUID],
-    ) -> dict[UUID, list[dict[str, str]]]:
-        result: dict[UUID, list[dict[str, str]]] = {}
+    ) -> dict[str, list[dict[str, str]]]:
+        result: dict[str, list[dict[str, str]]] = {}
         if not asset_ids:
             return result
         rows = (
@@ -761,7 +764,7 @@ class FleetTargetResolver:
             )
         ).all()
         for asset_id, tag in rows:
-            result.setdefault(asset_id, []).append(
+            result.setdefault(str(asset_id), []).append(
                 {"id": str(tag.id), "key": tag.key, "name": tag.name}
             )
         return result
@@ -771,8 +774,8 @@ class FleetTargetResolver:
         db: AsyncSession,
         organization_id: UUID,
         asset_ids: list[UUID],
-    ) -> dict[UUID, list[dict[str, str]]]:
-        result: dict[UUID, list[dict[str, str]]] = {}
+    ) -> dict[str, list[dict[str, str]]]:
+        result: dict[str, list[dict[str, str]]] = {}
         if not asset_ids:
             return result
         rows = (
@@ -794,7 +797,7 @@ class FleetTargetResolver:
             )
         ).all()
         for asset_id, group in rows:
-            result.setdefault(asset_id, []).append(
+            result.setdefault(str(asset_id), []).append(
                 {"id": str(group.id), "key": group.key, "name": group.name}
             )
         return result
@@ -804,8 +807,8 @@ class FleetTargetResolver:
         db: AsyncSession,
         organization_id: UUID,
         asset_ids: list[UUID],
-    ) -> dict[UUID, list[str]]:
-        result: dict[UUID, list[str]] = {}
+    ) -> dict[str, list[str]]:
+        result: dict[str, list[str]] = {}
         if not asset_ids:
             return result
         rows = (
@@ -825,7 +828,7 @@ class FleetTargetResolver:
             )
         ).all()
         for asset_id, collector_type in rows:
-            result.setdefault(asset_id, []).append(collector_type)
+            result.setdefault(str(asset_id), []).append(collector_type)
         return result
 
     @staticmethod

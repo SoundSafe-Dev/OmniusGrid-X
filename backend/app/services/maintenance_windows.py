@@ -245,7 +245,10 @@ def _effective_windows(windows: Sequence, site_id: UUID | None) -> list:
     enabled = [window for window in windows if bool(window.enabled)]
     if site_id is not None:
         site_windows = [
-            window for window in enabled if window.site_id == site_id
+            window
+            for window in enabled
+            if window.site_id is not None
+            and str(window.site_id) == str(site_id)
         ]
         if site_windows:
             return site_windows

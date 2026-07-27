@@ -484,10 +484,13 @@ class IngestionWorker:
         collector_status = data.get('collector_status') or {}
         collectors = collector_status.get('collectors') if isinstance(collector_status, dict) else {}
         collectors = collectors if isinstance(collectors, dict) else {}
-        updated_id_set = set(updated_ids)
+        # UUIDString-backed asset IDs are returned as strings on every dialect,
+        # while heartbeat payload validation produces UUID objects. Compare the
+        # canonical text form so collector facts are not silently discarded.
+        updated_id_set = {str(asset_id) for asset_id in updated_ids}
         for raw_asset_id, collector in collectors.items():
             try:
-                collector_asset_id = UUID(str(raw_asset_id))
+                collector_asset_id = str(UUID(str(raw_asset_id)))
             except (TypeError, ValueError):
                 continue
             if collector_asset_id not in updated_id_set or not isinstance(collector, dict):
