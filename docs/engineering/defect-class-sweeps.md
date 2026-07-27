@@ -575,9 +575,25 @@ the policy's `WITH CHECK` rejects an INSERT made with no tenant GUC.
 
 That split is the useful part: under RLS **a read fails silently and a write fails
 loudly**. Every other defect in this sweep was the quiet kind, which is precisely why they
-survived for so long. This one would have been noticed the first time anyone opened the
-feature — which says something about how much the feature is used. The application layer
-was correct throughout (`organization_id=current_user.organization_id` was already set on
+survived for so long.
+
+A 500 on create would normally be noticed at once. It was not, because the correlation
+model and its LoRA adapter are **deliberately unloaded right now** — that surface is meant
+to be dormant, so nobody exercising it is the expected state rather than evidence of
+neglect. An earlier draft of this note drew the opposite conclusion and was wrong.
+
+**Restoring the surface exposed a second, latent defect, and that is worth stating as a
+rule.** With the model unloaded, `correlation_ai_engine` serves a heuristic and marks it
+`simulated: True` with confidence dropped to 0.4 — honestly. Both chat handlers read the
+fallback's *text* and discarded the flag, so heuristic output reached the caller
+indistinguishable from a real inference. That was harmless while the RLS defect kept the
+endpoints unreachable; fixing the RLS made it live. **A change that turns a dead path into
+a working one owns whatever that path then does** — so the provenance
+(`simulated`, `simulation_reason`, `confidence`, `model_version`) is now carried through
+to the response, with a guard that forces a non-simulated result to prove the flag is not
+hardcoded.
+
+The application layer was correct throughout (`organization_id=current_user.organization_id` was already set on
 create); only the GUC was missing.
 
 (Kanban RLS and `/nlp/correlation/intake/{id}` are items #16 and #17 in the current task

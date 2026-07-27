@@ -12,8 +12,11 @@ feature was dead — and it failed in **both** directions at once:
 WHY THE SPLIT MATTERS. Under RLS a **read fails silently** — the policy filters rows and
 the endpoint returns an empty list — while a **write fails loudly**, because the policy's
 WITH CHECK rejects the INSERT outright. Every other defect in this sweep was the quiet
-kind, which is exactly why they survived. This one would have been noticed the first time
-anyone opened the feature, which suggests nobody had.
+kind, which is exactly why they survived.
+
+A 500 on create would normally have been noticed immediately — but the correlation model
+and its LoRA adapter are DELIBERATELY not loaded at the moment, so this surface is meant
+to be dormant. Nobody exercising it is the expected state, not evidence of neglect.
 
 The application layer was correct throughout: `organization_id=current_user.organization_id`
 was already set on create. Only the GUC was missing.
@@ -115,3 +118,81 @@ class TestSessionsStayInsideTheTenant:
 
         still_there = await client_a.get(f"/api/v1/nlp/sessions/{session_id}")
         assert still_there.status_code == 200, "the session was deleted by another tenant"
+
+
+class TestSimulatedAnalysisIsLabelledAsSuch:
+    """The correlation model and its LoRA adapter are DELIBERATELY not loaded right
+    now, so `correlation_ai_engine` serves a heuristic fallback. It marks that output
+    `simulated: True` with confidence dropped to 0.4 — honestly.
+
+    Both chat handlers read the fallback's text and DISCARDED the flag, so heuristic
+    output reached the caller indistinguishable from a real inference.
+
+    This was latent while the RLS defect above made these endpoints unreachable.
+    Fixing that made it live, which is why it is fixed in the same pass: a change that
+    turns a dead path into a working one owns whatever that path then does.
+    """
+
+    async def test_the_response_says_it_was_simulated(self, client_a):
+        session_id = (
+            await client_a.post("/api/v1/nlp/sessions", json={"title": "provenance"})
+        ).json()["id"]
+
+        response = await client_a.post(
+            f"/api/v1/nlp/sessions/{session_id}/chat",
+            json={"message": "why is line 3 down?"},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["simulated"] is True, (
+            "heuristic output is being presented as a real model inference — the "
+            "engine set simulated=True and the endpoint dropped it"
+        )
+
+    async def test_the_reason_and_confidence_come_through(self, client_a):
+        """`simulated: true` alone tells a caller something is off but not what. The
+        engine supplies both; neither should be lost."""
+        session_id = (
+            await client_a.post("/api/v1/nlp/sessions", json={"title": "provenance 2"})
+        ).json()["id"]
+
+        body = (
+            await client_a.post(
+                f"/api/v1/nlp/sessions/{session_id}/chat",
+                json={"message": "explain the correlation"},
+            )
+        ).json()
+        assert body["simulation_reason"], "no reason given for the simulated result"
+        assert body["confidence"] == 0.4, (
+            f"expected the fallback's lowered confidence, got {body['confidence']}"
+        )
+        assert body["model_version"] == "fallback-chat"
+
+    async def test_the_flag_is_not_hardcoded(self, client_a, monkeypatch):
+        """Guards the guard: if `simulated` were pinned True, the assertions above
+        would pass no matter what the engine returned. Force a non-simulated result
+        and confirm it comes through as False."""
+        from app.services import correlation_ai_engine as engine_module
+
+        async def _fake_chat(message, context=None):
+            return {
+                "response_text": "real inference",
+                "simulated": False,
+                "confidence": 0.92,
+                "model_version": "gemma-4-lora-v2",
+                "follow_up_questions": [],
+            }
+
+        monkeypatch.setattr(engine_module.correlation_ai_engine, "chat", _fake_chat)
+        session_id = (
+            await client_a.post("/api/v1/nlp/sessions", json={"title": "not simulated"})
+        ).json()["id"]
+
+        body = (
+            await client_a.post(
+                f"/api/v1/nlp/sessions/{session_id}/chat", json={"message": "hello"}
+            )
+        ).json()
+        assert body["simulated"] is False
+        assert body["confidence"] == 0.92
+        assert body["model_version"] == "gemma-4-lora-v2"

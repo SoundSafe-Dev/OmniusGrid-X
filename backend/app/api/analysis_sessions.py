@@ -309,6 +309,19 @@ class SessionChatResponse(BaseModel):
     actions: Optional[List[Dict[str, Any]]]
     follow_up_questions: Optional[List[str]] = None
     timestamp: datetime
+    # PROVENANCE. correlation_ai_engine falls back to a heuristic when the model or
+    # its LoRA adapter is not loaded — which is the deliberate state right now — and
+    # marks that output `simulated: True` with confidence dropped to 0.4. These two
+    # handlers read the fallback's text and DISCARDED the flag, so heuristic output
+    # reached the caller indistinguishable from a real inference.
+    #
+    # It was latent while the surrounding RLS defect made these endpoints unreachable.
+    # Fixing that made this live, so it is fixed in the same pass rather than left as
+    # a newly-exposed edge.
+    simulated: bool = False
+    simulation_reason: Optional[str] = None
+    confidence: Optional[float] = None
+    model_version: Optional[str] = None
 
 
 class SessionMessageResponse(BaseModel):
@@ -1164,7 +1177,14 @@ async def session_chat(
             domains=assistant_message.domains,
             actions=assistant_message.actions,
             follow_up_questions=analysis_result.get("follow_up_questions", []),
-            timestamp=_as_utc(assistant_message.timestamp)
+            timestamp=_as_utc(assistant_message.timestamp),
+            # Carried through from the engine, never defaulted to False here: if the
+            # engine says this was a heuristic rather than an inference, the caller has
+            # to be able to see that.
+            simulated=bool(analysis_result.get("simulated", False)),
+            simulation_reason=analysis_result.get("simulation_reason"),
+            confidence=analysis_result.get("confidence"),
+            model_version=analysis_result.get("model_version"),
         )
     except Exception as e:
         logger.exception("correlation_chat_error", error=str(e))
@@ -1243,7 +1263,14 @@ async def session_chat(
             domains=assistant_message.domains,
             actions=assistant_message.actions,
             follow_up_questions=analysis_result.get("follow_up_questions", []),
-            timestamp=_as_utc(assistant_message.timestamp)
+            timestamp=_as_utc(assistant_message.timestamp),
+            # Carried through from the engine, never defaulted to False here: if the
+            # engine says this was a heuristic rather than an inference, the caller has
+            # to be able to see that.
+            simulated=bool(analysis_result.get("simulated", False)),
+            simulation_reason=analysis_result.get("simulation_reason"),
+            confidence=analysis_result.get("confidence"),
+            model_version=analysis_result.get("model_version"),
         )
         
     except Exception as e:
