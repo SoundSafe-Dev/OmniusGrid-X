@@ -1,22 +1,16 @@
-# Next week — task pool, grouped by dev lane
+# Next week — task pool
 
-Written 2026-07-26 for **Harsh as Product Manager**.
+Written 2026-07-26 for **Harsh as Product Manager**. Grouped by lane so it can be handed
+out as-is; every task is independently assignable, so reassign freely.
 
-Grouped by lane so it can be handed out as-is, but **every ticket is independently
-assignable** — the lane is where the context currently lives, not a claim on the work.
-Reassign freely; nothing below depends on who does it except where a ticket says so.
+Numbers are stable references — a task keeps its number if it moves lane.
+**Every figure below was verified against the repository today.** Tasks marked *verify
+first* may already be fixed; the shape of the work depends on what is actually true.
 
-**Every number here was verified against the repository today.** Where something is
-reported but unverified it says so — those need a 15-minute check before scheduling,
-because the shape of the fix depends on the answer.
+Sizes: **S** under half a day · **M** 1–2 days · **L** 3+ days.
 
-Sizes: **S** = under half a day · **M** = 1–2 days · **L** = 3+ days.
-Lanes follow the ownership table in the root [README](../../README.md).
-
-**56 tickets.** Four are decisions, not work.
-
-*A print-ready PDF (one lane per page, for handing out) is not committed — it would go
-stale beside this file. Regenerate it in one command:*
+*A print-ready PDF (one lane per page) is not committed — it would go stale beside this
+file. Regenerate:*
 `python3 tools/docs/md2pdf.py docs/planning/next-week-task-pool.md docs/planning/next-week-task-pool.pdf`
 
 ---
@@ -37,293 +31,515 @@ stale beside this file. Regenerate it in one command:*
 | `geotab_service.py` | 16 `random.uniform` call sites |
 | ERP tests | 488 with live vendors, 399 hermetic |
 
-**Checked and found DONE — deliberately not in this pool**, because the previous plan
-still listed both: Redis is deployed (`base/redis-statefulset.yaml`) and server-side
-alarm rules exist (`AlarmRule` model + `AlarmRules.tsx` with a test).
+**Checked and found DONE — deliberately absent from this pool**, because the previous plan
+still listed both: Redis is deployed (`base/redis-statefulset.yaml`), and server-side alarm
+rules exist (`AlarmRule` model + `AlarmRules.tsx` with a test).
 
 ---
 
-# 0 · Decisions — Harsh, as PM
+# Decisions — Harsh, as PM
 
-These block engineering work and cost a conversation, not a sprint. Everything in
-brackets is waiting on them.
+These cost a conversation, not a sprint, and each blocks real work.
 
-**P-01 · DECISION · The correlation-AI honesty story.** *(blocks P-10 → P-11; shapes P-12)*
-The engine now returns `simulated: true` and a reason on both fallback paths, but
-**nothing renders it**, and `CORRELATION_MODEL_ENABLED` is `False` by default — so today
-every deployment shows heuristics styled as AI output. Label it, hide the tab when the
-model is off, or ship the adapter enabled. A product call.
+1. **Correlation-AI honesty — what does the product claim?** · *blocks #13, #14; shapes #15*
+   `CORRELATION_MODEL_ENABLED` is `False` by default and the engine falls back to a
+   heuristic, so **every deployment today shows heuristics styled as AI output**. The engine
+   now labels its own output `simulated: true`, but nothing carries or displays that. Three
+   defensible answers: label it in the UI, hide the AI tab when the model is off, or ship
+   the adapter enabled.
 
-**P-02 · DECISION · Fix or delete the quarantined tests.** *(blocks P-14, P-15, P-16)*
-Three test files are `--ignore`d and two tests deselected in `ci-cd.yml`. They fail at
-collection, so the module and its tests disagree about the API. Either is defensible;
-leaving them excluded indefinitely is not.
+   Done when: the answer is written down, and #13/#14 are either scheduled or closed as
+   won't-do.
 
-**P-03 · DECISION · The `main` promotion window.** *(pairs with P-50)*
-`hamad/converged-pre-main` is well ahead of `main`. Needs a window, not engineering.
+2. **Quarantined tests — fix or delete?** · *blocks #10, #11, #12*
+   Three test files are `--ignore`d and two tests deselected in `ci-cd.yml`. They fail at
+   *collection*, so a module and its tests disagree about the API. Fixing and deleting are
+   both defensible; leaving them excluded is not, because the exclusion is invisible in a
+   green build.
 
-**P-04 · DECISION · The `super_admin` role.** *(blocks P-57, and `data_retention.py`)*
-Two features need a role that spans tenants. Designing it is a security decision with a
-blast radius, which is why neither has shipped.
+   Done when: a decision per file, and #12 is scheduled regardless of which way it goes.
+
+3. **`main` promotion window** · *pairs with #39*
+   `hamad/converged-pre-main` is well ahead of `main`, and every dev is told to branch from
+   `main`. The longer the gap, the more divergent everyone's starting point.
+
+   Done when: a date is agreed and announced to the four active branches.
+
+4. **The `super_admin` role** · *blocks #23, and `data_retention.py`*
+   Two features need a role that spans tenants, which is a deliberate hole in the RLS model.
+   `app/core/roles.py:48` documents the need; nothing implements it. It has a real blast
+   radius, which is why neither feature shipped.
+
+   Done when: scope is decided — which routes, which audit trail, who can grant it — and
+   written into `roles.py` as the spec #23 builds against.
 
 ---
 
-# 1 · Alex — intake & spreadsheet parsing `[intake]`
-*Under Harsh. Sequenced deliberately: P-05 and P-06 finish work he already started.*
+# Alex — intake & spreadsheet parsing
+*Under Harsh. Sequenced: #5 and #6 finish work he already started.*
 
 His onboarding landed here — he fixed `normalize_key`, added `normalize_column_header`,
 added a messy real-world CSV fixture, and wrote `docs/DATA_FLOW_OVERVIEW.md`.
+**Two of those three code additions are not connected to anything**, which is the natural
+next step and teaches the lesson this codebase keeps relearning.
 
-**Two of those three code additions are not connected to anything.** That is the natural
-next step, and it teaches the lesson this codebase keeps relearning.
+5. **Wire `normalize_column_header` into its callers** · S
+   He added it with three passing tests and **no production caller** — `grep` finds it only
+   in its own test file, so it currently normalises nothing. Eight modules consume
+   `shared_key_detector`; the spreadsheet path (`multi_spreadsheet_correlator`) is the one
+   that ingests headers.
 
-**P-05 · S · Wire `normalize_column_header` into its callers.**
-He added it with three passing tests and **no production caller** — `grep` finds it only
-in its own test file. Eight modules consume `shared_key_detector`
-(`multi_spreadsheet_correlator`, `pdf_parser`, `docx_parser`,
-`document_scenario_builder`, `image_text_extractor`, `cross_file_scenario_builder`,
-`image_scenario_builder`, `nlp_correlation`). Pick the one that ingests spreadsheet
-headers, route them through the helper, and assert a real header set normalises.
-*Acceptance:* a test that fails if the call is removed. A helper with a test and no
-caller does nothing.
+   Do: route header ingestion through the helper, then assert a realistic header row
+   normalises end to end rather than unit-testing the helper again.
 
-**P-06 · S · Make the messy fixture assert something.**
-`tests/load/fixtures/messy_factory_upload.csv` is referenced by **no test**. He built it
-to represent real-world mess; point a parser test at it and assert the keys and headers
-that come out.
-*Acceptance:* corrupting a column in the fixture fails the test.
+   Done when: removing the call makes a test fail. A helper with a test and no caller does
+   nothing.
 
-**P-08 · S · Decide and test header-collision behaviour.**
-`Serial #` and `Serial No.` may both normalise to `serial_number`. Today's behaviour is
-**unknown** — determine it, then make it deliberate: last-wins, first-wins, or raise.
-Silent overwrite of one column by another is a data-loss bug.
-*Acceptance:* the chosen behaviour is asserted, with the reasoning in the docstring.
+6. **Make the messy fixture assert something** · S
+   `tests/load/fixtures/messy_factory_upload.csv` is referenced by **no test**. He built it
+   to represent real-world mess, and right now it is a file that proves nothing.
 
-**P-07 · M · Extend the messy-header corpus.**
-Cases from genuine customer spreadsheets: merged cells, a title row above the header,
-trailing total rows, unit suffixes (`Temp (°C)`), duplicated names, non-ASCII, Excel date
-coercion. Each gets a named test explaining what it represents.
+   Do: point a parser test at it and assert the keys and headers that come out.
 
-**P-09 · M · Fold `docs/DATA_FLOW_OVERVIEW.md` into the architecture docs.** *(stretch)*
-He wrote 114 lines living outside `docs/architecture/`. Reconcile with `DATA_FLOW.md` so
-there is one description of the flow, not two that can disagree.
+   Done when: corrupting a column in the fixture fails the test.
 
----
+7. **Decide and test header-collision behaviour** · S
+   `Serial #` and `Serial No.` may both normalise to `serial_number`. Today's behaviour is
+   **unknown** — one column may be silently overwriting another, which is data loss that
+   looks like success.
 
-# 2 · Harsh — correlation AI, NLP, kanban, MLOps `[ai]` `[intake]`
-*His own lane, until he reassigns it. P-14 is the one only he has the context for.*
+   Do: find out what happens now, choose the behaviour (last-wins, first-wins, or raise),
+   and implement it deliberately.
 
-**P-14 · M · Unquarantine the three scenario builders.** *(needs P-02)*
-`test_document_scenario_builder.py`, `test_image_scenario_builder.py` and
-`test_cross_file_scenario_builder.py` fail at **collection**:
-`ImportError: cannot import name 'build_document_scenarios'`. The test and the module
-disagree about the API, and only he knows which side is right.
+   Done when: the chosen behaviour is asserted by a test, with the reasoning in the
+   docstring so nobody re-litigates it.
 
-**P-15 · S · Re-enable the two deselected tests** — *(needs P-02)*
-`test_document_domain_mapper.py::test_map_section_to_domain_table_content` and
-`test_image_domain_mapper.py::test_map_image_domains`.
+8. **Extend the messy-header corpus** · M
+   The fixture covers one shape of mess. Real customer spreadsheets bring merged cells, a
+   title row above the header, trailing total rows, unit suffixes (`Temp (°C)`), duplicate
+   names, non-ASCII, and Excel coercing values to dates.
 
-**P-16 · S · Make the quarantine expire.**
-A named marker plus a test that fails once an expiry date passes, so an exclusion cannot
-quietly become permanent.
+   Done when: each case has a named test saying what real situation it represents, and the
+   parser either handles it or fails loudly rather than silently mis-parsing.
 
-**P-10 · S · Plumb the `simulated` flag through the API.** *(needs P-01; blocks P-11)*
-**The honesty fix currently stops at the service layer.** Verified today: no file in
-`app/api/` reads the key at all. `nlp_correlation.py:1152-1155` cherry-picks exactly four
-values out of the analysis — `predicted_root_cause`, `risk_score`,
-`target_kanban_tasks`, `remediation_commands` — and `/query` returns
-`response_model=NLPQueryResponse`, which declares no `simulated` field and would strip it
-even if the handler copied it. So the engine labels its output and nothing downstream can
-see the label.
-*Acceptance:* a test asserting the flag survives the HTTP boundary with the model
-disabled.
+9. **Fold `docs/DATA_FLOW_OVERVIEW.md` into the architecture docs** · M · *stretch*
+   He wrote 114 lines living outside `docs/architecture/`, alongside an existing
+   `DATA_FLOW.md`. Two descriptions of one flow will disagree, and nobody will know which
+   is current.
 
-**P-11 · S · Render the `simulated` flag.** *(needs P-10)*
-Only reachable once P-10 lands — `CorrelationAIPane.tsx` cannot display a key the API
-does not return.
-
-**P-12 · M · Make the Gemma adapter loadable in a dev environment.**
-`CORRELATION_ADAPTER_PATH` defaults to `./checkpoints/best_lora_v2`. Document how a dev
-obtains it, or make the load failure loud at startup rather than silent per request.
-
-**P-18 · M · Kanban RLS-write-on-read.** *(verify first)*
-`kanban.py` mixes 10 `get_db` and 14 `get_tenant_db`. One root cause was reported to 500
-`/kanban/board`, `/metrics` and `/workload`. It may already be fixed — check, then convert
-the handlers touching RLS-protected tables.
-
-**P-19 · S · `/nlp/correlation/intake/{id}` 500.** *(reported; verify)*
-
-**P-13 · L · First tests for `correlation_ai_engine.py`.**
-3,627 lines, and `pytest -k correlation` deselects 1,245 tests and runs **none** against
-it. Start with the pure scoring helpers — `_calculate_risk_score`,
-`_simulate_root_cause`, `_generate_kanban_tasks` — which need no model.
-
-**P-17 · L · Split `CorrelationAIPane.tsx`.**
-843 lines, no test. Extract the data-fetching from the panel layout so the pieces become
-testable.
+   Done when: one document describes the flow and the other is gone, not left as a stale
+   copy.
 
 ---
 
-# 3 · Hridyansh — tenant isolation, RBAC, OTA, edge `[edge]` `[platform]`
+# Harsh — correlation AI, NLP, kanban, MLOps
+*His own lane until he reassigns it. #10 is the one only he has the context for.*
 
-**P-51 · L · `get_db` on RLS-protected tables — 24 API files. ⭐ highest-value item here.**
-The class of bug that made the ERP background sync write nothing on a non-owner role and
-that hid the dashboard's data behind zeroes. Audit each file against the RLS tables in
-migrations `011`/`033`. **Add the guard test first** — it matters more than the sweep,
-because without it the next one ships too. Squarely his lane: RLS through the canonical
-`app.current_org_id` GUC.
+10. **Unquarantine the three scenario builders** · M · *needs #2*
+    `test_document_scenario_builder.py`, `test_image_scenario_builder.py` and
+    `test_cross_file_scenario_builder.py` fail at collection with
+    `ImportError: cannot import name 'build_document_scenarios'`. The test and the module
+    disagree about the API; only he knows which side is right.
 
-**P-22 · S · `ORGANIZATION_ID: "dev-org"` is hardcoded** at
-`base/edge-agent-statefulset.yaml:62,64`. Every edge agent in every environment reports
-into the same fake org.
+    Done when: the three files are passing and un-ignored in `ci-cd.yml`, or deleted with a
+    one-line note saying why.
 
-**P-20 · S · Edge backoff jitter** (FS-182). Without jitter a fleet that loses the backend
-reconnects in lockstep and stampedes it on recovery.
+11. **Re-enable the two deselected tests** · S · *needs #2*
+    `test_document_domain_mapper.py::test_map_section_to_domain_table_content` and
+    `test_image_domain_mapper.py::test_map_image_domains` are `--deselect`ed.
 
-**P-57 · M · Organisation management CRUD.** *(needs P-04)*
-`AdminPages.tsx` sets `USER_MGMT_ENABLED = false`. Blocked on the `super_admin` design
-that `data_retention.py` also needs.
+    Done when: both run in CI, or are deleted.
 
-**P-21 · M · Collector tests** (FS-185).
+12. **Make the quarantine expire** · S
+    Nothing stops an exclusion becoming permanent — a `--ignore` is invisible in a green
+    build, which is how these five survived.
 
----
+    Do: add a named marker plus a test that fails once an expiry date passes.
 
-# 4 · htreinen — RAG `[rag]`
-*Last work 2026-07-23: multi-document corpus, hybrid + discrimination tests.*
+    Done when: adding a new exclusion without an expiry date fails CI.
 
-**P-31 · S · `/rag/documents` leaks a raw SeaweedFS connection error** instead of 503. An
-infrastructure error surfaced verbatim to a client is both confusing and an information
-leak.
+13. **Plumb the `simulated` flag through the API** · S · *needs #1; blocks #14*
+    **The honesty fix currently stops at the service layer.** Verified: no file in
+    `app/api/` reads the key. `nlp_correlation.py:1152-1155` cherry-picks exactly four
+    values out of the analysis, and `/query` returns `response_model=NLPQueryResponse`,
+    which declares no `simulated` field and would strip it even if the handler copied it. So
+    the engine labels its output and nothing downstream can see the label.
 
-**P-32 · S · `rag_eval` is excluded from the default run**, so it has zero coverage in CI.
-Either include it or state why not.
+    Done when: a test asserts the flag survives the HTTP boundary with
+    `CORRELATION_MODEL_ENABLED=False`.
 
-**P-30 · M · The 5 open items** in `docs/rag_ingestion_followups.md`.
+14. **Show the user when an analysis is simulated** · S · *needs #13*
+    Once the flag reaches the client, `CorrelationAIPane.tsx` has to render it — a badge, a
+    banner, whatever #1 decided.
 
-**P-33 · M · Containerisation seam** in `docs/RAG_CONTAINERIZATION.md`.
+    Done when: with the model disabled the UI visibly distinguishes a heuristic from an
+    inference, and a test covers it.
 
----
+15. **Make the Gemma adapter loadable in a dev environment** · M
+    `CORRELATION_ADAPTER_PATH` defaults to `./checkpoints/best_lora_v2`, which no
+    documentation explains how to obtain. The load failure is caught per request and
+    swallowed into the fallback, so a misconfigured path looks like a working system.
 
-# 5 · Hamad — ERP connectors `[erp]`
-*The tail of the ERP slice. Everything here is small except P-47.*
+    Do: document how a dev gets the adapter, and make a failed load loud at startup rather
+    than silent on every request.
 
-**P-40 · S · Intuit tier 4.** Everything is built — connector, 87 hermetic tests, 16
-live-ready tests, `scripts/intuit_authorize.py`, a CI job. It needs the one-time consent:
-register `http://localhost:8399/callback` on the app, run the script, store the refresh
-token and realm id. **The refresh token rotates**, so two people running it against the
-same sandbox company will fight.
+    Done when: a dev can follow written steps to a real inference, and a bad
+    `CORRELATION_ADAPTER_PATH` fails visibly instead of silently degrading.
 
-**P-49 · S · Rotate the three credentials** shared during development (SAP key, Intuit
-client secret, Dataverse client secret) and move them to repository secrets so the three
-CI jobs stop skipping.
+16. **Kanban RLS-write-on-read** · M · *verify first*
+    `kanban.py` mixes 10 `get_db` and 14 `get_tenant_db`. One root cause was reported to
+    500 `/kanban/board`, `/metrics` and `/workload` — the same class as the ERP sync that
+    wrote nothing on a non-owner role.
 
-**P-43 · S · Set `webhook_secret` on the demo/seeded integrations.** Migration 049
-enforces uniqueness; the seeder should generate distinct values so the demo actually
-exercises the webhook path.
+    Do: reproduce on real Postgres as a non-owner role first, since it may already be fixed.
+    Then convert the handlers that touch RLS-protected tables.
 
-**P-44 · M · Verify a real vendor webhook end to end.** The Intuit sandbox can send real
-webhooks, and Intuit is the only scheme verified against vendor documentation — so it is
-the one place the raw-body HMAC can be proven against a genuine sender.
+    Done when: those three endpoints return data on real Postgres as a non-owner role, with
+    a test that fails if a handler regresses to `get_db`.
 
-**P-42 · M · Correlation transformers for a second vendor.**
-`erp_sync_correlation.CORRELATION_ROUTES` routes only SAP, because
-`transform_purchase_order` reads SAP field names. Dataverse and Odoo purchase orders are
-reported as `skipped: unrouted` — honest, but no correlations.
+17. **`/nlp/correlation/intake/{id}` 500** · S · *reported; verify*
+    Reported as a 500. Unverified.
 
-**P-45 · M · ERP export definition.** `EXPORT_DEFINITIONS` has `telemetry`,
-`kanban_tasks` and `registries`. ERP entities are exactly what an operator wants for
-reconciliation, and nothing claims it exists yet.
+    Done when: either a fix with a regression test, or a note that it no longer reproduces.
 
-**P-46 · M · ERP events over WebSocket.** No ERP event reaches `websocket_manager`, so the
-hub never updates live. The webhook receiver is the natural producer.
+18. **First tests for `correlation_ai_engine.py`** · L
+    3,627 lines, and `pytest -k correlation` deselects 1,245 tests and runs **none** against
+    it. Every change to it is currently unverifiable.
 
-**P-48 · M · `erp_database_replication.py`** — 491 lines. *(verify)* Reported as entirely
-no-op. Delete it or make it real.
+    Do: start with the pure scoring helpers that need no model — `_calculate_risk_score`,
+    `_simulate_root_cause`, `_generate_kanban_tasks`.
 
-**P-47 · L · ERP → Kafka.** No ERP producer exists. An architectural call: does ERP data
-belong on the bus alongside telemetry?
+    Done when: the scoring helpers have known-input/known-output tests, so a change to risk
+    scoring cannot land silently.
 
----
+19. **Split `CorrelationAIPane.tsx`** · L
+    843 lines with no test. Data-fetching and layout are entangled, so neither can be
+    tested without the other.
 
-# 6 · Hamad — platform, frontend, CI `[platform]` `[frontend]` `[ci]`
-
-**P-41 · S · Flip `api-contract` to blocking.** `continue-on-error: true`, with a comment
-saying both blockers are fixed and it needs one green run. ~400 property-checked
-operations for near-zero cost.
-
-**P-50 · S · Promote `main`.** *(needs P-03)*
-
-**P-58 · S · Frontend WebSocket defaults to `ws://`** at `api/fleetHealth.ts:156`, so
-fleet-health sockets break on any HTTPS deployment. Audit the other hardcoded `localhost`
-fallbacks with it.
-
-**P-56 · S · Coverage thresholds.** None exist, and `vitest.config.ts` narrows coverage
-`include` to 3 paths, so the number is decorative.
-
-**P-59 · S · Adopt the generated SDK.** It exists with **zero importers**.
-
-**P-52 · M · `response_model` coverage: 191/417 (45%).** Undeclared responses make the
-OpenAPI schema fiction for more than half the API — which also weakens P-41.
-
-**P-55 · M · GeoTab is 100% synthetic** — 16 `random.uniform` sites in
-`geotab_service.py`, including DOT-regulated HOS numbers. Being fake is defensible;
-**presenting fabricated compliance figures as real is not.** Label them or gate the
-surface.
-
-**P-60 · M · Migration chain hygiene** (FS-158/159/160): idempotency, test fixtures
-(005/006/008/009) in the production chain, duplicate prefixes at 004/005/007/009, the
-missing 019.
-
-**P-53 · L · 190 `USE_MOCK` forks, and `setup.ts` forces mock mode for every test.** So
-the real client path is never exercised and can drift from the API undetected. Start with
-the pages that have real backends.
-
-**P-54 · L · i18n: 0 `useTranslation` call sites** against a full scaffold and ~560
-hardcoded strings. Needs a scope decision before it is an engineering task.
+    Done when: data-fetching is extracted from presentation, and at least the fetching layer
+    has tests.
 
 ---
 
-# 7 · Hamad — deploy & infrastructure `[platform]`
+# Hridyansh — tenant isolation, RBAC, OTA, edge
 
-**P-67 · S · Wire `check_migrations.py` into CI.** A `Makefile` target referenced by no
-workflow, so nothing checks the migration chain on a PR.
+20. **`get_db` on RLS-protected tables — 24 API files** · L · ⭐ *highest-value task here*
+    The class of bug that made the ERP background sync write nothing on a non-owner role and
+    hid the dashboard's data behind zeroes. A handler using `get_db` never sets
+    `app.current_org_id`, so an RLS predicate evaluates NULL and rows silently vanish —
+    reads return empty, writes are rejected. Invisible in dev, because the dev connection
+    owns the tables and owners bypass RLS.
 
-**P-65 · S + COORDINATION · `HAMAD_IDE.pem` rotation.** The key was untracked (FS-01) but
-**remains in git history on both remotes** — untracking does not revoke it. Rotate first,
-then decide whether to purge history in one coordinated window, since a rewrite affects
-everyone's clones.
+    Do: **write the guard test first** — one that fails when a handler depending on `get_db`
+    queries an RLS-protected model. Then work the 24 files against the RLS tables in
+    migrations `011`/`033`.
 
-**P-61 · M · `monitoring/`, `autoscaling/` and `database-ha/` are referenced by NO
-overlay.** `overlays/production/kustomization.yaml` builds `../../base` plus `hpa.yaml` and
-nothing else — so the in-cluster Prometheus/Grafana, the KEDA scalers and the CloudNativePG
-HA stack are reviewed YAML that has run nowhere but a kind cluster.
-*Acceptance:* `kustomize build overlays/production` contains them, or `ci-cd.yml` applies
-the operator-dependent stacks in a documented step.
+    Done when: the guard exists and passes, and every handler touching an RLS-protected
+    table uses `get_tenant_db`. The guard matters more than the sweep; without it the next
+    one ships too.
 
-**P-62 · M · RTO/RPO checklist is still a template.** `docs/runbooks/rto-rpo-checklist.md`
-has `[DURATION]` where the measured RTO and RPO go. **Measured numbers or it is not a DR
-plan** — needs a drill, not a doc edit.
+21. **`ORGANIZATION_ID` is hardcoded in the edge StatefulSet** · S
+    `base/edge-agent-statefulset.yaml:62,64` sets `"dev-org"`, so **every edge agent in
+    every environment reports into the same fake organisation** — production included.
 
-**P-64 · M · KEDA scale drill.** Run `tests/load/ingestion_load.py` against staging and
-observe the HPA actually scale on consumer lag. Pairs with P-62.
+    Done when: the value comes from per-environment configuration, and no overlay ships
+    `dev-org`.
 
-**P-66 · M · Placeholder secrets can reach production.** `base/object-store.yaml`,
-`monitoring/grafana.yaml` and `monitoring/alertmanager.yaml` ship DEV/CI-ONLY credentials,
-including a placeholder Grafana admin password with anonymous Viewer enabled. They are
-honestly labelled in comments; nothing *enforces* that production overrides them. Make it
-a gate, not a comment.
+22. **Edge backoff jitter** · S
+    Without jitter, a fleet that loses the backend reconnects in lockstep and stampedes it
+    the moment it returns, turning a brief outage into a longer one.
 
-**P-23 · M · Probes, resource limits and `securityContext` for the 4 workers**, otel and
-jaeger (FS-173/214).
+    Done when: reconnect delay is randomised, and a test shows N agents do not retry in the
+    same instant.
 
-**P-24 · M · `overlays/dr` does not exist**, so
-`docs/deployment/dr-datacenter-outage.md` is unexecutable.
+23. **Organisation management CRUD** · M · *needs #4*
+    `AdminPages.tsx` sets `USER_MGMT_ENABLED = false`, so the UI exists and is switched off.
+    Only `GET /users` is implemented.
 
-**P-63 · L · CNPG cutover, which is what makes PITR real.**
-`docs/runbooks/database-backup-restore.md` still says *"Restoring PITR (not yet done)"* and
-marks itself not operational. Build the TimescaleDB-enabled CNPG image, install the
-operator, run the cutover, repoint `DATABASE_URL` at the pooler — then delete that
-section, because it will finally be false.
+    Do: add create/update/deactivate/role-change with `require_admin` and tenant scoping,
+    then turn the flag on.
+
+    Done when: an admin can manage users in their own org through the UI, an operator
+    cannot, and a cross-tenant attempt is refused by a test.
+
+24. **Collector tests** · M
+    The collector has no tests, so its parsing and batching behaviour is unverified.
+
+    Done when: the happy path and at least malformed-input handling are covered.
+
+---
+
+# htreinen — RAG
+
+25. **`/rag/documents` leaks a raw SeaweedFS error** · S
+    An infrastructure connection error is surfaced verbatim to the client instead of a 503 —
+    unreadable for the caller, and an information leak about internal topology.
+
+    Done when: the endpoint returns 503 with a generic message, the detail is logged
+    server-side, and a test covers the storage-unavailable path.
+
+26. **`rag_eval` is excluded from the default test run** · S
+    So it has zero coverage in CI, and the suite that validates retrieval quality never runs
+    on a PR.
+
+    Done when: it runs in CI, or the exclusion carries a written reason and an expiry
+    (see #12).
+
+27. **The five open items in `docs/rag_ingestion_followups.md`** · M
+    Carried from the ingestion work and not yet scheduled.
+
+    Done when: each is done or removed from the list with a reason — the list should not
+    outlive its usefulness.
+
+28. **RAG containerisation seam** · M
+    `docs/RAG_CONTAINERIZATION.md` describes a seam that is not yet realised, so the RAG
+    backend cannot be deployed the way the document says.
+
+    Done when: the documented topology is what actually runs, or the document is corrected
+    to match reality.
+
+---
+
+# Hamad — ERP connectors
+
+29. **Intuit tier 4** · S
+    Everything is built — connector, 87 hermetic tests, 16 live-ready tests,
+    `scripts/intuit_authorize.py`, a CI job. It needs the one-time human consent, because
+    QuickBooks offers no client-credentials grant.
+
+    Do: register `http://localhost:8399/callback` on the app, run the authorize script,
+    store the refresh token and realm id as CI secrets.
+
+    Done when: `test_erp_intuit_sandbox.py` runs green against a real sandbox company. Note
+    the refresh token **rotates**, so two people using the same company will fight over it.
+
+30. **Rotate the three development credentials** · S
+    The SAP key, Intuit client secret and Dataverse client secret were all shared in
+    conversation during development. None is in the repository, but all three should be
+    treated as compromised.
+
+    Done when: all three are rotated and stored as repository secrets, and the
+    `erp-sap-sandbox`, `erp-intuit-sandbox` and `erp-dynamics-sandbox` jobs stop skipping.
+
+31. **Give seeded ERP integrations a `webhook_secret`** · S
+    Migration 049 enforces uniqueness and the demo seeder sets no secret — so the demo
+    cannot exercise the webhook path at all, and two seeded integrations would collide if it
+    did.
+
+    Done when: `seed_demo_data.py` generates a distinct secret per integration, and the demo
+    can receive a signed webhook.
+
+32. **Verify a real vendor webhook end to end** · M
+    The raw-body HMAC scheme is proven against our own sender only. Intuit is the one vendor
+    whose scheme is verified against vendor documentation, and its sandbox sends genuine
+    webhooks.
+
+    Done when: a real Intuit webhook is accepted, stored as an `ERPIntegrationEvent`, and a
+    replay of it is deduplicated.
+
+33. **Correlation transformers for a second vendor** · M
+    `erp_sync_correlation.CORRELATION_ROUTES` routes only SAP, because
+    `transform_purchase_order` reads SAP field names. Dataverse and Odoo purchase orders are
+    reported as `skipped: unrouted` — honest, but no correlations are produced for either.
+
+    Do: write a transformer that reads that vendor's field names and register the route. Do
+    **not** reuse the SAP transformer; it would produce empty records and a confident report
+    of zero anomalies.
+
+    Done when: a synced Dataverse or Odoo purchase order produces a correlation, and the
+    routing test covers the new pair.
+
+34. **ERP export definition** · M
+    `EXPORT_DEFINITIONS` has `telemetry`, `kanban_tasks` and `registries`. ERP entities are
+    exactly what an operator wants for reconciliation, and there is no way to get them out.
+
+    Done when: ERP entities are exportable and tenant-scoped, with a test proving a second
+    tenant's rows are absent from the file.
+
+35. **ERP events over WebSocket** · M
+    No ERP event reaches `websocket_manager`, so the ERP hub never updates live — a synced
+    or webhook-delivered change needs a manual refresh.
+
+    Done when: an inbound webhook results in a WebSocket message to that tenant only.
+
+36. **`erp_database_replication.py`** · M · *verify*
+    491 lines, reported as entirely no-op. If true, it is 491 lines that look like a feature
+    and are not.
+
+    Done when: either it does something, with a test proving it, or it is deleted.
+
+37. **ERP → Kafka** · L
+    No ERP producer exists. Whether ERP data belongs on the bus alongside telemetry is an
+    architectural question, not only an implementation one.
+
+    Done when: a decision is recorded, and if yes, ERP events are produced and consumed with
+    the same idempotency guarantees as telemetry.
+
+---
+
+# Hamad — platform, frontend, CI
+
+38. **Flip `api-contract` to blocking** · S
+    `continue-on-error: true`, with a comment saying both known blockers are fixed and it
+    needs one green run. ~400 property-checked operations are advisory, so a contract
+    regression cannot fail a build.
+
+    Done when: the job is blocking and green.
+
+39. **Promote `main`** · S · *needs #3*
+    The mechanical half of #3. Every dev is told to branch from `main`, which is well behind
+    the converged branch — so each new branch starts from a stale base and inherits bugs
+    already fixed.
+
+    Done when: `main` matches the converged branch, CI is green on it, and every dev has been
+    told to rebase.
+
+40. **Frontend WebSocket defaults to `ws://`** · S
+    `api/fleetHealth.ts:156` defaults to the insecure scheme, so **fleet-health sockets
+    break on any HTTPS deployment** — production included.
+
+    Do: derive the scheme from the page protocol, and audit the other hardcoded `localhost`
+    fallbacks while there.
+
+    Done when: an HTTPS deployment gets `wss://` with no configuration, and a test covers
+    the derivation.
+
+41. **Coverage thresholds** · S
+    None exist, and `vitest.config.ts` narrows coverage `include` to three paths — so the
+    reported number is decorative and cannot regress.
+
+    Done when: both suites have a threshold set at today's real number, so coverage can only
+    go up.
+
+42. **Adopt the generated SDK** · S
+    It is generated, committed, and has **zero importers** — so it is neither used nor
+    verified, and will drift from the API silently.
+
+    Done when: at least one real caller uses it, or it is deleted.
+
+43. **`response_model` coverage: 191/417 (45%)** · M
+    Undeclared responses make the OpenAPI schema fiction for more than half the API, which
+    also weakens #38 — schemathesis can only check what is declared.
+
+    Done when: coverage is meaningfully above 45%, prioritising the routes the frontend
+    actually calls.
+
+44. **GeoTab is 100% synthetic** · M
+    16 `random.uniform` sites in `geotab_service.py`, including **DOT-regulated
+    hours-of-service numbers**. Being a stub is defensible; presenting fabricated compliance
+    figures as real is not.
+
+    Do: label the data as simulated at the API and in the UI, or gate the surface behind a
+    flag that is off by default.
+
+    Done when: nobody can mistake a generated HOS figure for a measured one.
+
+45. **Migration chain hygiene** · M
+    Test fixtures (005/006/008/009) sit in the production chain, prefixes are duplicated at
+    004/005/007/009, 019 is missing, and not every migration is idempotent.
+
+    Done when: the chain applies cleanly twice in a row on an empty database, and
+    `check_migrations.py` passes (see #48).
+
+46. **190 `USE_MOCK` forks, and every test runs in mock mode** · L
+    `frontend/src/test/setup.ts` stubs `VITE_USE_MOCK=true`, so **no test ever exercises the
+    real client path** — the branch that runs in production is the branch nothing covers,
+    and it can drift from the API undetected.
+
+    Do: add real-mode tests (MSW against the OpenAPI schema), starting with pages that have
+    real backends.
+
+    Done when: the real path has coverage for at least the dashboard and ERP pages, and new
+    API clients are expected to have it.
+
+47. **i18n: 0 `useTranslation` call sites** · L
+    A full i18n scaffold with locale files, and roughly 560 hardcoded strings. The scaffold
+    implies a capability the product does not have.
+
+    Do: decide scope first — which languages, which surfaces, whether this is wanted at all
+    — then extract.
+
+    Done when: either a first surface is genuinely translated end to end, or the scaffold is
+    removed so it stops implying support.
+
+---
+
+# Hamad — deploy & infrastructure
+
+48. **Wire `check_migrations.py` into CI** · S
+    It is a `Makefile` target referenced by no workflow, so nothing checks the migration
+    chain on a pull request — which is how #45's problems accumulated.
+
+    Done when: it runs on every PR and fails the build on a broken chain.
+
+49. **Rotate `HAMAD_IDE.pem`** · S · *needs coordination*
+    The key was untracked in FS-01 but **remains in git history on both remotes**.
+    Untracking does not revoke a key.
+
+    Do: rotate the key first. Decide separately whether to purge the history, since a
+    rewrite invalidates everyone's clones and needs a scheduled window.
+
+    Done when: the old key is revoked, and the history decision is recorded either way.
+
+50. **`monitoring/`, `autoscaling/` and `database-ha/` are referenced by no overlay** · M
+    `overlays/production/kustomization.yaml` builds `../../base` plus `hpa.yaml` and nothing
+    else. The in-cluster Prometheus/Grafana, the KEDA scalers and the CloudNativePG HA stack
+    are reviewed YAML that **has run nowhere but a kind cluster**.
+
+    Done when: `kustomize build overlays/production` contains them, or `ci-cd.yml` applies
+    the operator-dependent stacks in a documented step — and the four blocking k8s gates
+    stay green.
+
+51. **RTO/RPO checklist is still a template** · M
+    `docs/runbooks/rto-rpo-checklist.md` has `[DURATION]` where the measured RTO and RPO
+    belong. **Measured numbers or it is not a DR plan** — an untested recovery procedure is
+    a guess.
+
+    Do: run a restore drill and time it. This needs a drill, not a doc edit.
+
+    Done when: both figures are real measurements, with the date they were taken.
+
+52. **KEDA scale drill** · M
+    The autoscalers have never been observed scaling on real load, so the thresholds are
+    theoretical.
+
+    Do: run `tests/load/ingestion_load.py` against staging and watch the HPA.
+
+    Done when: `kubectl get hpa` shows an observed scale-up under load and scale-down after,
+    recorded alongside #51.
+
+53. **Placeholder secrets can reach production** · M
+    `base/object-store.yaml`, `monitoring/grafana.yaml` and `monitoring/alertmanager.yaml`
+    ship DEV/CI-ONLY credentials — including a placeholder Grafana admin password with
+    anonymous Viewer enabled. They are honestly labelled in comments; **nothing enforces
+    that production overrides them.**
+
+    Done when: a production build containing a known placeholder fails a CI gate. A comment
+    is not a control.
+
+54. **Probes, resource limits and `securityContext` for the four workers, otel and jaeger** · M
+    Without probes a wedged worker is never restarted; without limits one can starve the
+    node; without `securityContext` they run more privileged than they need.
+
+    Done when: all seven workloads have liveness/readiness probes, requests and limits, and
+    a non-root `securityContext`.
+
+55. **`overlays/dr` does not exist** · M
+    `docs/deployment/dr-datacenter-outage.md` describes a procedure that **cannot be
+    executed**, because the manifests it references were never written.
+
+    Done when: the overlay exists and the runbook's steps run against it, or the runbook is
+    withdrawn.
+
+56. **CNPG cutover — what makes PITR real** · L
+    `docs/runbooks/database-backup-restore.md` still says *"Restoring PITR (not yet done)"*
+    and marks itself not operational. Point-in-time recovery is a plan, not a capability.
+
+    Do: build the TimescaleDB-enabled CNPG image, install the operator, run the documented
+    cutover, repoint `DATABASE_URL` at the pooler.
+
+    Done when: `kubectl cnpg status` shows three healthy instances, a PITR restore has been
+    performed, and that runbook section is deleted because it is finally false.
 
 ---
 
@@ -332,25 +548,24 @@ section, because it will finally be false.
 **Lane totals:** decisions 4 · Alex 5 · Harsh 10 · Hridyansh 5 · htreinen 4 ·
 Hamad ERP 9 · Hamad platform 10 · Hamad infra 9. **56 total.**
 
-Hamad's three sections hold 30 of the 56 because the ownership table currently gives him
+Hamad's three sections hold 28 of 56, because the ownership table currently gives him
 backend platform, frontend, deploy/CI, schema, observability and docs. **That is the most
-obvious thing to rebalance** — P-52, P-56, P-58, P-59 and P-67 are self-contained and need
-no ERP or deploy context.
-
-**Two reassignments from the previous version, both from the README ownership table:**
-P-51 (`get_db` on RLS tables) and P-57 (organisation management) moved to **Hridyansh** —
-tenant isolation and RBAC are his lane, and P-51 is the same GUC mechanism he already owns.
+obvious thing to rebalance** — #40, #41, #42, #43 and #48 are self-contained and need no
+ERP or deploy context.
 
 **Sequencing that actually matters:**
-- P-02 before P-14/P-15/P-16 — no point fixing tests that may be deleted.
-- P-01 → P-10 → P-11, in that order. The flag is not even in the API response yet, so
-  building the UI first would have nothing to read.
-- P-04 before P-57.
-- P-05/P-06 before P-07 — finish the wiring before widening the corpus.
-- P-51's guard test before its sweep.
 
-**Five are "verify, then fix"** — P-18, P-19, P-48, and anything marked *reported*. Some
-may already be fixed, and the shape of the work depends on what is true.
+- #2 before #10/#11/#12 — no point fixing tests that may be deleted.
+- #1 → #13 → #14, in that order. The flag is not in the API response yet, so building the
+  UI first would have nothing to read.
+- #4 before #23.
+- #5/#6 before #8 — finish the wiring before widening the corpus.
+- #20's guard test before its 24-file sweep.
+- #48 before #45 — get the check running, then fix what it finds.
+- #51 and #52 are one drill, scheduled together.
 
-**Ticket IDs are stable.** They are not priority order, so moving one between lanes keeps
-its number and any reference to it.
+**Verify before scheduling:** #16, #17, #36. Some may already be fixed.
+
+**The single highest-value task is #20.** It is the root cause behind at least three
+separate user-visible bugs found so far, and its guard test matters more than the sweep —
+without it the next one ships too.
