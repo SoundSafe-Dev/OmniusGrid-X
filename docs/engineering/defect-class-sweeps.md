@@ -129,9 +129,20 @@ one of its findings. The habit that catches it:
 
 ## Open observations, not yet tickets
 
-**Extraction modules with no callers.** `sap_data_extraction.py`,
-`oracle_data_extraction.py` and `dynamics_data_extraction.py` expose
-`extract_all_entities`, which nothing calls. Together with `erp_database_replication.py`
-(task #36 in the current pool) that is a meaningful volume of code that looks like a
-feature. Probably one ticket rather than four: *ERP extraction/replication modules that no
-code calls — delete or wire.*
+**Seven ERP modules, ~3,800 lines, imported by nothing.** Measured, not estimated —
+`sap_data_extraction` (641), `oracle_data_extraction` (552), `dynamics_data_extraction`
+(714), `erp_database_replication` (492), `sap_webhook_integration` (501),
+`oracle_correlation_patterns` (492) and `dynamics_correlation_patterns` (404). No module
+imports any of them, and no public symbol they define is referenced anywhere else.
+
+**One of them turned out to be finished work that was never plugged in.** Oracle's
+`transform_invoice` / `transform_shipment` and its `analyze_invoice_anomalies` /
+`analyze_shipment_correlation` are matched pairs — the transformer emits exactly the five
+fields the analyzer reads, verified field-by-field. They were simply absent from
+`CORRELATION_ROUTES`, so every Oracle sync reported `skipped: unrouted` while the code to
+produce its correlations sat unused. Registering them took a per-vendor analyzer-class
+lookup and four registry lines. That closes most of task #33 in the current pool.
+
+So the remaining dead code is ~2,900 lines across five modules, and the ticket should be
+*check each for finished-but-unwired work before deleting* rather than a straight delete —
+one in seven was worth wiring.

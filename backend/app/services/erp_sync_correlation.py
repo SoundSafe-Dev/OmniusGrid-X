@@ -33,12 +33,32 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = structlog.get_logger()
 
+#: Where a vendor's analyzers live. SAP's are on the shared `ERPCorrelationPatterns`;
+#: Oracle has its own class. Naming the class per route is what lets a second vendor be
+#: routed at all — the registry previously hardcoded the SAP class, so an Oracle entry
+#: would have called a SAP analyzer.
+PATTERN_CLASSES: Dict[str, Tuple[str, str]] = {
+    "sap": ("app.services.erp_correlation_patterns", "ERPCorrelationPatterns"),
+    "oracle": (
+        "app.services.erp_connectors.oracle_correlation_patterns",
+        "OracleCorrelationPatterns",
+    ),
+}
+
 #: (erp_type, normalized entity type) -> (transformer method, analyzer method).
 #:
-#: Deliberately small. Every entry here is a claim that the named transformer reads
-#: THAT vendor's field names; the SAP transformers are the only ones that currently
-#: exist, so SAP is the only vendor routed. Others are skipped loudly rather than
-#: analysed with the wrong field mapping.
+#: Every entry is a claim that the named transformer reads THAT vendor's field names and
+#: produces exactly what the analyzer reads. Both halves were verified field-by-field
+#: before each route was added — `transform_invoice` emits `due_date`, `invoice_number`,
+#: `status`, `supplier_id` and `total_amount`, and `analyze_invoice_anomalies` reads
+#: those five and nothing else.
+#:
+#: Oracle's transformers and analyzers were both already written and simply never
+#: registered, so its correlations were reported as `skipped: unrouted` while the code to
+#: produce them sat unused.
+#:
+#: A vendor with no verified pair stays out. Reusing another vendor's transformer would
+#: yield empty normalized records and a confident report of zero anomalies.
 CORRELATION_ROUTES: Dict[Tuple[str, str], Tuple[str, str]] = {
     ("sap", "purchaseorder"): (
         "transform_purchase_order",
@@ -56,6 +76,10 @@ CORRELATION_ROUTES: Dict[Tuple[str, str], Tuple[str, str]] = {
         "transform_manufacturing_order",
         "analyze_manufacturing_order_correlation",
     ),
+    ("oracle", "invoice"): ("transform_invoice", "analyze_invoice_anomalies"),
+    ("oracle", "invoices"): ("transform_invoice", "analyze_invoice_anomalies"),
+    ("oracle", "shipment"): ("transform_shipment", "analyze_shipment_correlation"),
+    ("oracle", "shipments"): ("transform_shipment", "analyze_shipment_correlation"),
 }
 
 #: Correlation analysis issues several DB queries PER RECORD (supplier averages, order
@@ -81,8 +105,16 @@ _ROUTES_NORMALIZED: Dict[Tuple[str, str], Tuple[str, str]] = {
 
 
 def route_for(erp_type: Optional[str], entity_type: Optional[str]) -> Optional[Tuple[str, str]]:
-    """Resolve the transformer/analyzer pair, or None when the pair is unrouted."""
-    return _ROUTES_NORMALIZED.get((_normalize(erp_type), _normalize(entity_type)))
+    """Resolve the transformer/analyzer pair, or None when the pair is unrouted.
+
+    A route is only usable if we also know WHERE that vendor's analyzers live, so a
+    registry entry without a matching PATTERN_CLASSES entry resolves to None rather than
+    failing later inside a background sync.
+    """
+    vendor = _normalize(erp_type)
+    if vendor not in PATTERN_CLASSES:
+        return None
+    return _ROUTES_NORMALIZED.get((vendor, _normalize(entity_type)))
 
 
 async def _count_correlations(db: AsyncSession, organization_id: str) -> int:
@@ -147,11 +179,15 @@ async def correlate_synced_records(
     transformer_name, analyzer_name = route
     outcome["routed"] = True
 
-    from app.services.erp_correlation_patterns import ERPCorrelationPatterns
+    import importlib
+
     from app.services.erp_data_transformer import ERPDataTransformer
 
+    module_path, class_name = PATTERN_CLASSES[_normalize(erp_type)]
+    patterns_cls = getattr(importlib.import_module(module_path), class_name)
+
     transformer = ERPDataTransformer(organization_id, integration_id)
-    patterns = ERPCorrelationPatterns(organization_id, integration_id)
+    patterns = patterns_cls(organization_id, integration_id)
 
     transform = getattr(transformer, transformer_name)
     analyze = getattr(patterns, analyzer_name)

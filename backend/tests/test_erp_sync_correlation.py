@@ -36,8 +36,8 @@ class TestRouting:
         """Entity type reaches this from stored configuration, typed by a human."""
         assert route_for("sap", spelling) == route_for("sap", "purchaseorder")
 
-    @pytest.mark.parametrize("erp_type", ["dynamics", "odoo", "netsuite", "intuit", "oracle"])
-    def test_other_vendors_are_not_routed_to_sap_transformers(self, erp_type):
+    @pytest.mark.parametrize("erp_type", ["dynamics", "odoo", "netsuite", "intuit"])
+    def test_unverified_vendors_are_not_routed_to_sap_transformers(self, erp_type):
         """THE ASSERTION THIS FILE EXISTS FOR.
 
         `transform_purchase_order` reads SAP field names. Routing another vendor to
@@ -48,6 +48,11 @@ class TestRouting:
             f"{erp_type} purchase orders are routed to a transformer that reads SAP "
             f"field names; it would report zero anomalies for every record"
         )
+
+    def test_oracle_is_not_routed_for_entities_it_has_no_transformer_for(self):
+        """Routing Oracle does not mean routing everything Oracle. A purchase order has
+        no Oracle transformer, so it must still be skipped rather than handed to SAP's."""
+        assert route_for("oracle", "purchase_order") is None
 
     def test_an_unknown_entity_type_is_not_routed(self):
         assert route_for("sap", "no_such_entity") is None
@@ -64,16 +69,64 @@ class TestRouting:
 
     def test_every_route_names_methods_that_actually_exist(self):
         """A registry entry pointing at a renamed method fails only at runtime, deep
-        inside a background sync, as a caught-and-counted failure."""
-        from app.services.erp_correlation_patterns import ERPCorrelationPatterns
+        inside a background sync, as a caught-and-counted failure.
+
+        The analyzer is resolved through PATTERN_CLASSES because it is per-vendor now:
+        SAP's analyzers live on the shared ERPCorrelationPatterns, Oracle's on its own
+        class. Checking every route against the SAP class — as this did — would reject
+        a correct Oracle route.
+        """
+        import importlib
+
         from app.services.erp_data_transformer import ERPDataTransformer
 
         for (erp_type, entity), (transformer, analyzer) in mod.CORRELATION_ROUTES.items():
             assert hasattr(ERPDataTransformer, transformer), (
                 f"{erp_type}/{entity} names transformer {transformer!r}, which does not exist"
             )
-            assert hasattr(ERPCorrelationPatterns, analyzer), (
-                f"{erp_type}/{entity} names analyzer {analyzer!r}, which does not exist"
+            module_path, class_name = mod.PATTERN_CLASSES[mod._normalize(erp_type)]
+            patterns_cls = getattr(importlib.import_module(module_path), class_name)
+            assert hasattr(patterns_cls, analyzer), (
+                f"{erp_type}/{entity} names analyzer {analyzer!r}, which does not exist "
+                f"on {class_name}"
+            )
+
+    def test_every_routed_vendor_has_a_known_analyzer_class(self):
+        """A route with no PATTERN_CLASSES entry would fail inside a background sync,
+        caught and counted as a per-record failure — so it would look like bad data
+        rather than bad configuration."""
+        for erp_type, _entity in mod.CORRELATION_ROUTES:
+            assert mod._normalize(erp_type) in mod.PATTERN_CLASSES, (
+                f"{erp_type} is routed but its analyzer class is unknown"
+            )
+
+    def test_oracle_invoices_and_shipments_are_routed(self):
+        """Both pairs were already written and simply never registered: Oracle's
+        transformers and its analyzers both existed, so its correlations were reported
+        as `skipped: unrouted` while the code to produce them sat unused."""
+        for entity in ("invoice", "invoices", "shipment", "shipments"):
+            assert route_for("oracle", entity) is not None, f"oracle/{entity} unrouted"
+
+    def test_the_oracle_transformer_emits_what_its_analyzer_reads(self):
+        """THE CHECK THAT MAKES A ROUTE SAFE TO ADD.
+
+        Registering a pair whose fields do not line up produces an all-None normalized
+        record, zero detected anomalies, and a confident report of a clean sync — the
+        exact failure this module's routing exists to prevent. Verified here rather than
+        assumed: `analyze_invoice_anomalies` reads exactly these five fields.
+        """
+        from app.services.erp_data_transformer import ERPDataTransformer
+
+        transformer = ERPDataTransformer("org-1", "int-1")
+        normalized = transformer.transform_invoice({
+            "InvoiceId": "INV-1",
+            "SupplierId": "SUP-1",
+            "InvoiceAmount": "250.00",
+        })
+        for field in ("due_date", "invoice_number", "status", "supplier_id", "total_amount"):
+            assert field in normalized, (
+                f"transform_invoice does not emit {field!r}, which "
+                f"analyze_invoice_anomalies reads"
             )
 
 
@@ -213,3 +266,71 @@ class TestSyncPathIsWired:
             "where the app is not the table owner it writes nothing while reporting "
             "success"
         )
+
+
+class TestOracleRunsEndToEnd:
+    """Routing Oracle is only worth anything if the analyzer is actually reached.
+
+    Both halves were already written — `transform_invoice` and
+    `analyze_invoice_anomalies` — and neither was registered, so Oracle syncs reported
+    `skipped: unrouted` while the code to produce their correlations sat unused.
+    """
+
+    async def test_an_oracle_invoice_reaches_the_oracle_analyzer(self):
+        seen = []
+
+        class _Stub:
+            def __init__(self, *a, **kw):
+                pass
+
+            async def analyze_invoice_anomalies(self, db, normalized):
+                seen.append(normalized)
+                return {"anomalies": []}
+
+        with patch.object(mod, "_count_correlations", side_effect=[0, 1]), patch(
+            "app.services.erp_connectors.oracle_correlation_patterns.OracleCorrelationPatterns",
+            _Stub,
+        ):
+            result = await correlate_synced_records(
+                None,
+                organization_id="o",
+                integration_id="i",
+                erp_type="oracle",
+                entity_type="invoices",
+                records=[{"InvoiceId": "INV-9", "SupplierId": "SUP-1",
+                          "InvoiceAmount": "1000.00"}],
+            )
+
+        assert result["routed"] is True
+        assert result["analyzed"] == 1
+        assert result["correlations_created"] == 1
+        # The ORACLE transformer ran, not SAP's. `InvoiceId` and `SupplierId` are
+        # Oracle Fusion field names; the SAP mapping reads `PurchaseOrder`/`Supplier`
+        # and would have left every one of these None.
+        assert seen[0]["invoice_number"] == "INV-9"
+        assert seen[0]["supplier_id"] == "SUP-1"
+        assert seen[0]["total_amount"] == 1000.0
+
+    async def test_sap_still_uses_the_sap_analyzer_class(self):
+        """The per-vendor lookup must not have redirected SAP anywhere."""
+        seen = []
+
+        class _Stub:
+            def __init__(self, *a, **kw):
+                pass
+
+            async def analyze_purchase_order_anomalies(self, db, normalized):
+                seen.append(normalized)
+                return {}
+
+        with patch.object(mod, "_count_correlations", side_effect=[0, 0]), patch(
+            "app.services.erp_correlation_patterns.ERPCorrelationPatterns", _Stub
+        ):
+            result = await correlate_synced_records(
+                None, organization_id="o", integration_id="i", erp_type="sap",
+                entity_type="purchase_order",
+                records=[{"PurchaseOrder": "PO-1", "Supplier": "S1"}],
+            )
+
+        assert result["analyzed"] == 1
+        assert seen[0]["po_number"] == "PO-1"

@@ -181,7 +181,7 @@ fails the test.
 | `test_erp_base_url_normalization.py` | a trailing slash on `base_url` silently breaking every request |
 | `test_erp_shared_machinery.py` | token stampedes; a rate limiter that only works for sequential callers |
 | `test_erp_response_schema.py` | a response model stricter than its columns, which 500s on a valid row |
-| `test_erp_sync_correlation.py` | routing one vendor's records through another vendor's field mapping |
+| `test_erp_sync_correlation.py` | routing one vendor's records through another vendor's field mapping, or through another vendor's analyzer class |
 | `test_erp_webhook_auth.py` | a webhook scheme no vendor can satisfy; failing open on a missing secret |
 | `test_reporting_honesty.py` | logging `..._persisted` from a function that writes nothing |
 | `test_api_response_schema_matches_columns.py` | the same defect anywhere else in the API — the ERP models were the only offenders, and this proves the other routers clean rather than untested |
