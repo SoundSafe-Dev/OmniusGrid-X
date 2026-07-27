@@ -14,7 +14,9 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The five classes, all originally found in ERP
+## The six classes
+
+The first five were all originally found in ERP. The sixth came out of the fifth.
 
 | Class | Swept | Found elsewhere | Guard |
 |---|---|---|---|
@@ -23,6 +25,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 | Invented vendor endpoints | all 8 connectors | ERP only | `test_erp_no_invented_endpoints.py` |
 | Silent success | all of `app/` | **1, live** | `test_logistics_sync_dashboard_honesty.py` |
 | A name that claims a side effect | all of `app/` | **1, in the control path** | `test_helper_names_match_behaviour.py` |
+| Data reported as kept, but discarded | quarantine/DLQ paths | **1, live, on ingestion** | `test_edge_ingest_quarantine_retention.py` |
 
 ---
 
@@ -176,6 +179,67 @@ still catching the real ones exactly, because they were a `logger.warning` and n
 else. Two detector tests pin this: one that a log-only body is caught, one that
 assembling a payload before logging is **not** mistaken for dispatch.
 
+## 6. Data reported as kept, but discarded — **1, live, on the ingestion path**
+
+Found by following a loose end from class 5 rather than by pattern-matching, which is
+the more interesting part of how it turned up. `tactical_engine` had a `start()` that
+`main.py` never calls, so the obvious next question was whether it was alone.
+
+**Swept:** every module-level service singleton in `app/` exposing a `start()`, checked
+against every process that could start one — `main.py`, the workers, and the edge agent.
+**12 singletons; 5 are started nowhere at all:** `cloud_gateway`, `egress_scheduler`,
+`mlops_pipeline`, `strategic_engine`, `tactical_engine`. `main.py` even works around one
+of them, at line 82: *"Offline demo: the cloud strategic listener never connects, so
+seed a few…"*.
+
+`cloud_gateway` is the one that matters, because six call sites queue into it. It is an
+in-memory list capped at 10,000 that sheds the oldest, and `_flush_loop` — the only
+thing that drains it — is started nowhere. Following its callers reached
+`schema_registry._persist_to_dlq`, *"Persist quarantined record to dead letter queue"*,
+whose comment reads *"Persist to dead letter queue (SQLite or file)"* and which is
+neither. **That one is not live** — nothing in the running app imports
+`schema_registry`, so it is unwired rather than broken, and it is recorded below rather
+than fixed.
+
+**But the search pattern found a second quarantine path that IS live.**
+`EdgeIngestGateway.ingest` validated each reading and, on failure, called a sink and
+incremented an integer. `api/edge_ingest.py` constructs the gateway with no sink, so the
+default ran:
+
+```python
+def _default_quarantine(self, agent_id, reading, reason):
+    logger.warning("edge_ingest_quarantined", agent_id=agent_id, reason=reason)
+```
+
+`reading` is accepted and never used. The payload went nowhere — no table, no topic, not
+even the log line — and `POST /api/v1/edge/ingest` then answered `quarantined: 47`.
+
+**The count was true and the word was not.** "Quarantined" means set aside for
+inspection, and the module docstring promised these were *"diverted to a dead-letter
+sink."* An operator had no way to learn the number described 47 readings that no longer
+existed anywhere, and no way to find out what the agent producing them was doing wrong —
+which is the entire reason to look.
+
+The fix has two halves, because either alone leaves the hole open:
+
+- **Retention moved into `IngestResult.quarantined`**, which now holds the readings
+  themselves rather than a count — mirroring `accepted`, and for the same reason: the
+  caller has to be able to do something with them. Every caller gets them whether or not
+  it injects a sink, which is what the API configuration needed. A reading that is not
+  even a dict is kept as its `repr` rather than dropped for being the wrong shape; "it
+  was not a reading at all" is exactly what an investigation needs.
+- **A real dead-letter topic hop** in the endpoint, so they outlive the request, using
+  the `RedpandaForwarder` already constructed there and sharing its circuit breaker.
+
+`summary["quarantined"]` still returns the count, so the API response shape is untouched.
+
+**The DLQ topic keys on `agent_id`, not `asset_id`, and that is load-bearing.** These
+readings failed validation, so nothing inside them can be trusted for routing — the
+malformed field may well *be* `asset_id`. Keying on it would scatter dead letters under
+bug- or attacker-controlled topic names and discard the one identity that was actually
+verified, the client certificate. A test asserts a reading carrying
+`asset_id: "../../evil"` still lands on `telemetry.dlq.<agent>`.
+
 ---
 
 ## Writing a sweep that is worth trusting
@@ -198,6 +262,25 @@ one of its findings. The habit that catches it:
 ---
 
 ## Open observations, not yet tickets
+
+**Five service singletons have a `start()` that no process calls** — `cloud_gateway`,
+`egress_scheduler`, `mlops_pipeline`, `strategic_engine`, `tactical_engine` — against
+seven that `main.py` does start. They are the edge-AI stack, so running them in the API
+process may well be wrong; the point is that nothing runs them *anywhere*, and the code
+around them does not say so. Two consequences are already handled above:
+`tactical_engine` now refuses to claim a dispatch (class 5), and the live quarantine
+path was fixed independently of `cloud_gateway` (class 6).
+
+The rest is a decision, not a bug fix: either these belong to a process that does not
+exist yet, or they should say they are dormant. Until then, anything queued into
+`cloud_gateway` accumulates in a 10,000-entry in-memory list that sheds the oldest and
+is never flushed.
+
+**`schema_registry` is unwired.** Nothing in the running app imports it, so its
+`validate_payload` / `_quarantine_payload` / `_persist_to_dlq` chain never executes.
+Worth knowing before anyone wires it: `_persist_to_dlq` is documented *"Persist to dead
+letter queue (SQLite or file)"* and does neither — it forwards to `cloud_gateway`, which
+nothing drains. Same shape as class 6, one level of indirection deeper.
 
 **Seven ERP modules, ~3,800 lines, imported by nothing.** Measured, not estimated —
 `sap_data_extraction` (641), `oracle_data_extraction` (552), `dynamics_data_extraction`

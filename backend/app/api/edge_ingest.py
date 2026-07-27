@@ -80,4 +80,14 @@ async def ingest_batch(
     for org, readings in by_org.items():
         asyncio.get_event_loop().create_task(_forwarder.forward(org, readings))
 
+    # Dead-letter handoff. Without this the endpoint reported `quarantined: N`
+    # for readings that had been discarded — the count was true and the word was
+    # not. Same fire-and-forget shape as the accepted path, and keyed on the
+    # certificate-verified agent_id because a reading that failed validation
+    # cannot be trusted to say which asset it came from.
+    if result.quarantined:
+        asyncio.get_event_loop().create_task(
+            _forwarder.forward_quarantined(agent.agent_id, result.quarantined)
+        )
+
     return IngestSummary(**result.summary)

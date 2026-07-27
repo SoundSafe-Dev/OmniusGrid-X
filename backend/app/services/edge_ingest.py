@@ -7,7 +7,7 @@ downstream stream/store it passes five guards:
   12. dedup           — idempotency keys drop at-least-once retransmissions
   13. sequence        — per-source monotonic sequence tracking (gaps/reorder)
   14. backpressure    — per-agent token-bucket rate limiting
-  15. quarantine      — malformed readings diverted to a dead-letter sink
+  15. quarantine      — malformed readings retained for inspection and replay
 
 State (dedup cache, sequence table, rate buckets) is in-memory here with an
 injectable clock; a multi-replica deployment would back dedup/sequence with
@@ -138,7 +138,15 @@ class TokenBucket:
 class IngestResult:
     accepted: List[Dict[str, Any]] = field(default_factory=list)
     deduped: int = 0
-    quarantined: int = 0
+    #: The quarantined readings THEMSELVES, not a count of them — mirroring
+    #: ``accepted``, and for the same reason: the caller has to be able to do
+    #: something with them. This was an ``int``, and the reading was passed to a
+    #: sink that defaulted to logging ``agent_id`` and ``reason`` while discarding
+    #: the payload. So the endpoint answered ``quarantined: 47`` — a word that
+    #: means "set aside for inspection" — for 47 readings that no longer existed
+    #: anywhere. ``summary`` still reports the count, so the API contract is
+    #: unchanged.
+    quarantined: List[Dict[str, Any]] = field(default_factory=list)
     out_of_order: int = 0
     gaps: int = 0
 
@@ -147,7 +155,7 @@ class IngestResult:
         return {
             "accepted": len(self.accepted),
             "deduped": self.deduped,
-            "quarantined": self.quarantined,
+            "quarantined": len(self.quarantined),
             "out_of_order": self.out_of_order,
             "gaps": self.gaps,
         }
@@ -173,6 +181,14 @@ class EdgeIngestGateway:
         self._quarantine_sink = quarantine_sink or self._default_quarantine
 
     def _default_quarantine(self, agent_id: str, reading: Dict[str, Any], reason: str) -> None:
+        """Log the rejection. It does NOT retain the reading — ``ingest`` does.
+
+        This used to be the whole of quarantine, which is why the reading was
+        lost: it records that something was rejected and why, never what. That is
+        the right amount for a log line and the wrong amount for a dead-letter
+        sink, so retention now lives in ``IngestResult.quarantined`` where every
+        caller gets it, whether or not a sink is injected.
+        """
         logger.warning("edge_ingest_quarantined", agent_id=agent_id, reason=reason)
 
     def ingest(
@@ -191,8 +207,18 @@ class EdgeIngestGateway:
             # 11: validation -> 15: quarantine on failure
             err = validate_reading(reading)
             if err is not None:
-                self._quarantine_sink(agent_id, reading if isinstance(reading, dict) else {}, err)
-                result.quarantined += 1
+                payload = reading if isinstance(reading, dict) else {"_raw": repr(reading)}
+                self._quarantine_sink(agent_id, payload, err)
+                # Retain the reading, not just the fact that there was one. A
+                # non-dict reading is kept as its repr rather than dropped for
+                # being the wrong shape — "it was not even a dict" is exactly the
+                # kind of thing an investigation needs to see.
+                result.quarantined.append({
+                    "agent_id": agent_id,
+                    "reason": err,
+                    "reading": payload,
+                    "quarantined_at": now.isoformat(),
+                })
                 continue
 
             # 12: dedup
@@ -292,6 +318,37 @@ class RedpandaForwarder:
                 self._unavailable_until = self._now() + self._retry_seconds
                 self._producer = None
                 logger.warning("edge_ingest_forward_failed", error=str(exc))
+                break
+        self.forwarded += sent
+        return sent
+
+    async def forward_quarantined(self, agent_id: str, records: List[Dict[str, Any]]) -> int:
+        """Publish quarantined readings to the dead-letter topic. Returns how many.
+
+        KEYED ON agent_id, NOT asset_id, and that is the point. These readings
+        failed validation, so nothing inside them can be trusted for routing — the
+        missing or malformed field may well be `asset_id` itself. ``agent_id``
+        comes from the verified client certificate, so it is always present and
+        always right, and "which agent is emitting garbage" is the question an
+        operator actually opens this topic to answer.
+
+        Shares the forwarder's circuit with ``forward``: on broker outage this
+        trips too, and the edge agent's store-and-forward re-delivers the batch.
+        """
+        producer = await self._get_producer()
+        if producer is None:
+            self.dropped += len(records)
+            return 0
+        sent = 0
+        for record in records:
+            try:
+                await producer.send_and_wait(f"telemetry.dlq.{agent_id}", record)
+                sent += 1
+            except Exception as exc:
+                self.dropped += 1
+                self._unavailable_until = self._now() + self._retry_seconds
+                self._producer = None
+                logger.warning("edge_ingest_dlq_forward_failed", error=str(exc))
                 break
         self.forwarded += sent
         return sent
