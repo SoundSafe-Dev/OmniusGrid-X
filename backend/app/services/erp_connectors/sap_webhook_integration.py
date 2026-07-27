@@ -7,6 +7,19 @@ SAP Event Mesh webhook integration for real-time events:
 - Inventory change notifications
 - Production status updates
 - Work order events
+
+NOT WIRED. Nothing imports this module; the live inbound path is
+`app/api/erp_webhooks.py`, which authenticates with HMAC over the RAW request body and
+resolves the tenant by signature.
+
+Kept as the reference for SAP event PROCESSING — the per-event normalise/store/correlate
+handlers below are real and are the shape a wired implementation would take. Its
+signature verification is not here: that lived in `ERPWebhookReceiver`, whose scheme
+hashed a canonicalised re-serialisation of the payload and could not authenticate any
+real vendor. It now delegates to the one verifier in `api/erp_webhooks.py`.
+
+If you wire this, note that three of its helpers only LOG (see `_log_po_anomaly`) — they
+raise no alarm — while `_create_task_for_work_order` genuinely creates a Task.
 """
 
 from typing import Dict, Any, Optional, List
@@ -176,7 +189,7 @@ class SAPWebhookIntegration:
             
             if anomaly_result.get("requires_action"):
                 # Create alert or task
-                await self._create_alert_for_po_anomaly(db, normalized_po, anomaly_result)
+                await self._log_po_anomaly(db, normalized_po, anomaly_result)
     
     async def _process_po_changed(
         self,
@@ -212,7 +225,7 @@ class SAPWebhookIntegration:
             
             # Check for status changes that require attention
             if normalized_po.get("status") in ["rejected", "cancelled"]:
-                await self._create_alert_for_po_status_change(db, normalized_po)
+                await self._log_po_status_change(db, normalized_po)
     
     async def _process_inventory_changed(
         self,
@@ -247,7 +260,7 @@ class SAPWebhookIntegration:
             
             # Check for low inventory
             if normalized_inventory.get("quantity", 0) < 100:  # Threshold
-                await self._create_alert_for_low_inventory(db, normalized_inventory)
+                await self._log_low_inventory(db, normalized_inventory)
     
     async def _process_mo_created(
         self,
@@ -280,11 +293,23 @@ class SAPWebhookIntegration:
                 "SAP"
             )
             
-            # Correlate with production data
+            # Correlate with production data.
+            #
+            # The result was assigned and never read. The purchase-order path above
+            # acts on its analysis (`if anomaly_result.get("requires_action")`), so
+            # silently discarding this one meant a manufacturing-order correlation was
+            # computed at full cost and then dropped, with nothing recording that it
+            # had found anything.
             correlation_result = await self.correlation_patterns.analyze_manufacturing_order_correlation(
                 db,
                 normalized_mo
             )
+            if correlation_result:
+                logger.info(
+                    "sap_mo_correlation_analysed",
+                    mo_number=normalized_mo.get("mo_number"),
+                    correlations=len(correlation_result.get("correlations", []) or []),
+                )
             
             # Create registry item for production domain
             # organization_id is required (FS-231): without it the function could
@@ -420,38 +445,45 @@ class SAPWebhookIntegration:
         
         await db.commit()
     
-    async def _create_alert_for_po_anomaly(
+    async def _log_po_anomaly(
         self,
         db: AsyncSession,
         po_data: Dict[str, Any],
         anomaly_result: Dict[str, Any]
     ):
-        """Create alert for PO anomaly."""
-        # This would integrate with the alarm/alert system
+        """LOG ONLY — this raises no alarm and creates no row.
+
+        Named `_create_alert_for_po_anomaly` until it was noticed that it creates no
+        alert: it writes a log line. `_create_task_for_work_order` in this same class
+        DOES create a Task, so a reader had every reason to assume these did too.
+
+        A real implementation would write an `Alarm` (see app/api/alarms.py and the
+        AlarmRule model). Until then the name says what happens.
+        """
         logger.warning(
             "po_anomaly_alert",
             po_number=po_data.get("po_number"),
             anomalies=anomaly_result.get("anomalies")
         )
     
-    async def _create_alert_for_po_status_change(
+    async def _log_po_status_change(
         self,
         db: AsyncSession,
         po_data: Dict[str, Any]
     ):
-        """Create alert for PO status change."""
+        """LOG ONLY — raises no alarm. See _log_po_anomaly."""
         logger.warning(
             "po_status_change_alert",
             po_number=po_data.get("po_number"),
             status=po_data.get("status")
         )
     
-    async def _create_alert_for_low_inventory(
+    async def _log_low_inventory(
         self,
         db: AsyncSession,
         inventory_data: Dict[str, Any]
     ):
-        """Create alert for low inventory."""
+        """LOG ONLY — raises no alarm. See _log_po_anomaly."""
         logger.warning(
             "low_inventory_alert",
             material=inventory_data.get("material"),

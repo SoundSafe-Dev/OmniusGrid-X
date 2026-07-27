@@ -307,10 +307,17 @@ class LocalTacticalEngine:
                        confidence=decision.confidence)
             return False
         
-        # Execute via command queue
-        await self._send_command(decision)
-        
-        # Log to cloud for training feedback
+        # Execute via command queue. This CAN fail to dispatch — see
+        # _dispatch_command — and the result decides what we return and what we
+        # tell the training loop.
+        dispatched = await self._dispatch_command(decision)
+
+        # Log to cloud for training feedback.
+        #
+        # `dispatched` is part of the payload on purpose. This event is training
+        # feedback: a decision that never reached the asset produced no effect to
+        # learn from, and feeding it in as though it had actuated teaches the model
+        # from an outcome that never happened.
         await cloud_gateway.queue_discrete_event(
             'tactical_decision',
             {
@@ -320,14 +327,22 @@ class LocalTacticalEngine:
                 'confidence': decision.confidence,
                 'model_version': decision.model_version,
                 'latency_ms': decision.latency_ms,
+                'dispatched': dispatched,
             }
         )
-        
+
+        if not dispatched:
+            logger.warning("tactical_decision_not_dispatched",
+                           asset_id=decision.asset_id,
+                           action=decision.action_type,
+                           reason="no command sink configured")
+            return False
+
         logger.info("tactical_decision_executed",
                    asset_id=decision.asset_id,
                    action=decision.action_type,
                    latency_ms=decision.latency_ms)
-        
+
         return True
     
     async def _is_maintenance_mode(self, asset_id: str) -> bool:
@@ -355,21 +370,50 @@ class LocalTacticalEngine:
             )
             return True
     
-    async def _send_command(self, decision: TacticalDecision):
-        """Send command to asset via command queue"""
-        # Queue in commands topic
-        command = {
-            'asset_id': decision.asset_id,
-            'command_type': 'tactical',
-            'action': decision.action_type,
-            'parameters': decision.parameters,
-            'timestamp': decision.timestamp.isoformat(),
-            'model_version': decision.model_version,
-        }
-        
-        # Publish to command queue (Redpanda)
-        # Implementation depends on messaging setup
-        logger.debug("command_queued", command=command)
+    async def _dispatch_command(self, decision: TacticalDecision) -> bool:
+        """Dispatch a decision to the asset. Returns True only if it was actually sent.
+
+        NOT WIRED, AND SAYING SO IS THE POINT. This was `_send_command`, returning
+        nothing, whose entire body built a `command` dict and then logged
+        ``command_queued`` at DEBUG under the comment *"Implementation depends on
+        messaging setup"*. Nothing was ever published. `execute_decision` then logged
+        ``tactical_decision_executed`` and returned **True** — its docstring promises
+        "True if executed" — for a control command that reached no asset.
+
+        That made it the most consequential shape of this defect in the codebase: the
+        two safety gates immediately above it, maintenance-mode and the 0.7 confidence
+        floor, are implemented properly and carefully. The maintenance check even fails
+        SAFE, with a comment reading *"a broken control command is worse than a skipped
+        one."* Anyone reading that had every reason to assume the dispatch below it was
+        equally real.
+
+        It is currently unreachable — `execute_decision` is only called from
+        `_inference_loop`, and `start()` is absent from `main.py`'s startup list. That
+        is the only reason this has never mattered. It is one line away from mattering:
+        the other six engines are all started there.
+
+        WHY THIS REFUSES RATHER THAN DISPATCHES. The real sink exists and is already
+        running — `command_executor` (started in `main.py`), backed by the `Command`
+        model, and `api/commands.py` already documents ``"tactical"`` as a command type,
+        so this was clearly meant to feed it. Wiring it would switch on autonomous
+        actuation of industrial assets, which is a deliberate decision with a safety
+        review attached, not a side effect of a naming fix. So the honest state is to
+        refuse and report it, exactly as `erp_database_replication.start_replication`
+        does for its stubbed CDC helpers.
+
+        To wire it: submit through `command_executor` with `command_type="tactical"`
+        and return its accepted/rejected result, then delete this note.
+        """
+        logger.warning(
+            "tactical_command_not_dispatched",
+            asset_id=decision.asset_id,
+            action=decision.action_type,
+            detail=(
+                "the tactical engine has no command sink; the decision was computed "
+                "but not sent to the asset"
+            ),
+        )
+        return False
     
     async def start(self):
         """Start the inference loop"""
