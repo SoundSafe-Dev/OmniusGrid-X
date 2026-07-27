@@ -262,14 +262,20 @@ Defects found, all mutation-verified — reverting the fix fails the test:
 **Absent rather than broken, and left alone:** ERP has no export definition, no
 WebSocket event and no Kafka producer. Nothing claims otherwise.
 
+**The ERP hub now renders what it syncs.** Entities, Events and AI were three working
+endpoints with no production caller — data synced, nothing displayed. They are now tabs
+on the integration detail panel, and the truncation signal below reaches a person rather
+than stopping at the client.
+
 **Silent truncation, this time on our own API.** The ERP hub's three list endpoints
 returned exactly `limit` rows with no indication more existed, and clamped an over-limit
 request instead of refusing it — the same shape that bit three connectors. Bounds are now
 declared on the parameter (422, not a quiet substitution), truncation is reported in
 `X-Result-Truncated` via a `limit + 1` probe rather than a COUNT, and the API client
-returns `ListResult<T>` so the flag cannot be discarded. Latent rather than live: the
-Entities/Events/AI tabs have no production caller yet, which is why the shape was worth
-fixing before someone builds them.
+returns `ListResult<T>` so the flag cannot be discarded. The tabs that consume it are built, so an
+operator sees "showing the most recent 10 of more than 10" instead of a confident partial
+answer. Verified end to end: 149 rows synced from live Dataverse, `?limit=10` returns 10
+with `X-Result-Truncated: true`.
 
 **Swept platform-wide afterwards, and found clean.** The response-model defect above was
 the obvious candidate to exist elsewhere, so it was checked across all 61 API modules —
