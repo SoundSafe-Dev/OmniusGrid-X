@@ -4,6 +4,10 @@ Separate router (does not edit analysis_sessions.py, owned on gemma-correlation-
 that reuses the SessionDataSource model. Attached rows appear in DataSourcesPanel
 and are consumed by the existing correlate_session — so sensor/yard/transport data
 becomes correlatable with no change to the correlation engine.
+
+TENANT SESSION, NOT get_db. `analysis_sessions` is RLS-protected; on a session with no
+`app.current_org_id` the policy matched nothing and this endpoint returned an empty
+result.
 """
 
 from typing import Any, Dict, Optional
@@ -16,7 +20,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_active_user
-from app.db.database import get_db
+from app.db.database import get_db  # noqa: F401
+from app.middleware.tenant_isolation import get_tenant_db
 from app.db.models import AnalysisSession, SessionDataSource, User
 from app.services import platform_correlation as pc
 
@@ -54,7 +59,7 @@ async def list_platform_source_types(_user: User = Depends(get_current_active_us
 async def attach_platform_data(
     session_id: UUID,
     body: AttachPlatformDataRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """Pull data from a platform domain and attach it as a session data source."""

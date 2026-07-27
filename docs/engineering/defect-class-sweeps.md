@@ -606,6 +606,26 @@ create); only the GUC was missing.
 (Kanban RLS and `/nlp/correlation/intake/{id}` are items #16 and #17 in the current task
 pool and were left alone.)
 
+**The two remaining correlation routers were the same shape, with an extra twist.**
+`logistics_correlation.py` (12 handlers on `dock_appointments`) and
+`platform_correlation.py` (1 on `analysis_sessions`) both queried RLS tables through
+`get_db` and returned empty results — `logistics_correlation` even filtered on
+`organization_id` correctly itself, which changed nothing, exactly as in `gdpr.py`. Nine
+of its handlers additionally took `organization_id` as a **required client-supplied query
+parameter**: the IDOR shape, and a 422 for any client that omitted it. Both now derive the
+org from the token.
+
+**One thing there is deliberately NOT fixed.** `logistics_correlation` declares
+`prefix="/logistics"` while `main.py` mounts it at `/api/v1/logistics`, so every route
+serves at `/api/v1/logistics/logistics/…` — the double-prefix bug already corrected in the
+yard and transportation routers. Correcting it here would **collide** with
+`fleet_logistics.logistics_router`, which serves `/delivery-efficiency` and
+`/compliance/summary` at the single prefix — and those are the two paths the frontend
+actually calls. Since `logistics_correlation` registers first it would silently win,
+changing the payload the frontend receives. Choosing a canonical implementation per path
+is a product decision, not a routing edit, so the tests use the real doubled paths rather
+than pretending otherwise.
+
 **The core product surfaces were then swept for the same failure, and came back clean.**
 One organisation seeded with an asset, an alarm and an operation, then every main
 authenticated read exercised against a real database: `dashboard/overview` reports

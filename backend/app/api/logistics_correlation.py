@@ -1,6 +1,21 @@
 """
 Logistics Correlation API Endpoints
 Cross-domain data correlation between YMS/TMS and manufacturing
+
+TENANT SESSION, NOT get_db. `dock_appointments` is RLS-protected and every handler here
+ran on a session that sets no `app.current_org_id`, so the policy matched nothing and each
+endpoint returned an empty result — despite the handlers filtering on `organization_id`
+correctly themselves. A correct application-layer filter is no help when RLS has already
+removed the row.
+
+`organization_id` also came from the query string as a REQUIRED parameter: the IDOR shape
+`app/core/tenant.py` forbids, and a 422 for any client that did not send it. It now comes
+from the token.
+
+SEPARATE, UNFIXED, AND DELIBERATE: the double `/logistics` prefix (see the comment above
+`router` below). Removing it collides with `fleet_logistics.logistics_router`, which
+serves the two paths the frontend actually calls. That is a product decision about which
+implementation is canonical, not a routing edit.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -11,7 +26,8 @@ from sqlalchemy import and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_active_user
-from app.db.database import get_db
+from app.db.database import get_db  # noqa: F401
+from app.middleware.tenant_isolation import get_tenant_db, get_tenant_org_id
 from app.models.schemas import (
     LogisticsCorrelationResponse,
     DockScheduleCorrelationResponse,
@@ -53,9 +69,12 @@ router = APIRouter(
 
 @router.get("/correlation-dashboard", response_model=LogisticsCorrelationResponse)
 async def get_correlation_dashboard(
-    organization_id: UUID,
     date: Optional[datetime] = Query(None),
-    db: AsyncSession = Depends(get_db)
+    # organization_id from the TOKEN. As a required client-supplied query
+    # parameter it was the IDOR shape app/core/tenant.py forbids, and it made
+    # every call a 422 for any client that did not send it.
+    organization_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get comprehensive logistics correlation dashboard"""
     dashboard = await logistics_correlation_engine.get_correlation_dashboard(
@@ -70,9 +89,12 @@ async def get_correlation_dashboard(
 
 @router.get("/dock-production-sync", response_model=dict)
 async def get_dock_production_sync(
-    organization_id: UUID,
     date: Optional[datetime] = Query(None),
-    db: AsyncSession = Depends(get_db)
+    # organization_id from the TOKEN. As a required client-supplied query
+    # parameter it was the IDOR shape app/core/tenant.py forbids, and it made
+    # every call a 422 for any client that did not send it.
+    organization_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get dock schedule aligned with production forecasts"""
     synchronizer = DockProductionSynchronizer()
@@ -87,7 +109,7 @@ async def get_dock_production_sync(
 @router.post("/dock-appointments/{appointment_id}/sync", dependencies=[Depends(require_operator_or_admin)])
 async def sync_dock_appointment(
     appointment_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Run dock-production sync analysis for specific appointment"""
     synchronizer = DockProductionSynchronizer()
@@ -105,9 +127,12 @@ async def sync_dock_appointment(
 
 @router.get("/truck-asset-readiness")
 async def get_truck_asset_readiness(
-    organization_id: UUID,
     shipment_id: Optional[UUID] = None,
-    db: AsyncSession = Depends(get_db)
+    # organization_id from the TOKEN. As a required client-supplied query
+    # parameter it was the IDOR shape app/core/tenant.py forbids, and it made
+    # every call a 422 for any client that did not send it.
+    organization_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get truck arrival vs asset readiness correlation"""
     if shipment_id:
@@ -138,7 +163,7 @@ async def get_truck_asset_readiness(
 @router.post("/load-quality", response_model=LoadQualityLogResponse, dependencies=[Depends(require_operator_or_admin)])
 async def log_load_quality_issue(
     data: LoadQualityLogCreate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Log shipping defect and correlate to manufacturing root cause"""
     correlator = LoadQualityCorrelator()
@@ -158,10 +183,13 @@ async def log_load_quality_issue(
 
 @router.get("/load-quality-correlation")
 async def get_load_quality_correlation(
-    organization_id: UUID,
     start_date: datetime = Query(default_factory=lambda: datetime.now(timezone.utc) - timedelta(days=30)),
     end_date: Optional[datetime] = Query(None),
-    db: AsyncSession = Depends(get_db)
+    # organization_id from the TOKEN. As a required client-supplied query
+    # parameter it was the IDOR shape app/core/tenant.py forbids, and it made
+    # every call a 422 for any client that did not send it.
+    organization_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get load quality correlation analytics"""
     if not end_date:
@@ -181,9 +209,12 @@ async def get_load_quality_correlation(
 
 @router.get("/delivery-efficiency")
 async def get_delivery_efficiency(
-    organization_id: UUID,
     days: int = Query(30, ge=1, le=365),
-    db: AsyncSession = Depends(get_db)
+    # organization_id from the TOKEN. As a required client-supplied query
+    # parameter it was the IDOR shape app/core/tenant.py forbids, and it made
+    # every call a 422 for any client that did not send it.
+    organization_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get on-time delivery vs production efficiency metrics"""
     from sqlalchemy import case, func, select
@@ -230,7 +261,7 @@ async def get_delivery_efficiency(
 @router.post("/predict-detention", response_model=DetentionRiskPrediction, dependencies=[Depends(require_operator_or_admin)])
 async def predict_detention(
     appointment_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Predict detention risk for a dock appointment"""
     predictor = DetentionRiskPredictor()
@@ -246,9 +277,12 @@ async def predict_detention(
 
 @router.get("/detention-risk/upcoming")
 async def get_upcoming_detention_risks(
-    organization_id: UUID,
     hours_ahead: int = Query(24, ge=1, le=168),
-    db: AsyncSession = Depends(get_db)
+    # organization_id from the TOKEN. As a required client-supplied query
+    # parameter it was the IDOR shape app/core/tenant.py forbids, and it made
+    # every call a 422 for any client that did not send it.
+    organization_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get detention risk predictions for upcoming appointments"""
     from sqlalchemy import select
@@ -298,8 +332,11 @@ async def get_upcoming_detention_risks(
 
 @router.get("/compliance/summary")
 async def get_compliance_summary(
-    organization_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    # organization_id from the TOKEN. As a required client-supplied query
+    # parameter it was the IDOR shape app/core/tenant.py forbids, and it made
+    # every call a 422 for any client that did not send it.
+    organization_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get logistics compliance summary (DOT, CTPAT, HOS)"""
     from sqlalchemy import case, func, select
@@ -378,9 +415,12 @@ async def get_compliance_summary(
 
 @router.post("/optimize-assignment", dependencies=[Depends(require_operator_or_admin)])
 async def optimize_assignment(
-    organization_id: UUID,
     shipment_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    # organization_id from the TOKEN. As a required client-supplied query
+    # parameter it was the IDOR shape app/core/tenant.py forbids, and it made
+    # every call a 422 for any client that did not send it.
+    organization_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get optimal truck-asset assignment recommendations"""
     result = await logistics_correlation_engine.optimize_truck_asset_assignment(
@@ -395,9 +435,12 @@ async def optimize_assignment(
 
 @router.get("/liability/costs")
 async def get_liability_costs(
-    organization_id: UUID,
     days: int = Query(30, ge=1, le=365),
-    db: AsyncSession = Depends(get_db)
+    # organization_id from the TOKEN. As a required client-supplied query
+    # parameter it was the IDOR shape app/core/tenant.py forbids, and it made
+    # every call a 422 for any client that did not send it.
+    organization_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get detention, demurrage, and quality liability costs"""
     from sqlalchemy import case, func, select

@@ -110,9 +110,22 @@ KNOWN_GET_DB_ON_RLS: dict[str, int] = {
     # also took organization_id from the client payload and now take it from the
     # token. Pinned by tests/test_fleet_logistics_tenant_isolation_realdb.py.
     "kanban.py": 10,
-    "logistics_correlation.py": 12,
+    # logistics_correlation.py and platform_correlation.py are GONE from this list.
+    # Both queried RLS-protected tables (dock_appointments, analysis_sessions) through
+    # get_db, so every endpoint returned an empty result — logistics_correlation even
+    # filtered on organization_id correctly itself, which made no difference because
+    # RLS had already removed the row. Nine of its handlers ALSO took organization_id
+    # as a required client-supplied query parameter: the IDOR shape, and a 422 for any
+    # client that did not send it. Both now derive the org from the token.
+    #
+    # STILL OUTSTANDING there, deliberately: logistics_correlation declares
+    # prefix="/logistics" and main.py mounts it at /api/v1/logistics, so its routes
+    # serve at /api/v1/logistics/logistics/... — the double-prefix bug already fixed in
+    # yard and transportation. Removing it collides with fleet_logistics.logistics_router
+    # on /delivery-efficiency and /compliance/summary, which are the two paths the
+    # frontend actually calls. Choosing which implementation is canonical is a product
+    # decision, not a routing edit.
     "nlp_correlation.py": 7,
-    "platform_correlation.py": 1,
     # transportation.py is GONE from this list, and so is geotab.py.
     #
     # `get_vehicles` leaked outright: no organization filter, on a table with no RLS
