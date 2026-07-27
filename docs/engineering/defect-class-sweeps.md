@@ -143,9 +143,28 @@ fields the analyzer reads, verified field-by-field. They were simply absent from
 produce its correlations sat unused. Registering them took a per-vendor analyzer-class
 lookup and four registry lines. That closes most of task #33 in the current pool.
 
-So the remaining dead code is ~2,900 lines across five modules, and the ticket should be
-*check each for finished-but-unwired work before deleting* rather than a straight delete —
-one in seven was worth wiring.
+**All seven have now been checked, and none should simply be deleted.**
+
+| Module | Verdict |
+|---|---|
+| `oracle_correlation_patterns` | **wired** — matched transformers already existed |
+| `dynamics_correlation_patterns` | **wired**, after correcting three field names |
+| `erp_database_replication` | already refuses honestly: `start_replication` raises `NotImplementedError` because its CDC helpers are stubs. Nothing to do |
+| `sap`/`oracle`/`dynamics` `_data_extraction` | **superseded, annotated in place** |
+| `sap_webhook_integration` | unreviewed; the live webhook path is `api/erp_webhooks.py` |
+
+The three extraction modules are not duplicates of `run_erp_sync` — they store the
+**normalised** record, where `run_erp_sync` stores the **raw** one and transforms at
+analysis time. Raw storage is the approach that survived, because it is lossless: three
+field names in the Dynamics invoice transformer were wrong, and with raw storage that was
+a code fix rather than a re-sync. Wiring them back would create a second ingestion path
+writing the same table in a different shape, which is worse than either alone. Each now
+carries a module-level note saying so, since the risk is not that they sit unused but that
+someone starts one.
+
+So the tally is: of seven modules, **two were finished work worth wiring**, one was
+already honest, three are superseded and now say so, and one is unreviewed. A straight
+delete would have discarded the two.
 
 **Dynamics was then registered too — after correcting three field names.**
 `transform_dynamics_product` was already correct (all eight columns verified against
