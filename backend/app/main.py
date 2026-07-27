@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
-from app.api import assets, telemetry, alarms, operations, auth, dashboard, health, engines
+from app.api import assets, telemetry, alarms, operations, auth, users, dashboard, health, engines
 from app.api import dashboard_analytics
 from app.api import yard, transportation, logistics_correlation, websocket, commands, oee, kanban, registries, geotab, correlation_integration, nlp_correlation, analysis_sessions, user_context, audit, api_keys, gdpr, compliance, compliance_reports, data_residency, feature_flags, sso, bulk_operations, exports, error_tracking, erp_integrations
 from app.api import health_index, simulation, notifications
@@ -302,6 +302,18 @@ setup_profiling(app)
 
 # Include routers
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"], responses=common_responses)
+app.include_router(
+    users.router,
+    prefix="/api/v1/auth/users",
+    tags=["User Management"],
+    responses=common_responses,
+)
+app.include_router(
+    users.public_router,
+    prefix="/api/v1/auth/invitations",
+    tags=["User Invitations"],
+    responses=common_responses,
+)
 app.include_router(assets.router, prefix="/api/v1/assets", tags=["Assets"], responses=common_responses)
 app.include_router(telemetry.router, prefix="/api/v1/telemetry", tags=["Telemetry"], responses=common_responses)
 app.include_router(alarms.router, prefix="/api/v1/alarms", tags=["Alarms"], responses=common_responses)

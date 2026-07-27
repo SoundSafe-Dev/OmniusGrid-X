@@ -5,7 +5,7 @@ import { Routes, Route } from 'react-router-dom'
 // imports that don't tree-shake), and App is the eager root, so going through
 // it would pull those heavy libs into the initial bundle.
 import { AdminRoute, Layout, ProtectedRoute } from './components/layout'
-import { Login } from './pages/auth'
+import { AcceptInvitation, Login } from './pages/auth'
 import { TooltipProvider, DialogProvider } from './components/ui'
 import ErrorBoundary from './components/ErrorBoundary'
 
@@ -79,6 +79,7 @@ const App: FC = () => {
           <Routes>
             {/* Public Routes */}
             <Route path="/login" element={<Login />} />
+            <Route path="/accept-invite" element={<AcceptInvitation />} />
 
             {/* Protected Routes */}
             <Route element={<ProtectedRoute />}>

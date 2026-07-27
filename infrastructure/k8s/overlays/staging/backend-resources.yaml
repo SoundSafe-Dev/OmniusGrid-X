@@ -19,3 +19,5 @@ spec:
               value: "2"
             - name: MAX_CONNECTIONS
               value: "100"
+            - name: USER_INVITE_PUBLIC_BASE_URL
+              value: "https://staging.omniusgrid.local"

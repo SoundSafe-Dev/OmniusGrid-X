@@ -7,7 +7,6 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-import jwt
 from jwt import PyJWTError as JWTError
 from passlib.context import CryptContext
 from pydantic import BaseModel, ConfigDict, Field
@@ -15,15 +14,13 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.database import get_db
-from app.db.models import User, Organization
-from app.models.schemas import Token, UserCreate
 from app.core.config import settings
 from app.core.security import (
     LocalTokenClaimsError,
     create_access_token,
     create_refresh_token,
     decode_local_token,
+    get_current_user_ws,
     token_expiry,
 )
 from app.core.session import SessionManager
@@ -88,8 +85,21 @@ async def _load_local_user(
     ):
         raise _credentials_exception()
 
+    user_id = UUID(payload["sub"])
+    linked_session_jti = payload.get("sid")
+    if (
+        check_revocation
+        and linked_session_jti is not None
+        and not await SessionManager.is_refresh_session_active(
+            linked_session_jti,
+            user_id,
+            db,
+        )
+    ):
+        raise _credentials_exception()
+
     result = await db.execute(
-        select(User).where(User.id == UUID(payload["sub"]))
+        select(User).where(User.id == user_id)
     )
     user = result.scalar_one_or_none()
     if user is None:
@@ -469,58 +479,19 @@ async def get_current_user_info(
             current_user.last_login.isoformat() if current_user.last_login else None
         ),
     }
-
-
-@router.get(
-    "/users",
-    summary="Get organization users",
-    description="Retrieve users in the authenticated user's organization.",
-)
-async def get_organization_users(
-    current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Get all users in the organization for assignment."""
-    if not current_user.organization_id:
-        return {"items": [], "total": 0}
-
-    result = await db.execute(
-        select(User).where(User.organization_id == current_user.organization_id)
-    )
-    users = result.scalars().all()
-    user_list = [
-        {
-            "id": str(user.id),
-            "name": user.full_name,
-            "full_name": user.full_name,
-            "email": user.email,
-            "role": user.role,
-            "isActive": user.is_active,
-            "createdAt": user.created_at.isoformat() if user.created_at else None,
-            "updatedAt": user.updated_at.isoformat() if user.updated_at else None,
-        }
-        for user in users
-    ]
-
-    return {
-        "items": user_list,
-        "total": len(user_list)
-    }
-
-
 # ---- WebSocket authentication (ported from HARSH-CONTRIBUTION during the
 # converged-pre-main merge: its websocket.py imports this, but its auth.py was
 # resolved keep-ours; self-contained version against our dev-token flow). ----
 
 async def resolve_websocket_user(token: Optional[str]) -> Optional[User]:
-    """Authenticate WebSocket clients (JWT or dev-token). Returns None if invalid."""
+    """Authenticate WebSocket clients through the canonical durable checks."""
     from app.db.database import AsyncSessionLocal
 
     if not token:
         return None
 
-    async with AsyncSessionLocal() as db:
-        if token == "dev-token" and settings.ALLOW_DEV_TOKEN:
+    if token == "dev-token" and settings.ALLOW_DEV_TOKEN:
+        async with AsyncSessionLocal() as db:
             # Same fixed dev identity as get_current_active_user's bypass.
             dev_user_id = "00000000-0000-0000-0000-000000000001"
             result = await db.execute(select(User).where(User.id == dev_user_id))
@@ -528,24 +499,9 @@ async def resolve_websocket_user(token: Optional[str]) -> Optional[User]:
             if user is None:
                 # First-ever call: reuse the REST bypass to create org+user.
                 user = await get_current_active_user(token="dev-token", header_token=None, db=db)
-            return user
+            return user if user.is_active else None
 
-        try:
-            # Same checks as core.security.get_current_user_ws — the previous
-            # raw jwt.decode enforced neither, so a REFRESH token or a REVOKED
-            # (logged-out) access token could open a socket. expected_type
-            # rejects a refresh token used as an access token; is_token_revoked
-            # rejects a revoked one.
-            payload = decode_local_token(token, expected_type="access")
-            user_id = payload["sub"]
-            if await SessionManager.is_token_revoked(payload["jti"], db):
-                return None
-        except (JWTError, LocalTokenClaimsError, KeyError, ValueError):
-            return None
-
-        result = await db.execute(select(User).where(User.id == user_id))
-        user = result.scalar_one_or_none()
-        return user if user and user.is_active else None
+    return await get_current_user_ws(token)
 
 
 # The admin-console dependency was consolidated into the single canonical
