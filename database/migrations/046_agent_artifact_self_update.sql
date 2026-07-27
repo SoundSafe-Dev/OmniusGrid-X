@@ -1,5 +1,5 @@
 -- =============================================================================
--- Migration 031: signed wheel artifacts and restart-spanning agent OTA state
+-- Migration 046: signed wheel artifacts and restart-spanning agent OTA state
 -- =============================================================================
 
 BEGIN;
