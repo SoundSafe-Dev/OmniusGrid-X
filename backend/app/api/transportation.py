@@ -77,7 +77,7 @@ class VehicleCreatedResponse(BaseModel):
 @router.post("/carriers", response_model=CarrierResponse, dependencies=[Depends(require_operator_or_admin)])
 async def create_carrier(
     data: CarrierCreate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Create new carrier profile"""
     carrier = await transportation_management_service.create_carrier(
@@ -98,9 +98,14 @@ async def create_carrier(
 
 @router.get("/carriers", response_model=List[CarrierResponse])
 async def get_carriers(
-    organization_id: UUID,
+    # organization_id comes from the TOKEN. As a required client-supplied query
+    # parameter it was the IDOR shape app/core/tenant.py forbids — and it did not
+    # even work: on get_db no tenant GUC is set, and these tables have FORCE row
+    # level security, so the policy filtered EVERY row. This endpoint returned an
+    # empty list to every caller, including for its own organization.
+    organization_id: UUID = Depends(get_tenant_org_id),
     is_active: Optional[bool] = Query(True),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get carriers for organization"""
     query = select(Carrier).where(
@@ -116,7 +121,7 @@ async def get_carriers(
 @router.get("/carriers/{carrier_id}", response_model=CarrierResponse)
 async def get_carrier(
     carrier_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get carrier details"""
     result = await db.execute(
@@ -132,7 +137,7 @@ async def get_carrier(
 async def update_carrier(
     carrier_id: UUID,
     data: CarrierUpdate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Update carrier profile"""
     result = await db.execute(
@@ -154,7 +159,7 @@ async def update_carrier(
 @router.get("/carriers/{carrier_id}/compliance")
 async def get_carrier_compliance(
     carrier_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get carrier compliance summary"""
     try:
@@ -172,7 +177,7 @@ async def get_carrier_compliance(
 @router.post("/drivers", response_model=DriverResponse, dependencies=[Depends(require_operator_or_admin)])
 async def create_driver(
     data: DriverCreate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Create new driver profile"""
     driver = await transportation_management_service.create_driver(
@@ -195,10 +200,15 @@ async def create_driver(
 
 @router.get("/drivers", response_model=List[Dict[str, Any]])
 async def get_drivers(
-    organization_id: UUID,
+    # organization_id comes from the TOKEN. As a required client-supplied query
+    # parameter it was the IDOR shape app/core/tenant.py forbids — and it did not
+    # even work: on get_db no tenant GUC is set, and these tables have FORCE row
+    # level security, so the policy filtered EVERY row. This endpoint returned an
+    # empty list to every caller, including for its own organization.
+    organization_id: UUID = Depends(get_tenant_org_id),
     carrier_id: Optional[UUID] = None,
     is_active: Optional[bool] = Query(True),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get drivers for organization (adds carrierName + MISSING UI columns)."""
     query = select(Driver).where(
@@ -232,7 +242,7 @@ async def get_drivers(
 @router.get("/drivers/{driver_id}", response_model=DriverResponse)
 async def get_driver(
     driver_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get driver details"""
     result = await db.execute(
@@ -248,7 +258,7 @@ async def get_driver(
 async def update_driver(
     driver_id: UUID,
     data: DriverUpdate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Update driver profile"""
     result = await db.execute(
@@ -270,7 +280,7 @@ async def update_driver(
 @router.get("/drivers/{driver_id}/hos")
 async def get_driver_hos(
     driver_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get driver HOS compliance status"""
     try:
@@ -288,7 +298,7 @@ async def get_driver_hos(
 @router.post("/shipments", response_model=ShipmentResponse, dependencies=[Depends(require_operator_or_admin)])
 async def create_shipment(
     data: ShipmentCreate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Create new shipment"""
     shipment = await transportation_management_service.create_shipment(
@@ -315,12 +325,17 @@ async def create_shipment(
 
 @router.get("/shipments", response_model=PaginatedResponse[Dict[str, Any]])
 async def get_shipments(
-    organization_id: UUID,
+    # organization_id comes from the TOKEN. As a required client-supplied query
+    # parameter it was the IDOR shape app/core/tenant.py forbids — and it did not
+    # even work: on get_db no tenant GUC is set, and these tables have FORCE row
+    # level security, so the policy filtered EVERY row. This endpoint returned an
+    # empty list to every caller, including for its own organization.
+    organization_id: UUID = Depends(get_tenant_org_id),
     status: Optional[str] = Query(None),
     carrier_id: Optional[UUID] = None,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get shipments for organization (FS-99: {items, meta} envelope with a real total).
 
@@ -370,7 +385,7 @@ async def get_shipments(
 @router.get("/shipments/{shipment_id}", response_model=ShipmentResponse)
 async def get_shipment(
     shipment_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get shipment details"""
     result = await db.execute(
@@ -386,7 +401,7 @@ async def get_shipment(
 async def update_shipment(
     shipment_id: UUID,
     data: ShipmentUpdate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Update shipment"""
     result = await db.execute(
@@ -410,7 +425,7 @@ async def dispatch_shipment(
     shipment_id: UUID,
     driver_id: UUID,
     trailer_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Dispatch shipment to driver"""
     try:
@@ -436,7 +451,7 @@ async def update_shipment_status(
     status: str,
     actual_pickup: Optional[datetime] = None,
     actual_delivery: Optional[datetime] = None,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Update shipment status"""
     try:
@@ -459,7 +474,7 @@ async def update_shipment_status(
 @router.get("/shipments/{shipment_id}/costs")
 async def get_shipment_costs(
     shipment_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Calculate shipment costs"""
     try:
@@ -477,7 +492,7 @@ async def get_shipment_costs(
 @router.post("/routes", response_model=RouteResponse, dependencies=[Depends(require_operator_or_admin)])
 async def create_route(
     data: RouteCreate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Create optimized route"""
     route = await transportation_management_service.create_route(
@@ -494,9 +509,14 @@ async def create_route(
 
 @router.get("/routes", response_model=List[RouteResponse])
 async def get_routes(
-    organization_id: UUID,
+    # organization_id comes from the TOKEN. As a required client-supplied query
+    # parameter it was the IDOR shape app/core/tenant.py forbids — and it did not
+    # even work: on get_db no tenant GUC is set, and these tables have FORCE row
+    # level security, so the policy filtered EVERY row. This endpoint returned an
+    # empty list to every caller, including for its own organization.
+    organization_id: UUID = Depends(get_tenant_org_id),
     is_active: Optional[bool] = Query(True),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get routes for organization"""
     query = select(Route).where(
@@ -514,7 +534,7 @@ async def get_routes(
 @router.post("/load-plans", response_model=LoadPlanResponse, dependencies=[Depends(require_operator_or_admin)])
 async def create_load_plan(
     data: LoadPlanCreate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Create load plan for shipment"""
     load_plan = await transportation_management_service.create_load_plan(
@@ -534,7 +554,7 @@ async def create_load_plan(
 @router.get("/shipments/{shipment_id}/load-plan", response_model=LoadPlanResponse)
 async def get_load_plan(
     shipment_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get load plan for shipment"""
     result = await db.execute(
@@ -551,7 +571,7 @@ async def get_load_plan(
 @router.post("/freight-charges", response_model=FreightChargeResponse, dependencies=[Depends(require_operator_or_admin)])
 async def create_freight_charge(
     data: FreightChargeCreate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Create freight charge"""
     from app.services.transportation_management import FreightBillingEngine
@@ -575,7 +595,7 @@ async def create_freight_charge(
 @router.get("/shipments/{shipment_id}/freight-charges", response_model=List[FreightChargeResponse])
 async def get_shipment_charges(
     shipment_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get freight charges for shipment"""
     result = await db.execute(
@@ -665,7 +685,7 @@ async def get_vehicles(
 @router.post("/vehicles", response_model=VehicleCreatedResponse)
 async def create_vehicle(
     payload: dict,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Register a fleet vehicle."""
     from app.db.logistics_models import Vehicle

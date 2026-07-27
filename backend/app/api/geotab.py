@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import get_current_active_user
 from app.core.config import settings
 from app.db.database import get_db
+from app.middleware.tenant_isolation import get_tenant_db, get_tenant_org_id
 from app.services.geotab_service import geotab_service
 
 # Read/query endpoints require an authenticated user.
@@ -180,8 +181,12 @@ async def get_driver_hos_geotab(
     dependencies=[Depends(get_current_active_user)],
 )
 async def get_fleet_summary(
-    organization_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    # From the TOKEN. As a client-supplied query parameter this was the IDOR shape,
+    # and it did not work either: the geotab tables have row-level security and this
+    # handler set no tenant GUC, so every underlying query returned nothing and the
+    # summary reported zeros for every caller.
+    organization_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get fleet-wide GeoTab summary"""
     try:

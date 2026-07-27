@@ -511,8 +511,34 @@ They now take it from the token.
 GUC, so they were returning **zero** rows. One dependency, two failure modes, depending
 only on whether the table happened to have a policy.
 
-RLS on the four unprotected tables remains the structural fix and is still outstanding;
-it needs its own migration and a check of every writer.
+**RLS on the four unprotected tables is now in place** — migration 051, ENABLE + FORCE
+with a `tenant_isolation` policy each, so the application filter and the database policy
+finally line up with the two-layer model `app/core/tenant.py` describes. Two details
+mattered: the policy does **not** cast to `::uuid` (unlike 011/033) because
+`organization_id` is `character varying` on these four and casting would raise on every
+row; and FORCE is set because without it the table owner bypasses the policy, which makes
+`relrowsecurity = true` read as protected while the application's own connection is
+exempt.
+
+The writer audit that gates this came out clean: nothing outside `app/api/` touches these
+tables except `seed_demo_data.py`, which sets no tenant GUC — but it already writes
+`assets` (ENABLE + FORCE since 011) and defaults to SQLite, so it does not work against
+Postgres RLS today and this changes nothing for it.
+
+**The transportation endpoints turned out to fail the OTHER way.** `get_carriers`,
+`get_drivers`, `get_shipments`, `get_routes` and `geotab.get_fleet_summary` all took
+`organization_id` as a required client-supplied query parameter — the IDOR shape — but
+never leaked, because their tables have ENABLE **and FORCE** RLS and the handlers set no
+GUC. The policy filtered every row, so **each returned an empty list to every caller,
+including for its own organization**. Verified against a real database: listing carriers
+with the caller's own org id returned nothing while the row sat in the table.
+
+That is the same mistake as `get_vehicles` — one wrong dependency — producing the exact
+opposite result, decided only by whether the table happened to carry a policy. A leak and
+a permanently-empty page are indistinguishable from a status code, which is why both are
+now pinned by tests that assert the caller sees its OWN rows as well as not seeing
+anyone else's. The frontend stopped sending the removed parameter, and the
+`organization_id`-from-localStorage helper it needed went with it.
 
 ---
 

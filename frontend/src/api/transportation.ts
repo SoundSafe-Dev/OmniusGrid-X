@@ -415,8 +415,6 @@ const mockRoutes: Route[] = [
 // devLogin/login); read it here and pass it as a snake_case param, matching the
 // existing `carrier_id` convention. Returns undefined if unknown (call behaves
 // as before).
-const orgId = (): string | undefined =>
-  (typeof localStorage !== 'undefined' && localStorage.getItem('organizationId')) || undefined;
 
 export const transportationApi = {
   // Carriers
@@ -431,7 +429,7 @@ export const transportationApi = {
         hasMore: false,
       };
     }
-    const response = await api.get<Carrier[]>('/api/v1/transportation/carriers', { params: { organization_id: orgId() } });
+    const response = await api.get<Carrier[]>('/api/v1/transportation/carriers');
     const items = response.data;
     return {
       items,
@@ -481,7 +479,7 @@ export const transportationApi = {
         hasMore: false,
       };
     }
-    const response = await api.get<Driver[]>('/api/v1/transportation/drivers', { params: { carrier_id: carrierId, organization_id: orgId() } });
+    const response = await api.get<Driver[]>('/api/v1/transportation/drivers', { params: { carrier_id: carrierId } });
     const items = response.data;
     return {
       items,
@@ -579,7 +577,7 @@ export const transportationApi = {
     const response = await api.get<{
       items: Shipment[];
       meta: { total: number; skip: number; limit: number; has_more?: boolean; hasMore?: boolean };
-    }>('/api/v1/transportation/shipments', { params: { ...(filters ?? {}), organization_id: orgId() } });
+    }>('/api/v1/transportation/shipments', { params: { ...(filters ?? {}) } });
     const { items, meta } = response.data;
     return {
       items,
@@ -873,7 +871,7 @@ export const geoTabApi = {
         fuelConsumedToday: 375,
       };
     }
-    const response = await api.get('/api/v1/geotab/fleet/summary', { params: { organization_id: orgId() } });
+    const response = await api.get('/api/v1/geotab/fleet/summary');
     return response.data;
   },
 };
