@@ -32,7 +32,7 @@ to the frontend/backend seam.
 | A test double that reimplements what it stands in for | every `get_tenant_db` override | **4 copies, hiding an RLS bug** | `test_tenant_guc_survives_commit_realdb.py` |
 | Frontend calling endpoints the backend does not serve | all 183 real-mode API calls | **4, one wired to a live button** | `test_frontend_calls_real_endpoints.py` |
 | Query parameters the endpoint does not declare | 37 param-sending calls | **2, plus 4 IDOR-shaped endpoints** | `test_frontend_query_params_are_declared.py` |
-| An org-scoped table with neither a filter nor RLS | `get_db` handlers on org tables | **1 live leak; ~23 more of the shape** | `test_vehicle_tenant_isolation_realdb.py` |
+| An org-scoped table with neither a filter nor RLS | `get_db` handlers on org tables | **24 handlers, 2 live leaks + an IDOR** | `test_fleet_logistics_tenant_isolation_realdb.py` |
 
 ---
 
@@ -492,12 +492,27 @@ client payload**.
 `get_drivers` take `organization_id` as a client-supplied query parameter, and
 `get_carrier` fetches by id with no org check at all.
 
-**Not fixed in the same pass, deliberately.** 23 handlers with mixed read and write paths,
-where the write paths also need their org moved to the token, is not a change to make
-quickly at the end of a sweep — and RLS on those four tables (the structural fix) needs
-its own migration and a check of every writer. The `get_db` debt list in
-`test_tenant_session_guard.py` now records what each remaining file actually is, so the
-next pass starts from evidence rather than a count.
+**`fleet_logistics.py` is now fixed too**, in a following pass rather than bolted onto
+the sweep. Its 23 handlers were confirmed leaking in two distinct shapes before being
+touched: the zone list returned every tenant's zones, and **fetch-by-id returned another
+tenant's zone outright** — the list filter and the by-id lookup are separate code paths,
+and a guard covering one says nothing about the other.
+
+Every handler moved to `get_tenant_db`, and every query on the four unprotected tables
+is wrapped in a `_scope(...)` helper. Both halves are needed: the tenant session sets a
+GUC that no policy on these tables reads, so the session alone protects nothing here.
+
+The four create paths took `organization_id` **from the request payload**, letting a
+caller file a record under any organization they named — with no RLS to question it.
+They now take it from the token.
+
+**The same move fixed the opposite failure in the same file.** Endpoints reading
+`Shipment`/`Carrier`/`Driver` — tables that DO have RLS — were on `get_db`, which sets no
+GUC, so they were returning **zero** rows. One dependency, two failure modes, depending
+only on whether the table happened to have a policy.
+
+RLS on the four unprotected tables remains the structural fix and is still outstanding;
+it needs its own migration and a check of every writer.
 
 ---
 

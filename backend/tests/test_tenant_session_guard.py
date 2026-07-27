@@ -60,7 +60,14 @@ KNOWN_GET_DB_ON_RLS: dict[str, int] = {
     "audit.py": 5,
     "commands.py": 1,
     "erp_webhooks.py": 1,
-    "fleet_logistics.py": 23,
+    # fleet_logistics.py is GONE from this list. All 23 handlers moved to
+    # get_tenant_db, and the four tables that have no RLS to fall back on
+    # (geofence_zones, geofence_alerts, maintenance_schedules, repair_orders) are
+    # now filtered explicitly via `_scope`. It was not merely on the wrong
+    # dependency: the zone list returned every tenant's zones, and fetch-by-id was
+    # a full IDOR — both confirmed against a real database. Its four create paths
+    # also took organization_id from the client payload and now take it from the
+    # token. Pinned by tests/test_fleet_logistics_tenant_isolation_realdb.py.
     "gdpr.py": 9,
     "kanban.py": 10,
     "logistics_correlation.py": 12,

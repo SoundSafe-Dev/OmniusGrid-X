@@ -435,9 +435,13 @@ normally catch this were absent, so every authenticated user listed every tenant
 Confirmed against a real database before fixing (org A's client saw org B's vehicle), and
 pinned by a mutation-tested guard. The existing auth-walk test could not see it — the
 route does require authentication; scoping was the problem — and the RLS isolation tests
-exercise policies this table does not have. **`fleet_logistics.py` has 23 handlers of the
-same shape**, recorded rather than rushed, since their write paths also take the org from
-the client.
+exercise policies this table does not have. **`fleet_logistics.py` had 23 handlers of the same shape and is now
+fixed too** — its zone list leaked across tenants and fetch-by-id was a full IDOR (separate
+code paths, so a guard on one proves nothing about the other), and its four create paths
+took `organization_id` from the request payload. The same change fixed the *opposite*
+failure in the same file: endpoints reading RLS-protected tables on `get_db` were
+returning zero rows. One wrong dependency, two failure modes, depending only on whether
+the table had a policy.
 
 **The frontend was the same problem at a larger scale.** `src/test/setup.ts` forces
 `VITE_USE_MOCK='true'` before any module evaluates, so every unit test takes the mock
@@ -451,7 +455,7 @@ the UI were all already there, only the write was missing — and the component 
 failures. The other three were uncalled and were removed. Notably a hand fix of this exact
 class had already run (FS-15, "routes that never existed") and left these behind.
 
-**Both suites are green: backend 1651 passed, frontend 142 passed, 0 failed** — across
+**Both suites are green: backend 1671 passed, frontend 142 passed, 0 failed** — across
 156 backend and 38 frontend test files. Every guard listed above is mutation-tested:
 reintroduce the defect and the test must fail, checked individually, because a guard that
 cannot fail is indistinguishable from one that passes.
