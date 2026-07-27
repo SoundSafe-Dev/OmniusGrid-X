@@ -262,6 +262,19 @@ Defects found, all mutation-verified — reverting the fix fails the test:
 **Absent rather than broken, and left alone:** ERP has no export definition, no
 WebSocket event and no Kafka producer. Nothing claims otherwise.
 
+**Swept platform-wide afterwards, and found clean.** The response-model defect above was
+the obvious candidate to exist elsewhere, so it was checked across all 61 API modules —
+11 response/ORM pairs, 124 fields, **zero offenders**. Worth recording as a result: those
+routers are now proven correct rather than merely untested, and
+`test_api_response_schema_matches_columns.py` fails the moment that changes.
+
+The first version of that scan reported 8 defects. Testing one against real Postgres
+returned HTTP 200 instead of the predicted 500 — the detector checked
+`typing.get_origin(a) is typing.Union`, but PEP 604 `str | None` produces
+`types.UnionType`, so every field in modern syntax was misread as required. The same flaw
+was in the ERP guard, where it would have failed a *correct* model. Both fixed, and both
+now test the detector before anything that depends on it.
+
 **Tenant isolation held everywhere it was pushed on** — entities, sync status,
 integration list/get, events, correlations, and the provider feeding AI analysis
 sessions. The ERP client secret is never echoed, even to its owner.
