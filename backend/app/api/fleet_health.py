@@ -16,14 +16,15 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_active_user
+from app.middleware.rbac import require_operator_or_admin
 from app.middleware.tenant_isolation import get_tenant_org_id, get_tenant_db
-from app.db.models import GeoTabDiagnostic, GeoTabException, GeoTabTrip, Driver, Shipment
+from app.db.models import GeoTabDiagnostic, GeoTabException, GeoTabTrip, Driver, Shipment, User
 from app.db.logistics_models import GeofenceZone
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
@@ -264,6 +265,57 @@ async def security_events(
     if severity:
         out = [e for e in out if e["severity"] == severity]
     return out
+
+
+class SecurityEventAcknowledge(BaseModel):
+    acknowledged: bool = True
+
+
+@router.patch("/security/events/{event_id}", dependencies=[Depends(require_operator_or_admin)])
+async def acknowledge_security_event(
+    event_id: UUID,
+    payload: SecurityEventAcknowledge,
+    org_id: UUID = Depends(get_tenant_org_id),
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_tenant_db),
+):
+    """Acknowledge (or un-acknowledge) a fleet security event.
+
+    THE UI HAS ALWAYS CALLED THIS; the backend has never served it.
+    `HealthSecurityPanel` awaits `fleetHealthApi.acknowledgeSecurityEvent` with no
+    `catch`, so the 404 rejected the promise, the optimistic state update never ran,
+    and an operator clicking "acknowledge" saw nothing happen and no error.
+
+    Everything else was already in place — `geotab_exceptions` carries `acknowledged`,
+    `acknowledged_by` and `acknowledged_at`, and `GET /security/events` already returns
+    and filters on the flag. Only the write was missing.
+
+    `acknowledged_by` comes from the token rather than the body, matching
+    `alarms.acknowledge_alarm`: attribution a caller can set is not attribution.
+    """
+    event = (
+        await db.execute(
+            select(GeoTabException).where(
+                GeoTabException.id == event_id,
+                GeoTabException.organization_id == org_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if event is None:
+        # 404 rather than 403 for another tenant's event: telling a caller that an id
+        # exists but is not theirs is itself a disclosure.
+        raise HTTPException(status_code=404, detail="Security event not found")
+
+    event.acknowledged = payload.acknowledged
+    if payload.acknowledged:
+        event.acknowledged_by = current_user.id
+        event.acknowledged_at = datetime.now(timezone.utc)
+    else:
+        event.acknowledged_by = None
+        event.acknowledged_at = None
+
+    await db.commit()
+    return _security_out(event)
 
 
 @router.get("/vehicles/{vehicle_id}/security")

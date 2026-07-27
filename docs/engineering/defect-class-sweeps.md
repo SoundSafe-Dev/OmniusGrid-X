@@ -14,10 +14,12 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The seven classes
+## The eight classes
 
-The first five were all originally found in ERP. The sixth came out of the fifth,
-and the seventh out of two failing tests that turned out to share a cause.
+The first five were all originally found in ERP. The sixth came out of the fifth, the
+seventh out of two failing tests that turned out to share a cause, and the eighth out of
+the seventh — the same "we are testing a double, not the thing that ships" shape, moved
+to the frontend/backend seam.
 
 | Class | Swept | Found elsewhere | Guard |
 |---|---|---|---|
@@ -28,6 +30,7 @@ and the seventh out of two failing tests that turned out to share a cause.
 | A name that claims a side effect | all of `app/` | **1, in the control path** | `test_helper_names_match_behaviour.py` |
 | Data reported as kept, but discarded | quarantine/DLQ paths | **1, live, on ingestion** | `test_edge_ingest_quarantine_retention.py` |
 | A test double that reimplements what it stands in for | every `get_tenant_db` override | **4 copies, hiding an RLS bug** | `test_tenant_guc_survives_commit_realdb.py` |
+| Frontend calling endpoints the backend does not serve | all 183 real-mode API calls | **4, one wired to a live button** | `test_frontend_calls_real_endpoints.py` |
 
 ---
 
@@ -309,6 +312,61 @@ prints when it binds **inside the container**; the host's published port can tak
 meaningfully longer to forward, and that gap widens with the number of running
 containers. It now waits for a connection to actually succeed. Wait for the thing you
 need, not for a log line that correlates with it.
+
+## 8. Frontend calling endpoints the backend does not serve — **4, one live**
+
+`src/test/setup.ts` forces `VITE_USE_MOCK='true'` before any module evaluates, and
+`src/api/mockMode.ts` reads it into a module-level `const USE_MOCK`. So every frontend
+unit test has always taken the mock branch of the **213 `if (USE_MOCK)` forks across 33
+files**. The real branch — the code that actually ships — is executed by no test at all.
+
+Same shape as class 7 at a much larger scale: the suite exercises a double instead of the
+thing that runs. And the same shape as class 3, "invented endpoints", moved from vendor
+APIs to our own seam.
+
+**Swept:** every `api.get/post/put/patch/delete` call in `src/api/` — **183 calls across
+22 modules** — against the backend's live route table.
+
+**Found four the backend does not serve**, each confirmed by issuing the request
+in-process rather than trusting the diff:
+
+| Call | Result | |
+|---|---|---|
+| `PATCH /api/v1/fleet/security/events/{id}` | **404** | **live — wired to a UI button** |
+| `PATCH /api/v1/fleet/dtcs/{code}` | 404 | uncalled |
+| `GET /api/v1/transportation/vehicles/{id}` | 404 | uncalled |
+| `GET /api/v1/yard/moves` | 405 | uncalled (POST-only path) |
+
+**The live one had a second failure stacked on it.** `HealthSecurityPanel` awaited the
+call with no `catch`, so the 404 rejected the promise, the optimistic state update never
+ran, and the rejection went unhandled — an operator clicked "acknowledge" on a fleet
+security event and saw nothing happen, with nothing on screen saying why. The endpoint now
+exists (everything else was already there: `geotab_exceptions` carries `acknowledged`,
+`acknowledged_by`, `acknowledged_at`, and the GET already filtered on the flag — only the
+write was missing), and the component reports failures instead of swallowing them.
+`acknowledged_by` comes from the token, not the body, matching `alarms.acknowledge_alarm`.
+
+The other three were **uncalled**, and their only working branch returned fabricated mock
+data. Implementing three endpoints nobody calls would be speculative; the client functions
+were removed instead, so the next person to want the feature writes both halves together.
+
+**A previous fix of this exact class had already run, and missed these.** This router's
+docstring says it was created (FS-15) to serve "/api/v1/fleet/* routes that never existed
+(dead real branch)" — and it left both PATCH routes behind. That is the argument for
+sweeping rather than fixing by hand.
+
+**The guard checks route existence, deliberately and only.** Request bodies and response
+shapes need real-mode tests per module (`src/test/realMode.ts`, which today has exactly
+one adopter of 34 API modules); this is the cheap total-coverage check for the failure mode
+that actually occurred.
+
+**Its first run reported 185 failures against a backend that serves all of them.** The
+route table was read from `app.routes`, but this app includes routers lazily behind an
+`_IncludedRouter` wrapper, so at import time that list holds 74 entries covering none of
+the API. `app.openapi()` resolves the wrappers (373 paths). The extractor was wrong twice
+over: it had also read `` `/x/entities${q}` `` — a query string glued to a path — as a
+path segment, inventing a fifth missing endpoint. A path parameter is always preceded by a
+slash; the glued form is a suffix. `TestTheExtractor` runs first for exactly this reason.
 
 ---
 

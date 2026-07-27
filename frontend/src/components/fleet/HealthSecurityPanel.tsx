@@ -77,8 +77,19 @@ export const HealthSecurityPanel: FC = () => {
   };
 
   const handleAcknowledgeSecurity = async (eventId: string) => {
-    await fleetHealthApi.acknowledgeSecurityEvent(eventId);
-    setSecurityEvents(prev => prev.map(e => e.id === eventId ? { ...e, acknowledged: true } : e));
+    // The state update runs only AFTER the call resolves, and a failure is now
+    // reported. This used to be an unguarded `await` on an endpoint the backend did
+    // not serve: the 404 rejected the promise, the update below never ran, and the
+    // rejection went unhandled — so the operator clicked "acknowledge" and saw
+    // nothing happen, with nothing on screen saying why. The endpoint exists now;
+    // the missing catch would have hidden the next failure just as well.
+    try {
+      await fleetHealthApi.acknowledgeSecurityEvent(eventId);
+      setSecurityEvents(prev => prev.map(e => e.id === eventId ? { ...e, acknowledged: true } : e));
+    } catch (err) {
+      console.error('Failed to acknowledge security event:', err);
+      setError('Could not acknowledge that security event. Please try again.');
+    }
   };
 
   const unacknowledgedSecurity = securityEvents.filter(e => !e.acknowledged);

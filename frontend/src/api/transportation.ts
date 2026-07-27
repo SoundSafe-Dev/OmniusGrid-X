@@ -556,16 +556,6 @@ export const transportationApi = {
     };
   },
 
-  getVehicle: async (id: string): Promise<Vehicle> => {
-    if (USE_MOCK) {
-      await delay(MOCK_DELAY);
-      const vehicle = mockVehicles.find(v => v.id === id);
-      if (!vehicle) throw new Error('Vehicle not found');
-      return vehicle;
-    }
-    const response = await api.get<Vehicle>(`/api/v1/transportation/vehicles/${id}`);
-    return response.data;
-  },
 
   // Shipments
   getShipments: async (filters?: ShipmentFilters): Promise<PaginatedResponse<Shipment>> => {

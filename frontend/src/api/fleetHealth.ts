@@ -60,13 +60,6 @@ export const fleetHealthApi = {
     return response.data;
   },
 
-  clearDTC: async (dtcCode: string, vehicleId: string): Promise<void> => {
-    if (USE_MOCK) {
-      await delay(MOCK_DELAY);
-      return;
-    }
-    await api.patch(`/api/v1/fleet/dtcs/${dtcCode}`, { vehicleId, cleared: true });
-  },
 
   getSecurityEvents: async (): Promise<SecurityEvent[]> => {
     if (USE_MOCK) {

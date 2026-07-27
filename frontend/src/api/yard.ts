@@ -407,18 +407,6 @@ export const yardApi = {
     return response.data;
   },
 
-  // Yard Moves
-  getYardMoves: async (trailerId?: string): Promise<YardMove[]> => {
-    if (USE_MOCK) {
-      await delay(MOCK_DELAY);
-      if (trailerId) {
-        return mockYardMoves.filter(m => m.trailerId === trailerId);
-      }
-      return mockYardMoves;
-    }
-    const response = await api.get<YardMove[]>('/api/v1/yard/moves', { params: { trailer_id: trailerId } });
-    return response.data;
-  },
 
   recordMove: async (data: Partial<YardMove>): Promise<YardMove> => {
     if (USE_MOCK) {

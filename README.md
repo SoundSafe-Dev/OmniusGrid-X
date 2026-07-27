@@ -277,9 +277,9 @@ operator sees "showing the most recent 10 of more than 10" instead of a confiden
 answer. Verified end to end: 149 rows synced from live Dataverse, `?limit=10` returns 10
 with `X-Result-Truncated: true`.
 
-**Seven defect classes have now been swept platform-wide** — recorded in
+**Eight defect classes have now been swept platform-wide** — recorded in
 [`docs/engineering/defect-class-sweeps.md`](docs/engineering/defect-class-sweeps.md) with
-what each found and which guard keeps it closed. Four started in ERP; the last three came
+what each found and which guard keeps it closed. Four started in ERP; the last four came
 out of the ones before them. Two came back clean, which is worth writing down: "proven
 clean" and "never checked" look identical afterwards, and only one justifies not looking
 again.
@@ -361,7 +361,21 @@ reimplements the thing it stands in for can only prove the double works.
 That guard needed a second pass too: written the obvious way it *passed* against the
 reintroduced bug, because with a normal pool `commit()` hands the same connection straight
 back. It now uses `NullPool`, so every checkout is a fresh connection — the worst case a
-loaded server produces routinely. **The backend suite is green: 1387 passed, 0 failed.**
+loaded server produces routinely.
+
+**The frontend was the same problem at a larger scale.** `src/test/setup.ts` forces
+`VITE_USE_MOCK='true'` before any module evaluates, so every unit test takes the mock
+branch of the 213 `if (USE_MOCK)` forks across 33 files — the real branch, the code that
+ships, is executed by no test. Sweeping all 183 real-mode API calls against the backend's
+live route table found four endpoints the backend does not serve. One was live and wired
+to a UI button: `PATCH /api/v1/fleet/security/events/{id}` 404'd, and `HealthSecurityPanel`
+awaited it with no `catch`, so an operator clicking "acknowledge" on a fleet security event
+saw nothing happen and no error. The endpoint now exists — the columns, the read path and
+the UI were all already there, only the write was missing — and the component reports
+failures. The other three were uncalled and were removed. Notably a hand fix of this exact
+class had already run (FS-15, "routes that never existed") and left these behind.
+
+**Both suites are green: backend 1585 passed, frontend 142 passed, 0 failed.**
 
 **Tenant isolation held everywhere it was pushed on** — entities, sync status,
 integration list/get, events, correlations, and the provider feeding AI analysis
