@@ -219,6 +219,53 @@ real-mode audit + loading states (FS-128/129), seeder profiles + continuous
 aggregates + offline export (FS-133/134/136), and the signed-URL/geotab/ERP
 security passes (FS-138/139/140). The 3 intake-lane test failures remain Harsh's.
 
+### Delivered since — the ERP slice (eight real vendors, and the layer above them)
+
+On `hamad/converged-pre-main`. Start at **[`docs/erp/README.md`](docs/erp/README.md)**.
+
+The theme: a subsystem that *looked* wired end to end and had never been asked a
+question by a real vendor. Eight connectors now have five validation tiers, three of
+them running against **live systems** — and every tier stood up found a defect on its
+first run.
+
+**Eighth connector: Intuit QuickBooks.** Its contract came from Intuit's own OIDC
+discovery document rather than prose, and one line shaped the design:
+`response_types_supported: ["code"]`. QuickBooks offers **no client-credentials grant**,
+so it cannot be provisioned from an id and secret — it needs one-time consent and then
+lives on a refresh token Intuit **rotates on every use**. Drop the new value and the
+integration works exactly once, then dies with `invalid_grant`, which reads as a revoked
+authorization rather than a race.
+
+**Real systems now get a vote.** SAP's public sandbox (`$batch` parsing validated
+against genuine SAP bytes), a Dockerised Odoo 17, a free Dataverse environment, and the
+first end-to-end test that proves the *whole* path: live vendor → the real sync →
+RLS-protected rows, read back as a second tenant.
+
+Defects found, all mutation-verified — reverting the fix fails the test:
+
+| Found | Was |
+|---|---|
+| `subscribe_to_events` returned `True` for a subscription never created | 7 copies of the same invented `/webhooks` endpoint. Odoo answers **HTTP 200 with a fault in the body**, and only the status was checked. 379 lines removed |
+| Inbound webhooks could not authenticate **any** vendor | HMAC over re-serialised JSON, and a header we invented. Now raw-body HMAC, vendor-aware |
+| Webhook tenant chosen by **database order** | `.first()` across all organisations, so only one tenant's SAP webhooks could ever work |
+| Two tenants could share a webhook secret | Attribution became whichever was tried first. Now a unique index (049) — enforced in the DB *because* RLS hides the rows an app check would need |
+| Every `PUT` silently discarded configuration | A JSON column mutated in place, so SQLAlchemy emitted no UPDATE. Secret rotation was impossible via the API |
+| Four endpoints 500'd on a valid row | Response models declared required fields over nullable columns. The guard for it found the same bug in a second model on its first run |
+| Dataverse paging stopped at 5000 rows | `@odata.nextLink` never followed — silent truncation, the most repeated defect here |
+| An unreachable system reported `degraded`, not `unhealthy` | Only visible on the first connector whose **auth host differs from its data host** |
+| 20 concurrent callers → 20 token round trips | No lock. Confirmed 15-for-15 against live Entra ID *and* real Odoo; destructive for Intuit, where each refresh rotates the token |
+| Rate limiter **10× permissive** under concurrency | Waiters all slept on the same deadline then stampeded. 100 ops against a 10/min limit finished in 60s |
+| The background sync wrote nothing on a non-owner role | No tenant GUC. Reported `{"error": "integration not found"}` for an integration plainly in the UI |
+| Polled syncs produced no correlations | Only the SAP *webhook* path did, so the AI tab read a table nothing wrote |
+| A heuristic was presented as a model inference | `_simulate_analysis` reported the real path's confidence and a model-shaped version string, by default. Now self-labelling *(cross-lane: minimal, and the UI still does not show it)* |
+
+**Absent rather than broken, and left alone:** ERP has no export definition, no
+WebSocket event and no Kafka producer. Nothing claims otherwise.
+
+**Tenant isolation held everywhere it was pushed on** — entities, sync status,
+integration list/get, events, correlations, and the provider feeding AI analysis
+sessions. The ERP client secret is never echoed, even to its owner.
+
 ### Delivered since — FS-141+ (release path, backups, and the guards that weren't guarding)
 
 On `hamad/converged-pre-main`, ahead of `main`. The theme is the previous

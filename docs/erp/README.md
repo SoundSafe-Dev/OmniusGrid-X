@@ -178,9 +178,26 @@ fails the test.
 | `test_erp_no_invented_endpoints.py` | claiming success for work not done; inventing vendor endpoints; a `health_check` that skips the three-state probe |
 | `test_erp_retry_classification.py` | retrying a permanently-dead credential |
 | `test_erp_base_url_normalization.py` | a trailing slash on `base_url` silently breaking every request |
+| `test_erp_shared_machinery.py` | token stampedes; a rate limiter that only works for sequential callers |
+| `test_erp_response_schema.py` | a response model stricter than its columns, which 500s on a valid row |
+| `test_erp_sync_correlation.py` | routing one vendor's records through another vendor's field mapping |
+| `test_erp_webhook_auth.py` | a webhook scheme no vendor can satisfy; failing open on a missing secret |
 | `test_reporting_honesty.py` | logging `..._persisted` from a function that writes nothing |
+| `test_correlation_reporting_honesty.py` | a heuristic presented as a model inference |
 
-### Two rules that come from real incidents
+Real-system suites (skipped without credentials):
+
+| Suite | Proves |
+|---|---|
+| `test_erp_odoo_integration.py` | the shared machinery against a real Odoo 17 |
+| `test_erp_sap_sandbox.py` | `$batch` parsing against genuine SAP bytes |
+| `test_erp_dynamics_sandbox.py` | `@odata.nextLink` paging and three-state health against live Dataverse |
+| `test_erp_intuit_sandbox.py` | refresh-token rotation — only Intuit decides when |
+| `test_erp_sync_e2e_realdb.py` | live vendor → real sync → RLS-protected rows, read back as a second tenant |
+| `test_erp_platform_integration_realdb.py` | the operator-facing HTTP surface, both tenants |
+| `test_erp_webhook_secret_uniqueness_realdb.py` | two tenants cannot share a webhook secret |
+
+### Three rules that come from real incidents
 
 **Never invent an endpoint.** All seven original connectors POSTed to a
 `/webhooks`-shaped URL with byte-identical payloads across seven unrelated vendors.
@@ -191,7 +208,14 @@ If you cannot verify a vendor's mechanism, declare it in
 
 **Never report zero rows for a response you did not understand.** A missing envelope
 must raise, not return `[]`. An empty result and a misunderstood response look
-identical to a caller, and one of them is a silent data-loss bug.
+identical to a caller, and one of them is a silent data-loss bug. Related: **follow
+pagination to completion** — every connector that skipped this truncated silently, and
+it is the most repeated defect in the subsystem.
+
+**A response model must never be stricter than its columns.** A required field over a
+nullable column means a valid row cannot be serialised, and the 500 names a validation
+error in our schema rather than the data — so nobody looks at the row. It cost four
+endpoints at once, because create, list, get and update all built the same model.
 
 ---
 

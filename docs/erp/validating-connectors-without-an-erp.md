@@ -360,6 +360,109 @@ reverting the fix makes real vendors receive 15 token requests instead of 1.
 
 ---
 
+## Beyond the connector — what the rest of the platform did with ERP data
+
+The tiers above validate a *connector*. They say nothing about what happens to the
+data afterwards, and that is where the most user-visible defects were. Driving the real
+HTTP surface with **two seeded tenants over live Dataverse data** found six.
+
+### The API could not serialise its own rows
+
+`ERPIntegrationResponse` declared `sync_schedule`, `erp_type` and
+`sync_frequency_minutes` as required while all three are nullable. A row holding NULL
+in any of them could not be serialised at all — pydantic raised inside the handler and
+FastAPI returned 500. Not for one endpoint: **create, list, get and update all build
+that model**, so a single NULL made an integration simultaneously unreadable and
+uneditable, behind an error naming a validation failure in our schema rather than the
+data.
+
+Such rows are easy to produce — the demo seeder, a migration backfill, a fixture, any
+insert that is not the create endpoint (whose *request* model happens to default
+`sync_schedule`, the only reason this was not hit sooner).
+
+`tests/test_erp_response_schema.py` now asserts no response field is required where its
+column is nullable. **On its first run it found the same bug in `SyncStatusResponse`.**
+
+### Every configuration update was silently discarded
+
+```python
+config = integration.configuration      # the SAME dict object
+config["webhook_secret"] = ...          # mutated IN PLACE
+integration.configuration = config      # re-assigning the identical object
+```
+
+SQLAlchemy detects JSON-column changes by identity, so the attribute stayed clean and
+**no UPDATE was emitted for that column**. Every `PUT` dropped `auth_config`,
+`rate_limit`, `timeout`, `webhook_secret` and `ip_whitelist`, returned 200, and logged
+`erp_integration_updated`. An operator rotating a secret or correcting credentials saw
+success and got nothing.
+
+Found incidentally: a test expected 409 on a colliding secret and got 200 because the
+write never happened.
+
+### Inbound webhooks could not authenticate any vendor
+
+Two separate reasons, either sufficient on its own.
+
+**The wrong bytes were hashed.** `json.dumps(event_data, sort_keys=True)` — the parsed
+payload, re-serialised with sorted keys. Every vendor signs the exact bytes it
+transmits. The tests passed because they generated the signature the same wrong way,
+and one asserted the property that made it broken (`test_signature_order_independent`).
+
+**The wrong header was read.** Only `X-Webhook-Signature`, which *we* invented. Intuit
+sends base64 in `intuit-signature`; Dataverse sends a static header and has no HMAC
+option at all. Header and scheme are now per-integration configuration with per-vendor
+defaults — see [webhooks-vendor-setup.md](webhooks-vendor-setup.md).
+
+### The webhook tenant was chosen by database order
+
+The path carries only `erp_type`. The route took `.first()` of the active integrations
+**across all organisations** and verified against that one's secret, so with two tenants
+running SAP only whichever row sorted first could ever authenticate — every other
+tenant's genuine events were rejected as forged.
+
+The tenant is now whoever holds the secret that verifies those exact bytes, which
+requires secrets to be **unique**. Enforced by a unique index (migration 049) rather
+than application logic, because `integration_configurations` is RLS-protected: a create
+request cannot see another tenant's rows to compare against. A unique index is enforced
+at the storage layer regardless of RLS, so it constrains rows the inserting session may
+not read.
+
+### Polled syncs produced no correlations
+
+Correlations came only from the SAP *webhook* path, so `/erp/correlations/recent` read a
+table nothing in the sync path wrote. Now wired — keyed on `(erp_type, entity_type)`,
+because `transform_purchase_order` reads **SAP** field names despite its generic name.
+Routing on entity type alone would hand Dataverse records to an SAP mapping and report
+"analyzed 500 records, 0 correlations": confident, plausible, wrong.
+
+### A heuristic was presented as a model inference
+
+`analyze_scenario` falls back to `_simulate_analysis` when inference fails **or when
+`CORRELATION_MODEL_ENABLED` is false — the default**. The fallback reported
+`confidence: 0.85`, the same value the real path uses, a `model_version` of
+`gemma-4-placeholder`, and the caller logged `correlation_analysis_complete` with a risk
+score. Every correlation the product displayed was a heuristic labelled as an AI result,
+unfalsifiable from the payload, the UI or the logs.
+
+Both fallbacks now carry `simulated: True` and a reason; the real path carries
+`simulated: False` so consumers can rely on the key. **The UI does not yet show it** —
+that half belongs to whoever owns the correlation surface.
+
+### What held up
+
+Tenant isolation, everywhere it was pushed on: entities, sync status, integration
+list/get, events, correlations, and the platform-correlation provider that feeds AI
+analysis sessions. The ERP client secret is never echoed, even to the owning tenant.
+
+### What is absent rather than broken
+
+ERP has **no export definition, no WebSocket event and no Kafka producer**. Nothing
+claims otherwise, so these are gaps, not defects, and were left alone rather than
+invented.
+
+---
+
 ## Tier 5 — Record and replay (the moment any tenant exists)
 
 When access to any real system appears — even once, even briefly — record the
