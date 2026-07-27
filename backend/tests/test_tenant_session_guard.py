@@ -57,7 +57,15 @@ KNOWN_GET_DB_ON_RLS: dict[str, int] = {
     # Splitting the two is a change to the probe contract, so it is left for a
     # dedicated pass rather than bundled here.
     "health.py": 5,
-    "audit.py": 5,
+    # audit.py and gdpr.py are GONE from this list. Both were the empty-page failure:
+    # audit_logs and data_processing_records have had tenant policies since migration
+    # 011, and every handler ran on get_db, so the policy matched nothing and the
+    # endpoints returned ZERO rows — including for the caller's own organization. The
+    # audit trail was silently blank, which is the one thing an audit trail must not be.
+    #
+    # gdpr.py is the sharper case: its handlers filtered on current_user.organization_id
+    # CORRECTLY and it made no difference, because RLS had already removed the row.
+    # Pinned by tests/test_audit_and_gdpr_tenant_scoping_realdb.py.
     "commands.py": 1,
     "erp_webhooks.py": 1,
     # fleet_logistics.py is GONE from this list. All 23 handlers moved to
@@ -68,7 +76,6 @@ KNOWN_GET_DB_ON_RLS: dict[str, int] = {
     # a full IDOR — both confirmed against a real database. Its four create paths
     # also took organization_id from the client payload and now take it from the
     # token. Pinned by tests/test_fleet_logistics_tenant_isolation_realdb.py.
-    "gdpr.py": 9,
     "kanban.py": 10,
     "logistics_correlation.py": 12,
     "nlp_correlation.py": 7,

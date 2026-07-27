@@ -10,7 +10,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.database import get_db
+from app.db.database import get_db  # noqa: F401
+from app.middleware.tenant_isolation import get_tenant_db
 from app.db.models import AuditLog, User
 from app.middleware.rbac import require_admin
 
@@ -28,14 +29,28 @@ async def list_audit_logs(
     end_time: Optional[datetime] = None,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """List audit logs with filtering"""
     query = select(AuditLog)
-    
-    # Non-admin users can only see their organization's logs
-    if current_user.role != "admin" and current_user.organization_id:
-        query = query.where(AuditLog.organization_id == current_user.organization_id)
+
+    # SCOPED BY RLS, via get_tenant_db. `audit_logs` has had a tenant policy since
+    # migration 011, and this handler ran on `get_db` — which sets no GUC — so the
+    # policy matched nothing and **every audit endpoint returned zero rows**, including
+    # for the caller's own organization. The compliance surface was silently blank,
+    # which is the failure this table's policy exists to make impossible.
+    #
+    # The branch that used to sit here read:
+    #
+    #     if current_user.role != "admin" and current_user.organization_id:
+    #         query = query.where(AuditLog.organization_id == current_user.organization_id)
+    #
+    # It was unreachable: the endpoint is gated on `require_admin`, so `role` is always
+    # "admin". It was written for a cross-organization admin view, and the safe reading
+    # of a multi-tenant product is that a tenant admin sees their own tenant — one
+    # tenant's admin reading another's audit trail is exactly what an audit trail is
+    # supposed to preclude. Cross-org access needs the super-admin role that does not
+    # exist yet (the same one `data_retention` is blocked on).
     
     # Apply filters
     if user_id:
@@ -87,7 +102,7 @@ async def list_audit_logs(
 async def get_audit_log(
     log_id: UUID,
     current_user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get a single audit log by ID"""
     result = await db.execute(
@@ -121,7 +136,7 @@ async def get_audit_log(
 @router.get("/verify", summary="Verify hash chain integrity", description="Verify the integrity of the audit log hash chain to detect tampering. Admin access required.")
 async def verify_hash_chain(
     current_user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Verify audit log hash chain integrity"""
     result = await db.execute(
@@ -182,7 +197,7 @@ async def verify_hash_chain(
 @router.get("/actions", summary="List available audit actions", description="Retrieve a list of all unique audit actions recorded in the system. Admin access required.")
 async def list_audit_actions(
     current_user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """List all unique audit actions"""
     result = await db.execute(
@@ -201,7 +216,7 @@ async def audit_log_summary(
     current_user: User = Depends(require_admin),
     start_time: Optional[datetime] = None,
     end_time: Optional[datetime] = None,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get audit log summary statistics"""
     query = select(AuditLog)

@@ -32,7 +32,7 @@ to the frontend/backend seam.
 | A test double that reimplements what it stands in for | every `get_tenant_db` override | **4 copies, hiding an RLS bug** | `test_tenant_guc_survives_commit_realdb.py` |
 | Frontend calling endpoints the backend does not serve | all 183 real-mode API calls | **4, one wired to a live button** | `test_frontend_calls_real_endpoints.py` |
 | Query parameters the endpoint does not declare | 37 param-sending calls | **2, plus 4 IDOR-shaped endpoints** | `test_frontend_query_params_are_declared.py` |
-| An org-scoped table with neither a filter nor RLS | `get_db` handlers on org tables | **24 handlers, 2 live leaks + an IDOR** | `test_fleet_logistics_tenant_isolation_realdb.py` |
+| An org-scoped table with neither a filter nor RLS | `get_db` handlers on org tables | **~60 handlers: 2 leaks, an IDOR, and whole surfaces returning nothing** | `test_tenant_session_guard.py` + 5 real-DB suites |
 
 ---
 
@@ -511,7 +511,24 @@ They now take it from the token.
 GUC, so they were returning **zero** rows. One dependency, two failure modes, depending
 only on whether the table happened to have a policy.
 
-**RLS on the four unprotected tables is now in place** — migration 051, ENABLE + FORCE
+****The audit trail and the GDPR records were blank for the same reason.** `audit_logs`
+and `data_processing_records` have carried tenant policies since migration 011, and every
+handler in `audit.py` and `gdpr.py` ran on `get_db` — so both surfaces returned **zero
+rows, including for the caller's own organization**. An audit trail reporting no activity
+is the one thing an audit trail must never do, and from outside it is indistinguishable
+from a quiet system: HTTP 200, empty list.
+
+`gdpr.py` is the sharper illustration of why the application layer alone cannot save you:
+its handlers filtered on `current_user.organization_id` **correctly**, and it made no
+difference, because RLS had already removed the row.
+
+Fixing `audit.py` also settled a design question rather than just a dependency. It carried
+an unreachable branch — `if current_user.role != "admin"` under a `require_admin` gate —
+written for a cross-organization admin view. One tenant's admin reading another's audit
+trail is precisely what an audit trail should preclude, so scoping is now the caller's own
+organization; genuine cross-org access needs the super-admin role that does not exist yet.
+
+RLS on the four unprotected tables is now in place** — migration 051, ENABLE + FORCE
 with a `tenant_isolation` policy each, so the application filter and the database policy
 finally line up with the two-layer model `app/core/tenant.py` describes. Two details
 mattered: the policy does **not** cast to `::uuid` (unlike 011/033) because
