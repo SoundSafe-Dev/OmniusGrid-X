@@ -400,3 +400,108 @@ class TestRegisteredAnalyzersTakeARecord:
             "analyze_churn_prediction now takes a dict; if that is deliberate it can be "
             "routed, and this test should be updated rather than deleted"
         )
+
+
+class TestEveryRegisteredTransformerActuallyRuns:
+    """Call each registered transformer once with a realistic vendor record.
+
+    THE BUG THIS WOULD HAVE CAUGHT. `transform_manufacturing_order` referenced `sap_po`
+    while its parameter is `sap_mo` — a NameError on every call, in a route that was
+    already registered. It would not have surfaced as a crash: the per-record `except`
+    in `correlate_synced_records` catches it and counts a failure, so an entire SAP
+    manufacturing sync would have reported `failed: N` and read as bad vendor data.
+
+    Nothing called these functions, so nothing exercised them. Registering a route is a
+    claim that the transformer works; this is the cheapest possible check of that claim.
+    """
+
+    SAMPLES = {
+        "transform_purchase_order": {"PurchaseOrder": "PO-1", "Supplier": "S1"},
+        "transform_manufacturing_order": {"ManufacturingOrder": "MO-1", "BaseUnit": "EA"},
+        "transform_invoice": {"InvoiceId": "INV-1", "SupplierId": "S1"},
+        "transform_shipment": {"ShipmentNumber": "SH-1"},
+        "transform_dynamics_invoice": {"invoicenumber": "INV-9", "_customerid_value": "acct-1"},
+        "transform_dynamics_product": {"productid": "p-1", "productnumber": "SKU-1"},
+    }
+
+    def test_each_one_returns_a_record_without_raising(self):
+        from app.services.erp_data_transformer import ERPDataTransformer
+
+        transformer = ERPDataTransformer("org-1", "int-1")
+        for (erp_type, entity), (name, _analyzer) in mod.CORRELATION_ROUTES.items():
+            sample = self.SAMPLES.get(name)
+            assert sample is not None, f"no sample record for {name}; add one"
+            result = getattr(transformer, name)(sample)
+            assert isinstance(result, dict) and result, f"{name} returned {result!r}"
+
+    def test_the_sap_manufacturing_order_maps_its_own_fields(self):
+        """Pinned specifically: the NameError read `BaseUnit` off the wrong variable."""
+        from app.services.erp_data_transformer import ERPDataTransformer
+
+        result = ERPDataTransformer("o", "i").transform_manufacturing_order(
+            {"ManufacturingOrder": "MO-1", "BaseUnit": "EA", "OrderStatus": "DLV"}
+        )
+        assert result["mo_number"] == "MO-1"
+        assert result["unit"] == "EA"
+
+    def test_sap_dlv_maps_to_delivered(self):
+        """"DLV" was listed twice in the status map, so the second entry silently won
+        and "delivered" was unreachable."""
+        from app.services.erp_data_transformer import ERPDataTransformer
+
+        result = ERPDataTransformer("o", "i").transform_manufacturing_order(
+            {"ManufacturingOrder": "MO-1", "OrderStatus": "DLV"}
+        )
+        assert result["status"] == "delivered"
+
+
+class TestDynamicsFieldNamesAreTheRealOnes:
+    """Verified against Microsoft's published table reference, not assumed.
+
+    Three names in `transform_dynamics_invoice` were wrong, and every one would have
+    failed silently — an unmapped field is None, the analyzer finds nothing, and the
+    sync reports a clean run over data it never read.
+    """
+
+    def _invoice(self, record):
+        from app.services.erp_data_transformer import ERPDataTransformer
+
+        return ERPDataTransformer("o", "i").transform_dynamics_invoice(record)
+
+    def test_the_invoice_number_is_the_number_not_the_guid(self):
+        """`invoiceid` is the GUID primary key; `invoicenumber` is what a human calls
+        the invoice."""
+        result = self._invoice({"invoicenumber": "INV-1042", "invoiceid": "8f1c-guid"})
+        assert result["invoice_number"] == "INV-1042"
+
+    def test_it_falls_back_to_the_guid_when_there_is_no_number(self):
+        """Better a GUID than None — the analyzer puts this in its message."""
+        assert self._invoice({"invoiceid": "8f1c-guid"})["invoice_number"] == "8f1c-guid"
+
+    def test_the_customer_lookup_is_read_from_the_web_api_shape(self):
+        """`customerid_account` is a ReferencingEntityNavigationPropertyName — an
+        $expand target, not a scalar. A Web API row carries `_customerid_value`, so the
+        old mapping produced None for every invoice and the customer-account correlation
+        never ran."""
+        assert self._invoice({"_customerid_value": "acct-77"})["customer_id"] == "acct-77"
+
+    def test_the_old_navigation_property_name_no_longer_satisfies_it(self):
+        """If someone restores the old name, this fails rather than silently
+        regressing."""
+        assert self._invoice({"customerid_account": "acct-77"})["customer_id"] is None
+
+    def test_it_does_not_read_a_column_that_does_not_exist(self):
+        """`invoicedate` is not a column on the invoice table. The date columns are
+        `duedate` and `datedelivered`."""
+        result = self._invoice({"datedelivered": "2026-07-27T00:00:00Z"})
+        assert result["invoice_date"] is not None
+
+    def test_the_analyzer_gets_every_field_it_reads(self):
+        """The whole point: analyze_invoice_correlation reads five fields, and a
+        realistic Dataverse row must populate all of them."""
+        result = self._invoice({
+            "invoicenumber": "INV-1", "duedate": "2026-01-01T00:00:00Z",
+            "_customerid_value": "acct-1", "totalamount": "150000", "statecode": 0,
+        })
+        for field in ("invoice_number", "due_date", "customer_id", "total_amount", "status"):
+            assert result[field] is not None, f"{field} is None for a fully-populated row"

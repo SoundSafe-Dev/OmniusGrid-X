@@ -147,23 +147,22 @@ So the remaining dead code is ~2,900 lines across five modules, and the ticket s
 *check each for finished-but-unwired work before deleting* rather than a straight delete —
 one in seven was worth wiring.
 
-**Dynamics was evaluated next and deliberately NOT registered.** Its transformers and
-analyzers exist and their field names line up, but two things stop it:
+**Dynamics was then registered too — after correcting three field names.**
+`transform_dynamics_product` was already correct (all eight columns verified against
+Microsoft's product table reference). `transform_dynamics_invoice` was not, and every
+error would have failed silently, because an unmapped field is `None`, the analyzer finds
+nothing, and the sync reports a clean run over data it never read:
 
-- Its dict-taking analyzers cover `invoice`, `product` and `project`, and **none of those
-  tables exists in a base Dataverse environment** — they need the Sales and Project
-  modules. So the vendor field names (`invoiceid`, `duedate`, `customerid_account`,
-  `quantityonhand`) cannot be verified against a real system, and one of them —
-  `customerid_account` — looks wrong under Web API conventions, where a polymorphic
-  lookup surfaces as `_customerid_value`. This is the Odoo `sale.order` lesson again.
-- Its other two analyzers, `analyze_sales_velocity` and `analyze_churn_prediction`, take
-  an **account id, not a record**, so they cannot be routed at all.
+| Was | Problem | Now |
+|---|---|---|
+| `invoiceid` → `invoice_number` | that is the GUID primary key | `invoicenumber`, falling back to the GUID |
+| `invoicedate` | **not a column on invoice** | `datedelivered`, falling back to `createdon` |
+| `customerid_account` → `customer_id` | a navigation property for `$expand`, not a scalar | `_customerid_value`, the Web API shape |
 
-`transform_dynamics_account` *was* verified against the live environment — all six field
-names (`accountid`, `name`, `accountnumber`, `industrycode`, `revenue`, `statecode`) are
-real — but its analyzer is one of the id-taking pair. Registering a vendor whose mapping
-cannot be checked is exactly the "confident report of zero anomalies" failure the routing
-exists to prevent, so it stays out until someone has a Dataverse with those modules.
+Invoices and products are routed. Two Dynamics entities are deliberately not:
+`project` is not a base Dataverse table (confirmed absent from a live environment;
+Project Operations exposes `msdyn_project`), and `account`'s analyzer takes an account ID
+rather than a record — its transformer *is* verified, all six columns real.
 
 **That evaluation exposed a hole in the registry itself.** Field alignment is necessary
 but not sufficient: the router calls `analyze(db, normalized_record)`, and an id-taking
@@ -172,3 +171,15 @@ it and counts a failure, so a whole sync would report `failed: 500` and look lik
 vendor data rather than a wrong registry entry. `test_erp_sync_correlation.py` now asserts
 every registered analyzer's second parameter is a dict, and proves that check can fail by
 naming a real id-taking analyzer that must never be registered.
+
+**And registering the routes found two bugs in code that had never run.** Nothing called
+these transformers, so nothing exercised them. `transform_manufacturing_order` referenced
+`sap_po` while its parameter is `sap_mo` — a `NameError` on every call, in a route that
+was **already registered**. It would not have surfaced as a crash: the per-record handler
+catches it and counts a failure, so an entire SAP manufacturing sync would have reported
+`failed: N` and read as bad vendor data. Its status map also listed `"DLV"` twice, so the
+second entry silently won and `"delivered"` was unreachable.
+
+Every registered transformer is now called once with a realistic vendor record, which is
+the cheapest possible check that a route's central claim — *this transformer works* — is
+true.

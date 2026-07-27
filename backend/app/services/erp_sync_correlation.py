@@ -43,6 +43,10 @@ PATTERN_CLASSES: Dict[str, Tuple[str, str]] = {
         "app.services.erp_connectors.oracle_correlation_patterns",
         "OracleCorrelationPatterns",
     ),
+    "dynamics": (
+        "app.services.erp_connectors.dynamics_correlation_patterns",
+        "DynamicsCorrelationPatterns",
+    ),
 }
 
 #: (erp_type, normalized entity type) -> (transformer method, analyzer method).
@@ -80,7 +84,31 @@ CORRELATION_ROUTES: Dict[Tuple[str, str], Tuple[str, str]] = {
     ("oracle", "invoices"): ("transform_invoice", "analyze_invoice_anomalies"),
     ("oracle", "shipment"): ("transform_shipment", "analyze_shipment_correlation"),
     ("oracle", "shipments"): ("transform_shipment", "analyze_shipment_correlation"),
+    # Dataverse entity SET names, which is what fetch_data is called with.
+    # Field names verified against Microsoft's table reference before registering --
+    # transform_dynamics_invoice needed three corrections first.
+    ("dynamics", "invoice"): ("transform_dynamics_invoice", "analyze_invoice_correlation"),
+    ("dynamics", "invoices"): ("transform_dynamics_invoice", "analyze_invoice_correlation"),
+    ("dynamics", "product"): (
+        "transform_dynamics_product",
+        "analyze_product_inventory_correlation",
+    ),
+    ("dynamics", "products"): (
+        "transform_dynamics_product",
+        "analyze_product_inventory_correlation",
+    ),
 }
+
+#: NOT registered, and why — so nobody re-derives it.
+#:
+#:   dynamics/project   `project` is not a base Dataverse table (confirmed absent from
+#:                      a live environment); Project Operations exposes `msdyn_project`
+#:                      with different columns, so the mapping is unverified.
+#:   dynamics/account   its analyzer, analyze_churn_prediction, takes an account ID
+#:                      rather than a record, so the router cannot call it. The
+#:                      transformer itself IS verified — all six columns are real.
+#:   *sales_velocity, *supply_chain_risk, *cash_flow_correlation
+#:                      same shape: they take an id or a period, not a record.
 
 #: Correlation analysis issues several DB queries PER RECORD (supplier averages, order
 #: counts, delay counts). A 5000-row Dataverse page would therefore mean tens of

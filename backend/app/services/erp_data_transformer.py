@@ -116,7 +116,12 @@ class ERPDataTransformer:
             "start_date": self._parse_date(sap_mo.get("BasicSchedStartDate")),
             "end_date": self._parse_date(sap_mo.get("BasicSchedFinishDate")),
             "quantity": self._parse_number(sap_mo.get("TotalQuantity")),
-            "unit": sap_po.get("BaseUnit"),
+            # `sap_po` here was a NameError on EVERY call -- this function's parameter
+            # is `sap_mo`. Nothing caught it because nothing called the function: the
+            # SAP manufacturing-order route would have raised on the first record, been
+            # caught by the per-record handler in correlate_synced_records, and counted
+            # as a failure -- reading as bad vendor data rather than a typo.
+            "unit": sap_mo.get("BaseUnit"),
             "status": self._map_mo_status(sap_mo.get("OrderStatus")),
             "created_at": datetime.now(timezone.utc).isoformat(),
             "source_system": "SAP"
@@ -468,8 +473,10 @@ class ERPDataTransformer:
             "REL": "released",
             "PCNF": "partially_confirmed",
             "CNF": "confirmed",
+            # "DLV" was listed twice, so the second silently won and "delivered" was
+            # unreachable. DLV is SAP's delivered status; TECO below is the
+            # technically-complete one, so "completed" was the duplicate to drop.
             "DLV": "delivered",
-            "DLV": "completed",
             "TECO": "technically_complete",
             "CLSD": "closed"
         }
@@ -606,13 +613,28 @@ class ERPDataTransformer:
         Returns:
             Normalized invoice data
         """
+        # FIELD NAMES VERIFIED against Microsoft's invoice table reference. Three were
+        # wrong, and each would have failed silently -- an unmapped field is None, the
+        # analyzer finds nothing, and the sync reports a clean run over data it never
+        # actually read:
+        #
+        #   invoiceid      is the GUID primary key, NOT the human invoice number.
+        #                  `invoicenumber` is the real column.
+        #   invoicedate    IS NOT A COLUMN on invoice. The date columns are `duedate`
+        #                  and `datedelivered`; `createdon` is the record timestamp.
+        #   customerid_account is a ReferencingEntityNavigationPropertyName -- an
+        #                  $expand target, not a scalar. A Web API row carries the
+        #                  lookup as `_customerid_value`.
         normalized = {
             "entity_type": "Invoice",
-            "invoice_number": dynamics_invoice.get("invoiceid"),
-            "invoice_date": self._parse_date(dynamics_invoice.get("invoicedate")),
+            "invoice_number": dynamics_invoice.get("invoicenumber") or dynamics_invoice.get("invoiceid"),
+            "invoice_date": self._parse_date(
+                dynamics_invoice.get("datedelivered") or dynamics_invoice.get("createdon")
+            ),
             "due_date": self._parse_date(dynamics_invoice.get("duedate")),
-            "customer_id": dynamics_invoice.get("customerid_account"),
-            "customer_name": dynamics_invoice.get("customerid_accountname"),
+            # `customerid` is accepted too, for a caller that passes an expanded row.
+            "customer_id": dynamics_invoice.get("_customerid_value") or dynamics_invoice.get("customerid"),
+            "customer_name": dynamics_invoice.get("customeridname"),
             "total_amount": self._parse_currency(dynamics_invoice.get("totalamount")),
             "currency": dynamics_invoice.get("transactioncurrencyid"),
             "status": self._map_dynamics_invoice_status(dynamics_invoice.get("statecode")),
