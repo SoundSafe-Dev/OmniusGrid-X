@@ -381,6 +381,11 @@ thing that still needs its model is the Correlation-AI **inference** (a ready
 | Edge platform, backend platform, frontend/UI, deploy/CI, schema, observability, docs | **Hamad** | `hamad/converged-pre-main` (integration → `main`). The convergence program + the FS fixed-sprints above. |
 | *(ramp-up)* — under Harsh's lane | **Alex** | New contributor (joining the correlation/MLOps area under Harsh); not yet assigned a branch or task. |
 
+> 📋 **Next week's work is pooled in
+> [`docs/planning/next-week-task-pool.md`](docs/planning/next-week-task-pool.md)** — 56
+> independently-assignable tickets with sizes and acceptance criteria, for **Harsh (Product
+> Manager)** to redistribute. Four of them are *decisions* that block engineering work.
+
 > ⚠️ The pre-convergence feature branches are all merged into
 > `hamad/converged-pre-main` and now into **`main`**. **Start new work from
 > `main`** (or from your own active branch after merging `origin/main` into it),
