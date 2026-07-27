@@ -593,6 +593,13 @@ a working one owns whatever that path then does** — so the provenance
 to the response, with a guard that forces a non-simulated result to prove the flag is not
 hardcoded.
 
+Note what that guard does *not* establish: it patches the engine, so it proves the
+plumbing forwards the flag and nothing about whether a loaded adapter would set it. The
+`simulated: false` branch has never run for real. `docs/CORRELATION_AI_ENGINE.md` carries
+the check to perform when the model is switched back on — if a real inference still
+reports `simulated: true`, the adapter did not load and the engine is quietly serving
+heuristics under a model-version string that says otherwise.
+
 The application layer was correct throughout (`organization_id=current_user.organization_id` was already set on
 create); only the GUC was missing.
 

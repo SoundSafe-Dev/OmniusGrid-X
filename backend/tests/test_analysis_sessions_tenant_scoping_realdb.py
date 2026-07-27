@@ -131,6 +131,15 @@ class TestSimulatedAnalysisIsLabelledAsSuch:
     This was latent while the RLS defect above made these endpoints unreachable.
     Fixing that made it live, which is why it is fixed in the same pass: a change that
     turns a dead path into a working one owns whatever that path then does.
+
+    WHAT THIS CLASS DOES NOT COVER. Every assertion here exercises the FALLBACK, because
+    that is the current state. The `simulated: false` branch has never run against a real
+    adapter — `test_the_flag_is_not_hardcoded` patches the engine to force one, which
+    proves the plumbing forwards it and nothing about whether a loaded adapter produces
+    it. When the LoRA is restored, confirm a real inference returns `simulated: false`
+    with a confidence above the fallback's 0.4; if it still says `true`, the adapter did
+    not load and the engine is serving heuristics under a model-version string that
+    suggests otherwise. See docs/CORRELATION_AI_ENGINE.md, "Current state".
     """
 
     async def test_the_response_says_it_was_simulated(self, client_a):
