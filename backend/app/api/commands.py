@@ -1,12 +1,15 @@
 """API routes for command execution"""
 
 from typing import Optional, Dict, Any, List
+from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.database import get_db, AsyncSessionLocal
+from app.db.database import get_db, AsyncSessionLocal  # noqa: F401
+from app.core.tenant import tenant_session
+from app.middleware.tenant_isolation import get_tenant_db, get_tenant_org_id
 from app.db.models import Command, Asset, User
 from app.api.auth import get_current_active_user
 from app.middleware.rbac import require_admin, require_operator_or_admin
@@ -50,7 +53,8 @@ class CommandSubmitResponse(BaseModel):
 @router.post("/submit", response_model=CommandSubmitResponse, summary="Submit command to asset", description="Submit a new command for execution on an industrial asset. Commands are queued and executed asynchronously with automatic retries.\n\n**Common actions:**\n- `set_speed`: Adjust print/processing speed (params: speed_percent)\n- `pause_job`: Pause current operation\n- `resume_job`: Resume paused operation\n- `emergency_stop`: Immediate stop (safety critical, admin only)\n- `set_temperature`: Adjust nozzle/bed temp (params: target_temp, component)", dependencies=[Depends(require_operator_or_admin)])
 async def submit_command(
     request: CommandSubmitRequest,
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(get_current_active_user),
+    org_id: UUID = Depends(get_tenant_org_id),
 ):
     """
     Submit a new command for execution on an asset.
@@ -69,7 +73,11 @@ async def submit_command(
         )
     
     # Verify asset exists and user has access
-    async with AsyncSessionLocal() as session:
+    # tenant_session, NOT AsyncSessionLocal. `assets` is FORCE ROW LEVEL SECURITY;
+    # a plain session sets no app.current_org_id, so the policy matched nothing, the
+    # lookup below returned None and this endpoint answered 404 for EVERY asset —
+    # including the caller's own. Verified against a real database.
+    async with tenant_session(org_id) as session:
         result = await session.execute(
             select(Asset).where(Asset.id == request.asset_id)
         )
@@ -144,7 +152,8 @@ async def get_asset_commands(
     status: Optional[str] = None,
     limit: int = 50,
     current_user = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db),
+    org_id: UUID = Depends(get_tenant_org_id),
 ):
     """Get command history for an asset"""
     # Verify asset access
@@ -198,14 +207,19 @@ async def get_queue_status(
 @router.post("/asset/{asset_id}/emergency-stop", dependencies=[Depends(require_admin)])
 async def emergency_stop(
     asset_id: str,
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(get_current_active_user),
+    org_id: UUID = Depends(get_tenant_org_id),
 ):
     """
     Emergency stop - immediately halt asset operation.
     High priority command that bypasses normal queue.
     Requires admin role.
     """
-    async with AsyncSessionLocal() as session:
+    # tenant_session, NOT AsyncSessionLocal. `assets` is FORCE ROW LEVEL SECURITY;
+    # a plain session sets no app.current_org_id, so the policy matched nothing, the
+    # lookup below returned None and this endpoint answered 404 for EVERY asset —
+    # including the caller's own. Verified against a real database.
+    async with tenant_session(org_id) as session:
         result = await session.execute(
             select(Asset).where(Asset.id == asset_id)
         )

@@ -511,7 +511,35 @@ They now take it from the token.
 GUC, so they were returning **zero** rows. One dependency, two failure modes, depending
 only on whether the table happened to have a policy.
 
-****The audit trail and the GDPR records were blank for the same reason.** `audit_logs`
+****Command dispatch and the emergency stop were unreachable.** `assets` is FORCE RLS, and
+three handlers in `commands.py` looked the asset up through a session with no GUC —
+`submit_command` and `emergency_stop` via an inline `AsyncSessionLocal()`,
+`get_asset_commands` via `get_db`. Each then hits
+`if not asset: raise HTTPException(404, "Asset not found")`, so all three answered **404
+for every asset, including the caller's own**: submission impossible, history empty, and
+the admin-gated emergency stop dead. A 404 is the least suspicious symptom available — it
+reads as "that asset does not exist", which nobody investigates.
+
+**The guard under-counted this file, and that is the lesson.**
+`test_tenant_session_guard.py` keys on `Depends(get_db)` and recorded **one** site here.
+Two of the three handlers open a session inline, which the guard cannot see. A static
+check keyed on one idiom under-reports any file that uses two — the same failure as
+reading ORM metadata instead of the schema, one level up. They now use
+`tenant_session(org_id)`, the context-manager form extracted earlier for exactly this
+case.
+
+**The ERP webhook receiver is broken and is NOT a dependency swap.** Verified against a
+real database: every inbound webhook is rejected 404, because
+`integration_configurations` has FORCE RLS and the candidate lookup returns nothing. But
+this endpoint is an unauthenticated vendor callback — there is no user to derive a tenant
+from, and by design the tenant is *whoever holds the secret that verifies these exact
+bytes*, so the lookup must span organizations. `get_tenant_db` cannot apply. Fixing it
+needs a decision — a privileged read path for the candidate query, or moving the tenant
+into the URL and abandoning signature-selects-tenant — so it is recorded here rather than
+patched. It is exempt from the `get_db` guard for the same reason, with the breakage noted
+in place so the exemption cannot be mistaken for health.
+
+**The audit trail and the GDPR records were blank for the same reason.** `audit_logs`
 and `data_processing_records` have carried tenant policies since migration 011, and every
 handler in `audit.py` and `gdpr.py` ran on `get_db` — so both surfaces returned **zero
 rows, including for the caller's own organization**. An audit trail reporting no activity

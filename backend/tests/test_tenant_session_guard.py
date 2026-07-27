@@ -42,6 +42,11 @@ NO_USER_CONTEXT = {
     # Agent client-certificate auth (require_agent); the identity is the cert,
     # not a user. Tenancy comes from the verified agent record instead.
     "edge_ingest.py",
+    # Unauthenticated vendor callback. The tenant is whoever holds the secret that
+    # verifies the raw bytes, so the candidate lookup must span organizations by
+    # construction and no user context exists to derive one from. Exempt from THIS
+    # guard, but currently broken for a related reason — see the note below.
+    "erp_webhooks.py",
 }
 # NOTE: health.py was initially exempted as "infra probes", but it is a MIXED
 # file — /health/ready and /health/startup are unauthenticated probes while
@@ -66,8 +71,28 @@ KNOWN_GET_DB_ON_RLS: dict[str, int] = {
     # gdpr.py is the sharper case: its handlers filtered on current_user.organization_id
     # CORRECTLY and it made no difference, because RLS had already removed the row.
     # Pinned by tests/test_audit_and_gdpr_tenant_scoping_realdb.py.
-    "commands.py": 1,
-    "erp_webhooks.py": 1,
+    # commands.py is GONE from this list, and the count it carried was WRONG in an
+    # instructive way. This guard looks for `Depends(get_db)` and found one site; two
+    # more handlers — submit_command and emergency_stop — opened
+    # `AsyncSessionLocal()` inline, which the guard cannot see. `assets` is FORCE RLS,
+    # so all three looked up the asset through a session with no GUC, got None, and
+    # answered 404 for EVERY asset including the caller's own. Command submission was
+    # impossible, history was empty, and the admin-gated emergency stop was
+    # unreachable. Verified against a real database; pinned by
+    # tests/test_command_dispatch_tenant_scoping_realdb.py.
+    #
+    # A static guard keyed on one idiom under-counts a file that uses two.
+    #
+    # erp_webhooks.py is EXEMPT rather than fixed, and is not debt of this kind. The
+    # receiver is an unauthenticated vendor callback: there is no user, so
+    # get_tenant_db (which depends on get_current_active_user) cannot apply, and the
+    # tenant is resolved by which stored secret verifies the raw bytes — a lookup that
+    # must span organizations by construction. It is nonetheless BROKEN: verified
+    # against a real database, every inbound webhook is rejected 404 because
+    # integration_configurations has FORCE RLS and the candidate lookup returns
+    # nothing. Fixing it needs a design decision (a privileged read path, or the
+    # tenant in the URL), not a dependency swap. Recorded in
+    # docs/engineering/defect-class-sweeps.md.
     # fleet_logistics.py is GONE from this list. All 23 handlers moved to
     # get_tenant_db, and the four tables that have no RLS to fall back on
     # (geofence_zones, geofence_alerts, maintenance_schedules, repair_orders) are
