@@ -1,5 +1,5 @@
 -- =============================================================================
--- Migration 032: tenant-scoped fleet metadata, dynamic cohorts, and exact previews
+-- Migration 047: tenant-scoped fleet metadata, dynamic cohorts, and exact previews
 -- =============================================================================
 
 BEGIN;

@@ -1,5 +1,5 @@
 -- =============================================================================
--- Migration 033: timezone-aware maintenance windows and scheduled OTA rollouts
+-- Migration 048: timezone-aware maintenance windows and scheduled OTA rollouts
 -- =============================================================================
 
 BEGIN;
