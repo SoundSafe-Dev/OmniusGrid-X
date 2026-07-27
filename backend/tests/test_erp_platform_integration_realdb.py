@@ -339,3 +339,83 @@ async def _integration_with_secret(session_maker, seeded_orgs) -> str:
         await db.commit()
         await _clear_guc(db)
     return integration_id
+
+
+class TestTruncationIsVisible:
+    """A full page must be distinguishable from the complete set.
+
+    These endpoints returned exactly `limit` rows and nothing else, and the ERP hub
+    passes no limit at all — so a tenant with 5,000 entities saw the first 200 rendered
+    as everything. That is the same silent-truncation shape that bit three ERP
+    connectors, this time on our own API.
+
+    They also clamped silently: `min(limit, 1000)` with no bound declared on the
+    parameter, so asking for 5,000 returned 1,000 and nothing said the request had been
+    changed.
+    """
+
+    async def test_a_full_page_is_marked_truncated(self, client_a, synced_integration):
+        """149 real Dataverse users are synced, so limit=5 is genuinely a partial view."""
+        response = await client_a.get(
+            f"{ERP_BASE}/{synced_integration}/entities", params={"limit": 5}
+        )
+        assert response.status_code == 200, response.text
+        assert len(response.json()) == 5
+        assert response.headers.get("X-Result-Truncated") == "true", (
+            "a truncated page is indistinguishable from the complete set"
+        )
+        assert response.headers.get("X-Result-Limit") == "5"
+
+    async def test_a_partial_page_is_not_marked_truncated(self, client_a, synced_integration):
+        """The other direction matters as much: always claiming truncation would make
+        the header meaningless."""
+        response = await client_a.get(
+            f"{ERP_BASE}/{synced_integration}/entities", params={"limit": 1000}
+        )
+        assert response.status_code == 200, response.text
+        assert response.headers.get("X-Result-Truncated") == "false"
+
+    async def test_the_limit_is_respected_exactly(self, client_a, synced_integration):
+        """Fetching limit+1 to detect truncation must not leak the extra row."""
+        response = await client_a.get(
+            f"{ERP_BASE}/{synced_integration}/entities", params={"limit": 3}
+        )
+        assert len(response.json()) == 3
+
+    async def test_an_over_limit_request_is_rejected_not_silently_clamped(
+        self, client_a, synced_integration
+    ):
+        """It used to return 1000 rows for a request of 5000 and say nothing. Answering
+        a different question than the one asked, silently, is worse than refusing."""
+        response = await client_a.get(
+            f"{ERP_BASE}/{synced_integration}/entities", params={"limit": 5000}
+        )
+        assert response.status_code == 422, (
+            f"limit=5000 returned {response.status_code}; the bound must be declared so "
+            f"FastAPI refuses rather than quietly substituting a different limit"
+        )
+
+    async def test_a_zero_or_negative_limit_is_rejected(self, client_a, synced_integration):
+        for bad in (0, -1):
+            response = await client_a.get(
+                f"{ERP_BASE}/{synced_integration}/entities", params={"limit": bad}
+            )
+            assert response.status_code == 422, f"limit={bad} was accepted"
+
+    async def test_events_and_correlations_carry_the_same_signal(
+        self, client_a, synced_integration
+    ):
+        """All three hub tabs had the same defect, so all three need the same signal."""
+        for path in (f"{synced_integration}/events", "correlations/recent"):
+            response = await client_a.get(f"{ERP_BASE}/{path}", params={"limit": 5})
+            assert response.status_code == 200, f"{path}: {response.text}"
+            assert response.headers.get("X-Result-Truncated") in ("true", "false"), (
+                f"{path} does not report whether its result was truncated"
+            )
+
+    async def test_events_and_correlations_reject_an_over_limit_request(
+        self, client_a, synced_integration
+    ):
+        for path in (f"{synced_integration}/events", "correlations/recent"):
+            response = await client_a.get(f"{ERP_BASE}/{path}", params={"limit": 5000})
+            assert response.status_code == 422, f"{path} silently clamped limit=5000"

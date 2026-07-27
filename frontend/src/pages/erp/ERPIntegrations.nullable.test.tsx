@@ -50,8 +50,8 @@ vi.mock('../../api/erp', () => ({
     testConnection: vi.fn(),
     triggerSync: vi.fn(),
     listFieldMappings: vi.fn().mockResolvedValue([]),
-    listEntities: vi.fn().mockResolvedValue([]),
-    listEvents: vi.fn().mockResolvedValue([]),
+    listEntities: vi.fn().mockResolvedValue({ items: [], truncated: false, limit: 0 }),
+    listEvents: vi.fn().mockResolvedValue({ items: [], truncated: false, limit: 0 }),
   },
 }))
 vi.mock('../../api/analysisSessions', () => ({

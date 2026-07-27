@@ -188,6 +188,35 @@ const mockCorrelations: ERPCorrelationRecord[] = [
     created_at: new Date(Date.now() - 1200_000).toISOString() },
 ]
 
+/**
+ * A list result that says whether it is the whole set.
+ *
+ * These endpoints return at most `limit` rows, so a full page is indistinguishable from
+ * the complete set — the same silent-truncation shape that bit three ERP connectors. The
+ * API now reports it in `X-Result-Truncated`; this type exists so a caller has to receive
+ * the flag rather than a bare array it will assume is everything.
+ *
+ * None of these methods has a production caller yet (the hub's Entities/Events/AI tabs
+ * are not built). That is exactly why the shape is worth fixing now: the person who
+ * builds them should not have to rediscover the problem.
+ */
+export interface ListResult<T> {
+  items: T[]
+  /** True when more rows exist beyond this page. */
+  truncated: boolean
+  /** The page size the server actually applied. */
+  limit: number
+}
+
+function toListResult<T>(res: { data: T[]; headers: Record<string, unknown> }): ListResult<T> {
+  const header = (name: string) => String(res.headers?.[name] ?? '')
+  return {
+    items: res.data,
+    truncated: header('x-result-truncated') === 'true',
+    limit: Number(header('x-result-limit')) || res.data.length,
+  }
+}
+
 export const erpApi = {
   async listIntegrations(): Promise<ERPIntegration[]> {
     if (USE_MOCK) { await delay(200); return [...mockIntegrations] }
@@ -251,21 +280,22 @@ export const erpApi = {
     if (USE_MOCK) { await delay(150); const arr = mockMappings[id] ?? []; const idx = arr.findIndex((m) => m.id === mappingId); if (idx >= 0) arr.splice(idx, 1); return }
     await api.delete(`/api/v1/erp/integrations/${id}/mappings/${mappingId}`)
   },
-  async listEntities(id: string, entityType?: string): Promise<ERPEntity[]> {
+  async listEntities(id: string, entityType?: string): Promise<ListResult<ERPEntity>> {
     if (USE_MOCK) {
       await delay(200)
-      return entityType ? mockEntities.filter((e) => e.entity_type === entityType) : [...mockEntities]
+      const items = entityType ? mockEntities.filter((e) => e.entity_type === entityType) : [...mockEntities]
+      return { items, truncated: false, limit: items.length }
     }
     const q = entityType ? `?entity_type=${encodeURIComponent(entityType)}` : ''
-    return (await api.get<ERPEntity[]>(`/api/v1/erp/integrations/${id}/entities${q}`)).data
+    return toListResult(await api.get<ERPEntity[]>(`/api/v1/erp/integrations/${id}/entities${q}`))
   },
-  async listEvents(id: string): Promise<ERPEvent[]> {
-    if (USE_MOCK) { await delay(200); return [...mockEvents] }
-    return (await api.get<ERPEvent[]>(`/api/v1/erp/integrations/${id}/events`)).data
+  async listEvents(id: string): Promise<ListResult<ERPEvent>> {
+    if (USE_MOCK) { await delay(200); return { items: [...mockEvents], truncated: false, limit: mockEvents.length } }
+    return toListResult(await api.get<ERPEvent[]>(`/api/v1/erp/integrations/${id}/events`))
   },
-  async listCorrelations(): Promise<ERPCorrelationRecord[]> {
-    if (USE_MOCK) { await delay(200); return [...mockCorrelations] }
-    return (await api.get<ERPCorrelationRecord[]>('/api/v1/erp/integrations/correlations/recent')).data
+  async listCorrelations(): Promise<ListResult<ERPCorrelationRecord>> {
+    if (USE_MOCK) { await delay(200); return { items: [...mockCorrelations], truncated: false, limit: mockCorrelations.length } }
+    return toListResult(await api.get<ERPCorrelationRecord[]>('/api/v1/erp/integrations/correlations/recent'))
   },
   supportedTypes(): string[] {
     return ['sap', 'oracle', 'dynamics', 'netsuite', 'odoo', 'infor', 'epicor']

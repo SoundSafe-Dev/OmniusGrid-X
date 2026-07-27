@@ -207,6 +207,16 @@ Against a real Odoo it returned `True` for a subscription that was never created
 If you cannot verify a vendor's mechanism, declare it in
 `EVENT_SUBSCRIPTION_MECHANISM` and return `False`.
 
+**A full page must be distinguishable from the whole set.** The hub's list endpoints
+returned exactly `limit` rows and nothing else, and the UI passes no limit — so a tenant
+with 5,000 entities would have seen the first 200 rendered as everything. They also
+clamped silently (`min(limit, 1000)` with no declared bound), so asking for 5,000
+returned 1,000 with nothing saying the request had been changed. Now the bound is on the
+query parameter (an over-limit request gets 422 rather than a quiet substitution) and
+`X-Result-Truncated` reports whether more exists — detected by fetching `limit + 1`, not
+a COUNT. The API client returns `ListResult<T>` rather than a bare array so the flag
+cannot be dropped by accident.
+
 **Never report zero rows for a response you did not understand.** A missing envelope
 must raise, not return `[]`. An empty result and a misunderstood response look
 identical to a caller, and one of them is a silent data-loss bug. Related: **follow

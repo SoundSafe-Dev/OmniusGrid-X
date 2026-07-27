@@ -262,6 +262,15 @@ Defects found, all mutation-verified — reverting the fix fails the test:
 **Absent rather than broken, and left alone:** ERP has no export definition, no
 WebSocket event and no Kafka producer. Nothing claims otherwise.
 
+**Silent truncation, this time on our own API.** The ERP hub's three list endpoints
+returned exactly `limit` rows with no indication more existed, and clamped an over-limit
+request instead of refusing it — the same shape that bit three connectors. Bounds are now
+declared on the parameter (422, not a quiet substitution), truncation is reported in
+`X-Result-Truncated` via a `limit + 1` probe rather than a COUNT, and the API client
+returns `ListResult<T>` so the flag cannot be discarded. Latent rather than live: the
+Entities/Events/AI tabs have no production caller yet, which is why the shape was worth
+fixing before someone builds them.
+
 **Swept platform-wide afterwards, and found clean.** The response-model defect above was
 the obvious candidate to exist elsewhere, so it was checked across all 61 API modules —
 11 response/ORM pairs, 124 fields, **zero offenders**. Worth recording as a result: those

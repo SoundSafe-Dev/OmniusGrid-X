@@ -8,7 +8,7 @@ field mappings, and sync operations.
 from typing import List, Dict, Any, Optional
 from uuid import UUID
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, Field
 import structlog
@@ -1062,15 +1062,48 @@ async def delete_field_mapping(
 
 # ==================== ERP data surfaces (ERP hub page) ====================
 
+#: Upper bounds for the hub's list endpoints. Declared on the query parameter itself so
+#: FastAPI rejects an over-limit request with 422 instead of silently returning a
+#: different number than was asked for.
+MAX_ENTITIES_PAGE = 1000
+MAX_EVENTS_PAGE = 500
+
+
+def _mark_truncated(response: Response, rows: list, limit: int) -> list:
+    """Trim to `limit` and say so when there was more.
+
+    THE DEFECT THIS FIXES. These endpoints returned exactly `limit` rows and nothing
+    else, so **a full page was indistinguishable from the complete set**. The ERP hub
+    passes no limit at all, so a tenant with 5,000 entities saw the first 200 presented
+    as everything -- the same silent-truncation shape that bit three ERP connectors,
+    this time on our own API.
+
+    Callers fetch `limit + 1`; if the extra row came back there is more to see. That
+    costs one row rather than a COUNT over the whole table.
+
+    The signal is a HEADER, not an envelope, because the body is a bare array that the
+    frontend already consumes -- changing its shape would break every caller to fix a
+    problem they could then no longer see.
+    """
+    truncated = len(rows) > limit
+    response.headers["X-Result-Limit"] = str(limit)
+    response.headers["X-Result-Truncated"] = "true" if truncated else "false"
+    return list(rows[:limit])
+
+
 @router.get("/{integration_id}/entities")
 async def list_erp_entities(
     integration_id: UUID,
+    response: Response,
     entity_type: Optional[str] = None,
-    limit: int = 200,
+    limit: int = Query(200, ge=1, le=MAX_ENTITIES_PAGE),
     db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """Synced ERP business objects (erp_entities) for the hub's Entities tab."""
+    """Synced ERP business objects (erp_entities) for the hub's Entities tab.
+
+    Sets `X-Result-Truncated` so a full page is distinguishable from the whole set.
+    """
     from sqlalchemy import select
 
     query = select(ERPEntity).where(
@@ -1080,7 +1113,11 @@ async def list_erp_entities(
     )
     if entity_type:
         query = query.where(ERPEntity.entity_type == entity_type)
-    rows = (await db.execute(query.order_by(ERPEntity.updated_at.desc()).limit(min(limit, 1000)))).scalars().all()
+    # limit + 1: the extra row is how we know there is more, without a COUNT.
+    fetched = (await db.execute(
+        query.order_by(ERPEntity.updated_at.desc()).limit(limit + 1)
+    )).scalars().all()
+    rows = _mark_truncated(response, fetched, limit)
     return [{
         "id": str(e.id),
         "entity_type": e.entity_type,
@@ -1094,8 +1131,9 @@ async def list_erp_entities(
 @router.get("/{integration_id}/events")
 async def list_erp_events(
     integration_id: UUID,
+    response: Response,
     status: Optional[str] = None,
-    limit: int = 100,
+    limit: int = Query(100, ge=1, le=MAX_EVENTS_PAGE),
     db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -1109,7 +1147,10 @@ async def list_erp_events(
     )
     if status:
         query = query.where(ERPIntegrationEvent.processing_status == status)
-    rows = (await db.execute(query.order_by(ERPIntegrationEvent.created_at.desc()).limit(min(limit, 500)))).scalars().all()
+    fetched = (await db.execute(
+        query.order_by(ERPIntegrationEvent.created_at.desc()).limit(limit + 1)
+    )).scalars().all()
+    rows = _mark_truncated(response, fetched, limit)
     return [{
         "id": str(ev.id),
         "event_type": ev.event_type,
@@ -1124,19 +1165,24 @@ async def list_erp_events(
 
 @router.get("/correlations/recent")
 async def list_erp_correlations(
-    limit: int = 100,
+    response: Response,
+    limit: int = Query(100, ge=1, le=MAX_EVENTS_PAGE),
     db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """ERP<->sensor correlations recorded in erp_correlations (AI tab)."""
+    """ERP<->sensor correlations recorded in erp_correlations (AI tab).
+
+    Sets `X-Result-Truncated` so a full page is distinguishable from the whole set.
+    """
     from sqlalchemy import select
     from app.db.models import ERPCorrelation
 
     rows = (await db.execute(
         select(ERPCorrelation)
         .where(ERPCorrelation.organization_id == current_user.organization_id)
-        .order_by(ERPCorrelation.created_at.desc()).limit(min(limit, 500))
+        .order_by(ERPCorrelation.created_at.desc()).limit(limit + 1)
     )).scalars().all()
+    rows = _mark_truncated(response, rows, limit)
     return [{
         "id": str(c.id),
         "correlation_type": c.correlation_type,
