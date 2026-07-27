@@ -1,5 +1,5 @@
 import { FC, FormEvent, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from 'react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertCircle,
   Edit,
@@ -98,12 +98,14 @@ export const UsersPage: FC = () => {
     role: 'viewer' as UserRole,
   });
 
-  const usersQuery = useQuery(['admin-users'], () =>
-    authApi.getUsers({ limit: 500 })
-  );
-  const invitationsQuery = useQuery(['admin-user-invitations'], () =>
-    authApi.getInvitations({ limit: 500 })
-  );
+  const usersQuery = useQuery({
+    queryKey: ['admin-users'],
+    queryFn: () => authApi.getUsers({ limit: 500 }),
+  });
+  const invitationsQuery = useQuery({
+    queryKey: ['admin-user-invitations'],
+    queryFn: () => authApi.getInvitations({ limit: 500 }),
+  });
 
   const reportError = (value: unknown) => {
     setNotice(null);
@@ -112,12 +114,13 @@ export const UsersPage: FC = () => {
 
   const refreshData = async () => {
     await Promise.all([
-      queryClient.invalidateQueries(['admin-users']),
-      queryClient.invalidateQueries(['admin-user-invitations']),
+      queryClient.invalidateQueries({ queryKey: ['admin-users'] }),
+      queryClient.invalidateQueries({ queryKey: ['admin-user-invitations'] }),
     ]);
   };
 
-  const inviteMutation = useMutation(authApi.inviteUser, {
+  const inviteMutation = useMutation({
+    mutationFn: authApi.inviteUser,
     onSuccess: async (invitation) => {
       await refreshData();
       setError(null);
@@ -132,26 +135,25 @@ export const UsersPage: FC = () => {
     onError: reportError,
   });
 
-  const updateMutation = useMutation(
-    ({
+  const updateMutation = useMutation({
+    mutationFn: ({
       userId,
       changes,
     }: {
       userId: string;
       changes: { name: string; email: string; role: UserRole };
     }) => authApi.updateUser(userId, changes),
-    {
-      onSuccess: async () => {
-        await refreshData();
-        setError(null);
-        setNotice('User details updated.');
-        setEditingUser(null);
-      },
-      onError: reportError,
-    }
-  );
+    onSuccess: async () => {
+      await refreshData();
+      setError(null);
+      setNotice('User details updated.');
+      setEditingUser(null);
+    },
+    onError: reportError,
+  });
 
-  const deactivateMutation = useMutation(authApi.deactivateUser, {
+  const deactivateMutation = useMutation({
+    mutationFn: authApi.deactivateUser,
     onSuccess: async (user) => {
       await refreshData();
       setError(null);
@@ -160,7 +162,8 @@ export const UsersPage: FC = () => {
     onError: reportError,
   });
 
-  const reactivateMutation = useMutation(authApi.reactivateUser, {
+  const reactivateMutation = useMutation({
+    mutationFn: authApi.reactivateUser,
     onSuccess: async (user) => {
       await refreshData();
       setError(null);
@@ -169,7 +172,8 @@ export const UsersPage: FC = () => {
     onError: reportError,
   });
 
-  const resendMutation = useMutation(authApi.resendInvitation, {
+  const resendMutation = useMutation({
+    mutationFn: authApi.resendInvitation,
     onSuccess: async (invitation) => {
       await refreshData();
       setError(null);
@@ -182,7 +186,8 @@ export const UsersPage: FC = () => {
     onError: reportError,
   });
 
-  const revokeMutation = useMutation(authApi.revokeInvitation, {
+  const revokeMutation = useMutation({
+    mutationFn: authApi.revokeInvitation,
     onSuccess: async (invitation) => {
       await refreshData();
       setError(null);
@@ -348,7 +353,7 @@ export const UsersPage: FC = () => {
                             <Button
                               variant="ghost"
                               size="sm"
-                              disabled={isSelf || deactivateMutation.isLoading}
+                              disabled={isSelf || deactivateMutation.isPending}
                               onClick={() => deactivate(user)}
                               aria-label={`Deactivate ${user.name || user.email}`}
                               tooltip={
@@ -363,7 +368,7 @@ export const UsersPage: FC = () => {
                             <Button
                               variant="ghost"
                               size="sm"
-                              disabled={reactivateMutation.isLoading}
+                              disabled={reactivateMutation.isPending}
                               onClick={() => reactivateMutation.mutate(user.id)}
                               aria-label={`Reactivate ${user.name || user.email}`}
                               tooltip="Reactivate account without restoring old sessions"
@@ -441,7 +446,7 @@ export const UsersPage: FC = () => {
                           <Button
                             variant="ghost"
                             size="sm"
-                            disabled={resendMutation.isLoading}
+                            disabled={resendMutation.isPending}
                             onClick={() => resendMutation.mutate(invitation.id)}
                             aria-label={`Resend invitation to ${invitation.email}`}
                             tooltip="Rotate the link and send a new invitation"
@@ -451,7 +456,7 @@ export const UsersPage: FC = () => {
                           <Button
                             variant="ghost"
                             size="sm"
-                            disabled={revokeMutation.isLoading}
+                            disabled={revokeMutation.isPending}
                             onClick={() => revokeInvitation(invitation)}
                             aria-label={`Revoke invitation for ${invitation.email}`}
                             tooltip="Revoke this invitation"
@@ -485,7 +490,7 @@ export const UsersPage: FC = () => {
                 >
                   Cancel
                 </Button>
-                <Button type="submit" loading={inviteMutation.isLoading}>
+                <Button type="submit" loading={inviteMutation.isPending}>
                   Send Invitation
                 </Button>
               </>
@@ -531,7 +536,7 @@ export const UsersPage: FC = () => {
                 >
                   Cancel
                 </Button>
-                <Button type="submit" loading={updateMutation.isLoading}>
+                <Button type="submit" loading={updateMutation.isPending}>
                   Save Changes
                 </Button>
               </>

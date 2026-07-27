@@ -319,7 +319,7 @@ export const MaintenanceWindows: FC = () => {
               )}
               <Button
                 type="submit"
-                loading={createWindow.isLoading || updateWindow.isLoading}
+                loading={createWindow.isPending || updateWindow.isPending}
               >
                 {form.id ? 'Save changes' : 'Create window'}
               </Button>
@@ -353,7 +353,7 @@ export const MaintenanceWindows: FC = () => {
             <Button
               variant="secondary"
               onClick={preview}
-              loading={previewWindows.isLoading}
+              loading={previewWindows.isPending}
             >
               <Eye size={16} className="mr-2" /> Preview
             </Button>
@@ -483,7 +483,7 @@ export const MaintenanceWindows: FC = () => {
                           size="sm"
                           variant="outline"
                           onClick={() => disableWindow.mutate(window.id)}
-                          loading={disableWindow.isLoading}
+                          loading={disableWindow.isPending}
                         >
                           <Power size={14} className="mr-1" /> Disable
                         </Button>
@@ -497,7 +497,7 @@ export const MaintenanceWindows: FC = () => {
                               payload: { enabled: true },
                             })
                           }
-                          loading={updateWindow.isLoading}
+                          loading={updateWindow.isPending}
                         >
                           <Power size={14} className="mr-1" /> Enable
                         </Button>

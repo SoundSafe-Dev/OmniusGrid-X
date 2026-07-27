@@ -528,7 +528,7 @@ export const FleetTargeting: FC = () => {
               placeholder="Optional"
             />
             <div className="flex justify-end">
-              <Button type="submit" size="sm" loading={createSite.isLoading}>
+              <Button type="submit" size="sm" loading={createSite.isPending}>
                 <Plus size={15} className="mr-2" /> Add site
               </Button>
             </div>
@@ -537,7 +537,7 @@ export const FleetTargeting: FC = () => {
             <ResourceList
               items={siteItems}
               emptyMessage="No sites configured."
-              busy={deactivateSite.isLoading}
+              busy={deactivateSite.isPending}
               onDeactivate={(site) =>
                 confirmDeactivate('site', site.id, site.name)
               }
@@ -572,7 +572,7 @@ export const FleetTargeting: FC = () => {
                         <Select
                           aria-label={`Site for ${workcell.name}`}
                           value={workcell.site_id || ''}
-                          disabled={assignWorkcellSite.isLoading}
+                          disabled={assignWorkcellSite.isPending}
                           options={[
                             { value: '', label: 'Unassigned' },
                             ...siteOptions,
@@ -635,7 +635,7 @@ export const FleetTargeting: FC = () => {
               placeholder="Optional"
             />
             <div className="flex justify-end">
-              <Button type="submit" size="sm" loading={createTag.isLoading}>
+              <Button type="submit" size="sm" loading={createTag.isPending}>
                 <Plus size={15} className="mr-2" /> Add tag
               </Button>
             </div>
@@ -644,7 +644,7 @@ export const FleetTargeting: FC = () => {
             <ResourceList
               items={tagItems}
               emptyMessage="No tags configured."
-              busy={deactivateTag.isLoading}
+              busy={deactivateTag.isPending}
               accent={(item) =>
                 tagItems.find((tag) => tag.id === item.id)?.color || null
               }
@@ -682,7 +682,7 @@ export const FleetTargeting: FC = () => {
               placeholder="Optional"
             />
             <div className="flex justify-end">
-              <Button type="submit" size="sm" loading={createGroup.isLoading}>
+              <Button type="submit" size="sm" loading={createGroup.isPending}>
                 <Plus size={15} className="mr-2" /> Add group
               </Button>
             </div>
@@ -691,7 +691,7 @@ export const FleetTargeting: FC = () => {
             <ResourceList
               items={groupItems}
               emptyMessage="No groups configured."
-              busy={deactivateGroup.isLoading}
+              busy={deactivateGroup.isPending}
               onDeactivate={(group) =>
                 confirmDeactivate('group', group.id, group.name)
               }
@@ -797,7 +797,7 @@ export const FleetTargeting: FC = () => {
             </pre>
           )}
           <div className="flex justify-end">
-            <Button type="submit" loading={createCohort.isLoading}>
+            <Button type="submit" loading={createCohort.isPending}>
               <ListFilter size={16} className="mr-2" /> Save cohort
             </Button>
           </div>
@@ -826,7 +826,7 @@ export const FleetTargeting: FC = () => {
                   <Button
                     size="sm"
                     variant="ghost"
-                    disabled={deactivateCohort.isLoading}
+                    disabled={deactivateCohort.isPending}
                     tooltip={`Deactivate ${cohort.name}`}
                     aria-label={`Deactivate ${cohort.name}`}
                     onClick={() =>
@@ -877,7 +877,7 @@ export const FleetTargeting: FC = () => {
               <Button
                 size="sm"
                 variant="secondary"
-                loading={bulkTags.isLoading}
+                loading={bulkTags.isPending}
                 onClick={() => updateTags('add')}
               >
                 Add
@@ -885,7 +885,7 @@ export const FleetTargeting: FC = () => {
               <Button
                 size="sm"
                 variant="outline"
-                disabled={bulkTags.isLoading}
+                disabled={bulkTags.isPending}
                 onClick={() => updateTags('remove')}
               >
                 Remove
@@ -902,7 +902,7 @@ export const FleetTargeting: FC = () => {
               <Button
                 size="sm"
                 variant="secondary"
-                loading={updateGroupMembers.isLoading}
+                loading={updateGroupMembers.isPending}
                 onClick={() => updateGroups('add')}
               >
                 Add
@@ -910,7 +910,7 @@ export const FleetTargeting: FC = () => {
               <Button
                 size="sm"
                 variant="outline"
-                disabled={updateGroupMembers.isLoading}
+                disabled={updateGroupMembers.isPending}
                 onClick={() => updateGroups('remove')}
               >
                 Remove

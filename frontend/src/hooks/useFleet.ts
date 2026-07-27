@@ -120,15 +120,13 @@ export function usePauseAgentRollout() {
 
 export function useResumeAgentRollout() {
   const queryClient = useQueryClient();
-  return useMutation<AgentRollout, Error, string>(
-    fleetApi.resumeRollout,
-    {
-      onSuccess: (data) => {
-        queryClient.setQueryData([FLEET_KEY, 'rollout', data.id], data);
-        queryClient.invalidateQueries([FLEET_KEY, 'rollouts']);
-      },
-    }
-  );
+  return useMutation<AgentRollout, Error, string>({
+    mutationFn: fleetApi.resumeRollout,
+    onSuccess: (data) => {
+      queryClient.setQueryData([FLEET_KEY, 'rollout', data.id], data);
+      queryClient.invalidateQueries({ queryKey: [FLEET_KEY, 'rollouts'] });
+    },
+  });
 }
 
 export function useCancelAgentRollout() {
@@ -143,21 +141,19 @@ export function useCancelAgentRollout() {
 }
 
 export function useFleetSites() {
-  return useQuery<FleetSite[], Error>(
-    [...TARGETING_KEY, 'sites'],
-    fleetApi.sites,
-    { keepPreviousData: true }
-  );
+  return useQuery<FleetSite[], Error>({
+    queryKey: [...TARGETING_KEY, 'sites'],
+    queryFn: fleetApi.sites,
+    placeholderData: keepPreviousData,
+  });
 }
 
 export function useCreateFleetSite() {
   const queryClient = useQueryClient();
-  return useMutation<FleetSite, Error, FleetNamedCreate>(
-    fleetApi.createSite,
-    {
-      onSuccess: () => queryClient.invalidateQueries(TARGETING_KEY),
-    }
-  );
+  return useMutation<FleetSite, Error, FleetNamedCreate>({
+    mutationFn: fleetApi.createSite,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: TARGETING_KEY }),
+  });
 }
 
 export function useUpdateFleetSite() {
@@ -166,40 +162,34 @@ export function useUpdateFleetSite() {
     FleetSite,
     Error,
     { siteId: string; payload: FleetNamedUpdate }
-  >(
-    ({ siteId, payload }) => fleetApi.updateSite(siteId, payload),
-    {
-      onSuccess: () => queryClient.invalidateQueries(TARGETING_KEY),
-    }
-  );
+  >({
+    mutationFn: ({ siteId, payload }) => fleetApi.updateSite(siteId, payload),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: TARGETING_KEY }),
+  });
 }
 
 export function useDeactivateFleetSite() {
   const queryClient = useQueryClient();
-  return useMutation<FleetSite, Error, string>(
-    fleetApi.deactivateSite,
-    {
-      onSuccess: () => queryClient.invalidateQueries(TARGETING_KEY),
-    }
-  );
+  return useMutation<FleetSite, Error, string>({
+    mutationFn: fleetApi.deactivateSite,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: TARGETING_KEY }),
+  });
 }
 
 export function useMaintenanceWindows() {
-  return useQuery<MaintenanceWindow[], Error>(
-    MAINTENANCE_KEY,
-    fleetApi.maintenanceWindows,
-    { keepPreviousData: true }
-  );
+  return useQuery<MaintenanceWindow[], Error>({
+    queryKey: MAINTENANCE_KEY,
+    queryFn: fleetApi.maintenanceWindows,
+    placeholderData: keepPreviousData,
+  });
 }
 
 export function useCreateMaintenanceWindow() {
   const queryClient = useQueryClient();
-  return useMutation<MaintenanceWindow, Error, MaintenanceWindowCreate>(
-    fleetApi.createMaintenanceWindow,
-    {
-      onSuccess: () => queryClient.invalidateQueries(MAINTENANCE_KEY),
-    }
-  );
+  return useMutation<MaintenanceWindow, Error, MaintenanceWindowCreate>({
+    mutationFn: fleetApi.createMaintenanceWindow,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: MAINTENANCE_KEY }),
+  });
 }
 
 export function useUpdateMaintenanceWindow() {
@@ -208,23 +198,19 @@ export function useUpdateMaintenanceWindow() {
     MaintenanceWindow,
     Error,
     { windowId: string; payload: MaintenanceWindowUpdate }
-  >(
-    ({ windowId, payload }) =>
+  >({
+    mutationFn: ({ windowId, payload }) =>
       fleetApi.updateMaintenanceWindow(windowId, payload),
-    {
-      onSuccess: () => queryClient.invalidateQueries(MAINTENANCE_KEY),
-    }
-  );
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: MAINTENANCE_KEY }),
+  });
 }
 
 export function useDisableMaintenanceWindow() {
   const queryClient = useQueryClient();
-  return useMutation<MaintenanceWindow, Error, string>(
-    fleetApi.disableMaintenanceWindow,
-    {
-      onSuccess: () => queryClient.invalidateQueries(MAINTENANCE_KEY),
-    }
-  );
+  return useMutation<MaintenanceWindow, Error, string>({
+    mutationFn: fleetApi.disableMaintenanceWindow,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: MAINTENANCE_KEY }),
+  });
 }
 
 export function usePreviewMaintenanceWindows() {
@@ -232,15 +218,17 @@ export function usePreviewMaintenanceWindows() {
     MaintenanceWindowPreview,
     Error,
     MaintenanceWindowPreviewRequest
-  >(fleetApi.previewMaintenanceWindows);
+  >({
+    mutationFn: fleetApi.previewMaintenanceWindows,
+  });
 }
 
 export function useFleetWorkcells() {
-  return useQuery<FleetWorkcell[], Error>(
-    [...TARGETING_KEY, 'workcells'],
-    fleetApi.workcells,
-    { keepPreviousData: true }
-  );
+  return useQuery<FleetWorkcell[], Error>({
+    queryKey: [...TARGETING_KEY, 'workcells'],
+    queryFn: fleetApi.workcells,
+    placeholderData: keepPreviousData,
+  });
 }
 
 export function useAssignFleetWorkcellSite() {
@@ -249,30 +237,27 @@ export function useAssignFleetWorkcellSite() {
     Pick<FleetWorkcell, 'id' | 'name' | 'site_id'>,
     Error,
     { workcellId: string; siteId: string | null }
-  >(
-    ({ workcellId, siteId }) => fleetApi.assignWorkcellSite(workcellId, siteId),
-    {
-      onSuccess: () => queryClient.invalidateQueries(TARGETING_KEY),
-    }
-  );
+  >({
+    mutationFn: ({ workcellId, siteId }) =>
+      fleetApi.assignWorkcellSite(workcellId, siteId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: TARGETING_KEY }),
+  });
 }
 
 export function useFleetTags() {
-  return useQuery<FleetTag[], Error>(
-    [...TARGETING_KEY, 'tags'],
-    fleetApi.tags,
-    { keepPreviousData: true }
-  );
+  return useQuery<FleetTag[], Error>({
+    queryKey: [...TARGETING_KEY, 'tags'],
+    queryFn: fleetApi.tags,
+    placeholderData: keepPreviousData,
+  });
 }
 
 export function useCreateFleetTag() {
   const queryClient = useQueryClient();
-  return useMutation<FleetTag, Error, FleetTagCreate>(
-    fleetApi.createTag,
-    {
-      onSuccess: () => queryClient.invalidateQueries(TARGETING_KEY),
-    }
-  );
+  return useMutation<FleetTag, Error, FleetTagCreate>({
+    mutationFn: fleetApi.createTag,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: TARGETING_KEY }),
+  });
 }
 
 export function useUpdateFleetTag() {
@@ -281,22 +266,18 @@ export function useUpdateFleetTag() {
     FleetTag,
     Error,
     { tagId: string; payload: FleetTagUpdate }
-  >(
-    ({ tagId, payload }) => fleetApi.updateTag(tagId, payload),
-    {
-      onSuccess: () => queryClient.invalidateQueries(TARGETING_KEY),
-    }
-  );
+  >({
+    mutationFn: ({ tagId, payload }) => fleetApi.updateTag(tagId, payload),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: TARGETING_KEY }),
+  });
 }
 
 export function useDeactivateFleetTag() {
   const queryClient = useQueryClient();
-  return useMutation<FleetTag, Error, string>(
-    fleetApi.deactivateTag,
-    {
-      onSuccess: () => queryClient.invalidateQueries(TARGETING_KEY),
-    }
-  );
+  return useMutation<FleetTag, Error, string>({
+    mutationFn: fleetApi.deactivateTag,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: TARGETING_KEY }),
+  });
 }
 
 export function useBulkFleetTagAssignments() {
@@ -305,30 +286,26 @@ export function useBulkFleetTagAssignments() {
     FleetBulkTagAssignmentResponse,
     Error,
     FleetBulkTagAssignment
-  >(
-    fleetApi.bulkTagAssignments,
-    {
-      onSuccess: () => queryClient.invalidateQueries(TARGETING_KEY),
-    }
-  );
+  >({
+    mutationFn: fleetApi.bulkTagAssignments,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: TARGETING_KEY }),
+  });
 }
 
 export function useFleetGroups() {
-  return useQuery<FleetGroup[], Error>(
-    [...TARGETING_KEY, 'groups'],
-    fleetApi.groups,
-    { keepPreviousData: true }
-  );
+  return useQuery<FleetGroup[], Error>({
+    queryKey: [...TARGETING_KEY, 'groups'],
+    queryFn: fleetApi.groups,
+    placeholderData: keepPreviousData,
+  });
 }
 
 export function useCreateFleetGroup() {
   const queryClient = useQueryClient();
-  return useMutation<FleetGroup, Error, FleetNamedCreate>(
-    fleetApi.createGroup,
-    {
-      onSuccess: () => queryClient.invalidateQueries(TARGETING_KEY),
-    }
-  );
+  return useMutation<FleetGroup, Error, FleetNamedCreate>({
+    mutationFn: fleetApi.createGroup,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: TARGETING_KEY }),
+  });
 }
 
 export function useUpdateFleetGroup() {
@@ -337,22 +314,18 @@ export function useUpdateFleetGroup() {
     FleetGroup,
     Error,
     { groupId: string; payload: FleetNamedUpdate }
-  >(
-    ({ groupId, payload }) => fleetApi.updateGroup(groupId, payload),
-    {
-      onSuccess: () => queryClient.invalidateQueries(TARGETING_KEY),
-    }
-  );
+  >({
+    mutationFn: ({ groupId, payload }) => fleetApi.updateGroup(groupId, payload),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: TARGETING_KEY }),
+  });
 }
 
 export function useDeactivateFleetGroup() {
   const queryClient = useQueryClient();
-  return useMutation<FleetGroup, Error, string>(
-    fleetApi.deactivateGroup,
-    {
-      onSuccess: () => queryClient.invalidateQueries(TARGETING_KEY),
-    }
-  );
+  return useMutation<FleetGroup, Error, string>({
+    mutationFn: fleetApi.deactivateGroup,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: TARGETING_KEY }),
+  });
 }
 
 export function useUpdateFleetGroupMembers() {
@@ -361,40 +334,36 @@ export function useUpdateFleetGroupMembers() {
     FleetGroupMembershipResponse,
     Error,
     FleetGroupMembershipRequest
-  >(
-    fleetApi.updateGroupMembers,
-    {
-      // Individual membership routes may partially succeed before one request
-      // fails, so always refresh inventory after the batch settles.
-      onSettled: () => queryClient.invalidateQueries(TARGETING_KEY),
-    }
-  );
+  >({
+    mutationFn: fleetApi.updateGroupMembers,
+    // Individual membership routes may partially succeed before one request
+    // fails, so always refresh inventory after the batch settles.
+    onSettled: () => queryClient.invalidateQueries({ queryKey: TARGETING_KEY }),
+  });
 }
 
 export function useFleetCohorts() {
-  return useQuery<FleetCohort[], Error>(
-    [...TARGETING_KEY, 'cohorts'],
-    fleetApi.cohorts,
-    { keepPreviousData: true }
-  );
+  return useQuery<FleetCohort[], Error>({
+    queryKey: [...TARGETING_KEY, 'cohorts'],
+    queryFn: fleetApi.cohorts,
+    placeholderData: keepPreviousData,
+  });
 }
 
 export function useFleetCohort(cohortId: string) {
-  return useQuery<FleetCohort, Error>(
-    [...TARGETING_KEY, 'cohort', cohortId],
-    () => fleetApi.cohort(cohortId),
-    { enabled: Boolean(cohortId) }
-  );
+  return useQuery<FleetCohort, Error>({
+    queryKey: [...TARGETING_KEY, 'cohort', cohortId],
+    queryFn: () => fleetApi.cohort(cohortId),
+    enabled: Boolean(cohortId),
+  });
 }
 
 export function useCreateFleetCohort() {
   const queryClient = useQueryClient();
-  return useMutation<FleetCohort, Error, FleetCohortCreate>(
-    fleetApi.createCohort,
-    {
-      onSuccess: () => queryClient.invalidateQueries(TARGETING_KEY),
-    }
-  );
+  return useMutation<FleetCohort, Error, FleetCohortCreate>({
+    mutationFn: fleetApi.createCohort,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: TARGETING_KEY }),
+  });
 }
 
 export function useUpdateFleetCohort() {
@@ -403,30 +372,27 @@ export function useUpdateFleetCohort() {
     FleetCohort,
     Error,
     { cohortId: string; payload: FleetCohortUpdate }
-  >(
-    ({ cohortId, payload }) => fleetApi.updateCohort(cohortId, payload),
-    {
-      onSuccess: () => queryClient.invalidateQueries(TARGETING_KEY),
-    }
-  );
+  >({
+    mutationFn: ({ cohortId, payload }) =>
+      fleetApi.updateCohort(cohortId, payload),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: TARGETING_KEY }),
+  });
 }
 
 export function useDeactivateFleetCohort() {
   const queryClient = useQueryClient();
-  return useMutation<FleetCohort, Error, string>(
-    fleetApi.deactivateCohort,
-    {
-      onSuccess: () => queryClient.invalidateQueries(TARGETING_KEY),
-    }
-  );
+  return useMutation<FleetCohort, Error, string>({
+    mutationFn: fleetApi.deactivateCohort,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: TARGETING_KEY }),
+  });
 }
 
 export function useFleetInventory() {
-  return useQuery<FleetInventoryResponse, Error>(
-    [...TARGETING_KEY, 'inventory'],
-    fleetApi.inventory,
-    { keepPreviousData: true }
-  );
+  return useQuery<FleetInventoryResponse, Error>({
+    queryKey: [...TARGETING_KEY, 'inventory'],
+    queryFn: fleetApi.inventory,
+    placeholderData: keepPreviousData,
+  });
 }
 
 export function useSubmitAgentRemoteOperation() {
@@ -434,37 +400,39 @@ export function useSubmitAgentRemoteOperation() {
     AgentRemoteOperationSubmission,
     Error,
     SubmitAgentRemoteOperation
-  >(fleetApi.submitRemoteOperation);
+  >({
+    mutationFn: fleetApi.submitRemoteOperation,
+  });
 }
 
 export function useAgentRemoteOperation(
   assetId: string,
   commandId: string
 ) {
-  return useQuery<AgentRemoteOperationCommand, Error>(
-    [FLEET_KEY, 'remote-operation', assetId, commandId],
-    () => fleetApi.remoteOperationStatus(assetId, commandId),
-    {
-      enabled: Boolean(assetId && commandId),
-      refetchInterval: (data) =>
-        data &&
+  return useQuery<AgentRemoteOperationCommand, Error>({
+    queryKey: [FLEET_KEY, 'remote-operation', assetId, commandId],
+    queryFn: () => fleetApi.remoteOperationStatus(assetId, commandId),
+    enabled: Boolean(assetId && commandId),
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      return data &&
         ['completed', 'failed', 'cancelled', 'timeout'].includes(data.status)
-          ? false
-          : 1_500,
-    }
-  );
+        ? false
+        : 1_500;
+    },
+  });
 }
 
 export function useCreateFleetTargetPreview() {
-  return useMutation<FleetTargetPreview, Error, FleetTargetPreviewCreate>(
-    fleetApi.createTargetPreview
-  );
+  return useMutation<FleetTargetPreview, Error, FleetTargetPreviewCreate>({
+    mutationFn: fleetApi.createTargetPreview,
+  });
 }
 
 export function useFleetTargetPreview(previewId: string) {
-  return useQuery<FleetTargetPreview, Error>(
-    [...TARGETING_KEY, 'preview', previewId],
-    () => fleetApi.targetPreview(previewId),
-    { enabled: Boolean(previewId) }
-  );
+  return useQuery<FleetTargetPreview, Error>({
+    queryKey: [...TARGETING_KEY, 'preview', previewId],
+    queryFn: () => fleetApi.targetPreview(previewId),
+    enabled: Boolean(previewId),
+  });
 }
