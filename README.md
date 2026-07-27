@@ -383,7 +383,10 @@ the UI were all already there, only the write was missing — and the component 
 failures. The other three were uncalled and were removed. Notably a hand fix of this exact
 class had already run (FS-15, "routes that never existed") and left these behind.
 
-**Both suites are green: backend 1585 passed, frontend 142 passed, 0 failed.**
+**Both suites are green: backend 1648 passed, frontend 142 passed, 0 failed** — across
+156 backend and 38 frontend test files. Every guard listed above is mutation-tested:
+reintroduce the defect and the test must fail, checked individually, because a guard that
+cannot fail is indistinguishable from one that passes.
 
 **Tenant isolation held everywhere it was pushed on** — entities, sync status,
 integration list/get, events, correlations, and the provider feeding AI analysis
@@ -2522,7 +2525,7 @@ The ERP integration system correlates ERP data with operational telemetry to pro
 
 ## Documentation
 
-- [OmniusGrid Glossary](OMNIUSGRID_GLOSSARY.md) - Backend & Frontend combined terminology reference (400+ terms)
+- [OmniusGrid Glossary](OMNIUSGRID_GLOSSARY.md) - Backend & Frontend combined terminology reference (540+ terms)
 - [Intake Cross-Correlation](docs/INTAKE_CROSS_CORRELATION.md) - PDF/DOCX/image parsing, shared key detection, cross-file correlation
 - [Correlation AI Engine](docs/CORRELATION_AI_ENGINE.md) - Cross-domain AI analysis, synthetic data generation, and Gemma 4 fine-tuning
 - [Hybrid Architecture](HYBRID_ARCHITECTURE.md) - Human-in-the-Loop + Lights Out modes
