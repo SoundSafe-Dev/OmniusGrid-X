@@ -33,6 +33,7 @@ way — because the defect lived in the seam between them.
 
 from __future__ import annotations
 
+import pathlib
 import uuid
 
 import pytest
@@ -237,37 +238,67 @@ class TestItDoesNotLeakToTheNextRequest:
             )
 
 
-class TestTheTestHarnessDoesNotReimplementIt:
-    # Source inspection, no database and no event loop — opt out of the
-    # module-level asyncio mark.
+class TestNoTestDoubleReimplementsIt:
+    """Swept, not spot-checked — the first version of this guard read `conftest`
+    only, and THREE more copies were sitting in individual test modules.
+
+    Source inspection rather than behaviour, on purpose: a reimplementation that
+    happens to be correct today is still the failure mode. It drifts silently,
+    which is exactly what happened.
+    """
+
+    # No database and no event loop — opt out of the module-level asyncio mark.
     pytestmark = []
 
-    def test_the_conftest_override_delegates(self):
-        """The bug was invisible because the override was a copy. If it becomes one
-        again, this whole file goes back to testing something production does not run.
+    @staticmethod
+    def _code_of(text_: str, marker: str) -> str:
+        """Source of the function starting at `marker`, comments stripped.
 
-        Asserts on source text rather than behaviour on purpose: a reimplementation
-        that happens to be correct today is still the failure mode — it can drift
-        tomorrow, silently, exactly as it did before.
+        Comments in the delegating versions explain the defect and quote
+        `set_config`; judging them would flag the fix as the bug.
         """
-        import inspect
-        import pathlib
-
-        source = pathlib.Path(inspect.getfile(TestTheTestHarnessDoesNotReimplementIt))
-        conftest = (source.parent / "conftest.py").read_text()
-        start = conftest.index("async def _override_get_tenant_db")
-        raw = conftest[start:start + 1800]
-        # Comments explain the defect and name `set_config`; judge the CODE only.
-        body = "\n".join(
+        start = text_.index(marker)
+        raw = text_[start:start + 2000]
+        return "\n".join(
             line for line in raw.splitlines() if not line.lstrip().startswith("#")
         )
 
-        assert "tenant_session(" in body, (
-            "the tenant-db override no longer delegates to app.core.tenant."
-            "tenant_session — a hand-copied override mirrors production's bugs and "
-            "hides them from every RLS test in the suite, which is exactly how the "
-            "GUC-lost-on-commit defect survived"
+    def _overriding_files(self):
+        here = pathlib.Path(__file__).parent
+        me = pathlib.Path(__file__).name
+        return [
+            path
+            for path in sorted(here.glob("test_*.py")) + [here / "conftest.py"]
+            # Excluding this file: it quotes the pattern it searches for, so it
+            # matches itself.
+            if path.name != me
+            and "dependency_overrides[get_tenant_db]" in path.read_text()
+        ]
+
+    def test_the_sweep_finds_the_overrides(self):
+        """Vacuity guard. If the discovery breaks, every assertion below passes
+        while checking nothing — which is how three copies survived a guard that
+        only looked at conftest."""
+        found = self._overriding_files()
+        assert len(found) >= 4, (
+            f"only {len(found)} files overriding get_tenant_db discovered: "
+            f"{[p.name for p in found]}"
         )
-        assert "set_config" not in body, (
-            "the override is configuring the GUC itself again instead of delegating"
-        )
+
+    @pytest.mark.parametrize("marker", ["async def _get_tenant_db", "async def _override_get_tenant_db"])
+    def test_every_override_delegates(self, marker):
+        for path in self._overriding_files():
+            source = path.read_text()
+            if marker not in source:
+                continue
+            code = self._code_of(source, marker)
+            assert "tenant_session(" in code, (
+                f"{path.name} overrides get_tenant_db without delegating to "
+                f"app.core.tenant.tenant_session. A hand-copied override mirrors "
+                f"production's bugs and hides them from every test in that file — "
+                f"exactly how the GUC-lost-on-commit defect survived in four places."
+            )
+            assert "set_config" not in code, (
+                f"{path.name} is configuring the tenant GUC itself instead of "
+                f"delegating"
+            )

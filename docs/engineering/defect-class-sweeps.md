@@ -27,7 +27,7 @@ and the seventh out of two failing tests that turned out to share a cause.
 | Silent success | all of `app/` | **1, live** | `test_logistics_sync_dashboard_honesty.py` |
 | A name that claims a side effect | all of `app/` | **1, in the control path** | `test_helper_names_match_behaviour.py` |
 | Data reported as kept, but discarded | quarantine/DLQ paths | **1, live, on ingestion** | `test_edge_ingest_quarantine_retention.py` |
-| A test double that reimplements what it stands in for | the tenant-DB dependency | **1, hiding an RLS bug** | `test_tenant_guc_survives_commit_realdb.py` |
+| A test double that reimplements what it stands in for | every `get_tenant_db` override | **4 copies, hiding an RLS bug** | `test_tenant_guc_survives_commit_realdb.py` |
 
 ---
 
@@ -281,6 +281,16 @@ works. The override now delegates to a shared `tenant_session`, with only the se
 maker injected, and a guard asserts it keeps delegating — checking source text rather
 than behaviour on purpose, because a reimplementation that happens to be correct today
 is still the failure mode.
+
+**And then the sweep found three more.** The first version of that guard read `conftest`
+only. Sweeping every file that overrides `get_tenant_db` turned up byte-identical copies
+of the same buggy body in `test_rul_api`, `test_twin_optimizer_api` and
+`test_historian_api` — **four copies in total**, so the RUL, twin-optimizer and historian
+suites were all still asserting against the defect rather than against production. All
+four now delegate, and the guard sweeps rather than spot-checks: it enumerates every
+overriding file, fails naming the offender, and has a vacuity check because a broken
+discovery would pass while checking nothing — which is precisely how three of the four
+survived the first pass.
 
 **The guard needed a second pass, and this is the part worth remembering.** Written the
 obvious way it *passed against the reintroduced bug*. With a normal pool, `commit()`
