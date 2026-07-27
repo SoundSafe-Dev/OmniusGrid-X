@@ -357,15 +357,19 @@ export const yardApi = {
   },
 
   // Dock Doors
-  getDockDoors: async (workcellId?: string): Promise<DockDoor[]> => {
+  //
+  // No workcell filter. This took a `workcellId` and sent it as `workcell_id`, which
+  // the endpoint does not declare — FastAPI ignores unknown query parameters silently,
+  // so a filtered request would have returned every door and looked like a filtered
+  // result. `dock_doors` has no workcell column at all, so the filter could never have
+  // been honoured; only the mock branch, filtering fixture data on a field the real
+  // model lacks, made it look implemented. The one caller passes nothing.
+  getDockDoors: async (): Promise<DockDoor[]> => {
     if (USE_MOCK) {
       await delay(MOCK_DELAY);
-      if (workcellId) {
-        return mockDockDoors.filter(d => d.workcellId === workcellId);
-      }
       return mockDockDoors;
     }
-    const response = await api.get<DockDoor[]>('/api/v1/yard/dock/doors', { params: { workcell_id: workcellId } });
+    const response = await api.get<DockDoor[]>('/api/v1/yard/dock/doors');
     return response.data;
   },
 

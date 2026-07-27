@@ -277,7 +277,7 @@ operator sees "showing the most recent 10 of more than 10" instead of a confiden
 answer. Verified end to end: 149 rows synced from live Dataverse, `?limit=10` returns 10
 with `X-Result-Truncated: true`.
 
-**Eight defect classes have now been swept platform-wide** — recorded in
+**Nine defect classes have now been swept platform-wide** — recorded in
 [`docs/engineering/defect-class-sweeps.md`](docs/engineering/defect-class-sweeps.md) with
 what each found and which guard keeps it closed. Four started in ERP; the last four came
 out of the ones before them. Two came back clean, which is worth writing down: "proven
@@ -303,11 +303,19 @@ unanalysable appointment as "not on time" asserts something we failed to determi
 are surfaced as `analysis_failed_count`. A test pins the invariant that the buckets sum to
 the total.
 
-**Swept platform-wide afterwards, and found clean.** The response-model defect above was
-the obvious candidate to exist elsewhere, so it was checked across all 61 API modules —
-11 response/ORM pairs, 124 fields, **zero offenders**. Worth recording as a result: those
-routers are now proven correct rather than merely untested, and
-`test_api_response_schema_matches_columns.py` fails the moment that changes.
+**Swept platform-wide afterwards — and the sweep itself was wrong.** The response-model
+defect above was checked across all 61 API modules and reported **zero offenders**. That
+result did not hold. The detector skipped any column with a *Python-side* ORM default (it
+fills the value only for rows written through SQLAlchemy — a migration, a seeder or a raw
+`INSERT` leaves NULL), and it never paired response models a router imports from
+`app/models/schemas.py`. Corrected, the same sweep finds **40 pairs across 16 routers, 603
+fields, 158 offenders**.
+
+It surfaced the way these things do: a raw-inserted dock door made
+`GET /api/v1/yard/dock/doors` return a live 500 — *"equipment_capabilities: Input should be
+a valid dictionary"*, a validation error naming our schema rather than the data. That one
+is fixed; the remaining 157 are held in a shrink-only baseline, because the right fix is
+server defaults in a migration rather than weakening 157 response contracts.
 
 The first version of that scan reported 8 defects. Testing one against real Postgres
 returned HTTP 200 instead of the predicted 500 — the detector checked

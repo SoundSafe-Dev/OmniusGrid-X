@@ -14,7 +14,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The eight classes
+## The nine classes
 
 The first five were all originally found in ERP. The sixth came out of the fifth, the
 seventh out of two failing tests that turned out to share a cause, and the eighth out of
@@ -23,7 +23,7 @@ to the frontend/backend seam.
 
 | Class | Swept | Found elsewhere | Guard |
 |---|---|---|---|
-| Response model stricter than its columns | all 61 API modules | **none** | `test_api_response_schema_matches_columns.py` |
+| Response model stricter than its columns | all 61 API modules | **158 — the first sweep was wrong** | `test_api_response_schema_matches_columns.py` |
 | Pagination truncation | list endpoints | **3 ERP endpoints** | `test_erp_platform_integration_realdb.py` |
 | Invented vendor endpoints | all 8 connectors | ERP only | `test_erp_no_invented_endpoints.py` |
 | Silent success | all of `app/` | **1, live** | `test_logistics_sync_dashboard_honesty.py` |
@@ -31,19 +31,45 @@ to the frontend/backend seam.
 | Data reported as kept, but discarded | quarantine/DLQ paths | **1, live, on ingestion** | `test_edge_ingest_quarantine_retention.py` |
 | A test double that reimplements what it stands in for | every `get_tenant_db` override | **4 copies, hiding an RLS bug** | `test_tenant_guc_survives_commit_realdb.py` |
 | Frontend calling endpoints the backend does not serve | all 183 real-mode API calls | **4, one wired to a live button** | `test_frontend_calls_real_endpoints.py` |
+| Query parameters the endpoint does not declare | 37 param-sending calls | **2, plus 4 IDOR-shaped endpoints** | `test_frontend_query_params_are_declared.py` |
 
 ---
 
-## 1. A response model stricter than its columns — **clean**
+## 1. A response model stricter than its columns — **158, and the first sweep missed them**
 
 A required response field over a nullable, defaultless column means a valid row cannot be
 serialised: pydantic raises inside the handler and FastAPI returns 500, naming a
 validation error in *our schema* rather than the data. It cost four ERP endpoints at once,
 because create, list, get and update all built the same model.
 
-**Swept:** every response model in `app/api/` paired to its own ORM model — 11 pairs
-across 7 routers, 124 fields.
-**Found:** nothing. The ERP models were the only offenders.
+**Swept:** every response model in `app/api/` paired to its own ORM model.
+
+**This sweep was reported clean, and that was wrong.** It found 11 pairs across 7
+routers; the corrected version finds **40 pairs across 16 routers, 603 fields, and 158
+offenders**. Two exclusions were at fault, and both looked reasonable:
+
+- It skipped any column with a **Python-side ORM default**, on the reasoning that the
+  ORM fills it. It fills it only for rows written *through SQLAlchemy* — a migration, a
+  seeder or any raw `INSERT` leaves NULL. 148 of the 158 are this shape.
+- It required `obj.__module__ == module.__name__`, which skipped every response model a
+  router imports from `app/models/schemas.py` — where a large share of them live.
+
+**The class is real, not theoretical.** A raw-inserted dock door made
+`GET /api/v1/yard/dock/doors` return a live 500: *"equipment_capabilities: Input should
+be a valid dictionary"* — a validation error naming our schema rather than the data, so
+nobody would think to look at the row. `DockDoorResponse` now mirrors its columns, with
+the overrides on the response model so create/update keep their stricter types.
+
+A pydantic default does not rescue this either: the ORM hands the field an explicit
+`None` rather than omitting it, so the default never applies. The corrected check tests
+optionality of the annotation, not `is_required()`.
+
+**The remaining 157 are recorded in a shrink-only baseline rather than fixed here.**
+Weakening 157 response fields to `Optional` would degrade the contract every client codes
+against; the right fix runs the other way — server defaults in a migration so the
+database enforces what the ORM already assumes, exactly as 044/045 did for
+`created_at`/`updated_at`. The baseline fails on a new offender AND on an entry that no
+longer offends, so it cannot quietly become permanent.
 
 **The first scan was wrong, and the error is worth remembering.** It reported 8 defects.
 Testing one against real Postgres returned HTTP 200, not the predicted 500 — the
@@ -368,6 +394,48 @@ over: it had also read `` `/x/entities${q}` `` — a query string glued to a pat
 path segment, inventing a fifth missing endpoint. A path parameter is always preceded by a
 slash; the glued form is a suffix. `TestTheExtractor` runs first for exactly this reason.
 
+## 9. Query parameters the endpoint does not declare — **2, and they exposed 4 more**
+
+Class 8 checks that the path exists. This checks what is sent to it, and the failure is
+quieter: **FastAPI ignores unknown query parameters silently.** A misspelled or invented
+filter does not error — the endpoint returns the UNFILTERED set, and the caller renders it
+as a filtered result. No stack trace; just the wrong rows.
+
+**Swept:** every frontend call whose parameter keys are statically resolvable — a literal
+`?a=b` or a `params: { … }` object literal. **37 calls checked, 1 skipped** (params passed
+as a variable, which is reported rather than guessed at).
+
+**Found two, wrong in different ways.** `yard.getDockDoors` sent `workcell_id`, which the
+endpoint does not declare — and `dock_doors` has no workcell column, so it could never
+have been honoured. Only the mock branch, filtering fixture data on a field the real model
+lacks, made the feature look implemented.
+
+`nlpCorrelation.chat` sent `conversation_history` as a query parameter with a `null` body.
+The handler declares it `Optional[List[Dict[str, str]]]`, and FastAPI reads complex types
+from the **body** — so the server received `None` every time, while the endpoint's
+docstring promised it "maintains conversation context for multi-turn queries". It had no
+context to maintain. Now sent as the body; `message` genuinely is a query parameter and
+stayed.
+
+**The sweep then exposed something bigger than what it asserts.** Four yard GETs —
+`/trailers`, `/dock/doors`, `/dock/appointments`, `/dwell-times` — took `organization_id`
+as a **required, client-supplied query parameter** and used it directly in the `WHERE`
+clause. That is the IDOR shape `app/core/tenant.py` exists to forbid ("endpoints must
+NEVER trust a client-supplied organization_id"), with RLS the only thing standing between
+it and a cross-tenant read — defence in depth doing the whole job rather than backing
+something up.
+
+They were also simply broken: the parameter was required and **no frontend call sent it**,
+so all four returned 422 to every request the UI made. Four endpoints the yard page calls,
+none of which could ever have answered. They now derive the org from the token;
+`test_yard_tenant_scoping_realdb.py` pins that supplying someone else's `organization_id`
+changes nothing in either direction.
+
+**And fixing them surfaced class 1 all over again.** Seeding a dock door with a raw
+`INSERT` — the case a Python-side ORM default does not cover — made the endpoint return a
+live 500 on `equipment_capabilities`. That is what exposed the two holes in the class-1
+detector, and the reason its "clean" result above is now a correction.
+
 ---
 
 ## Writing a sweep that is worth trusting
@@ -386,6 +454,15 @@ one of its findings. The habit that catches it:
    meant.
 5. **Record a negative result.** It is the only thing that stops the next person redoing
    the work.
+6. **Distrust a clean result from a detector with exclusions.** Every exclusion is a
+   claim about what cannot happen, and class 1's two — "a Python-side default makes a
+   column safe" and "a response model lives in its router's module" — were both false.
+   A sweep that finds nothing should be read as *"nothing, within these exclusions"*, and
+   the exclusions are the part to attack.
+7. **Fix forward, not down.** When a corrected sweep surfaces 158 pre-existing offenders,
+   weakening 158 contracts to make the guard pass is the wrong direction. Record a
+   shrink-only baseline that fails on a new offender AND on a stale entry, and fix the
+   cause — here, server defaults in the database.
 
 ---
 

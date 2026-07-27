@@ -234,18 +234,33 @@ class DockDoorCreate(DockDoorBase):
 
 class DockDoorUpdate(BaseModel):
     status: Optional[str] = None
-    equipment_capabilities: Optional[Dict[str, Any]] = None
+    equipment_capabilities: Dict[str, Any] = {}
     is_active: Optional[bool] = None
     current_trailer_id: Optional[UUID] = None
 
 
 class DockDoorResponse(DockDoorBase):
+    # These five are nullable on `dock_doors` with NO server default, so they override
+    # the stricter request-side types in DockDoorBase. Their ORM `default=` is
+    # PYTHON-side: it fires only for rows written through SQLAlchemy, so a migration,
+    # a seeder or any raw INSERT leaves NULL — and a pydantic default does not save
+    # you, because the ORM hands the field an explicit None rather than omitting it.
+    #
+    # Not hypothetical: a raw-inserted dock door made GET /yard/dock/doors return 500
+    # with "equipment_capabilities: Input should be a valid dictionary" — a validation
+    # error naming OUR schema rather than the data, so nobody would think to look at
+    # the row. Overridden here rather than in DockDoorBase so create/update keep
+    # requiring them.
+    status: Optional[str] = None
+    equipment_capabilities: Optional[Dict[str, Any]] = None
+    is_active: Optional[bool] = None
+
     id: UUID
     organization_id: UUID
     current_trailer_id: Optional[UUID]
     last_occupied_at: Optional[datetime]
-    created_at: datetime
-    updated_at: datetime
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
 

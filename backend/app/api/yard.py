@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import get_current_active_user
 from app.core.pagination import PaginatedResponse, paginate
 from app.db.database import get_db  # noqa: F401  (kept for any non-tenant reads)
-from app.middleware.tenant_isolation import get_tenant_db
+from app.middleware.tenant_isolation import get_tenant_db, get_tenant_org_id
 from app.db.models import (
     YardTrailer, DockDoor, YardMove, DriverWaitTime,
     DockAppointment, YardCheckPoint, Carrier
@@ -100,7 +100,15 @@ async def trailer_check_out(
 
 @router.get("/trailers", response_model=PaginatedResponse[Dict[str, Any]])
 async def get_yard_inventory(
-    organization_id: UUID,
+    # organization_id comes from the TOKEN, not the query string. It was a
+    # required client-supplied query parameter — the IDOR shape this codebase
+    # forbids (see app/core/tenant.py), and the WHERE clause below used the
+    # caller's value directly. RLS was the only thing standing between that and a
+    # cross-tenant read.
+    #
+    # It was also simply broken: being required with no default, every frontend
+    # call — none of which sent it — got a 422.
+    organization_id: UUID = Depends(get_tenant_org_id),
     status: Optional[str] = Query(None, description="Filter by status: checked_in, docked, yard"),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
@@ -188,7 +196,15 @@ async def create_dock_door(
 
 @router.get("/dock/doors", response_model=List[DockDoorResponse])
 async def get_dock_doors(
-    organization_id: UUID,
+    # organization_id comes from the TOKEN, not the query string. It was a
+    # required client-supplied query parameter — the IDOR shape this codebase
+    # forbids (see app/core/tenant.py), and the WHERE clause below used the
+    # caller's value directly. RLS was the only thing standing between that and a
+    # cross-tenant read.
+    #
+    # It was also simply broken: being required with no default, every frontend
+    # call — none of which sent it — got a 422.
+    organization_id: UUID = Depends(get_tenant_org_id),
     status: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_tenant_db)
 ):
@@ -253,7 +269,15 @@ async def create_dock_appointment(
 
 @router.get("/dock/appointments", response_model=List[Dict[str, Any]])
 async def get_dock_schedule(
-    organization_id: UUID,
+    # organization_id comes from the TOKEN, not the query string. It was a
+    # required client-supplied query parameter — the IDOR shape this codebase
+    # forbids (see app/core/tenant.py), and the WHERE clause below used the
+    # caller's value directly. RLS was the only thing standing between that and a
+    # cross-tenant read.
+    #
+    # It was also simply broken: being required with no default, every frontend
+    # call — none of which sent it — got a 422.
+    organization_id: UUID = Depends(get_tenant_org_id),
     start_date: datetime = Query(default_factory=lambda: datetime.now(timezone.utc)),
     end_date: Optional[datetime] = Query(None),
     dock_door_id: Optional[UUID] = None,
@@ -355,7 +379,15 @@ async def complete_yard_move(
 
 @router.get("/dwell-times", response_model=List[DwellTimeAnalytics])
 async def get_dwell_time_analytics(
-    organization_id: UUID,
+    # organization_id comes from the TOKEN, not the query string. It was a
+    # required client-supplied query parameter — the IDOR shape this codebase
+    # forbids (see app/core/tenant.py), and the WHERE clause below used the
+    # caller's value directly. RLS was the only thing standing between that and a
+    # cross-tenant read.
+    #
+    # It was also simply broken: being required with no default, every frontend
+    # call — none of which sent it — got a 422.
+    organization_id: UUID = Depends(get_tenant_org_id),
     start_date: datetime = Query(default_factory=lambda: datetime.now(timezone.utc) - timedelta(days=7)),
     end_date: Optional[datetime] = Query(None),
     db: AsyncSession = Depends(get_tenant_db)
