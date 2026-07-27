@@ -23,7 +23,7 @@ to the frontend/backend seam.
 
 | Class | Swept | Found elsewhere | Guard |
 |---|---|---|---|
-| Response model stricter than its columns | all 61 API modules | **158 — the first sweep was wrong** | `test_api_response_schema_matches_columns.py` |
+| Response model stricter than its columns | all 61 API modules | **49 real, now 0 — the sweep was wrong twice** | `test_api_response_schema_matches_columns.py` |
 | Pagination truncation | list endpoints | **3 ERP endpoints** | `test_erp_platform_integration_realdb.py` |
 | Invented vendor endpoints | all 8 connectors | ERP only | `test_erp_no_invented_endpoints.py` |
 | Silent success | all of `app/` | **1, live** | `test_logistics_sync_dashboard_honesty.py` |
@@ -35,7 +35,7 @@ to the frontend/backend seam.
 
 ---
 
-## 1. A response model stricter than its columns — **158, and the first sweep missed them**
+## 1. A response model stricter than its columns — **49 real, now zero; the sweep was wrong twice**
 
 A required response field over a nullable, defaultless column means a valid row cannot be
 serialised: pydantic raises inside the handler and FastAPI returns 500, naming a
@@ -64,12 +64,29 @@ A pydantic default does not rescue this either: the ORM hands the field an expli
 `None` rather than omitting it, so the default never applies. The corrected check tests
 optionality of the annotation, not `is_required()`.
 
-**The remaining 157 are recorded in a shrink-only baseline rather than fixed here.**
-Weakening 157 response fields to `Optional` would degrade the contract every client codes
-against; the right fix runs the other way — server defaults in a migration so the
-database enforces what the ORM already assumes, exactly as 044/045 did for
-`created_at`/`updated_at`. The baseline fails on a new offender AND on an entry that no
-longer offends, so it cannot quietly become permanent.
+**Then the corrected sweep was wrong in the other direction, by a factor of three.** It
+read `column.server_default` off the ORM metadata — and **109 of the 158 columns already
+have a database default**, added by migration 044 and never mirrored back into the ORM
+declaration. The application's opinion of the schema is not the schema. Those columns can
+never be NULL from any INSERT, so they were never at risk.
+
+The check now reads `information_schema` from the migrated database. **The true count was
+49**, and it is now **zero**:
+
+- **39 were given server defaults by migration 050** — all in the logistics/yard tables
+  that 044 did not reach, each default taken from the ORM's own `default=` so the
+  database now enforces exactly what the application already assumed. Unlike 044, these
+  backfill existing NULLs: a NULL `is_active` or `status` is a missing value, not an
+  unknown moment, so writing the documented default is a correction rather than an
+  invention.
+- **10 are nullable with no default anywhere** — mostly optional foreign keys
+  (`dock_door_id`, `trailer_id`, `driver_id`, `shipment_id`). Their response fields now
+  mirror the columns, overridden on the response model so create/update keep the
+  stricter types.
+
+The shrink-only baseline is gone with them. It was the right instrument for what the
+evidence looked like at the time, and the wrong one once the evidence was measured
+properly — most of what it recorded described columns that were never broken.
 
 **The first scan was wrong, and the error is worth remembering.** It reported 8 defects.
 Testing one against real Postgres returned HTTP 200, not the predicted 500 — the
@@ -454,12 +471,17 @@ one of its findings. The habit that catches it:
    meant.
 5. **Record a negative result.** It is the only thing that stops the next person redoing
    the work.
-6. **Distrust a clean result from a detector with exclusions.** Every exclusion is a
+6. **Ask the system, not the model of the system.** A guard that reads ORM metadata is
+   reporting what the declaration claims. This one flagged 158 fields because it trusted
+   `column.server_default`, while the database — the thing that actually decides whether
+   an INSERT can write NULL — had defaulted 109 of them. Where a real instance is
+   reachable, read it.
+7. **Distrust a clean result from a detector with exclusions.** Every exclusion is a
    claim about what cannot happen, and class 1's two — "a Python-side default makes a
    column safe" and "a response model lives in its router's module" — were both false.
    A sweep that finds nothing should be read as *"nothing, within these exclusions"*, and
    the exclusions are the part to attack.
-7. **Fix forward, not down.** When a corrected sweep surfaces 158 pre-existing offenders,
+8. **Fix forward, not down.** When a corrected sweep surfaces a pile of pre-existing offenders,
    weakening 158 contracts to make the guard pass is the wrong direction. Record a
    shrink-only baseline that fails on a new offender AND on a stale entry, and fix the
    cause — here, server defaults in the database.

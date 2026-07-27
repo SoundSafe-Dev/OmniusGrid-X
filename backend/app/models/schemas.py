@@ -280,9 +280,14 @@ class YardMoveCreate(YardMoveBase):
 
 
 class YardMoveResponse(YardMoveBase):
+    # Mirrors the columns: nullable on the table with NO server default, so a row
+    # written outside SQLAlchemy (migration, seeder, raw INSERT) hands these an
+    # explicit None. A pydantic default does not help — the ORM passes the None
+    # rather than omitting the field. Response-only; create/update keep their
+    # stricter types.
     id: UUID
     organization_id: UUID
-    trailer_id: UUID
+    trailer_id: Optional[UUID] = None
     jockey_driver_id: Optional[UUID]
     started_at: datetime
     completed_at: Optional[datetime]
@@ -314,9 +319,14 @@ class DriverWaitTimeCreate(DriverWaitTimeBase):
 
 
 class DriverWaitTimeResponse(DriverWaitTimeBase):
+    # Mirrors the columns: nullable on the table with NO server default, so a row
+    # written outside SQLAlchemy (migration, seeder, raw INSERT) hands these an
+    # explicit None. A pydantic default does not help — the ORM passes the None
+    # rather than omitting the field. Response-only; create/update keep their
+    # stricter types.
     id: UUID
     organization_id: UUID
-    driver_id: UUID
+    driver_id: Optional[UUID] = None
     trailer_id: Optional[UUID]
     updated_at: datetime
     created_at: datetime
@@ -339,9 +349,14 @@ class YardCheckPointCreate(YardCheckPointBase):
 
 
 class YardCheckPointResponse(YardCheckPointBase):
+    # Mirrors the columns: nullable on the table with NO server default, so a row
+    # written outside SQLAlchemy (migration, seeder, raw INSERT) hands these an
+    # explicit None. A pydantic default does not help — the ORM passes the None
+    # rather than omitting the field. Response-only; create/update keep their
+    # stricter types.
     id: UUID
     organization_id: UUID
-    trailer_id: UUID
+    trailer_id: Optional[UUID] = None
     passed_at: datetime
     created_at: datetime
 
@@ -490,6 +505,12 @@ class ShipmentUpdate(BaseModel):
 
 
 class ShipmentResponse(ShipmentBase):
+    # Mirrors the columns: nullable on the table with NO server default, so a row
+    # written outside SQLAlchemy (migration, seeder, raw INSERT) hands these an
+    # explicit None. A pydantic default does not help — the ORM passes the None
+    # rather than omitting the field. Response-only; create/update keep their
+    # stricter types.
+    shipment_type: Optional[str] = None
     id: UUID
     organization_id: UUID
     carrier_id: Optional[UUID]
@@ -528,6 +549,12 @@ class RouteUpdate(BaseModel):
 
 
 class RouteResponse(RouteBase):
+    # Mirrors the columns: nullable on the table with NO server default, so a row
+    # written outside SQLAlchemy (migration, seeder, raw INSERT) hands these an
+    # explicit None. A pydantic default does not help — the ORM passes the None
+    # rather than omitting the field. Response-only; create/update keep their
+    # stricter types.
+    optimization_criteria: Optional[str] = None
     id: UUID
     organization_id: UUID
     created_at: datetime
@@ -555,9 +582,14 @@ class LoadPlanCreate(LoadPlanBase):
 
 
 class LoadPlanResponse(LoadPlanBase):
+    # Mirrors the columns: nullable on the table with NO server default, so a row
+    # written outside SQLAlchemy (migration, seeder, raw INSERT) hands these an
+    # explicit None. A pydantic default does not help — the ORM passes the None
+    # rather than omitting the field. Response-only; create/update keep their
+    # stricter types.
     id: UUID
     organization_id: UUID
-    shipment_id: UUID
+    shipment_id: Optional[UUID] = None
     trailer_id: Optional[UUID]
     planned_by: Optional[UUID]
     planned_at: datetime
@@ -590,9 +622,14 @@ class FreightChargeCreate(FreightChargeBase):
 
 
 class FreightChargeResponse(FreightChargeBase):
+    # Mirrors the columns: nullable on the table with NO server default, so a row
+    # written outside SQLAlchemy (migration, seeder, raw INSERT) hands these an
+    # explicit None. A pydantic default does not help — the ORM passes the None
+    # rather than omitting the field. Response-only; create/update keep their
+    # stricter types.
     id: UUID
     organization_id: UUID
-    shipment_id: UUID
+    shipment_id: Optional[UUID] = None
     carrier_id: Optional[UUID]
     approved_by: Optional[UUID]
     created_at: datetime
@@ -634,9 +671,15 @@ class DockAppointmentUpdate(BaseModel):
 
 
 class DockAppointmentResponse(DockAppointmentBase):
+    # Mirrors the columns: nullable on the table with NO server default, so a row
+    # written outside SQLAlchemy (migration, seeder, raw INSERT) hands these an
+    # explicit None. A pydantic default does not help — the ORM passes the None
+    # rather than omitting the field. Response-only; create/update keep their
+    # stricter types.
+    appointment_type: Optional[str] = None
     id: UUID
     organization_id: UUID
-    dock_door_id: UUID
+    dock_door_id: Optional[UUID] = None
     trailer_id: Optional[UUID]
     shipment_id: Optional[UUID]
     operation_id: Optional[UUID]
@@ -926,6 +969,12 @@ class TaskCommentCreate(TaskCommentBase):
 
 
 class TaskCommentResponse(TaskCommentBase):
+    # Mirrors the columns: nullable on the table with NO server default, so a row
+    # written outside SQLAlchemy (migration, seeder, raw INSERT) hands these an
+    # explicit None. A pydantic default does not help — the ORM passes the None
+    # rather than omitting the field. Response-only; create/update keep their
+    # stricter types.
+    content: Optional[str] = None
     id: UUID
     task_id: UUID
     user_id: Optional[UUID]

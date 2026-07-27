@@ -11,15 +11,31 @@ in our schema rather than the data, so nobody would think to look at the row.
 models. This file does the same thing for **every** response model in `app/api/` by
 discovering the pairs, so a new router cannot introduce the bug without being noticed.
 
-WHAT IT DOES NOT CLAIM. It only inspects models it can confidently pair with an ORM
-model by name (`FooResponse` -> `Foo`) and fields whose names match a column. A handler
-that synthesises a value (`configuration.get("x", "")`) is out of scope, because there
-the handler is the guarantee. `test_no_pair_is_vacuous` keeps the discovery honest: if
-the pairing ever finds nothing, the whole file would pass while checking zero fields.
+THIS FILE HAS BEEN WRONG TWICE, IN OPPOSITE DIRECTIONS, and both are worth knowing
+because each looked like a reasonable simplification at the time.
 
-WHEN THIS WAS WRITTEN IT FOUND NOTHING, and that is the point of recording it. The ERP
-models were the only offenders and were already fixed. Running it now proves the rest of
-the API is clean rather than untested, and it fails the moment that stops being true.
+**It under-reported, and claimed the whole API was clean.** Two exclusions were at
+fault: it skipped any column carrying a PYTHON-side ORM default — which fires only for
+rows written through SQLAlchemy, so a migration, a seeder or a raw INSERT still leaves
+NULL — and it required `obj.__module__ == module.__name__`, which skipped every response
+model a router imports from `app/models/schemas.py`. A raw-inserted dock door then
+returned a live 500: *"equipment_capabilities: Input should be a valid dictionary"*.
+
+**Then it over-reported, by a factor of three.** Corrected, it flagged 158 fields — but
+it was reading `column.server_default` off the ORM metadata, and **109 of those columns
+do have a database default**, added by migration 044 and never mirrored back into the ORM
+declaration. The application's opinion of the schema is not the schema.
+
+So it now reads `information_schema` from the migrated database. The true count was 49:
+39 given server defaults by migration 050, and 10 nullable columns with no default
+anywhere, whose response fields now mirror them. **Zero remain**, and the 158-entry
+baseline is gone — most of it described columns that were never at risk.
+
+WHAT IT DOES NOT CLAIM. It only inspects models it can pair with an ORM model by name
+(`FooResponse` -> `Foo`) and fields whose names match a column. A handler that
+synthesises a value (`configuration.get("x", "")`) is out of scope, because there the
+handler is the guarantee. The vacuity tests keep the discovery honest: if the pairing
+ever finds nothing, the file would pass while checking zero fields.
 """
 
 from __future__ import annotations
@@ -111,235 +127,60 @@ def _discover() -> List[Tuple[str, Any, Any]]:
 PAIRS = _discover()
 
 
-def _offenders() -> List[str]:
-    """Fields that are required in the response but can genuinely be NULL on the row.
+def _real_column_defaults(sync_url: str) -> Dict[str, Any]:
+    """{"table.column": default expression} straight from the migrated database.
 
-    A column with a default — Python-side or server-side — is excluded: the ORM or the
-    database fills it, so a required response field is safe. Only a nullable column with
-    NO default can actually hand pydantic a None.
+    THE SCHEMA, NOT THE ORM'S OPINION OF IT. Reading `column.server_default` off the
+    model reports what the declaration says, and the two diverge: migration 044 added
+    `DEFAULT NOW()` to timestamp columns across 30 tables without mirroring it back into
+    the ORM. Trusting the model flagged 158 fields, of which 109 were columns the
+    database already defaults and no INSERT can leave NULL.
+    """
+    import psycopg2
+
+    connection = psycopg2.connect(sync_url)
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT table_name, column_name, column_default "
+                "FROM information_schema.columns WHERE table_schema = 'public'"
+            )
+            return {f"{t}.{c}": d for t, c, d in cursor.fetchall()}
+    finally:
+        connection.close()
+
+
+def _offenders(real_defaults: Dict[str, Any]) -> List[str]:
+    """Fields required in the response that a real row can genuinely hand a None.
+
+    Safe means the DATABASE fills the column. A Python-side ORM default does not count:
+    it fires only for rows written through SQLAlchemy, so a migration, a seeder or any
+    raw INSERT still writes NULL.
+
+    A pydantic default does not rescue it either — the ORM passes the attribute's
+    explicit None rather than omitting the field, so the default never applies and
+    validation runs against None. Hence the test is `is_optional` on the annotation, not
+    `is_required`: a field with a default but a non-optional type still fails.
     """
     bad: List[str] = []
     for module_name, response_model, orm_class in PAIRS:
         columns = _columns(orm_class)
+        table = getattr(orm_class, "__tablename__", None)
         for field_name, field in response_model.model_fields.items():
             column = columns.get(field_name)
             if column is None or not column.nullable:
                 continue
-            # ONLY a server default makes a nullable column safe. This used to skip
-            # `column.default is not None` as well — a PYTHON-side ORM default, which
-            # fires only for rows written through SQLAlchemy. A migration, a seeder or
-            # any raw INSERT leaves NULL, and then the response model cannot serialise
-            # the row.
-            #
-            # That exclusion is why this file reported the whole API clean while
-            # `DockDoorResponse.equipment_capabilities` (nullable, `default={}`,
-            # no server default) returned a live 500 on a raw-inserted dock door.
-            if column.server_default is not None:
+            if real_defaults.get(f"{table}.{field_name}") is not None:
                 continue
-            # A pydantic default does NOT rescue this either: the ORM hands the field
-            # an explicit None rather than omitting it, so the default never applies
-            # and validation runs against None. Hence `is_optional`, not
-            # `is_required`, is the test that matters — a field with a default but a
-            # non-optional type still fails.
             if not is_optional(field.annotation):
                 bad.append(
                     f"{module_name}.{response_model.__name__}.{field_name} "
-                    f"(column {orm_class.__name__}.{field_name} is nullable with no default)"
+                    f"(column {table}.{field_name} is nullable with no server default)"
                 )
     return bad
 
 
 
-# ---------------------------------------------------------------------------
-# Pre-existing offenders, recorded rather than hidden.
-#
-# WHY THERE IS A BASELINE AT ALL. This file used to assert zero offenders and
-# passed — but it was excluding any column with a PYTHON-side ORM default, and
-# it never paired response models that a router imports from
-# `app/models/schemas.py`. Both exclusions were wrong, and correcting them took
-# the count from 0 to 158 across 30 response models. The earlier "the rest of the
-# API is clean" claim was true only of a much narrower scope than it described.
-#
-# THE CLASS IS REAL, not theoretical: `DockDoorResponse.equipment_capabilities`
-# (nullable, `default={}`, no server default) returned a live 500 —
-# "Input should be a valid dictionary" — on a dock door written by a raw INSERT.
-# A Python-side default fires only for rows written through SQLAlchemy; a
-# migration, a seeder or any raw INSERT leaves NULL. That one is fixed.
-#
-# 148 of the 158 are that shape; 10 have no default at all and are the most
-# certain to bite.
-#
-# WHY NOT FIX THEM HERE. Weakening 158 response fields to Optional would degrade
-# the contract every client codes against. The right fix is the opposite
-# direction — server defaults in a migration, so the database enforces what the
-# ORM already assumes, exactly as migrations 044/045 did for created_at/updated_at.
-# That is a schema change with its own review, not a side effect of correcting a
-# detector.
-#
-# THIS LIST MAY ONLY SHRINK. A new offender fails the build, and fixing one
-# without removing it from the list fails too, so it cannot quietly become
-# permanent.
-
-KNOWN_OFFENDERS = frozenset({
-    "alarms.AlarmResponse.is_acknowledged",
-    "alarms.AlarmResponse.is_active",
-    "analysis_sessions.SessionMessageResponse.timestamp",
-    "assets.AssetResponse.connection_config",
-    "assets.AssetResponse.created_at",
-    "assets.AssetResponse.current_packml_state",
-    "assets.AssetResponse.is_active",
-    "assets.AssetResponse.media_config",
-    "assets.AssetResponse.updated_at",
-    "assets.AssetTypeResponse.action_space",
-    "assets.AssetTypeResponse.created_at",
-    "assets.AssetTypeResponse.packml_config",
-    "assets.AssetTypeResponse.telemetry_schema",
-    "commands.CommandResponse.status",
-    "kanban.TaskBoardResponse.board_type",
-    "kanban.TaskBoardResponse.created_at",
-    "kanban.TaskBoardResponse.default_view_config",
-    "kanban.TaskBoardResponse.is_active",
-    "kanban.TaskBoardResponse.updated_at",
-    "kanban.TaskColumnResponse.auto_archive_days",
-    "kanban.TaskColumnResponse.color",
-    "kanban.TaskColumnResponse.created_at",
-    "kanban.TaskColumnResponse.is_collapsed",
-    "kanban.TaskColumnResponse.updated_at",
-    "kanban.TaskColumnResponse.wip_limit",
-    "kanban.TaskCommentResponse.comment_type",
-    "kanban.TaskCommentResponse.content",
-    "kanban.TaskCommentResponse.created_at",
-    "kanban.TaskCommentResponse.extra_data",
-    "kanban.TaskEscalationResponse.actions_taken",
-    "kanban.TaskEscalationResponse.notification_channels",
-    "kanban.TaskEscalationResponse.notified_users",
-    "kanban.TaskEscalationResponse.triggered_at",
-    "kanban.TaskResponse.approval_status",
-    "kanban.TaskResponse.checklist_items",
-    "kanban.TaskResponse.completion_actions",
-    "kanban.TaskResponse.completion_result",
-    "kanban.TaskResponse.created_at",
-    "kanban.TaskResponse.custom_fields",
-    "kanban.TaskResponse.position",
-    "kanban.TaskResponse.priority",
-    "kanban.TaskResponse.progress_percent",
-    "kanban.TaskResponse.status",
-    "kanban.TaskResponse.tags",
-    "kanban.TaskResponse.time_logged_minutes",
-    "kanban.TaskResponse.updated_at",
-    "kanban.TaskRuleResponse.assignee_rule",
-    "kanban.TaskRuleResponse.auto_approve_emergency",
-    "kanban.TaskRuleResponse.auto_approve_timeout_minutes",
-    "kanban.TaskRuleResponse.completion_actions",
-    "kanban.TaskRuleResponse.created_at",
-    "kanban.TaskRuleResponse.escalation_config",
-    "kanban.TaskRuleResponse.is_active",
-    "kanban.TaskRuleResponse.is_system_rule",
-    "kanban.TaskRuleResponse.notify_users",
-    "kanban.TaskRuleResponse.task_template",
-    "kanban.TaskRuleResponse.trigger_conditions",
-    "kanban.TaskRuleResponse.updated_at",
-    "kanban.TaskTimerResponse.created_at",
-    "kanban.TaskTimerResponse.duration_minutes",
-    "kanban.TaskTimerResponse.is_running",
-    "logistics_correlation.LoadQualityLogResponse.carrier_liable",
-    "logistics_correlation.LoadQualityLogResponse.claim_filed",
-    "logistics_correlation.LoadQualityLogResponse.created_at",
-    "logistics_correlation.LoadQualityLogResponse.updated_at",
-    "logistics_correlation.TruckAssetCorrelationResponse.created_at",
-    "logistics_correlation.TruckAssetCorrelationResponse.detention_incurred",
-    "operations.OperationResponse.created_at",
-    "operations.OperationResponse.packml_state_durations",
-    "registries.ActionableRegistryItemResponse.compliance_score",
-    "registries.ActionableRegistryItemResponse.created_at",
-    "registries.ActionableRegistryItemResponse.is_active",
-    "registries.ActionableRegistryItemResponse.is_required",
-    "registries.ActionableRegistryItemResponse.meta_data",
-    "registries.ActionableRegistryItemResponse.risk_score",
-    "registries.ActionableRegistryItemResponse.severity_level",
-    "registries.ActionableRegistryItemResponse.updated_at",
-    "registries.ActionableRegistryResponse.checklist_requirements",
-    "registries.ActionableRegistryResponse.compliance_score",
-    "registries.ActionableRegistryResponse.created_at",
-    "registries.ActionableRegistryResponse.is_active",
-    "registries.ActionableRegistryResponse.is_compliance",
-    "registries.ActionableRegistryResponse.meta_data",
-    "registries.ActionableRegistryResponse.priority_level",
-    "registries.ActionableRegistryResponse.updated_at",
-    "registries.DataCorrelationResponse.confidence_score",
-    "registries.DataCorrelationResponse.correlation_meta_data",
-    "registries.DataCorrelationResponse.correlation_method",
-    "registries.DataCorrelationResponse.correlation_strength",
-    "registries.DataCorrelationResponse.created_at",
-    "registries.DataCorrelationResponse.is_active",
-    "registries.DataCorrelationResponse.is_bidirectional",
-    "registries.DataCorrelationResponse.updated_at",
-    "transportation.CarrierResponse.contact_info",
-    "transportation.CarrierResponse.contract_rate",
-    "transportation.CarrierResponse.created_at",
-    "transportation.CarrierResponse.ctpat_certified",
-    "transportation.CarrierResponse.insurance_on_file",
-    "transportation.CarrierResponse.is_active",
-    "transportation.CarrierResponse.updated_at",
-    "transportation.DriverResponse.created_at",
-    "transportation.DriverResponse.dq_file_complete",
-    "transportation.DriverResponse.hazmat_endorsed",
-    "transportation.DriverResponse.hos_cycle_hours",
-    "transportation.DriverResponse.hos_drive_hours_today",
-    "transportation.DriverResponse.hos_on_duty_hours_today",
-    "transportation.DriverResponse.is_active",
-    "transportation.DriverResponse.updated_at",
-    "transportation.FreightChargeResponse.created_at",
-    "transportation.FreightChargeResponse.currency",
-    "transportation.FreightChargeResponse.is_billed",
-    "transportation.FreightChargeResponse.shipment_id",
-    "transportation.FreightChargeResponse.updated_at",
-    "transportation.LoadPlanResponse.created_at",
-    "transportation.LoadPlanResponse.is_executed",
-    "transportation.LoadPlanResponse.load_sequence",
-    "transportation.LoadPlanResponse.planned_at",
-    "transportation.LoadPlanResponse.shipment_id",
-    "transportation.LoadPlanResponse.temperature_zones",
-    "transportation.LoadPlanResponse.updated_at",
-    "transportation.LoadPlanResponse.weight_distribution",
-    "transportation.RouteResponse.created_at",
-    "transportation.RouteResponse.is_active",
-    "transportation.RouteResponse.optimization_criteria",
-    "transportation.RouteResponse.updated_at",
-    "transportation.RouteResponse.waypoints",
-    "transportation.ShipmentResponse.created_at",
-    "transportation.ShipmentResponse.destination",
-    "transportation.ShipmentResponse.hazmat",
-    "transportation.ShipmentResponse.origin",
-    "transportation.ShipmentResponse.priority",
-    "transportation.ShipmentResponse.shipment_type",
-    "transportation.ShipmentResponse.status",
-    "transportation.ShipmentResponse.temperature_required",
-    "transportation.ShipmentResponse.updated_at",
-    "workcells.OrganizationOut.settings",
-    "yard.DockAppointmentResponse.appointment_type",
-    "yard.DockAppointmentResponse.compliance_required",
-    "yard.DockAppointmentResponse.created_at",
-    "yard.DockAppointmentResponse.dock_door_id",
-    "yard.DockAppointmentResponse.priority",
-    "yard.DockAppointmentResponse.status",
-    "yard.DockAppointmentResponse.updated_at",
-    "yard.DriverWaitTimeResponse.created_at",
-    "yard.DriverWaitTimeResponse.driver_id",
-    "yard.DriverWaitTimeResponse.is_billed",
-    "yard.DriverWaitTimeResponse.updated_at",
-    "yard.YardCheckPointResponse.created_at",
-    "yard.YardCheckPointResponse.passed_at",
-    "yard.YardCheckPointResponse.trailer_id",
-    "yard.YardMoveResponse.created_at",
-    "yard.YardMoveResponse.started_at",
-    "yard.YardMoveResponse.trailer_id",
-    "yard.YardTrailerResponse.check_in_at",
-    "yard.YardTrailerResponse.created_at",
-    "yard.YardTrailerResponse.seal_status",
-    "yard.YardTrailerResponse.status",
-    "yard.YardTrailerResponse.updated_at",
-})
 
 
 class TestTheDetectorItself:
@@ -363,32 +204,39 @@ class TestTheDetectorItself:
 
 
 class TestNoResponseModelIsStricterThanItsColumns:
-    def test_no_new_offenders(self):
-        """A field not on the recorded baseline is a regression."""
-        current = {o.split(" ")[0] for o in _offenders()}
-        new = sorted(current - KNOWN_OFFENDERS)
-        assert not new, (
-            "A required response field over a nullable, server-default-less column "
+    def test_no_offenders(self, admin_sync_url):
+        """Checked against the MIGRATED SCHEMA, not the ORM's declaration of it.
+
+        No baseline: the true count is zero. The 158-entry list this replaced was
+        mostly an artifact of asking the model instead of the database — 109 of those
+        columns are defaulted by migration 044, which the ORM never mirrored.
+        """
+        offenders = _offenders(_real_column_defaults(admin_sync_url))
+        assert not offenders, (
+            "A required response field over a nullable column with no SERVER default "
             "means a valid row cannot be serialised — pydantic raises inside the "
             "handler and FastAPI returns 500, naming a validation error in our schema "
-            "rather than the data. New offenders:\n  " + "\n  ".join(new)
+            "rather than the data. A Python-side ORM default does not prevent this: it "
+            "fires only for rows written through SQLAlchemy.\n  " + "\n  ".join(offenders)
         )
 
-    def test_the_baseline_only_shrinks(self):
-        """Fixing an offender must remove it from the list, or the list stops
-        describing reality and the guard silently loses coverage."""
-        current = {o.split(" ")[0] for o in _offenders()}
-        fixed = sorted(KNOWN_OFFENDERS - current)
-        assert not fixed, (
-            "These are recorded as known offenders but no longer offend. Delete them "
-            "from KNOWN_OFFENDERS:\n  " + "\n  ".join(fixed)
-        )
+    def test_the_check_reflects_the_database_not_the_orm(self, admin_sync_url):
+        """The specific mistake that inflated this file's count threefold.
 
-    def test_the_baseline_is_not_growing_silently(self):
-        """A hard ceiling, so the list cannot be topped up instead of drained."""
-        assert len(KNOWN_OFFENDERS) <= 158, (
-            f"{len(KNOWN_OFFENDERS)} recorded offenders — the baseline was 158 and is "
-            f"supposed to shrink"
+        `assets.created_at` carries a Python-side `default=utcnow` and NO
+        `server_default` in the ORM, yet migration 044 gave it `DEFAULT NOW()`. If the
+        check ever reads the model again, this column reappears as an offender.
+        """
+        real = _real_column_defaults(admin_sync_url)
+        assert real.get("assets.created_at"), (
+            "assets.created_at has no database default — migration 044 should have set "
+            "one; the schema, not the ORM, is what this file must read"
+        )
+        from app.db.models import Asset
+
+        assert sa_inspect(Asset).columns["created_at"].server_default is None, (
+            "the ORM now declares a server_default for assets.created_at, so this test "
+            "no longer demonstrates the divergence it exists to pin"
         )
 
     def test_no_pair_is_vacuous(self):
@@ -400,18 +248,23 @@ class TestNoResponseModelIsStricterThanItsColumns:
             f"covering the API and would pass vacuously"
         )
 
-    def test_at_least_one_paired_column_is_nullable_without_a_default(self):
-        """The other half of not-vacuous: if no discovered column could ever be NULL,
-        `test_no_offenders` proves nothing."""
+    def test_at_least_one_paired_column_could_still_be_null(self, admin_sync_url):
+        """The other half of not-vacuous: if every discovered column were defaulted by
+        the database, `test_no_offenders` would pass no matter what the models said.
+
+        Against the real schema, not the ORM — the same correction as the main check.
+        """
+        real = _real_column_defaults(admin_sync_url)
         candidates = [
-            f"{orm_class.__name__}.{name}"
+            f"{orm_class.__tablename__}.{name}"
             for _m, _r, orm_class in PAIRS
             for name, column in _columns(orm_class).items()
-            if column.nullable and column.server_default is None and column.default is None
+            if column.nullable
+            and real.get(f"{orm_class.__tablename__}.{name}") is None
         ]
         assert candidates, (
-            "no paired column is nullable-without-default, so the sweep has nothing to "
-            "catch and would pass regardless"
+            "no paired column is nullable-without-a-server-default, so the sweep has "
+            "nothing to catch and would pass regardless"
         )
 
 

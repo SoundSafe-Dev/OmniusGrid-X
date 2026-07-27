@@ -363,9 +363,16 @@ fields, 158 offenders**.
 
 It surfaced the way these things do: a raw-inserted dock door made
 `GET /api/v1/yard/dock/doors` return a live 500 — *"equipment_capabilities: Input should be
-a valid dictionary"*, a validation error naming our schema rather than the data. That one
-is fixed; the remaining 157 are held in a shrink-only baseline, because the right fix is
-server defaults in a migration rather than weakening 157 response contracts.
+a valid dictionary"*, a validation error naming our schema rather than the data.
+
+**Then the corrected sweep was wrong the other way, by a factor of three.** It read
+`server_default` off the ORM, and 109 of those 158 columns already have a database
+default — added by migration 044 and never mirrored into the ORM declaration. The check
+now reads `information_schema` from the migrated database. The true count was **49**, and
+it is now **zero**: migration 050 gave server defaults to 39 logistics/yard columns (each
+taken from the ORM's own `default=`, backfilling existing NULLs), and the remaining 10 are
+nullable columns with no default anywhere — mostly optional foreign keys — whose response
+fields now mirror them.
 
 The first version of that scan reported 8 defects. Testing one against real Postgres
 returned HTTP 200 instead of the predicted 500 — the detector checked
