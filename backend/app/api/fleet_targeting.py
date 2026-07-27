@@ -768,19 +768,22 @@ async def bulk_tag_assignments(
     if tag is None:
         raise _not_found("Tag")
     requested = list(dict.fromkeys(payload.asset_ids))
-    owned = set(
-        (
-            await db.execute(
-                select(Asset.id).where(
-                    Asset.organization_id == org_id,
-                    Asset.id.in_(requested),
+    owned = {
+        str(asset_id)
+        for asset_id in (
+            (
+                await db.execute(
+                    select(Asset.id).where(
+                        Asset.organization_id == org_id,
+                        Asset.id.in_(requested),
+                    )
                 )
             )
+            .scalars()
+            .all()
         )
-        .scalars()
-        .all()
-    )
-    changed_set: set[UUID]
+    }
+    changed_set: set[str]
     if payload.operation == "add":
         rows = [
             {
@@ -790,10 +793,12 @@ async def bulk_tag_assignments(
                 "assigned_by": current_user.id,
             }
             for asset_id in requested
-            if asset_id in owned
+            if str(asset_id) in owned
         ]
         changed_set = (
-            set(
+            {
+                str(asset_id)
+                for asset_id in
                 (
                     await db.execute(
                         pg_insert(AssetFleetTag)
@@ -809,12 +814,14 @@ async def bulk_tag_assignments(
                 )
                 .scalars()
                 .all()
-            )
+            }
             if rows
             else set()
         )
     else:
-        changed_set = set(
+        changed_set = {
+            str(asset_id)
+            for asset_id in
             (
                 await db.execute(
                     delete(AssetFleetTag)
@@ -828,29 +835,32 @@ async def bulk_tag_assignments(
             )
             .scalars()
             .all()
-        )
+        }
     results: list[dict[str, Any]] = []
     for asset_id in requested:
-        if asset_id not in owned:
+        canonical_asset_id = str(asset_id)
+        if canonical_asset_id not in owned:
             results.append(
                 {
-                    "asset_id": str(asset_id),
+                    "asset_id": canonical_asset_id,
                     "status": "error",
                     "error": "asset_unavailable",
                 }
             )
             continue
-        if asset_id not in changed_set:
-            results.append({"asset_id": str(asset_id), "status": "unchanged"})
+        if canonical_asset_id not in changed_set:
+            results.append({"asset_id": canonical_asset_id, "status": "unchanged"})
         else:
             results.append(
                 {
-                    "asset_id": str(asset_id),
+                    "asset_id": canonical_asset_id,
                     "status": "added" if payload.operation == "add" else "removed",
                 }
             )
 
-    changed = [asset_id for asset_id in requested if asset_id in changed_set]
+    changed = [
+        asset_id for asset_id in requested if str(asset_id) in changed_set
+    ]
     if changed:
         _audit(
             db,
@@ -1342,9 +1352,9 @@ async def fleet_inventory(
                 "asset_type_id": str(asset_type.id),
                 "asset_type_name": asset_type.name,
                 "asset_category": asset_type.category,
-                "collector_types": collectors.get(asset.id, []),
-                "tags": tags.get(asset.id, []),
-                "groups": groups.get(asset.id, []),
+                "collector_types": collectors.get(str(asset.id), []),
+                "tags": tags.get(str(asset.id), []),
+                "groups": groups.get(str(asset.id), []),
             }
             for asset, workcell, site, asset_type in rows
         ]

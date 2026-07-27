@@ -10,8 +10,12 @@ from urllib.parse import urlsplit
 from uuid import UUID
 
 import structlog
+from fastapi import Depends, HTTPException, Request
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.db.database import get_db
 from app.db.models import UserInvitation
 from app.services.email_service import (
     EmailConfigurationError,
@@ -57,6 +61,27 @@ def invitation_token_organization(token: str) -> UUID:
     if not _SECRET_RE.fullmatch(secret):
         raise InvitationTokenError("Invalid invitation token")
     return organization_id
+
+
+async def get_invitation_tenant_db(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Bind a public invite request to the tenant encoded in its credential."""
+
+    try:
+        payload = await request.json()
+        token = payload.get("token") if isinstance(payload, dict) else None
+        organization_id = invitation_token_organization(token)
+    except (InvitationTokenError, TypeError, ValueError):
+        raise HTTPException(status_code=404, detail="Invitation not found")
+
+    if db.bind.dialect.name == "postgresql":
+        await db.execute(
+            text("SELECT set_config('app.current_org_id', :org_id, true)"),
+            {"org_id": str(organization_id)},
+        )
+    yield db
 
 
 def invitation_url(token: str) -> str:

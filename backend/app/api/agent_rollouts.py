@@ -177,7 +177,11 @@ def _rollout_response(rollout: AgentRollout) -> AgentRolloutResponse:
     )
 
 
-async def _get_rollout(rollout_id: UUID, org_id: UUID, db: AsyncSession) -> AgentRollout:
+async def _get_rollout(
+    rollout_id: UUID | str,
+    org_id: UUID | str,
+    db: AsyncSession,
+) -> AgentRollout:
     rollout = (
         await db.execute(
             select(AgentRollout)
@@ -189,11 +193,23 @@ async def _get_rollout(rollout_id: UUID, org_id: UUID, db: AsyncSession) -> Agen
                 AgentRollout.id == rollout_id,
                 AgentRollout.organization_id == org_id,
             )
+            .execution_options(populate_existing=True)
         )
     ).scalar_one_or_none()
     if rollout is None:
         raise HTTPException(status_code=404, detail="Agent rollout not found")
     return rollout
+
+
+async def _response_before_commit(
+    rollout_id: UUID | str,
+    org_id: UUID | str,
+    db: AsyncSession,
+) -> AgentRolloutResponse:
+    """Materialize the response while the tenant-bound connection is active."""
+
+    await db.flush()
+    return _rollout_response(await _get_rollout(rollout_id, org_id, db))
 
 
 async def _lock_rollout(
@@ -436,9 +452,11 @@ async def create_rollout(
     ).scalar_one_or_none()
     if preview is None:
         raise HTTPException(status_code=404, detail="Target preview not found")
-    if preview.created_by != current_user.id:
+    # User IDs use the repo's cross-dialect UUIDString (read as str), while
+    # preview.created_by is a native UUID column on PostgreSQL.
+    if str(preview.created_by) != str(current_user.id):
         raise HTTPException(status_code=404, detail="Target preview not found")
-    if preview.release_id != release.id:
+    if str(preview.release_id) != str(release.id):
         raise HTTPException(
             status_code=409,
             detail="Target preview was created for a different release",
@@ -617,8 +635,9 @@ async def create_rollout(
             },
         )
     )
+    response = await _response_before_commit(rollout.id, org_id, db)
     await db.commit()
-    return _rollout_response(await _get_rollout(rollout.id, org_id, db))
+    return response
 
 
 @router.get("/rollouts", response_model=list[AgentRolloutResponse])
@@ -687,8 +706,9 @@ async def pause_rollout(
             },
         )
     )
+    response = await _response_before_commit(rollout_id, org_id, db)
     await db.commit()
-    return _rollout_response(await _get_rollout(rollout_id, org_id, db))
+    return response
 
 
 @router.post("/rollouts/{rollout_id}/resume", response_model=AgentRolloutResponse, dependencies=[Depends(require_admin)])
@@ -774,8 +794,9 @@ async def resume_rollout(
             detail=detail,
         )
     )
+    response = await _response_before_commit(rollout_id, org_id, db)
     await db.commit()
-    return _rollout_response(await _get_rollout(rollout_id, org_id, db))
+    return response
 
 
 @router.post("/rollouts/{rollout_id}/cancel", response_model=AgentRolloutResponse, dependencies=[Depends(require_admin)])
@@ -846,6 +867,7 @@ async def cancel_rollout(
             },
         )
     )
+    response = await _response_before_commit(rollout_id, org_id, db)
     await db.commit()
 
     for command_id in command_ids:
@@ -863,4 +885,4 @@ async def cancel_rollout(
                 error=str(exc),
             )
 
-    return _rollout_response(await _get_rollout(rollout_id, org_id, db))
+    return response

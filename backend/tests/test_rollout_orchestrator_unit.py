@@ -240,6 +240,71 @@ async def test_agent_release_dispatches_self_update_with_artifact_metadata():
 
 
 @pytest.mark.asyncio
+async def test_multi_asset_agent_dispatches_once_and_promotes_as_one_group(
+    monkeypatch,
+):
+    session = FakeSession()
+    fake_commands = FakeCommandClient()
+    orchestrator = RolloutOrchestrator(command_client=fake_commands)
+    rollout = _rollout(waves=(0, 0, 1))
+    route_asset_id = rollout.targets[0].asset_id
+    for target in rollout.targets[:2]:
+        target.agent_id = "agent-shared"
+        target.route_asset_id = route_asset_id
+    rollout.targets[2].agent_id = "agent-next"
+    rollout.targets[2].route_asset_id = rollout.targets[2].asset_id
+
+    async def healthy(_session, _target, _release, _strategy):
+        return True
+
+    monkeypatch.setattr(orchestrator, "_target_healthy", healthy)
+
+    await orchestrator._process_rollout(session, rollout)
+    assert len(fake_commands.submissions) == 1
+    assert fake_commands.submissions[0]["asset_id"] == str(route_asset_id)
+    assert [target.command_id for target in rollout.targets[:2]] == [
+        "cmd-1",
+        "cmd-1",
+    ]
+    assert [target.status for target in rollout.targets] == [
+        "updating",
+        "updating",
+        "pending",
+    ]
+
+    fake_commands.statuses["cmd-1"] = {"status": "completed", "result": {}}
+    await orchestrator._process_rollout(session, rollout)
+
+    assert len(fake_commands.submissions) == 2
+    assert [target.status for target in rollout.targets] == [
+        "success",
+        "success",
+        "updating",
+    ]
+
+
+def test_failure_threshold_counts_unique_agent_groups():
+    orchestrator = RolloutOrchestrator(command_client=FakeCommandClient())
+    rollout = _rollout(
+        waves=(0, 0, 0),
+        strategy={"failure_threshold": 2},
+    )
+    for target in rollout.targets[:2]:
+        target.agent_id = "agent-shared"
+        target.status = "failed"
+    rollout.targets[2].agent_id = "agent-healthy"
+    rollout.targets[2].status = "success"
+
+    assert (
+        orchestrator._first_failed_wave_exceeding_threshold(
+            rollout.targets,
+            rollout.strategy,
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
 async def test_failed_ack_with_local_rollback_records_running_version():
     session = FakeSession()
     fake_commands = FakeCommandClient()
