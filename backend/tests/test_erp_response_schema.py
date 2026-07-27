@@ -24,6 +24,7 @@ storage only when the handler guarantees a value (a literal, or `or ""`).
 
 from __future__ import annotations
 
+import types
 import typing
 from typing import Any, Dict, Optional, Tuple, Union
 
@@ -34,9 +35,19 @@ from app.db.models import ERPSyncStatus, IntegrationConfiguration
 
 
 def _is_optional(annotation: Any) -> bool:
-    """Does this annotation admit None?"""
+    """Does this annotation admit None?
+
+    MUST handle both spellings. `Optional[str]` produces `typing.Union`; the PEP 604
+    form `str | None` produces `types.UnionType`, a different object. This originally
+    checked only `typing.Union`, so a field written in the modern syntax was misread as
+    REQUIRED — which would have failed this guard for a model that was perfectly
+    correct, and sent someone "fixing" a non-bug.
+
+    Found while generalising this sweep across the whole API: the same flaw made that
+    scan report 8 defects that did not exist.
+    """
     origin = typing.get_origin(annotation)
-    if origin is Union:
+    if origin is Union or origin is types.UnionType:
         return type(None) in typing.get_args(annotation)
     return annotation is type(None)
 
@@ -146,9 +157,13 @@ class TestTheGuardIsNotVacuous:
 
     def test_the_optionality_detector_works(self):
         """The helper is the load-bearing part; a broken detector makes every
-        assertion above pass."""
+        assertion above pass — or fail on correct code."""
         assert _is_optional(Optional[str])
         assert _is_optional(Union[str, None])
+        assert _is_optional(str | None), (
+            "PEP 604 syntax not recognised; a correctly-optional field would be "
+            "reported as a defect"
+        )
         assert not _is_optional(str)
         assert not _is_optional(int)
 
