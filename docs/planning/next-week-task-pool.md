@@ -15,6 +15,10 @@ Lanes follow the ownership table in the root [README](../../README.md).
 
 **56 tickets.** Four are decisions, not work.
 
+*A print-ready PDF (one lane per page, for handing out) is not committed — it would go
+stale beside this file. Regenerate it in one command:*
+`python3 tools/docs/md2pdf.py docs/planning/next-week-task-pool.md docs/planning/next-week-task-pool.pdf`
+
 ---
 
 ## Verified state, so nobody re-derives it

@@ -111,3 +111,8 @@ tools/erp-mocks/specs/*
 backend/.env.erp
 backend/.env.erp.*
 !*.example
+
+# PDFs rendered from markdown by tools/docs/md2pdf.py. The markdown is the source of
+# truth; a committed PDF beside it goes stale silently. Regenerate with:
+#   python3 tools/docs/md2pdf.py docs/planning/next-week-task-pool.md docs/planning/next-week-task-pool.pdf
+docs/**/*.pdf
