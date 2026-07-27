@@ -14,9 +14,10 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The six classes
+## The seven classes
 
-The first five were all originally found in ERP. The sixth came out of the fifth.
+The first five were all originally found in ERP. The sixth came out of the fifth,
+and the seventh out of two failing tests that turned out to share a cause.
 
 | Class | Swept | Found elsewhere | Guard |
 |---|---|---|---|
@@ -26,6 +27,7 @@ The first five were all originally found in ERP. The sixth came out of the fifth
 | Silent success | all of `app/` | **1, live** | `test_logistics_sync_dashboard_honesty.py` |
 | A name that claims a side effect | all of `app/` | **1, in the control path** | `test_helper_names_match_behaviour.py` |
 | Data reported as kept, but discarded | quarantine/DLQ paths | **1, live, on ingestion** | `test_edge_ingest_quarantine_retention.py` |
+| A test double that reimplements what it stands in for | the tenant-DB dependency | **1, hiding an RLS bug** | `test_tenant_guc_survives_commit_realdb.py` |
 
 ---
 
@@ -239,6 +241,64 @@ malformed field may well *be* `asset_id`. Keying on it would scatter dead letter
 bug- or attacker-controlled topic names and discard the one identity that was actually
 verified, the client certificate. A test asserts a reading carrying
 `asset_id: "../../evil"` still lands on `telemetry.dlq.<agent>`.
+
+## 7. A test double that reimplements what it stands in for — **1, and it was hiding an RLS bug**
+
+Two tests had been failing for a while, in other people's lanes, and were assumed
+independent. They had the same cause, and the cause explains why nothing caught it.
+
+**The bug.** `get_tenant_db` set `app.current_org_id` once, before yielding the session,
+with `set_config(..., false)`. The docstring justified the `false`: a session-scoped
+value survives an endpoint that commits mid-request, where a transaction-local one would
+not.
+
+It does not survive. `commit()` ends the transaction **and returns the connection to the
+pool**; the next statement checks out a connection that was never configured. The GUC
+reads empty, `NULLIF` makes it NULL, and every RLS policy fails closed — so an endpoint
+that wrote a row and read it back got nothing, for data it had just committed itself.
+`create_rollout` in `api/agent_rollouts.py` returned **404 for a rollout sitting in the
+table**.
+
+Part of this had already been diagnosed. An inline comment, right below the docstring
+that contradicts it, warns against `db.refresh()` after `commit()` for exactly this
+reason, and twenty such calls were removed. That was worth doing, but it treated the
+symptom: *any* query after a mid-request commit was affected, not just a refresh.
+
+**Fixed at the cause:** the GUC is now re-established per transaction from an
+`after_begin` hook, so any number of commits is fine. Because it re-runs per transaction
+it is written *transaction-locally*, so it also cannot leak onto a pooled connection —
+which removes a second hazard the old code needed a cleanup block to manage.
+
+**Why every RLS test we had was blind to it.** `conftest` must point endpoints at the
+testcontainers engine, and did so with an override that hand-copied the body of
+`get_tenant_db`, under a comment reading *"Mirrors the production get_tenant_db."* It
+mirrored the bug as well as the behaviour — and being a copy, it could not do otherwise.
+The suite was exercising the duplicate, so a defect in the original was undetectable, and
+fixing the original would not have reached the tests either.
+
+A test double that reimplements the thing it stands in for can only prove the double
+works. The override now delegates to a shared `tenant_session`, with only the session
+maker injected, and a guard asserts it keeps delegating — checking source text rather
+than behaviour on purpose, because a reimplementation that happens to be correct today
+is still the failure mode.
+
+**The guard needed a second pass, and this is the part worth remembering.** Written the
+obvious way it *passed against the reintroduced bug*. With a normal pool, `commit()`
+returns the connection and the very next statement checks the same one straight back
+out, so the GUC appears to survive — which is exactly why the defect read as
+intermittent and needed contention to appear. The fixture now uses `NullPool`, making
+every checkout a fresh connection: the worst case a loaded server produces routinely.
+Under mutation it fails the four commit assertions and nothing else. **A guard that
+fails only when the pool happens to cooperate is not a guard.**
+
+**A second, unrelated race surfaced in the same test.** `test_compliance_report_scheduling_e2e`
+also failed with `KafkaConnectionError: Unable to bootstrap` — but only in a full run,
+never in isolation, the classic shape of a readiness check that returns too early. The
+Redpanda fixture waited for the log line *"Started Kafka API server"*, which Redpanda
+prints when it binds **inside the container**; the host's published port can take
+meaningfully longer to forward, and that gap widens with the number of running
+containers. It now waits for a connection to actually succeed. Wait for the thing you
+need, not for a log line that correlates with it.
 
 ---
 

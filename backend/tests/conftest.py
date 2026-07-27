@@ -21,6 +21,7 @@ ends, the container is destroyed and all data with it.
 from __future__ import annotations
 
 import os
+import socket
 import sys
 import tarfile
 import time
@@ -260,7 +261,6 @@ async def app(tenant_async_url):
     ``app.db.database`` created at import time pointing at a placeholder.
     """
     from fastapi import Depends
-    from sqlalchemy import text
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
     from app.db import database as db_module
@@ -326,27 +326,24 @@ async def app(tenant_async_url):
     async def _override_get_tenant_db(
         org_id: UUID = Depends(get_tenant_org_id),
     ) -> AsyncIterator:
-        # Mirrors the production get_tenant_db: session-scoped GUC so it
-        # survives mid-request commits (create/update + refresh), reset at
-        # the end so context can't leak to a connection reused by a later
-        # request.
-        async with test_session_maker() as session:
-            try:
-                await session.execute(
-                    text("SELECT set_config('app.current_org_id', :org_id, false)"),
-                    {"org_id": str(org_id)},
-                )
-                yield session
-                await session.commit()
-            except Exception:
-                await session.rollback()
-                raise
-            finally:
-                await session.execute(
-                    text("SELECT set_config('app.current_org_id', '', false)")
-                )
-                await session.commit()
-                await session.close()
+        # DELEGATES to the production implementation, swapping only the session
+        # maker. It must not reimplement it.
+        #
+        # This used to be a hand-copy of `get_tenant_db`'s body, under a comment
+        # reading "Mirrors the production get_tenant_db." It mirrored the bug
+        # too: both set the GUC once with `set_config(..., false)`, which does
+        # not survive an endpoint's mid-request commit, because commit returns
+        # the connection to the pool and the next query gets a fresh one. Every
+        # RLS test in the suite ran against the copy, so the defect was invisible
+        # to all of them — and a fix to production would not have reached them
+        # either.
+        #
+        # A test double that reimplements the thing it is standing in for can
+        # only ever prove the double works.
+        from app.core.tenant import tenant_session
+
+        async with tenant_session(org_id, test_session_maker) as session:
+            yield session
 
     # FastAPI's dependency-override matches on the original callable.
     # Each override keeps its own ``Depends`` chain so ``get_tenant_org_id``
@@ -526,7 +523,38 @@ class _RedpandaContainer:
             r".*Started Kafka API server.*",
             timeout=15,
         )
+        self._await_reachable(host, int(port))
         return self
+
+    @staticmethod
+    def _await_reachable(host: str, port: int, timeout: float = 45.0) -> None:
+        """Block until the broker actually accepts a connection FROM THE HOST.
+
+        The log wait above is necessary and not sufficient. "Started Kafka API
+        server" is printed when Redpanda binds inside the container; the host's
+        published port can take meaningfully longer to start forwarding, and on a
+        Docker-in-VM setup (colima, Docker Desktop) that gap widens with the
+        number of running containers.
+
+        The symptom was a `KafkaConnectionError: Unable to bootstrap` that only
+        appeared in a FULL test run and never in isolation — the classic shape of
+        a readiness check that returns too early. It was read as flakiness; it is
+        a race, and it has a right answer: wait for the thing you actually need,
+        which is a connection, not a log line.
+        """
+        deadline = time.time() + timeout
+        last_error: Exception | None = None
+        while time.time() < deadline:
+            try:
+                with socket.create_connection((host, port), timeout=2.0):
+                    return
+            except OSError as exc:  # not listening yet, or not forwarded yet
+                last_error = exc
+                time.sleep(0.25)
+        raise RuntimeError(
+            f"Redpanda logged that it started but {host}:{port} never became "
+            f"reachable within {timeout}s (last error: {last_error})"
+        )
 
     def stop(self):
         self._container.stop()
