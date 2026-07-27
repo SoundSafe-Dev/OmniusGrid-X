@@ -596,7 +596,7 @@ export const Fleet: FC = () => {
                       type="button"
                       variant="secondary"
                       onClick={requestTargetPreview}
-                      loading={createTargetPreview.isLoading}
+                      loading={createTargetPreview.isPending}
                     >
                       <Eye size={16} className="mr-2" />
                       {rolloutPreview ? 'Refresh preview' : 'Preview targets'}

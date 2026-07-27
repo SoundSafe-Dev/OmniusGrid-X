@@ -116,7 +116,7 @@ export const FleetRolloutDetail: FC = () => {
             <Button
               variant="secondary"
               onClick={() => resumeRollout.mutate(rollout.data!.id)}
-              loading={resumeRollout.isLoading}
+              loading={resumeRollout.isPending}
             >
               Resume
             </Button>

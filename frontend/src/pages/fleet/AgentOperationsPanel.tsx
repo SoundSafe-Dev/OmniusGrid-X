@@ -72,7 +72,7 @@ export const AgentOperationsPanel: FC = () => {
 
   const selectedAsset = eligibleAssets.find((asset) => asset.id === assetId);
   const operationBusy =
-    submit.isLoading ||
+    submit.isPending ||
     Boolean(command.data && !TERMINAL_STATUSES.has(command.data.status));
 
   const startOperation = (action: AgentRemoteOperationAction) => {
