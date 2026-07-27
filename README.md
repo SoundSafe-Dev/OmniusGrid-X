@@ -455,7 +455,11 @@ every asset — and it had been rejecting **every inbound ERP webhook** — fixe
 grants that one unauthenticated lookup a narrow SELECT-only policy (active ERP rows, only
 while a transaction-local flag is set) rather than abandoning signature-selects-tenant.
 All 12 ERP routes are now verified working end to end against a real database, and the
-core product surfaces were swept for the same failure and came back clean — a seeded
+whole NLP analysis-session surface was dead too — 22 handlers on `get_db`, so reads
+returned nothing and **create raised a 500** from the policy's `WITH CHECK`. That is the
+one instance in this class that failed loudly rather than quietly: under RLS a read is
+silently filtered while a write is rejected outright. The core product surfaces were then
+swept for the same failure and came back clean — a seeded
 organisation's asset, alarm and operation all appear in `dashboard/overview`,
 `alarms/active` and `operations/active`.
 
@@ -471,7 +475,7 @@ the UI were all already there, only the write was missing — and the component 
 failures. The other three were uncalled and were removed. Notably a hand fix of this exact
 class had already run (FS-15, "routes that never existed") and left these behind.
 
-**Both suites are green: backend 1703 passed, frontend 142 passed, 0 failed** — across
+**Both suites are green: backend 1712 passed, frontend 142 passed, 0 failed** — across
 156 backend and 38 frontend test files. Every guard listed above is mutation-tested:
 reintroduce the defect and the test must fail, checked individually, because a guard that
 cannot fail is indistinguishable from one that passes.

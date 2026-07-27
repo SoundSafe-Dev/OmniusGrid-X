@@ -57,7 +57,15 @@ NO_USER_CONTEXT = {
 # The number is how many `Depends(get_db)` sites that router has — pinned so a
 # partial fix still moves, and so nothing silently grows.
 KNOWN_GET_DB_ON_RLS: dict[str, int] = {
-    "analysis_sessions.py": 22,
+    # analysis_sessions.py is GONE from this list, and it is the one entry that did
+    # NOT fail quietly. `analysis_sessions` is RLS-protected and all 22 handlers ran on
+    # get_db, so reads matched nothing (empty list, 404 by id) while CREATE raised
+    # InsufficientPrivilegeError — a 500 — because the policy's WITH CHECK rejects an
+    # INSERT made with no tenant GUC. Under RLS a read fails silently and a write fails
+    # loudly; every other entry on this list was the quiet kind, which is why they
+    # lasted. The application layer was already correct
+    # (organization_id=current_user.organization_id on create); only the GUC was
+    # missing. Pinned by tests/test_analysis_sessions_tenant_scoping_realdb.py.
     # Mixed: unauthenticated probes + an admin-gated view that reads Asset/Alarm.
     # Splitting the two is a change to the probe contract, so it is left for a
     # dedicated pass rather than bundled here.

@@ -567,6 +567,22 @@ routes the app serves (create, list, get, update, delete, sync, sync-status, ent
 events, mappings, webhook-config, test, correlations/recent) exercised against a real
 database. Every one responds correctly.
 
+**The NLP analysis-session surface was entirely dead, and it is the one instance that did
+NOT fail quietly.** `analysis_sessions` is RLS-protected and all 22 handlers ran on
+`get_db`, so reads matched nothing — empty list, 404 by id — while **create raised
+`InsufficientPrivilegeError: new row violates row-level security policy`, a 500**, because
+the policy's `WITH CHECK` rejects an INSERT made with no tenant GUC.
+
+That split is the useful part: under RLS **a read fails silently and a write fails
+loudly**. Every other defect in this sweep was the quiet kind, which is precisely why they
+survived for so long. This one would have been noticed the first time anyone opened the
+feature — which says something about how much the feature is used. The application layer
+was correct throughout (`organization_id=current_user.organization_id` was already set on
+create); only the GUC was missing.
+
+(Kanban RLS and `/nlp/correlation/intake/{id}` are items #16 and #17 in the current task
+pool and were left alone.)
+
 **The core product surfaces were then swept for the same failure, and came back clean.**
 One organisation seeded with an asset, an alarm and an operation, then every main
 authenticated read exercised against a real database: `dashboard/overview` reports
