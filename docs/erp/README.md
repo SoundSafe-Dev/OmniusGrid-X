@@ -14,6 +14,7 @@ credentials only for the tier you're actually working on.
 | Run a spec-driven mock of a vendor API | [../../tools/erp-mocks/README.md](../../tools/erp-mocks/README.md) |
 | **Wire a vendor's webhooks in** (what each vendor sends, and how to verify it) | [webhooks-vendor-setup.md](webhooks-vendor-setup.md) |
 | Copy the env var names | [`backend/.env.erp.example`](../../backend/.env.erp.example) |
+| See which defect classes were swept platform-wide, and what each found | [`../engineering/defect-class-sweeps.md`](../engineering/defect-class-sweeps.md) |
 
 ---
 

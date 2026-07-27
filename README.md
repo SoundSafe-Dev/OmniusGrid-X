@@ -277,6 +277,12 @@ operator sees "showing the most recent 10 of more than 10" instead of a confiden
 answer. Verified end to end: 149 rows synced from live Dataverse, `?limit=10` returns 10
 with `X-Result-Truncated: true`.
 
+**Four defect classes found in ERP were then swept platform-wide** — recorded in
+[`docs/engineering/defect-class-sweeps.md`](docs/engineering/defect-class-sweeps.md) with
+what each found and which guard keeps it closed. Two came back clean, which is worth
+writing down: "proven clean" and "never checked" look identical afterwards, and only one
+justifies not looking again.
+
 **A live dashboard was under-reporting its own metric.** Sweeping for handlers that
 swallow an exception and still report success turned up 12 candidates; 11 were legitimate
 (cleanup, `return False`, an explicit error status). The twelfth was real and live:
