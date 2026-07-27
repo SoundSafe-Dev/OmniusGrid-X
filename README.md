@@ -277,6 +277,21 @@ operator sees "showing the most recent 10 of more than 10" instead of a confiden
 answer. Verified end to end: 149 rows synced from live Dataverse, `?limit=10` returns 10
 with `X-Result-Truncated: true`.
 
+**A live dashboard was under-reporting its own metric.** Sweeping for handlers that
+swallow an exception and still report success turned up 12 candidates; 11 were legitimate
+(cleanup, `return False`, an explicit error status). The twelfth was real and live:
+`get_sync_dashboard` analysed each dock appointment in a `try`, and on failure logged a
+warning and incremented **no bucket at all** — so the appointment vanished from the
+breakdown while remaining in `total_appointments`, which is the denominator of
+`production_dock_sync_percent`.
+
+Every failed analysis therefore pushed the reported sync percentage **down**, making
+dock-production performance look worse than it was, with nothing in the response saying an
+analysis had failed. Failures now get their own bucket, leave the denominator (counting an
+unanalysable appointment as "not on time" asserts something we failed to determine), and
+are surfaced as `analysis_failed_count`. A test pins the invariant that the buckets sum to
+the total.
+
 **Swept platform-wide afterwards, and found clean.** The response-model defect above was
 the obvious candidate to exist elsewhere, so it was checked across all 61 API modules —
 11 response/ORM pairs, 124 fields, **zero offenders**. Worth recording as a result: those

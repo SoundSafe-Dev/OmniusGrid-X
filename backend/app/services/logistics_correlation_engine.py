@@ -247,7 +247,11 @@ class DockProductionSynchronizer:
                 'at_risk': 0,
                 'late': 0,
                 'not_started': 0,
-                'no_operation': 0
+                'no_operation': 0,
+                # An appointment whose analysis raised. It used to be counted in
+                # `total_appointments` and placed in NO bucket, so the breakdown did
+                # not account for every appointment and the caller could not tell.
+                'analysis_failed': 0,
             }
             
             total_appointments = len(appointments)
@@ -265,6 +269,10 @@ class DockProductionSynchronizer:
                         else:
                             sync_status['no_operation'] += 1
                     except Exception as e:
+                        # Counted, not dropped. Swallowing this silently removed the
+                        # appointment from the breakdown while leaving it in
+                        # `total_appointments`.
+                        sync_status['analysis_failed'] += 1
                         logger.warning(
                             "sync_analysis_failed",
                             appointment_id=str(appt.id),
@@ -272,10 +280,21 @@ class DockProductionSynchronizer:
                         )
                 else:
                     sync_status['no_operation'] += 1
-            
+
+            # THE PERCENTAGE IS OVER APPOINTMENTS WE COULD ACTUALLY ASSESS.
+            #
+            # This divided by `total_appointments`, which includes the ones whose
+            # analysis raised — so every failure quietly pushed the reported sync
+            # percentage DOWN, making dock-production performance look worse than it
+            # was, with nothing in the response saying an analysis had failed.
+            #
+            # Counting an unanalysable appointment as "not on time" is a claim we
+            # cannot support: we do not know its status, which is the whole problem.
+            # It is excluded from the denominator and reported separately instead.
+            assessed = total_appointments - sync_status['analysis_failed']
             sync_percent = (
-                (sync_status['on_time'] + sync_status['early']) / total_appointments * 100
-                if total_appointments > 0 else 0
+                (sync_status['on_time'] + sync_status['early']) / assessed * 100
+                if assessed > 0 else 0
             )
             
             return {
@@ -283,6 +302,10 @@ class DockProductionSynchronizer:
                 'total_appointments': total_appointments,
                 'linked_to_production': linked_appointments,
                 'sync_status_breakdown': sync_status,
+                # Surfaced, so a caller can tell a clean run from a partial one rather
+                # than reading a percentage computed over fewer rows than it appears.
+                'appointments_assessed': assessed,
+                'analysis_failed_count': sync_status['analysis_failed'],
                 'production_dock_sync_percent': round(sync_percent, 1),
                 'at_risk_count': sync_status['at_risk'] + sync_status['late'],
                 'early_count': sync_status['early']
