@@ -1487,9 +1487,21 @@ from five to four, and the correction is pinned as a test — four false positiv
 eight would have made the file worth ignoring.
 
 The static guard proves a `set_config` call is present. Only the real database proves the
-policy accepts what follows it, so three of the seven assertions write an actual row and
-count it through a superuser connection. Reverting the four services fails exactly those
-three plus the static check.
+policy accepts what follows it, so three assertions write an actual row and count it
+through a superuser connection.
+
+**That was still only half the property, and the file said so before it tested it.**
+Counting through a superuser connection bypasses RLS entirely — it proves the INSERT is no
+longer *rejected*, not that the entry is *visible*. What the compliance desk depends on is
+the row coming back from `GET /api/v1/audit/logs`, read through the tenant-scoped session
+as their own organisation; a row that lands and is then filtered out on read is, from that
+desk, identical to one that was never written. Three further assertions read the trail
+back, including one confirming the other organisation cannot see it — binding the GUC made
+these rows writable and readable, and the audit trail is the one table where a
+cross-tenant read is itself the incident.
+
+Reverting the four services fails five of the ten, with the RLS rejections printed in the
+output.
 
 ## 24. A handler that builds its own unbound session — **5 live**
 

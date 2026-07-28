@@ -189,3 +189,72 @@ class TestTheRowActuallyLands:
         assert audit_count(org) == before + 1, (
             "the export audit row was rejected again; RLS still refuses this INSERT"
         )
+
+
+class TestTheEntryReachesTheAuditTrail:
+    """Landing in the table is not the property that matters.
+
+    The three assertions above count rows through a SUPERUSER connection, which bypasses
+    RLS entirely — they prove the INSERT is no longer rejected. What an operator actually
+    depends on is the entry being visible in `GET /api/v1/audit/logs`, read back through
+    the tenant-scoped session as their own organisation. A row that lands but is filtered
+    out on read is, from the compliance desk, the same as one that never landed.
+
+    Written after noticing the original file proved only half of it.
+    """
+
+    async def test_a_standalone_audit_entry_is_listed(self, client_a, app, seeded_orgs):
+        from app.services.audit import record_audit
+
+        action = "test_visible_in_trail"
+        assert await record_audit(
+            session=None,
+            action=action,
+            resource_type="test",
+            organization_id=seeded_orgs["org_a_id"],
+            actor_id=seeded_orgs["user_a_id"],
+        )
+
+        response = await client_a.get("/api/v1/audit/logs", params={"limit": 200})
+        assert response.status_code == 200, response.text
+        body = response.json()
+        items = body["items"] if isinstance(body, dict) and "items" in body else body
+        assert any(row.get("action") == action for row in items), (
+            "the row was accepted by the database and does not appear in the audit "
+            "trail — from the compliance desk that is indistinguishable from never "
+            "having been written"
+        )
+
+    async def test_an_export_audit_is_listed(self, client_a, app, seeded_orgs):
+        """The writer whose silent failure started this."""
+        from app.services.export_processor import export_processor
+
+        action = "test_export_visible_in_trail"
+        await export_processor.audit_sync_export(
+            action, seeded_orgs["org_a_id"], seeded_orgs["user_a_id"], total=2
+        )
+        body = (await client_a.get("/api/v1/audit/logs", params={"limit": 200})).json()
+        items = body["items"] if isinstance(body, dict) and "items" in body else body
+        assert any(row.get("action") == action for row in items)
+
+    async def test_another_organisation_does_not_see_it(
+        self, client_a, client_b, app, seeded_orgs
+    ):
+        """Binding the GUC made these rows writable and readable. It must not have made
+        them readable to everyone — the audit trail is the one table where a
+        cross-tenant read is itself the incident."""
+        from app.services.audit import record_audit
+
+        action = "test_org_a_only"
+        await record_audit(
+            session=None,
+            action=action,
+            resource_type="test",
+            organization_id=seeded_orgs["org_a_id"],
+            actor_id=seeded_orgs["user_a_id"],
+        )
+        body = (await client_b.get("/api/v1/audit/logs", params={"limit": 200})).json()
+        items = body["items"] if isinstance(body, dict) and "items" in body else body
+        assert not any(row.get("action") == action for row in items), (
+            "org B can read org A's audit entries"
+        )
