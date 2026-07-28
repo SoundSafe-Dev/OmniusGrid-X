@@ -327,12 +327,26 @@ operator sees "showing the most recent 10 of more than 10" instead of a confiden
 answer. Verified end to end: 149 rows synced from live Dataverse, `?limit=10` returns 10
 with `X-Result-Truncated: true`.
 
-**Seventeen defect classes have now been swept platform-wide** — recorded in
+**Twenty-one defect classes have now been swept platform-wide** — recorded in
 [`docs/engineering/defect-class-sweeps.md`](docs/engineering/defect-class-sweeps.md) with
-what each found and which guard keeps it closed. Four started in ERP; the last four came
-out of the ones before them. Two came back clean, which is worth writing down: "proven
+what each found and which guard keeps it closed. Four started in ERP; most of the rest came
+out of the ones before them. Three came back clean, which is worth writing down: "proven
 clean" and "never checked" look identical afterwards, and only one justifies not looking
 again.
+
+The most recent four are all versions of *the system knows something the reader is never
+told*: a reply that was not an inference reporting itself as one; an OEE factor the server
+could not measure displayed as a perfect 100%; a query cache serving the previous answer
+after the filter changed; and three writes whose results the screen never went back to
+read — including a command panel where, because dispatch happens off the request path,
+whether the machine had acted was not observable **anywhere in the product**.
+
+Fifteen method rules now sit at the end of that document, and most were paid for. Two of
+the newest: a detector's skip count must account for everything it did not check (a
+query-parameter guard printed "37 checked, 1 skipped" while nine calls holding two live
+defects sat in the gap), and a detector's input must never contain its own subject (an
+invalidation sweep harvested query keys from the very calls it was auditing, so each
+vouched for itself and it reported a confident zero).
 
 The common shape is **code that looks wired and cannot work**. Every guard is
 mutation-tested — reintroduce the defect and the test must fail — because a guard that
@@ -475,8 +489,8 @@ the UI were all already there, only the write was missing — and the component 
 failures. The other three were uncalled and were removed. Notably a hand fix of this exact
 class had already run (FS-15, "routes that never existed") and left these behind.
 
-**Both suites are green: backend 1712 passed, frontend 151 passed, 0 failed** — across
-156 backend and 38 frontend test files. Every guard listed above is mutation-tested:
+**Both suites are green: backend 1954 passed, frontend 181 passed, 0 failed** — across
+181 backend and 42 frontend test files. Every guard listed above is mutation-tested:
 reintroduce the defect and the test must fail, checked individually, because a guard that
 cannot fail is indistinguishable from one that passes.
 
@@ -2625,7 +2639,7 @@ The ERP integration system correlates ERP data with operational telemetry to pro
 - [Implementation Summary](IMPLEMENTATION_SUMMARY.md) - Complete feature inventory
 
 **Engineering practice**
-- [Defect-class sweeps](docs/engineering/defect-class-sweeps.md) - The seven classes of "code that looks wired and cannot work" found so far, what each sweep found (including the two that came back clean), which mutation-tested guard keeps each closed, and how to write a sweep worth trusting
+- [Defect-class sweeps](docs/engineering/defect-class-sweeps.md) - The twenty-one classes of "code that looks wired and cannot work" found so far, what each sweep found (including the three that came back clean), which mutation-tested guard keeps each closed, and fifteen rules for writing a sweep worth trusting — most of them paid for by a detector that was wrong first
 
 **Infrastructure & operations**
 - [Database migrations](database/migrations/README.md) - Runner rules (never edit or rename an applied migration), the 019 gap, grandfathered duplicate prefixes, demo-data gating
