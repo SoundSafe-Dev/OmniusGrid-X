@@ -136,3 +136,45 @@ class TestTheHeartbeatStaysInsideItsTenant:
         assert re.search(r"set_config\([^)]*current_org_id[^)]*true\s*\)", body), (
             "the heartbeat's tenant binding is missing or is not transaction-local"
         )
+
+
+class TestTheOperatorCanSeeTheHeartbeat:
+    """The write is only half the property.
+
+    The assertions above read `agent_version` back through a SUPERUSER connection, which
+    bypasses RLS — correct for showing the worker's UPDATE landed, and silent on whether
+    the tenant can then see it. `assets` is FORCE ROW LEVEL SECURITY, so those are
+    different questions: the fleet page reads through a tenant-scoped session, and a
+    value that is written but invisible is, to the operator watching a rollout, the same
+    as one that was never written.
+
+    `GET /api/v1/fleet/agents/versions` is where that value surfaces. Added under method
+    rule 20 — verify through the path the user takes, and keep the privileged connection
+    for setup and diagnosis.
+    """
+
+    async def test_the_version_appears_in_the_fleet_distribution(
+        self, client_a, asset, tenant_async_url
+    ):
+        asset_id, org_a, _org_b = asset
+        await _heartbeat(tenant_async_url, org_a, [asset_id], version="9.9.9")
+        response = await client_a.get("/api/v1/fleet/agents/versions")
+        assert response.status_code == 200, response.text
+        body = response.json()
+        items = body["items"] if isinstance(body, dict) and "items" in body else body
+        versions = {row["agent_version"] for row in items}
+        assert "9.9.9" in versions, (
+            f"the worker wrote the version and the tenant cannot see it; the fleet page "
+            f"reports {sorted(versions)}"
+        )
+
+    async def test_another_organisation_does_not_see_it(
+        self, client_b, asset, tenant_async_url
+    ):
+        """The heartbeat binds a tenant to make the write land. That must not make the
+        result readable to everyone."""
+        asset_id, org_a, _org_b = asset
+        await _heartbeat(tenant_async_url, org_a, [asset_id], version="7.7.7")
+        body = (await client_b.get("/api/v1/fleet/agents/versions")).json()
+        items = body["items"] if isinstance(body, dict) and "items" in body else body
+        assert "7.7.7" not in {row["agent_version"] for row in items}
