@@ -510,7 +510,7 @@ the UI were all already there, only the write was missing — and the component 
 failures. The other three were uncalled and were removed. Notably a hand fix of this exact
 class had already run (FS-15, "routes that never existed") and left these behind.
 
-**Both suites are green: backend 2,157 passed, frontend 206 passed, 0 failed** — across
+**Both suites are green: backend 2,162 passed, frontend 206 passed, 0 failed** — across
 187 backend and 45 frontend test files. Every guard listed above is mutation-tested:
 reintroduce the defect and the test must fail, checked individually, because a guard that
 cannot fail is indistinguishable from one that passes.
