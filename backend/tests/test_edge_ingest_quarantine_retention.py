@@ -172,3 +172,40 @@ class TestTheDefaultSinkNoLongerCarriesRetention:
         # Calling the default sink directly must not itself accumulate state.
         gw._default_quarantine("agent-1", MALFORMED, "reason")
         assert len(result.quarantined) == 1
+
+
+class TestAcceptedIsNotForwarded:
+    """`accepted` and `forwarded` are different facts, and used to be reported as one.
+
+    A reading is ACCEPTED when it passes validation, dedup and sequencing. It is
+    FORWARDED only if its organisation can be resolved, because the topic name embeds
+    the org. That lookup reads `assets` — FORCE ROW LEVEL SECURITY — through a session
+    with no tenant GUC, so it returns None for every asset and nothing is published.
+
+    Verified against a real database: `_resolve_org` returns None for an asset that
+    demonstrably exists. The response nonetheless reported `accepted: N`, from which a
+    caller could only infer delivery.
+
+    Nothing calls this endpoint today — the edge agent publishes straight to the broker —
+    which is exactly why a total forwarding failure went unnoticed. The counts are now
+    separate so that if anyone does wire it up, the gap is visible in the response rather
+    than inferred from a silent topic.
+    """
+
+    def test_the_summary_reports_forwarded_separately(self):
+        from app.api.edge_ingest import IngestSummary
+
+        fields = set(IngestSummary.model_fields)
+        assert "forwarded" in fields, (
+            "the ingest summary no longer distinguishes forwarded from accepted, so a "
+            "caller cannot tell delivery from validation"
+        )
+        assert "accepted" in fields
+
+    def test_forwarded_defaults_to_zero_not_to_accepted(self):
+        """The default must not flatter the result. If `forwarded` ever defaults to the
+        accepted count, the distinction is decorative."""
+        from app.api.edge_ingest import IngestSummary
+
+        summary = IngestSummary(accepted=5, deduped=0, quarantined=0, out_of_order=0, gaps=0)
+        assert summary.forwarded == 0

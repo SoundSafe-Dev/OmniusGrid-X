@@ -966,6 +966,27 @@ A mismatched `organization_id` is now **refused** rather than silently replaced.
 Substituting the correct organisation would leave a caller believing it had subscribed to
 something it had not — and this codebase already had enough silently-ignored parameters.
 
+**The same sweep found the HTTP ingest endpoint forwarding nothing.** `/api/v1/edge/ingest`
+resolves each reading's organisation to pick a Redpanda topic, and that lookup reads
+`assets` — FORCE RLS — through a session with no tenant context. It returns `None` for
+every asset, so `by_org` stays empty, nothing is published, and the response still reported
+`accepted: N`. Verified: `_resolve_org` returns None for an asset that demonstrably exists.
+
+**It is not a live outage, and checking that mattered.** The edge agent publishes straight
+to the broker; nothing calls this endpoint. So the proportionate fix was honesty rather
+than machinery: `accepted` and `forwarded` are now separate counts, and an unresolved
+reading logs loudly. Building a policy migration for a path nobody calls would have been
+speculative work; leaving a success response that implies delivery would have been the
+class this whole document is about.
+
+**A second, latent defect there is recorded rather than fixed**, because fixing it needs a
+decision. The organisation comes from the ASSET a reading names, with no check that the
+asset belongs to the submitting agent — so a valid agent could route readings into another
+tenant's stream. `assets.agent_id` exists and looks like the binding to enforce against,
+but **nothing ever populates it**: it is NULL for every row. Keying a policy on it would
+have replaced one silent failure with another, which is why the column was checked before
+the design rather than after.
+
 **A note on the mutation test.** A hand-written reconstruction of the old code caught
 nothing: the later `user_org` lookup still refused the connection, so anonymous access
 stayed blocked for a different reason and the test passed. Reverting to the **actual**
