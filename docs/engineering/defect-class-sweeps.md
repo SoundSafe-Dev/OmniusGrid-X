@@ -14,7 +14,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The fifteen classes
+## The sixteen classes
 
 The first five were all originally found in ERP. The sixth came out of the fifth, the
 seventh out of two failing tests that turned out to share a cause, and the eighth out of
@@ -936,6 +936,42 @@ call, and `func.now()` is not `datetime.now()`. That is the fifth detector in th
 to need correcting before its output was worth anything — which is no longer a surprising
 result and is why rule 3 exists.
 
+## 16. A channel the route-walk cannot see — **2 live defects on the websocket**
+
+Every tenant sweep in this document looked at HTTP handlers. `/ws` is not one, and the
+guard that enforces authentication everywhere else **skips it by construction** — its own
+comment reads *"skips WebSocketRoute (/ws) + mounts"*.
+
+Two live defects, both confirmed against the running app before the fix.
+
+**Anyone could subscribe to any organisation, with no token at all.** The handler opened
+with `if token:`. With no token, `user` stayed `None`, control fell through to the
+client-supplied `organization_id`, and the connection was accepted as "anonymous" — the
+log line even says so. A caller who could reach the endpoint received another
+organisation's telemetry, alarms, state changes and command statuses **continuously**.
+
+**An authenticated user could name someone else's organisation.** The binding read
+*"default to the user's organization if not specified"*, so a supplied value took
+**precedence**. Org A's user passing `?organization_id=<org B>` was added to org B's
+broadcast set. This is the same IDOR shape already removed from yard, transportation and
+logistics_correlation — on a channel that streams rather than answering once.
+
+**The manager was never the problem.** `active_connections` is keyed by organisation and
+`broadcast_to_organization` writes only to that key. It was correct, and it was told the
+wrong key. Which is the sharper version of a pattern this document keeps recording: the
+mechanism is sound and the caller supplies the wrong input, so nothing downstream can
+detect it.
+
+A mismatched `organization_id` is now **refused** rather than silently replaced.
+Substituting the correct organisation would leave a caller believing it had subscribed to
+something it had not — and this codebase already had enough silently-ignored parameters.
+
+**A note on the mutation test.** A hand-written reconstruction of the old code caught
+nothing: the later `user_org` lookup still refused the connection, so anonymous access
+stayed blocked for a different reason and the test passed. Reverting to the **actual**
+pre-fix file failed exactly the two assertions naming the two defects. Reconstructing a
+defect is a guess about what it was; restoring it is not.
+
 ---
 
 ## Writing a sweep that is worth trusting
@@ -977,7 +1013,12 @@ one of its findings. The habit that catches it:
    positives train the reader to skip the output, and the next real finding goes with it.
    If the mapping the detector needs does not exist, run the sweep, write down what it
    found, and say why it is not enforced — see class 14.
-10. **Fix forward, not down.** When a corrected sweep surfaces a pile of pre-existing offenders,
+10. **Mutate by reverting, not by reconstructing.** A hand-written "undo" of the
+   websocket fix caught nothing, because the reconstruction was not the original — a
+   later check still refused the connection and the test passed for the wrong reason.
+   Restoring the actual prior file failed exactly the right assertions. If the old code
+   is still in git, use it.
+11. **Fix forward, not down.** When a corrected sweep surfaces a pile of pre-existing offenders,
    weakening 158 contracts to make the guard pass is the wrong direction. Record a
    shrink-only baseline that fails on a new offender AND on a stale entry, and fix the
    cause — here, server defaults in the database.

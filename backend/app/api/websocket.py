@@ -77,26 +77,60 @@ async def _serve_websocket(
 ):
     # Validate authentication via the shared resolver (handles JWTs and the
     # dev-token bypass under ALLOW_DEV_TOKEN — one ws auth path, not two).
-    user = None
-    if token:
-        try:
-            user = await resolve_websocket_user(token)
-        except Exception as e:
-            await websocket.close(code=1008, reason="Authentication failed")
-            logger.warning("websocket_auth_failed", error=str(e))
-            return
-        if user is None:
-            await websocket.close(code=1008, reason="Authentication failed")
-            logger.warning("websocket_auth_failed", error="invalid token")
-            return
-
-    # Default to user's organization if not specified
-    if not organization_id and user:
-        organization_id = str(user.organization_id)
-
-    if not organization_id:
-        await websocket.close(code=1008, reason="Organization ID required")
+    # A TOKEN IS REQUIRED. This used to be `if token:` — with no token, `user` stayed
+    # None, the block below fell through to the client-supplied organization_id, and the
+    # connection was accepted as "anonymous". Anyone able to reach this endpoint could
+    # subscribe to ANY organization's live telemetry, alarms, state changes and command
+    # statuses by naming its id. Confirmed against the running app before the fix.
+    #
+    # `test_route_auth_walk.py` asserts every route rejects an unauthenticated request,
+    # and cannot see this one: it skips WebSocketRoute by construction (see its line
+    # "skips WebSocketRoute (/ws) + mounts"). The rule was enforced everywhere the walk
+    # could reach, and this endpoint was outside it.
+    if not token:
+        await websocket.close(code=1008, reason="Authentication required")
+        logger.warning("websocket_auth_failed", error="no token")
         return
+
+    try:
+        user = await resolve_websocket_user(token)
+    except Exception as e:
+        await websocket.close(code=1008, reason="Authentication failed")
+        logger.warning("websocket_auth_failed", error=str(e))
+        return
+    if user is None:
+        await websocket.close(code=1008, reason="Authentication failed")
+        logger.warning("websocket_auth_failed", error="invalid token")
+        return
+
+    # THE ORGANISATION COMES FROM THE TOKEN, never from the query string.
+    #
+    # It used to be "default to the user's organization if not specified", so a
+    # client-supplied value took PRECEDENCE — an authenticated user of org A could pass
+    # ?organization_id=<org B> and be added to org B's broadcast set, then receive its
+    # data continuously. That is the IDOR shape already removed from yard, transportation
+    # and logistics_correlation, on a channel that streams rather than answers once.
+    #
+    # A mismatched value is refused rather than ignored: silently substituting the right
+    # org would leave a caller believing it had subscribed to something it had not, and
+    # this codebase has enough silently-ignored parameters already.
+    user_org = str(user.organization_id) if user.organization_id else None
+    if not user_org:
+        await websocket.close(code=1008, reason="User has no organization")
+        logger.warning("websocket_auth_failed", error="user has no organization")
+        return
+
+    if organization_id and organization_id != user_org:
+        await websocket.close(code=1008, reason="Organization mismatch")
+        logger.warning(
+            "websocket_org_mismatch",
+            requested=organization_id,
+            user_org=user_org,
+            user_id=str(user.id),
+        )
+        return
+
+    organization_id = user_org
 
     # Connect client
     await websocket_manager.connect_client(websocket, organization_id,
