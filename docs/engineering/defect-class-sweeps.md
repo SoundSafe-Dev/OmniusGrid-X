@@ -14,7 +14,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The twenty-four classes
+## The twenty-five classes
 
 The first five were all originally found in ERP. The sixth came out of the fifth, the
 seventh out of two failing tests that turned out to share a cause, and the eighth out of
@@ -48,6 +48,7 @@ to the frontend/backend seam.
 | A capped list that cannot say it was capped | every `limit`-bearing GET | **12 bare arrays; `/rul` fixed, the rest recorded** | `test_rul_truncation_is_reported_realdb.py` |
 | An audit write with no tenant bound | every `audit_logs` writer | **4 of 8 — exports, bulk jobs and flag changes recorded nothing** | `test_audit_writers_bind_a_tenant_realdb.py` |
 | A handler that builds its own unbound session | every inline `AsyncSessionLocal` in `app/api` | **5 live: 3 endpoints 404ing on your own asset, 2 reporting an empty fleet** | `test_tenant_session_guard.py` (second idiom) |
+| A request body the endpoint's schema rejects | every frontend POST/PUT/PATCH | **clean — 7 of 15 checkable, recorded not enforced** | none; see class 25 |
 
 ---
 
@@ -1473,6 +1474,41 @@ another lane's open ticket, and one root cause behind it also 500s `/kanban/boar
 `/metrics` and `/workload`. The exemption carries its reason, and a second test fails if
 the file stops offending, so a paid debt cannot sit on the allowlist pretending to be
 owed.
+
+## 25. A request body the endpoint's schema rejects — **clean, and deliberately not guarded**
+
+The third leg of the frontend/backend contract. Class 8 checks the path exists, class 9
+checks the query parameters are declared; `test_frontend_calls_real_endpoints.py` says in
+its own docstring that it "deliberately does NOT check request bodies". Rule 17 says a
+limitation written into a comment is a finding waiting to be re-found, so it was swept.
+
+**Result: clean, and it stays a written record rather than a guard.**
+
+**15 request bodies; 7 statically resolvable; 0 mismatches** — after the detector was
+wrong twice, both times in the way that manufactures defects:
+
+* `twinOptimizer` appeared to send `assetIds`, `emitRecommendations` and three more
+  fields "not in the schema". `/api/v1/twin` is registered with the casing seam, so they
+  arrive as `asset_ids` and friends. The same correction class 9 needed, for the same
+  reason, one sweep later — worth noting that knowing about a trap is not the same as
+  remembering it.
+* `erpApi.createIntegration` appeared to send `requests_per_minute` and `burst_limit`,
+  neither in `ERPIntegrationCreate`. They are NESTED inside `rate_limit`, which is. The
+  field-extractor flattened one object into two phantom fields.
+
+**The other 8 are all `Partial<T>`** — `createZone(zone: Partial<GeofenceZoneExtended>)`
+and seven like it. `Partial` makes every field optional, so the type permits `{}` and a
+static comparison cannot say whether a required server field will be present. Extending
+the resolver would report all 8 as "optional in TypeScript, required on the server", which
+is true of every `Partial<T>` by construction and tells a reader nothing.
+
+**And the failure mode is loud.** A body missing a required field is a 422 on the first
+call, unlike an unknown query parameter, which FastAPI drops in silence and which is why
+class 9 found four live defects. The quiet cousin is worth a guard; this one is worth
+knowing about.
+
+Recorded per the rule that a guard you cannot make precise is worse than a written-down
+result — the same call made for class 14.
 
 ## Writing a sweep that is worth trusting
 
