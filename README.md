@@ -693,7 +693,7 @@ altogether. The first version of that guard put the fictional name on an exempti
 which then excused the very bullet it was written to catch; the mutation run passed and
 looked like proof.
 
-Ten classes swept this slice (18–27) and six method rules added (14–19), including *a
+Ten classes swept this slice (18–27) and seven method rules added (14–20), including *a
 detector's skip count must account for everything it did not check*, *never let a
 detector's input include its own subject*, and *a guard that has already been wrong once
 is the most likely place to be wrong again — re-derive its entry point, not just the part
@@ -2763,7 +2763,7 @@ The ERP integration system correlates ERP data with operational telemetry to pro
 - [Implementation Summary](IMPLEMENTATION_SUMMARY.md) - Complete feature inventory
 
 **Engineering practice**
-- [Defect-class sweeps](docs/engineering/defect-class-sweeps.md) - The twenty-eight classes of "code that looks wired and cannot work" found so far, what each sweep found (including the three that came back clean), which mutation-tested guard keeps each closed, and nineteen rules for writing a sweep worth trusting — most of them paid for by a detector that was wrong first
+- [Defect-class sweeps](docs/engineering/defect-class-sweeps.md) - The twenty-eight classes of "code that looks wired and cannot work" found so far, what each sweep found (including the three that came back clean), which mutation-tested guard keeps each closed, and twenty rules for writing a sweep worth trusting — most of them paid for by a detector that was wrong first
 
 **Infrastructure & operations**
 - [Database migrations](database/migrations/README.md) - Runner rules (never edit or rename an applied migration), the 019 gap, grandfathered duplicate prefixes, demo-data gating

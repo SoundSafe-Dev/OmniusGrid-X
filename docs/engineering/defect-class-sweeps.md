@@ -1777,6 +1777,13 @@ one of its findings. The habit that catches it:
    is precisely what it existed to catch. The mutation run passed and looked like proof.
    Scope the exemption to the context, or write the citation so the pattern never sees
    it; an exemption keyed on a bare name is a hole with a comment attached.
+20. **Verifying a write through a privileged path proves the write, not the read.** The
+   audit tests counted rows with a superuser connection, which bypasses RLS — so they
+   showed the INSERT was accepted and said nothing about whether the entry was ever
+   visible to the tenant whose trail it belongs to. Under row-level security those are
+   different questions, and the one that matters is usually the second. Assert the
+   property through the same path the user takes; use the privileged connection to set up
+   and to explain a failure, not to conclude one.
 
 ---
 
