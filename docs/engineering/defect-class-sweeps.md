@@ -14,7 +14,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The twelve classes
+## The thirteen classes
 
 The first five were all originally found in ERP. The sixth came out of the fifth, the
 seventh out of two failing tests that turned out to share a cause, and the eighth out of
@@ -828,6 +828,46 @@ Also checked and clean: the compliance worker has 14 sessions and 13 `_set_org` 
 the one without hands its session to `build_report_payload`, which binds the tenant itself.
 That exception is now asserted, along with the delegation it depends on, so the two cannot
 drift apart.
+
+## 13. A rule enforced on one route and leaked by its neighbour — **2 public probes**
+
+`test_route_auth_walk.py` already proves no route answers 2xx without a token, with 18
+public routes allowlisted and reasoned. What nothing checked was **what those 18 return**.
+
+**Swept:** every allowlisted public route, read as an anonymous caller. Two disclosed
+internal topology:
+
+```
+/health/kafka  503  "error: KafkaConnectionError: Unable to bootstrap from
+                     [('redpanda', 29092, <AddressFamily.AF_UNSPEC: 0>)]"
+/health/ready  503  same string, inside the per-component checks
+```
+
+Internal broker hostname, port, and the technology in use — to anybody who can reach the
+endpoint, and precisely when the broker is down, which is when someone probing would be
+looking.
+
+**What makes this a defect rather than a choice** is that the rule was already written,
+one function away, on `/health/detailed`: *"Auth-gated for the same reason as
+/health/system: the per-component report (broker/redis/ingestion state, connection error
+strings) is recon-useful. Probes use /health/live|ready, which stay public."* The gating
+was right and the reasoning explicit. The same strings simply escaped through the routes
+named as the safe alternative. **A rule enforced in one place and leaked by its neighbour**
+is the recurring shape of this entire document — the class-8 endpoint that a hand fix had
+already visited, the class-11 disclosure flagged in a docstring, the class-12 branch that
+returned before reaching the binding its sibling had.
+
+**The fix withholds nothing from anyone entitled to it.** A probe consumer needs the
+status — Kubernetes reads the code, not the body. An operator reads the logs or
+`/health/detailed`, both of which still carry the full exception text. Statuses that are
+already coarse pass through; anything carrying a payload after a colon collapses to its
+first word, so `error` survives and the hostname does not.
+
+**A second inconsistency fell out of it.** The readiness probe's *cached* not-ready branch
+returned a bare `"Service not ready"` while the uncached branch returned per-component
+checks — so the probe's response shape depended on whether the cache had expired, and an
+operator hitting it twice got two different answers, the second saying nothing about which
+component was down. Both branches now return the same sanitised structure.
 
 ---
 

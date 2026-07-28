@@ -172,59 +172,74 @@ async def test_bearer_token_alone_does_not_replace_signed_token(
         conn.close()
 
 
-# OBSERVED FLAKE, 2026-07-27, cause not determined. This failed once inside a full
-# suite run and then passed in two consecutive full runs and in isolation. Recorded so a
-# recurrence starts from evidence rather than from scratch.
+# PARAMETRIZED SO A FAILURE NAMES ITS CASE.
 #
-# Ruled out by measurement, not by reasoning:
+# This was one loop over five bad tokens with a single assertion inside it, and it failed
+# once inside a full suite run — then passed in two consecutive full runs and in
+# isolation. The failure output could not say WHICH token failed, or whether it was the
+# status or the detail, because the loop does not identify the case it is on. That is the
+# whole reason the cause is still unknown.
+#
+# Two hypotheses were ruled out by measurement rather than argument:
 #   * base64 malleability in `tampered = token[:-1] + "a"`. The token is a JWT of length
 #     480 (len % 4 == 0), so the final character is fully significant; 0/200 generated
 #     tokens decoded identically after the swap.
 #   * rate limiting returning 429 instead of 403 under a long run. RATE_LIMIT_ENABLED
-#     defaults to False and this endpoint carries no rate_limit decorator.
+#     defaults to False and this route carries no rate_limit decorator.
 #
-# Still open: which of the five assertions failed, and on status or on detail. The loop
-# does not identify the case it is on, so the failure output cannot say. If it recurs,
-# parametrize the five bad tokens so the id names the culprit.
+# Splitting the loop costs nothing and converts a recurrence from "something in this test
+# failed" into "the expired-token case returned X". A flake that names itself is a bug
+# report; one that does not is a shrug.
+def _bad_token_cases(job_id: str, org_id, token: str):
+    """(id, token) for every token the endpoint must refuse."""
+    from app.utils.signed_urls import PURPOSE_EXPORT
+
+    return [
+        ("tampered_last_char", token[:-1] + ("a" if token[-1] != "a" else "b")),
+        ("not_a_token", "not-a-token"),
+        (
+            "expired",
+            create_signed_download_token(
+                PURPOSE_COMPLIANCE_REPORT,
+                UUID(job_id),
+                org_id,
+                expires_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+            ),
+        ),
+        (
+            "wrong_purpose",
+            create_signed_download_token(PURPOSE_EXPORT, UUID(job_id), org_id),
+        ),
+        ("wrong_job", _token_for(uuid4(), org_id)),
+    ]
+
+
 @pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["tampered_last_char", "not_a_token", "expired",
+                                  "wrong_purpose", "wrong_job"])
 async def test_invalid_tokens_return_uniform_403(
-    app, seeded_orgs, admin_sync_url, tmp_path, monkeypatch, signed_settings
+    app, seeded_orgs, admin_sync_url, tmp_path, monkeypatch, signed_settings, case
 ):
     job_id = str(uuid4())
     org_id = await _seed_completed_job(
         admin_sync_url, seeded_orgs, job_id, tmp_path, monkeypatch
     )
-    token = _token_for(UUID(job_id), org_id)
-    expired = create_signed_download_token(
-        PURPOSE_COMPLIANCE_REPORT,
-        UUID(job_id),
-        org_id,
-        expires_at=datetime.now(timezone.utc) - timedelta(minutes=1),
-    )
-    from app.utils.signed_urls import PURPOSE_EXPORT
+    valid = _token_for(UUID(job_id), org_id)
+    bad = dict(_bad_token_cases(job_id, org_id, valid))[case]
 
-    wrong_purpose = create_signed_download_token(
-        PURPOSE_EXPORT,
-        UUID(job_id),
-        org_id,
-    )
-    wrong_job = _token_for(uuid4(), org_id)
-    tampered = token[:-1] + ("a" if token[-1] != "a" else "b")
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        for bad in (
-            tampered,
-            "not-a-token",
-            expired,
-            wrong_purpose,
-            wrong_job,
-        ):
-            response = await client.get(
-                f"/api/v1/compliance/reports/{job_id}/signed-download",
-                params={"token": bad},
-            )
-            assert response.status_code == 403
-            assert response.json()["detail"] == "Invalid or expired download link"
+        response = await client.get(
+            f"/api/v1/compliance/reports/{job_id}/signed-download",
+            params={"token": bad},
+        )
+    assert response.status_code == 403, (
+        f"{case}: expected 403, got {response.status_code} — {response.text[:200]}"
+    )
+    assert response.json()["detail"] == "Invalid or expired download link", (
+        f"{case}: the refusal is not uniform, which lets a caller distinguish why a "
+        f"token failed: {response.json().get('detail')!r}"
+    )
 
 
 @pytest.mark.asyncio

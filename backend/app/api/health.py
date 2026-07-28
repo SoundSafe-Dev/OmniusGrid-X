@@ -285,14 +285,44 @@ async def _run_health_checks(db: AsyncSession) -> dict[str, Any]:
     }
 
 
+def _public_status(status: str) -> str:
+    """Collapse a component status to something safe for an anonymous caller.
+
+    THE DISCLOSURE THIS CLOSES. `_check_message_broker` returns strings like
+    `"error: KafkaConnectionError: Unable to bootstrap from [('redpanda', 29092, ...)]"`,
+    and the public probes returned them verbatim — leaking the internal broker hostname,
+    its port and the technology to anybody who can reach the endpoint unauthenticated.
+
+    That contradicted the design already stated one function below: `/health/detailed` is
+    auth-gated precisely because "the per-component report (broker/redis/ingestion state,
+    connection error strings) is recon-useful". The gating was right; the same strings
+    simply escaped through the probes.
+
+    A probe consumer needs the STATUS, not the reason. Kubernetes reads the code, and an
+    operator reads the logs or `/health/detailed`, which still carry the full text — this
+    withholds nothing from anyone entitled to it. Statuses that are already coarse
+    ("ok", "skipped", "degraded") pass through unchanged; anything carrying a payload
+    collapses to its first word.
+    """
+    if not status:
+        return status
+    head = status.split(":", 1)[0].strip()
+    return head or "error"
+
+
+def _public_checks(checks: dict[str, Any]) -> dict[str, Any]:
+    return {name: _public_status(value) for name, value in checks.items()}
+
+
 def _raise_if_not_ready(report: dict[str, Any]) -> None:
     if report["status"] != "ready":
+        # `details` is dropped and `checks` collapsed: this response is public. The
+        # full report stays available on /health/detailed, which requires a user.
         raise HTTPException(
             status_code=503,
             detail={
                 "status": report["status"],
-                "checks": report["checks"],
-                "details": report["details"],
+                "checks": _public_checks(report["checks"]),
             },
         )
 
@@ -311,9 +341,19 @@ async def readiness_probe(db: AsyncSession = Depends(get_db)):
         if _health_cache["status"] == "ready":
             return {
                 "status": "ready",
-                "checks": _health_cache.get("checks", {}),
+                "checks": _public_checks(_health_cache.get("checks", {})),
             }
-        raise HTTPException(status_code=503, detail="Service not ready")
+        # Same shape as the uncached path below. This used to be a bare
+        # "Service not ready" string, so the probe's response shape depended on whether
+        # the cache had expired — an operator hitting it twice got two different
+        # answers, and the second told them nothing about WHICH component was down.
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "status": _health_cache["status"],
+                "checks": _public_checks(_health_cache.get("checks", {})),
+            },
+        )
 
     report = await _run_health_checks(db)
     _health_cache.update(
@@ -324,7 +364,7 @@ async def readiness_probe(db: AsyncSession = Depends(get_db)):
         }
     )
     _raise_if_not_ready(report)
-    return {"status": report["status"], "checks": report["checks"]}
+    return {"status": report["status"], "checks": _public_checks(report["checks"])}
 
 
 @router.get("/health/startup")
@@ -394,8 +434,9 @@ async def health_database(db: AsyncSession = Depends(get_db)):
     """Database connectivity check."""
     status, details = await _check_database(db)
     if not _component_is_healthy(status):
-        raise HTTPException(status_code=503, detail={"status": status, **details})
-    return {"status": status, **details}
+        # Public route: the status only. `details` carries connection error text.
+        raise HTTPException(status_code=503, detail={"status": _public_status(status)})
+    return {"status": _public_status(status), **details}
 
 
 @router.get("/health/redis", operation_id="health_health_redis_unversioned")
@@ -404,8 +445,9 @@ async def health_redis():
     """Redis connectivity check (required when rate limiting is enabled)."""
     status, details = await _check_redis()
     if not _component_is_healthy(status):
-        raise HTTPException(status_code=503, detail={"status": status, **details})
-    return {"status": status, **details}
+        # Public route: the status only. `details` carries connection error text.
+        raise HTTPException(status_code=503, detail={"status": _public_status(status)})
+    return {"status": _public_status(status), **details}
 
 
 @router.get("/health/kafka", operation_id="health_health_kafka_unversioned")
@@ -414,8 +456,9 @@ async def health_kafka():
     """Message broker (Redpanda/Kafka) connectivity check."""
     status, details = await _check_message_broker()
     if not _component_is_healthy(status):
-        raise HTTPException(status_code=503, detail={"status": status, **details})
-    return {"status": status, **details}
+        # Public route: the status only. `details` carries connection error text.
+        raise HTTPException(status_code=503, detail={"status": _public_status(status)})
+    return {"status": _public_status(status), **details}
 
 
 # Prometheus metrics endpoint
