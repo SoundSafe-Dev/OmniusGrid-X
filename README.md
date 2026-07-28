@@ -693,6 +693,18 @@ altogether. The first version of that guard put the fictional name on an exempti
 which then excused the very bullet it was written to catch; the mutation run passed and
 looked like proof.
 
+**And two of this slice's own fixes turned out to prove only half their property.** The
+audit tests counted rows through a *superuser* connection, which bypasses row-level
+security entirely — so they showed the INSERT was no longer rejected and said nothing
+about whether the entry was ever **visible** to the tenant whose trail it belongs to.
+From the compliance desk those are the same failure. The heartbeat tests had the same
+shape. Both now read back through the path the operator actually takes —
+`GET /api/v1/audit/logs` and `GET /api/v1/fleet/agents/versions` — plus the opposite
+direction, because binding a tenant to make a write land must not make the result
+readable to everyone, and the audit trail is the one table where a cross-tenant read is
+itself the incident. That is method rule 20; sweeping the other four real-DB files that
+read through a privileged connection found them sound.
+
 Ten classes swept this slice (18–27) and seven method rules added (14–20), including *a
 detector's skip count must account for everything it did not check*, *never let a
 detector's input include its own subject*, and *a guard that has already been wrong once
@@ -962,7 +974,7 @@ reliability layers (each with its own README):
 | **Cache / job store** | Redis — rate limiting, cross-worker idempotency, async export job store. It previously appeared only as a NetworkPolicy destination with no Service behind it, so the always-on auth limiter 500'd every login when it was unreachable | [`base/redis-statefulset.yaml`](infrastructure/k8s/base/redis-statefulset.yaml) |
 | **Object storage** | Generated exports & compliance reports go to SeaweedFS (S3) so a worker on one pod and the API on another share one bucket — fixes cross-pod download | [`base/object-store.yaml`](infrastructure/k8s/base/object-store.yaml) |
 | **Secrets** | Sealed Secrets (encrypted, safe-in-git) **or** External Secrets Operator (Vault / AWS SM / GCP SM). Placeholder dev credentials are **enforced** out of both deployed environments — a blocking gate fails if one becomes reachable, or if the deploy stops filtering them | [`secrets/`](infrastructure/k8s/secrets/) |
-| **CI safety** | **14 blocking gates** on every branch push. Backend: `backend-realdb` (schema parity, tenant isolation + RLS, timestamp defaults — against an ephemeral TimescaleDB, because RLS and server defaults are both no-ops on SQLite), `backend-full` (2,134 tests — the whole suite bar the intake lane's three collection-failing files and the Kafka e2e, which run in their own job), `backend-kafka-e2e` (container e2e in its own process), `migration-hygiene`. Kubernetes: `k8s-manifests` (build + kubeconform + placeholder-credential check), `netpol-simulate`, `k8s-smoke` (kind: real operator webhooks), `k8s-netpol` (kind + **Calico**: policies genuinely enforced, 19 allow/deny cases), `netpol-coverage` (every workload in a default-deny namespace has a policy in both directions — the gap that killed tracing). Plus `prometheus-rules` (lints `alerts.yml` + `slo_rules.yml`, checks **both** Prometheus configs, and runs the alert unit tests), `frontend-e2e-authenticated` (stands up Postgres + migrations + demo data + uvicorn and asserts the dashboard shows **non-zero** data — an element-visibility check would have passed against the FS-191 tenancy bug), `supply-chain`, `repo-hygiene`, frontend unit + e2e | `.github/workflows/quality-gates.yml` |
+| **CI safety** | **14 blocking gates** on every branch push. Backend: `backend-realdb` (schema parity, tenant isolation + RLS, timestamp defaults — against an ephemeral TimescaleDB, because RLS and server defaults are both no-ops on SQLite), `backend-full` (2,149 tests — the whole suite bar the intake lane's three collection-failing files and the Kafka e2e, which run in their own job), `backend-kafka-e2e` (container e2e in its own process), `migration-hygiene`. Kubernetes: `k8s-manifests` (build + kubeconform + placeholder-credential check), `netpol-simulate`, `k8s-smoke` (kind: real operator webhooks), `k8s-netpol` (kind + **Calico**: policies genuinely enforced, 19 allow/deny cases), `netpol-coverage` (every workload in a default-deny namespace has a policy in both directions — the gap that killed tracing). Plus `prometheus-rules` (lints `alerts.yml` + `slo_rules.yml`, checks **both** Prometheus configs, and runs the alert unit tests), `frontend-e2e-authenticated` (stands up Postgres + migrations + demo data + uvicorn and asserts the dashboard shows **non-zero** data — an element-visibility check would have passed against the FS-191 tenancy bug), `supply-chain`, `repo-hygiene`, frontend unit + e2e | `.github/workflows/quality-gates.yml` |
 | **Load / failover testing** | Kafka ingestion load generator (drives KEDA scaling + DB writes) + a runbook for driving throughput and DB-failover-under-load | [`tests/load/`](tests/load/) |
 
 ### 5. Page → API wiring
