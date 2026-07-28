@@ -32,7 +32,7 @@ to the frontend/backend seam.
 | A test double that reimplements what it stands in for | every `get_tenant_db` override | **4 copies, hiding an RLS bug** | `test_tenant_guc_survives_commit_realdb.py` |
 | Frontend calling endpoints the backend does not serve | all 183 real-mode API calls | **4, one wired to a live button** | `test_frontend_calls_real_endpoints.py` |
 | Response shape disagreeing with the frontend's type | 86 typed calls | **none** | `test_frontend_response_shapes_match.py` |
-| Query parameters the endpoint does not declare | 46 param-sending calls (all of them) | **4, plus 4 IDOR-shaped endpoints** | `test_frontend_query_params_are_declared.py` |
+| Query parameters the endpoint does not declare | 52 param-sending calls (all of them) | **5, plus 4 IDOR-shaped endpoints** | `test_frontend_query_params_are_declared.py` |
 | An org-scoped table with neither a filter nor RLS | `get_db` handlers on org tables | **~60 handlers: 2 leaks, an IDOR, and whole surfaces returning nothing** | `test_tenant_session_guard.py` + 5 real-DB suites |
 | A globally-keyed table read as if tenant-scoped | tables keyed on something other than org | **1 live PII disclosure** | `test_error_triage_sample_redaction_realdb.py` |
 | A worker branch that writes without binding a tenant | every worker write path | **1 live silent no-op** | `test_worker_tenant_guc_hygiene.py` |
@@ -435,7 +435,7 @@ quieter: **FastAPI ignores unknown query parameters silently.** A misspelled or 
 filter does not error — the endpoint returns the UNFILTERED set, and the caller renders it
 as a filtered result. No stack trace; just the wrong rows.
 
-**Swept:** every frontend call that sends query parameters. **46 calls checked, 0
+**Swept:** every frontend call that sends query parameters. **52 calls checked, 0
 skipped** — see *Reopened* below; the first pass reported 37 checked and 1 skipped, and
 both numbers were wrong.
 
@@ -526,6 +526,47 @@ prefixes. Keys under a registered prefix are now compared in both forms, and the
 list is read from the frontend source rather than hardcoded, so removing a registration
 tightens the check instead of leaving a stale exemption. `_t` — a deliberate cache-buster
 that the server is *supposed* to ignore — is the one named exemption.
+
+### Reopened a second time: six calls the extractor could not see at all
+
+Writing a real-mode test for `workcellsApi` — the fix from the first reopening — turned
+up a third gap, and it had been hiding a fifth live defect.
+
+`AssetListParams` declared `organizationId?: string` and `assetsApi.list` forwarded the
+caller's object verbatim. `GET /api/v1/assets/` declares `workcell_id`, `asset_type_id`,
+`is_active`, `skip` and `limit` — **no organisation**. So the parameter was dropped in
+silence, in a type that read as a tenant filter, on the client every asset page uses.
+
+The guard had reported "46 calls checked, 0 skipped" and could not see it. Its call
+pattern required `<[^;{]*?>` between `api.get` and the parenthesis, and this call is:
+
+```ts
+api.get<{ items: Asset[]; meta: { total: number; … } }>('/api/v1/assets/', { params })
+```
+
+Braces and a semicolon inside the type argument, so the pattern matched **nothing** — the
+call was not checked and not counted, exactly the failure mode the first reopening was
+supposed to have closed. **Six calls were invisible that way.** The extractor now finds
+`api.<method>` and *scans* for the opening parenthesis past a balanced type argument,
+rather than pattern-matching up to it: 46 → 52.
+
+**And fixing it produced a false positive out of my own comment.** The note added to
+`AssetListParams` explaining the removal quoted that very call, and the field extractor
+read `items` and `meta` from inside the comment as query parameters — while swallowing
+the field that followed, because a key needs a `,`, `;` or `{` before it and a comment
+line supplies none. Comments are now stripped before parsing, anchored to line starts so
+a `https://` inside a string literal survives. That is method rule 14 again, one file
+over from where it was written.
+
+**The fix is runtime, not just type-level.** Deleting the field from the interface is a
+compile-time guarantee; forwarding the caller's object still puts any extra key on the
+wire. `assetsApi.list` now builds the five declared parameters explicitly, and
+`assets.realmode.test.ts` passes an organisation id in anyway and asserts it does not
+reach the request.
+
+*That test's first version was worthless and is worth recording as such:* it called
+`list()` with no argument, and the pre-fix code only attached `organization_id` when
+given one — so it passed against the defect. Passing the argument is the whole test.
 
 ## 10. An org-scoped table with neither a filter nor RLS — **1 live cross-tenant leak**
 
@@ -1598,6 +1639,13 @@ one of its findings. The habit that catches it:
    three of them 404ing on the caller's own asset. A known limitation written into a
    comment is a finding waiting to be re-found; either close it or record it where it
    will be read as debt.
+18. **A guard that has already been wrong once is the most likely place to be wrong
+   again.** The query-parameter sweep was reopened twice. The first fix taught it to
+   resolve variables; the second found that six calls had never matched its call pattern
+   at all, because a type argument containing `{` or `;` broke the regex — so they were
+   neither checked nor counted, the same failure the first fix was meant to close, one
+   layer down. Both times it was reporting full coverage. When a detector turns out to
+   have a gap, re-derive its *entry point*, not just the part that failed.
 
 ---
 

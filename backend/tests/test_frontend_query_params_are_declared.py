@@ -70,7 +70,38 @@ from app.main import app
 FRONTEND_API = pathlib.Path(__file__).resolve().parents[2] / "frontend" / "src" / "api"
 
 HTTP_METHODS = {"get", "post", "put", "patch", "delete"}
-CALL_START = re.compile(r"api\.(get|post|put|patch|delete)\s*(?:<[^;{]*?>)?\s*\(", re.S)
+#: `api.get` / `api.post` / … — the METHOD only. The opening parenthesis is found by
+#: scanning, because a type argument can contain braces and semicolons:
+#:
+#:     api.get<{ items: Asset[]; meta: { total: number } }>('/api/v1/assets/', { params })
+#:
+#: The original pattern required `<[^;{]*?>` before the `(`, so a call like that matched
+#: NOTHING — it was not checked and not counted as skipped, it simply did not exist as
+#: far as the sweep was concerned. That is how `assetsApi.list` kept offering an
+#: `organizationId` the endpoint has never declared, while this file reported "46 calls
+#: checked, 0 skipped".
+CALL_METHOD = re.compile(r"api\.(get|post|put|patch|delete)\b")
+
+
+def _open_paren_after(source: str, index: int) -> int:
+    """Index of the call's `(`, skipping a balanced type argument. -1 if there is none."""
+    i = index
+    while i < len(source) and source[i].isspace():
+        i += 1
+    if i < len(source) and source[i] == "<":
+        depth = 0
+        while i < len(source):
+            if source[i] == "<":
+                depth += 1
+            elif source[i] == ">":
+                depth -= 1
+                if depth == 0:
+                    i += 1
+                    break
+            i += 1
+        while i < len(source) and source[i].isspace():
+            i += 1
+    return i if i < len(source) and source[i] == "(" else -1
 URL_IN_ARGS = re.compile(r"[`'\"]([^`'\"]+)[`'\"]")
 PARAMS_OBJECT = re.compile(r"params\s*:\s*\{([^{}]*)\}", re.S)
 PARAMS_VARIABLE = re.compile(r"params\s*:\s*[A-Za-z_$][\w$]*\s*[,}]")
@@ -136,6 +167,22 @@ DELIBERATELY_UNDECLARED = {
 }
 
 
+#: Block comments, and line comments that START a line. Anchored so an inline
+#: `https://…` inside a string literal is left alone.
+#:
+#: STRIPPING IS NOT COSMETIC HERE. A comment inside an interface body is read as type
+#: fields: an explanatory note in `AssetListParams` that quoted
+#: `api.get<{ items: Asset[]; meta: { … } }>` added `items` and `meta` as parameters and
+#: swallowed `workcellId`, because the key pattern needs a `,`/`;`/`{` before a name and
+#: a comment line supplies none. The sweep then reported a defect against correct code.
+#: Method rule 14, one file over: a match on raw source is satisfied by prose.
+COMMENT = re.compile(r"(?m)^[ \t]*//[^\n]*|/\*.*?\*/", re.S)
+
+
+def _readable(path: pathlib.Path) -> str:
+    return COMMENT.sub("", path.read_text())
+
+
 def _registered_prefixes() -> List[str]:
     """URL prefixes whose request params the axios seam converts to snake_case.
 
@@ -147,7 +194,7 @@ def _registered_prefixes() -> List[str]:
     for file in FRONTEND_API.glob("*.ts"):
         if ".test." in file.name:
             continue
-        prefixes += re.findall(r"registerTransform\(\s*'([^']+)'", file.read_text())
+        prefixes += re.findall(r"registerTransform\(\s*'([^']+)'", _readable(file))
     return prefixes
 
 
@@ -286,9 +333,12 @@ def _calls_sending_params() -> Tuple[List[tuple], int]:
     for file in sorted(FRONTEND_API.glob("*.ts")):
         if ".test." in file.name:
             continue
-        source = file.read_text()
-        for match in CALL_START.finditer(source):
-            args = _balanced(source, match.end() - 1)
+        source = _readable(file)
+        for match in CALL_METHOD.finditer(source):
+            open_paren = _open_paren_after(source, match.end())
+            if open_paren < 0:
+                continue
+            args = _balanced(source, open_paren)
             url_match = URL_IN_ARGS.search(args)
             if not url_match or not url_match.group(1).startswith("/"):
                 continue
@@ -408,6 +458,42 @@ class TestTheExtractor:
         args = "('/x', { body: 1 }, { params: { limit: 5 } })"
         assert "limit" in _config_argument("post", args)
 
+    def test_it_sees_a_call_whose_type_argument_has_braces(self):
+        """`api.get<{ items: Asset[]; meta: { total: number } }>(…)`. The old pattern
+        required `<[^;{]*?>` before the parenthesis, so a call like this matched nothing
+        — not checked, not counted, invisible. Six calls were in that gap, one of them
+        sending `organizationId` to an endpoint that has never declared it."""
+        source = "const r = await api.get<{ items: A[]; meta: { total: number } }>('/x', { params })"
+        match = next(CALL_METHOD.finditer(source))
+        assert _open_paren_after(source, match.end()) > 0, (
+            "a call with braces in its type argument is still invisible to the sweep"
+        )
+
+    def test_it_ignores_a_call_with_no_parenthesis(self):
+        """`api.get` as a bare reference is not a call; treating it as one would make
+        the extractor read whatever text followed."""
+        assert _open_paren_after("const f = api.get;", len("const f = api.get")) == -1
+
+    def test_a_comment_inside_an_interface_is_not_read_as_fields(self):
+        """The correction that cost the most to find. An explanatory note in
+        `AssetListParams` quoting `api.get<{ items: Asset[]; meta: { … } }>` added
+        `items` and `meta` as query parameters AND swallowed the field after it — the
+        key pattern needs a `,`/`;`/`{` before a name and a comment line supplies none.
+        The sweep then reported a defect against correct code."""
+        source = """
+        interface P {
+          // returns { items: Asset[]; meta: { total: number } }
+          workcellId?: string;
+        }
+        """
+        keys = set(TYPE_KEY.findall(COMMENT.sub("", source)))
+        assert "items" not in keys and "meta" not in keys, f"comment read as fields: {keys}"
+        assert "workcellId" in keys, "the field after the comment was lost"
+
+    def test_stripping_leaves_a_url_in_a_string_alone(self):
+        """Anchored to line starts so `https://…` inside a literal survives."""
+        assert "https://example.test" in COMMENT.sub("", "const u = 'https://example.test'")
+
     def test_it_reads_literal_query_keys(self):
         assert set(LITERAL_QUERY_KEY.findall("/x?entity_type=a&status=b")) == {
             "entity_type",
@@ -443,7 +529,7 @@ class TestTheCasingSeamIsRespected:
 
 class TestTheSweepIsNotVacuous:
     def test_it_found_calls_that_send_parameters(self):
-        assert len(CHECKABLE) >= 40, (
+        assert len(CHECKABLE) >= 50, (
             f"only {len(CHECKABLE)} checkable param-sending calls found; the sweep is "
             f"not reaching them and would pass while checking nothing"
         )

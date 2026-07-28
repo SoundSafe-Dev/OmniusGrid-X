@@ -24,7 +24,16 @@ registerTransform('/api/v1/organizations');
 registerTransform('/admin/assets'); // setMaintenanceMode body -> snake_case
 
 interface AssetListParams {
-  organizationId?: string;
+  // No organizationId. `GET /api/v1/assets/` declares only workcell_id, asset_type_id,
+  // is_active, skip and limit — and FastAPI drops unknown query parameters SILENTLY, so
+  // supplying one returned the caller's own assets either way while reading, at the call
+  // site and in the type, as a tenant filter. The organisation comes from the JWT.
+  //
+  // The backend guard could not see this call at all: `api.get<{ items: Asset[]; meta:
+  // { … } }>(…)` has braces and a semicolon inside its type argument, and the
+  // extractor's pattern excluded both — so it was neither checked nor counted as
+  // skipped. Six calls were invisible that way; the extractor now scans for the opening
+  // parenthesis instead of pattern-matching up to it.
   workcellId?: string;
   assetTypeId?: string;
   isActive?: boolean;
@@ -38,10 +47,21 @@ export const assetsApi = {
     // Backend now returns a {items, meta} envelope (FS-82) with a real total,
     // instead of a bare array we had to fake a count from. Map it to the flat
     // PaginatedResponse; tolerate either casing of has_more from the transform seam.
+    // Built explicitly rather than forwarded wholesale. Dropping `organizationId` from
+    // AssetListParams is a compile-time guarantee; passing the caller's object straight
+    // through still puts any extra key on the wire at runtime, where FastAPI discards
+    // unknown query parameters in silence. These five are what the endpoint declares.
+    const query = {
+      workcell_id: params?.workcellId,
+      asset_type_id: params?.assetTypeId,
+      is_active: params?.isActive,
+      skip: params?.skip,
+      limit: params?.limit,
+    };
     const response = await api.get<{
       items: Asset[];
       meta: { total: number; skip: number; limit: number; has_more?: boolean; hasMore?: boolean };
-    }>('/api/v1/assets/', { params });
+    }>('/api/v1/assets/', { params: query });
     const { items, meta } = response.data;
     return {
       items,
