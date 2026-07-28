@@ -420,6 +420,13 @@ const mockOEEMetrics: OEEMetrics = {
   oee: 0.78,
   stateDurations: { Execute: 28800, Idle: 1620, Held: 900, Stopped: 180 },
   totalPlannedTimeSeconds: 31500,
+  // The demo asset is modelled as fully instrumented: part counters and an ideal
+  // cycle time both present. Leaving these undefined would make the mock render the
+  // unmeasured state, which is not what the fixture is depicting.
+  qualityMeasured: true,
+  performanceMeasured: true,
+  totalParts: 1240,
+  goodParts: 1228,
 };
 
 // Helper to simulate async delay

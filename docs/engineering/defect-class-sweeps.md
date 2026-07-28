@@ -1128,11 +1128,31 @@ reply now says the analysis failed and reports no risk score, because a risk sco
 an analysis happened. Reverting the handler fails 4 of the 7 new assertions.
 
 **Swept:** every model annotating any of nine provenance field names, and every
-construction of one. **1 model, 1 omission, 0 skipped.** That the platform has exactly one
-place where output declares how far to trust it is itself worth recording; the hardcoded
-`performance = 1.0` and `quality = 1.0` in the OEE path are the standing candidate for a
-second. The guard keys on field NAMES rather than that one model, so adding `degraded` or
-`availability_only` anywhere brings it under the rule without further work.
+construction of one. **1 model, 1 omission, 0 skipped.** The guard keys on field NAMES
+rather than that one model, so adding `degraded` or `availability_only` anywhere brings it
+under the rule without further work.
+
+**The same broken link, found by asking where else provenance was carried.** OEE has
+flagged its own honesty since FS-234: `quality` reads 1.0 when an asset has no part
+counters, `performance` reads 1.0 without an ideal cycle time, and the endpoint returns
+`quality_measured` / `performance_measured` with a comment saying a consumer "should
+render '—' rather than '100%' when this is false". **Nothing in the frontend read either
+flag** — the fields were not in `OEEMetrics`, so an uninstrumented asset displayed
+flawless quality, and OEE, being the product of the three, was reported as a result when
+it could only be an upper bound.
+
+1.0 is the correct arithmetic — it is the neutral multiplier — and the wrong thing to
+print, because "100%" is a measurement and this is the absence of one. The panel now shows
+`—` for an unmeasured factor with the reason underneath, labels the product **"OEE (upper
+bound)"** when either factor was stood in for, and shows the good/total part counts when
+they exist. An older response carrying no flags is treated as measured, so a deployment
+that predates them is not covered in dashes. Six page tests; reverting the page fails five,
+and the sixth is the negative control.
+
+These flags live in a dict, not a Pydantic model, so the AST sweep above cannot see them
+— the detector found the class and a human found the second instance of it. Worth stating
+plainly: the guard covers response MODELS, and provenance carried in a plain dict is
+outside it.
 
 **And the chain was broken again one link further on.** `SessionChatResponse` in
 `analysisSessions.ts` did not declare `simulated`, `simulation_reason`, `confidence` or

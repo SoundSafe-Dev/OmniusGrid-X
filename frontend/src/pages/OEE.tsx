@@ -294,11 +294,59 @@ const OEEDetailPanel: FC<{ assetId: string; assetName: string }> = ({ assetId, a
   }
 
   const pct = (v: number) => `${((v ?? 0) * 100).toFixed(1)}%`
-  const factors: Array<{ label: string; value: number; hint: string }> = [
-    { label: 'Availability', value: data.availability, hint: 'Uptime vs planned time' },
-    { label: 'Performance', value: data.performance, hint: 'Speed vs ideal cycle time' },
-    { label: 'Quality', value: data.quality, hint: 'Good units vs total' },
-    { label: 'OEE', value: data.oee, hint: 'Availability × Performance × Quality' },
+
+  // A factor the server could not measure comes back as 1.0 — the neutral multiplier
+  // for the OEE product, which is the correct arithmetic and the wrong thing to print.
+  // "100%" reads as a perfect score; this is the absence of a measurement. The server
+  // has flagged the difference since FS-234 and nothing read the flags, so an asset
+  // with no part counters displayed flawless quality.
+  //
+  // Absent flags are treated as measured: older responses predate them, and defaulting
+  // the other way would put "—" on every asset in a deployment that is fine.
+  const qualityMeasured = data.qualityMeasured !== false
+  const performanceMeasured = data.performanceMeasured !== false
+  // OEE is Availability × Performance × Quality, so it inherits any stand-in: with
+  // either factor unmeasured the product is an upper bound, not a result.
+  const oeeIsBounded = !qualityMeasured || !performanceMeasured
+
+  const factors: Array<{
+    label: string
+    value: number
+    hint: string
+    measured: boolean
+  }> = [
+    {
+      label: 'Availability',
+      value: data.availability,
+      hint: 'Uptime vs planned time',
+      measured: true,
+    },
+    {
+      label: 'Performance',
+      value: data.performance,
+      hint: performanceMeasured
+        ? 'Speed vs ideal cycle time'
+        : 'No ideal cycle time recorded for this asset',
+      measured: performanceMeasured,
+    },
+    {
+      label: 'Quality',
+      value: data.quality,
+      hint: qualityMeasured
+        ? `Good units vs total${
+            data.totalParts ? ` (${data.goodParts ?? 0}/${data.totalParts})` : ''
+          }`
+        : 'No part counters reporting for this asset',
+      measured: qualityMeasured,
+    },
+    {
+      label: oeeIsBounded ? 'OEE (upper bound)' : 'OEE',
+      value: data.oee,
+      hint: oeeIsBounded
+        ? 'Unmeasured factors count as 100%, so the real figure is lower'
+        : 'Availability × Performance × Quality',
+      measured: true,
+    },
   ]
 
   const states = Object.entries(data.stateDurations ?? {})
@@ -316,7 +364,14 @@ const OEEDetailPanel: FC<{ assetId: string; assetName: string }> = ({ assetId, a
         {factors.map((f) => (
           <div key={f.label} className="rounded-lg border border-opsgrid-border p-3">
             <p className="text-xs text-opsgrid-text-secondary">{f.label}</p>
-            <p className="text-2xl font-semibold">{pct(f.value)}</p>
+            <p
+              className={`text-2xl font-semibold ${
+                f.measured ? '' : 'text-opsgrid-text-secondary'
+              }`}
+              title={f.measured ? undefined : 'Not measured'}
+            >
+              {f.measured ? pct(f.value) : '—'}
+            </p>
             <p className="text-xs text-opsgrid-text-secondary mt-1">{f.hint}</p>
           </div>
         ))}

@@ -77,3 +77,75 @@ describe('OEE page — row expands detailed metrics', () => {
     )
   })
 })
+
+// A factor the server could not measure comes back as 1.0 — the neutral multiplier for
+// the OEE product. That is the right arithmetic and the wrong thing to print: "100%"
+// reads as a perfect score when it is the absence of a measurement. The API has sent
+// `quality_measured` / `performance_measured` since FS-234 and nothing read them, so an
+// asset with no part counters displayed flawless quality and an OEE that could only be
+// an upper bound.
+describe('OEE page — an unmeasured factor is not shown as 100%', () => {
+  // Read one factor tile by its label. Asserting on a bare "100.0%" matched the
+  // fleet-level tiles above the panel as well, which is a different number entirely.
+  // Matched on the tile's own <p>, not any element: "OEE" is also a table column
+  // header, and "Quality" could become one.
+  const tileValue = (label: string) => {
+    const tag = screen
+      .getAllByText(label)
+      .find((el) => el.tagName === 'P' && el.className.includes('text-xs'))
+    return tag?.parentElement?.querySelectorAll('p')[1]?.textContent
+  }
+
+  const expandDetail = async (over: Record<string, unknown>) => {
+    getAssetOEE.mockResolvedValueOnce({ ...detail, ...over })
+    wrap(<OEE />)
+    await waitFor(() => expect(screen.getByText('CNC Mill #1')).toBeInTheDocument())
+    fireEvent.click(screen.getByText('CNC Mill #1'))
+    await screen.findByText(/State breakdown/)
+  }
+
+  it('shows a dash instead of a perfect score when quality was not measured', async () => {
+    await expandDetail({ quality: 1.0, qualityMeasured: false })
+    expect(tileValue('Quality')).toBe('—')
+  })
+
+  it('says why the factor is missing', async () => {
+    await expandDetail({ quality: 1.0, qualityMeasured: false })
+    expect(screen.getByText(/No part counters reporting/)).toBeInTheDocument()
+  })
+
+  it('labels OEE an upper bound when a factor was stood in for', async () => {
+    await expandDetail({ quality: 1.0, qualityMeasured: false })
+    expect(screen.getByText(/OEE \(upper bound\)/)).toBeInTheDocument()
+    expect(screen.getByText(/the real figure is lower/)).toBeInTheDocument()
+  })
+
+  it('handles an unmeasured performance factor the same way', async () => {
+    await expandDetail({ performance: 1.0, performanceMeasured: false })
+    expect(screen.getByText(/No ideal cycle time recorded/)).toBeInTheDocument()
+  })
+
+  it('shows real numbers when both factors were measured', async () => {
+    // The negative control: marking everything unmeasured would satisfy the assertions
+    // above and make the panel useless on a fully instrumented asset.
+    await expandDetail({
+      quality: 0.95,
+      qualityMeasured: true,
+      performanceMeasured: true,
+      goodParts: 1228,
+      totalParts: 1240,
+    })
+    expect(tileValue('Quality')).toBe('95.0%')
+    expect(screen.getByText(/1228\/1240/)).toBeInTheDocument()
+    expect(screen.queryByText(/upper bound/)).not.toBeInTheDocument()
+  })
+
+  it('treats an older response with no flags as measured', async () => {
+    // Defaulting the other way would put "—" on every asset in a deployment whose
+    // backend predates the flags and is otherwise fine.
+    await expandDetail({})
+    expect(tileValue('OEE')).toBe('85.5%')
+    expect(tileValue('Quality')).toBe('95.0%')
+    expect(screen.queryByText('—')).not.toBeInTheDocument()
+  })
+})
