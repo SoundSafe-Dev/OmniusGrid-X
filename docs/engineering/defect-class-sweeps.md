@@ -14,7 +14,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The twenty-seven classes
+## The twenty-eight classes
 
 The first five were all originally found in ERP. The sixth came out of the fifth, the
 seventh out of two failing tests that turned out to share a cause, and the eighth out of
@@ -50,8 +50,9 @@ to the frontend/backend seam.
 | A handler that builds its own unbound session | every inline `AsyncSessionLocal` in `app/api` | **5 live: 3 endpoints 404ing on your own asset, 2 reporting an empty fleet** | `test_tenant_session_guard.py` (second idiom) |
 | A request body the endpoint's schema rejects | every frontend POST/PUT/PATCH | **clean — 7 of 15 checkable, recorded not enforced** | none; see class 25 |
 | An endpoint the README documents but the app never served | all 124 API-Reference rows | **22 wrong — 404 for anyone who followed them** | `test_documented_endpoints_exist.py` |
+| A source file the docs point at that is not in the repo | every filename cited in three docs | **1 fiction, 5 omissions** | `test_documented_files_exist.py` |
 
-Twenty-six of these carry a numbered section below. **Response-shape mismatch is the
+Twenty-seven of these carry a numbered section below. **Response-shape mismatch is the
 exception**: it was swept in the same pass as the `get_db` work and came back clean, so
 it is written up inside class 10 rather than given a heading of its own. The row stays in
 this table because a clean result that is not listed is indistinguishable from a check
@@ -1603,6 +1604,51 @@ Path-parameter NAMES are deliberately not compared — `{id}` in the docs and `{
 in the code are the same endpoint, and comparing them literally would fail on nearly every
 row and teach the reader to ignore the file.
 
+## 27. A source file the docs point at that is not in the repo — **1 fiction, 5 omissions**
+
+The companion to class 26. That one checks the API Reference; this checks every
+source filename the prose names. A reader who goes looking for a named file and cannot
+find it has no way to tell whether it moved, was renamed, or never existed.
+
+**The ERP project-structure listing named sap_correlation_patterns.py** between its
+Oracle and Dynamics siblings, both of which exist. It never has. SAP correlation runs
+through the generic `app/services/erp_correlation_patterns.py`, and **the symmetry of the
+list is what hid it** — three vendors, three bullets, one of them fiction. Nothing about
+the shape of the document invited a check.
+
+The same pass found the quieter half: five real files the inventory omitted
+(`intuit_connector.py`, `intuit_qbo.py`, `netsuite_auth.py`, `oauth2.py`, `sap_batch.py`),
+including the eighth ERP connector the README describes at length elsewhere. An inventory
+is only useful if it is complete in **both** directions.
+
+**Resolution is deliberately loose.** Exact path first, then a suffix match against
+`git ls-files`, because the docs legitimately write `sap_connector.py` for a file six
+directories down. Only existence is asserted, never location — tightening that would fail
+on nearly every prose mention and teach the reader to skip the file.
+
+### The first version of this guard had a hole with a comment attached
+
+The fictional name was put on the exemption list, alongside the genuinely
+deliberate absences (the README's "superseded paths" table compares another branch, so
+its left column is *supposed* to be missing here). The mutation run then **passed**: the
+name was excused by the exemption, so re-adding it as a bullet in the ERP listing was
+invisible — the exemption excused the exact fiction it had been written to record.
+
+Fixed by removing the exemption and spelling the name **without backticks** in the
+sentence noting its absence, so the citation pattern never sees it. Now re-adding the
+bullet fails two assertions. An exemption keyed on a bare name is not a record; it is a
+hole that reads like one.
+
+Both directions of the exemption list are also pinned: an entry that starts resolving is
+a stale claim hiding a real file, and an entry no longer cited anywhere is dead weight
+outliving whatever it protected.
+
+**And it failed its own first full run, correctly.** Resolution went through
+`git ls-files`, so the guard could not see a file added in the same commit as the sentence
+describing it — it called the documentation broken while the documentation was right. A
+check that cannot see uncommitted work punishes exactly the change it exists to encourage.
+It now falls back to the working tree, and that case is pinned by name.
+
 ## Writing a sweep that is worth trusting
 
 Both false starts above came from the same mistake — trusting the scan instead of testing
@@ -1698,6 +1744,12 @@ one of its findings. The habit that catches it:
    neither checked nor counted, the same failure the first fix was meant to close, one
    layer down. Both times it was reporting full coverage. When a detector turns out to
    have a gap, re-derive its *entry point*, not just the part that failed.
+19. **An exemption must not be keyed on something the check itself matches.** A filename
+   was allowlisted so one sentence could say "this does not exist" — and that allowlist
+   then excused the same name appearing as a factual bullet three paragraphs above, which
+   is precisely what it existed to catch. The mutation run passed and looked like proof.
+   Scope the exemption to the context, or write the citation so the pattern never sees
+   it; an exemption keyed on a bare name is a hole with a comment attached.
 
 ---
 

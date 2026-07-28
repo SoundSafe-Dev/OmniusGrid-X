@@ -327,7 +327,7 @@ operator sees "showing the most recent 10 of more than 10" instead of a confiden
 answer. Verified end to end: 149 rows synced from live Dataverse, `?limit=10` returns 10
 with `X-Result-Truncated: true`.
 
-**Twenty-seven defect classes have now been swept platform-wide** — recorded in
+**Twenty-eight defect classes have now been swept platform-wide** — recorded in
 [`docs/engineering/defect-class-sweeps.md`](docs/engineering/defect-class-sweeps.md) with
 what each found and which guard keeps it closed. Four started in ERP; most of the rest came
 out of the ones before them. Three came back clean, which is worth writing down: "proven
@@ -510,8 +510,8 @@ the UI were all already there, only the write was missing — and the component 
 failures. The other three were uncalled and were removed. Notably a hand fix of this exact
 class had already run (FS-15, "routes that never existed") and left these behind.
 
-**Both suites are green: backend 2,147 passed, frontend 206 passed, 0 failed** — across
-186 backend and 45 frontend test files. Every guard listed above is mutation-tested:
+**Both suites are green: backend 2,157 passed, frontend 206 passed, 0 failed** — across
+187 backend and 45 frontend test files. Every guard listed above is mutation-tested:
 reintroduce the defect and the test must fail, checked individually, because a guard that
 cannot fail is indistinguishable from one that passes.
 
@@ -685,7 +685,15 @@ that cannot be executed rots silently, precisely because nobody runs a README, s
 now a checked artefact — `test_documented_endpoints_exist.py` parameterises over every
 row and fails by name.
 
-Nine classes swept this slice (18–26) and five method rules added (14–18), including *a
+A twenty-eighth followed from the same idea: every source file the docs name is now
+checked to exist. The ERP listing had claimed a sap_correlation_patterns.py between its
+Oracle and Dynamics siblings — **the symmetry of the list is what hid it** — while five
+real files, including the eighth ERP connector, were missing from the inventory
+altogether. The first version of that guard put the fictional name on an exemption list,
+which then excused the very bullet it was written to catch; the mutation run passed and
+looked like proof.
+
+Ten classes swept this slice (18–27) and six method rules added (14–19), including *a
 detector's skip count must account for everything it did not check*, *never let a
 detector's input include its own subject*, and *a guard that has already been wrong once
 is the most likely place to be wrong again — re-derive its entry point, not just the part
@@ -2612,19 +2620,25 @@ sequenceDiagram
 - Entities: Invoices, Payments, Products, Sales Orders, Accounts, Contacts, Opportunities, Projects, Tasks
 
 **Additional Connectors**
-- `netsuite_connector.py` - NetSuite integration
-- `odoo_connector.py` - Odoo integration
+- `netsuite_connector.py` + `netsuite_auth.py` - NetSuite integration (TBA auth is separate)
+- `odoo_connector.py` - Odoo integration (JSON-RPC)
 - `epicor_connector.py` - Epicor integration
 - `infor_connector.py` - Infor integration
+- `intuit_connector.py` + `intuit_qbo.py` - Intuit QuickBooks, the eighth connector
+- `oauth2.py` - the shared OAuth2 / refresh-rotation machinery these depend on
 
 **Data Extraction & Correlation**
 - `sap_data_extraction.py` - SAP-specific data extraction logic
+- `sap_batch.py` - SAP OData `$batch` request assembly
 - `oracle_data_extraction.py` - Oracle-specific data extraction logic
 - `dynamics_data_extraction.py` - Dynamics-specific data extraction logic
-- `sap_correlation_patterns.py` - SAP-specific correlation patterns
 - `oracle_correlation_patterns.py` - Oracle-specific correlation patterns
 - `dynamics_correlation_patterns.py` - Dynamics-specific correlation patterns
 - `sap_webhook_integration.py` - SAP-specific webhook handling
+
+There is **no sap_correlation_patterns.py**. This listing claimed one for years; SAP
+correlation runs through the generic `app/services/erp_correlation_patterns.py`, and the
+per-vendor pattern modules exist only for Oracle and Dynamics.
 
 ### ERP Middleware
 
@@ -2749,7 +2763,7 @@ The ERP integration system correlates ERP data with operational telemetry to pro
 - [Implementation Summary](IMPLEMENTATION_SUMMARY.md) - Complete feature inventory
 
 **Engineering practice**
-- [Defect-class sweeps](docs/engineering/defect-class-sweeps.md) - The twenty-seven classes of "code that looks wired and cannot work" found so far, what each sweep found (including the three that came back clean), which mutation-tested guard keeps each closed, and eighteen rules for writing a sweep worth trusting — most of them paid for by a detector that was wrong first
+- [Defect-class sweeps](docs/engineering/defect-class-sweeps.md) - The twenty-eight classes of "code that looks wired and cannot work" found so far, what each sweep found (including the three that came back clean), which mutation-tested guard keeps each closed, and nineteen rules for writing a sweep worth trusting — most of them paid for by a detector that was wrong first
 
 **Infrastructure & operations**
 - [Database migrations](database/migrations/README.md) - Runner rules (never edit or rename an applied migration), the 019 gap, grandfathered duplicate prefixes, demo-data gating
