@@ -14,7 +14,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The seventeen classes
+## The eighteen classes
 
 The first five were all originally found in ERP. The sixth came out of the fifth, the
 seventh out of two failing tests that turned out to share a cause, and the eighth out of
@@ -34,6 +34,14 @@ to the frontend/backend seam.
 | Response shape disagreeing with the frontend's type | 86 typed calls | **none** | `test_frontend_response_shapes_match.py` |
 | Query parameters the endpoint does not declare | 46 param-sending calls (all of them) | **4, plus 4 IDOR-shaped endpoints** | `test_frontend_query_params_are_declared.py` |
 | An org-scoped table with neither a filter nor RLS | `get_db` handlers on org tables | **~60 handlers: 2 leaks, an IDOR, and whole surfaces returning nothing** | `test_tenant_session_guard.py` + 5 real-DB suites |
+| A globally-keyed table read as if tenant-scoped | tables keyed on something other than org | **1 live PII disclosure** | `test_error_triage_sample_redaction_realdb.py` |
+| A worker branch that writes without binding a tenant | every worker write path | **1 live silent no-op** | `test_worker_tenant_guc_hygiene.py` |
+| A rule enforced on one route and leaked by its neighbour | public/unauthenticated probes | **2 probes disclosing broker host and port** | `test_public_probes_do_not_disclose.py` |
+| App-permitted values a CHECK constraint rejects | Literal types vs CHECK constraints | **clean; 6 false positives, recorded not enforced** | none — see class 14 |
+| A naive datetime crossing an API boundary | every `datetime.now()` in `app/` | **9 calls, one module** | `test_datetimes_are_timezone_aware.py` |
+| A channel the route-walk cannot see | the websocket surface | **2 live: anonymous access and cross-tenant subscribe** | `test_websocket_tenant_binding.py` |
+| SQL built by interpolating a value into quotes | every raw SQL construction | **8 sites, all dormant** | `test_sql_is_not_built_by_interpolation.py` |
+| A provenance flag left to its default | every model declaring one, all constructions | **1, live, on the error path** | `test_provenance_flags_are_always_set.py` |
 
 ---
 
@@ -1092,6 +1100,62 @@ happen once, when restoring the analysis-session surface made a latent
 
 ---
 
+## 18. A provenance flag left to its default — **1, live, on the error path**
+
+`SessionChatResponse.simulated` defaults to `False`, and that default is a **claim**:
+*this was a genuine inference*. Two of the three constructions in `session_chat` carried
+the engine's real value through, under a comment saying exactly why — "never defaulted to
+False here". The third was the exception handler, and it built the response without those
+fields at all.
+
+So the one reply that is not an analysis in any sense — the engine raised, nothing was
+inferred — was the only one asserting that it was. Its text made that worse: *"the
+correlation AI integration is being set up"* describes a deployment state, not an
+exception, so an operator reading it had no way to know anything had failed.
+
+This is live rather than theoretical: the correlation model and its LoRA adapter are
+**deliberately not loaded**, which is what makes the failure paths the ordinary ones.
+
+**Why a default is the wrong place for this.** A default is what you get when nobody
+thought about the field, and the moment nobody thinks about it is precisely the handler
+written in a hurry to stop a 500. `False` is not neutral here — it is the strongest claim
+the model can make.
+
+**Fixed:** the fallback sets `simulated=True` with a reason naming the exception TYPE, not
+`str(e)` — an exception message is the field most likely to carry internal detail or
+customer data, which is why `/admin/errors` redacts message samples across tenants. The
+reply now says the analysis failed and reports no risk score, because a risk score implies
+an analysis happened. Reverting the handler fails 4 of the 7 new assertions.
+
+**Swept:** every model annotating any of nine provenance field names, and every
+construction of one. **1 model, 1 omission, 0 skipped.** That the platform has exactly one
+place where output declares how far to trust it is itself worth recording; the hardcoded
+`performance = 1.0` and `quality = 1.0` in the OEE path are the standing candidate for a
+second. The guard keys on field NAMES rather than that one model, so adding `degraded` or
+`availability_only` anywhere brings it under the rule without further work.
+
+**And the chain was broken again one link further on.** `SessionChatResponse` in
+`analysisSessions.ts` did not declare `simulated`, `simulation_reason`, `confidence` or
+`model_version`, so the server's "do not read this as an inference" was dropped by the
+client that had asked for it — nothing downstream could label the reply because nothing
+downstream could see the field. A flag the operator never sees is the same as no flag.
+
+The type now declares all four, `appendAssistantMessage` carries them onto the rendered
+message, and the chat pane shows a **"Not a model inference"** badge whose tooltip is the
+reason. The mock branch sets `simulated: true` as well — mock output is simulated by
+definition, and returning `false` there would have made the demo the most confident
+surface in the product. `test_provenance_flags_are_always_set.py` pins all four links, so
+removing any one of them fails rather than quietly restoring the confident version.
+
+**The sweep it came out of found nothing else.** 28 broad `except` handlers wrap a
+database write; **all 28 log at ERROR or WARNING**, and the audit writers — the subset
+where a swallowed failure is a compliance control failure rather than an inconvenience —
+already record an outcome rather than assuming one. `record_audit` confines its failure to
+a `SAVEPOINT` (a rejected audit INSERT would otherwise roll back the very change it
+describes) and returns a boolean; the audit middleware binds the tenant GUC before
+inserting into `audit_logs`, which is `FORCE ROW LEVEL SECURITY`. The one handler that
+turned a failure into a confident success was the one above.
+
 ## Writing a sweep that is worth trusting
 
 Both false starts above came from the same mistake — trusting the scan instead of testing
@@ -1158,6 +1222,18 @@ one of its findings. The habit that catches it:
 ---
 
 ## Open observations, not yet tickets
+
+**A TypeScript response type omitting fields the server sends — swept, not enforced.**
+The field-level companion to class 9's shape check, restricted to URL prefixes the casing
+seam does not touch so names are literal on both sides. **One hit:** `erp.ts`'s
+`FieldMapping` omits `created_at` and `updated_at`, which the client has no use for. That
+is the whole problem with enforcing this class — a missing field is usually a deliberate
+narrowing, and only occasionally a dropped meaning like `simulated` above. Recorded per
+the rule that a guard you cannot make precise is worse than a written-down result. The
+provenance case, where the omission *is* a defect, is enforced separately by
+`test_provenance_flags_are_always_set.py`.
+
+
 
 **RESOLVED, as a checked record rather than a fix.** The split is now pinned by
 `test_service_lifecycle_is_declared.py`: seven services started by `main.py`, five

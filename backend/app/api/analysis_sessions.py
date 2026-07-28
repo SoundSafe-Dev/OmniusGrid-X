@@ -1275,12 +1275,29 @@ async def session_chat(
         
     except Exception as e:
         logger.exception("correlation_ai_error", error=str(e))
-        
-        # Fallback response if AI integration fails
+
+        # LAST-RESORT FALLBACK, AND IT MUST SAY SO.
+        #
+        # The two paths above carry the engine's `simulated` flag through deliberately
+        # — "never defaulted to False here". This handler used to construct the
+        # response without those fields at all, and `simulated` defaults to False, so
+        # the one reply that is not an analysis AT ALL was the only one asserting it
+        # was a real inference. The old text ("the correlation AI integration is being
+        # set up") also described a deployment state rather than what happened, which
+        # is an exception the operator never hears about.
+        #
+        # The reason names the exception TYPE, never `str(e)`: an exception message is
+        # the field most likely to carry internal detail or customer data, which is the
+        # same reason `/admin/errors` redacts message samples across tenants.
         assistant_message = SessionMessage(
             session_id=session_id_str,
             role="assistant",
-            content=f"I received your query: {request.message}\n\nI'm processing this with the context of {len(data_sources)} data sources. The correlation AI integration is being set up.",
+            content=(
+                "I could not analyse that request — the correlation engine returned an "
+                "error, so there is no result to report. Nothing was inferred from your "
+                f"{len(data_sources)} attached data source(s). The failure has been "
+                "logged; please retry, and report it if it persists."
+            ),
             analysis={},
             risk_score=None,
             domains=[],
@@ -1301,7 +1318,14 @@ async def session_chat(
             domains=assistant_message.domains,
             actions=assistant_message.actions,
             follow_up_questions=[],
-            timestamp=_as_utc(assistant_message.timestamp)
+            timestamp=_as_utc(assistant_message.timestamp),
+            simulated=True,
+            simulation_reason=(
+                f"correlation analysis failed ({type(e).__name__}); no inference was "
+                f"performed"
+            ),
+            confidence=None,
+            model_version=None,
         )
 
 

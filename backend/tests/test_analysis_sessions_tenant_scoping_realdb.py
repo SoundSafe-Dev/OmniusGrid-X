@@ -205,3 +205,89 @@ class TestSimulatedAnalysisIsLabelledAsSuch:
         assert body["simulated"] is False
         assert body["confidence"] == 0.92
         assert body["model_version"] == "gemma-4-lora-v2"
+
+
+class TestTheLastResortFallbackAdmitsItIsOne:
+    """The path taken when the correlation engine RAISES, rather than when it falls
+    back to its heuristic.
+
+    `SessionChatResponse.simulated` defaults to False, and this handler constructed the
+    response without those fields at all — so the one reply that is not an analysis in
+    any sense was the only one asserting it was a genuine inference. The two paths above
+    it carry the flag through deliberately ("never defaulted to False here"); the
+    exception handler undid exactly that discipline, and it is reachable today because
+    the model and its LoRA adapter are deliberately not loaded.
+
+    The old text — "the correlation AI integration is being set up" — described a
+    deployment state rather than what happened, so an operator reading it had no way to
+    know an exception had been thrown and logged.
+    """
+
+    @staticmethod
+    def _break_the_engine(monkeypatch):
+        from app.services import correlation_ai_engine as engine_module
+
+        async def _raise(*args, **kwargs):
+            raise RuntimeError("adapter weights unavailable")
+
+        monkeypatch.setattr(engine_module.correlation_ai_engine, "chat", _raise)
+        monkeypatch.setattr(
+            engine_module.correlation_ai_engine, "analyze_scenario", _raise
+        )
+
+    async def _chat(self, client_a):
+        session_id = (
+            await client_a.post("/api/v1/nlp/sessions", json={"title": "engine down"})
+        ).json()["id"]
+        return await client_a.post(
+            f"/api/v1/nlp/sessions/{session_id}/chat", json={"message": "why did line 3 stop?"}
+        )
+
+    async def test_the_request_still_succeeds(self, client_a, monkeypatch):
+        """The fallback exists so a failed analysis does not 500. That part was right
+        and stays — what changes is what the successful response CLAIMS."""
+        self._break_the_engine(monkeypatch)
+        response = await self._chat(client_a)
+        assert response.status_code == 200, response.text
+
+    async def test_it_is_not_reported_as_a_real_inference(self, client_a, monkeypatch):
+        """THE ASSERTION THIS CLASS EXISTS FOR."""
+        self._break_the_engine(monkeypatch)
+        body = (await self._chat(client_a)).json()
+        assert body["simulated"] is True, (
+            "the engine raised and produced nothing, yet the response says this was a "
+            "genuine inference"
+        )
+
+    async def test_the_reason_names_the_failure(self, client_a, monkeypatch):
+        self._break_the_engine(monkeypatch)
+        body = (await self._chat(client_a)).json()
+        assert body["simulation_reason"], "no reason given for a result that is not one"
+        assert "failed" in body["simulation_reason"].lower()
+
+    async def test_the_reason_does_not_leak_the_exception_message(
+        self, client_a, monkeypatch
+    ):
+        """An exception message is the field most likely to carry internal detail or
+        customer data — the same reason /admin/errors redacts message samples across
+        tenants. The type name is enough to triage."""
+        self._break_the_engine(monkeypatch)
+        body = (await self._chat(client_a)).json()
+        assert "adapter weights unavailable" not in body["simulation_reason"]
+        assert "RuntimeError" in body["simulation_reason"]
+
+    async def test_no_confidence_is_claimed_for_a_non_result(self, client_a, monkeypatch):
+        self._break_the_engine(monkeypatch)
+        body = (await self._chat(client_a)).json()
+        assert body["confidence"] is None
+        assert body["model_version"] is None
+
+    async def test_the_text_describes_the_failure_not_a_rollout(
+        self, client_a, monkeypatch
+    ):
+        self._break_the_engine(monkeypatch)
+        body = (await self._chat(client_a)).json()
+        assert "being set up" not in body["content"], (
+            "the reply blames deployment state for what was an exception"
+        )
+        assert body["risk_score"] is None, "a risk score implies an analysis happened"

@@ -77,6 +77,19 @@ export interface SessionChatResponse {
   actions?: Record<string, any>[];
   follow_up_questions?: string[];
   timestamp: string;
+  // PROVENANCE. The backend marks output it did not genuinely infer: the correlation
+  // engine substitutes a heuristic when the model or its LoRA adapter is not loaded
+  // (the deliberate state today), and the chat handler's exception path returns a reply
+  // that is not an analysis at all. Both set `simulated: true` with a reason.
+  //
+  // These fields were absent from this type, so the whole provenance chain died here —
+  // the server was careful to say "do not trust this as an inference" and TypeScript
+  // dropped the sentence. Nothing downstream could label it because nothing downstream
+  // could see it.
+  simulated?: boolean;
+  simulation_reason?: string | null;
+  confidence?: number | null;
+  model_version?: string | null;
 }
 
 export interface SessionMessage {
@@ -90,6 +103,9 @@ export interface SessionMessage {
   actions?: Record<string, any>[];
   follow_up_questions?: string[];
   timestamp: string;
+  /** See SessionChatResponse — carried onto the rendered message so the UI can label it. */
+  simulated?: boolean;
+  simulation_reason?: string | null;
 }
 
 // ==================== API Functions ====================
@@ -294,6 +310,10 @@ export async function sessionChat(sessionId: string, request: SessionChatRequest
       actions: assistant.actions,
       follow_up_questions: assistant.follow_up_questions,
       timestamp: assistant.timestamp,
+      // The mock branch IS simulated, by definition. Returning `false` here would make
+      // the demo the one place that claims a real inference with the most certainty.
+      simulated: true,
+      simulation_reason: 'mock mode: no backend was contacted',
     };
   }
   const response = await api.post<SessionChatResponse>(

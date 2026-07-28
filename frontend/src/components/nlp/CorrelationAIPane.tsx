@@ -391,7 +391,12 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
           domains: response.domains,
           actions: response.actions,
           follow_up_questions: response.follow_up_questions || response.analysis?.follow_up_questions,
-          timestamp: response.timestamp
+          timestamp: response.timestamp,
+          // Carried through, never defaulted: the server sets this when the reply is a
+          // heuristic or an error fallback rather than an inference, and dropping it
+          // here would put the confident version back in front of the operator.
+          simulated: response.simulated,
+          simulation_reason: response.simulation_reason
         }
       ]);
     };
@@ -666,6 +671,20 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
                         : 'bg-white text-gray-900 border border-gray-200 shadow-sm'
                     }`}
                   >
+                    {message.role === 'assistant' && message.simulated && (
+                      <div className="mb-3">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Badge variant="warning">Not a model inference</Badge>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {message.simulation_reason ||
+                              'This reply was produced without the correlation model.'}
+                          </TooltipContent>
+                        </Tooltip>
+                      </div>
+                    )}
+
                     {message.role === 'assistant' && (() => {
                       const riskScore = normalizeRiskScore(message.risk_score);
                       if (riskScore === undefined) return null;
