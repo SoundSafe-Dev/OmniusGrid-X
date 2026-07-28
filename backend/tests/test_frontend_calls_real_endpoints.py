@@ -11,7 +11,7 @@ This is the same shape as the ERP "invented endpoints" sweep, moved to our own
 frontend/backend seam, and the same shape as the tenant-DB overrides: **the suite was
 exercising a double instead of the thing that ships.**
 
-WHAT IT FOUND. 183 real-mode calls across 22 modules; four that the backend does not
+WHAT IT FOUND. 194 real-mode calls across 22 modules; four that the backend does not
 serve, all confirmed against the live route table and by issuing the request in-process:
 
     PATCH /api/v1/fleet/security/events/{id}   404   <- LIVE: wired to a UI button
@@ -46,10 +46,52 @@ FRONTEND_API = pathlib.Path(__file__).resolve().parents[2] / "frontend" / "src" 
 HTTP_METHODS = {"get", "post", "put", "patch", "delete", "head", "options"}
 
 #: `api.get<Foo>('/path')` / ``api.post(`/path/${id}`)`` across all five verbs.
-CALL = re.compile(
-    r"api\.(get|post|put|patch|delete)\s*(?:<[^;{]*?>)?\s*\(\s*([`'\"])([^`'\"]+)\2",
-    re.S,
-)
+#:
+#: METHOD ONLY, then a scan — the type argument is NOT matched by pattern. It used to be,
+#: as `(?:<[^;{]*?>)?`, and a type argument containing a brace or a semicolon therefore
+#: matched nothing:
+#:
+#:     api.get<{ items: Asset[]; meta: { total: number } }>('/api/v1/assets/', …)
+#:
+#: Six calls were invisible to the sibling query-parameter guard for exactly this reason,
+#: and one of them was sending a parameter the endpoint has never declared. This file
+#: claims to check EVERY real-mode call, so the same gap here would have been a claim of
+#: total coverage over a set with holes in it. Method rule 18.
+CALL_METHOD = re.compile(r"api\.(get|post|put|patch|delete)\b")
+URL_ARG = re.compile(r"\A\s*([`'\"])([^`'\"]+)\1")
+
+
+def _open_paren_after(source: str, index: int) -> int:
+    """Index of the call's `(`, skipping a balanced type argument. -1 if there is none."""
+    i = index
+    while i < len(source) and source[i].isspace():
+        i += 1
+    if i < len(source) and source[i] == "<":
+        depth = 0
+        while i < len(source):
+            if source[i] == "<":
+                depth += 1
+            elif source[i] == ">":
+                depth -= 1
+                if depth == 0:
+                    i += 1
+                    break
+            i += 1
+        while i < len(source) and source[i].isspace():
+            i += 1
+    return i if i < len(source) and source[i] == "(" else -1
+
+
+def _calls_in(source: str):
+    """(match, method, url) for every `api.<verb>(...)` whose first argument is a
+    literal path."""
+    for match in CALL_METHOD.finditer(source):
+        open_paren = _open_paren_after(source, match.end())
+        if open_paren < 0:
+            continue
+        url = URL_ARG.match(source[open_paren + 1 :])
+        if url:
+            yield match, match.group(1), url.group(2)
 
 #: A path parameter is ALWAYS preceded by a slash: `/users/${id}`. A `${...}` glued to
 #: the end of a segment is a query-string suffix — `` `/x/entities${q}` `` where
@@ -97,8 +139,7 @@ def _frontend_calls() -> List[Tuple[str, int, str, str, str]]:
         if ".test." in path.name:
             continue
         source = path.read_text()
-        for match in CALL.finditer(source):
-            method, raw = match.group(1), match.group(3)
+        for match, method, raw in _calls_in(source):
             if not raw.startswith("/"):
                 continue  # relative or composed elsewhere; out of scope
             line = source[: match.start()].count("\n") + 1
@@ -108,6 +149,38 @@ def _frontend_calls() -> List[Tuple[str, int, str, str, str]]:
 
 ROUTES = _route_table()
 CALLS = _frontend_calls()
+
+
+class TestTheCallScanner:
+    """The entry point, re-derived after the sibling guard was found to have a hole in
+    exactly this place (method rule 18)."""
+
+    def test_it_sees_a_call_whose_type_argument_contains_braces(self):
+        """`api.get<{ items: Asset[]; meta: { total: number } }>('/x')`. The old pattern
+        required `<[^;{]*?>` before the parenthesis, so calls like this matched nothing
+        and were silently absent from a sweep that claims to check every real-mode call.
+        Fourteen were missing."""
+        source = "await api.get<{ items: A[]; meta: { total: number } }>('/api/v1/assets/')"
+        found = list(_calls_in(source))
+        assert found, "a call with braces in its type argument is invisible again"
+        assert found[0][1] == "get" and found[0][2] == "/api/v1/assets/"
+
+    def test_it_still_sees_a_plain_call(self):
+        found = list(_calls_in("await api.post('/api/v1/x', body)"))
+        assert [(m, u) for _s, m, u in found] == [("post", "/api/v1/x")]
+
+    def test_it_sees_a_simple_type_argument(self):
+        found = list(_calls_in("await api.get<Carrier[]>('/api/v1/y')"))
+        assert [(m, u) for _s, m, u in found] == [("get", "/api/v1/y")]
+
+    def test_a_bare_reference_is_not_a_call(self):
+        assert list(_calls_in("const f = api.get;")) == []
+
+    def test_the_scan_is_not_vacuous(self):
+        assert len(CALLS) >= 190, (
+            f"only {len(CALLS)} calls found; the scanner regressed and this file would "
+            f"pass while checking a fraction of the client"
+        )
 
 
 class TestTheExtractor:

@@ -30,7 +30,7 @@ to the frontend/backend seam.
 | A name that claims a side effect | all of `app/` | **1, in the control path** | `test_helper_names_match_behaviour.py` |
 | Data reported as kept, but discarded | quarantine/DLQ paths | **1, live, on ingestion** | `test_edge_ingest_quarantine_retention.py` |
 | A test double that reimplements what it stands in for | every `get_tenant_db` override | **4 copies, hiding an RLS bug** | `test_tenant_guc_survives_commit_realdb.py` |
-| Frontend calling endpoints the backend does not serve | all 183 real-mode API calls | **4, one wired to a live button** | `test_frontend_calls_real_endpoints.py` |
+| Frontend calling endpoints the backend does not serve | all 194 real-mode API calls | **4, one wired to a live button** | `test_frontend_calls_real_endpoints.py` |
 | Response shape disagreeing with the frontend's type | 86 typed calls | **none** | `test_frontend_response_shapes_match.py` |
 | Query parameters the endpoint does not declare | 52 param-sending calls (all of them) | **5, plus 4 IDOR-shaped endpoints** | `test_frontend_query_params_are_declared.py` |
 | An org-scoped table with neither a filter nor RLS | `get_db` handlers on org tables | **~60 handlers: 2 leaks, an IDOR, and whole surfaces returning nothing** | `test_tenant_session_guard.py` + 5 real-DB suites |
@@ -557,6 +557,15 @@ the field that followed, because a key needs a `,`, `;` or `{` before it and a c
 line supplies none. Comments are now stripped before parsing, anchored to line starts so
 a `https://` inside a string literal survives. That is method rule 14 again, one file
 over from where it was written.
+
+**Rule 18 paid immediately.** The sibling guard, `test_frontend_calls_real_endpoints.py`,
+carried the *identical* pattern and therefore the identical hole — while its docstring
+claimed to check "183 real-mode calls across 22 modules". With the scanner it sees **194**:
+fourteen calls had never been checked by the sweep that exists to prove every path is
+real. All 194 pass, so nothing was hiding there, but the coverage claim was false and only
+became true after looking. The third sibling, `test_frontend_response_shapes_match.py`,
+was checked too and does NOT share the flaw — its pattern tolerates braces because there
+is no `>` inside one. Verified rather than assumed.
 
 **The fix is runtime, not just type-level.** Deleting the field from the interface is a
 compile-time guarantee; forwarding the caller's object still puts any extra key on the
