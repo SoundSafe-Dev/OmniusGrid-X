@@ -14,7 +14,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The twenty classes
+## The twenty-one classes
 
 The first five were all originally found in ERP. The sixth came out of the fifth, the
 seventh out of two failing tests that turned out to share a cause, and the eighth out of
@@ -44,6 +44,7 @@ to the frontend/backend seam.
 | A provenance flag left to its default | every model declaring one, all constructions | **1, live, on the error path** | `test_provenance_flags_are_always_set.py` |
 | A qualifier the frontend never reads | every boolean qualifier on the wire | **3 fields, 2 defects, both live** | `test_qualifiers_reach_the_frontend.py` |
 | A cache key that omits what the fetch varies on | every `useQuery` in the frontend | **clean — 0 of 30+; nearly introduced during this work** | `queryKeysAreComplete.test.ts` |
+| A write whose result the UI never re-reads | every `useMutation` and invalidation | **3 live: ERP sync, command history, emergency stop** | `ERPIntegrations.sync.test.tsx`, `CommandPanel.test.tsx` |
 
 ---
 
@@ -1260,6 +1261,55 @@ call arguments flagged seven sites, all of them correct:
 Both corrections are pinned as tests. Seven false positives would have trained the reader
 to skip the output, and the one real finding would have gone with them.
 
+## 21. A write whose result the UI never re-reads — **3 live**
+
+Class 20 is about a cache key that is too narrow. This is the other half: the write
+succeeds, the server changes, and nothing tells the screen to look again. It is
+particularly quiet where the work happens **off the request path**, because there the
+success response is honest and still insufficient — "triggered" is the whole truth, and
+the result arrives later with nothing watching for it.
+
+**`erpApi.triggerSync`.** `POST /erp/integrations/{id}/sync` hands the work to FastAPI
+`BackgroundTasks` and returns immediately. The page reported *"Sync triggered for N entity
+type(s)"*, which reads as done, and never refetched `erp-sync-status` — so the Status tab
+sat on the previous run's counts for as long as anyone cared to watch.
+
+*A plain invalidate would not have fixed it,* and this is the part that needed reading the
+handler rather than pattern-matching the page: a single refetch on success lands
+milliseconds after the trigger, re-reads the row the sync has not written yet, and never
+fires again. It would have passed review and changed nothing on screen. The Status tab now
+polls while mounted; the invalidate only gives an immediate first read to whoever is
+already there. The backend writes no "running" marker at the start of a sync, so there is
+no in-flight state to poll until it clears — polling while the tab is open is the honest
+version of what is knowable here.
+
+**The command panel, a cluster of four.** Both mutations invalidated
+`['commands', assetId]`; **no query in the codebase declared that key**, so the refetch
+went nowhere. The panel told the operator to *"view command history in the asset details
+page"* — the page that renders this panel and no history. `GET /api/v1/commands/asset/{id}`
+worked and had **zero callers**. And emergency stop did not invalidate at all, so the one
+command an operator most needs to see land was the one guaranteed missing.
+
+The consequence is bigger than a missing list. `command_executor` dispatches off the
+request path, so *"Command submitted successfully"* only ever meant a row was written —
+whether the machine did anything was not observable **anywhere in the product**. The panel
+now renders recent commands with their status, polls while any is in flight and stops when
+they settle, and says so instead of pointing at a page that has no history.
+
+**The sweep found this only after the detector stopped vouching for itself.** The first
+version collected query roots from every `queryKey:` in the tree — including the ones
+*inside* the `invalidateQueries` calls it was checking. Every invalidation registered its
+own key as a valid target, so all 18 matched and the sweep reported zero. Roots now come
+only from query DECLARATIONS (`useQuery` and friends), and `'commands'` surfaced
+immediately. A detector whose input includes its own subject proves nothing, and it fails
+in the most convincing way available: clean.
+
+It was wrong in the other direction too. Reading only each mutation's body reported the
+three `AlarmRules` mutations as never refreshing; they call a local `const invalidate = ()
+=> queryClient.invalidateQueries(...)` declared a few lines above. Resolving local helpers
+took the false positives from 8 to 5, and the 3 that remain are correct — `testConnection`,
+`optimize` and `analyze` produce a result rather than changing a list.
+
 ## Writing a sweep that is worth trusting
 
 Both false starts above came from the same mistake — trusting the scan instead of testing
@@ -1327,6 +1377,13 @@ one of its findings. The habit that catches it:
    data"* — a sentence about a different feature standing in for code nobody had written.
    Strip comments before matching identifiers, and pin the strip with a test, or the
    result depends on what someone happened to write in English.
+15. **Never let a detector's input include its own subject.** The invalidation sweep
+   harvested query keys from every `queryKey:` in the tree, including the ones inside the
+   `invalidateQueries` calls it was auditing — so each call registered its own key as a
+   valid target and vouched for itself. All 18 matched, the sweep reported zero, and a
+   dead invalidation sat in the command panel. The failure mode is the dangerous one: it
+   comes back clean. Ask what the detector reads, and whether the thing under test is
+   inside it.
 
 ---
 

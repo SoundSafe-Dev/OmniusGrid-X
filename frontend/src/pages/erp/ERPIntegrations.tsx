@@ -42,7 +42,21 @@ export const ERPIntegrationsPage: FC = () => {
   })
   const syncMut = useMutation({
     mutationFn: (id: string) => erpApi.triggerSync(id),
-    onSuccess: (res, id) => setTestResult((p) => ({ ...p, [id]: res.message })),
+    // POST /erp/integrations/{id}/sync hands the work to BackgroundTasks and returns
+    // immediately, so "triggered" is the whole truth of the response — the records are
+    // not synced yet and the Status tab still holds the previous run's counts. It said
+    // only "Sync triggered for N entity type(s)", which reads as done.
+    //
+    // Invalidating gives whoever is on the Status tab an immediate first refresh; the
+    // interval there is what actually catches the result, because a single refetch this
+    // early would just re-read the old row.
+    onSuccess: (res, id) => {
+      qc.invalidateQueries({ queryKey: ['erp-sync-status', id] })
+      setTestResult((p) => ({
+        ...p,
+        [id]: `${res.message} — running in the background; the Status tab updates as entities finish.`,
+      }))
+    },
   })
 
   // "Analyze": this integration's synced data becomes a Correlation AI source —
@@ -182,6 +196,10 @@ export const ERPIntegrationsPage: FC = () => {
   )
 }
 
+/** How often the Status tab re-reads sync progress. The sync runs off the request
+ *  path, so this is the only thing that ever shows it finishing. */
+const SYNC_POLL_MS = 10_000
+
 type DetailTab = 'status' | 'entities' | 'events' | 'ai'
 
 const TABS: { key: DetailTab; label: string }[] = [
@@ -309,7 +327,14 @@ const CorrelationsTab: FC = () => {
 }
 
 const StatusTab: FC<{ id: string }> = ({ id }) => {
-  const { data: statuses } = useQuery({ queryKey: ['erp-sync-status', id], queryFn: () => erpApi.getSyncStatus(id) })
+  // Polled because the sync it reports on is a background task: nothing pushes its
+  // completion, and without this the counts a user is looking at stay frozen at the
+  // previous run's numbers however long they wait. Only while this tab is mounted.
+  const { data: statuses } = useQuery({
+    queryKey: ['erp-sync-status', id],
+    queryFn: () => erpApi.getSyncStatus(id),
+    refetchInterval: SYNC_POLL_MS,
+  })
   const { data: mappings } = useQuery({ queryKey: ['erp-mappings', id], queryFn: () => erpApi.listFieldMappings(id) })
   return (
     <div className="grid md:grid-cols-2 gap-4">
