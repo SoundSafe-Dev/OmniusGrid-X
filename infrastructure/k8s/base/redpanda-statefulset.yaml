@@ -23,7 +23,9 @@ spec:
         runAsUser: 101
         runAsGroup: 101
         fsGroup: 101
-      
+        seccompProfile:
+          type: RuntimeDefault
+
       containers:
         - name: redpanda
           image: redpandadata/redpanda:latest

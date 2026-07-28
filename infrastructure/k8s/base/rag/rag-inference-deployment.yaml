@@ -1,0 +1,131 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: rag-inference-models
+  namespace: omniusgrid-rag
+  labels:
+    app.kubernetes.io/name: rag-inference
+    app.kubernetes.io/component: inference
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rag-inference
+  namespace: omniusgrid-rag
+  labels:
+    app.kubernetes.io/name: rag-inference
+    app.kubernetes.io/component: inference
+    app.kubernetes.io/part-of: omniusgrid-rag
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rag-inference
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: rag-inference
+        app.kubernetes.io/component: inference
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: rag-inference
+          # Built locally from rag-inference/Dockerfile and loaded into kind
+          # with `kind load docker-image` for this pass - no registry yet, so
+          # imagePullPolicy must stay Never or the kubelet will try (and fail)
+          # to pull it.
+          image: rag-inference:local
+          imagePullPolicy: Never
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+
+          env:
+            - name: EMBEDDING_MODEL
+              value: "BAAI/bge-m3"
+            - name: RERANKER_MODEL
+              value: "BAAI/bge-reranker-v2-m3"
+            - name: USE_FP16
+              value: "false"
+
+          volumeMounts:
+            - name: models
+              mountPath: /models
+
+          resources:
+            requests:
+              memory: "2Gi"
+              cpu: "1000m"
+            limits:
+              memory: "4Gi"
+              cpu: "2000m"
+
+          # First boot downloads ~5GB of BGE weights (see Dockerfile's own
+          # 300s HEALTHCHECK start-period); startupProbe covers that so
+          # liveness/readiness don't start counting failures until it's done.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 15
+            failureThreshold: 40
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: rag-inference-models
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rag-inference
+  namespace: omniusgrid-rag
+  labels:
+    app.kubernetes.io/name: rag-inference
+    app.kubernetes.io/component: inference
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: rag-inference
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+      protocol: TCP

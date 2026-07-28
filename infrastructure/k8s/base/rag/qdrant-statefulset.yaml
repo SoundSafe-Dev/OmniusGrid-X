@@ -1,0 +1,105 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: qdrant
+  namespace: omniusgrid-rag
+  labels:
+    app.kubernetes.io/name: qdrant
+    app.kubernetes.io/component: vector-store
+    app.kubernetes.io/part-of: omniusgrid-rag
+spec:
+  serviceName: qdrant
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: qdrant
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: qdrant
+        app.kubernetes.io/component: vector-store
+    spec:
+      securityContext:
+        fsGroup: 1000
+      containers:
+        - name: qdrant
+          image: qdrant/qdrant:v1.12.4
+          imagePullPolicy: IfNotPresent
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+
+          ports:
+            - name: http
+              containerPort: 6333
+              protocol: TCP
+            - name: grpc
+              containerPort: 6334
+              protocol: TCP
+
+          volumeMounts:
+            - name: data
+              mountPath: /qdrant/storage
+
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+  # No storageClassName pinned - kind's default local-path-provisioner
+  # satisfies this for free. A future overlay pins a real CSI class here,
+  # same pattern as base/timescaledb-statefulset.yaml's `fast-ssd`.
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 20Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qdrant
+  namespace: omniusgrid-rag
+  labels:
+    app.kubernetes.io/name: qdrant
+    app.kubernetes.io/component: vector-store
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: qdrant
+  ports:
+    - name: http
+      port: 6333
+      targetPort: 6333
+      protocol: TCP
+    - name: grpc
+      port: 6334
+      targetPort: 6334
+      protocol: TCP

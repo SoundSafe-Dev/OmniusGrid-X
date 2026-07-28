@@ -86,6 +86,26 @@ spec:
                 secretKeyRef:
                   name: signed-url-secret
                   key: secret
+            # RAG: points at the standalone infrastructure/k8s/base/rag/ base,
+            # applied separately into its own omniusgrid-rag namespace (isolated
+            # test/verification pass - not yet in overlays/{staging,production},
+            # so these FQDNs only resolve where that base is also applied).
+            # No QDRANT_API_KEY/RAG_INFERENCE_API_KEY yet - single cluster
+            # network, same no-auth assumption as the isolated rag base itself.
+            - name: QDRANT_URL
+              value: "http://qdrant.omniusgrid-rag.svc.cluster.local:6333"
+            - name: S3_ENDPOINT_URL
+              value: "http://seaweedfs.omniusgrid-rag.svc.cluster.local:8333"
+            - name: RAG_INFERENCE_URL
+              value: "http://rag-inference.omniusgrid-rag.svc.cluster.local:8000"
+            # Same CPU-only inference tuning as docker-compose (see its
+            # RAG_EMBED_BATCH/RAG_INFERENCE_TIMEOUT comment) - rag-inference has
+            # no GPU path on k8s either, so the default batch/timeout would
+            # ReadTimeout the same way the eval suite caught in compose.
+            - name: RAG_EMBED_BATCH
+              value: "8"
+            - name: RAG_INFERENCE_TIMEOUT
+              value: "180"
             - name: MTLS_ENABLED
               value: "true"
             - name: CA_CERT_PATH

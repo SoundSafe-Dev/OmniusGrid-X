@@ -1,4 +1,4 @@
-# RAG Pipeline — Containerization & Deployment Guide
+# RAG Pipeline — Development & Deployment Guide
 
 This is the map to read **before** wiring the RAG stack into Docker Compose / k8s.
 The application code is deployment-agnostic on purpose: every dependency is a URL
@@ -6,10 +6,13 @@ The application code is deployment-agnostic on purpose: every dependency is a UR
 services, how they connect, and how they compose into each deployment shape.
 
 > Status: application layer is code-complete (document store, embeddings/reranker
-> service + clients, vector store) **and** the local Docker Compose stack is wired
-> (`qdrant`, `seaweedfs`, `rag-inference` under the `rag` profile). To bring it up
-> and prove it end-to-end on your machine, jump to
-> [§7 Running & testing the RAG backend locally](#7-running--testing-the-rag-backend-locally).
+> service + clients, vector store), the local Docker Compose stack is wired
+> (`qdrant`, `seaweedfs`, `rag-inference` under the `rag` profile), **and** an
+> isolated Kubernetes deployment (`infrastructure/k8s/base/rag/`) has passed
+> end-to-end verification on a local kind cluster. To bring up Compose locally,
+> jump to [§7 Running & testing the RAG backend locally](#7-running--testing-the-rag-backend-locally).
+> For the k8s state, known issues, and what's left before it's production-ready,
+> see [§8 Kubernetes deployment — status, known issues & next steps](#8-kubernetes-deployment--status-known-issues--next-steps).
 
 ---
 
@@ -313,3 +316,93 @@ Add `docker compose down -v` only if you want to wipe the `qdrant-data`,
 
 Application code for the document store, embeddings/reranker, and vector store is
 in place and verified end-to-end by the flow above.
+
+---
+
+## 8. Kubernetes deployment — status, known issues & next steps
+
+`infrastructure/k8s/base/rag/` is a standalone kustomize base (Qdrant StatefulSet,
+SeaweedFS Deployment, rag-inference Deployment — its own `omniusgrid-rag`
+namespace) applied **separately** from `infrastructure/k8s/base` +
+`overlays/{staging,production}`, not folded into them. The backend's
+`base/backend-deployment.yaml` already carries `QDRANT_URL` / `S3_ENDPOINT_URL` /
+`RAG_INFERENCE_URL` pointed at `*.omniusgrid-rag.svc.cluster.local`.
+
+**Verified:** a full ingest → embed → store → index → retrieve → cleanup pass via
+`scripts/verify_rag_e2e.py` against a local `kind` cluster, port-forwarded from the
+host. Every stage passed except LLM generation, which needs Ollama on the host and
+is unrelated to the RAG stack itself.
+
+### 8.1 Known issues (unfixed)
+
+- **mTLS config env vars don't match their settings fields.**
+  `base/backend-deployment.yaml` sets `CA_CERT_PATH` / `SERVER_CERT_PATH` /
+  `SERVER_KEY_PATH`, but `backend/app/core/config.py` actually reads
+  `MTLS_CA_CERT_PATH` / `MTLS_SERVER_CERT_PATH` / `MTLS_SERVER_KEY_PATH`. The one
+  live consumer of the CA path (`cloud_gateway.py`'s outbound mTLS to the cloud
+  gateway) silently falls back to its hardcoded default (`/certs/ca.crt`, not
+  mounted anywhere) instead of the `ca-certificate` Secret the manifest actually
+  mounts. `MTLS_SERVER_CERT_PATH` / `MTLS_SERVER_KEY_PATH` are defined in
+  `config.py` but **never read anywhere in the codebase** — the `backend-tls`
+  Secret/volume mount currently serves no code path. Needs a real fix: rename the
+  manifest's env vars to match, and either wire `backend-tls` to something real or
+  drop it.
+- **Namespace topology is still an open decision.** Keep `omniusgrid-rag`
+  standalone (current state — reusable later by `gemma-correlation-ai` without
+  coupling) vs. fold `base/rag/` into `overlays/{staging,production}`. Affects
+  every hostname if it changes; decide before wiring staging/production traffic
+  through it.
+- **Auth is deliberately not wired.** No `QDRANT_API_KEY` / `RAG_INFERENCE_API_KEY`,
+  no NetworkPolicies scoping ingress to `omniusgrid-rag` from only the app
+  namespaces. Fine for an isolated single-network kind test; not fine once this
+  shares a real cluster with other traffic.
+- **CI/CD doesn't build or deploy `rag-inference` at all.** `.github/workflows/ci-cd.yml`'s
+  `build-images` matrix is `[backend, frontend, edge-agent]` only; neither
+  overlay's `kustomize edit set image` references a `rag-inference` tag.
+  `base/rag/` has never been applied outside a local kind cluster.
+
+### 8.2 Not a bug, but a real hazard if you apply manually
+
+`app/main.py`'s startup (`init_db()`) unconditionally runs
+`Base.metadata.create_all()` on every backend boot, regardless of `ENVIRONMENT`.
+If the backend starts **before** the `db-migrate` Job has run against a fresh
+database, `create_all()` builds the ORM's version of the schema first, and
+`migrate.py` then refuses with *"schema exists but no schema_migrations
+records"* — recoverable via `migrate.py --baseline` (see
+`infrastructure/k8s/README.md`), but avoidable entirely by following the
+documented apply order (Job first, wait for completion, then the rest). CI
+already sequences it this way; this only bites on manual/concurrent applies.
+
+### 8.3 Local kind-cluster test recipe (workarounds, not committed)
+
+None of the following are in the committed manifests — they're specific to a
+throwaway local cluster and were applied live with `kubectl patch` / piped `sed`:
+
+- `timescaledb`'s PVC pins `storageClassName: fast-ssd`, which doesn't exist on
+  kind — swap to kind's default (`standard`) for local testing.
+- `backend` / `db-migrate` use `imagePullPolicy: Always`, which ignores an image
+  loaded locally via `kind load docker-image` — override to `IfNotPresent` (or
+  `Never`, as `rag-inference-deployment.yaml` already does) for local builds.
+- `ca-certificate` / `backend-tls` Secrets are required volume mounts regardless
+  of `MTLS_ENABLED` (Kubernetes can't conditionally skip a volume mount) — a
+  throwaway self-signed cert via `openssl` satisfies the mount.
+- `timescaledb`'s `exec`-based `pg_isready` liveness/readiness probes are
+  expensive (spawn a process via containerd per check) and flake under the CPU
+  contention of running the whole stack + image builds on one kind node — a
+  `tcpSocket` probe on 5432 is a cheap, reliable substitute for local testing.
+- The backend's `/health/ready` correctly reports `not_ready` without Redpanda
+  deployed (it's a critical dependency by design) — if you skip Redpanda/workers
+  for a scoped-down RAG-only test, port-forward to the backend **pod** directly
+  rather than its Service (Services only route to Ready pods).
+
+### 8.4 Next steps
+
+1. Fix the mTLS env var mismatch (§8.1) and decide `backend-tls`'s fate.
+2. Decide the namespace-topology question (§8.1) before any staging/production wiring.
+3. Pin a real `storageClassName` for `base/rag/`'s Qdrant PVC per environment
+   (mirroring how `timescaledb`/`redpanda` already do it with `fast-ssd`), and
+   revisit resource requests/limits once there's a sense of real load.
+4. Add `rag-inference` to the CI build matrix and wire its image tag into
+   whichever kustomization ends up owning `base/rag/`.
+5. Wire `QDRANT_API_KEY` / `RAG_INFERENCE_API_KEY` and NetworkPolicies once the
+   namespace-topology decision lands.
