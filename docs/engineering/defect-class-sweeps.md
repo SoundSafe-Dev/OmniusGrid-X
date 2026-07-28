@@ -777,6 +777,22 @@ one of its findings. The habit that catches it:
 
 ## Open observations, not yet tickets
 
+**RESOLVED, as a checked record rather than a fix.** The split is now pinned by
+`test_service_lifecycle_is_declared.py`: seven services started by `main.py`, five
+recorded as dormant *with the reason for each*. A new singleton nobody starts fails the
+test; starting a dormant one without updating the record fails it too, which forces the
+consequence to be read rather than discovered.
+
+The sharpest of those consequences has its own assertion. `cloud_gateway` holds a
+10,000-entry in-memory list that only its `_flush_loop` drains, and four dormant services
+queue into it. That costs nothing today — verified, not assumed: every producer is itself
+dormant or unwired. Start any one of them **without** starting `cloud_gateway` and queued
+events accumulate and are silently dropped, so the guard fails on exactly that ordering.
+
+Making an invisible state checkable is the point. `tactical_engine` reported dispatches it
+never made, and the only reason it never hurt anyone was that nothing started it — a fact
+recorded nowhere and discoverable only by grepping.
+
 **Five service singletons have a `start()` that no process calls** — `cloud_gateway`,
 `egress_scheduler`, `mlops_pipeline`, `strategic_engine`, `tactical_engine` — against
 seven that `main.py` does start. They are the edge-AI stack, so running them in the API
