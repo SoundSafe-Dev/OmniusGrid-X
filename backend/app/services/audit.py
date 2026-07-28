@@ -86,6 +86,20 @@ async def record_audit(
             from app.db.database import AsyncSessionLocal
 
             async with AsyncSessionLocal() as own_session:
+                # The in-session branch above inherits the caller's GUC from
+                # get_tenant_db. This branch has no caller session and therefore no
+                # tenant context, and `audit_logs` is ENABLE + FORCE ROW LEVEL SECURITY
+                # — FORCE meaning the policy binds the table owner too — so the INSERT
+                # is rejected and the `except` below turns that into `return False`.
+                # Every standalone audit write was silently lost.
+                #
+                # is_local=true, transaction-scoped: nothing here resets a session-scoped
+                # value before the connection goes back to the pool.
+                if organization_id and own_session.bind.dialect.name == "postgresql":
+                    await own_session.execute(
+                        text("SELECT set_config('app.current_org_id', :org, true)"),
+                        {"org": str(organization_id)},
+                    )
                 await own_session.execute(statement, payload)
                 await own_session.commit()
         return True

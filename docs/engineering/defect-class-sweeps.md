@@ -14,7 +14,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The twenty-two classes
+## The twenty-three classes
 
 The first five were all originally found in ERP. The sixth came out of the fifth, the
 seventh out of two failing tests that turned out to share a cause, and the eighth out of
@@ -46,6 +46,7 @@ to the frontend/backend seam.
 | A cache key that omits what the fetch varies on | every `useQuery` in the frontend | **clean — 0 of 30+; nearly introduced during this work** | `queryKeysAreComplete.test.ts` |
 | A write whose result the UI never re-reads | every `useMutation` and invalidation | **3 live: ERP sync, command history, emergency stop** | `ERPIntegrations.sync.test.tsx`, `CommandPanel.test.tsx` |
 | A capped list that cannot say it was capped | every `limit`-bearing GET | **12 bare arrays; `/rul` fixed, the rest recorded** | `test_rul_truncation_is_reported_realdb.py` |
+| An audit write with no tenant bound | every `audit_logs` writer | **4 of 8 — exports, bulk jobs and flag changes recorded nothing** | `test_audit_writers_bind_a_tenant_realdb.py` |
 
 ---
 
@@ -1388,6 +1389,47 @@ later one, in the same run, without anyone looking for it.
 handler returning success after a failure; this is the same shape applied to a service —
 and it survived longer precisely because it *did* log. A warning nobody reads is not a
 signal, it is a place for a defect to live.
+
+## 23. An audit write with no tenant bound — **4 of 8 writers, all silently lost**
+
+`audit_logs` is `ENABLE` + **FORCE** `ROW LEVEL SECURITY`. FORCE means the policy binds
+the table owner too, so an INSERT is rejected outright unless `app.current_org_id` is set
+on the connection — and `AsyncSessionLocal` never sets it.
+
+Four writers opened their own session, inserted, and caught the rejection in a broad
+`except` that logged and moved on: `record_audit`'s standalone path, and `_audit` in
+`export_processor`, `bulk_processor` and `feature_flags`. **Every export, every bulk job
+and every feature-flag change recorded nothing**, while the operation itself reported
+success.
+
+For a compliance surface that is the worst failure available: the action happened, the
+evidence that it happened did not, and the only trace is a log line nobody reads. Four of
+the eight writers were already correct, which is what makes the class worth a guard rather
+than a fix — the convention exists and is simply easy to omit.
+
+**Found in log noise, not by a sweep.** `export_audit_failed ... new row violates
+row-level security policy for table "audit_logs"` scrolled past three times during an
+unrelated real-DB run while the `/rul` tests were being written. The same run gave up
+`get_historical_oee`, which had never returned a row. Both had been failing continuously,
+on every request, for as long as they had existed; both were caught, logged, and forgotten.
+That is method rule 16, and it earned its place twice in one afternoon.
+
+**Why writes and not reads, again.** Under RLS a read with no GUC returns zero rows in
+silence; a write is rejected *loudly*. That should make writes the easy case — and it does
+not, because the loud error is caught two lines later and what reaches a human is
+identical to the quiet one. A `try/except` around a write is where the distinction that
+RLS gives you for free gets thrown away.
+
+**The detector needed the same correction as three before it.** Reading each writer's own
+body reported `report_scheduler._audit_enqueue` as an offender; it binds through
+`self._set_org`, one call away. Following one level of same-module helpers took the list
+from five to four, and the correction is pinned as a test — four false positives out of
+eight would have made the file worth ignoring.
+
+The static guard proves a `set_config` call is present. Only the real database proves the
+policy accepts what follows it, so three of the seven assertions write an actual row and
+count it through a superuser connection. Reverting the four services fails exactly those
+three plus the static check.
 
 ## Writing a sweep that is worth trusting
 

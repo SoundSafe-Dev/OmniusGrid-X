@@ -709,6 +709,22 @@ class BulkProcessor:
         }
         try:
             async with AsyncSessionLocal() as session:
+                # audit_logs is ENABLE + FORCE ROW LEVEL SECURITY (migrations 011/033),
+                # and FORCE means the policy applies to the table owner too — so this
+                # INSERT is REJECTED unless app.current_org_id is set on the connection.
+                # AsyncSessionLocal never sets it, and the `except` below swallowed the
+                # rejection, so this entry has never been written on a real deployment
+                # while every caller saw its own work succeed. Found in the log noise of
+                # a real-DB run: `export_audit_failed ... new row violates row-level
+                # security policy for table "audit_logs"`, three times, passing by.
+                #
+                # is_local=true (transaction-scoped): there is no teardown here to reset
+                # a session-scoped value before the connection returns to the pool.
+                if organization_id and session.bind.dialect.name == "postgresql":
+                    await session.execute(
+                        text("SELECT set_config('app.current_org_id', :org, true)"),
+                        {"org": str(organization_id)},
+                    )
                 await session.execute(
                     text(
                         """
