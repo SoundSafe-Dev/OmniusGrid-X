@@ -930,11 +930,20 @@ one of its findings. The habit that catches it:
    column safe" and "a response model lives in its router's module" — were both false.
    A sweep that finds nothing should be read as *"nothing, within these exclusions"*, and
    the exclusions are the part to attack.
-8. **A guard you cannot make precise is worse than a recorded result.** Six false
+8. **Measure the object the code operates on, not one that contains it.** A flaky
+   assertion in `test_signed_report_downloads` was "ruled out by measurement" — the
+   measurement decoded the whole 480-character JWT rather than its 43-character signature
+   segment, compared garbage to garbage, and reported 0/200 collisions. Measuring the
+   segment gives 18/400. An HS256 signature is 32 bytes in 43 base64url characters, so the
+   final character carries two unused bits and four characters decode identically; the
+   test's `token[:-1] + "a"` left the signature valid 4.5% of the time. The form of the
+   check was rigorous and it was pointed at the wrong thing, which is indistinguishable
+   from rigour until someone re-derives it.
+9. **A guard you cannot make precise is worse than a recorded result.** Six false
    positives train the reader to skip the output, and the next real finding goes with it.
    If the mapping the detector needs does not exist, run the sweep, write down what it
    found, and say why it is not enforced — see class 14.
-9. **Fix forward, not down.** When a corrected sweep surfaces a pile of pre-existing offenders,
+10. **Fix forward, not down.** When a corrected sweep surfaces a pile of pre-existing offenders,
    weakening 158 contracts to make the guard pass is the wrong direction. Record a
    shrink-only baseline that fails on a new offender AND on a stale entry, and fix the
    cause — here, server defaults in the database.

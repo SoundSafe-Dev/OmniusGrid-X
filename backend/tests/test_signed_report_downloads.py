@@ -172,30 +172,60 @@ async def test_bearer_token_alone_does_not_replace_signed_token(
         conn.close()
 
 
-# PARAMETRIZED SO A FAILURE NAMES ITS CASE.
+# PARAMETRIZED SO A FAILURE NAMES ITS CASE — and it earned that within a day.
 #
-# This was one loop over five bad tokens with a single assertion inside it, and it failed
-# once inside a full suite run — then passed in two consecutive full runs and in
-# isolation. The failure output could not say WHICH token failed, or whether it was the
-# status or the detail, because the loop does not identify the case it is on. That is the
-# whole reason the cause is still unknown.
+# This was one loop over five bad tokens with a single assertion inside, so when it failed
+# intermittently the output could not say which token, or whether on status or on detail.
+# Split into named cases, the very next occurrence reported
+# `test_invalid_tokens_return_uniform_403[tampered_last_char]` and the cause fell out
+# immediately.
 #
-# Two hypotheses were ruled out by measurement rather than argument:
-#   * base64 malleability in `tampered = token[:-1] + "a"`. The token is a JWT of length
-#     480 (len % 4 == 0), so the final character is fully significant; 0/200 generated
-#     tokens decoded identically after the swap.
-#   * rate limiting returning 429 instead of 403 under a long run. RATE_LIMIT_ENABLED
-#     defaults to False and this route carries no rate_limit decorator.
+# THE CAUSE WAS THE TEST, NOT THE ENDPOINT, and the first attempt to rule it out was
+# measuring the wrong object. An HS256 signature is 32 bytes encoded as 43 base64url
+# characters: 258 bits carrying 256, so the FINAL CHARACTER HAS TWO UNUSED BITS and four
+# distinct characters decode to the same signature. Replacing the last character with "a"
+# therefore leaves the signature unchanged about 4.5% of the time — the token stays
+# genuinely valid, the endpoint correctly returns 200, and the test fails.
 #
-# Splitting the loop costs nothing and converts a recurrence from "something in this test
-# failed" into "the expired-token case returned X". A flake that names itself is a bug
-# report; one that does not is a shrug.
+# The earlier measurement that "ruled this out" decoded the WHOLE 480-character token
+# instead of its signature segment, compared garbage to garbage, and reported 0/200
+# collisions. Measuring the signature segment gives 18/400. A check can be rigorous in
+# form and still be pointed at the wrong thing.
+#
+# Accepting a token whose signature bytes are identical is correct behaviour, so there is
+# nothing to fix in the product. The tamper now mutates a character in the MIDDLE of the
+# signature, where every bit is significant, and `_tampered` asserts the decoded bytes
+# actually changed — so the case can never silently degrade into "send a valid token and
+# expect a refusal" again.
+
+
+def _tampered(token: str) -> str:
+    """A token whose signature is genuinely different, not merely differently spelled."""
+    import base64
+
+    head, signature = token.rsplit(".", 1)
+
+    def decode(segment: str) -> bytes:
+        return base64.urlsafe_b64decode(segment + "=" * (-len(segment) % 4))
+
+    middle = len(signature) // 2
+    original = signature[middle]
+    replacement = "A" if original != "A" else "B"
+    mutated = signature[:middle] + replacement + signature[middle + 1 :]
+
+    assert decode(mutated) != decode(signature), (
+        "the tamper did not change the signature bytes; this case would be asserting "
+        "that a VALID token is refused"
+    )
+    return f"{head}.{mutated}"
+
+
 def _bad_token_cases(job_id: str, org_id, token: str):
     """(id, token) for every token the endpoint must refuse."""
     from app.utils.signed_urls import PURPOSE_EXPORT
 
     return [
-        ("tampered_last_char", token[:-1] + ("a" if token[-1] != "a" else "b")),
+        ("tampered_signature", _tampered(token)),
         ("not_a_token", "not-a-token"),
         (
             "expired",
@@ -215,7 +245,7 @@ def _bad_token_cases(job_id: str, org_id, token: str):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("case", ["tampered_last_char", "not_a_token", "expired",
+@pytest.mark.parametrize("case", ["tampered_signature", "not_a_token", "expired",
                                   "wrong_purpose", "wrong_job"])
 async def test_invalid_tokens_return_uniform_403(
     app, seeded_orgs, admin_sync_url, tmp_path, monkeypatch, signed_settings, case
