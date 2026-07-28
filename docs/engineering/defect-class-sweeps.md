@@ -627,6 +627,27 @@ changing the payload the frontend receives. Choosing a canonical implementation 
 is a product decision, not a routing edit, so the tests use the real doubled paths rather
 than pretending otherwise.
 
+**Real-mode frontend coverage went from 1 module to 3, chosen by what the backend guards
+cannot see.** `src/test/setup.ts` forces `VITE_USE_MOCK=true`, so every ordinary unit test
+exercises the mock branch; `src/test/realMode.ts` re-imports a module with the flag off and
+stubs axios, so the assertion is about *which request the client builds*.
+
+The three now covered are the contracts changed in this sweep, and the choice matters:
+
+- **`nlpCorrelation.chat`** is the one no backend guard can reach. `message` is a query
+  parameter and `conversation_history` is the **body**, because the handler declares it
+  `Optional[List[Dict[str, str]]]` and FastAPI reads complex types from the body. The
+  query-param guard flagged it while it was in the query — and could say nothing about
+  whether it subsequently landed in the body. Only a test that inspects the outgoing
+  request can.
+- **`transportation`** — `organization_id` gone from carriers, drivers and shipments.
+- **`yard.getDockDoors`** — no `workcell_id`, and no parameter at all, since the column
+  it filtered on does not exist.
+
+All three are mutation-tested by reinstating the old request shape. Backend guards catch
+a reintroduction from the server's side; these catch it in the suite where the change
+would actually be made.
+
 **The third leg of the frontend/backend contract — response shape — came back clean.**
 Its siblings check the path exists and the query parameters are declared; neither says
 anything about what comes back. An endpoint returning `{items, meta}` to a call typed
