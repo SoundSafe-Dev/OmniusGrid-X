@@ -14,7 +14,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The thirteen classes
+## The fourteen classes
 
 The first five were all originally found in ERP. The sixth came out of the fifth, the
 seventh out of two failing tests that turned out to share a cause, and the eighth out of
@@ -869,6 +869,39 @@ checks — so the probe's response shape depended on whether the cache had expir
 operator hitting it twice got two different answers, the second saying nothing about which
 component was down. Both branches now return the same sanitised structure.
 
+## 14. App-permitted values a CHECK constraint rejects — **clean, and only half guardable**
+
+The write-side twin of class 1. There, a response model was stricter than its column; here,
+the application permits a value the database refuses. A column defaulting to `"queued"`
+under a constraint allowing `('pending', 'running', 'done')` rejects every insert that
+omits the field — an IntegrityError from a value the application chose for itself.
+
+Migration 050 made this newly relevant: it copied 39 ORM defaults into SERVER defaults, so
+a bad default is no longer one insert path's problem but the column's.
+
+**Swept in two halves, and only one of them is shippable.**
+
+**ORM defaults vs CHECK — clean, and now guarded.** Every scalar `default=` on a column
+carrying a value-list constraint, compared against the live schema. Zero violations. This
+half is precise because an ORM column names its own table.
+
+**Pydantic `Literal`s vs CHECK — clean, and deliberately NOT guarded.** The broad version
+matched request-model fields to constrained columns by NAME, and produced six findings,
+every one false. `StatusUpdateRequest.status` was flagged against `agent_releases`,
+`agent_rollouts`, `model_registry` and two others — tables it never writes to, which merely
+also have a `status` column. `ScheduledComplianceReportCreate.frequency` was flagged
+against `scheduled_exports`, a different feature's table; its real target
+(`scheduled_compliance_reports`, migration 017) allows all five values, and the handler
+validates against the matching five-value set.
+
+Making that half trustworthy needs a request-model-to-table mapping, and unlike
+`FooResponse -> Foo` there is no naming convention to derive one from. **So it was run,
+found nothing, and was not shipped.** A guard with six known false positives trains people
+to ignore it, which costs more than the coverage is worth — and this document already
+records three detectors that had to be corrected before their output meant anything.
+Recording the negative result keeps the work from being repeated without pretending it is
+enforced.
+
 ---
 
 ## Writing a sweep that is worth trusting
@@ -897,7 +930,11 @@ one of its findings. The habit that catches it:
    column safe" and "a response model lives in its router's module" — were both false.
    A sweep that finds nothing should be read as *"nothing, within these exclusions"*, and
    the exclusions are the part to attack.
-8. **Fix forward, not down.** When a corrected sweep surfaces a pile of pre-existing offenders,
+8. **A guard you cannot make precise is worse than a recorded result.** Six false
+   positives train the reader to skip the output, and the next real finding goes with it.
+   If the mapping the detector needs does not exist, run the sweep, write down what it
+   found, and say why it is not enforced — see class 14.
+9. **Fix forward, not down.** When a corrected sweep surfaces a pile of pre-existing offenders,
    weakening 158 contracts to make the guard pass is the wrong direction. Record a
    shrink-only baseline that fails on a new offender AND on a stale entry, and fix the
    cause — here, server defaults in the database.
