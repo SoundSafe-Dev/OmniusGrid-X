@@ -258,3 +258,58 @@ class TestTheEntryReachesTheAuditTrail:
         assert not any(row.get("action") == action for row in items), (
             "org B can read org A's audit entries"
         )
+
+
+class TestTheTrailCannotBeAimedAtAnotherTenant:
+    """`GET /api/v1/audit/logs` used to accept an `organization_id` query parameter.
+
+    It could never have worked as a cross-tenant selector — the handler runs on
+    `get_tenant_db`, so RLS confines the query to the caller's organisation and any other
+    value matches zero rows. Verified against a real database before removing it: org A
+    supplying org B's id got a 200 and an empty list, not org B's trail.
+
+    It is gone anyway. A parameter that can only narrow-to-nothing reads as a capability
+    the product does not have, on the one table where a cross-tenant read *is* the
+    incident, and it would become a live selector the moment anything ran this query with
+    RLS bypassed. No caller sent it: `AuditLogs.tsx` builds its query string by hand and
+    never included it.
+    """
+
+    async def test_the_parameter_is_not_accepted(self, app):
+        from app.main import app as fastapi_app
+
+        operation = fastapi_app.openapi()["paths"]["/api/v1/audit/logs"]["get"]
+        names = {p["name"] for p in operation.get("parameters", []) if p.get("in") == "query"}
+        assert "organization_id" not in names, (
+            "the cross-tenant-looking filter is back on the audit trail"
+        )
+        assert {"action", "resource_type", "skip", "limit"} <= names, (
+            "the real filters went with it"
+        )
+
+    async def test_supplying_one_anyway_reveals_nothing(
+        self, client_a, app, seeded_orgs
+    ):
+        """FastAPI ignores unknown query parameters silently, so passing it now does
+        nothing at all — which is the same outcome RLS produced before, reached without
+        depending on RLS to produce it."""
+        from app.services.audit import record_audit
+
+        action = "test_not_reachable_by_param"
+        await record_audit(
+            session=None,
+            action=action,
+            resource_type="test",
+            organization_id=seeded_orgs["org_b_id"],
+            actor_id=seeded_orgs["user_b_id"],
+        )
+        response = await client_a.get(
+            "/api/v1/audit/logs",
+            params={"limit": 500, "organization_id": str(seeded_orgs["org_b_id"])},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        items = body["items"] if isinstance(body, dict) and "items" in body else body
+        assert action not in {row.get("action") for row in items}, (
+            "org A read an org B audit entry by naming their organisation"
+        )

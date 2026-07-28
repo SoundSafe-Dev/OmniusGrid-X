@@ -11,7 +11,7 @@ This is the same shape as the ERP "invented endpoints" sweep, moved to our own
 frontend/backend seam, and the same shape as the tenant-DB overrides: **the suite was
 exercising a double instead of the thing that ships.**
 
-WHAT IT FOUND. 194 real-mode calls across 22 modules; four that the backend does not
+WHAT IT FOUND. 196 real-mode calls across 22 modules and one page; four the backend does not
 serve, all confirmed against the live route table and by issuing the request in-process:
 
     PATCH /api/v1/fleet/security/events/{id}   404   <- LIVE: wired to a UI button
@@ -147,8 +147,38 @@ def _frontend_calls() -> List[Tuple[str, int, str, str, str]]:
     return calls
 
 
+#: `fetch('/api/v1/...')` — a call that bypasses the shared axios client entirely.
+#:
+#: THE GUARD USED TO SCAN ONLY `src/api/*.ts`, so a component calling `fetch` directly
+#: was outside every frontend-contract sweep in this repo — not skipped, not counted,
+#: simply not looked at, while this file claimed to check every real-mode call.
+#: `AuditLogs.tsx` does exactly that for `/audit/logs` and `/audit/verify`. Both happen
+#: to be real, which is luck rather than coverage.
+RAW_FETCH = re.compile(r"""fetch\(\s*[`'"](/api/[^`'"?]+)""")
+FRONTEND_SRC = FRONTEND_API.parent
+
+
+def _raw_fetch_calls() -> List[tuple]:
+    """(module, line, 'get', url, normalised) for direct fetch() calls to the API.
+
+    The method is assumed GET: `fetch` defaults to it, and the two live call sites pass
+    no `method`. A call that sets one explicitly would need reading, and none does — if
+    that changes, this comment is the place it will be wrong.
+    """
+    found: List[tuple] = []
+    for path in sorted(FRONTEND_SRC.rglob("*.ts*")):
+        if ".test." in path.name or "node_modules" in str(path):
+            continue
+        source = path.read_text()
+        for match in RAW_FETCH.finditer(source):
+            raw = match.group(1)
+            line = source[: match.start()].count("\n") + 1
+            found.append((path.name, line, "get", raw, normalise(raw)))
+    return found
+
+
 ROUTES = _route_table()
-CALLS = _frontend_calls()
+CALLS = _frontend_calls() + _raw_fetch_calls()
 
 
 class TestTheCallScanner:
@@ -176,8 +206,16 @@ class TestTheCallScanner:
     def test_a_bare_reference_is_not_a_call(self):
         assert list(_calls_in("const f = api.get;")) == []
 
+    def test_raw_fetch_calls_are_in_scope(self):
+        """`AuditLogs.tsx` calls fetch() directly rather than going through the axios
+        client, so it sat outside every frontend-contract sweep here. Both of its
+        endpoints turned out to be real, which is luck, not coverage."""
+        fetched = [c for c in CALLS if c[0] == "AuditLogs.tsx"]
+        assert fetched, "raw fetch() calls are no longer being scanned"
+        assert {c[3] for c in fetched} == {"/api/v1/audit/logs", "/api/v1/audit/verify"}
+
     def test_the_scan_is_not_vacuous(self):
-        assert len(CALLS) >= 190, (
+        assert len(CALLS) >= 195, (
             f"only {len(CALLS)} calls found; the scanner regressed and this file would "
             f"pass while checking a fraction of the client"
         )

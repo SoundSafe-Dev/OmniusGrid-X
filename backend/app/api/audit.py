@@ -22,7 +22,6 @@ router = APIRouter()
 async def list_audit_logs(
     current_user: User = Depends(require_admin),
     user_id: Optional[UUID] = None,
-    organization_id: Optional[UUID] = None,
     action: Optional[str] = None,
     resource_type: Optional[str] = None,
     start_time: Optional[datetime] = None,
@@ -51,12 +50,19 @@ async def list_audit_logs(
     # tenant's admin reading another's audit trail is exactly what an audit trail is
     # supposed to preclude. Cross-org access needs the super-admin role that does not
     # exist yet (the same one `data_retention` is blocked on).
+    #
+    # THE `organization_id` QUERY PARAMETER IS GONE for the same reason. It read as a
+    # cross-tenant selector and could never be one: this session is RLS-scoped, so any
+    # value but the caller's own org matches zero rows — verified against a real database
+    # (org A supplying org B's id got a 200 and an empty list, not org B's trail). A
+    # parameter that can only narrow-to-nothing is a footgun on the one table where a
+    # cross-tenant read IS the incident, and it would become a live selector the moment
+    # anything ran this query with RLS bypassed. No caller sent it; AuditLogs.tsx builds
+    # its query string by hand and never included it.
     
     # Apply filters
     if user_id:
         query = query.where(AuditLog.user_id == str(user_id))
-    if organization_id:
-        query = query.where(AuditLog.organization_id == str(organization_id))
     if action:
         query = query.where(AuditLog.action == action)
     if resource_type:
