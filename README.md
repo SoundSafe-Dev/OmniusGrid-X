@@ -327,7 +327,7 @@ operator sees "showing the most recent 10 of more than 10" instead of a confiden
 answer. Verified end to end: 149 rows synced from live Dataverse, `?limit=10` returns 10
 with `X-Result-Truncated: true`.
 
-**Twenty-three defect classes have now been swept platform-wide** — recorded in
+**Twenty-five defect classes have now been swept platform-wide** — recorded in
 [`docs/engineering/defect-class-sweeps.md`](docs/engineering/defect-class-sweeps.md) with
 what each found and which guard keeps it closed. Four started in ERP; most of the rest came
 out of the ones before them. Three came back clean, which is worth writing down: "proven
@@ -344,7 +344,17 @@ by asset NAME, so a machine near failure whose name sorted late was simply absen
 four audit writers whose rows were rejected by row-level security and swallowed, so every
 export, bulk job and flag change recorded nothing while reporting success.
 
-The last two were found the same way, in the **log noise of an unrelated test run** —
+Two more came out of the guards themselves. Five handlers opened their own
+`AsyncSessionLocal()` and could not see the caller's assets — three `/api/v1/oee/*` routes
+answered **404 for an asset you own**, and `/health-index` and `/simulation/fleet-summary`
+reported an empty fleet — sitting in a gap the tenant-session guard had *named in its own
+docstring* and never closed. And the query-parameter guard, already reopened once, turned
+out never to have matched calls whose type argument contains a brace: six were invisible,
+one of them offering an `organizationId` the assets endpoint has never declared. The
+sibling endpoint guard had the same hole and was checking 180 of 194 calls while claiming
+all of them.
+
+The earlier two were found the same way, in the **log noise of an unrelated test run** —
 which also gave up `get_historical_oee`, a function whose every column reference was a
 Python string (`"oee_metrics.timestamp" >= start_time` raises before the query compiles)
 and which had therefore never returned a row, against a table no migration creates. Each
@@ -500,8 +510,8 @@ the UI were all already there, only the write was missing — and the component 
 failures. The other three were uncalled and were removed. Notably a hand fix of this exact
 class had already run (FS-15, "routes that never existed") and left these behind.
 
-**Both suites are green: backend 1978 passed, frontend 181 passed, 0 failed** — across
-183 backend and 42 frontend test files. Every guard listed above is mutation-tested:
+**Both suites are green: backend 2020 passed, frontend 196 passed, 0 failed** — across
+186 backend and 44 frontend test files. Every guard listed above is mutation-tested:
 reintroduce the defect and the test must fail, checked individually, because a guard that
 cannot fail is indistinguishable from one that passes.
 
@@ -2650,7 +2660,7 @@ The ERP integration system correlates ERP data with operational telemetry to pro
 - [Implementation Summary](IMPLEMENTATION_SUMMARY.md) - Complete feature inventory
 
 **Engineering practice**
-- [Defect-class sweeps](docs/engineering/defect-class-sweeps.md) - The twenty-three classes of "code that looks wired and cannot work" found so far, what each sweep found (including the three that came back clean), which mutation-tested guard keeps each closed, and sixteen rules for writing a sweep worth trusting — most of them paid for by a detector that was wrong first
+- [Defect-class sweeps](docs/engineering/defect-class-sweeps.md) - The twenty-five classes of "code that looks wired and cannot work" found so far, what each sweep found (including the three that came back clean), which mutation-tested guard keeps each closed, and eighteen rules for writing a sweep worth trusting — most of them paid for by a detector that was wrong first
 
 **Infrastructure & operations**
 - [Database migrations](database/migrations/README.md) - Runner rules (never edit or rename an applied migration), the 019 gap, grandfathered duplicate prefixes, demo-data gating
