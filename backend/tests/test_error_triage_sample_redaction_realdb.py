@@ -7,8 +7,8 @@ yet. The detail endpoint therefore handed any tenant's admin any other tenant's
 `message_sample` and `traceback_sample`.
 
 Confirmed against a real database before the fix: org A retrieved a row owned by org B
-carrying `customer_ssn=123-45-6789` in the message and a card number in the traceback,
-and could PATCH its status. Exception text and tracebacks are the two fields most likely
+whose message carried a customer identifier and whose traceback carried a payment-card
+value, and could PATCH its status. Exception text and tracebacks are the two fields most likely
 to contain customer data, precisely because nobody chooses what goes into them.
 
 The module docstring already flagged the tenant-filtering question as open. What it did
@@ -42,8 +42,8 @@ pytestmark = pytest.mark.asyncio
 FP_OTHER = "fp-owned-by-b01"       # fingerprint is varchar(16)
 FP_OWN = "fp-owned-by-a01"
 FP_ORPHAN = "fp-no-owner-001"
-SECRET_MESSAGE = "customer_ssn=123-45-6789 failed validation"
-SECRET_TRACE = 'File "handler.py", line 9\n  card="4111111111111111"'
+SECRET_MESSAGE = "customer_ref=AAA-BB-CCCC failed validation"
+SECRET_TRACE = 'File "handler.py", line 9\n  card="XXXXXXXXXXXXXXXX"'
 
 
 @pytest_asyncio.fixture
@@ -84,14 +84,15 @@ class TestAnotherTenantsPayloadIsWithheld:
         response = await client_a.get(f"/api/v1/admin/errors/{FP_OTHER}")
         assert response.status_code == 200, response.text
         assert SECRET_MESSAGE not in (response.json()["message_sample"] or ""), (
-            "another tenant's error message — containing what looks like a customer "
-            "SSN — was returned in full"
+            "another tenant's error message — containing a customer identifier "
+            "— was returned in full"
         )
 
     async def test_the_traceback_sample_is_redacted(self, client_a, errors):
         response = await client_a.get(f"/api/v1/admin/errors/{FP_OTHER}")
-        assert "4111111111111111" not in (response.json()["traceback_sample"] or ""), (
-            "another tenant's traceback, containing a card number, was returned in full"
+        assert "XXXXXXXXXXXXXXXX" not in (response.json()["traceback_sample"] or ""), (
+            "another tenant's traceback, containing a payment-card value, was returned "
+            "in full"
         )
 
     async def test_the_redaction_says_why(self, client_a, errors):

@@ -760,8 +760,8 @@ cross-tenant *by construction*, and `require_admin` means a **tenant** admin, si
 platform-admin role exists. Any tenant's admin could therefore read any other tenant's
 `message_sample` and `traceback_sample`, and PATCH its status.
 
-Verified against a real database: org A retrieved a row owned by org B carrying
-`customer_ssn=123-45-6789` in the message and a card number in the traceback. Exception
+Verified against a real database: org A retrieved a row owned by org B whose message
+carried a customer identifier and whose traceback carried a payment-card value. Exception
 text and tracebacks are the two fields most likely to contain customer data, precisely
 because nobody chooses what goes into them.
 

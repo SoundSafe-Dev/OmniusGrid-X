@@ -336,8 +336,8 @@ async def _build_detail(
         # `require_admin` means a TENANT admin, since no platform-admin role exists yet.
         # Left as-is, any tenant's admin could read any other tenant's `message_sample`
         # and `traceback_sample`. Verified against a real database: org A retrieved a
-        # row belonging to org B carrying `customer_ssn=123-45-6789` in the message and
-        # a card number in the traceback. Exception text and tracebacks are the two
+        # row belonging to org B whose message carried a customer identifier and whose
+        # traceback carried a payment-card value. Exception text and tracebacks are the two
         # fields most likely to contain customer data, precisely because nobody chooses
         # what goes in them.
         #
