@@ -6,10 +6,24 @@ import { Tooltip, TooltipTrigger, TooltipContent, useDialog } from '../../compon
 import { authApi, api } from '../../api';
 import { User, UserRole } from '../../types';
 
+// One page of users. The server caps `limit` at 200, which is also where "Show more"
+// stops — beyond that the page says so instead of quietly ending the list.
+const PAGE_SIZE = 50;
+const MAX_PAGE = 200;
+
 export const UsersPage: FC = () => {
   const queryClient = useQueryClient();
   const { confirm, alert } = useDialog();
-  const { data: users, isLoading, isError } = useQuery({ queryKey: ['users'], queryFn: () => authApi.getUsers() });
+  // `limit` is explicit because the endpoint now paginates. It used to return the whole
+  // organisation — it declared no query parameters, so the `{ skip, limit }` this client
+  // has always sent were dropped silently by FastAPI. Fixing the handler without fixing
+  // this page would have swapped one silent truncation for another: the table would show
+  // the server's default page and give no sign that anyone was missing.
+  const [limit, setLimit] = useState(PAGE_SIZE);
+  const { data: users, isLoading, isError } = useQuery({
+    queryKey: ['users', limit],
+    queryFn: () => authApi.getUsers({ limit }),
+  });
   // Enabled in FS-221/224: the admin router at /api/v1/users now provides
   // create / update / deactivate, all admin-gated and tenant-scoped. These
   // affordances were hidden (not merely disabled) while the endpoints 404'd.
@@ -221,6 +235,28 @@ export const UsersPage: FC = () => {
             ))}
           </Table.Body>
         </Table>
+        {users && users.total > users.items.length && (
+          <div className="flex items-center justify-between border-t border-opsgrid-border px-4 py-3 text-sm">
+            <span className="text-opsgrid-text-secondary">
+              Showing {users.items.length} of {users.total} users
+            </span>
+            {limit < MAX_PAGE ? (
+              <Button
+                variant="secondary"
+                onClick={() => setLimit((n) => Math.min(n + PAGE_SIZE, MAX_PAGE))}
+              >
+                Show more
+              </Button>
+            ) : (
+              // The server's ceiling, stated rather than hidden. Silently stopping here
+              // is the exact failure this page was just fixed for.
+              <span className="text-opsgrid-text-secondary">
+                Showing the first {MAX_PAGE} — narrow the list from the admin API to see
+                the rest.
+              </span>
+            )}
+          </div>
+        )}
       </Card>
 
       {/* Add User Modal */}

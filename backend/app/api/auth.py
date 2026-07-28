@@ -5,13 +5,13 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 import jwt
 from jwt import PyJWTError as JWTError
 from passlib.context import CryptContext
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -490,16 +490,39 @@ async def get_current_user_info(
     description="Retrieve users in the authenticated user's organization.",
 )
 async def get_organization_users(
+    skip: int = Query(0, ge=0, description="Rows to skip."),
+    limit: int = Query(50, ge=1, le=200, description="Maximum rows to return."),
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get all users in the organization for assignment."""
-    if not current_user.organization_id:
-        return {"items": [], "total": 0}
+    """Get the users in the caller's organization, for assignment pickers.
 
-    result = await db.execute(
-        select(User).where(User.organization_id == current_user.organization_id)
-    )
+    PAGINATION IS DECLARED HERE BECAUSE THE CLIENT ALREADY SENT IT. `authApi.getUsers`
+    takes `{ skip, limit }` and types the result `PaginatedResponse<User>`, but this
+    handler declared no query parameters — and **FastAPI drops unknown query parameters
+    silently**, so both were discarded and every caller received the whole organization
+    while believing it had asked for a page. Three of the five fields the declared type
+    promises (`skip`, `limit`, `hasMore`) were never sent at all.
+
+    `total` is a COUNT over the whole organization, not `len(items)`. Returning the page
+    length was correct only while the page was always everything; as a paginated field it
+    would report "3 users" to an organization of 300 and stop the caller from paging.
+
+    camelCase `hasMore` is deliberate and matches `isActive`/`createdAt` below: this
+    router is on the casing seam's never-register list (`transformRegistry.ts`), so what
+    is written here is what TypeScript reads.
+    """
+    if not current_user.organization_id:
+        return {"items": [], "total": 0, "skip": skip, "limit": limit, "hasMore": False}
+
+    scoped = select(User).where(User.organization_id == current_user.organization_id)
+    total = (
+        await db.execute(
+            select(func.count()).select_from(scoped.subquery())
+        )
+    ).scalar_one()
+
+    result = await db.execute(scoped.order_by(User.created_at.asc(), User.id.asc()).offset(skip).limit(limit))
     users = result.scalars().all()
     user_list = [
         {
@@ -517,7 +540,10 @@ async def get_organization_users(
 
     return {
         "items": user_list,
-        "total": len(user_list)
+        "total": total,
+        "skip": skip,
+        "limit": limit,
+        "hasMore": skip + len(user_list) < total,
     }
 
 

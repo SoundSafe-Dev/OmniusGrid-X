@@ -26,7 +26,7 @@ const deleteUser = vi.fn()
 
 vi.mock('../../api', () => ({
   authApi: {
-    getUsers: () => getUsers(),
+    getUsers: (params: unknown) => getUsers(params),
     createUser: (d: unknown) => createUser(d),
     updateUser: (id: string, d: unknown) => updateUser(id, d),
     deleteUser: (id: string) => deleteUser(id),
@@ -56,8 +56,8 @@ const USER = {
   isActive: true,
 }
 
-function page(items: unknown[] = [USER]) {
-  getUsers.mockResolvedValue({ items, total: items.length, skip: 0, limit: 50 })
+function page(items: unknown[] = [USER], total = items.length) {
+  getUsers.mockResolvedValue({ items, total, skip: 0, limit: 50, hasMore: total > items.length })
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={client}>
@@ -129,5 +129,60 @@ describe('UsersPage', () => {
     await screen.findByText('Dana Operator')
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+})
+
+// The list endpoint used to return the whole organisation: it declared no query
+// parameters, so the `{ skip, limit }` this client has always sent were dropped
+// silently by FastAPI. The handler now paginates for real, which means this page can
+// no longer assume one request is the whole list — and a table that shows the first
+// page with no indication of the rest is the same silent truncation wearing a
+// different hat.
+describe('UsersPage pagination', () => {
+  beforeEach(() => {
+    getUsers.mockReset()
+    confirmMock.mockReset()
+  })
+
+  it('asks for an explicit page size rather than taking the server default', async () => {
+    page()
+    await screen.findByText('Dana Operator')
+    expect(getUsers).toHaveBeenCalledWith(expect.objectContaining({ limit: 50 }))
+  })
+
+  it('says how many users are hidden when the org exceeds a page', async () => {
+    page([USER], 120)
+    expect(await screen.findByText(/Showing 1 of 120 users/)).toBeInTheDocument()
+  })
+
+  it('shows nothing about paging when the org fits on one page', async () => {
+    page([USER])
+    await screen.findByText('Dana Operator')
+    expect(screen.queryByRole('button', { name: 'Show more' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/Showing 1 of/)).not.toBeInTheDocument()
+  })
+
+  it('requests a larger page when the admin asks for more', async () => {
+    page([USER], 120)
+    await screen.findByRole('button', { name: 'Show more' })
+    await userEvent.click(screen.getByRole('button', { name: 'Show more' }))
+    await waitFor(() =>
+      expect(getUsers).toHaveBeenCalledWith(expect.objectContaining({ limit: 100 })),
+    )
+  })
+
+  it('states the server ceiling instead of ending the list quietly', async () => {
+    // The handler rejects limit > 200, so "Show more" cannot keep going forever. What
+    // it must not do is stop offering more while saying nothing.
+    page([USER], 500)
+    await screen.findByRole('button', { name: 'Show more' })
+    for (let i = 0; i < 3; i++) {
+      await userEvent.click(screen.getByRole('button', { name: 'Show more' }))
+    }
+    await waitFor(() =>
+      expect(getUsers).toHaveBeenCalledWith(expect.objectContaining({ limit: 200 })),
+    )
+    expect(await screen.findByText(/Showing the first 200/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Show more' })).not.toBeInTheDocument()
   })
 })

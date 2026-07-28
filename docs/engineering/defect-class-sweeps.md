@@ -32,7 +32,7 @@ to the frontend/backend seam.
 | A test double that reimplements what it stands in for | every `get_tenant_db` override | **4 copies, hiding an RLS bug** | `test_tenant_guc_survives_commit_realdb.py` |
 | Frontend calling endpoints the backend does not serve | all 183 real-mode API calls | **4, one wired to a live button** | `test_frontend_calls_real_endpoints.py` |
 | Response shape disagreeing with the frontend's type | 86 typed calls | **none** | `test_frontend_response_shapes_match.py` |
-| Query parameters the endpoint does not declare | 37 param-sending calls | **2, plus 4 IDOR-shaped endpoints** | `test_frontend_query_params_are_declared.py` |
+| Query parameters the endpoint does not declare | 46 param-sending calls | **4, plus 4 IDOR-shaped endpoints** | `test_frontend_query_params_are_declared.py` |
 | An org-scoped table with neither a filter nor RLS | `get_db` handlers on org tables | **~60 handlers: 2 leaks, an IDOR, and whole surfaces returning nothing** | `test_tenant_session_guard.py` + 5 real-DB suites |
 
 ---
@@ -413,16 +413,16 @@ over: it had also read `` `/x/entities${q}` `` — a query string glued to a pat
 path segment, inventing a fifth missing endpoint. A path parameter is always preceded by a
 slash; the glued form is a suffix. `TestTheExtractor` runs first for exactly this reason.
 
-## 9. Query parameters the endpoint does not declare — **2, and they exposed 4 more**
+## 9. Query parameters the endpoint does not declare — **4, and they exposed 4 more**
 
 Class 8 checks that the path exists. This checks what is sent to it, and the failure is
 quieter: **FastAPI ignores unknown query parameters silently.** A misspelled or invented
 filter does not error — the endpoint returns the UNFILTERED set, and the caller renders it
 as a filtered result. No stack trace; just the wrong rows.
 
-**Swept:** every frontend call whose parameter keys are statically resolvable — a literal
-`?a=b` or a `params: { … }` object literal. **37 calls checked, 1 skipped** (params passed
-as a variable, which is reported rather than guessed at).
+**Swept:** every frontend call whose parameter keys are statically resolvable. **46 calls
+checked, 1 skipped** — see *Reopened* below; the first pass reported 37 checked and 1
+skipped, and both numbers were wrong.
 
 **Found two, wrong in different ways.** `yard.getDockDoors` sent `workcell_id`, which the
 endpoint does not declare — and `dock_doors` has no workcell column, so it could never
@@ -454,6 +454,56 @@ changes nothing in either direction.
 `INSERT` — the case a Python-side ORM default does not cover — made the endpoint return a
 live 500 on `equipment_capabilities`. That is what exposed the two holes in the class-1
 detector, and the reason its "clean" result above is now a correction.
+
+### Reopened: the guard's coverage number was itself a defect
+
+The first version matched two shapes — an object literal and a bare variable — and
+counted only the second as skipped. Everything else fell through both branches: it was
+neither checked **nor counted**. Nine calls sat in that gap while the sweep printed "37
+checked, 1 skipped" and looked complete. This is the class-4 failure (silent success)
+applied to a detector, which is worse than an ordinary instance of it, because the whole
+point of the guard is to be believed.
+
+Two live defects were in the gap.
+
+**`workcellsApi.list` sent `organization_id`** to `GET /api/v1/workcells/`, which declares
+only `skip` and `limit`. The parameter was dropped silently, so the call returned the
+caller's own workcells either way — a filter that had never filtered, in a query key that
+could not affect the result. The organisation comes from the JWT; the argument is gone
+from both the client and `useWorkcells`. It was invisible because the params were a
+**ternary**, `params: organizationId ? { … } : undefined`.
+
+**`authApi.getUsers` sent `skip` and `limit`** to `GET /api/v1/auth/users`, which declared
+**no query parameters at all**. Both were discarded, so a caller asking for the first 25
+of 300 users received all 300 — and read `hasMore` as `undefined`, which is falsy, meaning
+"you have seen everything". It had, which is exactly why nobody noticed: the bug only
+becomes visible as an organisation grows. Three of the five fields the declared
+`PaginatedResponse<User>` type promises were never sent. It was invisible because the
+params were the shorthand **`{ params }`**.
+
+The handler now paginates for real, and `total` became a `COUNT` over the organisation
+rather than `len(items)` — as a paginated field, the page length tells a 300-user
+organisation it has 25 users and stops the caller from paging. Eleven real-DB assertions
+in `test_auth_users_pagination_realdb.py`; reverting the handler fails eight of them.
+
+**Fixing the server would have been half a fix.** The handler now defaults to 50, so the
+admin table would have shown one page and given no sign that anyone was missing — the
+same silent truncation wearing a different hat. `AdminPages` requests an explicit page
+size, reports "Showing 20 of 120 users", and states the server's 200-row ceiling instead
+of quietly ending the list.
+
+**The guard now resolves variables** — from a local `const`, from later `params.x =`
+assignments, from an inline parameter type, or from a named interface — scoped to the
+enclosing function, because three functions in `analysisSessions.ts` each build their own
+`params` and merging them would invent parameters no single call sends.
+
+**And it had to learn about the casing seam, or it would have reported a fabricated
+defect.** `historian.query` sends `assetId` to an endpoint declaring `asset_id`. That is
+correct: `transformRegistry.ts` converts request params to snake_case for registered URL
+prefixes. Keys under a registered prefix are now compared in both forms, and the prefix
+list is read from the frontend source rather than hardcoded, so removing a registration
+tightens the check instead of leaving a stale exemption. `_t` — a deliberate cache-buster
+that the server is *supposed* to ignore — is the one named exemption.
 
 ## 10. An org-scoped table with neither a filter nor RLS — **1 live cross-tenant leak**
 
@@ -1083,6 +1133,20 @@ one of its findings. The habit that catches it:
    weakening 158 contracts to make the guard pass is the wrong direction. Record a
    shrink-only baseline that fails on a new offender AND on a stale entry, and fix the
    cause — here, server defaults in the database.
+12. **A detector's skip count must account for everything it did not check.** The
+   query-parameter guard matched two shapes and counted only one of them as skipped;
+   anything matching neither fell out of both branches and was invisible. It printed "37
+   checked, 1 skipped" while nine calls — holding two live defects — were in the gap. The
+   rule is structural, not about regexes: the recogniser and the counter must partition
+   the input between them, so that what the sweep cannot read is *reported as unread*
+   rather than dropped. A coverage number the guard cannot substantiate is worse than no
+   number, because the whole point of a guard is to be believed.
+13. **Before flagging a mismatch, check what sits between the two sides.** The same sweep
+   was ready to report `historian.query` sending `assetId` to an endpoint declaring
+   `asset_id`. An axios interceptor converts request params to snake_case for registered
+   URL prefixes, so the code was correct and the finding would have been fabricated — the
+   two ends only look mismatched if you ignore the seam in the middle. Comparing endpoints
+   of a pipeline means reading the transforms along it.
 
 ---
 

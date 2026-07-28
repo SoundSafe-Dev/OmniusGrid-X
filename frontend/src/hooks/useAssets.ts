@@ -81,10 +81,14 @@ export function useAssetTypes(category?: string) {
   });
 }
 
-export function useWorkcells(organizationId?: string) {
+// No organizationId argument: the server derives the organisation from the JWT, and the
+// query parameter this used to forward was silently discarded (GET /api/v1/workcells/
+// declares only skip and limit). Keeping the argument would have implied a filter that
+// never existed, and put a value into the query key that could not affect the result.
+export function useWorkcells() {
   return useQuery<Workcell[], Error>({
-    queryKey: [ASSETS_QUERY_KEY, 'workcells', organizationId],
-    queryFn: () => workcellsApi.list(organizationId),
+    queryKey: [ASSETS_QUERY_KEY, 'workcells'],
+    queryFn: () => workcellsApi.list(),
   });
 }
 

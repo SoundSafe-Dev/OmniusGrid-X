@@ -137,13 +137,16 @@ export const dashboardApi = {
 };
 
 export const workcellsApi = {
-  list: async (organizationId?: string): Promise<Workcell[]> => {
+  // No organizationId parameter. `GET /api/v1/workcells/` declares only `skip` and
+  // `limit`, and FastAPI drops unknown query parameters SILENTLY — so passing one
+  // returned the caller's own workcells either way while looking like a filter had been
+  // applied. The organisation comes from the JWT.
+  list: async (): Promise<Workcell[]> => {
     if (USE_MOCK) return mockApi.getWorkcells();
     // FS-99: backend returns the {items, meta} pagination envelope now; callers
     // consume a plain array, so unwrap here.
     const response = await api.get<{ items: Workcell[]; meta: { total: number } }>(
       '/api/v1/workcells/',
-      { params: organizationId ? { organization_id: organizationId } : undefined },
     );
     return response.data.items;
   },
