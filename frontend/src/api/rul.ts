@@ -1,4 +1,5 @@
 import { api } from './client';
+import { toListResult, type ListResult } from './listResult';
 import { USE_MOCK } from './mockMode';
 import { registerTransform } from './transformRegistry';
 
@@ -68,15 +69,20 @@ const mockAssessment = (assetId: string, i = 0): RULAssessment => {
 };
 
 export const rulApi = {
-  listAssessments: async (params: RULListParams = {}): Promise<RULAssessment[]> => {
+  // Returns ListResult, not a bare array. The endpoint caps at `limit` and orders by
+  // asset NAME — remaining useful life is computed per asset in Python, so risk is not
+  // a sortable column — which means truncation drops the alphabetically-last assets
+  // from the one view whose job is finding machines about to fail. Handing back
+  // `response.data` would discard the only thing that says so.
+  listAssessments: async (params: RULListParams = {}): Promise<ListResult<RULAssessment>> => {
     if (USE_MOCK) {
       await delay(MOCK_DELAY);
-      return ['asset-alpha', 'asset-bravo', 'asset-charlie', 'asset-delta'].map((id, i) =>
-        mockAssessment(id, i)
+      const items = ['asset-alpha', 'asset-bravo', 'asset-charlie', 'asset-delta'].map(
+        (id, i) => mockAssessment(id, i)
       );
+      return { items, truncated: false, limit: items.length };
     }
-    const response = await api.get<RULAssessment[]>('/api/v1/rul', { params });
-    return response.data;
+    return toListResult(await api.get<RULAssessment[]>('/api/v1/rul', { params }));
   },
 
   getAssessment: async (

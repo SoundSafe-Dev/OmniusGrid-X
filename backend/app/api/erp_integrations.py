@@ -20,6 +20,7 @@ from app.services.erp_sync_correlation import correlate_synced_records
 # NOTE (FS-56, for HARSH's review): ERP routes now use get_tenant_db — 020's
 # RLS policies were rewritten onto the canonical app.current_org_id GUC, and a
 # session that never sets it would read zero rows under any non-owner DB role.
+from app.core.pagination import mark_truncated
 from app.db.database import get_db  # noqa: F401 - kept for any non-tenant use
 from app.api.auth import get_current_active_user
 from app.db.models import User, IntegrationConfiguration, ERPDataMapping, ERPSyncStatus, ERPEntity
@@ -1085,10 +1086,9 @@ def _mark_truncated(response: Response, rows: list, limit: int) -> list:
     frontend already consumes -- changing its shape would break every caller to fix a
     problem they could then no longer see.
     """
-    truncated = len(rows) > limit
-    response.headers["X-Result-Limit"] = str(limit)
-    response.headers["X-Result-Truncated"] = "true" if truncated else "false"
-    return list(rows[:limit])
+    # Delegates rather than repeating the two header writes: `/api/v1/rul` needed the
+    # same signal, and two copies of a convention drift the moment one is edited.
+    return mark_truncated(response, rows, limit)
 
 
 @router.get("/{integration_id}/entities")

@@ -17,7 +17,7 @@ Usage::
 
 from typing import Generic, List, Sequence, TypeVar
 
-from fastapi import Query
+from fastapi import Query, Response
 from pydantic import BaseModel
 
 T = TypeVar("T")
@@ -61,3 +61,30 @@ def paginate(items: Sequence[T], total: int, page: PageParams) -> "PaginatedResp
             has_more=(page.skip + len(items)) < total,
         ),
     )
+
+
+def mark_truncated(response: Response, rows: Sequence[T], limit: int) -> List[T]:
+    """Trim to `limit` and tell the caller when there was more.
+
+    A bare-array endpoint returning exactly `limit` rows is indistinguishable from one
+    returning the complete set, so a page reads as the whole fleet. `/api/v1/rul` is the
+    sharpest case: its rows are ordered by asset NAME — remaining useful life is computed
+    per asset in Python, so risk is not a sortable column — which means the cap keeps the
+    alphabetically-first N and an asset near failure whose name sorts late is simply
+    absent from the risk view, with the summary tiles counting it as though the fleet
+    were fully assessed.
+
+    Callers select `limit + 1` rows; if the extra one came back there is more to see.
+    That costs one row instead of a COUNT over the whole table.
+
+    The signal is a HEADER, not an envelope: the body is a bare array that clients
+    already consume, and changing its shape would break every caller in order to fix a
+    problem they could then no longer see. Lifted here unchanged from
+    `erp_integrations._mark_truncated`, which is now a thin delegation — the convention
+    is documented in the README and belonged in a shared module the moment it had a
+    second user.
+    """
+    truncated = len(rows) > limit
+    response.headers["X-Result-Limit"] = str(limit)
+    response.headers["X-Result-Truncated"] = "true" if truncated else "false"
+    return list(rows[:limit])

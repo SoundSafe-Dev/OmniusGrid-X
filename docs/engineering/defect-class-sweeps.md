@@ -14,7 +14,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The twenty-one classes
+## The twenty-two classes
 
 The first five were all originally found in ERP. The sixth came out of the fifth, the
 seventh out of two failing tests that turned out to share a cause, and the eighth out of
@@ -45,6 +45,7 @@ to the frontend/backend seam.
 | A qualifier the frontend never reads | every boolean qualifier on the wire | **3 fields, 2 defects, both live** | `test_qualifiers_reach_the_frontend.py` |
 | A cache key that omits what the fetch varies on | every `useQuery` in the frontend | **clean — 0 of 30+; nearly introduced during this work** | `queryKeysAreComplete.test.ts` |
 | A write whose result the UI never re-reads | every `useMutation` and invalidation | **3 live: ERP sync, command history, emergency stop** | `ERPIntegrations.sync.test.tsx`, `CommandPanel.test.tsx` |
+| A capped list that cannot say it was capped | every `limit`-bearing GET | **12 bare arrays; `/rul` fixed, the rest recorded** | `test_rul_truncation_is_reported_realdb.py` |
 
 ---
 
@@ -1310,6 +1311,84 @@ three `AlarmRules` mutations as never refreshing; they call a local `const inval
 took the false positives from 8 to 5, and the 3 that remain are correct — `testConnection`,
 `optimize` and `analyze` produce a result rather than changing a list.
 
+## 22. A capped list that cannot say it was capped — **12 found, 1 fixed, the rest recorded**
+
+An endpoint that returns a bare JSON array capped at `limit` gives the caller no way to
+tell a full page from the complete set. The convention for fixing it already existed —
+`X-Result-Truncated` from a `limit + 1` probe, added to the three ERP list endpoints — so
+the sweep was really asking where else it belonged.
+
+**Twelve bare-array endpoints cap without a signal.** On most that is ambiguity.
+`/api/v1/rul` is different, and it is the one that got fixed.
+
+Remaining useful life is computed **per asset in Python** by `rul_service.assess_asset`,
+so risk is not a column and cannot be ordered on in SQL. The page is therefore ordered by
+asset **NAME**, which means the cap keeps the alphabetically-FIRST `limit` assets. An asset
+three days from failure whose name begins with W is absent from the risk view entirely —
+and Predictive Maintenance's tiles counted "Assets Assessed" and "High / Critical Risk"
+over the survivors as though the fleet had been fully assessed. The one page whose purpose
+is finding machines about to fail was quietly excluding some of them.
+
+Fixed on both sides: the endpoint reports the header, `rulApi.listAssessments` returns
+`ListResult` so the flag cannot be dropped on the way in, and the page carries a notice
+naming what is missing and why. `ListResult` and the `mark_truncated` helper moved to
+shared modules when this became their second consumer — the ERP copy now delegates rather
+than keeping a second version of a convention that would drift the moment either was
+edited.
+
+**The other eleven are recorded, not fixed, and the reason is class 19.** Adding a header
+no client reads would create exactly the defect that class exists to catch — the caveat
+sent and dropped. Each needs its consumer wired at the same time, which is per-endpoint
+work; four are in other lanes.
+
+**The detector's second category had to be thrown away.** It also flagged 26 endpoints as
+"an envelope with no total", which turned out to mean *no `response_model`* — the schema
+was empty, so it could see nothing either way. It listed `/api/v1/auth/users`, which had
+been given `total`, `skip`, `limit` and `hasMore` an hour earlier. Only the declared-type
+half of the result says anything, and the rest is *unknown* rather than clean.
+
+### What the log noise gave up: a function that had never once returned a row
+
+Running the new `/rul` tests printed `health_index_oee_unavailable` for every asset, with
+`'>=' not supported between instances of 'str' and 'datetime.datetime'`. Every column
+reference in `oee_calculator.get_historical_oee` was a **Python string literal**:
+
+```python
+func.avg("oee_metrics.availability")      # averages a string
+"oee_metrics.asset_id" == asset_id        # str == uuid -> False
+"oee_metrics.timestamp" >= start_time     # str >= datetime -> TypeError
+```
+
+The third raised before the statement was ever compiled. `health_index` calls it inside a
+broad `except` and logged a warning per asset per request; `/api/v1/oee/historical/{asset_id}`
+has no such handler and returned a **500**.
+
+It could not have worked in any case: **no migration creates an `oee_metrics` table**. Its
+writer passed the same string to `insert()` and swallowed the failure in its own broad
+`except` — and `oee_calculator` is one of the services `main.py` actually starts, so that
+error fired on every asset on every pass of the loop. A permanent error stream, for a write
+that could never land, into a table that does not exist.
+
+Both halves are now honest. The reader aggregates `packml_states` — real, populated, and
+already the basis of `/api/v1/dashboard/oee/trend` — which makes it **availability only**,
+declared per row, with `None` rather than `1.0` for the two factors it cannot measure.
+
+The writer was first rewritten as a no-op that explained itself, **and class 5's own guard
+rejected it**: a helper named `_store_*` must store. That was the right call, so it is
+deleted rather than renamed, and the explanation moved to the call site — where someone
+wondering "why isn't this persisted?" will actually look. OEE here is *derived* from data
+already persisted, so a rollup table would be a cache; building one needs a migration, a
+model, RLS scoping and a retention policy rather than a string. A test asserts no migration
+creates that table, so the day someone adds one it fails and asks for a real write.
+
+Satisfying: a guard written for an earlier class caught a defect introduced while fixing a
+later one, in the same run, without anyone looking for it.
+
+**Two broad excepts, one on each side, are what kept this alive.** Class 4 covered a
+handler returning success after a failure; this is the same shape applied to a service —
+and it survived longer precisely because it *did* log. A warning nobody reads is not a
+signal, it is a place for a defect to live.
+
 ## Writing a sweep that is worth trusting
 
 Both false starts above came from the same mistake — trusting the scan instead of testing
@@ -1384,6 +1463,13 @@ one of its findings. The habit that catches it:
    dead invalidation sat in the command panel. The failure mode is the dangerous one: it
    comes back clean. Ask what the detector reads, and whether the thing under test is
    inside it.
+16. **Read the log noise from your own test runs.** `get_historical_oee` had never once
+   returned a row — every column reference was a Python string, and `str >= datetime`
+   raised before the query compiled. No sweep found it and no test covered it. It
+   surfaced as `health_index_oee_unavailable` warnings scrolling past during an unrelated
+   real-DB run, on a service `main.py` starts, which had been emitting them on every
+   asset on every pass for as long as it had existed. A warning nobody reads is not a
+   signal; it is a place for a defect to live.
 
 ---
 

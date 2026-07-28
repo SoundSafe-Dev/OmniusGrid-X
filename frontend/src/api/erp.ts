@@ -200,22 +200,10 @@ const mockCorrelations: ERPCorrelationRecord[] = [
  * are not built). That is exactly why the shape is worth fixing now: the person who
  * builds them should not have to rediscover the problem.
  */
-export interface ListResult<T> {
-  items: T[]
-  /** True when more rows exist beyond this page. */
-  truncated: boolean
-  /** The page size the server actually applied. */
-  limit: number
-}
-
-function toListResult<T>(res: { data: T[]; headers: Record<string, unknown> }): ListResult<T> {
-  const header = (name: string) => String(res.headers?.[name] ?? '')
-  return {
-    items: res.data,
-    truncated: header('x-result-truncated') === 'true',
-    limit: Number(header('x-result-limit')) || res.data.length,
-  }
-}
+// Moved to ./listResult when /api/v1/rul became the second consumer; re-exported so
+// this module's existing importers are unaffected.
+export type { ListResult } from './listResult'
+import { toListResult, type ListResult } from './listResult'
 
 export const erpApi = {
   async listIntegrations(): Promise<ERPIntegration[]> {
