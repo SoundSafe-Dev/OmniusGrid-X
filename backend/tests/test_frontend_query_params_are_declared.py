@@ -250,6 +250,36 @@ def _resolve_variable(source: str, pos: int, name: str) -> Set[str]:
     return keys
 
 
+def _split_top_level(args: str) -> List[str]:
+    """Split a call's argument list on top-level commas."""
+    parts, depth, current = [], 0, []
+    for char in args[1:-1]:
+        if char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth -= 1
+        if char == "," and depth == 0:
+            parts.append("".join(current))
+            current = []
+            continue
+        current.append(char)
+    parts.append("".join(current))
+    return parts
+
+
+def _config_argument(method: str, args: str) -> str:
+    """The axios argument that can carry `params`, by position.
+
+    `get`/`delete` take (url, config); `post`/`put`/`patch` take (url, BODY, config).
+    Scanning the whole call would read a body field named `params` as a query
+    parameter — `platformCorrelation.attach` posts `{ source_type, params }` as its
+    body, and treating that as a query string would have invented a defect.
+    """
+    parts = _split_top_level(args)
+    index = 2 if method in {"post", "put", "patch"} else 1
+    return parts[index] if len(parts) > index else ""
+
+
 def _calls_sending_params() -> Tuple[List[tuple], int]:
     """((module, line, method, url, keys), count of unresolvable `params: var`)."""
     found, unresolvable = [], 0
@@ -264,6 +294,7 @@ def _calls_sending_params() -> Tuple[List[tuple], int]:
                 continue
             raw = url_match.group(1)
             keys = set(LITERAL_QUERY_KEY.findall(raw))
+            args = _config_argument(match.group(1), args)
             obj = PARAMS_OBJECT.search(args) or PARAMS_ANY_OBJECT.search(args)
             if obj:
                 keys |= set(OBJECT_KEY.findall(obj.group(1)))
@@ -361,6 +392,22 @@ class TestTheExtractor:
         source = "function f(params) { api.get('/x', { params }); }"
         assert _resolve_variable(source, source.index("api.get"), "params") == set()
 
+    def test_a_post_body_is_not_read_as_a_query_string(self):
+        """axios `post(url, BODY, config)`. `platformCorrelation.attach` posts
+        `{ source_type, params }` as its body; scanning the whole call would read those
+        as query parameters and report a defect against correct code."""
+        args = "(`/api/v1/nlp/sessions/${id}/platform-data`, { source_type: t, params })"
+        assert _config_argument("post", args).strip() == ""
+
+    def test_a_get_config_is_still_read(self):
+        """The other direction — the positional rule must not blind the sweep."""
+        args = "('/api/v1/rul', { params: { hours: 1 } })"
+        assert "params" in _config_argument("get", args)
+
+    def test_a_post_config_in_third_position_is_read(self):
+        args = "('/x', { body: 1 }, { params: { limit: 5 } })"
+        assert "limit" in _config_argument("post", args)
+
     def test_it_reads_literal_query_keys(self):
         assert set(LITERAL_QUERY_KEY.findall("/x?entity_type=a&status=b")) == {
             "entity_type",
@@ -418,7 +465,7 @@ class TestTheSweepIsNotVacuous:
                 f"\n  query-param sweep: {len(CHECKABLE)} calls checked, "
                 f"{UNRESOLVABLE} skipped (params passed as a variable)"
             )
-        assert UNRESOLVABLE <= 5, (
+        assert UNRESOLVABLE <= 2, (
             f"{UNRESOLVABLE} calls pass params as a variable and cannot be checked; "
             f"if this keeps growing the sweep stops meaning much"
         )

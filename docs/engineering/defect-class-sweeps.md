@@ -32,7 +32,7 @@ to the frontend/backend seam.
 | A test double that reimplements what it stands in for | every `get_tenant_db` override | **4 copies, hiding an RLS bug** | `test_tenant_guc_survives_commit_realdb.py` |
 | Frontend calling endpoints the backend does not serve | all 183 real-mode API calls | **4, one wired to a live button** | `test_frontend_calls_real_endpoints.py` |
 | Response shape disagreeing with the frontend's type | 86 typed calls | **none** | `test_frontend_response_shapes_match.py` |
-| Query parameters the endpoint does not declare | 46 param-sending calls | **4, plus 4 IDOR-shaped endpoints** | `test_frontend_query_params_are_declared.py` |
+| Query parameters the endpoint does not declare | 46 param-sending calls (all of them) | **4, plus 4 IDOR-shaped endpoints** | `test_frontend_query_params_are_declared.py` |
 | An org-scoped table with neither a filter nor RLS | `get_db` handlers on org tables | **~60 handlers: 2 leaks, an IDOR, and whole surfaces returning nothing** | `test_tenant_session_guard.py` + 5 real-DB suites |
 
 ---
@@ -420,9 +420,9 @@ quieter: **FastAPI ignores unknown query parameters silently.** A misspelled or 
 filter does not error — the endpoint returns the UNFILTERED set, and the caller renders it
 as a filtered result. No stack trace; just the wrong rows.
 
-**Swept:** every frontend call whose parameter keys are statically resolvable. **46 calls
-checked, 1 skipped** — see *Reopened* below; the first pass reported 37 checked and 1
-skipped, and both numbers were wrong.
+**Swept:** every frontend call that sends query parameters. **46 calls checked, 0
+skipped** — see *Reopened* below; the first pass reported 37 checked and 1 skipped, and
+both numbers were wrong.
 
 **Found two, wrong in different ways.** `yard.getDockDoors` sent `workcell_id`, which the
 endpoint does not declare — and `dock_doors` has no workcell column, so it could never
@@ -496,6 +496,13 @@ of quietly ending the list.
 assignments, from an inline parameter type, or from a named interface — scoped to the
 enclosing function, because three functions in `analysisSessions.ts` each build their own
 `params` and merging them would invent parameters no single call sends.
+
+**The last skipped call turned out to be a detector bug too.** `platformCorrelation.attach`
+posts `{ source_type, params }` — that is the axios **body**, since `post` takes
+`(url, body, config)` while `get` takes `(url, config)`. The extractor read every
+argument, so a body field named `params` was a query string as far as it was concerned.
+Reading the config argument *by position* both removed that false-positive risk and closed
+the last gap: **46 checked, 0 skipped**.
 
 **And it had to learn about the casing seam, or it would have reported a fabricated
 defect.** `historian.query` sends `assetId` to an endpoint declaring `asset_id`. That is
