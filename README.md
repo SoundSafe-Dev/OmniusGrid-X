@@ -327,7 +327,7 @@ operator sees "showing the most recent 10 of more than 10" instead of a confiden
 answer. Verified end to end: 149 rows synced from live Dataverse, `?limit=10` returns 10
 with `X-Result-Truncated: true`.
 
-**Twenty-five defect classes have now been swept platform-wide** — recorded in
+**Twenty-seven defect classes have now been swept platform-wide** — recorded in
 [`docs/engineering/defect-class-sweeps.md`](docs/engineering/defect-class-sweeps.md) with
 what each found and which guard keeps it closed. Four started in ERP; most of the rest came
 out of the ones before them. Three came back clean, which is worth writing down: "proven
@@ -510,8 +510,8 @@ the UI were all already there, only the write was missing — and the component 
 failures. The other three were uncalled and were removed. Notably a hand fix of this exact
 class had already run (FS-15, "routes that never existed") and left these behind.
 
-**Both suites are green: backend 2020 passed, frontend 196 passed, 0 failed** — across
-186 backend and 44 frontend test files. Every guard listed above is mutation-tested:
+**Both suites are green: backend 2,147 passed, frontend 206 passed, 0 failed** — across
+186 backend and 45 frontend test files. Every guard listed above is mutation-tested:
 reintroduce the defect and the test must fail, checked individually, because a guard that
 cannot fail is indistinguishable from one that passes.
 
@@ -608,6 +608,89 @@ alerting is blocked on that decision. `HAMAD_IDE.pem` remains retrievable from
 git history; see [`docs/runbooks/leaked-key-rotation.md`](docs/runbooks/leaked-key-rotation.md)
 (rotation is the fix and is still outstanding; the history purge is deliberately
 deferred because it would rewrite every collaborator's branch).
+
+### Delivered since — the honesty slice (what the system knew and never said)
+
+On `hamad/converged-pre-main`. The previous slice was about guards that reported
+success while testing nothing. This one is the same idea turned on the guards
+themselves and on the product's own output: **three sweeps were reporting coverage
+they did not have**, and several surfaces were showing confident numbers they had no
+right to.
+
+**Five handlers could not see the caller's own assets.** They took no session
+dependency and opened `AsyncSessionLocal()` inline, which sets no
+`app.current_org_id`; `assets` is `FORCE ROW LEVEL SECURITY`, so the policy matched
+nothing. Verified against a real database with an asset that plainly existed:
+
+| | | |
+|---|---|---|
+| `GET /api/v1/oee/current/{id}` | **404** | "Asset not found" |
+| `GET /api/v1/oee/historical/{id}` | **404** | "Asset not found" |
+| `GET /api/v1/oee/losses/{id}` | **404** | "Asset not found" |
+| `GET /api/v1/health-index` | 200 | `[]` |
+| `GET /api/v1/simulation/fleet-summary` | 200 | `{"asset_count": 0, …}` |
+
+Both halves of the RLS failure mode on one screen, and the quiet pair is worse —
+`asset_count: 0` on a running plant reads as an idle factory, not a broken query.
+`health_index` and `simulation` filtered on `current_user.organization_id` and were
+**right to**; it changed nothing, because RLS had removed the rows first. A reviewer
+sees a correct tenant check and no reason to look at the session. **The tenant-session
+guard had named this exact blind spot in its own docstring** — "a static guard keyed on
+one idiom under-counts a file that uses two" — and never closed it.
+
+**Four audit writers recorded nothing, and each one logged that it had.** `record_audit`'s
+standalone path plus `_audit` in `export_processor`, `bulk_processor` and
+`feature_flags` inserted into `audit_logs` (also `FORCE` RLS) with no tenant bound; the
+rejection was caught by a broad `except` that logged and continued. Every export, bulk
+job and feature-flag change reported success while its evidence was discarded. Under RLS
+a read fails *silently* and a write fails *loudly* — and a `try/except` around the write
+throws that distinction away.
+
+**Numbers that were not measurements.** The correlation chat's exception fallback — a
+reply that is not an analysis at all — was the only one of the three reporting
+`simulated: false`, because it built the response without the field and the default is a
+claim. OEE displayed `quality: 1.0` for an asset with no part counters as a perfect
+100%; 1.0 is the neutral multiplier for the product and the wrong thing to print, and the
+server had been sending `quality_measured` since FS-234 with nothing reading it.
+`/api/v1/rul` caps at `limit` and orders by asset **NAME** — remaining useful life is
+computed per asset in Python, so risk is not sortable in SQL — meaning the predictive
+page's "Assets Assessed" and "High / Critical Risk" tiles counted the alphabetically
+first N as though they were the fleet.
+
+**Two dead paths that had never once worked.** `oee_calculator.get_historical_oee` built
+every column reference from Python strings — `"oee_metrics.timestamp" >= start_time` is
+`str >= datetime`, which raises before the query compiles — against a table **no migration
+creates**; its writer passed the same string to `insert()` and swallowed the failure, and
+`main.py` starts that loop, so it emitted an error per asset per pass forever. And the
+command panel invalidated `['commands', assetId]`, a key **no query declared**, while
+telling operators to "view command history in the asset details page" — the page that
+renders the panel and no history — with `GET /api/v1/commands/asset/{id}` working and
+having zero callers.
+
+**The guards themselves gave up the rest.** The query-parameter sweep printed "37 checked,
+1 skipped" while nine calls sat in a gap; fixing that surfaced two live defects, and then
+the *entry point* turned out never to have matched calls whose type argument contains a
+brace — six more invisible, one offering an `organizationId` the assets endpoint has never
+declared. The sibling endpoint sweep had the identical hole: **180 of 194 calls checked,
+while claiming all 183**. Two further findings came out of log noise scrolling past during
+unrelated runs.
+
+A twenty-seventh class came out of documenting the rest: **the README's own API
+Reference had 22 wrong rows of 124** — `/api/v1/kanban/boards`, which has never existed;
+`/commands/{id}/status`, where the real route puts the verb first; five `correlations`
+rows that live under `registries`; and five logistics rows written at the *tidy* path
+while the router genuinely serves `/api/v1/logistics/logistics/…`, so the one artefact
+that would have warned a reader about that collision concealed it instead. Documentation
+that cannot be executed rots silently, precisely because nobody runs a README, so it is
+now a checked artefact — `test_documented_endpoints_exist.py` parameterises over every
+row and fails by name.
+
+Nine classes swept this slice (18–26) and five method rules added (14–18), including *a
+detector's skip count must account for everything it did not check*, *never let a
+detector's input include its own subject*, and *a guard that has already been wrong once
+is the most likely place to be wrong again — re-derive its entry point, not just the part
+that failed*. Every fix is mutation-verified by restoring the real prior code, not a
+reconstruction of it.
 
 ### Offline demo — `backend/scripts/seed_demo_data.py`
 
@@ -871,7 +954,7 @@ reliability layers (each with its own README):
 | **Cache / job store** | Redis — rate limiting, cross-worker idempotency, async export job store. It previously appeared only as a NetworkPolicy destination with no Service behind it, so the always-on auth limiter 500'd every login when it was unreachable | [`base/redis-statefulset.yaml`](infrastructure/k8s/base/redis-statefulset.yaml) |
 | **Object storage** | Generated exports & compliance reports go to SeaweedFS (S3) so a worker on one pod and the API on another share one bucket — fixes cross-pod download | [`base/object-store.yaml`](infrastructure/k8s/base/object-store.yaml) |
 | **Secrets** | Sealed Secrets (encrypted, safe-in-git) **or** External Secrets Operator (Vault / AWS SM / GCP SM). Placeholder dev credentials are **enforced** out of both deployed environments — a blocking gate fails if one becomes reachable, or if the deploy stops filtering them | [`secrets/`](infrastructure/k8s/secrets/) |
-| **CI safety** | **14 blocking gates** on every branch push. Backend: `backend-realdb` (schema parity, tenant isolation + RLS, timestamp defaults — against an ephemeral TimescaleDB, because RLS and server defaults are both no-ops on SQLite), `backend-full` (~830 tests), `backend-kafka-e2e` (container e2e in its own process), `migration-hygiene`. Kubernetes: `k8s-manifests` (build + kubeconform + placeholder-credential check), `netpol-simulate`, `k8s-smoke` (kind: real operator webhooks), `k8s-netpol` (kind + **Calico**: policies genuinely enforced, 19 allow/deny cases), `netpol-coverage` (every workload in a default-deny namespace has a policy in both directions — the gap that killed tracing). Plus `prometheus-rules` (lints `alerts.yml` + `slo_rules.yml`, checks **both** Prometheus configs, and runs the alert unit tests), `frontend-e2e-authenticated` (stands up Postgres + migrations + demo data + uvicorn and asserts the dashboard shows **non-zero** data — an element-visibility check would have passed against the FS-191 tenancy bug), `supply-chain`, `repo-hygiene`, frontend unit + e2e | `.github/workflows/quality-gates.yml` |
+| **CI safety** | **14 blocking gates** on every branch push. Backend: `backend-realdb` (schema parity, tenant isolation + RLS, timestamp defaults — against an ephemeral TimescaleDB, because RLS and server defaults are both no-ops on SQLite), `backend-full` (2,134 tests — the whole suite bar the intake lane's three collection-failing files and the Kafka e2e, which run in their own job), `backend-kafka-e2e` (container e2e in its own process), `migration-hygiene`. Kubernetes: `k8s-manifests` (build + kubeconform + placeholder-credential check), `netpol-simulate`, `k8s-smoke` (kind: real operator webhooks), `k8s-netpol` (kind + **Calico**: policies genuinely enforced, 19 allow/deny cases), `netpol-coverage` (every workload in a default-deny namespace has a policy in both directions — the gap that killed tracing). Plus `prometheus-rules` (lints `alerts.yml` + `slo_rules.yml`, checks **both** Prometheus configs, and runs the alert unit tests), `frontend-e2e-authenticated` (stands up Postgres + migrations + demo data + uvicorn and asserts the dashboard shows **non-zero** data — an element-visibility check would have passed against the FS-191 tenancy bug), `supply-chain`, `repo-hygiene`, frontend unit + e2e | `.github/workflows/quality-gates.yml` |
 | **Load / failover testing** | Kafka ingestion load generator (drives KEDA scaling + DB writes) + a runbook for driving throughput and DB-failover-under-load | [`tests/load/`](tests/load/) |
 
 ### 5. Page → API wiring
@@ -1209,9 +1292,9 @@ OmniusGrid/
 |--------|----------|-------------|
 | GET | `/api/v1/assets/` | List all manufacturing assets |
 | GET | `/api/v1/assets/{id}` | Get asset details |
-| GET | `/api/v1/telemetry/latest/{id}` | Latest telemetry data |
+| GET | `/api/v1/telemetry/{asset_id}/latest` | Latest telemetry data |
 | POST | `/api/v1/alarms/{id}/acknowledge` | Acknowledge alarm |
-| GET | `/api/v1/dashboard/oee` | Fleet OEE metrics |
+| GET | `/api/v1/dashboard/fleet/oee` | Fleet OEE metrics (availability-only; see `availability_only`) |
 
 ### AI Engine Endpoints
 
@@ -1262,13 +1345,21 @@ OmniusGrid/
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/v1/logistics/correlation-dashboard` | Cross-domain metrics |
-| POST | `/api/v1/logistics/predict-detention` | ML detention risk prediction |
-| GET | `/api/v1/logistics/dock-production-sync` | Production-dock alignment |
-| POST | `/api/v1/logistics/load-quality` | Log defect with root cause |
-| GET | `/api/v1/logistics/delivery-efficiency` | On-time delivery analytics |
-| GET | `/api/v1/logistics/compliance/summary` | Logistics compliance summary |
-| GET | `/api/v1/logistics/liability/costs` | Total liability tracking |
+| GET | `/api/v1/logistics/logistics/correlation-dashboard` | Cross-domain metrics |
+| POST | `/api/v1/logistics/logistics/predict-detention` | ML detention risk prediction |
+| GET | `/api/v1/logistics/logistics/dock-production-sync` | Production-dock alignment |
+| POST | `/api/v1/logistics/logistics/load-quality` | Log defect with root cause |
+| GET | `/api/v1/logistics/logistics/liability/costs` | Total liability tracking |
+| GET | `/api/v1/logistics/delivery-efficiency` | On-time delivery analytics (`fleet_logistics`) |
+| GET | `/api/v1/logistics/compliance/summary` | Logistics compliance summary (`fleet_logistics`) |
+
+**The doubled segment is real, not a typo.** `logistics_correlation` carries its own
+`/logistics` prefix *and* is mounted under `/api/v1/logistics`, so its routes land at
+`/api/v1/logistics/logistics/…`. Dropping the inner prefix would collide with
+`fleet_logistics`, which already owns `/delivery-efficiency` and `/compliance/summary` at
+the single-prefix path — which is why it is recorded rather than fixed. This table used
+to show the intended paths, so every row above was a 404 waiting to be discovered by
+whoever tried them.
 
 ### GeoTab Integration
 
@@ -2035,12 +2126,11 @@ The correlation AI model seamlessly integrates with OmniusGrid's Kanban task man
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/v1/kanban/boards` | List all Kanban boards |
-| POST | `/api/v1/kanban/boards` | Create new board |
-| GET | `/api/v1/kanban/boards/{id}` | Get board details with columns and tasks |
-| POST | `/api/v1/kanban/boards/{id}/tasks` | Create task on board |
+| GET | `/api/v1/kanban/board` | The board — columns with their tasks (one board per org) |
+| POST | `/api/v1/kanban/board/view` | Board filtered to a saved view |
+| POST | `/api/v1/kanban/tasks` | Create task |
 | PUT | `/api/v1/kanban/tasks/{id}` | Update task details |
-| PUT | `/api/v1/kanban/tasks/{id}/move` | Move task to different column |
+| POST | `/api/v1/kanban/tasks/{task_id}/move` | Move task to different column |
 | POST | `/api/v1/kanban/tasks/{id}/approve` | Approve task for execution |
 | POST | `/api/v1/kanban/tasks/{id}/start` | Start task execution |
 | POST | `/api/v1/kanban/tasks/{id}/complete` | Mark task as completed |
@@ -2060,22 +2150,21 @@ The correlation AI model seamlessly integrates with OmniusGrid's Kanban task man
 | POST | `/api/v1/registries/{id}/items` | Create registry item |
 | PUT | `/api/v1/registries/items/{id}` | Update registry item |
 | DELETE | `/api/v1/registries/items/{id}` | Delete registry item |
-| GET | `/api/v1/registries/{id}/compliance-score` | Calculate compliance score |
-| GET | `/api/v1/registries/{id}/risk-score` | Calculate risk score |
-| GET | `/api/v1/correlations` | List data correlations |
-| POST | `/api/v1/correlations` | Create data correlation |
-| GET | `/api/v1/correlations/{id}` | Get correlation details |
-| PUT | `/api/v1/correlations/{id}` | Update correlation |
-| DELETE | `/api/v1/correlations/{id}` | Delete correlation |
+| GET | `/api/v1/registries/{registry_id}/score` | Registry score |
+| POST | `/api/v1/registries/items/{item_id}/score` | Score one item |
+| GET | `/api/v1/registries/correlations` | List data correlations |
+| POST | `/api/v1/registries/correlations` | Create data correlation |
+| PUT | `/api/v1/registries/correlations/{correlation_id}` | Update correlation |
+| DELETE | `/api/v1/registries/correlations/{correlation_id}` | Delete correlation |
 
 ### Command Executor
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | POST | `/api/v1/commands/submit` | Submit command to asset |
-| GET | `/api/v1/commands/{command_id}/status` | Check command status |
-| POST | `/api/v1/commands/{command_id}/cancel` | Cancel pending command |
-| GET | `/api/v1/commands/asset/{asset_id}/history` | Asset command history |
+| GET | `/api/v1/commands/status/{command_id}` | Check command status |
+| POST | `/api/v1/commands/cancel/{command_id}` | Cancel pending command |
+| GET | `/api/v1/commands/asset/{asset_id}` | Asset command history (rendered by `CommandPanel`) |
 | POST | `/api/v1/commands/asset/{asset_id}/emergency-stop` | Emergency stop asset |
 
 ### OEE (Overall Equipment Effectiveness)
@@ -2660,7 +2749,7 @@ The ERP integration system correlates ERP data with operational telemetry to pro
 - [Implementation Summary](IMPLEMENTATION_SUMMARY.md) - Complete feature inventory
 
 **Engineering practice**
-- [Defect-class sweeps](docs/engineering/defect-class-sweeps.md) - The twenty-five classes of "code that looks wired and cannot work" found so far, what each sweep found (including the three that came back clean), which mutation-tested guard keeps each closed, and eighteen rules for writing a sweep worth trusting — most of them paid for by a detector that was wrong first
+- [Defect-class sweeps](docs/engineering/defect-class-sweeps.md) - The twenty-seven classes of "code that looks wired and cannot work" found so far, what each sweep found (including the three that came back clean), which mutation-tested guard keeps each closed, and eighteen rules for writing a sweep worth trusting — most of them paid for by a detector that was wrong first
 
 **Infrastructure & operations**
 - [Database migrations](database/migrations/README.md) - Runner rules (never edit or rename an applied migration), the 019 gap, grandfathered duplicate prefixes, demo-data gating

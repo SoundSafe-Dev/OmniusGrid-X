@@ -14,7 +14,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The twenty-five classes
+## The twenty-seven classes
 
 The first five were all originally found in ERP. The sixth came out of the fifth, the
 seventh out of two failing tests that turned out to share a cause, and the eighth out of
@@ -49,6 +49,13 @@ to the frontend/backend seam.
 | An audit write with no tenant bound | every `audit_logs` writer | **4 of 8 — exports, bulk jobs and flag changes recorded nothing** | `test_audit_writers_bind_a_tenant_realdb.py` |
 | A handler that builds its own unbound session | every inline `AsyncSessionLocal` in `app/api` | **5 live: 3 endpoints 404ing on your own asset, 2 reporting an empty fleet** | `test_tenant_session_guard.py` (second idiom) |
 | A request body the endpoint's schema rejects | every frontend POST/PUT/PATCH | **clean — 7 of 15 checkable, recorded not enforced** | none; see class 25 |
+| An endpoint the README documents but the app never served | all 124 API-Reference rows | **22 wrong — 404 for anyone who followed them** | `test_documented_endpoints_exist.py` |
+
+Twenty-six of these carry a numbered section below. **Response-shape mismatch is the
+exception**: it was swept in the same pass as the `get_db` work and came back clean, so
+it is written up inside class 10 rather than given a heading of its own. The row stays in
+this table because a clean result that is not listed is indistinguishable from a check
+nobody ran — which is the whole reason this document exists.
 
 ---
 
@@ -1559,6 +1566,42 @@ knowing about.
 
 Recorded per the rule that a guard you cannot make precise is worse than a written-down
 result — the same call made for class 14.
+
+## 26. An endpoint the README documents but the app never served — **22 of 124**
+
+Class 8 asserts that a path the frontend calls is served. The README's API Reference is
+the **other client** — the one a new engineer or an integrator reads before writing any
+code — and nothing checked it at all.
+
+**22 of 124 documented rows were wrong.** Not stylistic drift; paths that 404 for anyone
+who follows them:
+
+* `/api/v1/commands/{command_id}/status` and `…/cancel` — the real routes put the verb
+  *before* the id: `/commands/status/{id}`, `/commands/cancel/{id}`.
+* `/api/v1/telemetry/latest/{id}` — really `/telemetry/{asset_id}/latest`.
+* `/api/v1/kanban/boards` and three siblings — **there is no boards surface**. One board
+  per organisation, at `/kanban/board`.
+* `/api/v1/registries/{id}/compliance-score` and `/risk-score` — two invented variants of
+  a single real `/score`.
+* five `/api/v1/correlations*` rows that actually live under `/registries/correlations`.
+* five logistics rows missing a path segment — and this is the interesting one.
+
+**The logistics rows document an intention and hid a defect.** `logistics_correlation`
+carries its own `/logistics` prefix *and* is mounted under `/api/v1/logistics`, so its
+routes really are at `/api/v1/logistics/logistics/…`. That doubling is recorded elsewhere
+in this document as deliberately unfixed — removing the inner prefix collides with
+`fleet_logistics`, which owns the single-prefix path. The README showed the *tidy* path,
+so the one artefact that would have told a reader about the collision instead concealed
+it, and every one of those rows was a 404 waiting to be found by hand.
+
+**Why this class is worth a guard rather than a proofread.** Documentation that cannot be
+executed rots silently, and the rot is invisible *because nobody runs a README*. The
+guard parameterises over every row, so a wrong path fails by name. Reverting the README
+fails exactly 22 assertions.
+
+Path-parameter NAMES are deliberately not compared — `{id}` in the docs and `{asset_id}`
+in the code are the same endpoint, and comparing them literally would fail on nearly every
+row and teach the reader to ignore the file.
 
 ## Writing a sweep that is worth trusting
 
