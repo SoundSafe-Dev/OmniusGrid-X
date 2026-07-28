@@ -14,7 +14,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The fourteen classes
+## The fifteen classes
 
 The first five were all originally found in ERP. The sixth came out of the fifth, the
 seventh out of two failing tests that turned out to share a cause, and the eighth out of
@@ -901,6 +901,40 @@ to ignore it, which costs more than the coverage is worth — and this document 
 records three detectors that had to be corrected before their output meant anything.
 Recording the negative result keeps the work from being repeated without pretending it is
 enforced.
+
+## 15. A naive datetime crossing an API boundary — **9 calls, one module**
+
+**Swept:** every `datetime.now()` and `datetime.utcnow()` in `app/`. Nine were naive, all
+in `model_monitoring.py` — the only such island against 483 timezone-aware constructions
+elsewhere.
+
+**Inside Python it was harmless, and that is why it survived.** The drift and performance
+histories are in-memory, both sides of every comparison were naive, and nothing raised.
+
+**The hazard is at the boundary.** Those calls serialise to ISO strings with no offset,
+while every other endpoint emits `+00:00`. `new Date("2026-07-28T02:15:00")` is parsed by
+JavaScript as LOCAL time; the same string with `+00:00` is UTC. The same instant would
+render hours apart depending on which endpoint returned it — silently, with no error
+anywhere. No frontend consumes those routes today, which is the only reason it never
+showed, and exactly the kind of "only reason" this document keeps finding.
+
+The louder failure mode already has a scar in the codebase: `fleet_logistics._aware()`
+exists to coerce naive/aware mismatches away, because Postgres returns aware timestamps
+and SQLite returns naive ones, so the same code path differs by backend.
+
+**The detector had to be corrected twice, in both directions.**
+
+A grep for `datetime.now()` found the nine — and *missed nothing*, but a grep-based guard
+would have flagged its own explanatory prose, so the guard uses the AST instead. The AST
+version then immediately flagged **four uses of SQLAlchemy's `func.now()`** in
+`app/db/models.py`, which renders SQL `NOW()` and returns an aware `timestamptz` on
+Postgres — entirely correct. It matched on the method name without reading what it was
+called on. Flagging those would have meant "fixing" working code.
+
+So the guard now reads the receiver, and both mistakes are pinned as tests: prose is not a
+call, and `func.now()` is not `datetime.now()`. That is the fifth detector in this document
+to need correcting before its output was worth anything — which is no longer a surprising
+result and is why rule 3 exists.
 
 ---
 
