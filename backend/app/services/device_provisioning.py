@@ -1,6 +1,17 @@
 """
 Zero-Trust Device Provisioning Service
 Manages mTLS certificates for edge devices with cryptographic identity
+
+NOT WIRED, AND NOT IMPORTABLE. No module in `app/` references this one, and importing it
+raises `AttributeError: 'Settings' object has no attribute 'CA_KEY_PATH'` — the setting is
+named `EDGE_CA_KEY_PATH`. Both facts predate this note; it is recorded here so the state is
+visible from the file rather than discovered by trying.
+
+Its five SQL statements previously interpolated values straight into quoted literals,
+including `certificate_pem` and `json.dumps(metadata)`, which is a SQL injection and would
+also have broken on any apostrophe. They now bind parameters. That was fixed despite the
+module being dead: the cost is small, and a dormant injection is exactly the kind of thing
+that gets woken up by someone wiring a feature back on.
 """
 
 import os
@@ -221,21 +232,21 @@ class CertificateAuthority:
     async def _persist_device(self, device: DeviceIdentity):
         """Store device identity in database"""
         async with AsyncSessionLocal() as session:
+            # BOUND PARAMETERS, not interpolation. Every value here was previously
+            # formatted straight into the SQL as a quoted literal, including
+            # `certificate_pem` (a PEM blob) and `json.dumps(metadata)` (arbitrary
+            # JSON). A single apostrophe in any of them breaks the statement; a crafted
+            # one rewrites it. This module is not currently wired to any route, which is
+            # the only reason it was never reachable — see the note at the top of the
+            # class.
             await session.execute(
-                text(f"""
+                text("""
                     INSERT INTO device_identities (
                         device_id, asset_id, device_type, certificate_pem,
                         fingerprint, issued_at, expires_at, status, metadata
                     ) VALUES (
-                        '{device.device_id}',
-                        '{device.asset_id or ''}',
-                        '{device.device_type}',
-                        '{device.certificate_pem}',
-                        '{device.fingerprint}',
-                        '{device.issued_at.isoformat()}',
-                        '{device.expires_at.isoformat()}',
-                        '{device.status.value}',
-                        '{json.dumps(device.metadata)}'
+                        :device_id, :asset_id, :device_type, :certificate_pem,
+                        :fingerprint, :issued_at, :expires_at, :status, :metadata
                     )
                     ON CONFLICT (device_id) DO UPDATE SET
                         certificate_pem = EXCLUDED.certificate_pem,
@@ -243,7 +254,18 @@ class CertificateAuthority:
                         issued_at = EXCLUDED.issued_at,
                         expires_at = EXCLUDED.expires_at,
                         status = EXCLUDED.status
-                """)
+                """),
+                {
+                    "device_id": device.device_id,
+                    "asset_id": device.asset_id or "",
+                    "device_type": device.device_type,
+                    "certificate_pem": device.certificate_pem,
+                    "fingerprint": device.fingerprint,
+                    "issued_at": device.issued_at.isoformat(),
+                    "expires_at": device.expires_at.isoformat(),
+                    "status": device.status.value,
+                    "metadata": json.dumps(device.metadata),
+                },
             )
             await session.commit()
     
@@ -253,15 +275,20 @@ class CertificateAuthority:
         """Approve pending device certificate"""
         async with AsyncSessionLocal() as session:
             result = await session.execute(
-                text(f"""
+                text("""
                     UPDATE device_identities
                     SET status = 'approved',
-                        approved_by = '{approver}',
-                        approved_at = '{datetime.now(timezone.utc).isoformat()}'
-                    WHERE device_id = '{device_id}'
+                        approved_by = :approver,
+                        approved_at = :approved_at
+                    WHERE device_id = :device_id
                       AND status = 'pending'
                     RETURNING device_id
-                """)
+                """),
+                {
+                    "approver": approver,
+                    "approved_at": datetime.now(timezone.utc).isoformat(),
+                    "device_id": device_id,
+                }
             )
             
             if result.fetchone():
@@ -283,15 +310,20 @@ class CertificateAuthority:
         """
         async with AsyncSessionLocal() as session:
             result = await session.execute(
-                text(f"""
+                text("""
                     UPDATE device_identities
                     SET status = 'revoked',
-                        revoked_at = '{datetime.now(timezone.utc).isoformat()}',
-                        revoked_reason = '{reason}'
-                    WHERE device_id = '{device_id}'
+                        revoked_at = :revoked_at,
+                        revoked_reason = :reason
+                    WHERE device_id = :device_id
                       AND status != 'revoked'
                     RETURNING device_id
-                """)
+                """),
+                {
+                    "revoked_at": datetime.now(timezone.utc).isoformat(),
+                    "reason": reason,
+                    "device_id": device_id,
+                }
             )
             
             if result.fetchone():
@@ -327,14 +359,15 @@ class CertificateAuthority:
         """Verify certificate fingerprint and return device identity"""
         async with AsyncSessionLocal() as session:
             result = await session.execute(
-                text(f"""
+                text("""
                     SELECT device_id, asset_id, device_type, certificate_pem,
                            fingerprint, issued_at, expires_at, status,
                            approved_by, approved_at, revoked_at, revoked_reason,
                            metadata
                     FROM device_identities
-                    WHERE fingerprint = '{fingerprint}'
-                """)
+                    WHERE fingerprint = :fingerprint
+                """),
+                {"fingerprint": fingerprint}
             )
             
             row = result.fetchone()
@@ -397,10 +430,11 @@ class CertificateAuthority:
         """Get device by ID"""
         async with AsyncSessionLocal() as session:
             result = await session.execute(
-                text(f"""
+                text("""
                     SELECT * FROM device_identities
-                    WHERE device_id = '{device_id}'
-                """)
+                    WHERE device_id = :device_id
+                """),
+                {"device_id": device_id}
             )
             row = result.fetchone()
             

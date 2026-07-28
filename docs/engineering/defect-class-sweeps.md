@@ -14,7 +14,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The sixteen classes
+## The seventeen classes
 
 The first five were all originally found in ERP. The sixth came out of the fifth, the
 seventh out of two failing tests that turned out to share a cause, and the eighth out of
@@ -992,6 +992,46 @@ nothing: the later `user_org` lookup still refused the connection, so anonymous 
 stayed blocked for a different reason and the test passed. Reverting to the **actual**
 pre-fix file failed exactly the two assertions naming the two defects. Reconstructing a
 defect is a guess about what it was; restoring it is not.
+
+## 17. SQL built by interpolating a value into quotes — **8 sites, all dormant**
+
+`text(f"... WHERE id = '{asset_id}'")` assembles a quoted literal by string formatting. An
+apostrophe in the value breaks the statement; a crafted one rewrites it. The codebase has
+paid for this once already — `tactical_engine._is_maintenance_mode` carries a comment
+recording that `' OR '1'='1` used to match every row.
+
+**The check is "interpolated INSIDE quotes", not "f-string in SQL", and the distinction is
+what makes it shippable.** Sixteen `text(f"…")` calls in `app/` are entirely correct,
+because identifiers and intervals *cannot* be bound:
+
+| Interpolated | Source |
+|---|---|
+| `{_HISTORIAN_POLICY_COLUMNS}` | a module constant |
+| `{sort_col}`, `{order_sql}` | dict lookup and a ternary |
+| `INTERVAL '{seconds} seconds'` | an int from `AGGREGATION_SECONDS` |
+| `FROM {view_name}` | three hardcoded call sites |
+
+Banning f-strings outright would flag all sixteen, and a guard with sixteen false positives
+is one nobody reads — the same reasoning that kept class 14's `Literal` half unshipped.
+Quotes are the signal: they mean the value is *data*, and data can be bound.
+
+**Found eight, all now parameterised:**
+
+- **`device_provisioning` (5)** — an INSERT interpolating `certificate_pem` and
+  `json.dumps(metadata)` as quoted literals, plus approve, revoke and two lookups.
+- **`feature_extraction` (3)** — `asset_id` and timestamps, where `asset_id` arrives from
+  edge telemetry: the same untrusted source the tactical-engine fix was about.
+
+**Both modules are dormant, and one is worse than dormant.** `device_provisioning` is
+referenced by nothing *and cannot be imported*: it reads `settings.CA_KEY_PATH`, which does
+not exist — the setting is `EDGE_CA_KEY_PATH`. That was verified against the pre-existing
+file before claiming it, since it would have been easy to mistake for damage from this
+change.
+
+They were fixed anyway. The cost is small, and a dormant injection is precisely what gets
+woken up when somebody wires a feature back on — which this document has already watched
+happen once, when restoring the analysis-session surface made a latent
+`simulated`-flag-dropping bug live.
 
 ---
 
