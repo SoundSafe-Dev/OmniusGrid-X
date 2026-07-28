@@ -6,7 +6,9 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
-from app.db.database import AsyncSessionLocal
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.tenant import get_tenant_db
 from app.db.models import Asset
 from app.api.auth import get_current_active_user
 from app.services.simulation import simulation_engine
@@ -47,16 +49,24 @@ async def run_monte_carlo(
 async def fleet_summary(
     limit: int = Query(default=200, ge=1, le=1000),
     current_user=Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_tenant_db),
 ) -> Dict[str, Any]:
     """Fleet OEE rollup + bottleneck for the caller's organization (metric only)."""
     from app.services.oee_calculator import oee_calculator
 
+    # `assets` is FORCE ROW LEVEL SECURITY and AsyncSessionLocal binds no
+    # app.current_org_id, so the policy matched NOTHING and this returned an empty
+    # result for every organisation — a populated fleet reported as having no assets.
+    #
+    # The `organization_id` filter below was already correct and made no difference:
+    # RLS had removed the rows before it ran. That is the sharper half of this class —
+    # the application-layer check looks right, so nothing in review points at the
+    # session. Same shape as gdpr.py in `test_tenant_session_guard.py`.
     org_id = getattr(current_user, "organization_id", None)
-    async with AsyncSessionLocal() as session:
-        stmt = select(Asset)
-        if org_id is not None:
-            stmt = stmt.where(Asset.organization_id == org_id)
-        assets = (await session.execute(stmt.limit(limit))).scalars().all()
+    stmt = select(Asset)
+    if org_id is not None:
+        stmt = stmt.where(Asset.organization_id == org_id)
+    assets = (await db.execute(stmt.limit(limit))).scalars().all()
 
     rows: List[Dict[str, Any]] = []
     for asset in assets:

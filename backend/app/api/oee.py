@@ -44,7 +44,8 @@ class OEEHistoricalRequest(BaseModel):
 async def get_current_oee(
     asset_id: str,
     time_window_hours: float = Query(default=1.0, ge=0.5, le=24),
-    current_user = Depends(get_current_active_user)
+    current_user = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     """
     Get current OEE metrics for an asset.
@@ -54,15 +55,15 @@ async def get_current_oee(
     - Performance: Ideal vs actual cycle time
     - Quality: Good parts vs total parts
     """
-    # Verify asset access
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            select(Asset).where(Asset.id == asset_id)
-        )
-        asset = result.scalar_one_or_none()
-        
-        if not asset or asset.organization_id != current_user.organization_id:
-            raise HTTPException(status_code=404, detail="Asset not found")
+    # `assets` is FORCE ROW LEVEL SECURITY (migration 011), and AsyncSessionLocal sets
+    # no app.current_org_id — so this lookup used to return None for EVERY asset,
+    # including the caller's own, and answered 404 to a request about an asset that
+    # plainly exists. Verified against a real database before the fix. get_tenant_db
+    # binds the GUC, which is what makes the row visible.
+    result = await db.execute(select(Asset).where(Asset.id == asset_id))
+    asset = result.scalar_one_or_none()
+    if not asset or asset.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=404, detail="Asset not found")
     
     # Calculate OEE
     oee = await oee_calculator.calculate_oee(asset_id, time_window_hours)
@@ -88,7 +89,8 @@ async def get_historical_oee(
     asset_id: str,
     hours: int = Query(default=24, ge=1, le=168),
     aggregation: str = Query(default="hourly", pattern="^(hourly|daily|shift)$"),
-    current_user = Depends(get_current_active_user)
+    current_user = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     """
     Get historical OEE data with aggregation.
@@ -97,15 +99,15 @@ async def get_historical_oee(
     - daily: Per-day averages
     - shift: Per-8-hour-shift averages
     """
-    # Verify asset access
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            select(Asset).where(Asset.id == asset_id)
-        )
-        asset = result.scalar_one_or_none()
-        
-        if not asset or asset.organization_id != current_user.organization_id:
-            raise HTTPException(status_code=404, detail="Asset not found")
+    # `assets` is FORCE ROW LEVEL SECURITY (migration 011), and AsyncSessionLocal sets
+    # no app.current_org_id — so this lookup used to return None for EVERY asset,
+    # including the caller's own, and answered 404 to a request about an asset that
+    # plainly exists. Verified against a real database before the fix. get_tenant_db
+    # binds the GUC, which is what makes the row visible.
+    result = await db.execute(select(Asset).where(Asset.id == asset_id))
+    asset = result.scalar_one_or_none()
+    if not asset or asset.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=404, detail="Asset not found")
     
     end_time = datetime.now(timezone.utc)
     start_time = end_time - timedelta(hours=hours)
@@ -198,7 +200,8 @@ async def get_oee_dashboard_summary(
 async def get_oee_losses(
     asset_id: str,
     hours: int = Query(default=8, ge=1, le=72),
-    current_user = Depends(get_current_active_user)
+    current_user = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     """
     Get OEE loss breakdown for an asset.
@@ -208,15 +211,15 @@ async def get_oee_losses(
     - Performance losses (speed)
     - Quality losses (defects)
     """
-    # Verify asset access
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            select(Asset).where(Asset.id == asset_id)
-        )
-        asset = result.scalar_one_or_none()
-        
-        if not asset or asset.organization_id != current_user.organization_id:
-            raise HTTPException(status_code=404, detail="Asset not found")
+    # `assets` is FORCE ROW LEVEL SECURITY (migration 011), and AsyncSessionLocal sets
+    # no app.current_org_id — so this lookup used to return None for EVERY asset,
+    # including the caller's own, and answered 404 to a request about an asset that
+    # plainly exists. Verified against a real database before the fix. get_tenant_db
+    # binds the GUC, which is what makes the row visible.
+    result = await db.execute(select(Asset).where(Asset.id == asset_id))
+    asset = result.scalar_one_or_none()
+    if not asset or asset.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=404, detail="Asset not found")
     
     # Get OEE for the period
     oee = await oee_calculator.calculate_oee(asset_id, hours)

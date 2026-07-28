@@ -14,7 +14,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The twenty-three classes
+## The twenty-four classes
 
 The first five were all originally found in ERP. The sixth came out of the fifth, the
 seventh out of two failing tests that turned out to share a cause, and the eighth out of
@@ -47,6 +47,7 @@ to the frontend/backend seam.
 | A write whose result the UI never re-reads | every `useMutation` and invalidation | **3 live: ERP sync, command history, emergency stop** | `ERPIntegrations.sync.test.tsx`, `CommandPanel.test.tsx` |
 | A capped list that cannot say it was capped | every `limit`-bearing GET | **12 bare arrays; `/rul` fixed, the rest recorded** | `test_rul_truncation_is_reported_realdb.py` |
 | An audit write with no tenant bound | every `audit_logs` writer | **4 of 8 — exports, bulk jobs and flag changes recorded nothing** | `test_audit_writers_bind_a_tenant_realdb.py` |
+| A handler that builds its own unbound session | every inline `AsyncSessionLocal` in `app/api` | **5 live: 3 endpoints 404ing on your own asset, 2 reporting an empty fleet** | `test_tenant_session_guard.py` (second idiom) |
 
 ---
 
@@ -1431,6 +1432,48 @@ policy accepts what follows it, so three of the seven assertions write an actual
 count it through a superuser connection. Reverting the four services fails exactly those
 three plus the static check.
 
+## 24. A handler that builds its own unbound session — **5 live**
+
+Class 10 swept handlers taking `Depends(get_db)` on an RLS-protected table. This is the
+same defect reached by a different route: a handler that takes no session dependency at
+all and opens `AsyncSessionLocal()` inline. It binds no `app.current_org_id`, so a read
+of `assets` — FORCE ROW LEVEL SECURITY — matches nothing.
+
+**The guard had already written down its own blind spot and nobody acted on it.** The
+note explaining why its `commands.py` count was wrong ends: *"A static guard keyed on one
+idiom under-counts a file that uses two."* The second idiom was named, the sentence was
+committed, and the sweep was never extended to it. Five more handlers were sitting in
+that gap the whole time.
+
+Verified against a real database, with an asset that plainly existed:
+
+| | | |
+|---|---|---|
+| `GET /api/v1/oee/current/{id}` | **404** | "Asset not found" |
+| `GET /api/v1/oee/historical/{id}` | **404** | "Asset not found" |
+| `GET /api/v1/oee/losses/{id}` | **404** | "Asset not found" |
+| `GET /api/v1/health-index` | 200 | `[]` |
+| `GET /api/v1/simulation/fleet-summary` | 200 | `{"asset_count": 0, …}` |
+
+Both halves of the RLS failure mode on one screen. Three endpoints that **404 on an asset
+you own**, and two that answer 200 with a confident, empty lie — and the quiet pair is
+worse, because "asset_count: 0" on a running plant reads as an idle factory rather than a
+broken query. Nobody files a bug against a number.
+
+**`health_index` and `simulation` are the sharpest version of the class.** Both filtered
+on `current_user.organization_id`, and both were right to. It changed nothing: RLS had
+already removed the rows before the filter ran. A reviewer reading those handlers sees a
+correct tenant check and no reason to look at the session — which is why this survives
+review, and why it needs a static guard rather than more care.
+
+The guard now sweeps both idioms. Setting the GUC by hand still counts as binding, since
+that is what the ingestion worker and the audit writers legitimately do. `kanban.py` is
+the one remaining offender and is **recorded, not fixed** — the kanban RLS defect is
+another lane's open ticket, and one root cause behind it also 500s `/kanban/board`,
+`/metrics` and `/workload`. The exemption carries its reason, and a second test fails if
+the file stops offending, so a paid debt cannot sit on the allowlist pretending to be
+owed.
+
 ## Writing a sweep that is worth trusting
 
 Both false starts above came from the same mistake — trusting the scan instead of testing
@@ -1512,6 +1555,13 @@ one of its findings. The habit that catches it:
    real-DB run, on a service `main.py` starts, which had been emitting them on every
    asset on every pass for as long as it had existed. A warning nobody reads is not a
    signal; it is a place for a defect to live.
+17. **Act on the blind spots your guards have already written down.** The tenant-session
+   guard's own docstring said "a static guard keyed on one idiom under-counts a file that
+   uses two", naming `AsyncSessionLocal()` as the idiom it could not see. That sentence
+   was committed and the sweep was never extended. Five live defects were in the gap,
+   three of them 404ing on the caller's own asset. A known limitation written into a
+   comment is a finding waiting to be re-found; either close it or record it where it
+   will be read as debt.
 
 ---
 

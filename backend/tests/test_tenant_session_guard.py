@@ -25,6 +25,7 @@ its entry below.
 """
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -283,4 +284,108 @@ def test_exempt_routers_really_have_no_user_dependency(router: str):
     assert "get_current_active_user" not in text or "require_agent" in text, (
         f"{router} is exempt from the tenant-session guard but depends on an "
         "authenticated user — it should use get_tenant_db instead."
+    )
+
+
+#: Handlers that build their own session instead of taking one as a dependency.
+#: The guard used to look ONLY for `Depends(get_db)`, and its own notes on commands.py
+#: said why that was not enough — "a static guard keyed on one idiom under-counts a file
+#: that uses two". The idiom was named and never swept, and five more handlers were
+#: sitting in the gap: three `/api/v1/oee/*` routes answering 404 for the caller's own
+#: asset, plus `/health-index` and `/simulation/fleet-summary` reporting an empty fleet.
+#: Pinned by `test_inline_session_tenant_scoping_realdb.py`.
+INLINE_SESSION_ALLOWED: dict[str, str] = {
+    # NOT exempt on merit — another lane's open ticket, recorded so the number cannot
+    # grow while it waits. `execute_completion_actions` opens AsyncSessionLocal and
+    # touches Alarm, Asset and TaskBoard, all RLS-protected. The kanban RLS defect is
+    # HARSH's task-pool item (it also 500s /kanban/board, /metrics and /workload from
+    # one root cause), so fixing it here would collide with work in progress. Remove
+    # this entry when that lands; the assertion below will then hold it closed.
+    "kanban.py": (
+        "kanban RLS is an open ticket in another lane; one root cause also 500s "
+        "/kanban/board, /metrics and /workload"
+    ),
+}
+
+
+def _inline_session_offenders() -> dict[str, list[str]]:
+    """file -> handlers that open AsyncSessionLocal, touch an RLS model, bind no tenant."""
+    rls = _rls_tables()
+    models = _model_to_table()
+    found: dict[str, list[str]] = {}
+    for path in sorted(API_DIR.glob("*.py")):
+        if path.name in NO_USER_CONTEXT or path.name in INLINE_SESSION_ALLOWED:
+            continue
+        source = path.read_text()
+        if "AsyncSessionLocal(" not in source:
+            continue
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            body = ast.get_source_segment(source, node) or ""
+            if "AsyncSessionLocal(" not in body:
+                continue
+            # Setting the GUC by hand is a legitimate alternative to get_tenant_db —
+            # the ingestion worker and the audit writers do exactly that.
+            if "current_org_id" in body:
+                continue
+            if any(models[cls] in rls and re.search(rf"\b{cls}\b", body) for cls in models):
+                found.setdefault(path.name, []).append(node.name)
+    return found
+
+
+def test_no_handler_opens_an_unbound_session_on_an_rls_table():
+    """The second idiom. `AsyncSessionLocal()` sets no `app.current_org_id`, so an
+    RLS-protected read through it matches nothing — the handler 404s on rows the caller
+    owns, or answers 200 with an empty list. Either take `Depends(get_tenant_db)`, or
+    set the GUC explicitly the way the ingestion worker does."""
+    offenders = _inline_session_offenders()
+    assert not offenders, (
+        "These open their own session, read an RLS-protected model, and bind no tenant:\n  "
+        + "\n  ".join(f"{f}: {', '.join(fns)}" for f, fns in sorted(offenders.items()))
+    )
+
+
+def test_every_inline_exemption_states_a_reason():
+    """A filename on an allowlist explains nothing, and a silent allowlist is how debt
+    becomes permanent. The reason is what lets the next reader decide whether it still
+    applies."""
+    for name, reason in INLINE_SESSION_ALLOWED.items():
+        assert len(reason) > 40, f"{name} is exempted with no real reason"
+
+
+def test_exemptions_are_not_stale():
+    """The other direction: an entry for a file that no longer offends is a claim about
+    debt that has already been paid, and it hides the next regression in that file."""
+    rls = _rls_tables()
+    models = _model_to_table()
+    for name in INLINE_SESSION_ALLOWED:
+        path = API_DIR / name
+        if not path.exists():
+            continue
+        source = path.read_text()
+        still = "AsyncSessionLocal(" in source and any(
+            models[cls] in rls and re.search(rf"\b{cls}\b", source) for cls in models
+        )
+        assert still, (
+            f"{name} no longer opens an unbound session on an RLS model — drop it from "
+            f"INLINE_SESSION_ALLOWED so the guard covers it again"
+        )
+
+
+def test_the_inline_sweep_can_see_the_idiom():
+    """Vacuity: if the AST walk or the model map breaks, the check above passes while
+    inspecting nothing — the failure mode this whole file exists to prevent."""
+    rls = _rls_tables()
+    models = _model_to_table()
+    assert models, "no models parsed; the inline sweep would find nothing"
+    assert any(t in rls for t in models.values()), "no model maps to an RLS table"
+    users = [p for p in API_DIR.glob("*.py") if "AsyncSessionLocal(" in p.read_text()]
+    assert users, (
+        "no API module opens AsyncSessionLocal any more; if that is real, delete this "
+        "check rather than leaving one that can never fire"
     )
