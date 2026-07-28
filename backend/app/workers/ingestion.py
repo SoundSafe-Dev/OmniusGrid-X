@@ -361,6 +361,24 @@ class IngestionWorker:
             logger.warning("invalid_agent_heartbeat_uuid", error=str(exc))
             return
 
+        # BIND THE TENANT BEFORE THE UPDATE BELOW.
+        #
+        # `assets` is FORCE ROW LEVEL SECURITY. _process_message sets
+        # app.current_org_id for the telemetry/state/alarm branch, but the agent-status
+        # branch returns before reaching it, so this path ran with no GUC at all — and
+        # RLS filters a WRITE silently rather than raising. The UPDATE matched zero rows
+        # on every heartbeat, `result.rowcount` was 0, and the fleet-version fields it
+        # exists to maintain were never written. Verified against a real database:
+        # agent_version stayed NULL after a heartbeat naming the asset directly.
+        #
+        # Set here rather than in the caller so the binding lives next to the
+        # organization_id it is derived from, and holds for any future caller.
+        # Transaction-local: it must not ride the connection back into the pool.
+        await session.execute(
+            text("SELECT set_config('app.current_org_id', :org_id, true)"),
+            {"org_id": str(org_uuid)},
+        )
+
         timestamp_str = data.get('timestamp')
         if timestamp_str:
             timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))

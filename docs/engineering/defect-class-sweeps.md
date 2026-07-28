@@ -14,7 +14,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The eleven classes
+## The twelve classes
 
 The first five were all originally found in ERP. The sixth came out of the fifth, the
 seventh out of two failing tests that turned out to share a cause, and the eighth out of
@@ -789,6 +789,45 @@ protects were invisible to it, so a `get_db` regression on any of them would not
 flagged. Parsing SQL text is a proxy for asking the database, and this was the cost of the
 proxy; the parser now understands both forms and a test pins it. Same lesson as rule 6, in
 a place that had already learned it.
+
+## 12. A worker branch that writes without binding a tenant — **1 live silent no-op**
+
+Every tenant sweep so far looked at API handlers. A worker has no request and no user, so
+it sets `app.current_org_id` by hand from the message it is processing — and nothing in
+the API guards checks that.
+
+**Swept:** all five workers. Three bind a tenant; `ota_rollouts` and `health_server` touch
+no tenant data. Two findings, one live.
+
+**LIVE: the edge-agent heartbeat updated nothing.** `_process_agent_heartbeat` runs
+`update(Asset)` to record fleet-version fields. `_process_message` binds the tenant for the
+telemetry/state/alarm branch — but the agent-status branch **returns before reaching that
+code**, so this path ran with no GUC at all. RLS filters a WRITE silently rather than
+raising, so the UPDATE matched zero rows on every heartbeat and the worker logged
+`updated_assets=0`: an accurate log of total failure, which nobody reads because nothing
+looks wrong. Verified against a real database — `agent_version` stayed NULL after a
+heartbeat naming the asset directly. The binding now lives inside the handler, next to the
+`organization_id` it derives from, so it cannot be lost to another early return.
+
+**LATENT: `export_delivery` bound the tenant session-scoped (`false`).** That value stays
+on the connection after the session closes and rides it back into the pool, so the next
+task inherits a stale tenant unless it sets its own. Every operation there does set its
+own, so nothing was leaking — but that is a property of today's code rather than of the
+mechanism, and it is the same footgun `get_tenant_db` had to be fixed for. Both sites are
+transaction-local now.
+
+**HOW THE LIVE ONE WAS FOUND is the part worth keeping.** A guard written to assert
+something else — that the ingestion message path commits exactly once, so a
+transaction-local GUC cannot be dropped mid-message — failed on a count of 2. The second
+commit was a different branch, so the assertion was too crude. But reading that branch to
+correct the test is what exposed the missing binding. **The wrong assertion pointed at the
+right place**, which is an argument for writing the crude version early rather than
+waiting to write the precise one.
+
+Also checked and clean: the compliance worker has 14 sessions and 13 `_set_org` calls, and
+the one without hands its session to `build_report_payload`, which binds the tenant itself.
+That exception is now asserted, along with the delegation it depends on, so the two cannot
+drift apart.
 
 ---
 
