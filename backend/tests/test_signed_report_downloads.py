@@ -172,6 +172,20 @@ async def test_bearer_token_alone_does_not_replace_signed_token(
         conn.close()
 
 
+# OBSERVED FLAKE, 2026-07-27, cause not determined. This failed once inside a full
+# suite run and then passed in two consecutive full runs and in isolation. Recorded so a
+# recurrence starts from evidence rather than from scratch.
+#
+# Ruled out by measurement, not by reasoning:
+#   * base64 malleability in `tampered = token[:-1] + "a"`. The token is a JWT of length
+#     480 (len % 4 == 0), so the final character is fully significant; 0/200 generated
+#     tokens decoded identically after the swap.
+#   * rate limiting returning 429 instead of 403 under a long run. RATE_LIMIT_ENABLED
+#     defaults to False and this endpoint carries no rate_limit decorator.
+#
+# Still open: which of the five assertions failed, and on status or on detail. The loop
+# does not identify the case it is on, so the failure output cannot say. If it recurs,
+# parametrize the five bad tokens so the id names the culprit.
 @pytest.mark.asyncio
 async def test_invalid_tokens_return_uniform_403(
     app, seeded_orgs, admin_sync_url, tmp_path, monkeypatch, signed_settings

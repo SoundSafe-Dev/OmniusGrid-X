@@ -31,6 +31,7 @@ to the frontend/backend seam.
 | Data reported as kept, but discarded | quarantine/DLQ paths | **1, live, on ingestion** | `test_edge_ingest_quarantine_retention.py` |
 | A test double that reimplements what it stands in for | every `get_tenant_db` override | **4 copies, hiding an RLS bug** | `test_tenant_guc_survives_commit_realdb.py` |
 | Frontend calling endpoints the backend does not serve | all 183 real-mode API calls | **4, one wired to a live button** | `test_frontend_calls_real_endpoints.py` |
+| Response shape disagreeing with the frontend's type | 86 typed calls | **none** | `test_frontend_response_shapes_match.py` |
 | Query parameters the endpoint does not declare | 37 param-sending calls | **2, plus 4 IDOR-shaped endpoints** | `test_frontend_query_params_are_declared.py` |
 | An org-scoped table with neither a filter nor RLS | `get_db` handlers on org tables | **~60 handlers: 2 leaks, an IDOR, and whole surfaces returning nothing** | `test_tenant_session_guard.py` + 5 real-DB suites |
 
@@ -625,6 +626,33 @@ actually calls. Since `logistics_correlation` registers first it would silently 
 changing the payload the frontend receives. Choosing a canonical implementation per path
 is a product decision, not a routing edit, so the tests use the real doubled paths rather
 than pretending otherwise.
+
+**The third leg of the frontend/backend contract — response shape — came back clean.**
+Its siblings check the path exists and the query parameters are declared; neither says
+anything about what comes back. An endpoint returning `{items, meta}` to a call typed
+`Carrier[]` is a runtime `.map is not a function`; the reverse reads `.items` as
+`undefined` and renders an empty list. TypeScript cannot catch either, because the type
+argument to `api.get<T>` is an assertion about JSON rather than a checked fact.
+
+**86 typed calls, zero mismatches** — the FS-99 envelope migration evidently landed on
+both sides. The guard exists so the next one cannot half-land.
+
+Its first run reported one mismatch that was not real: it treated any object with an
+`items` property as a paginated envelope, and `SuggestedQuestionsResponse` legitimately
+has `questions`, `items`, `context_summary` and `intelligence`. An envelope now requires
+`items` **plus** a pagination sibling. Third detector in this document to need correcting
+before its output was worth anything.
+
+**`health.py` was split rather than converted, and the distinction is the point.**
+`/admin/system/status` is admin-gated with a real user and was on `get_db`, so its
+`assets` and `alarms` counts — both FORCE RLS — came back **zero** regardless of what
+existed. An engineer's status page reporting no active assets on a running platform reads
+as an idle system, not a broken query. It is now tenant-scoped.
+
+The other four sites stay on `get_db` deliberately: `/health/live`, `/health/ready` and
+`/health/startup` are unauthenticated probes and cannot resolve a tenant from a user they
+do not have, so they read only tables without a policy. A uniform conversion would have
+turned three working probes into 500s. Pinned in both directions.
 
 **The core product surfaces were then swept for the same failure, and came back clean.**
 One organisation seeded with an asset, an alarm and an operation, then every main

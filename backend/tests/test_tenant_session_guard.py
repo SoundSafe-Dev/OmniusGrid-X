@@ -66,10 +66,19 @@ KNOWN_GET_DB_ON_RLS: dict[str, int] = {
     # lasted. The application layer was already correct
     # (organization_id=current_user.organization_id on create); only the GUC was
     # missing. Pinned by tests/test_analysis_sessions_tenant_scoping_realdb.py.
-    # Mixed: unauthenticated probes + an admin-gated view that reads Asset/Alarm.
-    # Splitting the two is a change to the probe contract, so it is left for a
-    # dedicated pass rather than bundled here.
-    "health.py": 5,
+    # 4, not 5, and the split has now been done. /admin/system/status is admin-gated
+    # with a real user and was on get_db, so its assets and alarms counts — both FORCE
+    # RLS — came back ZERO regardless of what existed. A system-status page reporting
+    # no active assets on a running platform reads as an idle system, not a broken
+    # query. It is now tenant-scoped.
+    #
+    # The remaining 4 sites are the UNAUTHENTICATED probes (/health/live, /ready,
+    # /startup and their shared checks). They cannot use get_tenant_db, which resolves
+    # a tenant from a user they do not have, so they read only tables without a policy
+    # — which is why _check_ingestion had to drop its assets.last_seen read. They are
+    # exempt in substance but stay counted here so the number cannot drift unnoticed.
+    # Pinned by tests/test_admin_system_status_scoping_realdb.py.
+    "health.py": 4,
     # audit.py and gdpr.py are GONE from this list. Both were the empty-page failure:
     # audit_logs and data_processing_records have had tenant policies since migration
     # 011, and every handler ran on get_db, so the policy matched nothing and the

@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.api.auth import get_current_active_user
 from app.db.database import engine, get_db
+from app.middleware.tenant_isolation import get_tenant_db
 from app.db.models import Alarm, Asset, User
 from app.middleware.rbac import require_admin
 
@@ -543,9 +544,28 @@ async def trigger_database_vacuum(
 @router.get("/admin/system/status", dependencies=[Depends(require_admin)])
 async def get_system_status(
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
-    """Get comprehensive system status for engineers (live queries, not placeholders)."""
+    """Comprehensive system status for engineers (live queries, not placeholders).
+
+    THE ONE TENANT-SCOPED ENDPOINT IN THIS FILE, and the reason the rest are not.
+
+    `health.py` is deliberately mixed: `/health/live`, `/health/ready` and
+    `/health/startup` are UNAUTHENTICATED probes, so they cannot use `get_tenant_db`
+    (which resolves a tenant from an authenticated user) and must read only tables
+    without a policy. They do — see `_check_ingestion`, which had to drop an
+    `assets.last_seen` read for exactly that reason.
+
+    This handler is different: it is admin-gated and has a user. On `get_db` it set no
+    tenant GUC, so `assets` and `alarms` — both FORCE ROW LEVEL SECURITY — returned
+    **zero** no matter how much existed. An engineer's system-status page reported
+    `active_assets: 0` and no alarms on a running platform, which reads as an idle
+    system rather than a broken query.
+
+    The counts are now the caller's organisation. Platform-wide totals across tenants
+    would need the super-admin role that does not exist yet — the same one
+    `data_retention` and the audit log's cross-org view are blocked on.
+    """
     health = await _run_health_checks(db)
 
     active_assets = (
