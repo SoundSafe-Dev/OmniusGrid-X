@@ -14,7 +14,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The nineteen classes
+## The twenty classes
 
 The first five were all originally found in ERP. The sixth came out of the fifth, the
 seventh out of two failing tests that turned out to share a cause, and the eighth out of
@@ -43,6 +43,7 @@ to the frontend/backend seam.
 | SQL built by interpolating a value into quotes | every raw SQL construction | **8 sites, all dormant** | `test_sql_is_not_built_by_interpolation.py` |
 | A provenance flag left to its default | every model declaring one, all constructions | **1, live, on the error path** | `test_provenance_flags_are_always_set.py` |
 | A qualifier the frontend never reads | every boolean qualifier on the wire | **3 fields, 2 defects, both live** | `test_qualifiers_reach_the_frontend.py` |
+| A cache key that omits what the fetch varies on | every `useQuery` in the frontend | **clean — 0 of 30+; nearly introduced during this work** | `queryKeysAreComplete.test.ts` |
 
 ---
 
@@ -1226,6 +1227,38 @@ and a test pins that the strip removes prose without removing code.
 names it. Parsing TSX for rendered output would mismodel enough to manufacture defects, so
 the display half is pinned per instance instead — six OEE page tests and the four-link
 chain in `test_provenance_flags_are_always_set.py`.
+
+## 20. A cache key that omits what the fetch varies on — **clean, and nearly broken by this work**
+
+React Query caches on the key alone. If the fetch depends on a value the key does not
+name, changing that value serves the PREVIOUS result straight from cache — no refetch, no
+loading state, no error. The screen updates its controls and not its data. It reads as
+"the filter doesn't work", and clicking around rarely finds it, because the first render
+is always right.
+
+**This one is recorded because of how it arrived.** Making `/api/v1/auth/users` paginate
+meant `AdminPages` had to send an explicit page size, and the first version of that change
+kept `queryKey: ['users']` while the fetch became `getUsers({ limit })`. "Show more" would
+have re-read the same 50 rows forever. Caught before commit — but nothing in the type
+system or the existing suite would have caught it after, which is the argument for the
+guard. It costs one line to make this mistake.
+
+**Swept:** every `useQuery` in the frontend, 30+ of them. **Zero offenders.** The whole
+value is in staying that way, so the guard lives in the frontend suite rather than in a
+document.
+
+**The detector was wrong first, in the usual direction.** Reading identifiers out of the
+call arguments flagged seven sites, all of them correct:
+
+* six pass an object literal such as `{ limit: 500 }` — `limit` is a KEY with a constant
+  value and varies with nothing. Object keys are stripped before matching, exactly the
+  correction the backend's query-parameter sweep needed for the same reason;
+* one passes `startTime`, derived one line above from `timeRange`, which IS in the key. A
+  derived value is covered transitively, so a dependency whose declaration mentions a key
+  variable is not reported.
+
+Both corrections are pinned as tests. Seven false positives would have trained the reader
+to skip the output, and the one real finding would have gone with them.
 
 ## Writing a sweep that is worth trusting
 
