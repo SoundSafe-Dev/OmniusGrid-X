@@ -14,7 +14,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The eighteen classes
+## The nineteen classes
 
 The first five were all originally found in ERP. The sixth came out of the fifth, the
 seventh out of two failing tests that turned out to share a cause, and the eighth out of
@@ -42,6 +42,7 @@ to the frontend/backend seam.
 | A channel the route-walk cannot see | the websocket surface | **2 live: anonymous access and cross-tenant subscribe** | `test_websocket_tenant_binding.py` |
 | SQL built by interpolating a value into quotes | every raw SQL construction | **8 sites, all dormant** | `test_sql_is_not_built_by_interpolation.py` |
 | A provenance flag left to its default | every model declaring one, all constructions | **1, live, on the error path** | `test_provenance_flags_are_always_set.py` |
+| A qualifier the frontend never reads | every boolean qualifier on the wire | **3 fields, 2 defects, both live** | `test_qualifiers_reach_the_frontend.py` |
 
 ---
 
@@ -1176,6 +1177,56 @@ describes) and returns a boolean; the audit middleware binds the tenant GUC befo
 inserting into `audit_logs`, which is `FORCE ROW LEVEL SECURITY`. The one handler that
 turned a failure into a confident success was the one above.
 
+## 19. A qualifier the frontend never reads — **3 fields, 2 defects, both live**
+
+Classes 4, 5 and 18 are all about a system describing itself untruthfully. This is the
+seam version: the backend describes itself **correctly**, and the description is dropped
+one layer up.
+
+A *qualifier* is a boolean whose whole job is to say how far to trust the value beside it.
+Sending one and ignoring it is worse than never sending it, because the backend author
+then believes the caveat is being shown — the code review passes, the field is in the
+payload, and the reader still sees a confident number with its footnote removed.
+
+Two instances, both found by hand before this sweep existed, and both would have been
+caught by it:
+
+* **`simulated`** — the correlation chat's error fallback returns a reply that is not an
+  analysis at all, and says so. `analysisSessions.ts` did not declare the field.
+* **`quality_measured` / `performance_measured`** — `quality` reads 1.0 for an asset with
+  no part counters, the neutral multiplier for OEE and not a measurement. The endpoint has
+  flagged this since FS-234, with a comment telling consumers to render `—` rather than
+  `100%`. `OEEMetrics` did not carry the fields.
+
+**Swept:** every boolean qualifier the API can emit, from two sources — the OpenAPI
+schemas AND the raw dicts handlers return. That second source is the whole reason the
+sweep works: about half these endpoints declare no `response_model`, so nothing about
+them reaches `components.schemas`, and `/dashboard/assets/{id}/oee` — where
+`quality_measured` lives — is one of them. **Reading only the schemas made the first
+version look clean while missing the defect it was written for.** Its own vacuity check
+caught that, which is the strongest argument for writing vacuity checks: it failed with
+"the OEE flags are not being swept" before a human noticed.
+
+**The detector was wrong twice more, in opposite directions.**
+
+*Too loose:* keying on name stems alone matched `estimated_duration_hours`,
+`estimated_seconds` and `total_estimated_cost` — business QUANTITIES, none of them a
+statement about trust. `estimated_X` names a number; the qualifier form is a flag.
+Requiring `boolean` removed the whole family without an allowlist, which is the better
+repair: an allowlist of false positives is a list of checks that no longer run.
+
+*Too generous:* matching raw source made `simulated` look read, because `fleetTracker.ts`
+carries the comment *"Mock vehicle positions (simulated GeoTab data)"*. An English
+sentence about an unrelated feature was standing in for code that consumed the field, and
+the mutation run proved the cost — against the real pre-fix frontend the sweep flagged the
+OEE pair and **missed the correlation flag**. Comments are now stripped before matching,
+and a test pins that the strip removes prose without removing code.
+
+**What it deliberately cannot prove:** that the value is *displayed*, only that the code
+names it. Parsing TSX for rendered output would mismodel enough to manufacture defects, so
+the display half is pinned per instance instead — six OEE page tests and the four-link
+chain in `test_provenance_flags_are_always_set.py`.
+
 ## Writing a sweep that is worth trusting
 
 Both false starts above came from the same mistake — trusting the scan instead of testing
@@ -1238,6 +1289,11 @@ one of its findings. The habit that catches it:
    URL prefixes, so the code was correct and the finding would have been fabricated — the
    two ends only look mismatched if you ignore the seam in the middle. Comparing endpoints
    of a pipeline means reading the transforms along it.
+14. **A substring match on source is satisfied by prose.** The qualifier sweep considered
+   `simulated` "read by the frontend" because an unrelated comment said *"simulated GeoTab
+   data"* — a sentence about a different feature standing in for code nobody had written.
+   Strip comments before matching identifiers, and pin the strip with a test, or the
+   result depends on what someone happened to write in English.
 
 ---
 
