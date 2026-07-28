@@ -13,6 +13,14 @@ fiction. The same pass found four real files the listing omitted (`intuit_connec
 `intuit_qbo.py`, `netsuite_auth.py`, `oauth2.py`, `sap_batch.py`), which is the quieter
 half: an inventory is only useful if it is complete in both directions.
 
+SCOPE: the three top-level documents, and deliberately not `docs/**`. That tree was
+swept by hand and came back clean, but its 50 files use three idioms this guard cannot
+tell apart from a broken reference — "Create `configs/lora_config.json`:" (an instruction,
+not a claim), "`network-policies.yaml`, which does not exist" (a deliberate absence note,
+the same shape as the SAP one above), and unchecked checklist items for files not yet
+written. Extending the guard there would produce eleven false positives on correct prose,
+which is the fastest way to make a check worth ignoring.
+
 HOW A NAME IS RESOLVED. Exact repo-relative path first, then a suffix match against
 `git ls-files`, because the docs legitimately write `sap_connector.py` for
 `backend/app/services/erp_connectors/sap_connector.py`. Only the file's *existence* is

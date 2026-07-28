@@ -1621,6 +1621,14 @@ The same pass found the quieter half: five real files the inventory omitted
 including the eighth ERP connector the README describes at length elsewhere. An inventory
 is only useful if it is complete in **both** directions.
 
+**`docs/**` was swept by hand and is clean**, and is deliberately left outside the guard.
+Its 50 files use three idioms a static check cannot distinguish from a broken reference:
+*"Create `configs/lora_config.json`:"* is an instruction, not a claim; *"there is no
+network-policies.yaml"* is a deliberate absence note — the same shape as the SAP one
+above, arrived at independently; and unchecked checklist items name files that are not
+meant to exist yet. Automating it would report eleven false positives against correct
+prose, which is the fastest way to make a check worth ignoring.
+
 **Resolution is deliberately loose.** Exact path first, then a suffix match against
 `git ls-files`, because the docs legitimately write `sap_connector.py` for a file six
 directories down. Only existence is asserted, never location — tightening that would fail
@@ -1642,6 +1650,13 @@ hole that reads like one.
 Both directions of the exemption list are also pinned: an entry that starts resolving is
 a stale claim hiding a real file, and an entry no longer cited anywhere is dead weight
 outliving whatever it protected.
+
+**It has now caught this document three times.** Writing *about* an absent file is
+itself the hazard: every sentence recording that something does not exist is, formatted as
+a citation, indistinguishable from a claim that it does. The convention that fell out of
+it — name an absent file in plain text, never in backticks — is the whole reason the
+`docs/**` idioms above cannot be automated, and the reason this section spells two
+filenames without them.
 
 **And it failed its own first full run, correctly.** Resolution went through
 `git ls-files`, so the guard could not see a file added in the same commit as the sentence
