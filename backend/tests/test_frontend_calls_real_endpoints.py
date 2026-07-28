@@ -11,7 +11,7 @@ This is the same shape as the ERP "invented endpoints" sweep, moved to our own
 frontend/backend seam, and the same shape as the tenant-DB overrides: **the suite was
 exercising a double instead of the thing that ships.**
 
-WHAT IT FOUND. 196 real-mode calls across 22 modules and one page; four the backend does not
+WHAT IT FOUND. 194 real-mode calls across 22 modules; four the backend does not
 serve, all confirmed against the live route table and by issuing the request in-process:
 
     PATCH /api/v1/fleet/security/events/{id}   404   <- LIVE: wired to a UI button
@@ -206,16 +206,32 @@ class TestTheCallScanner:
     def test_a_bare_reference_is_not_a_call(self):
         assert list(_calls_in("const f = api.get;")) == []
 
-    def test_raw_fetch_calls_are_in_scope(self):
-        """`AuditLogs.tsx` calls fetch() directly rather than going through the axios
-        client, so it sat outside every frontend-contract sweep here. Both of its
-        endpoints turned out to be real, which is luck, not coverage."""
-        fetched = [c for c in CALLS if c[0] == "AuditLogs.tsx"]
-        assert fetched, "raw fetch() calls are no longer being scanned"
-        assert {c[3] for c in fetched} == {"/api/v1/audit/logs", "/api/v1/audit/verify"}
+    def test_the_raw_fetch_scanner_works(self):
+        """Asserted on synthetic input rather than on a real offender, because there are
+        none left — pinning "this page uses fetch" as a property broke the moment the
+        page was fixed."""
+        assert RAW_FETCH.search("await fetch('/api/v1/audit/logs?x=1')")
+        assert RAW_FETCH.search("await fetch(`/api/v1/audit/verify`)")
+        assert not RAW_FETCH.search("await fetch('https://vendor.example/thing')")
+
+    def test_nothing_bypasses_the_shared_client(self):
+        """A raw `fetch` to our own API skips the axios response interceptor, which
+        refreshes an expired token on 401 and redirects to /login when that fails.
+        `AuditLogs.tsx` did this, so it was the one screen that could not recover from
+        expiry — an operator reading the audit trail, which is exactly where someone
+        sits long enough to expire, just saw "Failed to fetch audit logs". It also put
+        the page outside every contract guard here.
+
+        Zero offenders now. This keeps it that way."""
+        offenders = [f"{m}:{ln} {url}" for m, ln, _meth, url, _n in _raw_fetch_calls()]
+        assert not offenders, (
+            "these call our API directly instead of through `api`, skipping token "
+            "refresh, error normalisation and every guard in this file:\n  "
+            + "\n  ".join(offenders)
+        )
 
     def test_the_scan_is_not_vacuous(self):
-        assert len(CALLS) >= 195, (
+        assert len(CALLS) >= 190, (
             f"only {len(CALLS)} calls found; the scanner regressed and this file would "
             f"pass while checking a fraction of the client"
         )

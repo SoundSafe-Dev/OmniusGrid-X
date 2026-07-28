@@ -510,8 +510,8 @@ the UI were all already there, only the write was missing — and the component 
 failures. The other three were uncalled and were removed. Notably a hand fix of this exact
 class had already run (FS-15, "routes that never existed") and left these behind.
 
-**Both suites are green: backend 2,162 passed, frontend 206 passed, 0 failed** — across
-187 backend and 45 frontend test files. Every guard listed above is mutation-tested:
+**Both suites are green: backend 2,166 passed, frontend 215 passed, 0 failed** — across
+187 backend and 46 frontend test files. Every guard listed above is mutation-tested:
 reintroduce the defect and the test must fail, checked individually, because a guard that
 cannot fail is indistinguishable from one that passes.
 
@@ -692,6 +692,24 @@ real files, including the eighth ERP connector, were missing from the inventory
 altogether. The first version of that guard put the fictional name on an exemption list,
 which then excused the very bullet it was written to catch; the mutation run passed and
 looked like proof.
+
+**The audit chain closed at the page, and the page was bypassing the client.**
+`AuditLogs.tsx` called `fetch('/api/v1/audit/logs')` with a hand-built `Authorization`
+header instead of going through the shared axios instance. That mattered twice: the
+client's response interceptor refreshes an expired token on 401 and redirects to `/login`
+when the refresh fails, so this was the **one screen that could not recover from expiry**
+— and the audit trail is exactly where someone sits reading long enough to expire. It
+also placed the page outside every frontend/backend contract guard, which scan for calls
+through the client; both its endpoints happened to be real, which is luck rather than
+coverage. It now uses `api`, the guard walks the whole `src` tree for raw `fetch`, and a
+new assertion fails if anything bypasses the client again.
+
+The same pass removed an `organization_id` query parameter from `GET /api/v1/audit/logs`.
+It could never have worked as a cross-tenant selector — the handler is RLS-scoped, and a
+real-database probe confirmed org A supplying org B's id got a 200 and an empty list — but
+a parameter that can only narrow-to-nothing advertises a capability the product does not
+have, on the one table where a cross-tenant read *is* the incident, and it would become a
+live selector the moment anything ran that query with RLS bypassed.
 
 **And two of this slice's own fixes turned out to prove only half their property.** The
 audit tests counted rows through a *superuser* connection, which bypasses row-level
