@@ -154,14 +154,41 @@ KNOWN_GET_DB_ON_RLS: dict[str, int] = {
 }
 
 
+#: `ALTER TABLE assets ENABLE ROW LEVEL SECURITY` — the literal form.
+_LITERAL_RLS = re.compile(
+    r"ALTER\s+TABLE\s+(\w+)\s+(?:FORCE\s+)?(?:ENABLE\s+)?ROW\s+LEVEL\s+SECURITY",
+    re.I,
+)
+#: `EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t)` driven by a
+#: `FOREACH t IN ARRAY ARRAY['a', 'b', ...]` loop — the form migration 052 uses.
+_DYNAMIC_RLS = re.compile(
+    r"format\(\s*'ALTER TABLE %I[^']*ROW LEVEL SECURITY", re.I
+)
+_ARRAY_LITERAL = re.compile(r"ARRAY\s*\[([^\]]+)\]", re.S)
+
+
 def _rls_tables() -> set[str]:
+    """Tables under RLS, per the migration chain.
+
+    MUST UNDERSTAND BOTH FORMS. This used to match only the literal
+    `ALTER TABLE <name> ...`, and migration 051 enables RLS through
+    `EXECUTE format('ALTER TABLE %I ...', t)` over a table array. The four tables it
+    protects — geofence_zones, geofence_alerts, maintenance_schedules, repair_orders —
+    were therefore invisible here: the guard believed they had no policy, so a router
+    using `get_db` on any of them would not have been flagged, and the protection added
+    for them was invisible to the tool that enforces the pattern.
+
+    Parsing SQL text is a proxy for asking the database, and this is the cost of the
+    proxy. It stays static so the check remains in the fast suite; the regression is
+    pinned by `test_dynamically_enabled_rls_is_detected`.
+    """
     tables: set[str] = set()
-    pattern = re.compile(
-        r"ALTER\s+TABLE\s+(\w+)\s+(?:FORCE\s+)?(?:ENABLE\s+)?ROW\s+LEVEL\s+SECURITY",
-        re.I,
-    )
     for sql in MIGRATIONS.glob("*.sql"):
-        tables.update(m.group(1) for m in pattern.finditer(sql.read_text()))
+        text = sql.read_text()
+        tables.update(m.group(1) for m in _LITERAL_RLS.finditer(text))
+        if _DYNAMIC_RLS.search(text):
+            for block in _ARRAY_LITERAL.findall(text):
+                tables.update(re.findall(r"'(\w+)'", block))
     return tables
 
 
@@ -200,6 +227,19 @@ def test_rls_tables_are_actually_detected():
     tables = _rls_tables()
     assert "assets" in tables and "audit_logs" in tables, sorted(tables)[:10]
     assert len(tables) > 20, f"suspiciously few RLS tables found: {len(tables)}"
+
+
+def test_dynamically_enabled_rls_is_detected():
+    """Migration 051 enables RLS through EXECUTE format(...) over a table array. If the
+    parser stops seeing that form, these four silently drop out of the guard's view and
+    a `get_db` regression on them would pass unnoticed."""
+    tables = _rls_tables()
+    for name in ("geofence_zones", "geofence_alerts", "maintenance_schedules",
+                 "repair_orders"):
+        assert name in tables, (
+            f"{name} has RLS (migration 051) but the guard cannot see it — a router "
+            f"using get_db on it would not be flagged"
+        )
 
 
 def test_no_new_get_db_on_rls_tables():

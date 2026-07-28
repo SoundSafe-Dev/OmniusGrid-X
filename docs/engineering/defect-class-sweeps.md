@@ -14,7 +14,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The ten classes
+## The eleven classes
 
 The first five were all originally found in ERP. The sixth came out of the fifth, the
 seventh out of two failing tests that turned out to share a cause, and the eighth out of
@@ -739,6 +739,56 @@ a permanently-empty page are indistinguishable from a status code, which is why 
 now pinned by tests that assert the caller sees its OWN rows as well as not seeing
 anyone else's. The frontend stopped sending the removed parameter, and the
 `organization_id`-from-localStorage helper it needed went with it.
+
+## 11. A globally-keyed table read as if tenant-scoped — **1 live PII disclosure**
+
+Every tenant sweep so far chased **reads on tenant-partitioned tables**. This one is the
+opposite shape: a table deliberately NOT partitioned, whose contents are nonetheless
+tenant-sensitive.
+
+**Swept:** write paths (POST/PUT/PATCH/DELETE) touching org-scoped tables that have no
+RLS to fall back on — the gap left after migration 051 covered the fleet tables. Four
+tables qualify: `api_keys`, `error_events`, `users`, `vehicles`.
+
+`api_keys.revoke_api_key` is **correctly scoped** (`APIKey.organization_id ==
+current_user.organization_id`), and most apparent `users` hits were the same
+`Depends()`-annotation false positive that has recurred throughout this document.
+
+**`error_events` is the real one, and it is not a missing filter.** `fingerprint` is the
+PRIMARY KEY — one row per distinct error for the entire platform — so the triage view is
+cross-tenant *by construction*, and `require_admin` means a **tenant** admin, since no
+platform-admin role exists. Any tenant's admin could therefore read any other tenant's
+`message_sample` and `traceback_sample`, and PATCH its status.
+
+Verified against a real database: org A retrieved a row owned by org B carrying
+`customer_ssn=123-45-6789` in the message and a card number in the traceback. Exception
+text and tracebacks are the two fields most likely to contain customer data, precisely
+because nobody chooses what goes into them.
+
+**The module already flagged the question** — *"the API is not tenant-filtered (open
+question flagged to the manager)"*. What it lacked was evidence of what was exposed, which
+is the difference between a design question and a disclosure. A question can wait; a
+disclosure of another tenant's PII should not.
+
+**Fixed by redaction, not by scoping**, and the distinction matters. Filtering the view by
+`organization_id` would be wrong: with `fingerprint` as the key, one row is shared by every
+tenant hitting that bug and its `organization_id` names only one of them, so a filter would
+hide errors that genuinely are the caller's. Only the two payload-bearing fields are
+withheld, only from a viewer in a different organisation. Counts, route, method and status
+stay visible — that is the triage value, and it carries no payload. A row with no
+`organization_id` is platform-level and stays visible to everyone. The list endpoint was
+already safe; it returns no samples at all, now pinned.
+
+If a platform-admin role is added, gate the samples on that rather than dropping the check.
+
+**A guard of this document's own making was also found blind.** `test_tenant_session_guard`
+derives its RLS table set by grepping migrations for a literal
+`ALTER TABLE <name> ENABLE ROW LEVEL SECURITY` — and migration 051 enables RLS through
+`EXECUTE format('ALTER TABLE %I …')` over a table array. All four tables that migration
+protects were invisible to it, so a `get_db` regression on any of them would not have been
+flagged. Parsing SQL text is a proxy for asking the database, and this was the cost of the
+proxy; the parser now understands both forms and a test pins it. Same lesson as rule 6, in
+a place that had already learned it.
 
 ---
 
