@@ -1660,6 +1660,17 @@ one of its findings. The habit that catches it:
 
 ## Open observations, not yet tickets
 
+**The password-reveal toggle on the login page has no accessible name.** It is an
+icon-only `<button>` whose meaning lives in a Radix tooltip, which is exposed as a
+*description*, not a name — a screen-reader user hears "button". Found while writing
+`Login.test.tsx`, which selects it structurally rather than by role+name because of this.
+
+**Deliberately not fixed.** The `htmlFor` / `aria-label` sweep is another lane's first
+ticket, and quietly fixing one instance would take the interesting part of that work and
+leave the pattern behind. Recorded here so it is not re-found from scratch.
+
+
+
 **A TypeScript response type omitting fields the server sends — swept, not enforced.**
 The field-level companion to class 9's shape check, restricted to URL prefixes the casing
 seam does not touch so names are literal on both sides. **One hit:** `erp.ts`'s
