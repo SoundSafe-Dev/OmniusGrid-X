@@ -14,7 +14,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The twenty-eight classes
+## The twenty-nine classes
 
 The first five were all originally found in ERP. The sixth came out of the fifth, the
 seventh out of two failing tests that turned out to share a cause, and the eighth out of
@@ -51,8 +51,9 @@ to the frontend/backend seam.
 | A request body the endpoint's schema rejects | every frontend POST/PUT/PATCH | **clean — 7 of 15 checkable, recorded not enforced** | none; see class 25 |
 | An endpoint the README documents but the app never served | all 124 API-Reference rows | **22 wrong — 404 for anyone who followed them** | `test_documented_endpoints_exist.py` |
 | A source file the docs point at that is not in the repo | every filename cited in three docs | **1 fiction, 5 omissions** | `test_documented_files_exist.py` |
+| A frontend catch that swallows a failure | every `catch` in `src` | **clean — all 10 report or recover** | none; see class 28 |
 
-Twenty-seven of these carry a numbered section below. **Response-shape mismatch is the
+Twenty-eight of these carry a numbered section below. **Response-shape mismatch is the
 exception**: it was swept in the same pass as the `get_db` work and came back clean, so
 it is written up inside class 10 rather than given a heading of its own. The row stays in
 this table because a clean result that is not listed is indistinguishable from a check
@@ -1682,6 +1683,34 @@ filenames without them.
 describing it — it called the documentation broken while the documentation was right. A
 check that cannot see uncommitted work punishes exactly the change it exists to encourage.
 It now falls back to the working tree, and that case is pinned by name.
+
+## 28. A frontend catch that swallows a failure — **clean**
+
+Class 4 is a backend handler returning success after a failure. This is its frontend
+form: a `catch` that neither tells the user, retries, nor rethrows, so a failed request
+renders as an empty list or an unchanged screen — and an empty list is a claim.
+
+**Swept:** every `catch` block in `src`. **10 found that neither report nor rethrow, and
+all 10 are correct.** Three are `formatters.ts` returning `'Invalid date'`, which *is* the
+report. Two are auth paths where the recovery is the point — a failed logout still logs
+out locally, a failed refresh clears the session and redirects to `/login`. One defaults
+the theme to dark when the stored preference will not parse. One keeps a default export
+message when the error body is a Blob that will not decode, and the outer handler shows it.
+`Login.tsx` deliberately swallows because the store holds the error, which
+`Login.test.tsx` now pins.
+
+**One false positive, and it is the same shape as every other detector correction here:**
+`ERPIntegrations.tsx` reports through `setTestResult`, which was missing from the list of
+names that count as reporting. A reporting sweep that does not know all the ways this
+codebase reports will accuse correct code, and four false positives out of ten would have
+made the output worth skipping.
+
+**Not guarded.** The remaining risk is not a silent `catch` — it is a handler that reports
+correctly into a state the page then renders as ordinary emptiness, and distinguishing
+those two statically means knowing what each screen does with its error state. That is
+per-page work, and it is what the page tests added this week actually assert: `AuditLogs`
+must not render a fetch failure as an empty trail, and `ErrorTriageDetail` must not render
+a redaction as a missing traceback.
 
 ## Writing a sweep that is worth trusting
 
