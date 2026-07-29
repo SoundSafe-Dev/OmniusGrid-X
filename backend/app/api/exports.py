@@ -845,9 +845,17 @@ async def export_oee_summary(
                 "status": "healthy" if m.oee > 60 else "at_risk" if m.oee > 40 else "critical",
             })
         except Exception:  # noqa: BLE001 - one bad asset shouldn't fail the report
+            # NOT ZEROS. This is a PDF someone files, prints or forwards, and a row
+            # reading "0, 0, 0, 0" states that the machine produced nothing in the
+            # window — a total outage — when the truth is that the calculation failed.
+            # The status column said "no_data", but a reader scanning four numeric
+            # columns has already drawn the conclusion. None renders as an em dash.
+            # Same defect as /oee/dashboard/summary; found by sweeping for the shape
+            # after fixing that one (method rule 18).
             rows.append({
-                "asset_name": asset.name, "oee": 0, "availability": 0,
-                "performance": 0, "quality": 0, "runtime_minutes": 0, "status": "no_data",
+                "asset_name": asset.name, "oee": None, "availability": None,
+                "performance": None, "quality": None, "runtime_minutes": None,
+                "status": "unavailable",
             })
     content = export_processor.build_oee_summary_pdf(rows)
     await export_processor.audit_sync_export(

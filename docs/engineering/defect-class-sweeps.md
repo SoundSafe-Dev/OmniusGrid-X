@@ -2289,3 +2289,50 @@ cards asserting the opposite of unknown. Marking the failure and *acting* on it 
 different jobs, and a reviewer who greps for `isError` finds the first and concludes the
 second. The question to ask is not "does this component handle the error" but "what does
 this component still claim while the error is on screen".
+
+## The backend form: an except branch that fills the gap with zeros
+
+The frontend variants of this class coerce `undefined`; the backend variant catches an
+exception and appends a plausible-looking row. Both OEE fleet surfaces did it:
+
+```python
+except Exception:
+    summary.append({..., "oee": 0, "availability": 0, "performance": 0,
+                    "quality": 0, "runtime_minutes": 0, "status": "no_data"})
+```
+
+Zero OEE is not a null result. It is a machine that produced nothing for the entire
+window — the worst number this platform can report about a piece of equipment.
+
+**And the status named the one thing it was not.** `calculate_oee` returns zeros through
+the *success* path for an asset that genuinely reported nothing, so this branch only ever
+fired when the calculation itself broke. "no_data" was reserved for the case that was not
+missing data.
+
+Two consequences beyond the row:
+
+**The fleet mean averaged the placeholders.** `sum(s['oee']) / len(summary)` divided by
+every asset including the failed ones, so one broken calculation in twenty pulled the
+average down and the plant read as a partial outage. This is the empty-set-average defect
+one step removed — the set is not empty, it is full of stand-ins for absence, which is
+harder to see and produces a number that looks entirely reasonable.
+
+**The other copy renders to PDF.** `/exports/oee/summary` builds a document that gets
+filed, printed and forwarded. Four numeric columns reading "0, 0, 0, 0" have told the
+reader the machine was dead before their eye reaches the status column. Those cells are
+em dashes now — deliberately not the CSV `_cell` helper, which maps None to `""`: a blank
+in a spreadsheet reads as missing, a blank in a printed table reads as an omission and
+the reader supplies the zero themselves.
+
+The substitution is keyed on `is None` and never on falsiness, because a genuine 0 is a
+finding and hiding it behind a dash is the same defect facing the other way.
+
+## Rule 25 — a qualifier nobody renders is a qualifier that does not exist
+
+Adding `assets_measured` / `assets_unavailable` to the OEE aggregate made
+`test_qualifiers_reach_the_frontend` fail, which is the guard doing its job: a caveat the
+UI never reads leaves the number rendered bare while the backend believes the caveat is
+shown. The honest resolutions are to wire it, to drop it, or — as here — to record that
+the field it qualifies is not rendered either, in an exemption that expires by itself the
+moment anything renders it. `/oee/dashboard/summary` has no frontend consumer at all; the
+dashboard reads `/dashboard/fleet/oee`.

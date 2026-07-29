@@ -602,10 +602,20 @@ class ExportProcessor:
             "Asset", "OEE %", "Availability %", "Performance %", "Quality %",
             "Runtime (min)", "Status",
         ]
+        # NOT `_cell`, which is the CSV/Excel normaliser and maps None to "". A blank in
+        # a spreadsheet reads as missing; a blank in a printed table reads as an
+        # omission, and the reader supplies the zero themselves. An em dash refuses that.
+        # A real 0 still prints as 0 — an asset that genuinely produced nothing is a
+        # finding, and hiding it behind a dash is the opposite defect, so the
+        # substitution is keyed on None and never on falsiness.
+        def _report_cell(value):
+            return "\u2014" if value is None else value
+
         data = [header] + [
             [
-                r.get("asset_name"), r.get("oee"), r.get("availability"),
-                r.get("performance"), r.get("quality"), r.get("runtime_minutes"),
+                r.get("asset_name"), _report_cell(r.get("oee")),
+                _report_cell(r.get("availability")), _report_cell(r.get("performance")),
+                _report_cell(r.get("quality")), _report_cell(r.get("runtime_minutes")),
                 r.get("status"),
             ]
             for r in rows

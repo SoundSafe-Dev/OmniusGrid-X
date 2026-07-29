@@ -13,6 +13,10 @@ from app.db.models import Asset
 from app.api.auth import get_current_active_user
 from app.services.oee_calculator import oee_calculator, OEEMetrics
 
+import structlog
+
+logger = structlog.get_logger()
+
 router = APIRouter()
 
 
@@ -161,36 +165,53 @@ async def get_oee_dashboard_summary(
                 "runtime_minutes": oee.runtime_minutes,
                 "status": "healthy" if oee.oee > 60 else "at_risk" if oee.oee > 40 else "critical"
             })
-        except Exception:
+        except Exception as exc:
+            # A FAILED CALCULATION IS NOT A MACHINE AT ZERO. This branch used to append
+            # oee/availability/performance/quality of 0 with status "no_data", which
+            # renders as an asset in total outage — and "no_data" is the wrong word for
+            # it either way: an asset that genuinely reported nothing goes through the
+            # branch above, so this status was conflating a broken computation with an
+            # idle machine. The values are None and the status says what happened.
+            logger.warning(
+                "oee_summary_asset_failed", asset_id=str(asset.id), error=str(exc)
+            )
             summary.append({
                 "asset_id": str(asset.id),
                 "asset_name": asset.name,
-                "oee": 0,
-                "availability": 0,
-                "performance": 0,
-                "quality": 0,
-                "runtime_minutes": 0,
-                "status": "no_data"
+                "oee": None,
+                "availability": None,
+                "performance": None,
+                "quality": None,
+                "runtime_minutes": None,
+                "status": "unavailable"
             })
-    
-    # Calculate aggregate
-    if summary:
-        avg_oee = sum(s['oee'] for s in summary) / len(summary)
-        avg_availability = sum(s['availability'] for s in summary) / len(summary)
-        avg_performance = sum(s['performance'] for s in summary) / len(summary)
-        avg_quality = sum(s['quality'] for s in summary) / len(summary)
-    else:
-        avg_oee = avg_availability = avg_performance = avg_quality = 0
-    
+
+    # AND THE AGGREGATE MUST NOT AVERAGE THE PLACEHOLDERS. The old sum divided by
+    # `len(summary)`, so every asset whose calculation raised entered the fleet mean as a
+    # zero and dragged it down — one broken asset in twenty made the fleet look like it
+    # was in a partial outage. Averaging over what was measured is the only mean that
+    # means anything; how many that was is now reported rather than left to be inferred.
+    measured = [s for s in summary if s["oee"] is not None]
+
+    def _mean(key: str):
+        # None, not 0, when nothing was measured. The average of an empty set is not
+        # zero — zero is a reading, and a fleet-wide 0% OEE is an emergency.
+        if not measured:
+            return None
+        return round(sum(s[key] for s in measured) / len(measured), 2)
+
     return {
         "organization_id": str(current_user.organization_id),
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "aggregate": {
-            "avg_oee": round(avg_oee, 2),
-            "avg_availability": round(avg_availability, 2),
-            "avg_performance": round(avg_performance, 2),
-            "avg_quality": round(avg_quality, 2),
-            "asset_count": len(summary)
+            "avg_oee": _mean("oee"),
+            "avg_availability": _mean("availability"),
+            "avg_performance": _mean("performance"),
+            "avg_quality": _mean("quality"),
+            "asset_count": len(summary),
+            # The two numbers that let a reader tell a healthy fleet from an unread one.
+            "assets_measured": len(measured),
+            "assets_unavailable": len(summary) - len(measured),
         },
         "assets": summary
     }

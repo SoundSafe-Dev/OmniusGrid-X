@@ -162,6 +162,12 @@ QUALIFIES_AN_UNREAD_FIELD: Dict[str, str] = {
     "appointments_assessed": "sync_status_breakdown",
     # Intake lane's scenario builder; its output is not rendered by any page today.
     "degraded": "scenario_confidence",
+    # /oee/dashboard/summary has NO frontend consumer at all — the dashboard reads
+    # /dashboard/fleet/oee instead. `avg_oee` is the verdict here and no screen shows
+    # it, so `assets_unavailable` has no claim to caveat. The moment anything renders
+    # the aggregate, `test_the_qualified_field_is_still_unread` fails and this has to
+    # be wired with it.
+    "assets_unavailable": "avg_oee",
 }
 
 
