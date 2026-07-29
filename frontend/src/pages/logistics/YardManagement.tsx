@@ -22,7 +22,7 @@ import {
   DockDoor,
   TrailerFilters
 } from '../../types';
-import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
+import { Button, Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
 import { YardMapPanel } from '../../components/yard/YardMapPanel';
 
 const YARD_QUERY_KEY = 'yard';
@@ -35,7 +35,12 @@ export const YardManagement: FC = () => {
   const [showCheckIn, setShowCheckIn] = useState(false);
   const [activeTab, setActiveTab] = useState<'trailers' | 'map' | 'doors' | 'appointments' | 'detention'>('trailers');
 
-  const { data: trailersData, isLoading: trailersLoading, refetch: refetchTrailers } = useQuery({
+  const {
+    data: trailersData,
+    isLoading: trailersLoading,
+    isError: trailersError,
+    refetch: refetchTrailers,
+  } = useQuery({
     queryKey: [YARD_QUERY_KEY, 'trailers', filters],
     queryFn: () => yardApi.getTrailers(filters),
   });
@@ -353,6 +358,19 @@ export const YardManagement: FC = () => {
         <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg overflow-hidden">
           {trailersLoading ? (
             <div className="p-8 text-center text-opsgrid-text-secondary">Loading trailers...</div>
+          ) : trailersError ? (
+            /* A FAILED REQUEST IS NOT AN EMPTY YARD. There was no error branch here, so
+               a failure fell through to the empty state and rendered "No trailers found"
+               — which a yard manager reads as an operational fact and acts on. The two
+               have to say different things. */
+            <div className="p-8 text-center space-y-3" role="alert">
+              <p className="text-status-alarm">
+                Couldn’t load trailers — this is a loading failure, not an empty yard.
+              </p>
+              <Button variant="secondary" onClick={() => refetchTrailers()}>
+                Retry
+              </Button>
+            </div>
           ) : trailers.length === 0 ? (
             <div className="p-8 text-center text-opsgrid-text-secondary">No trailers found</div>
           ) : (
