@@ -149,3 +149,40 @@ describe('OEE page — an unmeasured factor is not shown as 100%', () => {
     expect(screen.queryByText('—')).not.toBeInTheDocument()
   })
 })
+
+
+// An average of nothing is not zero. The API returned 0 for a fleet with no assets,
+// which renders as 0% availability -- a fleet-wide outage reported because there was
+// nothing to average. It now returns null, and the page has to show that rather than
+// coercing it back with `|| 0`, which is exactly what it used to do.
+describe('OEE page — an unmeasured fleet is not a fleet at zero', () => {
+  it('shows a dash when the API reports no measurable assets', async () => {
+    getFleetOEE.mockReset()
+    getFleetOEE.mockResolvedValue({
+      ...fleet,
+      assetCount: 0,
+      assets: [],
+      fleetAverageAvailability: null,
+      assetsMeasured: 0,
+    })
+    const { container } = wrap(<OEE />)
+    await waitFor(() =>
+      expect(container.textContent).toContain('Availability'),
+    )
+    expect(screen.queryByText('0.0%')).not.toBeInTheDocument()
+    expect(container.textContent).toContain('\u2014')
+  })
+
+  it('still shows a real fleet average as a percentage', async () => {
+    // The negative control: rendering a dash unconditionally would satisfy the test
+    // above and remove the number the page exists to show.
+    getFleetOEE.mockReset()
+    getFleetOEE.mockResolvedValue({
+      ...fleet,
+      fleetAverageAvailability: 0.873,
+      assetsMeasured: 4,
+    })
+    const { container } = wrap(<OEE />)
+    await waitFor(() => expect(container.textContent).toContain('87.3%'))
+  })
+})

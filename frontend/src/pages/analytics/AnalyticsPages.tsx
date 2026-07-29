@@ -191,10 +191,13 @@ export const TelemetryCharts: FC = () => {
   // also carry `fleetAverageOee`, which was the same availability number — so
   // plotting both drew one series twice and called one of them OEE.
   const asPct = (v: number) => Math.round((v ?? 0) * (v > 1 ? 1 : 100));
-  const oeeData = fleetOEE ? [{
-    time: 'Current',
-    availability: asPct(fleetOEE.fleetAverageAvailability),
-  }] : [];
+  // No point is plotted when there is nothing to average. `asPct(null)` would render a
+  // bar at 0% — a fleet-wide outage drawn from an empty fleet — which is the same
+  // defect the API was just fixed for, recreated one layer up.
+  const oeeData =
+    fleetOEE && fleetOEE.fleetAverageAvailability != null
+      ? [{ time: 'Current', availability: asPct(fleetOEE.fleetAverageAvailability) }]
+      : [];
 
   // Health distribution from real PackML states.
   const healthBuckets = { Executing: 0, Idle: 0, Held: 0, 'Down/Other': 0 };

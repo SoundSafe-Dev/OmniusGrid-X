@@ -232,15 +232,23 @@ async def get_fleet_oee(
             "availability_only": True,
         })
 
+    # AN AVERAGE OF NOTHING IS NOT ZERO. With no assets in the fleet this returned 0,
+    # which renders as 0% availability — a fleet-wide outage, reported because there was
+    # nothing to average. `None` cannot be mistaken for a measurement, and
+    # `assets_measured` says how many rows the figure rests on.
     avg_availability = (
         sum(r["availability"] for r in oee_results) / len(oee_results)
-        if oee_results else 0
+        if oee_results
+        else None
     )
 
     return {
         "time_range": f"Last {hours} hours",
         "asset_count": len(assets),
-        "fleet_average_availability": round(avg_availability, 4),
+        "fleet_average_availability": (
+            round(avg_availability, 4) if avg_availability is not None else None
+        ),
+        "assets_measured": len(oee_results),
         # `fleet_average_oee` used to be this same availability number. Callers
         # wanting a fleet OEE trend should use /api/v1/dashboard/oee/trend,
         # which is explicit about being availability-only.

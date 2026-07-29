@@ -443,9 +443,14 @@ async def get_compliance_summary(
             "total_carriers": carrier_row.total or 0,
             "ctpat_certified": carrier_row.ctpat_count or 0,
             "valid_insurance": carrier_row.valid_insurance or 0,
-            "compliance_rate": round(
-                (carrier_row.ctpat_count or 0) / (carrier_row.total or 1) * 100, 1
-            ) if carrier_row.total else 0
+            # `or 1` invents a denominator so the expression cannot raise, and the 0%
+            # it yields is indistinguishable from an organisation whose carriers are all
+            # uncertified. With no carriers there is no rate to report.
+            "compliance_rate": (
+                round((carrier_row.ctpat_count or 0) / carrier_row.total * 100, 1)
+                if carrier_row.total
+                else None
+            ),
         },
         "driver_compliance": {
             "hos_violations_today": hos_count,

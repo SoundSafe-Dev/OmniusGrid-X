@@ -44,7 +44,7 @@ vi.mock('../../api', () => ({
 import { TooltipProvider } from '../../components/ui'
 import { TransportationManagement } from './TransportationManagement'
 
-const page = (over: Record<string, number | boolean> = {}) => ({
+const page = (over: Record<string, unknown> = {}) => ({
   items: [] as unknown[],
   total: 0,
   skip: 0,

@@ -1797,10 +1797,25 @@ from absence is no more true than optimism from it. The grade is now `None` with
 calculated" into "nothing owed", so `is_detention` read as a settled answer on billable
 time nobody had worked out.
 
-**So the class has now appeared through four distinct mechanisms** — Python `or 0`
+**A fifth mechanism: the average of an empty set.** `sum(xs) / len(xs) if xs else 0`
+reports a number for a fleet nobody measured. `/dashboard/fleet/oee` returned **0
+availability for a fleet with no assets** — which renders as 0%, a fleet-wide outage,
+produced by having nothing to average. `/logistics/…/compliance/summary` did the same with
+`(ctpat_count or 0) / (total or 1)`: the invented denominator exists so the expression
+cannot raise, and the 0% it yields is indistinguishable from an organisation whose
+carriers are all uncertified. Both now return `None`, with `assets_measured` alongside.
+
+**And fixing the API alone would have been invisible**, which is the part worth keeping.
+Both consumers wrote `(value || 0) * 100`, so an honest `null` was coerced straight back
+into `0.0%` one layer up — the defect recreated by the code reading the fix. The OEE page
+now renders `—`, and the analytics chart plots no point rather than a bar at zero. This is
+class 19 again from the other side: it is not enough for the server to stop lying if the
+client restores the lie.
+
+**So the class has now appeared through five distinct mechanisms** — Python `or 0`
 coercion, iteration over an empty collection, SQL `NULL` in a comparison, and a threshold
-applied to a percentage of nothing. That is what makes it worth a name rather than four
-fixes.
+applied to a percentage of nothing. That is what makes it worth a name rather than a
+handful of fixes.
 
 **Sweeping the class properly found its root, one level further down.** A detector for
 "a positive verdict that hinges on a count being zero" returned exactly two hits: the

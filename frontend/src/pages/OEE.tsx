@@ -95,7 +95,9 @@ const OEE: FC = () => {
                 <p className="text-opsgrid-text-secondary">Availability</p>
               </div>
               <p className="text-3xl font-bold">
-                {((fleetOEE?.fleetAverageAvailability || 0) * 100).toFixed(1)}%
+                {fleetOEE?.fleetAverageAvailability == null
+                  ? '—'
+                  : `${(fleetOEE.fleetAverageAvailability * 100).toFixed(1)}%`}
               </p>
               <p className="text-sm text-opsgrid-text-secondary mt-1">
                 Time equipment was available to run
@@ -131,7 +133,9 @@ const OEE: FC = () => {
                 <p className="text-opsgrid-text-secondary">Fleet Availability</p>
               </div>
               <p className="text-3xl font-bold">
-                {((fleetOEE?.fleetAverageAvailability || 0) * 100).toFixed(1)}%
+                {fleetOEE?.fleetAverageAvailability == null
+                  ? '—'
+                  : `${(fleetOEE.fleetAverageAvailability * 100).toFixed(1)}%`}
               </p>
               <p className="text-sm text-opsgrid-text-secondary mt-1">
                 Run time ÷ planned time — not full OEE

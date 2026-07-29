@@ -59,7 +59,12 @@ export interface OEEMetrics {
 export interface FleetOEE {
   timeRange: string;
   assetCount: number;
-  fleetAverageAvailability: number;
+  /** `null` when the fleet has no assets to average. The API stopped reporting 0 for
+   *  an unmeasured fleet — 0% availability reads as a fleet-wide outage — so callers
+   *  must render the absence rather than coercing it back into a number. */
+  fleetAverageAvailability: number | null;
+  /** How many assets the average rests on. */
+  assetsMeasured?: number;
   availabilityOnly: boolean;
   assets: Array<{
     assetId: string;
