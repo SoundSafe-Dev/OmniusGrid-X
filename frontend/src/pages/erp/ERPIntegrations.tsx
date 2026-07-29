@@ -330,17 +330,23 @@ const StatusTab: FC<{ id: string }> = ({ id }) => {
   // Polled because the sync it reports on is a background task: nothing pushes its
   // completion, and without this the counts a user is looking at stay frozen at the
   // previous run's numbers however long they wait. Only while this tab is mounted.
-  const { data: statuses } = useQuery({
+  const { data: statuses, isError: statusesError } = useQuery({
     queryKey: ['erp-sync-status', id],
     queryFn: () => erpApi.getSyncStatus(id),
     refetchInterval: SYNC_POLL_MS,
   })
-  const { data: mappings } = useQuery({ queryKey: ['erp-mappings', id], queryFn: () => erpApi.listFieldMappings(id) })
+  const { data: mappings, isError: mappingsError } = useQuery({ queryKey: ['erp-mappings', id], queryFn: () => erpApi.listFieldMappings(id) })
   return (
     <div className="grid md:grid-cols-2 gap-4">
       <div>
         <h3 className="text-sm font-semibold text-opsgrid-text mb-2">Sync status</h3>
-        {(statuses ?? []).length === 0 ? (
+        {statusesError ? (
+          /* "No syncs recorded yet" invites the operator to trigger one; on a failed
+             read it is simply unknown whether any have run. */
+          <p className="text-xs text-status-alarm" role="alert">
+            Sync status unavailable — this is a loading failure, not an absence of syncs.
+          </p>
+        ) : (statuses ?? []).length === 0 ? (
           <p className="text-xs text-opsgrid-text-secondary">No syncs recorded yet.</p>
         ) : (
           (statuses ?? []).map((s) => (
@@ -356,7 +362,11 @@ const StatusTab: FC<{ id: string }> = ({ id }) => {
       </div>
       <div>
         <h3 className="text-sm font-semibold text-opsgrid-text mb-2">Field mappings</h3>
-        {(mappings ?? []).length === 0 ? (
+        {mappingsError ? (
+          <p className="text-xs text-status-alarm" role="alert">
+            Field mappings unavailable — this is a loading failure, not an empty configuration.
+          </p>
+        ) : (mappings ?? []).length === 0 ? (
           <p className="text-xs text-opsgrid-text-secondary">No mappings configured.</p>
         ) : (
           (mappings ?? []).map((m) => (

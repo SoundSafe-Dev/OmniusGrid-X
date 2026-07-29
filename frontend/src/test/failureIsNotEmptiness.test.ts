@@ -35,9 +35,71 @@ import { describe, expect, it } from 'vitest'
 
 const SRC = join(__dirname, '..')
 
-const QUERIES = /\buse(?:Infinite)?Query\b/
-/** `isError`, `status === 'error'`, or an `error ?` ternary — any of them counts. */
-const HANDLES_ERROR = /\bisError\b|status\s*===\s*['"]error['"]|\berror\s*\?/
+/** A CALL SITE, not the import. `import { useQuery } from '@tanstack/react-query'`
+ *  matched the bare word and inflated every file's query count by one. */
+const QUERIES = /\buse(?:Infinite)?Query\s*[<(]/g
+/**
+ * PER EMPTY STATE, not per file and not per count — and both earlier versions were wrong
+ * in ways that hid live defects.
+ *
+ * v1 asked whether the FILE mentions `isError`. `TransportationManagement` has seven
+ * queries; three handled failure and the shipments query did not, so the file looked
+ * safe while a failed load rendered "No shipments found" to a dispatcher, who reads that
+ * as "nothing is in transit".
+ *
+ * v2 counted queries against handlers. That found the transportation defect and three
+ * more, but it cannot settle a file like `AdminPages`, which holds five separate page
+ * components: a health query with no empty state is not a defect, and the count has no
+ * way to know that.
+ *
+ * v3 is the actual property. For each empty state, look at the conditional chain it sits
+ * in and ask whether a failure branch precedes it. That is exactly what has to be true,
+ * and it is local enough to be decided without guessing which query feeds which list.
+ */
+/**
+ * Every form this codebase uses to branch on failure. Keying on the ternary alone
+ * accused two correct pages: `AlarmRules` renders its failure with `{isError && …}` and
+ * guards the empty state with `!isError`, and `AssetDetail` returns early with
+ * `if (isError)`, and `Dashboard` hands `isError={q.isError}` to a widget that owns the
+ * three states together. Four broadenings, each one found by the next false positive:
+ * a detector that knows one idiom under-counts a codebase that uses five — the same
+ * lesson the tenant-session guard learned about `AsyncSessionLocal`.
+ */
+const ERROR_BRANCH =
+  /\b(?:isError|[A-Za-z]+Error)\s*(?:\?|&&|=)|!\s*(?:isError|[A-Za-z]+Error)\b|if\s*\(\s*(?:isError|[A-Za-z]+Error)\s*\)|status\s*===\s*['"]error['"]/
+/**
+ * Comments are stripped before any of this runs, for two reasons that turned out to be
+ * the same reason. A comment EXPLAINING this defect quotes the empty-state text, so the
+ * quoted-string pattern matched the prose and reported a second, phantom empty state.
+ * And that same comment sat between the failure branch and the real JSX node, pushing
+ * them more than a window apart, so the genuine one looked unguarded. Method rule 14,
+ * for the third time in this repository: a match on raw source is satisfied — and
+ * displaced — by prose.
+ */
+const COMMENT = /\/\*[\s\S]*?\*\/|(?<![:'"`])\/\/[^\n]*/g
+/**
+ * An early return guards EVERYTHING after it, however far away.
+ *
+ * `OEE` and `ErrorTriageDetail` both do `if (isError) return <Err/>` near the top of the
+ * component and render their empty states hundreds of lines below. A proximity window
+ * cannot see that, and reported three correct empty states as unguarded. Distance is the
+ * wrong question for this idiom: the guard is unconditional from that point on.
+ */
+const EARLY_RETURN =
+  /if\s*\([^)]*\b(?:isError|[A-Za-z]+Error)\b[^)]*\)\s*\{?\s*(?:return|\n\s*return)/
+
+/** How far back to look for a failure branch in the same conditional chain. Used only
+ *  for the inline forms — a ternary, an `&&`, or an `isError=` prop — which really are
+ *  local to the JSX they guard.
+ *
+ *  2500, not 900. Every genuine offender had its empty branch immediately after the
+ *  loading one, a few dozen characters away. What sits between a REAL failure branch and
+ *  the empty state is that branch's own markup — an alert div, an icon, a retry button,
+ *  a second line of explanation — which on two pages ran to 919 and 1323 characters and
+ *  pushed correct code outside the window. Erring small produces false positives on
+ *  exactly the pages that took the trouble to explain themselves, which is the worst
+ *  possible incentive. */
+const CHAIN_WINDOW = 2500
 /** A literal empty state.
  *
  * KEYED ON MORE THAN "No …", because that was the guard's entry point on day one and
@@ -71,16 +133,25 @@ export function emptyStatesIn(source: string): string[] {
   return [...new Set(found)]
 }
 
-export function fallsThroughToEmptiness(source: string): string[] {
-  if (!QUERIES.test(source)) return []
-  if (HANDLES_ERROR.test(source)) return []
-  return emptyStatesIn(source)
+export function fallsThroughToEmptiness(raw: string, _file = ''): string[] {
+  const source = raw.replace(COMMENT, ' ')
+  if (!(source.match(QUERIES) ?? []).length) return []
+  const unguarded: string[] = []
+  for (const pattern of EMPTY_STATE) {
+    for (const match of source.matchAll(pattern)) {
+      const before = source.slice(0, match.index!)
+      if (EARLY_RETURN.test(before)) continue
+      const chain = before.slice(Math.max(0, before.length - CHAIN_WINDOW))
+      if (!ERROR_BRANCH.test(chain)) unguarded.push(match[1].trim())
+    }
+  }
+  return [...new Set(unguarded)]
 }
 
 const FILES = sourceFiles(SRC)
 const OFFENDERS = FILES.map((file) => ({
   file: file.slice(SRC.length + 1),
-  states: fallsThroughToEmptiness(readFileSync(file, 'utf8')),
+  states: fallsThroughToEmptiness(readFileSync(file, 'utf8'), file.slice(SRC.length + 1)),
 })).filter((o) => o.states.length > 0)
 
 const QUERYING = FILES.filter((f) => QUERIES.test(readFileSync(f, 'utf8')))
@@ -104,13 +175,41 @@ describe('the sweep is not vacuous', () => {
     expect(fallsThroughToEmptiness(bad)).toEqual(['No trailers found'])
   })
 
+  it('accepts an early return however far it sits from the empty state', () => {
+    const padding = 'y'.repeat(CHAIN_WINDOW + 100)
+    const guarded = `
+      const { data, isError } = useQuery({ queryKey: ['x'], queryFn: f })
+      if (isError) return <Err />
+      ${padding}
+      return data?.length ? <List /> : <p>No OEE data available</p>
+    `
+    expect(fallsThroughToEmptiness(guarded)).toEqual([])
+  })
+
   it('accepts the same component once it handles the failure', () => {
     const good = `
       const { data, isError } = useQuery({ queryKey: ['x'], queryFn: f })
-      if (isError) return <Error />
-      return data?.items?.length ? <List /> : <p>No trailers found</p>
+      return isError ? <Err /> : data?.items?.length ? <List /> : <p>No trailers found</p>
     `
     expect(fallsThroughToEmptiness(good)).toEqual([])
+  })
+
+  it('flags a file whose OTHER queries handle failure while one does not', () => {
+    // The correction that found the transportation defect. Asking whether the file
+    // mentions `isError` passes any page where a single query happens to handle it.
+    // The other query's handler is in the file but not in this chain and not an early
+    // return, so the shipments list still falls through. The padding stands in for the
+    // hundreds of lines that separate them in the real page — proximity is the only
+    // signal available for the inline forms, and this is where its limit sits.
+    const padding = 'x'.repeat(CHAIN_WINDOW + 100)
+    const partial = `
+      const a = useQuery({ queryKey: ['a'], queryFn: f })
+      const { isError } = useQuery({ queryKey: ['b'], queryFn: g })
+      const other = isError ? <Err /> : null
+      ${padding}
+      return a.data?.length ? <List /> : <p>No shipments found</p>
+    `
+    expect(fallsThroughToEmptiness(partial)).toContain('No shipments found')
   })
 
   it('sees an empty state that does not start with "No"', () => {

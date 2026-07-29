@@ -76,7 +76,15 @@ export const MLOpsPipeline: FC = () => {
                 <div>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <p className="text-lg font-semibold">{status?.currentModel || 'No model deployed'}</p>
+                      {/* `status` is undefined on a failed fetch, so the `||` fallback
+                          asserted "No model deployed" — which an MLOps operator reads as
+                          "nothing is in production" and may act on by deploying. The
+                          fallback now distinguishes a failed read from an empty one. */}
+                      <p className="text-lg font-semibold">
+                        {isError
+                          ? 'Model status unavailable'
+                          : status?.currentModel || 'No model deployed'}
+                      </p>
                     </TooltipTrigger>
                     <TooltipContent>Currently deployed model version</TooltipContent>
                   </Tooltip>

@@ -106,7 +106,17 @@ export const TacticalEngine: FC = () => {
 
         {showThresholds && (
           <div className="mt-4">
-            {thresholdEntries.length === 0 ? (
+            {isError ? (
+              /* The banner above already says the fetch failed, and this section still
+                 asserted "No safety thresholds reported by the engine" underneath it —
+                 a definitive claim about SAFETY LIMITS, read by whoever expands this
+                 panel. On error `status` is undefined, so `thresholdEntries` is empty
+                 and the absence branch fired. Two contradictory statements on one
+                 screen, and the more specific one was the false one. */
+              <p className="text-opsgrid-text-secondary text-sm">
+                Thresholds unavailable while the engine status cannot be read.
+              </p>
+            ) : thresholdEntries.length === 0 ? (
               <p className="text-opsgrid-text-secondary text-sm">
                 No safety thresholds reported by the engine.
               </p>

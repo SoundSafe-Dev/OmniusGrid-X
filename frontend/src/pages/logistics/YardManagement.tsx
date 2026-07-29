@@ -50,7 +50,11 @@ export const YardManagement: FC = () => {
     queryFn: () => yardApi.getDockDoors(),
   });
 
-  const { data: appointmentsData, isLoading: appointmentsLoading } = useQuery({
+  const {
+    data: appointmentsData,
+    isLoading: appointmentsLoading,
+    isError: appointmentsError,
+  } = useQuery({
     queryKey: [YARD_QUERY_KEY, 'appointments'],
     queryFn: () => yardApi.getAppointments(),
   });
@@ -482,6 +486,16 @@ export const YardManagement: FC = () => {
         <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg overflow-hidden">
           {appointmentsLoading ? (
             <div className="p-8 text-center text-opsgrid-text-secondary">Loading appointments...</div>
+          ) : appointmentsError ? (
+            /* Same distinction as the trailer list above: a dock with no appointments is
+               a schedule an operator plans around; a failed request that looks identical
+               is not. Fixing only the trailers tab left this one, which is why the sweep
+               that found it counts queries against handlers per file. */
+            <div className="p-8 text-center" role="alert">
+              <p className="text-status-alarm">
+                Couldn’t load appointments — this is a loading failure, not an empty schedule.
+              </p>
+            </div>
           ) : appointments.length === 0 ? (
             <div className="p-8 text-center text-opsgrid-text-secondary">No appointments found</div>
           ) : (

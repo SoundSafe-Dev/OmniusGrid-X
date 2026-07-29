@@ -52,7 +52,7 @@ to the frontend/backend seam.
 | An endpoint the README documents but the app never served | all 124 API-Reference rows | **22 wrong — 404 for anyone who followed them** | `test_documented_endpoints_exist.py` |
 | A source file the docs point at that is not in the repo | every filename cited in three docs | **1 fiction, 5 omissions** | `test_documented_files_exist.py` |
 | A frontend catch that swallows a failure | every `catch` in `src` | **clean — all 10 report or recover** | none; see class 28 |
-| A failed query rendered as an empty result | every querying component | **2 live: the yard and the telemetry chart** | `failureIsNotEmptiness.test.ts` |
+| A failed query rendered as an empty result | every querying component | **13 live, across 9 components** | `failureIsNotEmptiness.test.ts` |
 
 Twenty-nine of these carry a numbered section below. **Response-shape mismatch is the
 exception**: it was swept in the same pass as the `get_db` work and came back clean, so
@@ -1713,7 +1713,7 @@ per-page work, and it is what the page tests added this week actually assert: `A
 must not render a fetch failure as an empty trail, and `ErrorTriageDetail` must not render
 a redaction as a missing traceback.
 
-## 29. A failed query rendered as an empty result — **2 live**
+## 29. A failed query rendered as an empty result — **13 live, across 9 components**
 
 Class 28 came back clean: no frontend `catch` swallows a failure. This is where the
 failures actually go instead. React Query does not need a `catch` to lose one — on error
@@ -1733,6 +1733,37 @@ Both now say a failure is a failure, and both offer a retry rather than a dead e
 empty states stay, because "the yard is empty" and "the sensor is quiet" are real and
 useful answers — they simply are not the same answer.
 
+**The count grew from 2 to 13 as the detector was sharpened**, and the worst of them was
+found last:
+
+| | |
+|---|---|
+| `TransportationManagement` | **"No HOS violations detected"**, under a green tick |
+| `TacticalEngine` | "No safety thresholds reported by the engine." |
+| `MLOpsPipeline` | "No model deployed" |
+| `AdminPages` | "No edge agents have reported yet. Agents appear here once they enroll…" |
+| `Historian` | "No assets" in the picker; "No data points in this window." |
+| `ERPIntegrations` | "No syncs recorded yet."; "No mappings configured." |
+| `OEE` | a failed fleet load rendered **nothing at all** — no rows, no message |
+| `YardManagement` | "No trailers found"; "No appointments found" |
+| `TelemetryHistoryChart` | "No history for this metric" |
+
+**The HOS one is the sharpest defect in this document.** On a failed drivers query
+`drivers` is `[]`, so `drivers.filter(d => d.hosDriveHoursRemaining === 0).length === 0`
+is true and the page rendered a **green checkmark** reading *"No HOS violations
+detected"*. Hours of Service is DOT-regulated. A compliance officer reads a green tick as
+clearance, and it was produced by a request that never returned. Unknown is not clear.
+
+`TacticalEngine` is the same shape with a twist: it already showed a failure banner at the
+top of the page, and the thresholds panel *underneath it* still asserted that the engine
+reported no safety limits. Two contradictory statements on one screen, and the more
+specific one was the false one.
+
+`OEE` failed in the opposite direction and is worth separating: with `fleetOEE` undefined,
+`fleetOEE?.assets?.length === 0` is **false**, so even the empty state did not render. The
+page showed a table with no rows and no explanation. Silently empty is worse than wrongly
+labelled — there is nothing for the reader to disbelieve.
+
 **How it was found, which is the part worth keeping.** Not by this sweep. It came out of
 writing a page test whose first version asserted only that a known trailer was *absent* —
 true in the empty state AND the error state, so it passed against the defect while
@@ -1742,6 +1773,27 @@ silence visible; the sweep was written afterwards, and found the second one imme
 That is the third time this week a weak assertion has hidden a live defect from a test
 written specifically to catch it. The pattern is always the same shape: asserting that
 something is *not there* is satisfied by every reason it might not be there.
+
+**The detector took five corrections, each one found by the false positive it produced.**
+v1 asked whether the FILE mentions `isError` — `TransportationManagement` has seven
+queries, three of them handled, so it looked safe. v2 counted queries against handlers,
+which found four more but could not settle `AdminPages`, a file holding five separate page
+components. v3 asks the real question, per empty state: does a failure branch precede this
+one in its own chain?
+
+Then the idioms. Keying on the ternary alone accused `AlarmRules` (`{isError && …}`),
+`AssetDetail` (`if (isError) return`), and `Dashboard` (`isError={q.isError}` passed to a
+widget). And an early return guards everything after it however far away, which a
+proximity window cannot express — `OEE` returns at the top and renders its empty states
+hundreds of lines below.
+
+Comments are stripped, for the third time in this document: a comment *explaining this
+very defect* quoted the empty-state text, so the quoted-string pattern reported a phantom
+second occurrence, and that same comment sat between the failure branch and the real JSX
+node and pushed them apart. The window is 2500 rather than 900 because what separates a
+real failure branch from the empty state is that branch's own markup — an alert, an icon,
+a retry button — which on two pages ran past 900 characters. Erring small produces false
+positives on exactly the pages that took the trouble to explain themselves.
 
 **Scope.** A component qualifies when it queries AND renders a literal "No …" empty
 state. Both halves are load-bearing: the query is what can fail, and the empty string is

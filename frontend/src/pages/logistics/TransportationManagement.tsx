@@ -37,7 +37,7 @@ import type {
   GeoLocation,
   MapFilterType
 } from '../../types';
-import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
+import { Button, Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
 
 const TRANSPORT_QUERY_KEY = 'transportation';
 
@@ -52,22 +52,30 @@ export const TransportationManagement: FC = () => {
   const [selectedMapVehicle, setSelectedMapVehicle] = useState<string | null>(null);
   const [selectedMapShipment, setSelectedMapShipment] = useState<string | null>(null);
 
-  const { data: shipmentsData, isLoading: shipmentsLoading, refetch: refetchShipments } = useQuery({
+  const {
+    data: shipmentsData,
+    isLoading: shipmentsLoading,
+    isError: shipmentsError,
+    refetch: refetchShipments,
+  } = useQuery({
     queryKey: [TRANSPORT_QUERY_KEY, 'shipments', filters],
     queryFn: () => transportationApi.getShipments(filters),
   });
 
-  const { data: carriersData, isLoading: carriersLoading } = useQuery({
+  const { data: carriersData, isLoading: carriersLoading, isError: carriersError } =
+    useQuery({
     queryKey: [TRANSPORT_QUERY_KEY, 'carriers'],
     queryFn: () => transportationApi.getCarriers(),
   });
 
-  const { data: driversData, isLoading: driversLoading } = useQuery({
+  const { data: driversData, isLoading: driversLoading, isError: driversError } =
+    useQuery({
     queryKey: [TRANSPORT_QUERY_KEY, 'drivers'],
     queryFn: () => transportationApi.getDrivers(),
   });
 
-  const { data: vehiclesData, isLoading: vehiclesLoading } = useQuery({
+  const { data: vehiclesData, isLoading: vehiclesLoading, isError: vehiclesError } =
+    useQuery({
     queryKey: [TRANSPORT_QUERY_KEY, 'vehicles'],
     queryFn: () => transportationApi.getVehicles(),
   });
@@ -400,6 +408,21 @@ export const TransportationManagement: FC = () => {
         <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg overflow-hidden">
           {shipmentsLoading ? (
             <div className="p-8 text-center text-opsgrid-text-secondary">Loading shipments...</div>
+          ) : shipmentsError ? (
+            /* A FAILED QUERY IS NOT AN EMPTY BOARD. This fell through to "No shipments
+               found", which a dispatcher reads as "nothing is in transit" — an
+               operational fact they plan around. Three OTHER queries on this page
+               already handled `isError`, which is why the sweep for this defect class
+               passed the file: it checked whether the FILE mentions isError, not
+               whether THIS query does. */
+            <div className="p-8 text-center space-y-3" role="alert">
+              <p className="text-status-alarm">
+                Couldn’t load shipments — this is a loading failure, not an empty board.
+              </p>
+              <Button variant="secondary" onClick={() => refetchShipments()}>
+                Retry
+              </Button>
+            </div>
           ) : shipments.length === 0 ? (
             <div className="p-8 text-center text-opsgrid-text-secondary">No shipments found</div>
           ) : (
@@ -506,6 +529,12 @@ export const TransportationManagement: FC = () => {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {vehiclesLoading ? (
                 <div className="col-span-full p-8 text-center text-opsgrid-text-secondary">Loading vehicles...</div>
+              ) : vehiclesError ? (
+                <div className="col-span-full p-8 text-center" role="alert">
+                  <p className="text-status-alarm">
+                    Couldn’t load vehicles — this is a loading failure, not an empty fleet.
+                  </p>
+                </div>
               ) : vehicles.length === 0 ? (
                 <div className="col-span-full p-8 text-center text-opsgrid-text-secondary">No vehicles found</div>
               ) : vehicles.map(vehicle => (
@@ -554,6 +583,12 @@ export const TransportationManagement: FC = () => {
             <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg overflow-hidden">
               {driversLoading ? (
                 <div className="p-8 text-center text-opsgrid-text-secondary">Loading drivers...</div>
+              ) : driversError ? (
+                <div className="p-8 text-center" role="alert">
+                  <p className="text-status-alarm">
+                    Couldn’t load drivers — this is a loading failure, not an empty roster.
+                  </p>
+                </div>
               ) : drivers.length === 0 ? (
                 <div className="p-8 text-center text-opsgrid-text-secondary">No drivers found</div>
               ) : (
@@ -626,6 +661,12 @@ export const TransportationManagement: FC = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {carriersLoading ? (
             <div className="col-span-full p-8 text-center text-opsgrid-text-secondary">Loading carriers...</div>
+          ) : carriersError ? (
+            <div className="col-span-full p-8 text-center" role="alert">
+              <p className="text-status-alarm">
+                Couldn’t load carriers — this is a loading failure, not an empty list.
+              </p>
+            </div>
           ) : carriers.length === 0 ? (
             <div className="col-span-full p-8 text-center text-opsgrid-text-secondary">No carriers found</div>
           ) : carriers.map(carrier => (
@@ -715,7 +756,23 @@ export const TransportationManagement: FC = () => {
               <Clock className="w-5 h-5 text-opsgrid-primary" />
               Hours of Service (HOS) Violations
             </h3>
-            {drivers.filter(d => d.hosDriveHoursRemaining === 0).length === 0 ? (
+            {driversError ? (
+              /* THE WORST VERSION OF THIS DEFECT IN THE CODEBASE. On a failed drivers
+                 query `drivers` is [], so the filter returned nothing and this rendered
+                 a GREEN TICK reading "No HOS violations detected" — a positive
+                 compliance assurance about DOT-regulated Hours of Service, produced by
+                 a request that never returned. A compliance officer reads a green tick
+                 as clearance. Unknown is not the same as clear. */
+              <div className="bg-status-alarm/10 border border-status-alarm/50 rounded-lg p-4 text-center" role="alert">
+                <AlertTriangle className="w-8 h-8 text-status-alarm mx-auto mb-2" />
+                <p className="text-status-alarm font-medium">
+                  HOS status unknown — driver data could not be loaded
+                </p>
+                <p className="text-xs text-opsgrid-text-secondary mt-1">
+                  This is not a clean bill of compliance; it means the check could not run.
+                </p>
+              </div>
+            ) : drivers.filter(d => d.hosDriveHoursRemaining === 0).length === 0 ? (
               <div className="bg-green-500/10 border border-green-500/50 rounded-lg p-4 text-center">
                 <CheckCircle2 className="w-8 h-8 text-green-500 mx-auto mb-2" />
                 <p className="text-green-500 font-medium">No HOS violations detected</p>

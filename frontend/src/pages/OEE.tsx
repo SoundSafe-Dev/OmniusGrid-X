@@ -2,7 +2,7 @@ import { FC, Fragment, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { BarChart3, TrendingUp, Clock, ChevronDown, ChevronRight } from 'lucide-react'
 import { dashboardApi } from '../api'
-import { Tooltip, TooltipTrigger, TooltipContent } from '../components/ui'
+import { Button, Tooltip, TooltipTrigger, TooltipContent } from '../components/ui'
 import { ExportButton } from '../components/common'
 import { useAuth } from '../hooks/useAuth'
 
@@ -11,7 +11,7 @@ const OEE: FC = () => {
   // Clicking a row expands an inline OEE breakdown for that asset (the row
   // tooltip has always promised this; the handler was never wired).
   const [expandedId, setExpandedId] = useState<string | null>(null)
-  const { data: fleetOEE, isLoading } = useQuery({
+  const { data: fleetOEE, isLoading, isError, refetch } = useQuery({
     queryKey: ['fleet-oee'],
     queryFn: () => dashboardApi.getFleetOEE(),
   })
@@ -29,6 +29,24 @@ const OEE: FC = () => {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="text-opsgrid-text-secondary">Loading...</div>
+      </div>
+    )
+  }
+
+  // A FAILED FLEET LOAD SAID NOTHING AT ALL. There was no error branch, and on failure
+  // `fleetOEE` is undefined — so `fleetOEE?.assets?.length === 0` is false, the empty
+  // state below does not render either, and the page showed an OEE table with no rows
+  // and no explanation. Silently empty is worse than wrongly labelled: there is nothing
+  // for the reader to disbelieve.
+  if (isError) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 gap-3" role="alert">
+        <p className="text-status-alarm">
+          Couldn’t load fleet OEE — this is a loading failure, not an idle fleet.
+        </p>
+        <Button variant="secondary" onClick={() => refetch()}>
+          Retry
+        </Button>
       </div>
     )
   }

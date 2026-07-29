@@ -510,7 +510,7 @@ the UI were all already there, only the write was missing — and the component 
 failures. The other three were uncalled and were removed. Notably a hand fix of this exact
 class had already run (FS-15, "routes that never existed") and left these behind.
 
-**Both suites are green: backend 2,166 passed, frontend 242 passed, 0 failed** — across
+**Both suites are green: backend 2,166 passed, frontend 245 passed, 0 failed** — across
 187 backend and 49 frontend test files. Every guard listed above is mutation-tested:
 reintroduce the defect and the test must fail, checked individually, because a guard that
 cannot fail is indistinguishable from one that passes.
@@ -710,6 +710,22 @@ real-database probe confirmed org A supplying org B's id got a 200 and an empty 
 a parameter that can only narrow-to-nothing advertises a capability the product does not
 have, on the one table where a cross-tenant read *is* the incident, and it would become a
 live selector the moment anything ran that query with RLS bypassed.
+
+**Thirteen screens told the operator something false when a request failed.** React
+Query sets `data` to `undefined` on error, so `data?.items ?? []` renders an empty list
+and nothing anywhere says the request failed — the screen makes a claim about the *world*
+instead of about the *system*. The worst of them: `TransportationManagement` rendered a
+**green checkmark reading "No HOS violations detected"** when the drivers query failed.
+Hours of Service is DOT-regulated, and a compliance officer reads a green tick as
+clearance. `TacticalEngine` asserted the engine reported no safety thresholds — directly
+beneath its own "failed to load" banner. `MLOpsPipeline` said "No model deployed", which
+an operator may act on by deploying. `OEE` failed the other way and rendered nothing at
+all: no rows, no message, nothing to disbelieve.
+
+All thirteen now distinguish a failure from an absence, and the sweep that found them is
+a guard. It took five corrections to get there, each found by the false positive it
+produced — file-level, then count-based, then per-empty-state; then four more error
+idioms; then comment stripping, for the third time in this codebase.
 
 **And two of this slice's own fixes turned out to prove only half their property.** The
 audit tests counted rows through a *superuser* connection, which bypasses row-level

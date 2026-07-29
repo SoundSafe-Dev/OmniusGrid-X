@@ -401,7 +401,7 @@ interface EdgeAgent {
 }
 
 export const CollectorsPage: FC = () => {
-  const { data: agents, isLoading } = useQuery({
+  const { data: agents, isLoading, isError } = useQuery({
     queryKey: ['edge-fleet'],
     queryFn: async () => {
       const res = await api.get<EdgeAgent[]>('/api/v1/edge/fleet');
@@ -418,6 +418,14 @@ export const CollectorsPage: FC = () => {
       <Card title="Edge Agents" subtitle="Live data-collection agents reporting via heartbeat">
         {isLoading ? (
           <SkeletonCard />
+        ) : isError ? (
+          /* The empty state below EXPLAINS itself — "agents appear here once they enroll
+             and send a heartbeat" — which is a confident account of why the list is
+             empty, and simply wrong when the request failed. On error `agents` is
+             undefined, so `!agents` sent every failure straight into that sentence. */
+          <p className="text-sm text-status-alarm" role="alert">
+            Couldn’t load the agent fleet — this is a loading failure, not an empty fleet.
+          </p>
         ) : !agents || agents.length === 0 ? (
           <p className="text-sm text-opsgrid-text-secondary">
             No edge agents have reported yet. Agents appear here once they enroll and send a heartbeat.
