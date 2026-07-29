@@ -24,8 +24,10 @@
  * rest.
  *
  * SCOPE. A component is in scope when it calls `useQuery`/`useInfiniteQuery` AND renders
- * a literal "No …" empty state. Both halves are needed: the query is what can fail, and
- * the empty string is where the failure lands.
+ * a literal empty state. Both halves are needed: the query is what can fail, and the
+ * empty string is where the failure lands. The phrase list covers "No …" plus "not
+ * found", "nothing to …", "no results", "is empty" and "none yet" — see the pattern
+ * below for why it grew on day two.
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
@@ -36,8 +38,21 @@ const SRC = join(__dirname, '..')
 const QUERIES = /\buse(?:Infinite)?Query\b/
 /** `isError`, `status === 'error'`, or an `error ?` ternary — any of them counts. */
 const HANDLES_ERROR = /\bisError\b|status\s*===\s*['"]error['"]|\berror\s*\?/
-/** A literal empty state: `>No trailers found<` or `"No history for this metric"`. */
-const EMPTY_STATE = [/>\s*(No [A-Za-z][^<>{]{2,40}?)\s*</g, /["'](No [A-Za-z][^"']{2,40})["']/g]
+/** A literal empty state.
+ *
+ * KEYED ON MORE THAN "No …", because that was the guard's entry point on day one and
+ * `AssetDetail` says "Asset not found" — a phrasing the original pattern could not see,
+ * and a sharper claim than most: it asserts the thing does not EXIST. That page already
+ * handles failure (its comment records the same defect being fixed there earlier), so
+ * nothing was hiding in the gap. The pattern is widened anyway, because a blind spot
+ * that happens to be empty today is still a blind spot — method rule 18.
+ */
+const EMPTY_PHRASE =
+  String.raw`(?:No [A-Za-z][^<>{"']{2,40}|[A-Za-z][^<>{"']{0,30}(?:not found|nothing to [a-z]+|no results|is empty|none yet)[^<>{"']{0,20})`
+const EMPTY_STATE = [
+  new RegExp(String.raw`>\s*(${EMPTY_PHRASE})\s*<`, 'g'),
+  new RegExp(String.raw`["'](${EMPTY_PHRASE})["']`, 'g'),
+]
 
 function sourceFiles(dir: string): string[] {
   return readdirSync(dir).flatMap((entry) => {
@@ -96,6 +111,16 @@ describe('the sweep is not vacuous', () => {
       return data?.items?.length ? <List /> : <p>No trailers found</p>
     `
     expect(fallsThroughToEmptiness(good)).toEqual([])
+  })
+
+  it('sees an empty state that does not start with "No"', () => {
+    // `Asset not found` is the sharper claim — it says the thing does not EXIST — and
+    // the day-one pattern could not match it.
+    const bad = `
+      const { data } = useQuery({ queryKey: ['a'], queryFn: f })
+      return data ? <Detail /> : <p>Asset not found</p>
+    `
+    expect(fallsThroughToEmptiness(bad)).toContain('Asset not found')
   })
 
   it('ignores a component with an empty state but no query', () => {
