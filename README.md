@@ -510,14 +510,53 @@ the UI were all already there, only the write was missing — and the component 
 failures. The other three were uncalled and were removed. Notably a hand fix of this exact
 class had already run (FS-15, "routes that never existed") and left these behind.
 
-**Both suites are green: backend 2,186 passed, frontend 261 passed, 0 failed** — across
-189 backend and 51 frontend test files. Every guard listed above is mutation-tested:
+**Both suites are green: backend 2,213 passed, frontend 299 passed, 0 failed** — across
+188 backend and 55 frontend test files. Every guard listed above is mutation-tested:
 reintroduce the defect and the test must fail, checked individually, because a guard that
 cannot fail is indistinguishable from one that passes.
 
 **Tenant isolation held everywhere it was pushed on** — entities, sync status,
 integration list/get, events, correlations, and the provider feeding AI analysis
 sessions. The ERP client secret is never echoed, even to its owner.
+
+### Delivered since — the verdict-from-absence slice
+
+One class, chased across both sides of the wire until the mechanical sweeps came back
+empty with working controls. **Absence read as a result**, in six distinct forms:
+
+| form | example found |
+|---|---|
+| Python coercion | `float(x or 0)` made a driver who never reported one who drove zero hours |
+| an empty iteration | zero HOS violations among zero drivers cleared a carrier |
+| SQL three-valued logic | `WHERE hours > 11` discards NULL as it discards FALSE — `COMPLIANT` |
+| the average of an empty set | `/dashboard/fleet/oee` reported 0% availability for a fleet with no assets |
+| an `except` that fills the gap | a failed OEE calculation appended a row of zeros — a machine at 0% |
+| **a falsy branch that asserts** | `mtls ? 'Enabled' : 'Disabled'` printed a security finding about a link nobody inspected |
+
+The last one is the hardest to see in review, because both branches look like deliberate
+handling. It is a two-valued answer to a three-valued question.
+
+**Maintenance mode is the sharpest thing in this slice, and it is about fixing, not
+finding.** `assets.maintenance_mode` did not exist: the write endpoint 500'd on every
+call while the frontend called it, and the tactical engine's reader caught the error and
+failed *safe*, so every asset looked suppressed and nothing surfaced. Adding the column
+alone would have flipped the engine from suppress-everything to **suppress-nothing** —
+control commands dispatched to machines an operator had locked out — because the read was
+`bool(row and row[0])` on a session with no tenant GUC, and `assets` is FORCE RLS. When a
+fail-safe has been absorbing a defect, removing the defect releases what it was hiding;
+the commit that makes the error go away is the moment of maximum risk (rule 22).
+
+Also fixed in the same class: cross-tenant error triage (a *write*), the fleet page whose
+live vehicle map silently vanished when its org query failed, the cloud-gateway page that
+reported "Queue Depth 0 items" and "mTLS Disabled" for a gateway it never reached, a
+hardcoded green **Active** badge sitting beside "Model status unavailable", and the
+dashboard heading that kept counting "Active alarms (0)" while its own body said the
+request had failed.
+
+**Three sweeps are now permanent guards**, each with a control proving it can fail:
+phrase-based empty states, widgets that disappear when a query fails (checked against the
+real pre-fix file), and qualifiers the frontend never renders. Rules 21–25 are recorded in
+`docs/engineering/defect-class-sweeps.md`.
 
 ### Delivered since — FS-141+ (release path, backups, and the guards that weren't guarding)
 
