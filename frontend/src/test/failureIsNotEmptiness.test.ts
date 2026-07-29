@@ -23,6 +23,14 @@
  * is what made the silence visible, and the sweep was written afterwards to find the
  * rest.
  *
+ * A SECOND DETECTOR LIVES AT THE BOTTOM OF THIS FILE, for the form the first one is
+ * structurally blind to. `FleetOverview` gated its live vehicle map on a value derived
+ * from an unguarded query — `{orgId && <GeoTabIntegration …>}` where `orgId` came from
+ * `orgs?.[0]?.id`. On failure the widget was simply not rendered. There is no empty
+ * state to match because there is no string: the page draws its other tiles and looks
+ * finished while the thing it exists for is gone. Absence of a sentence and absence of a
+ * component are the same defect; only one of them is greppable by phrase.
+ *
  * SCOPE. A component is in scope when it calls `useQuery`/`useInfiniteQuery` AND renders
  * a literal empty state. Both halves are needed: the query is what can fail, and the
  * empty string is where the failure lands. The phrase list covers "No …" plus "not
@@ -236,6 +244,105 @@ describe('no querying component renders a failure as emptiness', () => {
         (o) =>
           `${o.file} — a failed query falls through to ${JSON.stringify(o.states)}, ` +
           `which reads as a fact about the world rather than about the request`,
+      ),
+    ).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// A WIDGET GATED ON AN UNGUARDED QUERY.
+//
+// `{orgId && <GeoTabIntegration …>}`, where `orgId` traces back to a `useQuery`
+// destructured without `isError`. A rejected query makes the gate falsy and the widget
+// disappears — no empty state, no error, no gap. The phrase-based sweep above cannot see
+// this, because the failure renders as nothing at all rather than as a sentence.
+//
+// Two hops of derivation are followed (`data` -> `orgs?.[0]?.id` -> the gate), which is
+// what the real defect needed. Deeper chains are not tracked; the guard is a floor.
+// ---------------------------------------------------------------------------
+
+const DESTRUCTURED_QUERY = /const\s*\{([^}]*)\}\s*=\s*useQuery/g
+const HANDLES_FAILURE = /\b(isError|error|isSuccess|status)\b/
+const GATED_WIDGET = /\{\s*([\w.?]+)\s*(?:&&|\?)\s*[(\s]*<([A-Z]\w+)/g
+
+export function widgetsGatedOnUnguardedQueries(raw: string): string[] {
+  const source = raw.replace(COMMENT, ' ')
+  if (!(source.match(QUERIES) ?? []).length) return []
+
+  const unguarded = new Set<string>()
+  for (const match of source.matchAll(DESTRUCTURED_QUERY)) {
+    if (HANDLES_FAILURE.test(match[1])) continue
+    for (const part of match[1].split(',')) {
+      // `data: orgs` binds `orgs`; a bare `data` binds `data`.
+      const name = part.split(':').pop()!.trim()
+      if (name) unguarded.add(name)
+    }
+  }
+  if (!unguarded.size) return []
+
+  const tainted = new Set(unguarded)
+  for (let hop = 0; hop < 2; hop++) {
+    for (const name of [...tainted]) {
+      const assigned = new RegExp(String.raw`const\s+(\w+)\s*=\s*[^;\n]*\b${name}\b`, 'g')
+      for (const match of source.matchAll(assigned)) tainted.add(match[1])
+    }
+  }
+
+  const found: string[] = []
+  for (const match of source.matchAll(GATED_WIDGET)) {
+    const root = match[1].split('?')[0].split('.')[0]
+    if (tainted.has(root)) found.push(`{${match[1]} && <${match[2]}>}`)
+  }
+  return [...new Set(found)]
+}
+
+const GATED = FILES.map((file) => ({
+  file: file.slice(SRC.length + 1),
+  gates: widgetsGatedOnUnguardedQueries(readFileSync(file, 'utf8')),
+})).filter((g) => g.gates.length > 0)
+
+describe('the widget-gate sweep is not vacuous', () => {
+  it('flags a widget gated on a query that ignores failure', () => {
+    // The defect verbatim, as FleetOverview carried it.
+    const bad = `
+      const { data: orgs } = useQuery({ queryKey: ['fleet-orgs'], queryFn: f })
+      const orgId = orgs?.[0]?.id
+      return <div>{orgId && <GeoTabIntegration organizationId={orgId} />}</div>
+    `
+    expect(widgetsGatedOnUnguardedQueries(bad)).toEqual(['{orgId && <GeoTabIntegration>}'])
+  })
+
+  it('accepts the same widget once the query handles failure', () => {
+    const good = `
+      const { data: orgs, isError: orgsError } = useQuery({ queryKey: ['o'], queryFn: f })
+      const orgId = orgs?.[0]?.id
+      return <div>{orgId ? <GeoTabIntegration organizationId={orgId} /> : <Notice />}</div>
+    `
+    expect(widgetsGatedOnUnguardedQueries(good)).toEqual([])
+  })
+
+  it('ignores a gate whose value never came from a query', () => {
+    // A widget behind a local toggle or a prop cannot vanish because a request failed.
+    const fine = `
+      const { data, isError } = useQuery({ queryKey: ['x'], queryFn: f })
+      const [open, setOpen] = useState(false)
+      return <div>{open && <Drawer />}</div>
+    `
+    expect(widgetsGatedOnUnguardedQueries(fine)).toEqual([])
+  })
+
+  it('ignores a component that does not query', () => {
+    expect(widgetsGatedOnUnguardedQueries('return <div>{x && <Panel />}</div>')).toEqual([])
+  })
+})
+
+describe('no widget disappears because a query failed', () => {
+  it('has no offenders', () => {
+    expect(
+      GATED.map(
+        (g) =>
+          `${g.file} — ${g.gates.join(', ')} is gated on a query that does not handle ` +
+          `failure, so a rejected request removes the widget with nothing in its place`,
       ),
     ).toEqual([])
   })
