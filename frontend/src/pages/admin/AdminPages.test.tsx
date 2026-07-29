@@ -206,7 +206,10 @@ describe('UsersPage — a failed write does not pass for a successful one', () =
     await userEvent.type(screen.getByLabelText(/password/i), 'hunter2hunter2')
     await userEvent.click(screen.getByRole('button', { name: /^create user$/i }))
     await waitFor(() => expect(alertMock).toHaveBeenCalled())
-    expect(alertMock.mock.calls.at(-1)![0].message).toMatch(/Email already in use/)
+    // Index arithmetic, not `.at(-1)`: this project's TS lib target predates it, and
+    // the same slip already cost a run earlier in this sweep.
+    const calls = alertMock.mock.calls
+    expect(calls[calls.length - 1][0].message).toMatch(/Email already in use/)
   })
 })
 
