@@ -1856,6 +1856,14 @@ one of its findings. The habit that catches it:
    different questions, and the one that matters is usually the second. Assert the
    property through the same path the user takes; use the privileged connection to set up
    and to explain a failure, not to conclude one.
+21. **Asserting that something is NOT there is satisfied by every reason it might not
+   be.** `expect(queryByText('TR-1001')).not.toBeInTheDocument()` passes when the yard is
+   empty, when the request failed, when the component crashed, and when the selector is
+   simply wrong. Three live defects this week hid behind exactly that shape, in tests
+   written specifically to catch them. Assert what the state DOES say — the empty-state
+   text, the alert role, the specific message — and pair it with the opposite case, so
+   the two branches have to differ. A negative assertion is a control, never a
+   conclusion.
 
 ---
 
