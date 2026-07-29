@@ -589,8 +589,8 @@ export interface MaintenanceSchedule {
   serviceType: 'oil_change' | 'tire_rotation' | 'brake_inspection' | 'engine_tuneup' | 'transmission_service' | 'annual_inspection' | 'other';
   description: string;
   scheduledDate: string;
+  /** Odometer reading at which this service falls due (`due_odometer_miles`). */
   dueMileage?: number;
-  currentMileage: number;
   status: 'scheduled' | 'overdue' | 'completed' | 'cancelled';
   priority: 'low' | 'normal' | 'high' | 'urgent';
   estimatedCost?: number;

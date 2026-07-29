@@ -29,12 +29,26 @@ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 // what MaintenancePanel reads. Map backend keys -> the component shape with safe
 // defaults so nothing calls .toLocaleString()/.length on undefined. Mock data
 // already matches the TS types and is left untouched.
-const adaptSchedule = (s: any): MaintenanceSchedule => ({
-  ...s,
-  // component reads currentMileage.toLocaleString(); backend only has dueMileage
-  currentMileage: s?.currentMileage ?? s?.dueMileage ?? 0,
-  priority: (s?.priority ?? 'medium') as MaintenanceSchedule['priority'],
-});
+/**
+ * NOTHING IS INVENTED HERE ANY MORE. This adapter used to fill two fields the wire did
+ * not carry:
+ *
+ *   `currentMileage: s?.currentMileage ?? s?.dueMileage ?? 0` — the backend has no such
+ *   column. It stores `due_odometer_miles`, the odometer reading at which the service
+ *   falls due. The panel printed it as "Mileage: 128,500", which a technician reads as
+ *   where the vehicle IS, not where it has to be serviced — and with neither value
+ *   present it printed "Mileage: 0", a vehicle with no miles on it.
+ *
+ *   `priority: s?.priority ?? 'medium'` — the column did not exist until migration 054,
+ *   so EVERY schedule rendered as 'medium', which is not even a member of the declared
+ *   union ('low' | 'normal' | 'high' | 'urgent'). Whatever the operator selected on the
+ *   form was discarded by the handler and overwritten by this default on the way back.
+ *
+ * The wire now carries `priority`, and `currentMileage` has been removed from the type
+ * rather than manufactured — a schedule knows when service is DUE; it does not know the
+ * vehicle's present odometer.
+ */
+const adaptSchedule = (s: any): MaintenanceSchedule => ({ ...s });
 
 const adaptRepairOrder = (o: any): RepairOrder => ({
   ...o,

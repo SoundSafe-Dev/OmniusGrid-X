@@ -8,7 +8,7 @@ avoid touching the large shared models.py (a convergence hotspot).
 
 from app.core.datetime_utils import utcnow
 
-from sqlalchemy import Boolean, Column, DateTime, Float, Integer, JSON, String, Text
+from sqlalchemy import Boolean, Column, DateTime, Float, Integer, JSON, String, Text, text
 
 from app.db.models import Base, UUIDColumn
 
@@ -94,6 +94,9 @@ class MaintenanceSchedule(Base):
     due_date = Column(DateTime(timezone=True))
     due_odometer_miles = Column(Float)
     status = Column(String(50), default="scheduled")  # scheduled | overdue | in_progress | completed | cancelled
+    # The UI has always collected this and always displayed it; until migration 054 there
+    # was nowhere to put it, so the handler dropped it and the client invented 'medium'.
+    priority = Column(String(20), nullable=False, server_default=text("'normal'"))
     estimated_cost = Column(Float)
     completed_at = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), default=utcnow)

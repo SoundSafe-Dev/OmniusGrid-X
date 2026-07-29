@@ -2492,3 +2492,62 @@ trust on noise, and after two or three of those nobody reads the output.
 The same lesson had already been paid for once in `failureIsNotEmptiness`, where a 2500-
 character proximity window found an unrelated mutation's error branch and cleared a page
 that was genuinely broken.
+
+## A round trip that could not close: the maintenance schedule
+
+Chasing the casing seam (`transformRegistry` converts snake_case to camelCase for
+registered URL prefixes only) produced a clean result — every client on an unregistered
+prefix reads snake_case, or its backend deliberately emits camelCase. But reading the
+`/api/v1/maintenance` client to prove that turned up an adapter comment —
+
+```ts
+// component reads currentMileage.toLocaleString(); backend only has dueMileage
+currentMileage: s?.currentMileage ?? s?.dueMileage ?? 0,
+```
+
+— and behind it, three defects in one round trip, each hiding the next.
+
+**Creation always failed.** `create_schedule` raised 400 *"vehicleId is required"* unless
+the payload carried `vehicleId`. `_schedule_out` emits the vehicle under **both**
+`vehicleId` and `vehicleNumber`, from the same column, and the form sent what it had been
+shown. Reading a field out under one name and refusing to accept it back under that name
+is a round trip that cannot close.
+
+**`priority` was collected, sent and dropped.** The form offers Low/Normal/High/Urgent;
+the panel renders a coloured badge on every row. There was no column, so the handler
+ignored it, the serializer never emitted it, and the client's adapter substituted the
+literal `'medium'` — **not a member of its own declared union**. Every schedule displayed
+the same invented priority whatever the operator chose.
+
+**`currentMileage` was dropped too, and displayed.** The panel printed
+`Mileage: {currentMileage}` from `dueMileage` — the odometer at which the service falls
+DUE — which a technician reads as where the vehicle is now. The two differ by exactly the
+distance left before the service. With neither value present it printed `Mileage: 0`.
+
+Fixed by migration 054 (a real `priority` column), by accepting `vehicleNumber`, by
+returning the whole row from create instead of `{id, status}`, and by **deleting**
+`currentMileage` rather than manufacturing it — a schedule knows when service is due; it
+does not know the vehicle's present odometer.
+
+## Rule 28 — a mock more generous than the wire hides the defect it was built to catch
+
+Every existing test passed. `maintenanceMocks.ts` supplied `currentMileage` and a real
+`priority`, because the fixtures were written from the TypeScript type — and the type
+described fields the API had never sent. `VITE_USE_MOCK` is set globally in
+`test/setup.ts`, so *every* unit and Playwright test ran against those fixtures.
+
+The fixture must be copied from **what the serializer emits**, not from the type the
+frontend declares. When the two disagree, the type is the thing that is wrong, and a
+fixture built from it will agree with the type forever.
+
+Deleting `currentMileage` from the interface made `tsc` name every place the fabrication
+had been propped up — the mocks, the panel, the form — which is the useful direction:
+the type system finds the props once the lie is removed from the type.
+
+## Rule 29 — a create that returns `{id, status}` cannot be checked
+
+`create_schedule` returned two fields. A caller cannot tell from that whether what it sent
+was stored, which is exactly how a silently dropped `priority` survived in a form that
+posted it on every submission. Returning the stored row makes the round trip assertable in
+one call — and the test that now pins it (`what was sent is what comes back`) is the one
+that would have caught all three defects on the day they shipped.

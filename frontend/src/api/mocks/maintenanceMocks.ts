@@ -1,3 +1,9 @@
+// NOTE: `currentMileage` was removed from every fixture here along with the field
+// itself. The API has never sent it — `maintenance_schedules` stores only
+// `due_odometer_miles` — and the mock supplying it is why every test was green
+// while the real path rendered the DUE mileage (or 0) under a "Mileage:" label.
+// A mock that is more generous than the wire hides exactly the defects mock-mode
+// testing is supposed to surface.
 import type { 
   MaintenanceSchedule, 
   RepairOrder, 
@@ -15,7 +21,6 @@ export const mockMaintenanceSchedules: MaintenanceSchedule[] = [
     description: 'Regular 15,000 mile oil change service',
     scheduledDate: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(),
     dueMileage: 145000,
-    currentMileage: 128500,
     status: 'scheduled',
     priority: 'normal',
     estimatedCost: 125,
@@ -30,7 +35,6 @@ export const mockMaintenanceSchedules: MaintenanceSchedule[] = [
     description: 'Brake pad replacement and rotor inspection',
     scheduledDate: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
     dueMileage: 195000,
-    currentMileage: 185300,
     status: 'overdue',
     priority: 'high',
     estimatedCost: 450,
@@ -45,7 +49,6 @@ export const mockMaintenanceSchedules: MaintenanceSchedule[] = [
     description: 'Regular tire rotation and pressure check',
     scheduledDate: new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString(),
     dueMileage: 105000,
-    currentMileage: 98700,
     status: 'scheduled',
     priority: 'low',
     estimatedCost: 45,
@@ -59,7 +62,6 @@ export const mockMaintenanceSchedules: MaintenanceSchedule[] = [
     description: 'Transmission fluid flush and filter replacement',
     scheduledDate: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(),
     dueMileage: 160000,
-    currentMileage: 156400,
     status: 'scheduled',
     priority: 'high',
     estimatedCost: 350,
@@ -74,7 +76,6 @@ export const mockMaintenanceSchedules: MaintenanceSchedule[] = [
     description: 'Full engine tune-up: spark plugs, filters, belts',
     scheduledDate: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString(),
     dueMileage: 85000,
-    currentMileage: 76200,
     status: 'scheduled',
     priority: 'normal',
     estimatedCost: 275,
@@ -88,7 +89,6 @@ export const mockMaintenanceSchedules: MaintenanceSchedule[] = [
     description: 'Annual DOT safety inspection',
     scheduledDate: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(),
     dueMileage: undefined,
-    currentMileage: 212800,
     status: 'overdue',
     priority: 'urgent',
     estimatedCost: 150,
@@ -103,7 +103,6 @@ export const mockMaintenanceSchedules: MaintenanceSchedule[] = [
     description: 'Air conditioning system check',
     scheduledDate: new Date(Date.now() + 20 * 24 * 60 * 60 * 1000).toISOString(),
     dueMileage: undefined,
-    currentMileage: 128500,
     status: 'scheduled',
     priority: 'low',
     estimatedCost: 85,

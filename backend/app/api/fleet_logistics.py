@@ -240,6 +240,10 @@ def _schedule_out(s: Any, now: Optional[datetime] = None) -> Dict[str, Any]:
         "scheduledDate": s.due_date.isoformat() if s.due_date else None,
         "dueMileage": s.due_odometer_miles,
         "status": "overdue" if (s.status in ("scheduled", "overdue") and due and due < now) else s.status,
+        # Emitted since migration 054. It was absent, so the client's adapter substituted
+        # the literal 'medium' — not even a member of its own declared union — and every
+        # row rendered the same invented priority whatever the operator had chosen.
+        "priority": s.priority,
         "estimatedCost": s.estimated_cost,
     }
 
@@ -325,6 +329,7 @@ async def update_schedule(schedule_id: str, payload: Dict[str, Any], org_id: UUI
         (pick("description"), "description"),
         (pick("status"), "status"),
         (pick("dueMileage", "dueOdometer"), "due_odometer_miles"),
+        (pick("priority"), "priority"),
         (pick("estimatedCost"), "estimated_cost"),
     ):
         if value is not None:
@@ -356,7 +361,14 @@ async def create_schedule(
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),
 ):
-    if not payload.get("vehicleId") and not payload.get("vehicle_id"):
+    # `vehicleNumber` is accepted because `_schedule_out` EMITS it — from this same
+    # column, alongside `vehicleId`. The create form sends what it was shown, so it sent
+    # vehicleNumber and every creation failed with "vehicleId is required". Reading a
+    # field under one name and refusing to accept it under that name is a round trip
+    # that cannot close.
+    vehicle = (payload.get("vehicleId") or payload.get("vehicle_id")
+               or payload.get("vehicleNumber"))
+    if not vehicle:
         raise HTTPException(status_code=400, detail="vehicleId is required")
     scheduled = payload.get("scheduledDate") or payload.get("dueDate")
     schedule = MaintenanceSchedule(
@@ -364,17 +376,22 @@ async def create_schedule(
         # file a record under any organization they cared to name, and — because
         # these tables have no RLS — nothing downstream would question it.
         organization_id=str(org_id),
-        vehicle_id=payload.get("vehicleId") or payload.get("vehicle_id"),
+        vehicle_id=vehicle,
         maintenance_type=payload.get("serviceType") or payload.get("maintenanceType") or payload.get("maintenance_type") or "inspection",
         description=payload.get("description"),
         due_date=_iso_or_400(scheduled, "scheduledDate") if scheduled else None,
         due_odometer_miles=payload.get("dueMileage") or payload.get("dueOdometer"),
+        # Collected by the form since it shipped; dropped on the floor until 054.
+        priority=payload.get("priority") or "normal",
         estimated_cost=payload.get("estimatedCost"),
     )
     db.add(schedule)
     await db.commit()
     await db.refresh(schedule)
-    return {"id": str(schedule.id), "status": schedule.status}
+    # The whole row, not two fields. Returning only id+status meant a caller could not
+    # confirm that what it sent was what was stored — which is exactly how a silently
+    # dropped `priority` survived.
+    return _schedule_out(schedule)
 
 
 @maintenance_router.get("/repair-orders")

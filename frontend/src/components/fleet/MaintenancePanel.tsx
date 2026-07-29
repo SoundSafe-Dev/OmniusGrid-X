@@ -201,7 +201,16 @@ export const MaintenancePanel: FC = () => {
                           <Calendar className="w-3 h-3" />
                           {new Date(item.scheduledDate).toLocaleDateString()}
                         </span>
-                        <span>Mileage: {item.currentMileage.toLocaleString()}</span>
+                        {/* WAS `Mileage: {item.currentMileage}`, which the adapter filled
+                            from `dueMileage` — the odometer at which service falls DUE —
+                            or from 0. A technician reads "Mileage: 128,500" as where the
+                            vehicle is now. The two differ by exactly the distance left
+                            before the service, which is the number that matters here.
+                            Omitted entirely when the schedule carries no due odometer,
+                            because 0 miles is a reading and absence is not. */}
+                        {item.dueMileage != null && (
+                          <span>Due at {item.dueMileage.toLocaleString()} mi</span>
+                        )}
                         {item.assignedTechnician && (
                           <span>Tech: {item.assignedTechnician}</span>
                         )}
@@ -386,7 +395,12 @@ const CreateScheduleModal: FC<{ onClose: () => void; onCreated: () => void }> = 
   const [description, setDescription] = useState('');
   const [scheduledDate, setScheduledDate] = useState('');
   const [priority, setPriority] = useState<MaintenanceSchedule['priority']>('normal');
-  const [currentMileage, setCurrentMileage] = useState('');
+  // WAS `currentMileage`, collected under a "Current Mileage" label and sent as a
+  // field `maintenance_schedules` does not have — so the handler dropped it in silence
+  // and the panel then displayed the DUE mileage back, which looked like it had saved.
+  // A schedule holds the odometer at which service falls due; that is what this asks for
+  // now, and it is stored.
+  const [dueMileage, setDueMileage] = useState('');
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -403,12 +417,20 @@ const CreateScheduleModal: FC<{ onClose: () => void; onCreated: () => void }> = 
     setFormError(null);
     try {
       await maintenanceApi.createSchedule({
+        // Both names, from one input. `_schedule_out` emits vehicleId and vehicleNumber
+        // from the same column, and create used to demand `vehicleId` specifically — so
+        // this form, which only ever knew the number it was shown, failed every time
+        // with "vehicleId is required". The backend accepts either now; sending both
+        // means neither end has to guess.
+        vehicleId: vehicleNumber.trim(),
         vehicleNumber: vehicleNumber.trim(),
         serviceType,
         description: description.trim() || serviceType?.replace(/_/g, ' '),
         scheduledDate: new Date(scheduledDate).toISOString(),
         priority,
-        currentMileage: Number(currentMileage) || 0,
+        // Only when given. `Number('') || 0` sent a real zero for a blank field, which
+        // the schema would now store as "service is due at zero miles".
+        ...(dueMileage.trim() ? { dueMileage: Number(dueMileage) } : {}),
       } as Partial<MaintenanceSchedule>);
       onCreated();
     } catch (e: any) {
@@ -477,11 +499,14 @@ const CreateScheduleModal: FC<{ onClose: () => void; onCreated: () => void }> = 
           </div>
         </div>
         <div>
-          <label className="block text-sm text-gray-600 mb-1">Current Mileage</label>
+          <label htmlFor="due-mileage" className="block text-sm text-gray-600 mb-1">
+            Due at mileage
+          </label>
           <input
+            id="due-mileage"
             type="number"
             className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
-            value={currentMileage} onChange={(e) => setCurrentMileage(e.target.value)} placeholder="0"
+            value={dueMileage} onChange={(e) => setDueMileage(e.target.value)} placeholder="Optional"
           />
         </div>
         {formError && <p className="text-sm text-status-alarm">{formError}</p>}
