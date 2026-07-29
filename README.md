@@ -711,7 +711,7 @@ a parameter that can only narrow-to-nothing advertises a capability the product 
 have, on the one table where a cross-tenant read *is* the incident, and it would become a
 live selector the moment anything ran that query with RLS bypassed.
 
-**Thirteen screens told the operator something false when a request failed.** React
+**Fourteen surfaces told the operator something false when a request failed.** React
 Query sets `data` to `undefined` on error, so `data?.items ?? []` renders an empty list
 and nothing anywhere says the request failed — the screen makes a claim about the *world*
 instead of about the *system*. The worst of them: `TransportationManagement` rendered a
@@ -722,7 +722,20 @@ beneath its own "failed to load" banner. `MLOpsPipeline` said "No model deployed
 an operator may act on by deploying. `OEE` failed the other way and rendered nothing at
 all: no rows, no message, nothing to disbelieve.
 
-All thirteen now distinguish a failure from an absence, and the sweep that found them is
+**And the server had the same defect on the same data.**
+`get_carrier_compliance_summary` returns
+`overall_compliant = ctpat_certified and insurance_on_file and hos_violations == 0`,
+counting violations by looping over the carrier's drivers — so `hos_violations == 0` is
+**trivially true when there are no drivers**, and a carrier whose records had never been
+entered was cleared on the same DOT-regulated check. One is an empty table and the other
+an empty response; both produced clearance from nothing having been inspected.
+
+That pair is what makes it a class rather than two bugs, and it comes with a usable line:
+**emptiness is only ambiguous where a COUNT stands in for an inspection.** The C-TPAT and
+insurance checks in the same payload read fields that either hold a valid date or do not,
+so they were deliberately left alone.
+
+All fourteen now distinguish a failure from an absence, and the sweep that found them is
 a guard. It took five corrections to get there, each found by the false positive it
 produced — file-level, then count-based, then per-empty-state; then four more error
 idioms; then comment stripping, for the third time in this codebase.
