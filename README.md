@@ -510,8 +510,8 @@ the UI were all already there, only the write was missing — and the component 
 failures. The other three were uncalled and were removed. Notably a hand fix of this exact
 class had already run (FS-15, "routes that never existed") and left these behind.
 
-**Both suites are green: backend 2,213 passed, frontend 299 passed, 0 failed** — across
-188 backend and 55 frontend test files. Every guard listed above is mutation-tested:
+**Both suites are green: backend 2,213 passed, frontend 342 passed, 0 failed** — across
+188 backend and 58 frontend test files. Every guard listed above is mutation-tested:
 reintroduce the defect and the test must fail, checked individually, because a guard that
 cannot fail is indistinguishable from one that passes.
 
@@ -553,9 +553,26 @@ hardcoded green **Active** badge sitting beside "Model status unavailable", and 
 dashboard heading that kept counting "Active alarms (0)" while its own body said the
 request had failed.
 
-**Three sweeps are now permanent guards**, each with a control proving it can fail:
-phrase-based empty states, widgets that disappear when a query fails (checked against the
-real pre-fix file), and qualifiers the frontend never renders. Rules 21–25 are recorded in
+**Then the same question, asked about actions rather than reads.** `useQuery` failures
+render as emptiness; `useMutation` failures render as nothing at all — and the user pressed
+the button on purpose, so no response is indistinguishable from the instant before the list
+refreshes. Nine silent mutations, all `onSuccess` and no `onError`. A failed connection test
+left the PREVIOUS test's "healthy: connected" on screen as the current result. A failed
+delete-user said nothing, and "row still there" is what success looks like until the list
+refetches — an admin who believes they revoked access, and did not.
+
+**Four sweeps are now permanent guards**, each with a control proving it can fail:
+phrase-based empty states, widgets that disappear when a query fails, mutations with no
+error surface, and qualifiers the frontend never renders. Every one is checked against the
+real pre-fix file restored from git, not a synthetic fixture — a fixture proves the function
+works, only the file proves the walking around it does.
+
+**The guards needed as much correcting as the code.** The emptiness sweep reported zero
+offenders while three pages were unguarded: its phrase cap hid a hundred-character empty
+state, and its proximity window found an unrelated mutation's error branch and called the
+page clean. The mutation sweep's first version produced two false positives out of four
+files from a fixed look-ahead window. A window is a guess about code shape; the fix in both
+cases was to count braces and use the real bounds. Rules 21–27 are recorded in
 `docs/engineering/defect-class-sweeps.md`.
 
 ### Delivered since — FS-141+ (release path, backups, and the guards that weren't guarding)
