@@ -40,7 +40,18 @@ export const CloudGateway: FC = () => {
   }
 
   const status = data as unknown as CloudStatus | undefined;
-  const isConnected = status?.connected || false;
+  // EVERY FIELD BELOW USED TO READ AS A FACT WHEN THERE WAS NO STATUS AT ALL. The error
+  // banner rendered, and then the page went on to state — in full sentences, with red
+  // icons — that the gateway was Disconnected and Offline, that the queue held 0 items,
+  // and that "Mutual TLS is not enabled on this gateway connection". All four came from
+  // `undefined` via `?? 0`, `|| false` and a falsy ternary. The queue depth is the
+  // operational danger (nothing stranded at the edge) and the mTLS line is the sharper
+  // one: it is a security claim about a link nobody managed to inspect.
+  //
+  // `known` is the whole fix. A failed status query means the STATUS is unreadable, not
+  // that the gateway is down — those are different events with different responses.
+  const known = status !== undefined;
+  const isConnected = status?.connected ?? false;
 
   return (
     <div className="space-y-6">
@@ -66,13 +77,19 @@ export const CloudGateway: FC = () => {
           <Tooltip>
             <TooltipTrigger asChild>
               <div className="flex items-center gap-4">
-                <div className={`p-4 rounded-xl ${isConnected ? 'bg-status-running/20' : 'bg-status-offline/20'}`}>
-                  <Cloud className={`w-10 h-10 ${isConnected ? 'text-status-running' : 'text-status-offline'}`} />
+                <div className={`p-4 rounded-xl ${!known ? 'bg-opsgrid-bg' : isConnected ? 'bg-status-running/20' : 'bg-status-offline/20'}`}>
+                  <Cloud className={`w-10 h-10 ${!known ? 'text-opsgrid-text-secondary' : isConnected ? 'text-status-running' : 'text-status-offline'}`} />
                 </div>
                 <div>
-                  <h2 className="text-2xl font-bold">{isConnected ? 'Connected' : 'Disconnected'}</h2>
+                  <h2 className="text-2xl font-bold">
+                    {!known ? 'Status unknown' : isConnected ? 'Connected' : 'Disconnected'}
+                  </h2>
                   <p className="text-opsgrid-text-secondary">
-                    {status?.endpoint ? `Endpoint: ${status.endpoint}` : 'Endpoint unknown'}
+                    {status?.endpoint
+                      ? `Endpoint: ${status.endpoint}`
+                      : known
+                        ? 'Endpoint unknown'
+                        : 'The gateway did not report — this is not a report of no gateway.'}
                   </p>
                 </div>
               </div>
@@ -81,11 +98,17 @@ export const CloudGateway: FC = () => {
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Badge variant={isConnected ? 'success' : 'error'} size="md">
-                {isConnected ? 'Online' : 'Offline'}
+              <Badge variant={!known ? 'default' : isConnected ? 'success' : 'error'} size="md">
+                {!known ? 'Unknown' : isConnected ? 'Online' : 'Offline'}
               </Badge>
             </TooltipTrigger>
-            <TooltipContent>{isConnected ? 'Gateway is connected to cloud' : 'Gateway is disconnected from cloud'}</TooltipContent>
+            <TooltipContent>
+              {!known
+                ? 'The gateway status could not be read; its connection state is unknown'
+                : isConnected
+                  ? 'Gateway is connected to cloud'
+                  : 'Gateway is disconnected from cloud'}
+            </TooltipContent>
           </Tooltip>
         </div>
       </Card>
@@ -99,7 +122,11 @@ export const CloudGateway: FC = () => {
                 <Clock className="w-5 h-5 text-opsgrid-primary" />
                 <div>
                   <p className="text-sm text-opsgrid-text-secondary">Queue Depth</p>
-                  <p className="font-medium">{status?.queueSize ?? 0} items</p>
+                  {/* `?? 0` said the edge had nothing waiting to upload. An operator
+                      reads an empty queue as "no data is stranded" and stops looking. */}
+                  <p className="font-medium">
+                    {known ? `${status.queueSize} items` : 'Unknown'}
+                  </p>
                 </div>
               </div>
             </Card>
@@ -114,7 +141,9 @@ export const CloudGateway: FC = () => {
                 <Shield className="w-5 h-5 text-opsgrid-primary" />
                 <div>
                   <p className="text-sm text-opsgrid-text-secondary">mTLS</p>
-                  <p className="font-medium">{status?.mtlsEnabled ? 'Enabled' : 'Disabled'}</p>
+                  <p className="font-medium">
+                    {known ? (status.mtlsEnabled ? 'Enabled' : 'Disabled') : 'Unknown'}
+                  </p>
                 </div>
               </div>
             </Card>
@@ -151,7 +180,7 @@ export const CloudGateway: FC = () => {
               </div>
               <Button
                 variant="primary"
-                disabled={!isConnected || flushMutation.isPending}
+                disabled={!known || !isConnected || flushMutation.isPending}
                 loading={flushMutation.isPending}
                 onClick={() => flushMutation.mutate()}
               >
@@ -168,13 +197,20 @@ export const CloudGateway: FC = () => {
       <Card title="Security" subtitle="Connection encryption details">
         <div className="p-4 bg-opsgrid-bg rounded-lg">
           <div className="flex items-center gap-3 mb-2">
-            <Shield className={`w-5 h-5 ${status?.mtlsEnabled ? 'text-status-running' : 'text-status-offline'}`} />
-            <p className="font-medium">{status?.mtlsEnabled ? 'mTLS Enabled' : 'mTLS Disabled'}</p>
+            <Shield className={`w-5 h-5 ${!known ? 'text-opsgrid-text-secondary' : status.mtlsEnabled ? 'text-status-running' : 'text-status-offline'}`} />
+            <p className="font-medium">
+              {!known ? 'mTLS state unknown' : status.mtlsEnabled ? 'mTLS Enabled' : 'mTLS Disabled'}
+            </p>
           </div>
+          {/* THE SHARPEST OF THE FOUR. This asserted that mutual TLS was not enabled on a
+              connection nobody had managed to inspect — a security conclusion drawn from a
+              failed request, printed under a red shield. */}
           <p className="text-sm text-opsgrid-text-secondary">
-            {status?.mtlsEnabled
-              ? 'Mutual TLS authentication secures bidirectional communication with the cloud.'
-              : 'Mutual TLS is not enabled on this gateway connection.'}
+            {!known
+              ? 'The gateway status could not be read, so its encryption state is unknown. This is not a finding that mTLS is disabled.'
+              : status.mtlsEnabled
+                ? 'Mutual TLS authentication secures bidirectional communication with the cloud.'
+                : 'Mutual TLS is not enabled on this gateway connection.'}
           </p>
         </div>
       </Card>

@@ -2249,3 +2249,43 @@ returns for a database that never answered. Three of them passed on the first ru
 only the `app` fixture rebinds it at the testcontainer. Rule 21 again, one layer down: any
 suite whose assertions are all on the safe side of a fail-safe needs a test that produces
 the *unsafe* side through the same path, or it is testing that the code is unreachable.
+
+## The third form: a falsy branch that is an assertion
+
+The sweep for this class began with a phrase — "No trailers found" — and grew a second
+detector for a widget that vanishes. `CloudGateway` is the third form, and the most
+quietly wrong of the three, because the page renders its error banner **and then
+contradicts it**.
+
+With `data` undefined, four values were derived and printed as facts:
+
+| rendered | from |
+|---|---|
+| `Disconnected` / `Offline` | `status?.connected \|\| false` |
+| `Queue Depth 0 items` | `status?.queueSize ?? 0` |
+| `mTLS Disabled` | `status?.mtlsEnabled ? … : …` |
+| "Mutual TLS is not enabled on this gateway connection." | the same ternary's falsy branch |
+
+Two of them are consequential. **Queue depth 0** says no data is stranded at the edge —
+the exact check an operator runs after an outage, and the reading that stops them
+looking. **mTLS Disabled** is a security finding, printed under a red shield with a
+sentence explaining the consequence, about a link nobody managed to inspect.
+
+The shape to look for is not `?? 0` on its own — it is **a ternary whose falsy branch
+states something**. `x ? 'Enabled' : 'Disabled'` is a two-valued answer to a
+three-valued question, and it is invisible in review because both branches look like
+deliberate handling. A blank would have been safer than either word.
+
+A failed status query means the STATUS is unreadable. It does not mean the gateway is
+down, its queue is empty, or its encryption is off — the gateway may be perfectly
+healthy while the endpoint describing it is not. Every field is now `known`-gated and
+says "Unknown", and the security card says outright that this is *not* a finding that
+mTLS is disabled, because a blank beside a security heading still reads as reassurance.
+
+## Rule 24 — an error banner does not immunise the rest of the page
+
+`CloudGateway` handled `isError`. It rendered a clear red notice, and then laid out four
+cards asserting the opposite of unknown. Marking the failure and *acting* on it are
+different jobs, and a reviewer who greps for `isError` finds the first and concludes the
+second. The question to ask is not "does this component handle the error" but "what does
+this component still claim while the error is on screen".
