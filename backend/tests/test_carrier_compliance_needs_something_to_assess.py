@@ -46,7 +46,7 @@ async def carrier_factory(admin_sync_url, seeded_orgs):
     conn.autocommit = True
     created: list[tuple[str, str]] = []
 
-    def make(*, drivers: int, drive_hours: float = 2.0) -> str:
+    def make(*, drivers: int, drive_hours: float = 2.0, medical_cert=FUTURE) -> str:
         """`drive_hours` is hours ALREADY DRIVEN today — the model tracks consumption,
         not remaining time, and `check_compliance` compares it against
         MAX_DRIVE_HOURS_DAY. Assuming a `hos_drive_hours_remaining` column cost a run."""
@@ -61,12 +61,17 @@ async def carrier_factory(admin_sync_url, seeded_orgs):
             )
             for i in range(drivers):
                 driver_id = uuid4()
+                # A medical certificate is supplied by default. Without one the driver
+                # is UNASSESSABLE under the rule this file tests, which is exactly the
+                # point — the first version of this fixture omitted it and the positive
+                # control started failing the moment that rule landed.
                 cur.execute(
                     "INSERT INTO drivers (id, organization_id, carrier_id, first_name, "
                     "last_name, hos_drive_hours_today, hos_on_duty_hours_today, "
-                    "hos_cycle_hours) VALUES (%s, %s, %s, %s, %s, %s, 4, 20)",
+                    "hos_cycle_hours, medical_cert_expires) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, 4, 20, %s)",
                     (str(driver_id), str(seeded_orgs["org_a_id"]), str(carrier_id),
-                     "Dana", f"Driver{i}", drive_hours),
+                     "Dana", f"Driver{i}", drive_hours, medical_cert),
                 )
                 created.append(("drivers", str(driver_id)))
         created.append(("carriers", str(carrier_id)))
@@ -135,3 +140,46 @@ class TestARealViolationIsStillAViolation:
         assert body["drivers_assessed"] is True
         assert body["overall_compliant"] is False
         assert body["driver_compliance"]["hos_violations"] >= 1
+
+
+class TestAnUnassessableDriverIsNotACompliantOne:
+    """The root of the carrier-level defect, one level down.
+
+    `check_compliance` coerced every HOS column with `float(x or 0)`, so a driver who had
+    never reported turned into one who had driven zero hours — no violations, therefore
+    compliant. The medical-certificate check was worse: both of its branches were guarded
+    on the field being SET, so a driver with **no certificate on file** produced neither a
+    violation nor a warning and came back clean. A current medical certificate is a
+    condition of driving; its absence is a finding, not the lack of one.
+    """
+
+    async def test_a_driver_with_no_medical_certificate_is_not_cleared(
+        self, client_a, carrier_factory
+    ):
+        body = await _summary(client_a, carrier_factory(drivers=1, medical_cert=None))
+        assert body["overall_compliant"] is False, (
+            "a driver with no medical certificate on file was reported compliant"
+        )
+
+    async def test_the_carrier_reports_what_it_could_not_judge(
+        self, client_a, carrier_factory
+    ):
+        body = await _summary(client_a, carrier_factory(drivers=1, medical_cert=None))
+        assert body["driver_compliance"]["unassessable_drivers"] == 1
+        assert body["drivers_assessed"] is False
+
+    async def test_an_unassessable_driver_is_not_counted_as_a_violation(
+        self, client_a, carrier_factory
+    ):
+        """Trading a false clearance for a false accusation is not a fix. An operator
+        chasing a phantom HOS breach stops trusting the number in both directions."""
+        body = await _summary(client_a, carrier_factory(drivers=1, medical_cert=None))
+        assert body["driver_compliance"]["hos_violations"] == 0
+
+    async def test_an_unassessable_driver_is_not_counted_as_compliant_either(
+        self, client_a, carrier_factory
+    ):
+        """`compliant_drivers` was `total - violations`, which put the unjudged drivers
+        on the compliant side of the ledger — the same error one level up."""
+        body = await _summary(client_a, carrier_factory(drivers=1, medical_cert=None))
+        assert body["driver_compliance"]["compliant_drivers"] == 0

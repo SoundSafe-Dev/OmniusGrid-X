@@ -1773,6 +1773,33 @@ been entered — a new carrier, a failed sync, a partial migration — was clear
 Service. One is an empty table and the other is an empty response; both produced
 clearance from nothing having been inspected.
 
+**Sweeping the class properly found its root, one level further down.** A detector for
+"a positive verdict that hinges on a count being zero" returned exactly two hits: the
+carrier roll-up above, and `HOSComplianceMonitor.check_compliance`, which produces the
+per-driver verdict the roll-up counts.
+
+That one is worse in two ways. Every HOS column is read as `float(x or 0)`, so a driver
+who has **never reported** becomes a driver who has driven zero hours — no violations,
+therefore compliant. And the medical-certificate check had both branches guarded on the
+field being SET:
+
+```python
+if driver.medical_cert_expires and driver.medical_cert_expires < now:      # expired
+elif driver.medical_cert_expires and driver.medical_cert_expires < now+30d: # expiring
+```
+
+so a driver with **no certificate on file at all** produced neither a violation nor a
+warning and came back clean. A current medical certificate is a condition of driving; its
+absence is a finding, not the lack of one.
+
+**Fixing it required not over-correcting.** Marking unassessed drivers as violations would
+trade a false clearance for a false accusation, and an operator chasing a phantom HOS
+breach stops trusting the number in both directions. Missing inputs are now collected
+separately (`missing_data`, `assessable`), the carrier roll-up counts
+`unassessable_drivers` apart from `hos_violations`, and `compliant_drivers` is
+`total − violations − unassessable` rather than `total − violations`, which had been
+putting the unjudged on the compliant side of the ledger.
+
 The verdict now requires that something was assessed, and reports `drivers_assessed` so
 the reason is legible rather than inferred from a count. The C-TPAT and insurance checks
 are deliberately untouched: they read fields on the carrier itself, which either hold a

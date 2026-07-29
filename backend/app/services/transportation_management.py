@@ -33,6 +33,21 @@ class HOSComplianceMonitor:
         violations = []
         warnings = []
 
+        # WHAT IS MISSING, BEFORE WHAT IS WRONG.
+        #
+        # `float(x or 0)` turns "never reported" into "has driven zero hours", which
+        # then produces no violations and reads as a fresh, legal driver. The same
+        # coercion is why the carrier-level roll-up cleared carriers with no drivers at
+        # all: absence kept arriving as a clean result. Missing inputs are collected
+        # first so the verdict can say it had nothing to judge.
+        missing_data: List[str] = []
+        if driver.hos_drive_hours_today is None:
+            missing_data.append("No drive-hours reported")
+        if driver.hos_on_duty_hours_today is None:
+            missing_data.append("No on-duty hours reported")
+        if driver.hos_cycle_hours is None:
+            missing_data.append("No cycle hours reported")
+
         # Numeric columns come back as Decimal; coerce once so the float
         # arithmetic below never mixes Decimal and float (TypeError).
         drive_hours = float(driver.hos_drive_hours_today or 0)
@@ -57,15 +72,25 @@ class HOSComplianceMonitor:
         elif cycle_hours >= self.MAX_CYCLE_HOURS - 10:
             warnings.append(f"Cycle time nearing limit: {cycle_hours}h")
 
-        # Check medical cert
-        if driver.medical_cert_expires and driver.medical_cert_expires < datetime.now(timezone.utc):
+        # Check medical cert. A NULL expiry is not a pass: both branches below are
+        # guarded on the field being set, so a driver with NO certificate on file
+        # produced no violation and no warning and came back compliant. A current
+        # medical certificate is a condition of driving, and its absence is a finding
+        # rather than the lack of one.
+        if driver.medical_cert_expires is None:
+            missing_data.append("No medical certificate on file")
+        elif driver.medical_cert_expires < datetime.now(timezone.utc):
             violations.append("Medical certificate expired")
-        elif driver.medical_cert_expires and driver.medical_cert_expires < datetime.now(timezone.utc) + timedelta(days=30):
+        elif driver.medical_cert_expires < datetime.now(timezone.utc) + timedelta(days=30):
             warnings.append("Medical certificate expiring soon")
 
         return {
             'driver_id': str(driver.id),
-            'is_compliant': len(violations) == 0,
+            # Compliance requires having been ASSESSED. `len(violations) == 0` alone is
+            # satisfied by a driver nobody has any data for.
+            'is_compliant': len(violations) == 0 and len(missing_data) == 0,
+            'assessable': len(missing_data) == 0,
+            'missing_data': missing_data,
             'violations': violations,
             'warnings': warnings,
             'hours_summary': {
@@ -629,11 +654,19 @@ class TransportationManagementService:
             # Check compliance for each driver
             hos_violations = 0
             expired_medical_certs = 0
-            
+            unassessable_drivers = 0
+
             for driver in drivers:
                 compliance = self.hos_monitor.check_compliance(driver)
-                if not compliance['is_compliant']:
+                # A driver with missing data is NOT a violation — counting them as one
+                # would trade a false clearance for a false accusation, and an operator
+                # chasing a phantom HOS breach stops trusting the number either way.
+                # They are counted separately so the roll-up can say what it could not
+                # judge.
+                if compliance['violations']:
                     hos_violations += 1
+                if not compliance['assessable']:
+                    unassessable_drivers += 1
                 if driver.medical_cert_expires and driver.medical_cert_expires < datetime.now(timezone.utc):
                     expired_medical_certs += 1
             
@@ -664,7 +697,11 @@ class TransportationManagementService:
                     'total_drivers': len(drivers),
                     'hos_violations': hos_violations,
                     'expired_medical_certs': expired_medical_certs,
-                    'compliant_drivers': len(drivers) - hos_violations
+                    'unassessable_drivers': unassessable_drivers,
+                    # Drivers who were judged AND passed. Subtracting only violations
+                    # counted the unassessable ones as compliant, which is the same
+                    # error one level up.
+                    'compliant_drivers': len(drivers) - hos_violations - unassessable_drivers,
                 },
                 # WHETHER ANY DRIVER WAS ASSESSED AT ALL. `hos_violations == 0` is
                 # trivially true for a carrier with no drivers on file, so the verdict
@@ -673,9 +710,10 @@ class TransportationManagementService:
                 # finding — it is the absence of one, and Hours of Service is
                 # DOT-regulated. The frontend had the same defect on the same data and
                 # rendered a green tick for it.
-                'drivers_assessed': len(drivers) > 0,
+                'drivers_assessed': len(drivers) > 0 and unassessable_drivers == 0,
                 'overall_compliant': (
                     len(drivers) > 0 and
+                    unassessable_drivers == 0 and
                     carrier.ctpat_certified and
                     carrier.insurance_on_file and
                     hos_violations == 0
