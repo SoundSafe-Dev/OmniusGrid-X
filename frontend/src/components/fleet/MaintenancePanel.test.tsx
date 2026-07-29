@@ -205,6 +205,77 @@ describe('MaintenancePanel — the repair orders tab', () => {
   })
 })
 
+describe('MaintenancePanel — the costs tab', () => {
+  // The server sends `ytdTotal` and `byCategory`. Nothing else. Three of the five figures
+  // on this tab were manufactured in the client: two hardcoded to 0 and one as `ytd / 12`
+  // regardless of the month.
+  const WIRE_COSTS = { totalYTD: 12000, byCategory: { brakes: 3000 }, monthlyBreakdown: [] }
+
+  const openCosts = async (c: Record<string, unknown> = WIRE_COSTS) => {
+    getMaintenanceCosts.mockResolvedValue(c)
+    render(<MaintenancePanel />)
+    await screen.findByText('15,000 mile service')
+    fireEvent.click(screen.getByRole('button', { name: /cost analysis/i }))
+  }
+
+  it('shows the YTD total the server reported', async () => {
+    // The positive control for the omissions below.
+    await openCosts()
+    expect(await screen.findByText('Total YTD')).toBeInTheDocument()
+    expect(screen.getAllByText('$12,000').length).toBeGreaterThan(0)
+  })
+
+  it('does not report a per-vehicle cost of zero', async () => {
+    // `costPerVehicle: 0`, hardcoded, rendered as "Per Vehicle $0" — a fleet whose
+    // maintenance costs nothing per vehicle.
+    await openCosts()
+    await screen.findByText('Total YTD')
+    expect(screen.queryByText('Per Vehicle')).not.toBeInTheDocument()
+  })
+
+  it('does not report zero upcoming cost in a highlighted box', async () => {
+    // The sharper of the two: highlighted, so it reads as "nothing is coming up" rather
+    // than "nobody calculated this".
+    await openCosts()
+    await screen.findByText('Total YTD')
+    expect(screen.queryByText(/Upcoming \(Est\.\)/)).not.toBeInTheDocument()
+  })
+
+  it('does not divide the year-to-date total by twelve', async () => {
+    // `ytd / 12` is wrong in every month but December — in February it understates the
+    // real monthly average roughly sixfold.
+    await openCosts()
+    await screen.findByText('Total YTD')
+    expect(screen.queryByText('Monthly Average')).not.toBeInTheDocument()
+    expect(screen.queryByText('$1,000')).not.toBeInTheDocument()
+  })
+
+  it('says the missing figures are not reported rather than leaving a gap', async () => {
+    await openCosts()
+    expect(
+      await screen.findByText(/not reported by this deployment/i),
+    ).toBeInTheDocument()
+  })
+
+  it('shows the figures when a deployment does report them', async () => {
+    // The control that keeps the omission honest: these rows must appear when the data
+    // exists, or the fix has deleted a feature rather than stopped a fabrication.
+    await openCosts({ ...WIRE_COSTS, monthlyAverage: 950, costPerVehicle: 400, upcomingEstimated: 275 })
+    expect(await screen.findByText('Monthly Average')).toBeInTheDocument()
+    expect(screen.getByText('Per Vehicle')).toBeInTheDocument()
+    expect(screen.getByText('$400')).toBeInTheDocument()
+  })
+
+  it('does not print NaN when the year-to-date total is zero', async () => {
+    // `amount / 0` is Infinity and `NaN.toFixed(1)` renders the literal string "NaN",
+    // both reachable exactly when a category breakdown means least.
+    await openCosts({ totalYTD: 0, byCategory: { brakes: 0 }, monthlyBreakdown: [] })
+    await screen.findByText('Costs by Category')
+    expect(screen.queryByText(/NaN/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Infinity/)).not.toBeInTheDocument()
+  })
+})
+
 describe('MaintenancePanel — creating a schedule', () => {
   // QUERIED BY PLACEHOLDER AND INPUT TYPE, not by label. The form's `<label>`s carry no
   // `htmlFor` and its inputs no `id`, so `getByLabelText` cannot associate them — which

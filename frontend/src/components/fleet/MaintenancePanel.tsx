@@ -18,6 +18,11 @@ const getStatusColor = (status: string) => {
   }
 };
 
+// A share of a total that may be zero or absent. `amount / 0` is Infinity, which becomes
+// an `Infinity%` CSS width, and `NaN.toFixed(1)` renders the literal string "NaN".
+const share = (amount: number, total?: number): number =>
+  total && total > 0 ? (amount / total) * 100 : 0;
+
 const getPriorityColor = (priority: string) => {
   switch (priority) {
     case 'urgent': return 'text-red-600 font-bold';
@@ -115,7 +120,11 @@ export const MaintenancePanel: FC = () => {
             <DollarSign className="w-5 h-5 text-green-500" />
             <span className="text-sm text-gray-600">YTD Costs</span>
           </div>
-          <p className="text-2xl font-bold text-green-600">${costs?.totalYTD.toLocaleString() || 0}</p>
+          {/* `|| 0` turned a missing YTD figure into "$0" — a fleet that has spent
+              nothing on maintenance all year, which is a claim, not a blank. */}
+          <p className="text-2xl font-bold text-green-600">
+            {costs?.totalYTD != null ? `$${costs.totalYTD.toLocaleString()}` : '—'}
+          </p>
         </div>
       </div>
 
@@ -319,22 +328,41 @@ export const MaintenancePanel: FC = () => {
               Cost Summary
             </h3>
             <div className="space-y-3">
-              <div className="flex justify-between items-center p-3 bg-opsgrid-bg rounded-lg">
-                <span>Total YTD</span>
-                <span className="font-bold text-xl">${costs.totalYTD.toLocaleString()}</span>
-              </div>
-              <div className="flex justify-between items-center p-3 bg-opsgrid-bg rounded-lg">
-                <span>Monthly Average</span>
-                <span className="font-bold">${costs.monthlyAverage.toLocaleString()}</span>
-              </div>
-              <div className="flex justify-between items-center p-3 bg-opsgrid-bg rounded-lg">
-                <span>Per Vehicle</span>
-                <span className="font-bold">${costs.costPerVehicle.toLocaleString()}</span>
-              </div>
-              <div className="flex justify-between items-center p-3 bg-yellow-50 rounded-lg">
-                <span>Upcoming (Est.)</span>
-                <span className="font-bold text-yellow-600">${costs.upcomingEstimated.toLocaleString()}</span>
-              </div>
+              {/* Only the figures the server actually sent. "Per Vehicle $0" and
+                  "Upcoming (Est.) $0" were hardcoded zeros, and the second sat in a
+                  highlighted box where it read as "nothing is coming up" rather than
+                  "nobody calculated this". A row that is absent prompts a question; a row
+                  reading $0 answers one. */}
+              {costs.totalYTD != null && (
+                <div className="flex justify-between items-center p-3 bg-opsgrid-bg rounded-lg">
+                  <span>Total YTD</span>
+                  <span className="font-bold text-xl">${costs.totalYTD.toLocaleString()}</span>
+                </div>
+              )}
+              {costs.monthlyAverage != null && (
+                <div className="flex justify-between items-center p-3 bg-opsgrid-bg rounded-lg">
+                  <span>Monthly Average</span>
+                  <span className="font-bold">${costs.monthlyAverage.toLocaleString()}</span>
+                </div>
+              )}
+              {costs.costPerVehicle != null && (
+                <div className="flex justify-between items-center p-3 bg-opsgrid-bg rounded-lg">
+                  <span>Per Vehicle</span>
+                  <span className="font-bold">${costs.costPerVehicle.toLocaleString()}</span>
+                </div>
+              )}
+              {costs.upcomingEstimated != null && (
+                <div className="flex justify-between items-center p-3 bg-yellow-50 rounded-lg">
+                  <span>Upcoming (Est.)</span>
+                  <span className="font-bold text-yellow-600">${costs.upcomingEstimated.toLocaleString()}</span>
+                </div>
+              )}
+              {costs.monthlyAverage == null && costs.costPerVehicle == null && (
+                <p className="text-xs text-opsgrid-text-secondary px-3">
+                  Monthly average, per-vehicle and upcoming figures are not reported by
+                  this deployment.
+                </p>
+              )}
             </div>
           </div>
 
@@ -352,12 +380,16 @@ export const MaintenancePanel: FC = () => {
                     <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
                       <div 
                         className="h-full bg-opsgrid-primary rounded-full"
-                        style={{ width: `${(amount / costs.totalYTD) * 100}%` }}
+                        style={{ width: `${share(amount, costs.totalYTD)}%` }}
                       />
                     </div>
                   </div>
+                  {/* `amount / 0` is Infinity and `NaN.toFixed(1)` prints the string
+                      "NaN" — both were reachable whenever the YTD total was zero or
+                      absent, which is exactly when a category breakdown is least
+                      meaningful. */}
                   <span className="text-xs text-gray-500 w-12 text-right">
-                    {((amount / costs.totalYTD) * 100).toFixed(1)}%
+                    {costs.totalYTD ? `${share(amount, costs.totalYTD).toFixed(1)}%` : '—'}
                   </span>
                 </div>
               ))}

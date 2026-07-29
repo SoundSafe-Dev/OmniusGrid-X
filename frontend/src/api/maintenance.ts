@@ -239,18 +239,30 @@ export const maintenanceApi = {
       await delay(MOCK_DELAY);
       return mockMaintenanceCosts;
     }
-    // Backend /costs returns { ytdTotal, byCategory }; the Costs tab reads
-    // totalYTD/monthlyAverage/costPerVehicle/upcomingEstimated/monthlyBreakdown.
+    // Backend /costs returns { ytdTotal, byCategory } and nothing else. The Costs tab
+    // reads five figures, so three of them used to be manufactured here:
+    //
+    //   `costPerVehicle: 0`     — a hardcoded zero, rendered as "Per Vehicle $0".
+    //   `upcomingEstimated: 0`  — a hardcoded zero, rendered in a highlighted box as
+    //                             "Upcoming (Est.) $0", which reads as "nothing is coming
+    //                             up" rather than "nobody calculated this".
+    //   `monthlyAverage: ytd/12` — YTD divided by twelve regardless of how many months
+    //                             have actually elapsed. In February that understates the
+    //                             true monthly average roughly sixfold, and it is wrong in
+    //                             every month except December.
+    //
+    // A figure the server does not send is now absent rather than zero, and the panel
+    // renders what it has. Fabricating a plausible number is worse than omitting it: an
+    // absent row prompts a question, and "$0" answers one.
     const response = await api.get<any>('/api/v1/maintenance/costs');
     const d = response.data ?? {};
-    const ytd = d.ytdTotal ?? d.totalYTD ?? 0;
     return {
-      totalYTD: ytd,
-      monthlyAverage: ytd / 12,
-      costPerVehicle: 0,
-      upcomingEstimated: 0,
+      totalYTD: d.ytdTotal ?? d.totalYTD,
       byCategory: d.byCategory ?? {},
       monthlyBreakdown: d.monthlyBreakdown ?? [],
+      ...(d.monthlyAverage != null ? { monthlyAverage: d.monthlyAverage } : {}),
+      ...(d.costPerVehicle != null ? { costPerVehicle: d.costPerVehicle } : {}),
+      ...(d.upcomingEstimated != null ? { upcomingEstimated: d.upcomingEstimated } : {}),
     };
   },
 

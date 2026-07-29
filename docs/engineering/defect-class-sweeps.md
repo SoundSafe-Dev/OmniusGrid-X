@@ -2649,3 +2649,30 @@ the count below its threshold and the check failed with nothing wrong in the tre
 guards. A guard whose result depends on iteration order cannot tell you anything about
 anything. It now uses `.match()`, and a test asserts the count is the same twice —
 because the failure mode is *inconsistency*, which a single run cannot see.
+
+## The costs tab: three of five figures were manufactured in the client
+
+`/maintenance/costs` returns `{ ytdTotal, byCategory }`. The tab renders five figures, so
+the client filled the gap:
+
+| rendered | from | what it said |
+|---|---|---|
+| Total YTD | `ytdTotal` | honest |
+| Monthly Average | `ytd / 12` | wrong in every month but December — in February it understates roughly sixfold |
+| Per Vehicle | `0` | a fleet whose maintenance costs nothing per vehicle |
+| Upcoming (Est.) | `0` | in a **highlighted** box, so it reads as "nothing is coming up" rather than "nobody calculated this" |
+| Monthly Cost Trend | `[]` | an empty chart |
+
+Plus `(amount / costs.totalYTD) * 100` for the category breakdown, which is `Infinity`
+when the total is zero and renders the literal string **"NaN"** through `.toFixed(1)` —
+reachable exactly when a cost breakdown means least.
+
+A figure the server does not send is now absent, and the panel says which ones are not
+reported by this deployment. **An absent row prompts a question; a row reading `$0`
+answers one** — that is the whole difference, and it is why omitting beats defaulting
+every time the value is a measurement rather than a count.
+
+Note the direction of the two hardcoded zeros. Both were written to make a layout look
+complete, and both survived review because a zero in a currency column is unremarkable.
+That is exactly what makes this class expensive: the fabricated value is always the one
+that looks most normal.

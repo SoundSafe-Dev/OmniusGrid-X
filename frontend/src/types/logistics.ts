@@ -654,10 +654,14 @@ export interface ServiceHistoryEntry {
 }
 
 export interface MaintenanceCosts {
-  totalYTD: number;
-  monthlyAverage: number;
-  costPerVehicle: number;
-  upcomingEstimated: number;
+  /** `/maintenance/costs` sends `ytdTotal`. Undefined if it sent nothing at all. */
+  totalYTD?: number;
+  /** OPTIONAL BECAUSE NOTHING COMPUTES THEM. The server sends only `ytdTotal` and
+   *  `byCategory`; these three were manufactured client-side (two hardcoded to 0, one as
+   *  `ytd / 12` regardless of the month) and rendered as figures. */
+  monthlyAverage?: number;
+  costPerVehicle?: number;
+  upcomingEstimated?: number;
   byCategory: Record<string, number>;
   monthlyBreakdown: { month: string; cost: number }[];
 }
