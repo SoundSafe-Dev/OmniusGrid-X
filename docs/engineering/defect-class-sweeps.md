@@ -2676,3 +2676,34 @@ Note the direction of the two hardcoded zeros. Both were written to make a layou
 complete, and both survived review because a zero in a currency column is unremarkable.
 That is exactly what makes this class expensive: the fabricated value is always the one
 that looks most normal.
+
+## Rule 31 — a guard that derives its expected value from its own input asserts nothing
+
+The wire-vocabulary sweep became a permanent guard, and the first version of it was
+vacuous in a way worth recording because it looked completely reasonable:
+
+```python
+BASELINE = _declared_but_unsent()      # computed at import, from the current tree
+...
+new = sorted(_declared_but_unsent() - BASELINE)
+assert not new
+```
+
+`new` is empty by construction. The guard could never fail, for any tree, ever — it was a
+very expensive way of asserting that a set equals itself. Nine tests passed and one of
+them was inspecting nothing.
+
+A baseline must be a **literal**, written into the file, so the comparison is against what
+was true when someone looked rather than against what is true now. The fix is mechanical;
+noticing is the part that isn't, and the tell is that the expected value and the actual
+value come from the same function call.
+
+Controlled the only way that means anything: a fabricated field (`inferencesPerSecond`,
+declared on a type and read by a component, emitted by nothing) was introduced into the
+real tree, and the guard named it. Restored, it goes quiet.
+
+Two other guards in this session had the same shape of problem and neither was caught by
+running them — the emptiness sweep reported zero offenders while three pages were broken
+(rule 26), and its vacuity check depended on iteration order (rule 30). **Three guards,
+three different ways of being confidently wrong.** The only method that has reliably found
+these is to break the real tree on purpose and check that the guard notices.
