@@ -510,8 +510,8 @@ the UI were all already there, only the write was missing — and the component 
 failures. The other three were uncalled and were removed. Notably a hand fix of this exact
 class had already run (FS-15, "routes that never existed") and left these behind.
 
-**Both suites are green: backend 2,232 passed, frontend 363 passed, 0 failed** — across
-190 backend and 59 frontend test files. Every guard listed above is mutation-tested:
+**Both suites are green: backend 2,241 passed, frontend 370 passed, 0 failed** — across
+191 backend and 59 frontend test files. Every guard listed above is mutation-tested:
 reintroduce the defect and the test must fail, checked individually, because a guard that
 cannot fail is indistinguishable from one that passes.
 
@@ -595,19 +595,33 @@ left the PREVIOUS test's "healthy: connected" on screen as the current result. A
 delete-user said nothing, and "row still there" is what success looks like until the list
 refetches — an admin who believes they revoked access, and did not.
 
-**Four sweeps are now permanent guards**, each with a control proving it can fail:
+**Five sweeps are now permanent guards**, each with a control proving it can fail:
 phrase-based empty states, widgets that disappear when a query fails, mutations with no
-error surface, and qualifiers the frontend never renders. Every one is checked against the
+error surface, qualifiers the frontend never renders, and — the mirror of that last one —
+TypeScript fields the frontend renders that no backend source emits. Every one is checked against the
 real pre-fix file restored from git, not a synthetic fixture — a fixture proves the function
 works, only the file proves the walking around it does.
+
+**The last sweep asked the contract question in the other direction** — which fields does
+the frontend declare and render that nothing on the server produces? — and found values
+that had simply been invented: a maintenance schedule's "Mileage: 128,500" (the odometer at
+which service falls *due*, relabelled), a work-order number synthesised from eight
+characters of a UUID and shown as the heading a technician quotes to a vendor, and three of
+the five figures on the cost tab (two hardcoded zeros, one "monthly average" that divides
+year-to-date by twelve in every month). A fabricated value is always the one that looks
+most normal — a zero in a currency column is unremarkable, which is exactly why it survives
+review.
 
 **The guards needed as much correcting as the code.** The emptiness sweep reported zero
 offenders while three pages were unguarded: its phrase cap hid a hundred-character empty
 state, and its proximity window found an unrelated mutation's error branch and called the
 page clean. The mutation sweep's first version produced two false positives out of four
 files from a fixed look-ahead window. A window is a guess about code shape; the fix in both
-cases was to count braces and use the real bounds. Rules 21–27 are recorded in
-`docs/engineering/defect-class-sweeps.md`.
+cases was to count braces and use the real bounds. A third computed its own baseline from
+the tree it then compared against, so it could never fail for any input. **Three guards,
+three different ways of being confidently wrong** — running a guard does not test it;
+breaking the tree on purpose does, and every one of them is now controlled that way.
+Rules 21–31 are recorded in `docs/engineering/defect-class-sweeps.md`.
 
 ### Delivered since — FS-141+ (release path, backups, and the guards that weren't guarding)
 
@@ -2912,7 +2926,7 @@ The ERP integration system correlates ERP data with operational telemetry to pro
 - [Implementation Summary](IMPLEMENTATION_SUMMARY.md) - Complete feature inventory
 
 **Engineering practice**
-- [Defect-class sweeps](docs/engineering/defect-class-sweeps.md) - The thirty-five classes of "code that looks wired and cannot work" found so far, what each sweep found (including the ones that came back clean), which mutation-tested guard keeps each closed, and twenty-seven rules for writing a sweep worth trusting — most of them paid for by a detector that was wrong first, including one that reported zero offenders while three pages were broken
+- [Defect-class sweeps](docs/engineering/defect-class-sweeps.md) - The thirty-seven classes of "code that looks wired and cannot work" found so far, what each sweep found (including the ones that came back clean), which mutation-tested guard keeps each closed, and thirty-one rules for writing a sweep worth trusting — most of them paid for by a detector that was wrong first, including one that reported zero offenders while three pages were broken and one that compared a baseline against itself
 
 **Infrastructure & operations**
 - [Database migrations](database/migrations/README.md) - Runner rules (never edit or rename an applied migration), the 019 gap, grandfathered duplicate prefixes, demo-data gating

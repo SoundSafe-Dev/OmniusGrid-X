@@ -14,7 +14,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The thirty-five classes
+## The thirty-seven classes
 
 The first five were all originally found in ERP. The sixth came out of the fifth, the
 seventh out of two failing tests that turned out to share a cause, and the eighth out of
@@ -65,6 +65,8 @@ to ask where else it could live.
 | A widget that vanishes when its query fails | every JSX gate on a query-derived value | **1 live: the fleet page's vehicle map, with no string to grep for** | `failureIsNotEmptiness.test.ts` (second detector) |
 | A claim rendered beside a handled error | every falsy ternary branch / coerced count outside an error branch | **6 live: gateway mTLS + queue, model badge, MLOps ×3, dashboard heading, strategic tiles** | the per-page suites; rule 24 |
 | A mutation whose failure reaches nobody | every `useMutation` in the frontend | **9 live across 3 files, incl. delete-user and a stale connection-test success** | `mutationFailureIsVisible.test.ts` |
+| A TS field the wire never carries | every `types/*.ts` field a component reads | **3 live: a relabelled odometer, a UUID slice shown as a work-order number, 3 of 5 cost figures** | `test_frontend_fields_exist_on_the_wire.py` |
+| A field the compliance check reads that nothing writes | `hos_drive_hours_remaining` and its neighbours | **1 live, and the worst of the session: every fleet cleared of HOS violations** | `test_hos_remaining_is_derived.py` |
 
 Twenty-nine of these carry a numbered section below. **Response-shape mismatch is the
 exception**: it was swept in the same pass as the `get_db` work and came back clean, so
@@ -2091,6 +2093,32 @@ one of its findings. The habit that catches it:
    a long `mutationFn`, and a `try/catch` around `mutateAsync`. The options object has
    exact bounds, so count braces. And treat a parse failure as "cannot tell": a sweep
    that turns one into a finding spends the reader's trust on noise. *(§ Rule 27.)*
+
+28. **A mock more generous than the wire hides the defect it was built to catch.** Every
+   test passed while the maintenance panel rendered a fabricated mileage, because the
+   fixtures were written from the TypeScript type and the type described fields the API
+   had never sent. `VITE_USE_MOCK` is global in `test/setup.ts`, so every unit and
+   Playwright test ran against them. Copy a fixture from what the SERIALIZER emits; when
+   type and wire disagree, the type is what is wrong. Deleting the field from the
+   interface then makes `tsc` name every place the fabrication was propped up.
+
+29. **A create that returns `{id, status}` cannot be checked.** The caller cannot tell
+   whether what it sent was stored, which is exactly how a silently dropped `priority`
+   survived in a form that posted it on every submission. Return the stored row and the
+   round trip becomes assertable in one call.
+
+30. **`.test()` on a global regex is stateful, and a guard that uses it is lying.**
+   `RegExp.prototype.test` advances `lastIndex` and resumes there, so consecutive calls
+   over different strings alternate on identical content. The emptiness sweep's own
+   vacuity check did this and had been passing by luck; editing four unrelated pages
+   dropped the count below its threshold and it failed with nothing wrong in the tree.
+   Use `.match()`, and assert the count is the same twice — the failure mode is
+   inconsistency, which one run cannot see.
+
+31. **A guard that derives its expected value from its own input asserts nothing.** A
+   baseline computed at import from the tree it is then compared against yields an empty
+   difference by construction. Pin baselines as literals. The tell is that the expected
+   and actual values come from the same function call.
 
 ---
 
