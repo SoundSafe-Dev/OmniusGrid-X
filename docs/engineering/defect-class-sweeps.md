@@ -2004,6 +2004,15 @@ one of its findings. The habit that catches it:
    the two branches have to differ. A negative assertion is a control, never a
    conclusion.
 
+   *And twice more while writing the analytics tests.* A negative assertion about a
+   chart passed against the defect because **Recharts draws nothing under jsdom** — it
+   measures a zero-size container — so "no bar at zero" was true of every possible input.
+   Stubbing the chart to expose its `data` prop made the assertion about what the page
+   decided to plot. Then the corrected version STILL passed, because it ran before the
+   component left its loading branch: no chart existed, so "no availability series" was
+   true because nothing had rendered at all. Waiting for the chart to exist first is what
+   finally made it fail against the old code, with the exact series it would have drawn.
+
    *Applied backwards over the existing suite:* 12 tests assert nothing but absences.
    Nine are correct — the property genuinely is an absence (`sends no tenant
    identifier`, `says nothing about truncation when the list is complete`) and each is

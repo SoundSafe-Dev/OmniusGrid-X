@@ -72,8 +72,22 @@ const wrap = () => {
   )
 }
 
+// This page issues SEVEN queries before the compliance tab can settle, and the default
+// `findBy*` timeout is one second. Under a full parallel run that is not enough — the
+// suite failed intermittently on two different assertions here, at ~2.2s, which is a
+// defect in the test rather than in the page. Every wait that depends on those queries
+// gets a realistic budget.
+const SETTLE = { timeout: 10000 }
+
 const openCompliance = async () => {
-  const tab = await screen.findByRole('button', { name: /compliance/i })
+  // WAIT FOR THE DATA BEFORE SWITCHING TABS. Clicking straight away is a race: the tab
+  // renders immediately, but the compliance panel is computed from `drivers`, and if the
+  // click lands while that query is still in flight the panel renders once from an empty
+  // list and the assertion races the refresh. Padding the timeout did not fix it — one
+  // run still failed at 5021ms — because the problem was ordering, not budget.
+  await waitFor(() => expect(getDrivers).toHaveBeenCalled(), SETTLE)
+  await waitFor(() => expect(getDrivers.mock.results.length).toBeGreaterThan(0), SETTLE)
+  const tab = await screen.findByRole('button', { name: /compliance/i }, SETTLE)
   fireEvent.click(tab)
 }
 
@@ -112,7 +126,9 @@ describe('TransportationManagement — HOS compliance', () => {
     // that never shows the green tick at all.
     wrap()
     await openCompliance()
-    expect(await screen.findByText('No HOS violations detected')).toBeInTheDocument()
+    expect(
+      await screen.findByText('No HOS violations detected', undefined, SETTLE),
+    ).toBeInTheDocument()
   })
 
   it('does NOT clear the fleet when the drivers could not be loaded', async () => {
@@ -121,10 +137,10 @@ describe('TransportationManagement — HOS compliance', () => {
     getDrivers.mockRejectedValue(new Error('driver service unreachable'))
     wrap()
     await openCompliance()
-    await waitFor(() =>
-      expect(screen.queryByText('No HOS violations detected')).not.toBeInTheDocument(),
-    )
-    expect(await screen.findByText(/HOS status unknown/i)).toBeInTheDocument()
+    expect(
+      await screen.findByText(/HOS status unknown/i, undefined, SETTLE),
+    ).toBeInTheDocument()
+    expect(screen.queryByText('No HOS violations detected')).not.toBeInTheDocument()
   })
 
   it('says plainly that this is not a clean bill of compliance', async () => {
@@ -133,7 +149,7 @@ describe('TransportationManagement — HOS compliance', () => {
     getDrivers.mockRejectedValue(new Error('driver service unreachable'))
     wrap()
     await openCompliance()
-    const notice = await screen.findByRole('alert')
+    const notice = await screen.findByRole('alert', undefined, SETTLE)
     expect(notice.textContent).toMatch(/not a clean bill of compliance/i)
   })
 
@@ -144,8 +160,9 @@ describe('TransportationManagement — HOS compliance', () => {
     )
     wrap()
     await openCompliance()
-    await waitFor(() =>
-      expect(screen.queryByText('No HOS violations detected')).not.toBeInTheDocument(),
+    await waitFor(
+      () => expect(screen.queryByText('No HOS violations detected')).not.toBeInTheDocument(),
+      SETTLE,
     )
     expect(screen.queryByText(/HOS status unknown/i)).not.toBeInTheDocument()
   })
@@ -154,7 +171,7 @@ describe('TransportationManagement — HOS compliance', () => {
 describe('TransportationManagement — a failed list is not an empty one', () => {
   it('distinguishes an empty shipment board from an unreadable one', async () => {
     wrap()
-    expect(await screen.findByText('No shipments found')).toBeInTheDocument()
+    expect(await screen.findByText('No shipments found', undefined, SETTLE)).toBeInTheDocument()
 
     getShipments.mockRejectedValue(new Error('unreachable'))
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -165,14 +182,14 @@ describe('TransportationManagement — a failed list is not an empty one', () =>
         </TooltipProvider>
       </QueryClientProvider>,
     )
-    await waitFor(() => expect(screen.getAllByRole('alert').length).toBeGreaterThan(0))
+    await waitFor(() => expect(screen.getAllByRole('alert').length).toBeGreaterThan(0), SETTLE)
   })
 
   it('sends no tenant identifier on any transportation query', async () => {
     // get_carriers and get_drivers used to take a client-supplied organization_id, and
     // get_carrier fetched by id with no org check at all.
     wrap()
-    await waitFor(() => expect(getDrivers).toHaveBeenCalled())
+    await waitFor(() => expect(getDrivers).toHaveBeenCalled(), SETTLE)
     const everything = JSON.stringify([
       getShipments.mock.calls,
       getCarriers.mock.calls,
