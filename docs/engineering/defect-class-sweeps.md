@@ -14,7 +14,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The twenty-nine classes
+## The thirty classes
 
 The first five were all originally found in ERP. The sixth came out of the fifth, the
 seventh out of two failing tests that turned out to share a cause, and the eighth out of
@@ -52,8 +52,9 @@ to the frontend/backend seam.
 | An endpoint the README documents but the app never served | all 124 API-Reference rows | **22 wrong — 404 for anyone who followed them** | `test_documented_endpoints_exist.py` |
 | A source file the docs point at that is not in the repo | every filename cited in three docs | **1 fiction, 5 omissions** | `test_documented_files_exist.py` |
 | A frontend catch that swallows a failure | every `catch` in `src` | **clean — all 10 report or recover** | none; see class 28 |
+| A failed query rendered as an empty result | every querying component | **2 live: the yard and the telemetry chart** | `failureIsNotEmptiness.test.ts` |
 
-Twenty-eight of these carry a numbered section below. **Response-shape mismatch is the
+Twenty-nine of these carry a numbered section below. **Response-shape mismatch is the
 exception**: it was swept in the same pass as the `get_db` work and came back clean, so
 it is written up inside class 10 rather than given a heading of its own. The row stays in
 this table because a clean result that is not listed is indistinguishable from a check
@@ -1711,6 +1712,41 @@ those two statically means knowing what each screen does with its error state. T
 per-page work, and it is what the page tests added this week actually assert: `AuditLogs`
 must not render a fetch failure as an empty trail, and `ErrorTriageDetail` must not render
 a redaction as a missing traceback.
+
+## 29. A failed query rendered as an empty result — **2 live**
+
+Class 28 came back clean: no frontend `catch` swallows a failure. This is where the
+failures actually go instead. React Query does not need a `catch` to lose one — on error
+`data` is simply `undefined`, so `data?.items ?? []` renders an empty list and the
+component never mentions that anything went wrong.
+
+The consequence is not a missing error message. It is a **claim about the world**:
+
+* **`YardManagement`** — a failed trailer query rendered *"No trailers found"*. A yard
+  manager reads that as an operational fact and dispatches on it.
+* **`TelemetryHistoryChart`** — a failed history query rendered *"No history for this
+  metric"*, which an engineer diagnosing a machine reads as *"this sensor produced
+  nothing in that window"*, concluding something about the equipment from a failure of
+  the request.
+
+Both now say a failure is a failure, and both offer a retry rather than a dead end. The
+empty states stay, because "the yard is empty" and "the sensor is quiet" are real and
+useful answers — they simply are not the same answer.
+
+**How it was found, which is the part worth keeping.** Not by this sweep. It came out of
+writing a page test whose first version asserted only that a known trailer was *absent* —
+true in the empty state AND the error state, so it passed against the defect while
+claiming to guard it. Asserting each branch by its own text is what made the page's
+silence visible; the sweep was written afterwards, and found the second one immediately.
+
+That is the third time this week a weak assertion has hidden a live defect from a test
+written specifically to catch it. The pattern is always the same shape: asserting that
+something is *not there* is satisfied by every reason it might not be there.
+
+**Scope.** A component qualifies when it queries AND renders a literal "No …" empty
+state. Both halves are load-bearing: the query is what can fail, and the empty string is
+where the failure lands. A presentational list handed its rows as props has nothing to
+distinguish and is correctly ignored.
 
 ## Writing a sweep that is worth trusting
 

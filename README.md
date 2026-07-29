@@ -327,7 +327,7 @@ operator sees "showing the most recent 10 of more than 10" instead of a confiden
 answer. Verified end to end: 149 rows synced from live Dataverse, `?limit=10` returns 10
 with `X-Result-Truncated: true`.
 
-**Twenty-nine defect classes have now been swept platform-wide** — recorded in
+**Thirty defect classes have now been swept platform-wide** — recorded in
 [`docs/engineering/defect-class-sweeps.md`](docs/engineering/defect-class-sweeps.md) with
 what each found and which guard keeps it closed. Four started in ERP; most of the rest came
 out of the ones before them. Three came back clean, which is worth writing down: "proven
@@ -510,8 +510,8 @@ the UI were all already there, only the write was missing — and the component 
 failures. The other three were uncalled and were removed. Notably a hand fix of this exact
 class had already run (FS-15, "routes that never existed") and left these behind.
 
-**Both suites are green: backend 2,166 passed, frontend 233 passed, 0 failed** — across
-187 backend and 48 frontend test files. Every guard listed above is mutation-tested:
+**Both suites are green: backend 2,166 passed, frontend 242 passed, 0 failed** — across
+187 backend and 49 frontend test files. Every guard listed above is mutation-tested:
 reintroduce the defect and the test must fail, checked individually, because a guard that
 cannot fail is indistinguishable from one that passes.
 
@@ -2793,7 +2793,7 @@ The ERP integration system correlates ERP data with operational telemetry to pro
 - [Implementation Summary](IMPLEMENTATION_SUMMARY.md) - Complete feature inventory
 
 **Engineering practice**
-- [Defect-class sweeps](docs/engineering/defect-class-sweeps.md) - The twenty-nine classes of "code that looks wired and cannot work" found so far, what each sweep found (including the three that came back clean), which mutation-tested guard keeps each closed, and twenty rules for writing a sweep worth trusting — most of them paid for by a detector that was wrong first
+- [Defect-class sweeps](docs/engineering/defect-class-sweeps.md) - The thirty classes of "code that looks wired and cannot work" found so far, what each sweep found (including the three that came back clean), which mutation-tested guard keeps each closed, and twenty rules for writing a sweep worth trusting — most of them paid for by a detector that was wrong first
 
 **Infrastructure & operations**
 - [Database migrations](database/migrations/README.md) - Runner rules (never edit or rename an applied migration), the 019 gap, grandfathered duplicate prefixes, demo-data gating
