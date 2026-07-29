@@ -609,15 +609,25 @@ export interface RepairOrder {
   id: string;
   vehicleId: string;
   vehicleNumber: string;
-  workOrderNumber: string;
+  /** No work-order number exists in `repair_orders`. It was synthesised from the first
+   *  eight characters of the row's UUID and displayed as the heading of every row. */
+  workOrderNumber?: string;
   issueDescription: string;
   reportedDate: string;
   startedDate?: string;
   completedDate?: string;
   status: 'reported' | 'diagnosing' | 'in_progress' | 'waiting_parts' | 'completed' | 'cancelled';
+  /** MISMATCHED WITH THE SERVER, deliberately left as-is for now: `repair_orders.priority`
+   *  is `low | medium | high | critical`, so 'medium' and 'critical' arrive here as values
+   *  this union does not contain and `getPriorityColor` falls through to its default.
+   *  Reconciling the two vocabularies is a product decision (which set of words does the
+   *  operator use?), not a mechanical fix — recorded in defect-class-sweeps.md. */
   priority: 'low' | 'normal' | 'high' | 'urgent';
   assignedTechnician?: string;
-  estimatedCost: number;
+  /** What the repair cost (`repair_orders.cost`). NOT an estimate — the panel labelled it
+   *  "estimated" and coerced a missing value to 0, so a repair with no cost recorded
+   *  displayed as a free one. */
+  cost?: number;
   actualCost?: number;
   partsUsed: PartUsed[];
   laborHours?: number;

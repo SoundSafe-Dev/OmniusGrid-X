@@ -2551,3 +2551,40 @@ was stored, which is exactly how a silently dropped `priority` survived in a for
 posted it on every submission. Returning the stored row makes the round trip assertable in
 one call — and the test that now pins it (`what was sent is what comes back`) is the one
 that would have caught all three defects on the day they shipped.
+
+## Sweeping the whole contract: TS fields the wire never carries
+
+`currentMileage` suggested a general question — *which other fields does the frontend
+declare, read and render that no backend source ever emits?* — and it is mechanically
+answerable. The sweep builds the backend's **wire vocabulary** (every string key in a
+dict literal across `app/`, every model and schema attribute, every `Field(alias=…)`,
+each also in camelCase) plus the casing seam's `inAliases` values, then reports every
+field declared in `types/*.ts` that is absent from it **and read somewhere in a component**.
+
+Controlled against the real file: with the pre-fix `logistics.ts` and panel restored it
+reports `MaintenanceSchedule.currentMileage` and a total of 61; with the fix in place, 60.
+
+**53 after the alias correction**, and the `RepairOrder` cluster is the same defect family
+in the same component — the adapter beside `adaptSchedule`:
+
+| rendered | actually | consequence |
+|---|---|---|
+| `workOrderNumber` | `id.slice(0, 8)` | eight characters of a UUID, as the row heading a technician quotes to a vendor |
+| `estimatedCost` … "estimated" | `repair_orders.cost`, `?? 0` | a repair with no cost recorded displayed as **"$0 estimated"** — a free repair, and an estimate nobody made |
+| `priority` | `?? 'medium'` | see the enum note below |
+
+Renaming is fine; inventing is not. `title → issueDescription` and `openedAt →
+reportedDate` are honest maps onto columns that exist. The two above were not maps.
+
+**Recorded, not fixed:** `repair_orders.priority` is `low | medium | high | critical` and
+the TypeScript union is `low | normal | high | urgent`, so two of the four server values
+arrive as strings the union does not contain and `getPriorityColor` falls through to its
+default. Reconciling the vocabularies is a product decision — which words does the
+operator use? — not a mechanical fix. `partsUsed`, `laborHours`, `assignedTechnician` and
+`actualCost` have no columns at all; every one is rendered conditionally, so they are
+simply never shown. That is a missing feature, not a false statement, and it is left as
+one rather than faked.
+
+The remaining ~45 entries are recorded here as a work-list rather than swept in one pass:
+each needs the same judgement — is this field renamed, absent, or invented? — and the
+three answers have three different fixes.

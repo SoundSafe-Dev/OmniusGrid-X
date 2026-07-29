@@ -50,16 +50,31 @@ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
  */
 const adaptSchedule = (s: any): MaintenanceSchedule => ({ ...s });
 
+/**
+ * Renaming is fine here; inventing is not. `repair_orders` really does store title,
+ * opened_at, cost, priority and vehicle_id, so mapping those onto the names the panel
+ * reads is honest. Two entries were not renames:
+ *
+ *   `workOrderNumber: o.id.slice(0, 8)` — the first eight characters of a UUID, rendered
+ *   as the heading of every row. A technician reads that as a work-order number and
+ *   quotes it to a vendor. No system ever issued it. There is no work-order number in
+ *   this schema, so the row is keyed on the identifier that does exist.
+ *
+ *   `estimatedCost: … ?? 0` — the column is `cost`, what the repair COST, and a null one
+ *   became "$0" under a label reading "estimated". A repair with no cost recorded is not
+ *   a free repair. It stays undefined and the panel omits the line.
+ *
+ * `partsUsed`, `laborHours`, `assignedTechnician` and `actualCost` have no columns at
+ * all; each is rendered conditionally, so they are simply never shown. Recorded rather
+ * than faked — see the note in defect-class-sweeps.md.
+ */
 const adaptRepairOrder = (o: any): RepairOrder => ({
   ...o,
-  estimatedCost: o?.estimatedCost ?? o?.cost ?? 0,
+  cost: o?.cost,
   issueDescription: o?.issueDescription ?? o?.title ?? '',
   reportedDate: o?.reportedDate ?? o?.openedAt ?? '',
   partsUsed: o?.partsUsed ?? [],
-  workOrderNumber:
-    o?.workOrderNumber ?? (typeof o?.id === 'string' ? o.id.slice(0, 8) : ''),
   vehicleNumber: o?.vehicleNumber ?? o?.vehicleId ?? '',
-  priority: (o?.priority ?? 'medium') as RepairOrder['priority'],
 });
 
 export const maintenanceApi = {

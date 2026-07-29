@@ -249,7 +249,13 @@ export const MaintenancePanel: FC = () => {
                 <div className="flex items-start justify-between">
                   <div className="flex-1">
                     <div className="flex items-center gap-2">
-                      <span className="font-semibold">{order.workOrderNumber}</span>
+                      {/* `workOrderNumber` was the first eight characters of the row's
+                          UUID — an identifier no system issued, displayed as the heading a
+                          technician would quote to a vendor. The schema has no work-order
+                          number; the row is headed by its issue instead. */}
+                      {order.workOrderNumber && (
+                        <span className="font-semibold">{order.workOrderNumber}</span>
+                      )}
                       <span className={`px-2 py-0.5 rounded text-xs ${getStatusColor(order.status)}`}>
                         {order.status?.replace(/_/g, ' ')}
                       </span>
@@ -282,9 +288,18 @@ export const MaintenancePanel: FC = () => {
                     )}
                   </div>
                   <div className="text-right">
-                    <p className="font-medium">${order.estimatedCost.toLocaleString()}</p>
-                    <p className="text-xs text-gray-500">estimated</p>
-                    {order.actualCost && (
+                    {/* WAS `${order.estimatedCost}` with the caption "estimated". It was
+                        fed from `repair_orders.cost` — what the repair COST — and a null
+                        one was coerced to 0, so a repair with nothing recorded against it
+                        displayed as "$0 estimated": a free repair, and an estimate that
+                        nobody made. Omitted when there is no figure. */}
+                    {order.cost != null && (
+                      <>
+                        <p className="font-medium">${order.cost.toLocaleString()}</p>
+                        <p className="text-xs text-gray-500">cost</p>
+                      </>
+                    )}
+                    {order.actualCost != null && (
                       <p className="text-xs text-green-600">${order.actualCost.toLocaleString()} actual</p>
                     )}
                   </div>

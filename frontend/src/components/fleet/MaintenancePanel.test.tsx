@@ -141,6 +141,70 @@ describe('MaintenancePanel — the priority it shows', () => {
   })
 })
 
+describe('MaintenancePanel — the repair orders tab', () => {
+  // EXACTLY what `_order_out` emits. `repair_orders` has no work-order number, no parts
+  // list, no labour hours and no technician — the adapter used to manufacture the first
+  // two and the panel renders the rest conditionally.
+  const order = (over: Record<string, unknown> = {}) => ({
+    id: '9f1c2b7e-4a3d-4e55-b1aa-77c0e5d13f42',
+    vehicleId: 'TRK-001',
+    vehicleNumber: 'TRK-001',
+    title: 'Brake pads worn past limit',
+    issueDescription: 'Brake pads worn past limit',
+    status: 'in_progress',
+    priority: 'high',
+    vendor: 'Acme Brakes',
+    cost: 480,
+    category: 'brakes',
+    openedAt: '2026-07-20T00:00:00Z',
+    reportedDate: '2026-07-20T00:00:00Z',
+    partsUsed: [],
+    ...over,
+  })
+
+  const openRepairs = async (o = order()) => {
+    getActiveRepairOrders.mockResolvedValue([o])
+    render(<MaintenancePanel />)
+    await screen.findByText('15,000 mile service')
+    fireEvent.click(screen.getByRole('button', { name: /repair orders/i }))
+    // findAllBy: the description is the row's body text, and is also its heading when a
+    // real work-order number exists, so the singular query is ambiguous by design.
+    await screen.findAllByText('Brake pads worn past limit')
+  }
+
+  it('shows the recorded cost as a cost, not as an estimate', async () => {
+    await openRepairs()
+    expect(screen.getByText('$480')).toBeInTheDocument()
+    expect(screen.getByText('cost')).toBeInTheDocument()
+    // It was fed from `repair_orders.cost` — what the repair COST — under a caption
+    // reading "estimated". Nobody estimated anything.
+    expect(screen.queryByText('estimated')).not.toBeInTheDocument()
+  })
+
+  it('shows no figure at all for a repair with no cost recorded', async () => {
+    // THE ASSERTION THIS BLOCK EXISTS FOR. `?? 0` rendered "$0 estimated" — a free
+    // repair, and an estimate nobody made.
+    await openRepairs(order({ cost: undefined }))
+    expect(screen.queryByText('$0')).not.toBeInTheDocument()
+    expect(screen.queryByText('cost')).not.toBeInTheDocument()
+  })
+
+  it('does not head the row with an identifier no system issued', async () => {
+    // `workOrderNumber` was `id.slice(0, 8)` — eight characters of a UUID, rendered as
+    // the heading a technician would quote to a vendor. With no real number the heading
+    // is simply absent; the description below already identifies the row.
+    await openRepairs()
+    expect(screen.queryByText('9f1c2b7e')).not.toBeInTheDocument()
+    expect(screen.getAllByText('Brake pads worn past limit')).toHaveLength(1)
+  })
+
+  it('uses a real work-order number when one is supplied', async () => {
+    // The positive control: dropping the field entirely would satisfy the test above.
+    await openRepairs(order({ workOrderNumber: 'WO-2026-0042' }))
+    expect(screen.getByText('WO-2026-0042')).toBeInTheDocument()
+  })
+})
+
 describe('MaintenancePanel — creating a schedule', () => {
   // QUERIED BY PLACEHOLDER AND INPUT TYPE, not by label. The form's `<label>`s carry no
   // `htmlFor` and its inputs no `id`, so `getByLabelText` cannot associate them — which

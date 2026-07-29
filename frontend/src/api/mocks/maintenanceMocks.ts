@@ -123,7 +123,7 @@ export const mockRepairOrders: RepairOrder[] = [
     status: 'in_progress',
     priority: 'high',
     assignedTechnician: 'Steve Williams',
-    estimatedCost: 2500,
+    cost: 2500,
     actualCost: 1850,
     partsUsed: [
       { partNumber: 'TRN-4521', description: 'Transmission Filter Kit', quantity: 1, unitCost: 85 },
@@ -145,7 +145,7 @@ export const mockRepairOrders: RepairOrder[] = [
     status: 'completed',
     priority: 'high',
     assignedTechnician: 'Mike Rodriguez',
-    estimatedCost: 800,
+    cost: 800,
     actualCost: 675,
     partsUsed: [
       { partNumber: 'SPK-SET-6', description: 'Spark Plug Set (6)', quantity: 1, unitCost: 85 },
@@ -165,7 +165,7 @@ export const mockRepairOrders: RepairOrder[] = [
     status: 'waiting_parts',
     priority: 'urgent',
     assignedTechnician: 'Lisa Thompson',
-    estimatedCost: 1200,
+    cost: 1200,
     actualCost: undefined,
     partsUsed: [],
     laborHours: undefined,
@@ -183,7 +183,7 @@ export const mockRepairOrders: RepairOrder[] = [
     status: 'completed',
     priority: 'normal',
     assignedTechnician: 'Tom Anderson',
-    estimatedCost: 200,
+    cost: 200,
     actualCost: 175,
     partsUsed: [
       { partNumber: 'MAF-SNS-42', description: 'Mass Air Flow Sensor', quantity: 1, unitCost: 125 },
@@ -203,7 +203,7 @@ export const mockRepairOrders: RepairOrder[] = [
     status: 'completed',
     priority: 'low',
     assignedTechnician: 'Mike Rodriguez',
-    estimatedCost: 150,
+    cost: 150,
     actualCost: 140,
     partsUsed: [
       { partNumber: 'VSS-78', description: 'Vehicle Speed Sensor', quantity: 1, unitCost: 85 },
@@ -221,7 +221,7 @@ export const mockRepairOrders: RepairOrder[] = [
     status: 'reported',
     priority: 'high',
     assignedTechnician: undefined,
-    estimatedCost: 450,
+    cost: 450,
     actualCost: undefined,
     partsUsed: [],
     laborHours: undefined,
