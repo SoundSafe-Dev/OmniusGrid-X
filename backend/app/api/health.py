@@ -7,7 +7,7 @@ from typing import Any
 from uuid import UUID
 
 from aiokafka import AIOKafkaConsumer
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
     Counter,
@@ -546,20 +546,47 @@ async def set_maintenance_mode(
     asset_id: UUID,
     enabled: bool = True,
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     """Manual override: Set asset to maintenance mode (blocks game-theoretic commands)"""
-    await db.execute(
+    # SCOPED TO THE CALLER'S ORGANISATION, and the rowcount is checked.
+    #
+    # The session is `get_tenant_db`, not `get_db`. `assets` is FORCE ROW LEVEL SECURITY,
+    # so without the `app.current_org_id` GUC the policy hides every row and the UPDATE
+    # matches nothing — an explicit `organization_id` predicate cannot rescue a row RLS
+    # has already removed. Adding the predicate first and testing it was what made that
+    # obvious: the caller's OWN asset came back 404.
+    #
+    # This updated `assets` by id alone. Two separate reasons it could touch nothing: the
+    # asset might belong to another tenant, and `assets` is FORCE ROW LEVEL SECURITY
+    # while this handler runs on `get_db`, which sets no `app.current_org_id`. Under RLS
+    # an INSERT is rejected loudly and an UPDATE is FILTERED — it succeeds having matched
+    # no rows — so the endpoint returned 200 and told the operator "Game-theoretic engine
+    # commands are blocked" for a write that never happened.
+    #
+    # The explicit organisation predicate does the scoping rather than relying on a GUC
+    # this session does not set, and the rowcount turns a silent miss into a 404.
+    result = await db.execute(
         text(
             """
             UPDATE assets
             SET maintenance_mode = :enabled,
                 updated_at = NOW()
             WHERE id = :asset_id
+              AND organization_id = :org
             """
         ),
-        {"enabled": enabled, "asset_id": str(asset_id)},
+        {
+            "enabled": enabled,
+            "asset_id": str(asset_id),
+            "org": str(current_user.organization_id),
+        },
     )
+    if result.rowcount == 0:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Asset not found in your organization.",
+        )
     await db.commit()
 
     mode = "enabled" if enabled else "disabled"

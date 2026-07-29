@@ -120,6 +120,10 @@ class Asset(Base):
     sensor_class = Column(String(50), nullable=True)
     media_config = Column(JSON, default={})
     is_active = Column(Boolean, default=True)
+    # Operator override read by TacticalEngine._is_maintenance_mode to suppress control
+    # commands. Added in migration 053 — the endpoint and the reader both predated the
+    # column, so the write 500'd and the read failed safe, silently blocking everything.
+    maintenance_mode = Column(Boolean, nullable=False, server_default=text("false"))
     last_seen = Column(DateTime(timezone=True))
     agent_id = Column(String(255))
     agent_version = Column(String(100))

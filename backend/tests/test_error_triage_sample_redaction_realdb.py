@@ -143,3 +143,71 @@ class TestTheListWasAlreadySafe:
         for item in items:
             assert "message_sample" not in item
             assert "traceback_sample" not in item
+
+
+class TestActingOnAnotherTenantsError:
+    """Reading a shared row is defensible; mutating one is not.
+
+    The redaction above fixed the READ side — another tenant's message and traceback are
+    withheld while the triage metadata stays visible, because `error_events` is keyed on
+    `fingerprint` alone and one row genuinely is shared by every tenant hitting the same
+    bug.
+
+    The WRITE side was still open. `PATCH /admin/errors/{fingerprint}` updated by
+    fingerprint alone, so one tenant's admin could resolve or reopen an error owned by
+    another and change what that tenant saw in their own triage queue.
+    """
+
+    async def test_the_caller_can_triage_their_own_error(self, client_a, errors):
+        """The positive control. Without it, "cannot triage another's" is satisfied by
+        an endpoint that triages nothing at all."""
+        response = await client_a.patch(
+            f"/api/v1/admin/errors/{FP_OWN}", json={"status": "acknowledged"}
+        )
+        assert response.status_code == 200, response.text
+
+    async def test_another_tenants_error_cannot_be_triaged(self, client_a, errors):
+        """THE ASSERTION THIS CLASS EXISTS FOR."""
+        response = await client_a.patch(
+            f"/api/v1/admin/errors/{FP_OTHER}", json={"status": "acknowledged"}
+        )
+        assert response.status_code == 403, (
+            f"org A changed the triage status of an error owned by org B "
+            f"(got {response.status_code})"
+        )
+
+    async def test_the_refusal_explains_the_asymmetry(self, client_a, errors):
+        """"Forbidden" alone reads as a permissions bug on a page that plainly shows the
+        row. The message has to say that viewing and triaging differ here."""
+        response = await client_a.patch(
+            f"/api/v1/admin/errors/{FP_OTHER}", json={"status": "acknowledged"}
+        )
+        assert "another organization" in response.json()["detail"].lower()
+
+    async def test_the_other_tenants_status_is_untouched(
+        self, client_a, errors, admin_sync_url
+    ):
+        """A 403 that had already written would be worse than no check at all."""
+        import psycopg2
+
+        await client_a.patch(
+            f"/api/v1/admin/errors/{FP_OTHER}", json={"status": "acknowledged"}
+        )
+        conn = psycopg2.connect(admin_sync_url)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT status FROM error_events WHERE fingerprint = %s", (FP_OTHER,)
+                )
+                assert cur.fetchone()[0] == "open"
+        finally:
+            conn.close()
+
+    async def test_an_unattributed_error_is_still_triageable(self, client_a, errors):
+        """A row with no organization_id is platform-level — it happened outside a tenant
+        request or predates attribution. It stays writable for the same reason its
+        samples stay readable: it belongs to nobody in particular."""
+        response = await client_a.patch(
+            f"/api/v1/admin/errors/{FP_ORPHAN}", json={"status": "acknowledged"}
+        )
+        assert response.status_code == 200, response.text

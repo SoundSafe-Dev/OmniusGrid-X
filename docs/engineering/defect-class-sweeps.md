@@ -2175,3 +2175,77 @@ second entry silently won and `"delivered"` was unreachable.
 Every registered transformer is now called once with a realistic vendor record, which is
 the cheapest possible check that a route's central claim — *this transformer works* — is
 true.
+
+---
+
+## Maintenance mode: a feature that could not work, and the fix that would have made it dangerous
+
+`POST /admin/assets/{id}/maintenance` writes `assets.maintenance_mode`;
+`TacticalEngine._is_maintenance_mode` reads it to decide whether a control command may be
+dispatched to a machine. `frontend/src/api/assets.ts` calls the endpoint. **The column did
+not exist in the schema.**
+
+Three defects, stacked, each hiding the one beneath it.
+
+**1. No column.** The endpoint raised `UndefinedColumnError` and returned 500 on every
+call. Nothing in the product could put a machine into maintenance.
+
+**2. The reader failed safe, so nobody found out.** Its `except` returned `True` — *in
+maintenance* — with a comment already anticipating the missing column ("the query can also
+error on deployments where assets.maintenance_mode doesn't exist"). Failing safe was the
+right call and it is exactly what made the gap invisible: every asset looked suppressed,
+which is indistinguishable from a working feature nobody had used.
+
+**3. The read could never have worked either.** The body was
+
+```python
+row = result.fetchone()
+return bool(row and row[0])
+```
+
+on `AsyncSessionLocal`, which sets no tenant GUC because nothing here runs behind a
+request. `assets` is FORCE ROW LEVEL SECURITY and the app connects as `tenant_user`, a
+non-owner, so the policy predicate is NULL and **every row is filtered**. `row` is `None`,
+and `bool(None and ...)` is `False`: *not in maintenance*.
+
+So **adding the column alone would have flipped the engine from suppress-everything to
+suppress-nothing** — commands dispatched to machines an operator had explicitly locked
+out. A migration that looked like completing a feature would have been the most dangerous
+change in the sequence. The read had to be fixed in the same commit as the write, and this
+is the general shape: *when a fail-safe has been absorbing a defect, removing the defect
+releases whatever the fail-safe was hiding.* Check what the safe branch was covering
+before you delete its cause.
+
+The reader now has three outcomes rather than two — in maintenance / not in maintenance /
+**could not determine** — with the last folded into "do not command" and logged as
+`maintenance_mode_asset_not_visible`. It accepts an `organization_id` and binds the GUC
+when given, so a caller that can name its tenant gets a real answer; one that cannot gets
+a deliberate suppression instead of an accidental clearance. Nothing upstream carries a
+tenant today (the feature vector is `asset_id`-keyed from the edge), which is itself worth
+recording.
+
+**The write had the class-10 defect too.** It updated by `id` alone — not scoped to the
+caller — and ran on `get_db`. Under RLS an INSERT is rejected loudly and **an UPDATE is
+filtered silently**: it succeeds having matched nothing. Adding an `organization_id`
+predicate was not enough and testing it proved so — the caller's *own* asset came back
+404, because RLS had already removed the row before the predicate could match it. The
+handler is now on `get_tenant_db` with the rowcount checked, which is the only thing that
+separates "done" from "matched nothing".
+
+## Rule 22 — when a fail-safe stops firing, something it was hiding starts happening
+
+A `try/except` that returns the conservative answer, an `or 0`, a `?? []`, a 404 branch
+that is reached for two different reasons: each one converts a defect into a survivable
+behaviour, and survivable behaviour does not get investigated. Before removing the cause,
+work out what the safe branch was standing in for — the fix is complete only when the code
+downstream of it is correct too, and the moment of maximum risk is the commit that makes
+the error go away.
+
+## Rule 23 — a suppression assertion is satisfied by a broken connection
+
+Four of the new engine tests assert `is True`, and `True` is also what the `except` branch
+returns for a database that never answered. Three of them passed on the first run against
+`role "placeholder" does not exist` — the engine dials `AsyncSessionLocal` directly and
+only the `app` fixture rebinds it at the testcontainer. Rule 21 again, one layer down: any
+suite whose assertions are all on the safe side of a fail-safe needs a test that produces
+the *unsafe* side through the same path, or it is testing that the code is unreachable.

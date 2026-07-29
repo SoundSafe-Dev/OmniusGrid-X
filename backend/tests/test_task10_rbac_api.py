@@ -433,16 +433,20 @@ async def test_maintenance_update_uses_bound_parameters():
         async def execute(self, statement, parameters):
             self.statement = statement
             self.parameters = parameters
+            # The handler now checks `rowcount`: an UPDATE under RLS succeeds having
+            # matched nothing, so "did it commit" was never the question.
+            return SimpleNamespace(rowcount=1)
 
         async def commit(self):
             self.committed = True
 
     asset_id = uuid4()
+    org_id = uuid4()
     session = FakeSession()
     response = await health_api.set_maintenance_mode(
         asset_id=asset_id,
         enabled=True,
-        current_user=SimpleNamespace(id=uuid4(), role="admin"),
+        current_user=SimpleNamespace(id=uuid4(), role="admin", organization_id=org_id),
         db=session,
     )
 
@@ -452,7 +456,11 @@ async def test_maintenance_update_uses_bound_parameters():
     assert session.parameters == {
         "enabled": True,
         "asset_id": str(asset_id),
+        # The write is scoped to the caller's own organisation — it used to update by
+        # id alone, so an asset id from another tenant was a valid target.
+        "org": str(org_id),
     }
+    assert ":org" in sql
     assert session.committed is True
     assert response["asset_id"] == str(asset_id)
 

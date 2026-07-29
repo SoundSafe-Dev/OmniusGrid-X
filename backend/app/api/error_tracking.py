@@ -382,10 +382,33 @@ async def update_error_status(
 ):
     """Transition an error through the triage workflow (validated transitions)."""
     row = (await db.execute(text(
-        "SELECT status FROM error_events WHERE fingerprint = :fp"
+        "SELECT status, organization_id FROM error_events WHERE fingerprint = :fp"
     ), {"fp": fingerprint})).mappings().first()
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Error not found")
+
+    # YOU MAY READ EVERY ERROR AND ACT ONLY ON YOUR OWN.
+    #
+    # `error_events` is keyed on `fingerprint` alone — one row per distinct error for the
+    # entire platform — so this endpoint is cross-tenant by construction, and
+    # `require_admin` means a TENANT admin because no platform-admin role exists yet.
+    # The READ side already reflects that: `_visible_sample` withholds another tenant's
+    # message and traceback while leaving the triage metadata visible.
+    #
+    # The WRITE side did not. This updated by fingerprint alone, so one tenant's admin
+    # could resolve or reopen an error owned by another and change what that tenant sees
+    # in their own triage queue. Reading a shared row is defensible; mutating one on
+    # somebody else's behalf is not.
+    #
+    # An unattributed row (organization_id IS NULL) is platform-level — it happened
+    # outside a tenant request or predates attribution — and stays writable by any admin,
+    # for the same reason its samples stay readable: it belongs to nobody in particular.
+    owner = row["organization_id"]
+    if owner is not None and str(owner) != str(current_user.organization_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This error belongs to another organization; you can view it but not triage it.",
+        )
 
     current = row["status"]
     target = payload.status
@@ -395,20 +418,34 @@ async def update_error_status(
             detail=f"Invalid transition: {current} -> {target}",
         )
 
-    await db.execute(text(
+    # The ownership predicate is repeated in the UPDATE rather than trusted from the
+    # SELECT above: between the two statements is a gap, and the check that matters is
+    # the one the write itself carries.
+    result = await db.execute(text(
         """
         UPDATE error_events
         SET status = :status,
             status_changed_by = :user_id,
             status_changed_at = :now
         WHERE fingerprint = :fp
+          AND (organization_id IS NULL OR organization_id = :org)
         """
     ), {
         "status": target,
         "user_id": current_user.id,
         "now": datetime.now(timezone.utc),
         "fp": fingerprint,
+        "org": current_user.organization_id,
     })
+    # ROWCOUNT IS CHECKED BECAUSE AN UPDATE FAILS QUIETLY. Under row-level security an
+    # INSERT is REJECTED by the policy's WITH CHECK, loudly; an UPDATE is FILTERED, so it
+    # succeeds and touches nothing. Without this, a write that matched no rows returned
+    # 200 and the triage page showed the new status until the next refresh undid it.
+    if result.rowcount == 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The error changed or is no longer yours to triage; reload and retry.",
+        )
     await db.commit()
 
     logger.info(

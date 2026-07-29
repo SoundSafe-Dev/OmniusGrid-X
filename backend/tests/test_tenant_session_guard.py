@@ -73,13 +73,22 @@ KNOWN_GET_DB_ON_RLS: dict[str, int] = {
     # no active assets on a running platform reads as an idle system, not a broken
     # query. It is now tenant-scoped.
     #
-    # The remaining 4 sites are the UNAUTHENTICATED probes (/health/live, /ready,
+    # 3, not 4. /admin/assets/{id}/maintenance was the fourth, and it was the worst of
+    # them: it WROTE. `assets` is FORCE RLS, and under RLS an UPDATE is filtered rather
+    # than rejected — it succeeds having matched no rows — so putting a machine into
+    # maintenance returned 200 and changed nothing. (It never got that far in practice:
+    # assets.maintenance_mode did not exist at all until migration 053, so the handler
+    # 500'd on every call while the frontend went on calling it.) Now on get_tenant_db,
+    # scoped to the caller's organisation, with the rowcount checked.
+    # Pinned by tests/test_maintenance_mode_realdb.py.
+    #
+    # The remaining 3 sites are the UNAUTHENTICATED probes (/health/live, /ready,
     # /startup and their shared checks). They cannot use get_tenant_db, which resolves
     # a tenant from a user they do not have, so they read only tables without a policy
     # — which is why _check_ingestion had to drop its assets.last_seen read. They are
     # exempt in substance but stay counted here so the number cannot drift unnoticed.
     # Pinned by tests/test_admin_system_status_scoping_realdb.py.
-    "health.py": 4,
+    "health.py": 3,
     # audit.py and gdpr.py are GONE from this list. Both were the empty-page failure:
     # audit_logs and data_processing_records have had tenant policies since migration
     # 011, and every handler ran on get_db, so the policy matched nothing and the
