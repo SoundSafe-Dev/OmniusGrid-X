@@ -238,11 +238,34 @@ const OFFENDERS = FILES.map((file) => ({
   states: fallsThroughToEmptiness(readFileSync(file, 'utf8'), file.slice(SRC.length + 1)),
 })).filter((o) => o.states.length > 0)
 
-const QUERYING = FILES.filter((f) => QUERIES.test(readFileSync(f, 'utf8')))
+/** `.match()`, NOT `QUERIES.test()`.
+ *
+ * `QUERIES` carries the `g` flag, and `RegExp.prototype.test` on a global regex is
+ * STATEFUL — it advances `lastIndex` and resumes from there on the next call, so
+ * consecutive `.test()` calls over different strings alternate between finding and not
+ * finding the same pattern. This filter therefore returned a different count depending on
+ * how many files preceded each one and how long they were.
+ *
+ * It had been passing by luck. Editing four unrelated pages moved enough characters to
+ * drop the count under the threshold, and the vacuity check failed with nothing wrong in
+ * the code it guards. A guard whose own result depends on iteration order cannot tell you
+ * anything about the tree — this is the third regex bug in this file, and the first that
+ * made the sweep's own honesty check unreliable. */
+const QUERYING = FILES.filter((f) => (readFileSync(f, 'utf8').match(QUERIES) ?? []).length > 0)
 
 describe('the sweep is not vacuous', () => {
   it('reaches the components', () => {
     expect(FILES.length).toBeGreaterThan(50)
+  })
+
+  it('counts the querying files the same way twice', () => {
+    // The regression that made this suite fail with nothing wrong in the tree. `QUERIES`
+    // is global, and `.test()` on a global regex advances `lastIndex`, so the old filter
+    // alternated between matching and not matching identical content. Asserting the count
+    // is stable across two passes is what makes the threshold below mean anything.
+    const countOnce = () =>
+      FILES.filter((f) => (readFileSync(f, 'utf8').match(QUERIES) ?? []).length > 0).length
+    expect(countOnce()).toBe(countOnce())
   })
 
   it('finds the ones that query', () => {

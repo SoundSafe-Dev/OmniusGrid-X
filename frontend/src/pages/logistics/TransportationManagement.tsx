@@ -39,6 +39,21 @@ import type {
 } from '../../types';
 import { Button, Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
 
+// Four outcomes, not three: exhausted, low, ample, and NOT REPORTED. The last was
+// previously indistinguishable from "low", because `null < 2` coerces to `0 < 2` — so a
+// driver who had reported nothing was painted as a driver running short of hours.
+// Module scope because the drivers table and the driver detail panel are separate
+// components and both have to answer this the same way.
+const hosClass = (hours: number | null | undefined): string =>
+  hours == null
+    ? 'text-opsgrid-text-secondary'
+    : hours === 0
+      ? 'text-red-500'
+      : hours < 2
+        ? 'text-yellow-500'
+        : 'text-green-500';
+
+
 const TRANSPORT_QUERY_KEY = 'transportation';
 
 export const TransportationManagement: FC = () => {
@@ -114,7 +129,12 @@ export const TransportationManagement: FC = () => {
     planned: shipments.filter(s => s.status === 'planned').length,
     activeDrivers: drivers.filter(d => d.currentHosStatus === 'driving' || d.currentHosStatus === 'on_duty').length,
     offDutyDrivers: drivers.filter(d => d.currentHosStatus === 'off_duty').length,
+    // `=== 0` on a field that is null for every driver who has not reported. `null === 0`
+    // is false, so an unreported driver counted as compliant — the same "absence read as
+    // clearance" the failed-query branch below was already fixed for, arriving through
+    // the SUCCESS path instead.
     hosViolations: drivers.filter(d => d.hosDriveHoursRemaining === 0).length,
+    hosUnassessable: drivers.filter(d => d.hosDriveHoursRemaining == null).length,
     totalCarriers: carriers.length,
     ctpatCertified: carriers.filter(c => c.ctpatCertified).length,
   };
@@ -131,14 +151,14 @@ export const TransportationManagement: FC = () => {
     }
   };
 
-  const getHosColor = (hoursRemaining: number) => {
-    if (hoursRemaining === 0) return 'text-red-500';
-    if (hoursRemaining < 2) return 'text-yellow-500';
-    return 'text-green-500';
-  };
 
-  const formatDuration = (hours?: number) => {
-    if (hours === undefined) return 'N/A';
+  // `== null`, not `=== undefined`. The API sends JSON null for an unreported driver and
+  // `null === undefined` is FALSE, so this fell through to `null.toFixed(1)` and threw —
+  // taking the whole drivers tab down with it on any deployment where the column was
+  // unpopulated, which was all of them. It never surfaced because the mock fixtures
+  // supply a number for every driver.
+  const formatDuration = (hours?: number | null) => {
+    if (hours == null) return 'not reported';
     return `${hours.toFixed(1)}h`;
   };
 
@@ -631,13 +651,23 @@ export const TransportationManagement: FC = () => {
                               {driver.currentHosStatus?.replace('_', ' ')}
                             </span>
                           </td>
-                          <td className={`px-4 py-3 font-medium ${getHosColor(driver.hosDriveHoursRemaining)}`}>
+                          <td className={`px-4 py-3 font-medium ${hosClass(driver.hosDriveHoursRemaining)}`}>
                             {formatDuration(driver.hosDriveHoursRemaining)}
                           </td>
-                          <td className={`px-4 py-3 font-medium ${getHosColor(driver.hosDutyHoursRemaining)}`}>
+                          <td className={`px-4 py-3 font-medium ${hosClass(driver.hosDutyHoursRemaining)}`}>
+                            {/* Same null handling as the drive-hours cell beside it —
+                                `getHosColor` takes a plain number and paints null amber,
+                                the colour meaning "nearly out of hours". */}
                             {formatDuration(driver.hosDutyHoursRemaining)}
                           </td>
-                          <td className="px-4 py-3 text-sm">{driver.hosCycleHoursUsed.toFixed(1)}h / 70h</td>
+                          {/* `hos_cycle_hours` is nullable too, and this was the third
+                              unguarded `.toFixed()` in one row — each of which takes the
+                              whole tab down rather than blanking one cell. */}
+                          <td className="px-4 py-3 text-sm">
+                            {driver.hosCycleHoursUsed == null
+                              ? 'not reported'
+                              : `${driver.hosCycleHoursUsed.toFixed(1)}h / 70h`}
+                          </td>
                           <td className="px-4 py-3 text-sm">
                             {driver.lastLocation ? (
                               <span className="flex items-center gap-1">
@@ -770,6 +800,23 @@ export const TransportationManagement: FC = () => {
                 </p>
                 <p className="text-xs text-opsgrid-text-secondary mt-1">
                   This is not a clean bill of compliance; it means the check could not run.
+                </p>
+              </div>
+            ) : stats.hosUnassessable > 0 ? (
+              /* THE SECOND WAY THIS WAS WRONG. The branch above covers a failed query;
+                 this one covers a query that SUCCEEDED and returned drivers whose hours
+                 nobody has reported. `hosDriveHoursRemaining` is null for them, `null ===
+                 0` is false, and they fell straight through to the green tick below.
+                 Every fleet was cleared. Hours of Service is DOT-regulated and a
+                 compliance officer reads that tick as clearance. */
+              <div className="bg-status-warning/10 border border-status-warning/50 rounded-lg p-4 text-center" role="alert">
+                <AlertTriangle className="w-8 h-8 text-status-warning mx-auto mb-2" />
+                <p className="text-status-warning font-medium">
+                  {stats.hosUnassessable} of {drivers.length} drivers have no reported hours
+                </p>
+                <p className="text-xs text-opsgrid-text-secondary mt-1">
+                  Their Hours of Service cannot be checked. This is missing data, not a
+                  clean record — and not a violation either.
                 </p>
               </div>
             ) : drivers.filter(d => d.hosDriveHoursRemaining === 0).length === 0 ? (
@@ -1206,14 +1253,21 @@ const DriverDetailModal: FC<{ driver: Driver; onClose: () => void }> = ({ driver
               </div>
               <div className="flex justify-between">
                 <span className="text-sm text-opsgrid-text-secondary">Drive Hours Remaining</span>
-                <span className={`font-medium ${driver.hosDriveHoursRemaining === 0 ? 'text-red-500' : driver.hosDriveHoursRemaining < 2 ? 'text-yellow-500' : 'text-green-500'}`}>
-                  {driver.hosDriveHoursRemaining?.toFixed(1) ?? 'N/A'}h
+                {/* `null < 2` is `0 < 2` — true — so an unreported driver was coloured as
+                    a warning and captioned "N/Ah". Neither the number nor the colour was
+                    a statement anyone had earned. */}
+                <span className={`font-medium ${hosClass(driver.hosDriveHoursRemaining)}`}>
+                  {driver.hosDriveHoursRemaining == null
+                    ? 'not reported'
+                    : `${driver.hosDriveHoursRemaining.toFixed(1)}h`}
                 </span>
               </div>
               <div className="flex justify-between">
                 <span className="text-sm text-opsgrid-text-secondary">Duty Hours Remaining</span>
-                <span className={`font-medium ${driver.hosDutyHoursRemaining === 0 ? 'text-red-500' : driver.hosDutyHoursRemaining < 2 ? 'text-yellow-500' : 'text-green-500'}`}>
-                  {driver.hosDutyHoursRemaining?.toFixed(1) ?? 'N/A'}h
+                <span className={`font-medium ${hosClass(driver.hosDutyHoursRemaining)}`}>
+                  {driver.hosDutyHoursRemaining == null
+                    ? 'not reported'
+                    : `${driver.hosDutyHoursRemaining.toFixed(1)}h`}
                 </span>
               </div>
               <div className="flex justify-between">

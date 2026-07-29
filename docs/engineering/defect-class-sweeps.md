@@ -2588,3 +2588,64 @@ one rather than faked.
 The remaining ~45 entries are recorded here as a work-list rather than swept in one pass:
 each needs the same judgement — is this field renamed, absent, or invented? — and the
 three answers have three different fixes.
+
+## The HOS clearance, found a second time in the same component
+
+`hosDriveHoursRemaining` came out of the wire-vocabulary sweep, and it is the most serious
+thing this session found.
+
+Migration 042 added `drivers.hos_drive_hours_remaining` and `hos_duty_hours_remaining`
+with no default and no backfill. **Nothing in this codebase has ever written to either** —
+no ELD sync, no ingestion path, no computation. The model comment states what they were
+meant to be (`# 11 - hos_drive_hours_today`) and nothing did the subtraction.
+
+The transportation compliance tab counts a violation as `hosDriveHoursRemaining === 0`.
+**`null === 0` is false.** Every driver was counted compliant, every fleet returned zero
+violations, and the page rendered a green *"No HOS violations detected"* tick — on the
+**success** path, with the data loaded, for DOT-regulated hours.
+
+**This page had already been fixed for this exact class.** The earlier fix covered a
+*failed* drivers query — `[]` also produces zero violations — and left the far more common
+case untouched: the query succeeds and the field is simply null. Rule 18 in its plainest
+possible form, and it took a different sweep to find the second instance.
+
+Three more defects fell out of the same field:
+
+**The list endpoint 500'd on any unreported driver.** `DriverBase` declared
+`hos_drive_hours_today: float = 0` while the column is nullable, so `model_validate`
+raised on a NULL and the entire `/drivers` response failed — one silent driver took the
+page down for the whole fleet. The `= 0` was the sharper half: **a schema default is a
+claim about the world just as much as a coalesce is**, and zero hours driven is a clean HOS
+record, not an absent one.
+
+**`formatDuration` crashed the tab.** It guarded with `hours === undefined`, and the API
+sends JSON `null` — `null === undefined` is false, so it fell through to `null.toFixed(1)`
+and threw, taking the whole drivers tab down. Never surfaced because the mock fixtures
+supply a number for every driver (rule 28 again).
+
+**`null < 2` is `0 < 2`.** An unreported driver was painted amber — the colour reserved for
+one running short of hours — and captioned "N/Ah".
+
+The fix is a derivation, not a default: remaining is computed from the consumed figure that
+*is* populated, and stays NULL when that is missing too. A driver who has reported nothing
+is unassessable, and inventing "11 hours left" for them clears them just as effectively as
+null did.
+
+## Rule 30 — `.test()` on a global regex is stateful, and a guard that uses it is lying
+
+The emptiness sweep's own vacuity check —
+
+```ts
+const QUERYING = FILES.filter((f) => QUERIES.test(readFileSync(f, 'utf8')))
+```
+
+— uses a `/g/` regex, and `RegExp.prototype.test` advances `lastIndex` and resumes from
+there on the next call. Consecutive calls over different strings therefore alternate
+between matching and not matching identical content, so the count depended on how many
+files preceded each one and how long they were.
+
+It had been passing by luck. Editing four unrelated pages moved enough characters to drop
+the count below its threshold and the check failed with nothing wrong in the tree it
+guards. A guard whose result depends on iteration order cannot tell you anything about
+anything. It now uses `.match()`, and a test asserts the count is the same twice —
+because the failure mode is *inconsistency*, which a single run cannot see.

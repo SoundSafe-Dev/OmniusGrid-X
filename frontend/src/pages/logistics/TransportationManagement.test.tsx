@@ -53,11 +53,22 @@ const page = (over: Record<string, unknown> = {}) => ({
   ...over,
 })
 
+// The drivers TABLE reads more than the compliance tab does, and three of its cells call
+// `.toFixed()`. A fixture missing any of them throws during render and empties the
+// document, which reads as a component bug rather than a thin fixture — the same trap
+// that has now cost time on five page tests here.
 const driver = (over: Record<string, unknown> = {}) => ({
   id: 'd-1',
   name: 'Dana Driver',
+  firstName: 'Dana',
+  lastName: 'Driver',
+  carrierName: 'Acme Freight',
+  cdlClass: 'A',
+  currentHosStatus: 'off_duty',
   status: 'available',
   hosDriveHoursRemaining: 8,
+  hosDutyHoursRemaining: 10,
+  hosCycleHoursUsed: 42,
   ...over,
 })
 
@@ -151,6 +162,52 @@ describe('TransportationManagement — HOS compliance', () => {
     await openCompliance()
     const notice = await screen.findByRole('alert', undefined, SETTLE)
     expect(notice.textContent).toMatch(/not a clean bill of compliance/i)
+  })
+
+  it('does NOT clear the fleet when a driver has never reported hours', async () => {
+    // THE SECOND WAY THIS PAGE WAS WRONG, found by the wire-vocabulary sweep long after
+    // the failed-query branch was fixed. `hos_drive_hours_remaining` was added by
+    // migration 042 with no default and no backfill, and NOTHING has ever written to it,
+    // so it is null for every driver. The violation test is `=== 0`, and `null === 0` is
+    // false — every fleet came back clean, on the SUCCESS path, with the data loaded.
+    //
+    // The API now derives the value from `hos_drive_hours_today` and leaves it null only
+    // when that is missing too. Null must read as unassessable, never as compliant.
+    getDrivers.mockResolvedValue(
+      page({ items: [driver({ hosDriveHoursRemaining: null })], total: 1 }),
+    )
+    wrap()
+    await openCompliance()
+    const notice = await screen.findByRole('alert', undefined, SETTLE)
+    expect(notice.textContent).toMatch(/no reported hours/i)
+    expect(screen.queryByText('No HOS violations detected')).not.toBeInTheDocument()
+  })
+
+  it('says missing data is not a violation either', async () => {
+    // Trading a false clearance for a false accusation is not a fix. An operator chasing
+    // a phantom breach stops trusting the number in both directions — the same rule the
+    // server-side carrier roll-up already follows.
+    getDrivers.mockResolvedValue(
+      page({ items: [driver({ hosDriveHoursRemaining: null })], total: 1 }),
+    )
+    wrap()
+    await openCompliance()
+    const notice = await screen.findByRole('alert', undefined, SETTLE)
+    expect(notice.textContent).toMatch(/not a clean record — and not a violation either/i)
+    expect(screen.queryByText(/Drive Limit Exceeded/i)).not.toBeInTheDocument()
+  })
+
+  it('shows a driver with no reported hours as not reported, not as nearly out', async () => {
+    // `null < 2` is `0 < 2`, so the table painted an unreported driver amber — the colour
+    // reserved for a driver running short of hours.
+    getDrivers.mockResolvedValue(
+      page({ items: [driver({ hosDriveHoursRemaining: null })], total: 1 }),
+    )
+    wrap()
+    await waitFor(() => expect(getDrivers).toHaveBeenCalled(), SETTLE)
+    const tab = await screen.findByRole('button', { name: /drivers/i }, SETTLE)
+    fireEvent.click(tab)
+    expect(await screen.findByText('not reported', undefined, SETTLE)).toBeInTheDocument()
   })
 
   it('still reports a real violation as a violation', async () => {

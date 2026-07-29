@@ -141,9 +141,14 @@ export interface Driver {
   endorsements: string[];
   hazmatCertified: boolean;
   currentHosStatus: 'off_duty' | 'sleeper' | 'driving' | 'on_duty';
-  hosCycleHoursUsed: number;
-  hosDriveHoursRemaining: number;
-  hosDutyHoursRemaining: number;
+  /** Null when unreported — `drivers.hos_cycle_hours` is nullable. */
+  hosCycleHoursUsed: number | null;
+  /** Null when the driver has reported no hours — the API derives this from
+   *  `hos_drive_hours_today` and leaves it null when that is missing too. Treat null as
+   *  UNASSESSABLE: `x === 0` is false for null, which cleared every fleet. */
+  hosDriveHoursRemaining: number | null;
+  /** Null when unreported — see `hosDriveHoursRemaining`. */
+  hosDutyHoursRemaining: number | null;
   lastLocation?: GeoLocation;
   currentVehicleId?: string;
   currentShipmentId?: string;

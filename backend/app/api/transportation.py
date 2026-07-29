@@ -198,6 +198,25 @@ async def create_driver(
     return driver
 
 
+# 49 CFR 395. Kept beside the serializer that needs them rather than imported from the
+# compliance service, which would drag its session dependencies into this module.
+MAX_DRIVE_HOURS_DAY = 11.0
+MAX_ON_DUTY_HOURS_DAY = 14.0
+
+
+def _hours_remaining(stored, consumed, limit):
+    """Remaining HOS, preferring a stored figure and deriving it when there is none.
+
+    Returns None when neither is known — the caller must render that as "unknown", not as
+    a full tank and not as zero. Both readings are verdicts, and neither was earned.
+    """
+    if stored is not None:
+        return stored
+    if consumed is None:
+        return None
+    return round(max(0.0, limit - float(consumed)), 2)
+
+
 @router.get("/drivers", response_model=List[Dict[str, Any]])
 async def get_drivers(
     # organization_id comes from the TOKEN. As a required client-supplied query
@@ -233,8 +252,27 @@ async def get_drivers(
         row["carrierName"] = carrier_names.get(str(d.carrier_id))
         row["endorsements"] = d.endorsements or []
         row["licenseExpiry"] = _iso(d.license_expiry)
-        row["hosDriveHoursRemaining"] = d.hos_drive_hours_remaining
-        row["hosDutyHoursRemaining"] = d.hos_duty_hours_remaining
+        # DERIVED WHEN THE STORED COLUMN IS NULL, which it always is. Migration 042 added
+        # `hos_drive_hours_remaining` and `hos_duty_hours_remaining` with no default and
+        # no backfill, and NOTHING in this codebase has ever written to either — no ELD
+        # sync, no ingestion path, no computation. The model comment says what they were
+        # meant to be ("11 - hos_drive_hours_today") and nothing did the subtraction.
+        #
+        # The consequence was on the compliance tab, which counts a violation as
+        # `hosDriveHoursRemaining === 0`. `null === 0` is FALSE, so every fleet came back
+        # with zero violations and a green "No HOS violations detected" tick — on the
+        # SUCCESS path, with the data loaded, for DOT-regulated hours.
+        #
+        # `hos_drive_hours_today` IS populated and is what `check_compliance` already
+        # judges against, so remaining is computed from it. Left NULL when the consumed
+        # figure is missing too: that driver has genuinely not reported, and inventing
+        # "11 hours left" for them would be the same defect pointing the other way.
+        row["hosDriveHoursRemaining"] = _hours_remaining(
+            d.hos_drive_hours_remaining, d.hos_drive_hours_today, MAX_DRIVE_HOURS_DAY
+        )
+        row["hosDutyHoursRemaining"] = _hours_remaining(
+            d.hos_duty_hours_remaining, d.hos_on_duty_hours_today, MAX_ON_DUTY_HOURS_DAY
+        )
         items.append(row)
     return items
 

@@ -424,9 +424,17 @@ class DriverBase(BaseModel):
     medical_cert_expires: Optional[datetime] = None
     dq_file_complete: bool = False
     current_hos_status: Optional[str] = None  # on_duty, driving, off_duty, sleeper
-    hos_drive_hours_today: float = 0
-    hos_on_duty_hours_today: float = 0
-    hos_cycle_hours: float = 0
+    # OPTIONAL, AND NOT DEFAULTED TO ZERO. All three columns are nullable, so a driver
+    # who has not reported made `model_validate` raise and the whole `/drivers` list
+    # answered 500 — one silent driver took the page down for the entire fleet.
+    #
+    # The `= 0` was the sharper half. Zero is not "unknown", it is "has driven no hours
+    # today", which is a clean HOS record; it is the same coercion `check_compliance` was
+    # fixed for (`float(x or 0)` turning a driver who never reported into one who drove
+    # nothing). A schema default is a claim about the world just as much as a coalesce is.
+    hos_drive_hours_today: Optional[float] = None
+    hos_on_duty_hours_today: Optional[float] = None
+    hos_cycle_hours: Optional[float] = None
     eld_device_id: Optional[str] = None
     phone: Optional[str] = None
     email: Optional[str] = None
