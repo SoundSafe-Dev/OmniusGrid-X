@@ -510,8 +510,8 @@ the UI were all already there, only the write was missing — and the component 
 failures. The other three were uncalled and were removed. Notably a hand fix of this exact
 class had already run (FS-15, "routes that never existed") and left these behind.
 
-**Both suites are green: backend 2,213 passed, frontend 346 passed, 0 failed** — across
-188 backend and 58 frontend test files. Every guard listed above is mutation-tested:
+**Both suites are green: backend 2,232 passed, frontend 363 passed, 0 failed** — across
+190 backend and 59 frontend test files. Every guard listed above is mutation-tested:
 reintroduce the defect and the test must fail, checked individually, because a guard that
 cannot fail is indistinguishable from one that passes.
 
@@ -574,6 +574,18 @@ as it was:
 | `ERPIntegrations` test-connection | the **previous** test's "healthy: connected" | this test had just failed |
 | `AdminPages` delete-user | *(nothing)* | the delete failed; access was never revoked |
 | `Notifications` delete-subscription | *(nothing)* | the webhook is still active and still sending |
+
+**The sharpest find came last, from a different sweep.** Asking which TypeScript fields
+the frontend declares and renders that *no backend source emits* turned up
+`hosDriveHoursRemaining` — a column migration 042 added with no default, no backfill and
+no writer anywhere in the codebase. The compliance tab counts a violation as
+`hosDriveHoursRemaining === 0`, `null === 0` is false, and so **every fleet was cleared of
+HOS violations** on the success path with the data loaded. This page had already been
+fixed for the same class once, on the *failed-query* branch; the more common case sat
+untouched behind it. The same field also 500'd the drivers list on any unreported driver
+(`float = 0` against a nullable column), crashed the tab through `formatDuration`'s
+`=== undefined` guard meeting a JSON `null`, and painted unreported drivers amber because
+`null < 2` is `0 < 2`.
 
 **Then the same question, asked about actions rather than reads.** `useQuery` failures
 render as emptiness; `useMutation` failures render as nothing at all — and the user pressed
