@@ -39,8 +39,25 @@ export const UsersPage: FC = () => {
     password: '',
   });
 
+  // A FAILED USER MUTATION SAID NOTHING. All three of these closed their modal or
+  // refreshed the list on success and had no onError at all, so a rejected request left
+  // the dialog open (create/update) or the row exactly where it was (delete) with no
+  // message. Deleting is the one that matters: an admin who believes they revoked
+  // someone's access, and did not, has a security problem they cannot see.
+  //
+  // The idiom was already here — `alert` from useDialog is used for the missing-field
+  // checks a few lines down. Only the failures skipped it (method rule 18).
+  const failed = (title: string) => (error: any) =>
+    alert({
+      title,
+      message:
+        error?.response?.data?.detail ||
+        'The request did not complete. Nothing has been changed.',
+    });
+
   const createMutation = useMutation({
     mutationFn: (userData: typeof formData) => authApi.createUser(userData),
+    onError: failed('Could not create the user'),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['users'] });
       setShowAddModal(false);
@@ -51,6 +68,7 @@ export const UsersPage: FC = () => {
   const updateMutation = useMutation({
     mutationFn: ({ userId, userData }: { userId: string; userData: Partial<User> }) =>
       authApi.updateUser(userId, userData),
+    onError: failed('Could not update the user'),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['users'] });
       setShowEditModal(false);
@@ -60,6 +78,9 @@ export const UsersPage: FC = () => {
 
   const deleteMutation = useMutation({
     mutationFn: (userId: string) => authApi.deleteUser(userId),
+    // The list simply re-rendered unchanged. "Still there" is what a successful delete
+    // looks like a moment before the refetch, so there was nothing to notice.
+    onError: failed('Could not remove the user — their access is unchanged'),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['users'] });
     },
@@ -567,6 +588,8 @@ export const SettingsPage: FC = () => {
     mutationFn: (patch: OrgSettings) => api.put('/api/v1/organizations/settings/current', patch),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['org-settings'] }); setDraft({}); },
   });
+  // `draft` survives a failure, so the edited values stay in the fields — which reads
+  // exactly like a save that worked. The banner below is what distinguishes them.
 
   const set = (key: keyof OrgSettings, value: any) => setDraft((d) => ({ ...d, [key]: value }));
   const dirty = Object.keys(draft).length > 0;
@@ -618,6 +641,12 @@ export const SettingsPage: FC = () => {
           {save.isPending ? 'Saving…' : 'Save changes'}
         </Button>
         {save.isSuccess && !dirty && <span className="text-sm text-status-success">Saved</span>}
+        {save.isError && (
+          <span role="alert" className="text-sm text-status-alarm">
+            Could not save these settings — your edits are still here and have not been
+            applied.
+          </span>
+        )}
       </div>
     </div>
   );

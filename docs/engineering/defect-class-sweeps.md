@@ -2389,3 +2389,53 @@ request. `NOT_A_QUERY_EMPTY_STATE` records it with the reason, and three tests k
 entry honest: the phrase must still exist in the named file, the list must stay short
 enough to read, and the pattern must still match the phrase — so the list cannot quietly
 describe code that has moved on, or hide a sweep that has narrowed.
+
+## The action side: a mutation whose failure reaches nobody
+
+Every sweep so far was about reads. `useQuery` failures render as emptiness. **`useMutation`
+failures render as nothing at all**, and that is worse in one specific way: the user pressed
+the button deliberately, so they already expect a change, and no response is
+indistinguishable from the instant before the list refreshes.
+
+Nine silent mutations across three files, all of which had `onSuccess` and no `onError`:
+
+**The stale success is the sharpest thing in this session.** `ERPIntegrations`'s
+test-connection wrote its outcome into a per-integration map on success only. A failed test
+wrote nothing, so the PREVIOUS test's *"healthy: connected"* stayed exactly where it was —
+same place, same colour, nothing marking it stale — as the result of a test that had just
+failed. The button exists to refresh that claim; the person pressing it is asking the
+question again and getting last time's answer. That is not missing feedback, it is a false
+one.
+
+**The silent delete is the most consequential.** `AdminPages` deleted a user and said
+nothing on failure. "Row still there" is exactly what a successful delete looks like until
+the list refetches, so there was nothing to notice — and an admin who believes they revoked
+someone's access, and did not, has a security problem they cannot see. `Notifications` had
+the same shape for a subscription: an admin who thinks they stopped a webhook has not.
+
+Both files already contained the right idiom and skipped it locally — `AdminPages` uses
+`alert` from `useDialog` for its missing-field checks, `ERPIntegrations` has an `onError`
+on `analyzeMut` and nowhere else. Rule 18 yet again, and `Notifications` was found *after*
+being read for query defects and declared clean: the sweep for one class does not see the
+next one.
+
+`ERPIntegrations` also rendered every outcome in the accent colour, so even the failures it
+did record were displayed identically to successes. The map now carries `ok` alongside the
+text.
+
+## Rule 27 — a window is a guess about code shape; bounds are not
+
+The first version of the mutation sweep looked for `onError` within 600 characters of the
+declaration and produced **two false positives out of four files**: `CommandPanel`, whose
+`mutationFn` body is long enough to push `onError` past the window, and `AlarmRules`, which
+handles failure in a `try/catch` around `mutateAsync`. Both were correct code.
+
+The options object has exact bounds, so the guard counts braces instead, and recognises all
+three real idioms: `onError` in the options, `name.isError` rendered by the component, and
+`name.mutateAsync` awaited at a call site. It also treats a parse failure as "cannot tell"
+and stays quiet — a sweep that turns a parse failure into a finding spends the reader's
+trust on noise, and after two or three of those nobody reads the output.
+
+The same lesson had already been paid for once in `failureIsNotEmptiness`, where a 2500-
+character proximity window found an unrelated mutation's error branch and cleared a page
+that was genuinely broken.

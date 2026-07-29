@@ -26,10 +26,25 @@ export const ERPIntegrationsPage: FC = () => {
   const [form, setForm] = useState<ERPIntegrationCreate>(EMPTY_FORM)
   const [authConfigText, setAuthConfigText] = useState('{}')
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [testResult, setTestResult] = useState<Record<string, string>>({})
+  // WAS `Record<string, string>`, and every entry rendered in the same accent colour.
+  // A per-integration outcome line has to say WHICH outcome it is: `analyzeMut` already
+  // wrote its failures into this map, so a failed analysis was displayed identically to a
+  // successful one. `ok` is what separates them, and it is also what makes the onError
+  // handlers below safe to add — a failure now REPLACES a stale success rather than
+  // leaving it on screen.
+  const [testResult, setTestResult] = useState<Record<string, { text: string; ok: boolean }>>({})
+  const noteOk = (id: string, text: string) =>
+    setTestResult((p) => ({ ...p, [id]: { text, ok: true } }))
+  const noteFailure = (id: string, text: string) =>
+    setTestResult((p) => ({ ...p, [id]: { text, ok: false } }))
 
   const createMut = useMutation({
     mutationFn: (body: ERPIntegrationCreate) => erpApi.createIntegration(body),
+    // Without this the dialog simply stayed open with the form still filled. That is
+    // feedback of a sort — something did not happen — but it does not say what, and a
+    // slow network reads the same as a rejected payload.
+    onError: (e: any) =>
+      noteFailure('__form', e?.response?.data?.detail || 'Could not create the integration.'),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['erp-integrations'] })
       setShowAdd(false)
@@ -39,11 +54,22 @@ export const ERPIntegrationsPage: FC = () => {
   })
   const deleteMut = useMutation({
     mutationFn: (id: string) => erpApi.deleteIntegration(id),
+    // A failed delete left the row exactly where it was and said nothing, which is
+    // indistinguishable from not having clicked. The same silent-action defect the
+    // fleet security panel had.
+    onError: (e: any, id) =>
+      noteFailure(id, e?.response?.data?.detail || 'Could not delete this integration.'),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['erp-integrations'] }),
   })
   const testMut = useMutation({
     mutationFn: (id: string) => erpApi.testConnection(id),
-    onSuccess: (res, id) => setTestResult((p) => ({ ...p, [id]: `${res.status}: ${res.message}` })),
+    // THE SHARPEST OF THE FOUR. On failure nothing was written, so a PREVIOUS successful
+    // test stayed on screen — "healthy: connected" displayed as the outcome of a test
+    // that had just failed. Not merely missing feedback: a stale claim presented as the
+    // current result, and the user pressed the button precisely to refresh that claim.
+    onError: (e: any, id) =>
+      noteFailure(id, e?.response?.data?.detail || 'Connection test failed to run.'),
+    onSuccess: (res, id) => noteOk(id, `${res.status}: ${res.message}`),
   })
   const syncMut = useMutation({
     mutationFn: (id: string) => erpApi.triggerSync(id),
@@ -55,12 +81,14 @@ export const ERPIntegrationsPage: FC = () => {
     // Invalidating gives whoever is on the Status tab an immediate first refresh; the
     // interval there is what actually catches the result, because a single refetch this
     // early would just re-read the old row.
+    onError: (e: any, id) =>
+      noteFailure(id, e?.response?.data?.detail || 'Could not trigger a sync.'),
     onSuccess: (res, id) => {
       qc.invalidateQueries({ queryKey: ['erp-sync-status', id] })
-      setTestResult((p) => ({
-        ...p,
-        [id]: `${res.message} — running in the background; the Status tab updates as entities finish.`,
-      }))
+      noteOk(
+        id,
+        `${res.message} — running in the background; the Status tab updates as entities finish.`,
+      )
     },
   })
 
@@ -79,15 +107,12 @@ export const ERPIntegrationsPage: FC = () => {
       return { session, attached }
     },
     onSuccess: ({ session, attached }, it) =>
-      setTestResult((p) => ({
-        ...p,
-        [it.id]: `Attached ${attached.row_count} synced records to session "${session.title}" — open Correlation AI to analyze against sensors, yard, and shipments.`,
-      })),
+      noteOk(
+        it.id,
+        `Attached ${attached.row_count} synced records to session "${session.title}" — open Correlation AI to analyze against sensors, yard, and shipments.`,
+      ),
     onError: (e: any, it) =>
-      setTestResult((p) => ({
-        ...p,
-        [it.id]: e?.response?.data?.detail || 'Failed to start analysis session',
-      })),
+      noteFailure(it.id, e?.response?.data?.detail || 'Failed to start analysis session'),
   })
 
   const submit = () => {
@@ -95,7 +120,7 @@ export const ERPIntegrationsPage: FC = () => {
     try {
       auth_config = JSON.parse(authConfigText || '{}')
     } catch {
-      setTestResult((p) => ({ ...p, __form: 'auth_config is not valid JSON' }))
+      noteFailure('__form', 'auth_config is not valid JSON')
       return
     }
     createMut.mutate({ ...form, auth_config })
@@ -135,7 +160,14 @@ export const ERPIntegrationsPage: FC = () => {
                     {' · '}every {it.sync_frequency_minutes}m
                   </div>
                   {testResult[it.id] && (
-                    <div className="text-xs mt-1 text-opsgrid-accent">{testResult[it.id]}</div>
+                    <div
+                      role={testResult[it.id].ok ? undefined : 'alert'}
+                      className={`text-xs mt-1 ${
+                        testResult[it.id].ok ? 'text-opsgrid-accent' : 'text-status-alarm'
+                      }`}
+                    >
+                      {testResult[it.id].text}
+                    </div>
                   )}
                 </div>
                 <div className="flex gap-2">
@@ -194,7 +226,9 @@ export const ERPIntegrationsPage: FC = () => {
               <textarea className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-opsgrid-text font-mono text-xs"
                 rows={4} value={authConfigText} onChange={(e) => setAuthConfigText(e.target.value)} />
             </div>
-            {testResult.__form && <div className="text-xs text-status-alarm">{testResult.__form}</div>}
+            {testResult.__form && (
+              <div role="alert" className="text-xs text-status-alarm">{testResult.__form.text}</div>
+            )}
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="outline" onClick={() => setShowAdd(false)}>Cancel</Button>
               <Button onClick={submit} loading={createMut.isPending}>Create</Button>

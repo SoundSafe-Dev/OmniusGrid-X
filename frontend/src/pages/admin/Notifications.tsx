@@ -53,6 +53,7 @@ export const Notifications: FC = () => {
   const [assetId, setAssetId] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
   const [testSummary, setTestSummary] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const createMutation = useMutation({
     mutationFn: () =>
@@ -76,8 +77,19 @@ export const Notifications: FC = () => {
 
   const deleteMutation = useMutation({
     mutationFn: (subscriptionId: string) => notificationsApi.deleteSubscription(subscriptionId),
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: ['notification-subscriptions'] }),
+    // Found by the mutation sweep AFTER this page had been read for the query defects and
+    // declared clean — the two panels' failure handling was correct and the delete button
+    // beside them said nothing at all. A failed delete leaves the row exactly where it
+    // was, which is what a successful one looks like until the list refetches, so an
+    // admin who thinks they have stopped a webhook has not.
+    onError: () =>
+      setDeleteError(
+        'Could not remove that subscription — it is still active and will keep sending.',
+      ),
+    onSuccess: () => {
+      setDeleteError(null);
+      queryClient.invalidateQueries({ queryKey: ['notification-subscriptions'] });
+    },
   });
 
   const testMutation = useMutation({
@@ -137,6 +149,9 @@ export const Notifications: FC = () => {
       >
         {testSummary && (
           <p className="text-sm text-opsgrid-text-secondary mb-3">{testSummary}</p>
+        )}
+        {deleteError && (
+          <p role="alert" className="text-sm text-status-alarm mb-3">{deleteError}</p>
         )}
         {isError ? (
           <p className="text-status-alarm text-sm py-4">Failed to load subscriptions.</p>

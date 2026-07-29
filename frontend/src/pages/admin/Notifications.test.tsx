@@ -124,6 +124,32 @@ describe('Notifications — subscriptions', () => {
   })
 })
 
+describe('Notifications — deleting a subscription', () => {
+  it('removes it when the request succeeds', async () => {
+    // The positive control: without it, "an error appears on failure" is satisfied by a
+    // delete button that never works at all.
+    wrap()
+    await screen.findByText('Ops webhook')
+    fireEvent.click(screen.getByRole('button', { name: /delete/i }))
+    await waitFor(() => expect(deleteSubscription).toHaveBeenCalledWith('sub-1'))
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('does not leave a failed delete looking like a successful one', async () => {
+    // FOUND BY THE MUTATION SWEEP, after this page had been read for its query defects
+    // and declared clean. The mutation handled only success, so a rejected delete left
+    // the row exactly where it was — which is what a successful delete looks like until
+    // the list refetches. An admin who believes they stopped a webhook has not.
+    deleteSubscription.mockRejectedValue(new Error('unreachable'))
+    wrap()
+    await screen.findByText('Ops webhook')
+    fireEvent.click(screen.getByRole('button', { name: /delete/i }))
+    const notice = await screen.findByRole('alert')
+    expect(notice.textContent).toMatch(/still active and will keep sending/i)
+    expect(screen.getByText('Ops webhook')).toBeInTheDocument()
+  })
+})
+
 describe('Notifications — the delivery log', () => {
   it('lists dispatch attempts', async () => {
     wrap()
