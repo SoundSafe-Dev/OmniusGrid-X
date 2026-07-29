@@ -142,8 +142,12 @@ describe('AuditLogs — hash-chain verification', () => {
     )
     await screen.findByText('export_kanban_tasks')
     fireEvent.click(screen.getByRole('button', { name: /verify hash chain/i }))
-    // Must not fall through to a green "verified" state on an error.
-    await waitFor(() => expect(screen.queryByText('Hash chain intact')).not.toBeInTheDocument())
+    // The page stores {verified:false, message} on a failed verification, so it must
+    // SAY something — asserting only that "Hash chain intact" is absent was true before
+    // the button was ever clicked, and would have passed against a verifier that
+    // silently did nothing (rule 21).
+    expect(await screen.findByText('unreachable')).toBeInTheDocument()
+    expect(screen.queryByText('Hash chain intact')).not.toBeInTheDocument()
   })
 })
 

@@ -1865,6 +1865,21 @@ one of its findings. The habit that catches it:
    the two branches have to differ. A negative assertion is a control, never a
    conclusion.
 
+   *Applied backwards over the existing suite:* 12 tests assert nothing but absences.
+   Nine are correct — the property genuinely is an absence (`sends no tenant
+   identifier`, `says nothing about truncation when the list is complete`) and each is
+   paired with a positive control. **Three were written the same day this rule was, and
+   were wrong:** two claimed to show a loading skeleton and an error state while
+   asserting only that the data was missing, and one titled *"says so when verification
+   itself fails"* checked only that the success text was absent — which was equally true
+   before the button was ever pressed, and would have passed against a verifier that did
+   nothing at all. All three now assert what the state SAYS.
+
+   The detector needed correcting first, in the usual direction: matching
+   `expect\([^)]*\)` cannot see `expect(screen.getByText('x'))`, whose argument
+   contains parentheses, so the first run reported 49 negative-only tests of which
+   roughly forty had a positive assertion it simply could not read.
+
 ---
 
 ## Open observations, not yet tickets

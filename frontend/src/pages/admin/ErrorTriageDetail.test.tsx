@@ -87,14 +87,20 @@ describe('ErrorTriageDetail', () => {
     expect(screen.getByText(/File "handler.py"/)).toBeInTheDocument()
   })
 
-  it('shows a loading state', () => {
-    show(undefined, { isLoading: true })
-    expect(screen.queryByText('ValueError')).not.toBeInTheDocument()
+  it('shows a loading skeleton', () => {
+    // Asserts the skeleton is PRESENT, not merely that the data is absent. The first
+    // version checked only the absence, which is equally true when the component
+    // crashes, when the selector is wrong, and when nothing renders at all (rule 21).
+    const { container } = show(undefined, { isLoading: true })
+    expect(container.querySelector('.animate-pulse')).toBeTruthy()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
-  it('shows an error state rather than a blank page', () => {
+  it('names the problem instead of showing a blank page', () => {
     show(undefined, { isError: true })
-    expect(screen.queryByText('ValueError')).not.toBeInTheDocument()
+    const alert = screen.getByRole('alert')
+    expect(alert).toBeInTheDocument()
+    expect(alert.textContent).toMatch(/unknown or expired fingerprint/i)
   })
 })
 
