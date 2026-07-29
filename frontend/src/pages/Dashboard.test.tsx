@@ -182,6 +182,37 @@ describe('Dashboard', () => {
     expect(screen.getAllByRole('status').length).toBeGreaterThan(0)
   })
 
+  it('stops counting alarms in the heading when the count did not arrive', async () => {
+    // The body handled the error and the TITLE did not: `Active alarms (${count ?? 0})`
+    // rendered "Active alarms (0)" beside a panel reading "Couldn't load this data". Two
+    // contradictory statements, and the more specific one was false.
+    //
+    // The heading is also this section's aria-label, so a screen-reader user navigating
+    // by landmark hears "Active alarms 0" and need never reach the body that disagrees.
+    // Rule 24 — handling isError and acting on it are different jobs.
+    happyPath()
+    getActive.mockRejectedValue(new Error('boom'))
+    renderDashboard()
+
+    const alarms = await screen.findByRole('region', { name: 'Active alarms' })
+    await waitFor(() =>
+      expect(within(alarms).getByRole('alert')).toHaveTextContent(/couldn’t load/i),
+    )
+    // Named exactly: `{ name: /active alarms/i }` would match "Active alarms (0)" too and
+    // the query above would pass against the defect.
+    expect(screen.queryByRole('region', { name: /active alarms \(/ })).toBeNull()
+  })
+
+  it('shows the alarm count in the heading when there is one', async () => {
+    // The positive control. Without it, "no count in the heading" is satisfied by a page
+    // that never puts one there.
+    happyPath()
+    renderDashboard()
+    expect(
+      await screen.findByRole('region', { name: 'Active alarms (1)' }),
+    ).toBeInTheDocument()
+  })
+
   it('degrades ONE widget on failure, leaving the rest of the page usable', async () => {
     happyPath()
     getThroughput.mockRejectedValue(new Error('boom'))
