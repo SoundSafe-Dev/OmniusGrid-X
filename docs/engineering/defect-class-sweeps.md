@@ -14,12 +14,19 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The thirty classes
+## The thirty-five classes
 
 The first five were all originally found in ERP. The sixth came out of the fifth, the
 seventh out of two failing tests that turned out to share a cause, and the eighth out of
 the seventh — the same "we are testing a double, not the thing that ships" shape, moved
 to the frontend/backend seam.
+
+The last six are one question asked six ways: **what does this code claim when it does not
+know?** They ran from a compliance verdict computed over an empty driver list, through five
+more mechanisms that turn absence into a reading, out to a widget that disappears, a claim
+rendered beside its own error banner, and finally to the action side — a button whose
+failure reaches nobody. Each was found by taking the previous one's shape seriously enough
+to ask where else it could live.
 
 | Class | Swept | Found elsewhere | Guard |
 |---|---|---|---|
@@ -53,6 +60,11 @@ to the frontend/backend seam.
 | A source file the docs point at that is not in the repo | every filename cited in three docs | **1 fiction, 5 omissions** | `test_documented_files_exist.py` |
 | A frontend catch that swallows a failure | every `catch` in `src` | **clean — all 10 report or recover** | none; see class 28 |
 | A verdict computed from emptiness | every querying component + compliance verdicts | **14 live: 13 UI, 1 server-side** | `failureIsNotEmptiness.test.ts`, `test_carrier_compliance_needs_something_to_assess.py` |
+| The same verdict, five more mechanisms | HOS/OEE/grade paths on both sides of the wire | **8 live: NULL coercion, empty iteration, SQL 3-valued logic, an empty-set average, a threshold on a percentage of nothing** | `test_logistics_compliance_status_realdb.py`, `test_oee_failure_is_not_zero.py` |
+| A tenant-scoped write that matched nothing | every unchecked `UPDATE` in `app/api` | **2 live: error triage cross-tenant, maintenance mode 500ing on a column that did not exist** | `test_maintenance_mode_realdb.py`, `test_error_triage_sample_redaction_realdb.py` |
+| A widget that vanishes when its query fails | every JSX gate on a query-derived value | **1 live: the fleet page's vehicle map, with no string to grep for** | `failureIsNotEmptiness.test.ts` (second detector) |
+| A claim rendered beside a handled error | every falsy ternary branch / coerced count outside an error branch | **6 live: gateway mTLS + queue, model badge, MLOps ×3, dashboard heading, strategic tiles** | the per-page suites; rule 24 |
+| A mutation whose failure reaches nobody | every `useMutation` in the frontend | **9 live across 3 files, incl. delete-user and a stale connection-test success** | `mutationFailureIsVisible.test.ts` |
 
 Twenty-nine of these carry a numbered section below. **Response-shape mismatch is the
 exception**: it was swept in the same pass as the `get_db` work and came back clean, so
@@ -2038,6 +2050,47 @@ one of its findings. The habit that catches it:
    B, and asserted three zeros. It now seeds a job for each tenant and asserts org A can
    read and delete its own — with the GUC pointed at an org that owns nothing, the new
    assertion fails and says why.
+
+22. **When a fail-safe stops firing, something it was hiding starts happening.** A
+   `try/except` returning the conservative answer, an `or 0`, a `?? []`: each converts a
+   defect into survivable behaviour, and survivable behaviour is never investigated. The
+   tactical engine's maintenance check failed *safe* for as long as the column was
+   missing, so adding it would have flipped suppress-everything into suppress-nothing.
+   Work out what the safe branch was standing in for before removing its cause — the
+   commit that makes the error go away is the moment of maximum risk. *(Full account:
+   § Maintenance mode.)*
+
+23. **A suppression assertion is satisfied by a broken connection.** Four engine tests
+   assert `is True`, and `True` is also what the `except` branch returns for a database
+   that never answered — three passed on the first run against `role "placeholder" does
+   not exist`. Any suite whose assertions all sit on the safe side of a fail-safe needs
+   one that produces the *unsafe* side through the same path, or it is only testing that
+   the code is unreachable. Rule 21, one layer down.
+
+24. **An error banner does not immunise the rest of the page.** `CloudGateway` handled
+   `isError`, rendered a clear red notice, and then laid out four cards asserting the
+   opposite of unknown. Marking a failure and *acting* on it are different jobs, and a
+   reviewer grepping for `isError` finds the first and assumes the second. Ask not "does
+   this component handle the error" but "what does it still claim while the error is on
+   screen". Six pages were wrong this way. *(§ The third form.)*
+
+25. **A qualifier nobody renders is a qualifier that does not exist.** A caveat the UI
+   never reads leaves the number rendered bare while the backend believes the caveat is
+   shown. Wire it, drop it, or record that the field it qualifies is unrendered too — in
+   an exemption that expires by itself the moment anything renders it.
+
+26. **A sweep that finds nothing has told you about the sweep.** The emptiness guard
+   reported zero offenders tree-wide while three pages were unguarded: a 40-character
+   phrase cap hid a hundred-character empty state, and a 2500-character proximity window
+   found an *unrelated* mutation's error branch and called the page clean. Control every
+   guard against the real pre-fix file restored from git — a synthetic fixture proves the
+   function works, only the file proves the walking around it does. *(§ Rule 26.)*
+
+27. **A window is a guess about code shape; bounds are not.** Looking for `onError`
+   within 600 characters of a `useMutation` gave two false positives out of four files —
+   a long `mutationFn`, and a `try/catch` around `mutateAsync`. The options object has
+   exact bounds, so count braces. And treat a parse failure as "cannot tell": a sweep
+   that turns one into a finding spends the reader's trust on noise. *(§ Rule 27.)*
 
 ---
 

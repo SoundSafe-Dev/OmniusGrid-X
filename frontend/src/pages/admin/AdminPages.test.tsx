@@ -138,6 +138,78 @@ describe('UsersPage', () => {
 // no longer assume one request is the whole list — and a table that shows the first
 // page with no indication of the rest is the same silent truncation wearing a
 // different hat.
+describe('UsersPage — a failed write does not pass for a successful one', () => {
+  // FOUND BY THE MUTATION SWEEP. All three user mutations had `onSuccess` and no
+  // `onError`, so a rejected request left the modal open (create/update) or the row
+  // exactly where it was (deactivate) and said nothing at all.
+  //
+  // Deactivate is the one that matters. "Row still there" is precisely what a SUCCESSFUL
+  // deactivation looks like until the list refetches — the server keeps the row — so
+  // there was nothing to notice, and an admin who believes they revoked someone's access
+  // and did not has a security problem they cannot see.
+  //
+  // The idiom was already in this file: `alert` from useDialog is used for the
+  // missing-field checks. Only the failures skipped it.
+
+  it('tells the admin when a deactivation did not happen', async () => {
+    deleteUser.mockRejectedValue({ response: { data: { detail: 'Insufficient rights' } } })
+    page()
+    await screen.findByText('Dana Operator')
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Deactivate Dana Operator' }),
+    )
+    await waitFor(() => expect(alertMock).toHaveBeenCalled())
+    const opts = alertMock.mock.calls[0][0]
+    expect(opts.title).toMatch(/could not remove the user/i)
+    // The reason has to reach the screen: "it failed" and "you are not allowed to do
+    // this" send an admin to different places.
+    expect(opts.message).toMatch(/Insufficient rights/)
+  })
+
+  it('says the access is unchanged rather than leaving it ambiguous', async () => {
+    deleteUser.mockRejectedValue(new Error('unreachable'))
+    page()
+    await screen.findByText('Dana Operator')
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Deactivate Dana Operator' }),
+    )
+    await waitFor(() => expect(alertMock).toHaveBeenCalled())
+    const opts = alertMock.mock.calls[0][0]
+    expect(`${opts.title} ${opts.message}`).toMatch(/access is unchanged|Nothing has been changed/i)
+    // And the row is still listed, which is the state the message now explains.
+    expect(screen.getByText('Dana Operator')).toBeInTheDocument()
+  })
+
+  it('says nothing when the deactivation succeeds', async () => {
+    // The positive control. Without it, "an alert appears on failure" is satisfied by a
+    // page that alerts on every deactivation, which is noise dressed as safety.
+    page()
+    await screen.findByText('Dana Operator')
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Deactivate Dana Operator' }),
+    )
+    await waitFor(() => expect(deleteUser).toHaveBeenCalledWith('u-1'))
+    expect(alertMock).not.toHaveBeenCalled()
+  })
+
+  it('tells the admin when a user could not be created', async () => {
+    // The modal simply stayed open with the form still filled — feedback of a sort, but
+    // a slow network reads identically to a rejected payload.
+    createUser.mockRejectedValue({ response: { data: { detail: 'Email already in use' } } })
+    page()
+    await screen.findByText('Dana Operator')
+    await userEvent.click(screen.getByRole('button', { name: /add user/i }))
+    // The form label is "Name"; the API field is `full_name`. Asserting on the label
+    // the page actually renders, not on the wire name.
+    await userEvent.type(screen.getByLabelText(/^name$/i), 'New Person')
+    await userEvent.type(screen.getByLabelText(/email/i), 'new@test.local')
+    await userEvent.type(screen.getByLabelText(/password/i), 'hunter2hunter2')
+    await userEvent.click(screen.getByRole('button', { name: /^create user$/i }))
+    await waitFor(() => expect(alertMock).toHaveBeenCalled())
+    expect(alertMock.mock.calls.at(-1)![0].message).toMatch(/Email already in use/)
+  })
+})
+
 describe('UsersPage pagination', () => {
   beforeEach(() => {
     getUsers.mockReset()

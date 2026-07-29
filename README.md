@@ -510,7 +510,7 @@ the UI were all already there, only the write was missing — and the component 
 failures. The other three were uncalled and were removed. Notably a hand fix of this exact
 class had already run (FS-15, "routes that never existed") and left these behind.
 
-**Both suites are green: backend 2,213 passed, frontend 342 passed, 0 failed** — across
+**Both suites are green: backend 2,213 passed, frontend 346 passed, 0 failed** — across
 188 backend and 58 frontend test files. Every guard listed above is mutation-tested:
 reintroduce the defect and the test must fail, checked individually, because a guard that
 cannot fail is indistinguishable from one that passes.
@@ -546,12 +546,34 @@ control commands dispatched to machines an operator had locked out — because t
 fail-safe has been absorbing a defect, removing the defect releases what it was hiding;
 the commit that makes the error go away is the moment of maximum risk (rule 22).
 
-Also fixed in the same class: cross-tenant error triage (a *write*), the fleet page whose
-live vehicle map silently vanished when its org query failed, the cloud-gateway page that
-reported "Queue Depth 0 items" and "mTLS Disabled" for a gateway it never reached, a
-hardcoded green **Active** badge sitting beside "Model status unavailable", and the
-dashboard heading that kept counting "Active alarms (0)" while its own body said the
-request had failed.
+**Every fix in the slice**, so the record is the list and not a sample. Each one is a live
+defect on a mounted route or a rendered page, each has a test that fails against the code
+as it was:
+
+| where | what it claimed | what was true |
+|---|---|---|
+| `check_compliance` | a driver with no reported hours was **compliant** | nothing was reported; `float(x or 0)` invented the zero |
+| `check_compliance` | a driver with **no medical certificate** was compliant | both branches were guarded on the field being set |
+| `/carriers/{id}/compliance` | a carrier with no drivers was **cleared on HOS** | zero violations among zero drivers is not a finding |
+| `/logistics/compliance/summary` | `COMPLIANT` | NULL hours never match `> 11`; WHERE discards UNKNOWN as it discards FALSE |
+| `/logistics/delivery-efficiency` | grade **D** for the period | there were no deliveries to grade |
+| `/dashboard/fleet/oee` | **0%** fleet availability | no assets were measured — the average of an empty set |
+| `/oee/dashboard/summary` | an asset at **0% OEE**, and a fleet mean dragged down by it | the calculation raised; placeholders were averaged in |
+| `/exports/oee/summary` (PDF) | a filed report showing **0, 0, 0, 0** | same, in a document that gets printed and forwarded |
+| `PATCH /error-tracking/errors/{fp}` | one tenant could resolve **another tenant's** error | matched on fingerprint alone — a cross-tenant *write* |
+| `POST /admin/assets/{id}/maintenance` | 200 | the column did not exist; and under RLS an UPDATE is filtered, not rejected |
+| `TacticalEngine._is_maintenance_mode` | *not in maintenance* | the row was invisible to a session with no tenant GUC |
+| 13 screens (yard, telemetry, …) | "No trailers found", "No history for this metric" | the request failed |
+| `FleetOverview` | *(the live vehicle map, absent)* | the org query failed — no sentence to grep for |
+| `CloudGateway` | "Queue Depth 0 items", "**mTLS Disabled**" | the gateway was never reached |
+| `TacticalEngine` | a red **Not Loaded** badge — edge inference down | the status endpoint did not answer |
+| `MLOpsPipeline` | a green **Active** badge, "300 seconds", "0 models" | beside its own "Model status unavailable" |
+| `Dashboard` | heading "**Active alarms (0)**" | its own body said "Couldn't load this data" |
+| `StrategicEngine` | "No pending recommendations. **Check back later**" | the query failed; three tiles read 0 beside the banner |
+| `ERPIntegrations` | "No ERP integrations yet. **Add one to get started**" | `isError` was never destructured |
+| `ERPIntegrations` test-connection | the **previous** test's "healthy: connected" | this test had just failed |
+| `AdminPages` delete-user | *(nothing)* | the delete failed; access was never revoked |
+| `Notifications` delete-subscription | *(nothing)* | the webhook is still active and still sending |
 
 **Then the same question, asked about actions rather than reads.** `useQuery` failures
 render as emptiness; `useMutation` failures render as nothing at all — and the user pressed
@@ -2878,7 +2900,7 @@ The ERP integration system correlates ERP data with operational telemetry to pro
 - [Implementation Summary](IMPLEMENTATION_SUMMARY.md) - Complete feature inventory
 
 **Engineering practice**
-- [Defect-class sweeps](docs/engineering/defect-class-sweeps.md) - The thirty classes of "code that looks wired and cannot work" found so far, what each sweep found (including the three that came back clean), which mutation-tested guard keeps each closed, and twenty-one rules for writing a sweep worth trusting — most of them paid for by a detector that was wrong first
+- [Defect-class sweeps](docs/engineering/defect-class-sweeps.md) - The thirty-five classes of "code that looks wired and cannot work" found so far, what each sweep found (including the ones that came back clean), which mutation-tested guard keeps each closed, and twenty-seven rules for writing a sweep worth trusting — most of them paid for by a detector that was wrong first, including one that reported zero offenders while three pages were broken
 
 **Infrastructure & operations**
 - [Database migrations](database/migrations/README.md) - Runner rules (never edit or rename an applied migration), the 019 gap, grandfathered duplicate prefixes, demo-data gating
