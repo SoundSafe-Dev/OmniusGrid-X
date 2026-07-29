@@ -1773,6 +1773,35 @@ been entered — a new carrier, a failed sync, a partial migration — was clear
 Service. One is an empty table and the other is an empty response; both produced
 clearance from nothing having been inspected.
 
+**A third mechanism, and a fourth surface, found by sweeping the coercion itself.** A
+detector for "a threshold check made on a null-coerced value" returned ten sites. Two were
+already fixed; the rest split into two more live defects and a handful of correct uses.
+
+`/logistics/logistics/compliance/summary` reached the same wrong answer through **SQL
+three-valued logic**. Its violation query filters on
+`hos_drive_hours_today > 11 OR ... OR medical_cert_expires < now()`, and **a NULL never
+satisfies a comparison** — it evaluates to UNKNOWN, which `WHERE` discards exactly as it
+discards FALSE. A driver who has never reported, or has no certificate on file, is
+therefore not counted as a violation and not counted as anything else, so `hos_count == 0`
+and the endpoint returned `"COMPLIANT"`. It now reports `INCOMPLETE_DATA` as a third
+status, because "your fleet has a problem" and "we could not check your fleet" send an
+operator to different places.
+
+`/logistics/logistics/delivery-efficiency` failed the **opposite** way. With no shipments
+in the period `on_time_percent` is 0, which is below every threshold, so `efficiency_grade`
+came out **"D"** — a failing mark awarded for a week with nothing to deliver. Pessimism
+from absence is no more true than optimism from it. The grade is now `None` with a
+`graded` flag.
+
+`yard_management` had the mild version: `float(detention_charge or 0)` turned "not yet
+calculated" into "nothing owed", so `is_detention` read as a settled answer on billable
+time nobody had worked out.
+
+**So the class has now appeared through four distinct mechanisms** — Python `or 0`
+coercion, iteration over an empty collection, SQL `NULL` in a comparison, and a threshold
+applied to a percentage of nothing. That is what makes it worth a name rather than four
+fixes.
+
 **Sweeping the class properly found its root, one level further down.** A detector for
 "a positive verdict that hinges on a count being zero" returned exactly two hits: the
 carrier roll-up above, and `HOSComplianceMonitor.check_compliance`, which produces the

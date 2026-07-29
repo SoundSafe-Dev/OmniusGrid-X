@@ -252,7 +252,21 @@ async def get_delivery_efficiency(
         "on_time_percent": round(on_time_percent, 1),
         "late_deliveries": total - on_time,
         "avg_delay_minutes": round(float(avg_delay), 1) if avg_delay else 0,
-        "efficiency_grade": "A" if on_time_percent >= 95 else "B" if on_time_percent >= 85 else "C" if on_time_percent >= 75 else "D"
+        # THE SAME EMPTINESS DEFECT, FAILING THE OTHER WAY. With no shipments in the
+        # period `on_time_percent` is 0, which is below every threshold, so the grade
+        # came out "D" — a failing mark awarded for a week with nothing to deliver.
+        # Pessimism from absence is no more true than optimism from it; both are a
+        # verdict on data that does not exist. `None` says so, and `graded` lets a
+        # caller distinguish it from a missing field.
+        "graded": total > 0,
+        "efficiency_grade": (
+            None
+            if total == 0
+            else "A" if on_time_percent >= 95
+            else "B" if on_time_percent >= 85
+            else "C" if on_time_percent >= 75
+            else "D"
+        ),
     }
 
 
@@ -381,6 +395,36 @@ async def get_compliance_summary(
         )
     )
     hos_count = hos_violations.scalar() or 0
+
+    # HOW MANY DRIVERS COULD NOT BE JUDGED AT ALL.
+    #
+    # The violation query above filters on `>` comparisons, and **SQL NULL never
+    # satisfies a comparison** — it evaluates to UNKNOWN, which WHERE discards. So a
+    # driver who has never reported hours, or has no medical certificate on file, is not
+    # counted as a violation and not counted as anything else either. `hos_count == 0`
+    # then reads as a clean fleet, and the endpoint below returned "COMPLIANT".
+    #
+    # Same defect as `HOSComplianceMonitor.check_compliance` (Python coercing NULL to 0)
+    # and as the carrier roll-up (a zero count over zero drivers), reached a third way.
+    # Absence keeps arriving as a clean result.
+    driver_totals = (
+        await db.execute(
+            select(
+                func.count(Driver.id).label("total"),
+                func.count(Driver.id)
+                .filter(
+                    or_(
+                        Driver.hos_drive_hours_today.is_(None),
+                        Driver.hos_on_duty_hours_today.is_(None),
+                        Driver.medical_cert_expires.is_(None),
+                    )
+                )
+                .label("unassessable"),
+            ).where(Driver.organization_id == organization_id)
+        )
+    ).fetchone()
+    total_drivers = driver_totals.total or 0
+    unassessable_drivers = driver_totals.unassessable or 0
     
     # Driver medical cert expirations (next 30 days)
     medical_expiring = await db.execute(
@@ -405,9 +449,27 @@ async def get_compliance_summary(
         },
         "driver_compliance": {
             "hos_violations_today": hos_count,
-            "medical_certs_expiring_30_days": medical_expiring_count
+            "medical_certs_expiring_30_days": medical_expiring_count,
+            "total_drivers": total_drivers,
+            "unassessable_drivers": unassessable_drivers,
         },
-        "overall_status": "COMPLIANT" if hos_count == 0 and (carrier_row.ctpat_count or 0) > 0 else "ATTENTION_REQUIRED"
+        # UNKNOWN is its own answer. "COMPLIANT" now requires that there were drivers and
+        # that every one of them had the data needed to judge them; anything else is
+        # reported as INCOMPLETE_DATA rather than folded into ATTENTION_REQUIRED, because
+        # "your fleet has a problem" and "we could not check your fleet" send an operator
+        # to different places.
+        "overall_status": (
+            "COMPLIANT"
+            if (
+                total_drivers > 0
+                and unassessable_drivers == 0
+                and hos_count == 0
+                and (carrier_row.ctpat_count or 0) > 0
+            )
+            else "INCOMPLETE_DATA"
+            if total_drivers == 0 or unassessable_drivers > 0
+            else "ATTENTION_REQUIRED"
+        ),
     }
 
 

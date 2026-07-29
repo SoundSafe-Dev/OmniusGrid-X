@@ -469,6 +469,12 @@ class YardManagementService:
                 check_out = _aware(row.check_out_at)
                 end = check_out or now
                 dwell_hours = (end - check_in).total_seconds() / 3600 if check_in else 0.0
+                # `detention_charge` is NULL until the charge has been CALCULATED, and
+                # `float(None or 0)` turns "not yet worked out" into "nothing owed".
+                # `is_detention` below then reads as a settled answer on a trailer that
+                # has not been assessed — the same absence-as-verdict shape as the HOS
+                # checks, on billable time.
+                detention_known = row.detention_charge is not None
                 detention = float(row.detention_charge or 0)
                 out.append({
                     'trailer_id': row.trailer_id,
@@ -476,8 +482,9 @@ class YardManagementService:
                     'check_in_at': row.check_in_at,
                     'check_out_at': row.check_out_at,
                     'dwell_hours': round(dwell_hours, 2),
-                    'is_detention': detention > 0,
-                    'detention_charge': detention,
+                    'is_detention': detention_known and detention > 0,
+                    'detention_assessed': detention_known,
+                    'detention_charge': detention if detention_known else None,
                 })
             return out
     

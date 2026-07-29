@@ -69,22 +69,37 @@ QUALIFIER_STEMS = (
     "unavailable",
     "sampled",
     "inferred",
+    # Added with the verdict-from-emptiness work. These say a judgement WAS or was not
+    # made — `drivers_assessed`, `detention_assessed`, `assessable`, `graded` — which is
+    # the same job as `quality_measured`: telling the reader how far the number beside it
+    # can be trusted. Naming them without adding them here would have left the newest
+    # qualifiers outside the sweep written to catch exactly this.
+    "assessed",
+    "assessable",
+    "graded",
 )
 
 
 def _is_qualifier_name(name: str) -> bool:
+    """A flag ENDS with its stem: `availability_only`, `quality_measured`,
+    `drivers_assessed`, `graded`.
+
+    Matching the stem anywhere in the name pulled in `context_only_sections` and
+    `context_only_tabs` — both LISTS of sections, named for what they contain rather than
+    for how far to trust them. The schema half of this sweep filters on `boolean` and
+    never had the problem; a raw dict key carries no type, so the shape of the NAME is
+    the only signal available, and a trust flag puts its stem last.
+    """
     lowered = name.lower()
-    return any(
-        lowered == stem
-        or lowered.endswith("_" + stem)
-        or lowered.startswith(stem + "_")
-        or ("_" + stem + "_") in lowered
-        for stem in QUALIFIER_STEMS
-    )
+    return any(lowered == stem or lowered.endswith("_" + stem) for stem in QUALIFIER_STEMS)
 
 
 #: `"quality_measured": metrics.quality_measured` in a handler that returns a plain dict.
-DICT_KEY = re.compile(r'"([a-z][a-z0-9_]*)"\s*:')
+#: BOTH QUOTE STYLES. Matching only double quotes missed every payload in
+#: `transportation_management.py`, which uses single throughout — including
+#: `drivers_assessed`, added by the same work that extended this sweep. A detector that
+#: knows one of two equally common spellings under-reports by construction.
+DICT_KEY = re.compile(r'''["']([a-z][a-z0-9_]*)["']\s*:''')
 
 
 def _qualifier_fields() -> Dict[str, Set[str]]:
@@ -102,8 +117,13 @@ def _qualifier_fields() -> Dict[str, Set[str]]:
     forced the type rule was `estimated_*`, and `estimated` is deliberately not a stem.
     """
     found: Dict[str, Set[str]] = {}
-    api = pathlib.Path(__file__).resolve().parents[1] / "app" / "api"
-    for path in sorted(api.glob("**/*.py")):
+    app_root = pathlib.Path(__file__).resolve().parents[1] / "app"
+    # api AND services: a response payload is just as often assembled in a service and
+    # returned verbatim by a thin handler. Scanning only `app/api` kept
+    # `drivers_assessed` and `detention_assessed` out of view — both introduced by the
+    # verdict-from-emptiness work, both exactly what this file exists to check.
+    sources = sorted(app_root.glob("api/**/*.py")) + sorted(app_root.glob("services/**/*.py"))
+    for path in sources:
         for match in DICT_KEY.finditer(path.read_text()):
             if _is_qualifier_name(match.group(1)):
                 found.setdefault(match.group(1), set()).add(f"{path.name} (raw dict)")
@@ -123,6 +143,26 @@ def _qualifier_fields() -> Dict[str, Set[str]]:
 #: `//` to end of line, and `/* … */`. Applied before matching so that prose about an
 #: unrelated feature cannot stand in for code that reads the field.
 COMMENT = re.compile(r"//[^\n]*|/\*.*?\*/", re.S)
+
+
+#: A qualifier is exempt only while the FIELD IT QUALIFIES is itself unread. That is the
+#: honest reason: `graded` tells a caller whether `efficiency_grade` means anything, and
+#: no screen renders the grade, so nothing is being dropped — there is no caveat to lose
+#: because there is no claim being made.
+#:
+#: Each entry names that field, and `TestTheExemptionsStayHonest` asserts it is still
+#: unread. The moment somebody renders the verdict, the exemption fails and the qualifier
+#: has to be wired with it. An allowlist that cannot expire is how a real finding gets
+#: parked forever.
+QUALIFIES_AN_UNREAD_FIELD: Dict[str, str] = {
+    "graded": "efficiency_grade",
+    "drivers_assessed": "overall_compliant",
+    "assessable": "is_compliant",
+    "detention_assessed": "detention_charge",
+    "appointments_assessed": "sync_status_breakdown",
+    # Intake lane's scenario builder; its output is not rendered by any page today.
+    "degraded": "scenario_confidence",
+}
 
 
 def _frontend_source() -> str:
@@ -145,7 +185,9 @@ SOURCE = _frontend_source()
 UNREAD: List[Tuple[str, List[str]]] = sorted(
     (field, sorted(schemas))
     for field, schemas in QUALIFIERS.items()
-    if field not in SOURCE and _camel(field) not in SOURCE
+    if field not in SOURCE
+    and _camel(field) not in SOURCE
+    and field not in QUALIFIES_AN_UNREAD_FIELD
 )
 
 
@@ -201,3 +243,36 @@ class TestEveryQualifierIsReadByTheFrontend:
             "the field on the TypeScript type and render it, or drop it server-side:\n  "
             + "\n  ".join(f"{field} (from {', '.join(schemas)})" for field, schemas in UNREAD)
         )
+
+
+class TestTheExemptionsStayHonest:
+    """An exemption here is a claim: "the field this qualifies is not rendered either".
+
+    Claims rot. These assertions make each one re-prove itself on every run, so the list
+    cannot quietly become a place where findings go to be forgotten.
+    """
+
+    def test_each_exemption_names_the_field_it_qualifies(self):
+        for qualifier, qualified in QUALIFIES_AN_UNREAD_FIELD.items():
+            assert qualified and qualified != qualifier, (
+                f"{qualifier} is exempted without naming what it qualifies"
+            )
+
+    def test_the_qualified_field_is_still_unread(self):
+        """The exemption expires by itself. If a page starts rendering
+        `efficiency_grade`, `graded` stops being optional and this fails."""
+        now_read = [
+            f"{q} (qualifies {field}, which the frontend now reads)"
+            for q, field in QUALIFIES_AN_UNREAD_FIELD.items()
+            if field in SOURCE or _camel(field) in SOURCE
+        ]
+        assert not now_read, (
+            "these qualifiers were exempted because the field they qualify was not "
+            "rendered; it is now, so the caveat has to be wired too:\n  "
+            + "\n  ".join(now_read)
+        )
+
+    def test_every_exemption_is_still_a_qualifier_on_the_wire(self):
+        """An entry for a field the backend no longer emits is dead weight."""
+        stale = [q for q in QUALIFIES_AN_UNREAD_FIELD if q not in QUALIFIERS]
+        assert not stale, f"exempted but no longer emitted: {stale}"
