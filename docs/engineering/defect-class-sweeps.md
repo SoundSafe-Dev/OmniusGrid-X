@@ -1880,6 +1880,17 @@ one of its findings. The habit that catches it:
    contains parentheses, so the first run reported 49 negative-only tests of which
    roughly forty had a positive assertion it simply could not read.
 
+   *And again on the backend.* 164 Python tests assert nothing but absences, which is
+   mostly correct — refusals, guards and isolation are negative properties. The sharper
+   question is whether each isolation suite has a **positive control**, because "org B
+   cannot see org A's row" is satisfied by a policy that hides the table from everyone,
+   and this codebase has shipped exactly that twice (`audit_logs` and
+   `data_processing_records` returned zero rows to their own owners for months).
+   `test_compliance_report_migration.py` had no such control: it seeded one job, for org
+   B, and asserted three zeros. It now seeds a job for each tenant and asserts org A can
+   read and delete its own — with the GUC pointed at an org that owns nothing, the new
+   assertion fails and says why.
+
 ---
 
 ## Open observations, not yet tickets
