@@ -666,7 +666,16 @@ class TransportationManagementService:
                     'expired_medical_certs': expired_medical_certs,
                     'compliant_drivers': len(drivers) - hos_violations
                 },
+                # WHETHER ANY DRIVER WAS ASSESSED AT ALL. `hos_violations == 0` is
+                # trivially true for a carrier with no drivers on file, so the verdict
+                # below used to clear a carrier whose driver records had never been
+                # entered or synced. Zero violations found among zero drivers is not a
+                # finding — it is the absence of one, and Hours of Service is
+                # DOT-regulated. The frontend had the same defect on the same data and
+                # rendered a green tick for it.
+                'drivers_assessed': len(drivers) > 0,
                 'overall_compliant': (
+                    len(drivers) > 0 and
                     carrier.ctpat_certified and
                     carrier.insurance_on_file and
                     hos_violations == 0

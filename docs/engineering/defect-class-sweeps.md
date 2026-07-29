@@ -52,7 +52,7 @@ to the frontend/backend seam.
 | An endpoint the README documents but the app never served | all 124 API-Reference rows | **22 wrong — 404 for anyone who followed them** | `test_documented_endpoints_exist.py` |
 | A source file the docs point at that is not in the repo | every filename cited in three docs | **1 fiction, 5 omissions** | `test_documented_files_exist.py` |
 | A frontend catch that swallows a failure | every `catch` in `src` | **clean — all 10 report or recover** | none; see class 28 |
-| A failed query rendered as an empty result | every querying component | **13 live, across 9 components** | `failureIsNotEmptiness.test.ts` |
+| A verdict computed from emptiness | every querying component + compliance verdicts | **14 live: 13 UI, 1 server-side** | `failureIsNotEmptiness.test.ts`, `test_carrier_compliance_needs_something_to_assess.py` |
 
 Twenty-nine of these carry a numbered section below. **Response-shape mismatch is the
 exception**: it was swept in the same pass as the `get_db` work and came back clean, so
@@ -1713,7 +1713,7 @@ per-page work, and it is what the page tests added this week actually assert: `A
 must not render a fetch failure as an empty trail, and `ErrorTriageDetail` must not render
 a redaction as a missing traceback.
 
-## 29. A failed query rendered as an empty result — **13 live, across 9 components**
+## 29. A verdict computed from emptiness — **14 live: 13 in the UI, 1 in the API**
 
 Class 28 came back clean: no frontend `catch` swallows a failure. This is where the
 failures actually go instead. React Query does not need a `catch` to lose one — on error
@@ -1763,6 +1763,22 @@ specific one was the false one.
 `fleetOEE?.assets?.length === 0` is **false**, so even the empty state did not render. The
 page showed a table with no rows and no explanation. Silently empty is worse than wrongly
 labelled — there is nothing for the reader to disbelieve.
+
+**And the server had the same defect on the same data.**
+`get_carrier_compliance_summary` returns
+`overall_compliant = ctpat_certified and insurance_on_file and hos_violations == 0`,
+counting violations by looping over the carrier's drivers. **`hos_violations == 0` is
+trivially true when there are no drivers**, so a carrier whose driver records had never
+been entered — a new carrier, a failed sync, a partial migration — was cleared on Hours of
+Service. One is an empty table and the other is an empty response; both produced
+clearance from nothing having been inspected.
+
+The verdict now requires that something was assessed, and reports `drivers_assessed` so
+the reason is legible rather than inferred from a count. The C-TPAT and insurance checks
+are deliberately untouched: they read fields on the carrier itself, which either hold a
+valid date or do not. **Emptiness is only ambiguous where a COUNT stands in for an
+inspection** — that is the line worth remembering, and it is what makes this a class
+rather than two bugs.
 
 **How it was found, which is the part worth keeping.** Not by this sweep. It came out of
 writing a page test whose first version asserted only that a known trailer was *absent* —
