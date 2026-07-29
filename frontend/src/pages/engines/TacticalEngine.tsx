@@ -49,8 +49,19 @@ export const TacticalEngine: FC = () => {
                 </div>
                 <div>
                   <p className="text-sm text-opsgrid-text-secondary">Model Status</p>
-                  <Badge variant={status?.modelLoaded ? 'success' : 'error'} size="sm">
-                    {status?.modelLoaded ? 'Loaded' : 'Not Loaded'}
+                  {/* MISSED BY THE FIX ONE SCREEN BELOW. The thresholds panel was
+                      corrected for exactly this — a failed query rendering as a finding —
+                      and this badge, on the same page, kept saying "Not Loaded" in red.
+                      A red badge reading Not Loaded is a claim that edge inference is
+                      down, which is a callout; the truth was that the status endpoint
+                      did not answer. Method rule 18: a guard wrong once is likeliest
+                      wrong again, so re-derive the whole component, not the line that
+                      was reported. */}
+                  <Badge
+                    variant={!status ? 'default' : status.modelLoaded ? 'success' : 'error'}
+                    size="sm"
+                  >
+                    {!status ? 'Unknown' : status.modelLoaded ? 'Loaded' : 'Not Loaded'}
                   </Badge>
                 </div>
               </div>
