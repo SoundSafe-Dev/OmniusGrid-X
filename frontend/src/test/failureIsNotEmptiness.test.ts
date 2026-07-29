@@ -116,9 +116,21 @@ const CHAIN_WINDOW = 2500
  * handles failure (its comment records the same defect being fixed there earlier), so
  * nothing was hiding in the gap. The pattern is widened anyway, because a blind spot
  * that happens to be empty today is still a blind spot — method rule 18.
+ *
+ * WIDENED A THIRD TIME, and this time something WAS hiding in the gap. The cap was 40
+ * characters, and `StrategicEngine` says
+ *
+ *     No pending recommendations. Check back later for new suggestions from the cloud
+ *     strategic engine.
+ *
+ * — about a hundred. The guard reported zero offenders across the tree while that sat
+ * unguarded, which is the exact failure mode rule 21 is about: a clean sweep is a claim
+ * about the SWEEP until something proves it can still fail. A helpful empty state is
+ * longer than a terse one, so the cap was hardest on the pages that explained themselves
+ * best. 120 now, still bounded so it cannot run across a whole JSX subtree.
  */
 const EMPTY_PHRASE =
-  String.raw`(?:No [A-Za-z][^<>{"']{2,40}|[A-Za-z][^<>{"']{0,30}(?:not found|nothing to [a-z]+|no results|is empty|none yet)[^<>{"']{0,20})`
+  String.raw`(?:No [A-Za-z][^<>{"']{2,120}|[A-Za-z][^<>{"']{0,30}(?:not found|nothing to [a-z]+|no results|is empty|none yet)[^<>{"']{0,20})`
 const EMPTY_STATE = [
   new RegExp(String.raw`>\s*(${EMPTY_PHRASE})\s*<`, 'g'),
   new RegExp(String.raw`["'](${EMPTY_PHRASE})["']`, 'g'),
@@ -141,16 +153,80 @@ export function emptyStatesIn(source: string): string[] {
   return [...new Set(found)]
 }
 
+/** A `{isError && (…)}` block that CLOSES before the empty state guards nothing.
+ *
+ * This is how `StrategicEngine` escaped. Its failure banner sits at the top of the page
+ * and the empty state is a hundred lines below, but the banner was inside the proximity
+ * window, so the chain "contained an error branch" and the file looked clean. A banner
+ * marks a failure; it does not stand in the way of anything after it — rule 24, arriving
+ * in the guard itself.
+ *
+ * Brace counting, not a regex: a JSX expression container ends at its matching `}`, and
+ * nesting is exactly what a pattern cannot follow. If the container holding this
+ * `isError` closes before `emptyAt`, the occurrence is a banner and does not count.
+ *
+ * NARROW ON PURPOSE — it applies only to a whole JSX container that OPENS with an error
+ * check, `{someError && …}` or `{someError ? … : …}`.
+ *
+ * The `?` form is not optional, and leaving it out is what still hid `StrategicEngine`
+ * after the length cap was widened. Its nearest error branch was
+ * `{optimizeMutation.isError ? (…)}` — a DIFFERENT mutation, in a different card, 1669
+ * characters away and therefore inside the window. Proximity had found an error branch
+ * that guards a completely unrelated thing. When the container opens with a ternary and
+ * the empty state is inside it, brace counting still says "guards"; when it closed two
+ * cards earlier, it now correctly says it does not. The first version counted braces from whatever `{` came
+ * before the match, and defaulting to "does not guard" made it wrong twice at once: it
+ * anchored on the `{ data, isError }` of the destructuring, and on `isError={q.isError}`
+ * passed as a PROP, where the guard is the receiving component and position is
+ * irrelevant. Both are real guards and both got flagged. Everything that is not the
+ * banner idiom is now assumed to guard, so the check can only ever remove a false
+ * negative, never manufacture a false positive.
+ */
+const BANNER_BLOCK = /^\s*(?:[A-Za-z.]*\b(?:isError|[A-Za-z]+Error))\s*(?:&&|\?)/
+
+function guardsPosition(source: string, errorAt: number, emptyAt: number): boolean {
+  const open = source.lastIndexOf('{', errorAt)
+  if (open === -1) return true
+  if (!BANNER_BLOCK.test(source.slice(open + 1, errorAt + 40))) return true
+  let depth = 0
+  for (let i = open; i < source.length; i++) {
+    if (source[i] === '{') depth++
+    else if (source[i] === '}') {
+      depth--
+      if (depth === 0) return i > emptyAt
+    }
+  }
+  return true
+}
+
+/** Empty states whose condition is a field on an ALREADY-RENDERED item, not on a query
+ *  result. Each entry is a claim that the phrase cannot be reached by a failed request;
+ *  `TestTheExemptionsStayHonest` re-proves the phrase still exists so the list cannot
+ *  quietly describe code that has moved on. */
+export const NOT_A_QUERY_EMPTY_STATE: Record<string, string> = {
+  // `a.notificationDispatched ? … : …` inside the assessment list — `a` is one rendered
+  // assessment, so this line exists only when the query already returned data. It
+  // describes THAT assessment, not the absence of a response.
+  'No notification dispatched for this assessment':
+    'pages/predictive/PredictiveMaintenance.tsx',
+}
+
 export function fallsThroughToEmptiness(raw: string, _file = ''): string[] {
   const source = raw.replace(COMMENT, ' ')
   if (!(source.match(QUERIES) ?? []).length) return []
   const unguarded: string[] = []
   for (const pattern of EMPTY_STATE) {
     for (const match of source.matchAll(pattern)) {
+      const phrase = match[1].trim()
+      if (phrase in NOT_A_QUERY_EMPTY_STATE) continue
       const before = source.slice(0, match.index!)
       if (EARLY_RETURN.test(before)) continue
       const chain = before.slice(Math.max(0, before.length - CHAIN_WINDOW))
-      if (!ERROR_BRANCH.test(chain)) unguarded.push(match[1].trim())
+      const chainStart = before.length - chain.length
+      const guarded = [...chain.matchAll(new RegExp(ERROR_BRANCH.source, 'g'))].some((e) =>
+        guardsPosition(source, chainStart + e.index!, match.index!),
+      )
+      if (!guarded) unguarded.push(phrase)
     }
   }
   return [...new Set(unguarded)]
@@ -230,10 +306,93 @@ describe('the sweep is not vacuous', () => {
     expect(fallsThroughToEmptiness(bad)).toContain('Asset not found')
   })
 
+  it('does not accept a banner that closes before the empty state', () => {
+    // HOW STRATEGICENGINE ESCAPED. A `{isError && (…)}` block at the top of the page
+    // marks the failure and stands in the way of nothing after it, but it sat inside the
+    // proximity window, so the chain "contained an error branch" and the file read clean.
+    const banner = `
+      const { data, isError } = useQuery({ queryKey: ['x'], queryFn: f })
+      return (
+        <div>
+          {isError && (<Card><p>Failed to load recommendations.</p></Card>)}
+          <Card>
+            {(data ?? []).length === 0 ? (
+              <p>No pending recommendations. Check back later for new suggestions.</p>
+            ) : <List />}
+          </Card>
+        </div>
+      )
+    `
+    expect(fallsThroughToEmptiness(banner)).toContain(
+      'No pending recommendations. Check back later for new suggestions.',
+    )
+  })
+
+  it('still accepts a banner that WRAPS the empty state', () => {
+    // The same idiom used correctly: the container has not closed, so it really is the
+    // alternative branch. Without this the rule above would flag it.
+    const wrapping = `
+      const { data, isError } = useQuery({ queryKey: ['x'], queryFn: f })
+      return <div>{isError ? <Err /> : <p>No pending recommendations here at all.</p>}</div>
+    `
+    expect(fallsThroughToEmptiness(wrapping)).toEqual([])
+  })
+
+  it('still accepts isError passed as a prop to the component that renders both', () => {
+    // The Dashboard idiom. The guard is the receiving component, so position says
+    // nothing — the first version of the banner rule flagged all six of its widgets.
+    const viaProp = `
+      const q = useQuery({ queryKey: ['x'], queryFn: f })
+      return <Widget isError={q.isError} isEmpty={!q.data?.count} emptyLabel="No active alarms" />
+    `
+    expect(fallsThroughToEmptiness(viaProp)).toEqual([])
+  })
+
+  it('sees an empty state longer than the old forty-character cap', () => {
+    // The cap is why StrategicEngine's phrase was invisible even before the banner
+    // question arose. A helpful empty state is longer than a terse one, so the limit bit
+    // hardest on the pages that explained themselves best.
+    const verbose = `
+      const { data } = useQuery({ queryKey: ['x'], queryFn: f })
+      return <p>No pending recommendations. Check back later for new suggestions from the cloud engine.</p>
+    `
+    expect(fallsThroughToEmptiness(verbose).length).toBe(1)
+  })
+
   it('ignores a component with an empty state but no query', () => {
     // A presentational list given its rows as props cannot fail a request, so it has
     // nothing to distinguish. Flagging it would be noise.
     expect(fallsThroughToEmptiness('return <p>No items selected</p>')).toEqual([])
+  })
+})
+
+describe('the per-item exemptions stay honest', () => {
+  // An exemption is a claim: "a failed request cannot reach this phrase, because the
+  // condition is a field on an item the query already returned". Claims rot. These make
+  // each one re-prove itself, so the list cannot become somewhere findings go to be
+  // forgotten — the same discipline as the backend's QUALIFIES_AN_UNREAD_FIELD.
+  it('names a file that still contains the phrase', () => {
+    const missing = Object.entries(NOT_A_QUERY_EMPTY_STATE).filter(
+      ([phrase, file]) => !readFileSync(join(SRC, file), 'utf8').includes(phrase),
+    )
+    expect(missing).toEqual([])
+  })
+
+  it('stays short enough to read', () => {
+    // Not a limit for its own sake: a list nobody reads is a list nobody audits, and
+    // this one exists to hold false positives, not findings.
+    expect(Object.keys(NOT_A_QUERY_EMPTY_STATE).length).toBeLessThanOrEqual(5)
+  })
+
+  it('would flag the exempted phrase without the exemption', () => {
+    // If the pattern stopped matching these phrases entirely, the entries would be dead
+    // weight AND the sweep would have quietly narrowed. This proves they are still live.
+    const [phrase] = Object.keys(NOT_A_QUERY_EMPTY_STATE)
+    const source = `
+      const { data } = useQuery({ queryKey: ['x'], queryFn: f })
+      return <p>${phrase}</p>
+    `
+    expect(emptyStatesIn(source)).toContain(phrase)
   })
 })
 

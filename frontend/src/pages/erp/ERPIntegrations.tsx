@@ -16,7 +16,12 @@ const EMPTY_FORM: ERPIntegrationCreate = {
 
 export const ERPIntegrationsPage: FC = () => {
   const qc = useQueryClient()
-  const { data: integrations, isLoading } = useQuery({ queryKey: ['erp-integrations'], queryFn: () => erpApi.listIntegrations() })
+  // `isError` was not destructured at all, so a failed list query fell through to
+  // "No ERP integrations yet. Add one to get started." — an instruction to go and
+  // configure something, given to someone whose integrations could not be read. This
+  // file already had the right idiom: `EmptyOrError` below is used by every sub-panel.
+  // Only the top-level list, the first thing on the page, skipped it (method rule 18).
+  const { data: integrations, isLoading, isError } = useQuery({ queryKey: ['erp-integrations'], queryFn: () => erpApi.listIntegrations() })
   const [showAdd, setShowAdd] = useState(false)
   const [form, setForm] = useState<ERPIntegrationCreate>(EMPTY_FORM)
   const [authConfigText, setAuthConfigText] = useState('{}')
@@ -154,7 +159,12 @@ export const ERPIntegrationsPage: FC = () => {
               {selectedId === it.id && <SyncStatusPanel id={it.id} />}
             </Card>
           ))}
-          {(integrations ?? []).length === 0 && (
+          {isError ? (
+            <p role="alert" className="text-status-alarm">
+              Could not load ERP integrations. This is a failed request — it does not mean
+              you have none configured.
+            </p>
+          ) : (integrations ?? []).length === 0 && (
             <p className="text-opsgrid-text-secondary">No ERP integrations yet. Add one to get started.</p>
           )}
         </div>

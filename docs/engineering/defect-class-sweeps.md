@@ -2336,3 +2336,56 @@ shown. The honest resolutions are to wire it, to drop it, or — as here — to 
 the field it qualifies is not rendered either, in an exemption that expires by itself the
 moment anything renders it. `/oee/dashboard/summary` has no frontend consumer at all; the
 dashboard reads `/dashboard/fleet/oee`.
+
+## Rule 26 — a sweep that finds nothing has told you about the sweep
+
+The emptiness sweep reported **zero offenders across the tree** while `StrategicEngine`
+sat unguarded, telling anyone whose recommendations had failed to load: *"No pending
+recommendations. Check back later for new suggestions from the cloud strategic engine."*
+It escaped through two independent blind spots, and neither was visible from the clean
+result.
+
+**The length cap.** `EMPTY_PHRASE` matched up to forty characters after "No "; that
+sentence runs to about a hundred. A helpful empty state is longer than a terse one, so
+the cap bit hardest on exactly the pages that took the trouble to explain themselves —
+the third time this pattern has had to be widened, and the first time something was
+actually hiding in the gap.
+
+**Proximity found the wrong error branch.** With the cap widened it *still* passed: the
+nearest `isError` inside the 2500-character window was `{optimizeMutation.isError ? …}`,
+a different mutation in a different card. The chain "contained an error branch" and the
+file read clean. The page's own failure banner is a hundred lines above and guards
+nothing below it either — rule 24 arriving inside the guard.
+
+The fix is `guardsPosition`: when a JSX expression container OPENS with an error check
+(`{someError && …}` or `{someError ? … : …}`) and closes before the empty state, that
+occurrence is a banner and does not count. Brace counting, because nesting is precisely
+what a regex cannot follow.
+
+**It is deliberately narrow, and the first version was not.** Counting braces from
+whatever `{` preceded the match, and defaulting to "does not guard", broke two correct
+idioms at once: the `{ data, isError }` of the destructuring, and `isError={q.isError}`
+passed as a **prop**, where the guard is the receiving component and position is
+meaningless — that one flagged all six Dashboard widgets. Anything that is not the banner
+idiom is now assumed to guard, so the rule can only remove a false negative, never
+manufacture a false positive.
+
+Three sweeps in this session came back empty. Two of those were true, and each is now
+controlled against the real pre-fix file rather than a synthetic fixture — restore the
+file from git, watch the guard name it, restore the fix, watch it go quiet. A synthetic
+fixture proves the function works; only the real file proves the file-walking around it
+does.
+
+`ERPIntegrations` fell out of the same widening: its top-level list query did not
+destructure `isError` at all, so a failed load rendered "No ERP integrations yet. Add one
+to get started." — an instruction to go and configure something, given to someone whose
+integrations could not be read. That file already defined an `EmptyOrError` component and
+used it in every sub-panel. Only the first thing on the page skipped it.
+
+**One false positive was found and exempted, not suppressed.** `PredictiveMaintenance`
+says "No notification dispatched for this assessment" from `a.notificationDispatched ? …`
+where `a` is an already-rendered assessment — the line cannot be reached by a failed
+request. `NOT_A_QUERY_EMPTY_STATE` records it with the reason, and three tests keep the
+entry honest: the phrase must still exist in the named file, the list must stay short
+enough to read, and the pattern must still match the phrase — so the list cannot quietly
+describe code that has moved on, or hide a sweep that has narrowed.

@@ -80,7 +80,9 @@ export const StrategicEngine: FC = () => {
               <div className="flex items-center gap-3">
                 <Lightbulb className="w-8 h-8 text-opsgrid-primary" />
                 <div>
-                  <p className="text-2xl font-bold">{pendingRecs.length}</p>
+                  {/* 0 Pending, 0 Approved and 0 Rejected sat beside the failure
+                      banner — three counts of nothing, from nothing. */}
+                  <p className="text-2xl font-bold">{isError ? '—' : pendingRecs.length}</p>
                   <p className="text-sm text-opsgrid-text-secondary">Pending Recommendations</p>
                 </div>
               </div>
@@ -95,7 +97,7 @@ export const StrategicEngine: FC = () => {
                 <CheckCircle className="w-8 h-8 text-status-running" />
                 <div>
                   <p className="text-2xl font-bold">
-                    {historyRecs.filter((r) => r.status === 'approved').length}
+                    {isError ? '—' : historyRecs.filter((r) => r.status === 'approved').length}
                   </p>
                   <p className="text-sm text-opsgrid-text-secondary">Approved</p>
                 </div>
@@ -111,7 +113,7 @@ export const StrategicEngine: FC = () => {
                 <XCircle className="w-8 h-8 text-status-alarm" />
                 <div>
                   <p className="text-2xl font-bold">
-                    {historyRecs.filter((r) => r.status === 'rejected').length}
+                    {isError ? '—' : historyRecs.filter((r) => r.status === 'rejected').length}
                   </p>
                   <p className="text-sm text-opsgrid-text-secondary">Rejected</p>
                 </div>
@@ -175,7 +177,17 @@ export const StrategicEngine: FC = () => {
       {/* Pending Recommendations */}
       <Card title="Pending Recommendations" subtitle="Cloud-derived optimization suggestions">
         <div className="space-y-4">
-          {pendingRecs.length === 0 ? (
+          {isError ? (
+            /* The banner at the top of the page marks the failure; it does not guard
+               anything below it. `recommendations` is undefined on a failed query, so
+               `pendingRecs` is [] and this said "No pending recommendations. Check back
+               later" — an instruction to stop looking, given to someone whose
+               recommendations could not be fetched. Rule 24. */
+            <p role="alert" className="text-status-alarm text-center py-8">
+              Recommendations could not be loaded. This is a failed request — it does not
+              mean the strategic engine has nothing to suggest.
+            </p>
+          ) : pendingRecs.length === 0 ? (
             <p className="text-opsgrid-text-secondary text-center py-8">
               No pending recommendations. Check back later for new suggestions from the cloud strategic engine.
             </p>
