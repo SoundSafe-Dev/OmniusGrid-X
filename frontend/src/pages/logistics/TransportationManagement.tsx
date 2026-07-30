@@ -495,23 +495,23 @@ export const TransportationManagement: FC = () => {
                       <td className="px-4 py-3 text-sm">{shipment.carrierName}</td>
                       <td className="px-4 py-3 text-sm">
                         <div>
+                          {/* A live position for the shipment was rendered here from
+                              `currentLocation`, which `shipments` has no column for and no
+                              endpoint has ever sent. The nearest real position belongs to the
+                              driver's vehicle, two hops away, and goes stale the moment they
+                              change vehicle. */}
                           <p>{shipment.origin.city} → {shipment.destination.city}</p>
-                          {shipment.currentLocation && (
-                            <p className="text-xs text-opsgrid-text-secondary flex items-center gap-1">
-                              <MapPin className="w-3 h-3" />
-                              {shipment.currentLocation.latitude.toFixed(2)}, {shipment.currentLocation.longitude.toFixed(2)}
-                            </p>
-                          )}
                         </div>
                       </td>
                       <td className="px-4 py-3 text-sm">
-                        {shipment.estimatedDelivery ? (
-                          <span className={new Date(shipment.estimatedDelivery) > new Date(shipment.scheduledDelivery) ? 'text-yellow-500' : 'text-green-500'}>
-                            {new Date(shipment.estimatedDelivery).toLocaleDateString()}
-                          </span>
-                        ) : shipment.scheduledDelivery ? (
-                          new Date(shipment.scheduledDelivery).toLocaleDateString()
-                        ) : '-'}
+                        {/* WAS a running-late warning: yellow when `estimatedDelivery`
+                            exceeded `scheduledDelivery`. Nothing in this product predicts a
+                            delivery time, so the field was never sent and the branch never
+                            taken — the column silently showed the schedule instead. It shows
+                            the schedule, and says so. */}
+                        {shipment.scheduledDelivery
+                          ? new Date(shipment.scheduledDelivery).toLocaleDateString()
+                          : '-'}
                       </td>
                       <td className="px-4 py-3 text-sm">${shipment.freightCharge?.toFixed(2) || '0.00'}</td>
                     </tr>
@@ -599,11 +599,11 @@ export const TransportationManagement: FC = () => {
                       <span>{vehicle.odometer?.toLocaleString()} mi</span>
                     </div>
                   </div>
-                  {vehicle.currentLocation && (
+                  {vehicle.lastLocation && (
                     <div className="mt-3 pt-3 border-t border-opsgrid-border">
                       <p className="text-xs text-opsgrid-text-secondary flex items-center gap-1">
                         <MapPin className="w-3 h-3" />
-                        {vehicle.currentLocation.latitude.toFixed(4)}, {vehicle.currentLocation.longitude.toFixed(4)}
+                        {vehicle.lastLocation.latitude.toFixed(4)}, {vehicle.lastLocation.longitude.toFixed(4)}
                       </p>
                     </div>
                   )}
@@ -684,12 +684,11 @@ export const TransportationManagement: FC = () => {
                               : `${driver.hosCycleHoursUsed.toFixed(1)}h / 70h`}
                           </td>
                           <td className="px-4 py-3 text-sm">
-                            {driver.lastLocation ? (
-                              <span className="flex items-center gap-1">
-                                <MapPin className="w-3 h-3" />
-                                {driver.lastLocation.latitude.toFixed(2)}, {driver.lastLocation.longitude.toFixed(2)}
-                              </span>
-                            ) : '-'}
+                            {/* `drivers` has no position column. This cell was always '-';
+                                a driver's position is their vehicle's, which the vehicle
+                                panel shows. The column now names the vehicle they are on,
+                                which the API resolves from `vehicles.current_driver_id`. */}
+                            {driver.currentVehicleId ?? '-'}
                           </td>
                         </tr>
                       ))}
@@ -1074,28 +1073,11 @@ const ShipmentDetailModal: FC<{
             </div>
           </div>
 
-          {shipment.currentLocation && (
-            <div className="bg-opsgrid-bg rounded-lg p-4">
-              <div className="flex items-center gap-2 mb-2">
-                <MapPin className="w-4 h-4 text-opsgrid-primary" />
-                <h4 className="font-medium">Current Location (GeoTab)</h4>
-              </div>
-              <div className="grid grid-cols-3 gap-4 text-sm">
-                <div>
-                  <p className="text-opsgrid-text-secondary">Latitude</p>
-                  <p>{shipment.currentLocation.latitude.toFixed(4)}</p>
-                </div>
-                <div>
-                  <p className="text-opsgrid-text-secondary">Longitude</p>
-                  <p>{shipment.currentLocation.longitude.toFixed(4)}</p>
-                </div>
-                <div>
-                  <p className="text-opsgrid-text-secondary">Speed</p>
-                  <p>{shipment.currentLocation.speed?.toFixed(0) || 0} mph</p>
-                </div>
-              </div>
-            </div>
-          )}
+          {/* A "Current Location (GeoTab)" card sat here with latitude, longitude and speed,
+              fed by `shipment.currentLocation` — a field `shipments` has no column for and no
+              endpoint has ever sent, so the card never appeared. The heading was the most
+              specific claim in it: GeoTab is not the source of a shipment's position, because
+              nothing is. The vehicle panel shows `vehicles.last_location`, which is real. */}
 
           <div className="grid grid-cols-3 gap-4">
             <div>
@@ -1405,7 +1387,7 @@ const VehicleDetailModal: FC<{ vehicle: Vehicle; onClose: () => void }> = ({ veh
             </div>
           </div>
 
-          {vehicle.currentLocation && (
+          {vehicle.lastLocation && (
             <div className="bg-opsgrid-bg rounded-lg p-4">
               <div className="flex items-center gap-2 mb-2">
                 <MapPin className="w-4 h-4 text-opsgrid-primary" />
@@ -1414,15 +1396,15 @@ const VehicleDetailModal: FC<{ vehicle: Vehicle; onClose: () => void }> = ({ veh
               <div className="grid grid-cols-3 gap-4 text-sm">
                 <div>
                   <p className="text-opsgrid-text-secondary">Latitude</p>
-                  <p>{vehicle.currentLocation.latitude.toFixed(4)}</p>
+                  <p>{vehicle.lastLocation.latitude.toFixed(4)}</p>
                 </div>
                 <div>
                   <p className="text-opsgrid-text-secondary">Longitude</p>
-                  <p>{vehicle.currentLocation.longitude.toFixed(4)}</p>
+                  <p>{vehicle.lastLocation.longitude.toFixed(4)}</p>
                 </div>
                 <div>
                   <p className="text-opsgrid-text-secondary">Speed</p>
-                  <p>{vehicle.currentLocation.speed?.toFixed(0) || 0} mph</p>
+                  <p>{vehicle.lastLocation.speed?.toFixed(0) || 0} mph</p>
                 </div>
               </div>
             </div>

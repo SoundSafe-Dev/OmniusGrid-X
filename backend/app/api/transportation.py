@@ -51,6 +51,52 @@ async def _resolve_carrier_names(carrier_ids, db: AsyncSession) -> Dict[str, Any
     return {str(cid): name for cid, name in rows}
 
 
+#: A shipment in one of these has been handed over; the driver is no longer on it.
+_TERMINAL_SHIPMENT_STATUSES = ("delivered", "cancelled", "completed")
+
+
+async def _resolve_driver_assignments(driver_ids, db: AsyncSession) -> Dict[str, Dict[str, Any]]:
+    """Map {driver_id -> {vehicle_id, shipment_id}} in two queries.
+
+    `drivers` holds neither association: a vehicle names its driver
+    (`vehicles.current_driver_id`) and a shipment names its driver
+    (`shipments.driver_id`). So the driver's side of both is a reverse lookup, and a
+    column-by-column comparison of the table against the client's type reports
+    `currentVehicleId`/`currentShipmentId` as having no source — which is how the panel ended
+    up with two rows that never rendered.
+
+    Two queries for the whole page rather than two per driver; the N+1 is easy to write here
+    and this endpoint is the fleet list.
+    """
+    from app.db.logistics_models import Vehicle
+
+    ids = {str(d) for d in driver_ids if d}
+    if not ids:
+        return {}
+
+    out: Dict[str, Dict[str, Any]] = {}
+    vehicles = (await db.execute(
+        select(Vehicle.id, Vehicle.current_driver_id).where(
+            Vehicle.current_driver_id.in_(ids)
+        )
+    )).all()
+    for vehicle_id, driver_id in vehicles:
+        out.setdefault(str(driver_id), {})["vehicle_id"] = str(vehicle_id)
+
+    shipments = (await db.execute(
+        select(Shipment.id, Shipment.driver_id).where(
+            Shipment.driver_id.in_(ids),
+            # A delivered shipment is not what the driver is on NOW. Without this the panel
+            # would name whichever historical load the query happened to return first.
+            Shipment.status.notin_(_TERMINAL_SHIPMENT_STATUSES),
+        ).order_by(Shipment.scheduled_pickup.desc())
+    )).all()
+    for shipment_id, driver_id in shipments:
+        out.setdefault(str(driver_id), {}).setdefault("shipment_id", str(shipment_id))
+
+    return out
+
+
 # ---- Small response schemas for stable dict-shaped endpoints (FS-100). ----
 # Shapes are unchanged; these only document/type what the handlers already return.
 
@@ -267,11 +313,21 @@ async def get_drivers(
     carrier_names = await _resolve_carrier_names(
         {d.carrier_id for d in drivers if d.carrier_id}, db
     )
+    assignments = await _resolve_driver_assignments({str(d.id) for d in drivers}, db)
 
     items: List[Dict[str, Any]] = []
     for d in drivers:
         row = DriverResponse.model_validate(d).model_dump(mode="json", by_alias=True)
         row["carrierName"] = carrier_names.get(str(d.carrier_id))
+        # `currentVehicleId` and `currentShipmentId` are declared by the client and were
+        # produced by nothing, so the driver panel's "Current Vehicle" and "Current Shipment"
+        # rows never rendered. Neither is a column on `drivers` — the association is held from
+        # the other side (`vehicles.current_driver_id`, `shipments.driver_id`), which is why a
+        # column-by-column comparison of the table against the type reports them as absent
+        # rather than as the reverse lookups they are. Batched, not per-row.
+        assignment = assignments.get(str(d.id), {})
+        row["currentVehicleId"] = assignment.get("vehicle_id")
+        row["currentShipmentId"] = assignment.get("shipment_id")
         row["endorsements"] = d.endorsements or []
         row["licenseExpiry"] = _iso(d.license_expiry)
         # DERIVED WHEN THE STORED COLUMN IS NULL, which it always is. Migration 042 added

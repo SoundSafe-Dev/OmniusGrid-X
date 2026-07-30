@@ -10,10 +10,18 @@ Once one is found the question generalises, and it is mechanically answerable: *
 fields does the frontend declare and read that no backend source produces?**
 
 WHAT THE VOCABULARY IS. Every string key in a dict literal anywhere under `app/`, every
-Pydantic/SQLAlchemy attribute name, every `Field(alias=…)`, each also in camelCase — plus
-the values in the frontend casing seam's `inAliases` maps, which legitimately rename a
-field on the way in (`checkInAt` -> `checkedInAt`) and would otherwise be reported as
-missing. A field absent from all of that has no producer.
+Pydantic/SQLAlchemy attribute name, every `Field(alias=…)`, every endpoint PARAMETER (a
+`*Params` interface describes a request), every constant-string subscript assignment
+(`row["carrierName"] = …` is a producer too), each also in camelCase — plus the values in the
+frontend casing seam's `inAliases` maps, which legitimately rename a field on the way in
+(`checkInAt` -> `checkedInAt`) and would otherwise be reported as missing. A field absent from
+all of that has no producer.
+
+The last two forms were added after the sweep was wrong about them: parameters, because it was
+comparing what the backend CONSUMES against what it PRODUCES; subscripts, because a field the
+server had started sending and the panel had started rendering stayed on the baseline. Each
+widening carries a positive and a negative control below — a vocabulary that absorbs names too
+freely stops reporting anything, which is the same failure as one that reads nothing.
 
 WHAT THIS TEST IS FOR. Not to drive the list to zero — several entries are honest (a value
 computed client-side, a field a future endpoint will carry). It is to stop the list
@@ -22,7 +30,7 @@ step is always one of three: rename it to what the wire calls it, delete it, or 
 server send it. `currentMileage` needed the second; `priority` on a maintenance schedule
 needed the third (migration 054).
 
-SIX FINDINGS SO FAR:
+THE FINDINGS SO FAR — the count is deliberately not written here (rule 44):
 
   * `MaintenanceSchedule.currentMileage` — the due odometer shown as the current one.
   * `RepairOrder.workOrderNumber` — the first eight characters of a UUID, shown as the
@@ -42,6 +50,15 @@ SIX FINDINGS SO FAR:
   * `DockDoor.trailerLicensePlate` and friends — the first entry needing two DIFFERENT fixes
     in one cluster: the plate exposed through a join that existed, `workcellName` deleted
     because the relationship does not.
+  * `RepairOrder.assignedTechnician` and six siblings — the sharpest kind again:
+    `repair_orders.vendor`, who actually did the repair, was sent on every response and shown
+    NOWHERE, beside a "Tech:" line that could never populate.
+  * `MaintenanceCosts.*` — the first cluster fixed by the THIRD option. Four figures the
+    client manufactured (one as `ytd / 12`, two as hardcoded zeros, one a chart with no data)
+    are all computable from columns the endpoint already had.
+  * `Vehicle.currentLocation` and the position cluster — one group needing all three fixes:
+    a rename that woke a dead panel, two reverse lookups the server now resolves, and a
+    "Current Location (GeoTab)" card for a position nothing records.
 
 Its sibling `test_qualifiers_reach_the_frontend.py` asks the mirror question: which fields
 does the BACKEND send that no frontend file reads? Between them the contract is checked in
@@ -87,6 +104,21 @@ def _wire_vocabulary() -> set[str]:
                 for target in node.targets:
                     if isinstance(target, ast.Name):
                         vocab.add(target.id)
+                    # SUBSCRIPT ASSIGNMENT IS A PRODUCER. `row["currentVehicleId"] = ...` puts
+                    # a name on the wire exactly as a dict literal does, and this walk saw only
+                    # the literal form. `transportation.py` builds several responses by
+                    # validating a model and then adding derived keys this way — carrierName,
+                    # the HOS remaining hours, the driver's vehicle and shipment — so every one
+                    # of those was invisible to the vocabulary and would be reported as
+                    # unsourced the moment a client declared it.
+                    #
+                    # Found by fixing `Driver.currentVehicleId`: the server sent it, the panel
+                    # rendered it, and the sweep still listed it as having no producer.
+                    elif isinstance(target, ast.Subscript) and isinstance(
+                        target.slice, ast.Constant
+                    ):
+                        if isinstance(target.slice.value, str):
+                            vocab.add(target.slice.value)
             # FUNCTION PARAMETERS TOO. A `*Params` interface on the frontend describes a
             # REQUEST, and the names a request may carry are the endpoint's own parameters —
             # which are `ast.arg` nodes, not `AnnAssign`, so the walk above never saw them.
@@ -206,8 +238,6 @@ BASELINE = {
     # describes a REQUEST, whose valid names are exactly those parameters. The sweep
     # was checking what the backend CONSUMES against what it PRODUCES. Fixed in
     # `_wire_vocabulary`; the entry is gone because it was never real.
-    "Driver.currentShipmentId",
-    "Driver.currentVehicleId",
     # `Driver.geoTabDeviceId` and `Vehicle.geoTabDeviceId` were HERE, and are the
     # eighth finding — one field name hiding TWO different defects:
     #   * vehicles DO have one, `vehicles.geotab_device_id`, but the casing seam
@@ -226,12 +256,35 @@ BASELINE = {
     # routine authorised entry — rendered as "Violation". Fixed on the producer side,
     # because nothing consumed the names it was sending.
     # Pinned by tests/test_geofence_alert_names_match_the_client.py.
-    "HOSViolationAlert.currentLocation",
-    "HOSViolationAlert.hoursRemaining",
     # `todayAppointments` STAYS, and is the honest kind: `YardManagement` computes it
     # client-side by filtering the appointments list. The sweep cannot tell a local
     # computation from a fabrication, which is why the list is a baseline and not a
     # defect count.
+    # The eight position/assignment entries across Vehicle, Driver, Shipment and
+    # HOSViolationAlert were HERE, and are the thirteenth finding — one cluster, all three
+    # fixes, plus a hole in this sweep's own vocabulary.
+    #
+    #   * `Vehicle.currentLocation` — RENAMED. The column is `vehicles.last_location` and the
+    #     serializer emits `lastLocation` with exactly this shape, so every location block on
+    #     the vehicle panel was dead against a value arriving on every response.
+    #   * `Driver.currentVehicleId` / `.currentShipmentId` — SERVED. Neither is a column on
+    #     `drivers` and neither should be: a vehicle names its driver and a shipment names its
+    #     driver, so the driver's side of both is a reverse lookup. Two batched queries.
+    #   * `Shipment.currentLocation` — DELETED, with a "Current Location (GeoTab)" card. A
+    #     shipment has no position; the nearest real one is the driver's vehicle's, two hops
+    #     away, and stale the moment they change vehicle.
+    #   * `Shipment.estimatedDelivery` — DELETED. Nothing predicts a delivery time, so the
+    #     late-running warning it drove never fired.
+    #   * `HOSViolationAlert.*` — the whole INTERFACE deleted. One occurrence in the frontend:
+    #     its own declaration. A type nothing constructs is a plan, not a contract.
+    #
+    # `Driver.lastLocation` went with them though the sweep never reported it — `drivers` has
+    # no position column, and the global vocabulary credited the name from `vehicles`. Rule
+    # 34's blind spot, found by auditing the interface against its own table.
+    #
+    # AND THE SWEEP COULD NOT SEE THE FIX. The two Driver ids stayed listed after the server
+    # started sending them, because `_wire_vocabulary` collected dict-literal keys and not
+    # `row["name"] = ...`. Widened, with both a positive and a negative control above.
     "LogisticsOverview.todayAppointments",
     # `LogisticsOverview.vehiclesIdle` was HERE, and is the seventh finding. The fleet
     # card promised totalVehicles/vehiclesMoving/vehiclesIdle/avgSpeed/
@@ -285,12 +338,8 @@ BASELINE = {
     #
     # `vendor` and `category` are now displayed, so this cluster also shortened the mirror
     # sweep's list. Pinned by MaintenancePanel.test.tsx.
-    "Shipment.currentLocation",
-    "Shipment.estimatedDelivery",
     "StrategicRecommendation.costSavings",
     "StrategicRecommendation.timeSavings",
-    "Vehicle.currentLocation",
-    "Vehicle.currentShipmentId",
     "YardTrailer.contents",
     "YardTrailer.driverPhone",
 }
@@ -314,6 +363,36 @@ class TestTheSweepIsNotVacuous:
         clean result says nothing about the sweep — method rule 26."""
         vocab = _wire_vocabulary()
         assert "totallyInventedFieldNobodyEmits" not in vocab
+
+    def test_a_key_added_by_subscript_assignment_is_credited(self):
+        """`row["carrierName"] = ...` puts a name on the wire exactly as a dict literal does,
+        and the walk originally saw only the literal form. `transportation.py` builds several
+        responses by validating a model and then adding derived keys this way, so all of them
+        were invisible — found when `Driver.currentVehicleId` stayed on the baseline after the
+        server started sending it and the panel started rendering it.
+
+        `carrierName` is asserted rather than one of the two that prompted this, so the check
+        does not merely restate the change that motivated it."""
+        assert "carrierName" in _wire_vocabulary()
+
+    def test_the_subscript_form_does_not_credit_arbitrary_indexing(self):
+        """The control on the widening. Only a CONSTANT STRING subscript is a wire name; a
+        variable index (`row[key] = ...`) names nothing in particular, and crediting whatever
+        it resolves to would let the vocabulary absorb names at random and quietly stop
+        reporting anything."""
+        import ast as _ast
+
+        tree = _ast.parse("row[some_variable] = 1\nrow[0] = 2\n")
+        credited = []
+        for node in _ast.walk(tree):
+            if isinstance(node, _ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, _ast.Subscript) and isinstance(
+                        target.slice, _ast.Constant
+                    ):
+                        if isinstance(target.slice.value, str):
+                            credited.append(target.slice.value)
+        assert credited == [], f"a non-string subscript was credited: {credited}"
 
     def test_the_casing_seam_aliases_are_credited(self):
         """`checkedInAt` is produced by `YARD_ALIASES`, not by any Python file. Without

@@ -178,7 +178,15 @@ export interface Driver {
   hosDriveHoursRemaining: number | null;
   /** Null when unreported — see `hosDriveHoursRemaining`. */
   hosDutyHoursRemaining: number | null;
-  lastLocation?: GeoLocation;
+  /** `drivers` HAS NO POSITION COLUMN, and the sweep did not report this one because the
+   *  global vocabulary credits `lastLocation` from `vehicles.last_location`. Rule 34's blind
+   *  spot; found by auditing this interface against its own table. A driver's position is
+   *  their vehicle's, which the vehicle already carries, so this field is gone. */
+  /** Reverse lookups, not columns: a vehicle names its driver (`vehicles.current_driver_id`)
+   *  and a shipment names its driver (`shipments.driver_id`). Nothing produced either, so the
+   *  "Current Vehicle" and "Current Shipment" rows never rendered; `/transportation/drivers`
+   *  resolves both in one query each now. `currentShipmentId` is the driver's CURRENT load —
+   *  shipments in a terminal status are excluded, or the row would name a delivered one. */
   currentVehicleId?: string;
   currentShipmentId?: string;
   /** WAS `geoTabDeviceId`. Drivers have no GeoTab device — the column is
@@ -206,7 +214,10 @@ export interface Shipment {
   scheduledPickup: string;
   actualPickup?: string;
   scheduledDelivery: string;
-  estimatedDelivery?: string;
+  /** `shipments` records `scheduled_delivery` and `actual_delivery`. There is no ETA: nothing
+   *  in this product predicts a delivery time. The list coloured a row yellow when
+   *  `estimatedDelivery > scheduledDelivery` — a late-running warning driven by a field no
+   *  endpoint has ever sent, so it never fired, and the field is gone. Same shape as `DockDoor.estimatedReleaseAt`. */
   actualDelivery?: string;
   freightDescription?: string;
   weight?: number; // kg
@@ -221,7 +232,11 @@ export interface Shipment {
   detentionRate?: number; // per hour
   detentionHours?: number;
   detentionTotal?: number;
-  currentLocation?: GeoLocation;
+  /** `shipments` carries no position. The nearest real thing is the assigned driver's
+   *  vehicle's `last_location`, two hops away through `shipments.driver_id` ->
+   *  `vehicles.current_driver_id` — and that silently becomes another load's position the
+   *  moment a driver changes vehicle. Presenting it as the shipment's would be the
+   *  `currentMileage` defect: the right number under the wrong label. The field is gone. */
   geoTabTripId?: string;
   routeId?: string;
   createdAt: string;
@@ -263,8 +278,13 @@ export interface Vehicle {
   dotNumber?: string;
   isActive: boolean;
   currentDriverId?: string;
-  currentShipmentId?: string;
-  currentLocation?: GeoLocation;
+  /** `vehicles` HAS NO SHIPMENT LINK — a shipment names its driver, and a vehicle names its
+   *  driver, so a vehicle's load is really its driver's load. Removed rather than derived
+   *  through two hops. */
+  /** WAS `currentLocation`, which no endpoint has ever sent, so every location block on the
+   *  vehicle panel was dead. The column is `vehicles.last_location` and the serializer emits
+   *  it as `lastLocation` with exactly this shape. Rule 35: name the field after the wire. */
+  lastLocation?: GeoLocation;
   /** `vehicles.geotab_device_id`. WAS `geoTabDeviceId` with a capital T — the casing seam
    *  produces `geotabDeviceId`, so the declared name matched nothing and the row never
    *  rendered. Rule 35: name the field after the wire. */
@@ -446,17 +466,12 @@ export interface DetentionAlert {
   severity: 'low' | 'medium' | 'high' | 'critical';
 }
 
-export interface HOSViolationAlert {
-  id: string;
-  driverId: string;
-  driverName: string;
-  carrierName: string;
-  violationType: 'driving_limit' | 'duty_limit' | 'rest_break' | 'cycle_limit';
-  hoursRemaining: number;
-  estimatedViolationTime?: string;
-  currentLocation?: GeoLocation;
-  severity: 'warning' | 'violation';
-}
+// `HOSViolationAlert` was declared here and referenced by NOTHING — one occurrence in the
+// whole frontend, its own declaration. It described an alert no endpoint produces and no
+// component renders: `hoursRemaining` and `currentLocation` had no source, and neither did
+// `estimatedViolationTime` or the four-value `violationType` union. A type that nothing
+// constructs is not a contract, it is a plan; the HOS surface that DOES exist reads
+// `hosDriveHoursRemaining` off the driver, which the API derives and this file documents.
 
 // Filter Types
 

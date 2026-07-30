@@ -2246,6 +2246,20 @@ one of its findings. The habit that catches it:
    does not send. Fixtures carry what the serializer emits, and nothing else.
    *(Fuller account: § Rule 50.)*
 
+51. **An upper-bound assertion is satisfied by zero.**
+   An N+1 guard asserted `len(vehicle_reads) <= 1` and passed against a one-query-per-driver
+   mutation, because its matcher wanted `" FROM vehicles"` with a leading space and SQLAlchemy
+   puts `FROM` at the start of a line. Assert the exact count: `== 1` fails at zero, so the
+   matcher's silence becomes a failure rather than a pass.
+   *(Fuller account: § Rule 51.)*
+
+52. **When a fix does not move the baseline, suspect the detector.**
+   `Driver.currentVehicleId` stayed on the declared-but-unsent list after the server began
+   sending it — `_wire_vocabulary` collected dict-literal keys and not `row["name"] = …`. A
+   baseline that does not move when the code does is evidence about one of the two; find out
+   which. Widen with both a positive and a negative control.
+   *(Fuller account: § Rule 52.)*
+
 ---
 
 ## Open observations, not yet tickets
@@ -3774,3 +3788,68 @@ The same thing appeared twice more in this cluster: `MaintenancePanel.test.tsx` 
 `issueDescription` AND `title`, `reportedDate` AND `openedAt`, so it could not distinguish the
 panel reading the wire from the panel reading names the adapter had invented. Fixtures now carry
 exactly what the serializer emits, and the mock uses the wire's date format.
+
+## The thirteenth finding: one cluster, all three fixes, and a hole in the sweep itself
+
+Eight entries across `Vehicle`, `Driver`, `Shipment` and `HOSViolationAlert`, all about where
+something is or what it is assigned to. Between them they needed every option the sweep offers.
+
+**Renamed.** `Vehicle.currentLocation` is `vehicles.last_location`, which the serializer emits
+as `lastLocation` with exactly the shape the panel reads. Every location block on the vehicle
+panel was dead against a value arriving on every response.
+
+**Served.** `Driver.currentVehicleId` and `.currentShipmentId` are not columns on `drivers` and
+should not be: a vehicle names its driver, and a shipment names its driver. The driver's side of
+both is a **reverse lookup**, which is why comparing the table to the type says "no such column"
+about a field that is perfectly derivable. Two batched queries, and the shipment one excludes
+terminal statuses — a delivered load is not what the driver is on now.
+
+**Deleted.** `Shipment.currentLocation`, with the "Current Location (GeoTab)" card it fed. A
+shipment has no position; the nearest real one belongs to the driver's vehicle, two hops away
+through `shipments.driver_id` → `vehicles.current_driver_id`, and goes stale the moment a driver
+changes vehicle. The heading was the most specific claim in it — GeoTab is not the source of a
+shipment's position, because nothing is. `Shipment.estimatedDelivery` went too: it drove a
+running-late warning (yellow when the ETA exceeded the schedule) that could never fire, because
+nothing in this product predicts a delivery time.
+
+`HOSViolationAlert` was deleted **whole**. One occurrence in the entire frontend: its own
+declaration. Nothing constructed it, nothing rendered it, and none of its fields had a source. A
+type nothing constructs is a plan, not a contract.
+
+`Driver.lastLocation` went with them although the sweep never reported it — `drivers` has no
+position column, and the global vocabulary credited the name from `vehicles`. Rule 34's blind
+spot, found by auditing the interface against its own table rather than against the tree.
+
+## Rule 51 — an upper-bound assertion is satisfied by zero
+
+The N+1 guard for the driver lookups counted SELECTs and asserted `len(vehicle_reads) <= 1`. It
+passed against a deliberate one-query-per-driver mutation, and the reason was two mistakes
+stacked so that neither was visible:
+
+  * the matcher was `" FROM vehicles" in statement` — **with a leading space**. SQLAlchemy
+    renders the clause at the start of a line, so `FROM` is preceded by a newline and the count
+    was always zero;
+  * `0 <= 1` is true, so the bound could not tell "batched" from "matched nothing".
+
+The file even had a non-vacuity check — `assert statements` — and it passed, because *something*
+was recorded. It proved the listener was attached, not that the thing being counted was ever
+found.
+
+**Assert the exact count.** `== 1` fails at zero, which makes the matcher's silence a test
+failure instead of a pass. An upper bound on a number you also have to discover is two claims in
+one assertion, and the weaker one hides the stronger.
+
+## Rule 52 — when a fix does not move the baseline, suspect the detector
+
+`Driver.currentVehicleId` stayed on the declared-but-unsent list after the server started
+sending it and the panel started rendering it. The obvious reading is that the fix did not work.
+The actual reason: `_wire_vocabulary` collected string keys from dict LITERALS, and
+`transportation.py` builds several responses by validating a model and then adding derived keys
+by subscript — `row["carrierName"] = …`, the HOS remaining hours, the driver's vehicle and
+shipment. Every one was invisible, and would have been reported as unsourced the moment a client
+declared it.
+
+A baseline that does not move when the code does is evidence about **one of the two**, and it is
+worth a minute to find out which. The widening carries a positive control (`carrierName` is
+credited) and a negative one (a variable subscript credits nothing) — a vocabulary that absorbs
+names too freely stops reporting anything, which is the same failure as one that reads nothing.

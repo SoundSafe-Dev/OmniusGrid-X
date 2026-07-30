@@ -99,7 +99,6 @@ const mockDrivers: Driver[] = [
     hosDriveHoursRemaining: 6,
     hosDutyHoursRemaining: 9,
     currentVehicleId: 'vehicle-1',
-    currentShipmentId: 'shipment-1',
     eldDeviceId: 'eld-device-001',
     isActive: true,
     createdAt: new Date().toISOString(),
@@ -122,14 +121,7 @@ const mockDrivers: Driver[] = [
     hosDriveHoursRemaining: 3,
     hosDutyHoursRemaining: 5,
     currentVehicleId: 'vehicle-2',
-    currentShipmentId: 'shipment-2',
     eldDeviceId: 'eld-device-002',
-    lastLocation: {
-      latitude: 39.7392,
-      longitude: -104.9903,
-      speed: 65,
-      timestamp: new Date().toISOString(),
-    },
     isActive: true,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -174,7 +166,6 @@ const mockVehicles: Vehicle[] = [
     inspectionDue: new Date(Date.now() + 30 * 86400000).toISOString(),
     isActive: true,
     currentDriverId: 'driver-1',
-    currentShipmentId: 'shipment-1',
     geotabDeviceId: 'gt-device-001',
     odometer: 125000,
     fuelLevel: 75,
@@ -199,9 +190,8 @@ const mockVehicles: Vehicle[] = [
     inspectionDue: new Date(Date.now() + 15 * 86400000).toISOString(),
     isActive: true,
     currentDriverId: 'driver-2',
-    currentShipmentId: 'shipment-2',
     geotabDeviceId: 'gt-device-002',
-    currentLocation: {
+    lastLocation: {
       latitude: 39.7392,
       longitude: -104.9903,
       speed: 65,
@@ -268,7 +258,6 @@ const mockShipments: Shipment[] = [
     scheduledPickup: new Date(Date.now() - 24 * 3600000).toISOString(),
     actualPickup: new Date(Date.now() - 24 * 3600000).toISOString(),
     scheduledDelivery: new Date(Date.now() + 12 * 3600000).toISOString(),
-    estimatedDelivery: new Date(Date.now() + 10 * 3600000).toISOString(),
     freightDescription: 'Electronics - Consumer Goods',
     weight: 25000,
     pieces: 500,
@@ -312,7 +301,6 @@ const mockShipments: Shipment[] = [
     scheduledPickup: new Date(Date.now() - 12 * 3600000).toISOString(),
     actualPickup: new Date(Date.now() - 12 * 3600000).toISOString(),
     scheduledDelivery: new Date(Date.now() + 6 * 3600000).toISOString(),
-    estimatedDelivery: new Date(Date.now() + 5 * 3600000).toISOString(),
     freightDescription: 'Frozen Foods - Reefer Required',
     weight: 35000,
     pieces: 800,
@@ -324,12 +312,6 @@ const mockShipments: Shipment[] = [
     proNumber: 'PRO-987655',
     freightCharge: 3200.00,
     detentionRate: 65,
-    currentLocation: {
-      latitude: 39.7392,
-      longitude: -104.9903,
-      speed: 65,
-      timestamp: new Date().toISOString(),
-    },
     geoTabTripId: 'trip-002',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -629,8 +611,10 @@ export const transportationApi = {
         driver.updatedAt = new Date().toISOString();
       }
       if (vehicle) {
+        // `vehicle.currentShipmentId = id` was set here too. `vehicles` has no shipment link
+        // — a shipment names its DRIVER — so the mock recorded an association the real
+        // dispatch endpoint cannot, and only the mock path could ever read it back.
         vehicle.currentDriverId = driverId;
-        vehicle.currentShipmentId = id;
         vehicle.updatedAt = new Date().toISOString();
       }
       return shipment;
