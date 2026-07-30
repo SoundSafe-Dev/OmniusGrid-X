@@ -2204,6 +2204,14 @@ one of its findings. The habit that catches it:
    than trusting them — two of those three were wrong when measured.
    *(Fuller account: § Rule 44.)*
 
+45. **A module-level copy of a patched name is a defect waiting for a new caller.**
+   `tenant_session` held `AsyncSessionLocal` captured at import, and the harness rebinds that
+   name per module — invisible while the helper was only reached through the dependency the
+   suite overrides wholesale, and instant the moment a service called it directly. Resolve such
+   names at call time. And simulate the broken state in the test: comparing engines passed under
+   the mutation, because whether the copy is patched is exactly what varies.
+   *(Fuller account: § Rule 45.)*
+
 ---
 
 ## Open observations, not yet tickets
