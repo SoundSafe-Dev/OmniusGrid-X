@@ -46,6 +46,16 @@ class AssetResponse(AssetBase):
     workcell_id: Optional[UUID]
     asset_type_id: UUID
     current_packml_state: str
+    # THE READ PATH THAT WAS MISSING. Migration 053 added the column, the admin endpoint
+    # writes it, and `TacticalEngine._is_maintenance_mode` reads it before dispatching a
+    # control command — but this schema did not carry it, so nothing in the product could
+    # show which assets were in maintenance. An operator could take a machine out of
+    # service, have the engine correctly stop commanding it, and see no sign of either.
+    #
+    # The frontend even had a name for it: `Asset.isInMaintenance`, declared as a required
+    # boolean, populated by the mock fixtures and by nothing else. FastAPI drops whatever
+    # the schema does not declare, so adding the column was necessary and not sufficient.
+    maintenance_mode: bool = False
     last_seen: Optional[datetime]
     created_at: datetime
     updated_at: datetime

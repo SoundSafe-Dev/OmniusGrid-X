@@ -22,13 +22,20 @@ step is always one of three: rename it to what the wire calls it, delete it, or 
 server send it. `currentMileage` needed the second; `priority` on a maintenance schedule
 needed the third (migration 054).
 
-THREE FINDINGS SO FAR, all of them rendered:
+FOUR FINDINGS SO FAR:
 
   * `MaintenanceSchedule.currentMileage` — the due odometer shown as the current one.
   * `RepairOrder.workOrderNumber` — the first eight characters of a UUID, shown as the
     heading a technician would quote to a vendor.
   * `MaintenanceCosts.costPerVehicle` / `.upcomingEstimated` — hardcoded zeros, the second
     in a highlighted box reading "Upcoming (Est.) $0".
+  * `Asset.isInMaintenance` — the sharpest of the four, because everything AROUND it
+    worked. Migration 053 added `assets.maintenance_mode`, the admin endpoint writes it,
+    and the tactical engine reads it before dispatching a control command — but
+    `AssetResponse` never declared the field, so FastAPI dropped it from every response
+    and nothing in the product could show which assets were out of service. The frontend's
+    name for it had never been sent by any endpoint under any spelling. Adding a column is
+    not the same as exposing it; see `test_maintenance_mode_reaches_the_client.py`.
 
 Its sibling `test_qualifiers_reach_the_frontend.py` asks the mirror question: which fields
 does the BACKEND send that no frontend file reads? Between them the contract is checked in
@@ -131,9 +138,14 @@ def _declared_but_unsent() -> set[str]:
 #: that derives its own expected value from its own input is not a guard; it is a very
 #: expensive way of asserting that a set equals itself.
 BASELINE = {
+    # `Asset.isInMaintenance` and `AssetUpdate.isInMaintenance` were HERE, and are the
+    # fourth finding: the name was declared as a required boolean, populated only by the
+    # mock fixtures, and sent by no endpoint under any spelling — because `AssetResponse`
+    # did not carry the column at all. Fixed by declaring `maintenance_mode` on the schema
+    # and renaming the TypeScript field to `maintenanceMode`, which is what the casing seam
+    # then delivers. Re-pinned rather than left in place: a baseline that still lists a
+    # fixed entry quietly loses its edge.
     "AgentRolloutCreate.all",
-    "Asset.isInMaintenance",
-    "AssetUpdate.isInMaintenance",
     "Carrier.contactEmail",
     "Carrier.contactPhone",
     "CloudGatewayStatus.lastConnectedAt",

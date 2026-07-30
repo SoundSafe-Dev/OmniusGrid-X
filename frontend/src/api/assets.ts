@@ -113,8 +113,25 @@ export const assetsApi = {
     await api.post(`/admin/collectors/${assetId}/restart`);
   },
 
+  /**
+   * THIS INVERTED THE CALLER'S INTENT. It posted `{ inMaintenance }` as a JSON BODY, and
+   * the endpoint declares `enabled: bool = True` — a scalar, which FastAPI reads from the
+   * QUERY STRING. So the body was ignored and `enabled` fell to its default:
+   *
+   *   setMaintenanceMode(id, false)  ->  POST .../maintenance  ->  enabled = True
+   *
+   * Calling this to take an asset OUT of maintenance put it IN. Not a 422 that someone
+   * would have noticed — a 200, with the opposite of the requested effect, and a response
+   * body reading "Game-theoretic engine commands are blocked".
+   *
+   * `enabled` is sent explicitly now. The endpoint's `= True` default is left alone
+   * deliberately: changing it would break any caller that relies on the bare POST meaning
+   * "enable", and the fix belongs on the side that was wrong.
+   */
   setMaintenanceMode: async (assetId: string, inMaintenance: boolean): Promise<void> => {
-    await api.post(`/admin/assets/${assetId}/maintenance`, { inMaintenance });
+    await api.post(`/admin/assets/${assetId}/maintenance`, null, {
+      params: { enabled: inMaintenance },
+    });
   },
 };
 

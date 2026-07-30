@@ -2735,3 +2735,43 @@ running them — the emptiness sweep reported zero offenders while three pages w
 (rule 26), and its vacuity check depended on iteration order (rule 30). **Three guards,
 three different ways of being confidently wrong.** The only method that has reliably found
 these is to break the real tree on purpose and check that the guard notices.
+
+## Maintenance mode, finished: five defects in one feature
+
+The wire-vocabulary sweep flagged `Asset.isInMaintenance`, and finishing that thread closed
+the last two of **five independent defects in a single feature**. Worth listing together,
+because each one alone would have broken it, and each was individually plausible:
+
+1. **No column.** `assets.maintenance_mode` did not exist. The write endpoint 500'd on
+   every call while the frontend called it (migration 053).
+2. **The write was not tenant-scoped and did not check its rowcount.** Under RLS an UPDATE
+   is filtered, not rejected — it succeeds having matched nothing and returns 200.
+3. **The engine's read was blind to RLS.** `bool(row and row[0])` on a session with no
+   tenant GUC turns an invisible row into *not in maintenance*, so fixing the column alone
+   would have flipped suppress-everything into suppress-nothing.
+4. **`AssetResponse` never declared the field.** FastAPI drops whatever the schema omits,
+   so with the column present, the write working and the engine honouring it, **no client
+   could see which assets were out of service.** The frontend's own name for it,
+   `isInMaintenance`, had never been sent by any endpoint under any spelling.
+5. **The one call site sent the flag where the server does not look.**
+   `setMaintenanceMode` posted `{ inMaintenance }` as a JSON body; the endpoint declares
+   `enabled: bool = True`, a scalar FastAPI reads from the query string. The body was
+   discarded and the default took over, so **calling it to take an asset OUT of maintenance
+   put it IN** — a 200, the opposite of the requested effect, and a response reading
+   "Game-theoretic engine commands are blocked".
+
+## Rule 32 — a feature is not one thing, and finding one defect in it says nothing about the rest
+
+Four separate sweeps found these, weeks of work apart: an unchecked-UPDATE audit, a
+fail-safe audit, a contract sweep in one direction, and reading a client while chasing
+something else. Each fix looked complete at the time. What actually distinguishes them is
+that every one sits on a different *seam* — schema, write, read-under-RLS, response model,
+call site — and a sweep is organised by shape, not by feature. **When a sweep finds a defect
+in something, walk the whole path by hand before believing the feature works.** The column,
+the writer, the reader, the response model and the caller are five different places to be
+wrong, and this feature was wrong in all of them.
+
+The corollary is about direction. Defects 4 and 5 point opposite ways — the server not
+sending what the client reads, and the client not sending what the server reads — and
+neither sweep could have found the other. A contract has two ends and needs checking from
+both.

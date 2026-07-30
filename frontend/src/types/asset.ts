@@ -39,7 +39,13 @@ export interface Asset {
   workcell?: Workcell;
   currentPackmlState: PackMLState;
   isActive: boolean;
-  isInMaintenance: boolean;
+  /** WAS `isInMaintenance`, a name the wire has never used. The column is
+   *  `assets.maintenance_mode` (migration 053) and `/api/v1/assets` is registered on the
+   *  casing seam, so it arrives as `maintenanceMode`. The old name was declared as a
+   *  required boolean and populated only by the mock fixtures, so it was `undefined` on
+   *  every real response — and until the field was added to `AssetResponse` the wire did
+   *  not carry it under any name at all. */
+  maintenanceMode: boolean;
   lastSeen?: string;
   connectionConfig?: Record<string, any>;
   // Sensor taxonomy (migration 024): drives type-aware AssetDetail panes.
@@ -93,7 +99,11 @@ export interface AssetUpdate {
   connectionConfig?: Record<string, any>;
   metadata?: Record<string, any>;
   isActive?: boolean;
-  isInMaintenance?: boolean;
+  /** Renamed with the read side. NOTE: `PATCH /assets/{id}` does not accept this — the
+   *  only writer is `POST /admin/assets/{id}/maintenance`, which is admin-gated for a
+   *  reason (it suppresses engine control commands). Declared here so the shape matches
+   *  `Asset`, not because sending it does anything. */
+  maintenanceMode?: boolean;
 }
 
 export interface AssetStatus {
