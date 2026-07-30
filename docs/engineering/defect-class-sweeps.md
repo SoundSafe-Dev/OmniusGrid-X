@@ -2287,6 +2287,13 @@ one of its findings. The habit that catches it:
    fixtures well inside the range under test, unless the edge is the assertion.
    *(Fuller account: § Rule 56.)*
 
+57. **Test each layer with what the layer above it can actually send.**
+   `circleRenderableZones` was tested with `center: undefined`; `adaptZone` produced
+   `{latitude: 0, longitude: 0}`. Both units were correct about their own contract, neither was
+   ever handed the other's output, and a zero-radius circle at 0°N 0°E reached the map with full
+   coverage on both sides. Where two units meet, assert on the pair.
+   *(Fuller account: § Rule 57.)*
+
 ---
 
 ## Open observations, not yet tickets
@@ -4037,3 +4044,58 @@ thing that was wrong. Seeding two hours out removes the race entirely.
 
 **Put fixtures well inside the range under test, not on its edge**, unless the edge IS the
 assertion — in which case seed both sides of it deliberately.
+
+## Class 52: a coercion between two layers that both handled the absence correctly
+
+`adaptZone` and `adaptAlert` in `src/api/geofencing.ts` turned absent values into plausible
+ones. In three places that defeated null-handling written **deliberately on both sides of them**
+— the serializer chose to send `null`, the panel was written to detect it, and the adapter in
+between replaced it with something that looked like data.
+
+**`geofenceName: … ?? a?.zoneId ?? ''`.** `_alert_out` resolves the zone name by join and sends
+`null` when it cannot, under a comment reading *"the panel must be able to tell a zone it could
+not resolve from one with an empty name. A blank would read as an unnamed zone."* The panel does
+`geofenceName ?? 'Zone name unavailable'`. And **`'' ?? x` is `''`** — nullish coalescing does
+not treat the empty string as absent — so the panel's fallback was unreachable and the row
+rendered a blank line. Before reaching `''` it would print the zone's UUID under a heading that
+reads like a name.
+
+Two authors did the careful thing, in two files, and one line between them undid both.
+
+**`alertType: … ?? 'violation'`** — the original defect surviving as a fallback. *Every geofence
+alert reading "Violation"* is what started this whole thread; the producer was fixed and the
+panel was taught to refuse to guess an unrecognised value, which requires it to SEE the absence.
+The adapter kept supplying the word.
+
+**`center: { latitude: … ?? 0, longitude: … ?? 0 }` and `radius: … ?? 0`.** `center_lat`,
+`center_lng` and `radius_meters` are nullable, and are genuinely NULL for a POLYGON zone.
+`circleRenderableZones` filters on `typeof z.center.latitude === 'number'` precisely to exclude
+those — and a coerced `0` passes the filter. A zero-radius circle at 0°N 0°E, in the Gulf of
+Guinea, drawn on the fleet map.
+
+`GeofencingPanel.zones.test.ts` covers that filter thoroughly, **including a `center: undefined`
+case**, and passed throughout. The adapter never produced an undefined centre, so the filter was
+tested against an input the real pipeline could not send it.
+
+Two smaller ones in the same pass: `vehiclesInside: … ?? []` made the panel print "0 vehicles
+inside" on every zone — a count, which reads as a measurement, for a figure nothing computes —
+and `createdAt: … ?? ''` produced `new Date('')`, which renders as the literal string
+"Invalid Date".
+
+**The whole frontend suite was green before this and after: 417 tests, none of which could see
+any of it.** A coercion is invisible to every test that supplies complete data, and fixtures
+supply complete data by default.
+
+## Rule 57 — test each layer with what the layer above it can actually send
+
+`circleRenderableZones` was tested with `center: undefined`. `adaptZone` produced
+`center: {latitude: 0, longitude: 0}`. Both were correct about their own contract and neither
+was ever handed the other's output, so a defect lived in the join between them with full
+coverage on both sides.
+
+The cheap fix is one test that runs the real adapter's output into the real filter — twenty
+lines, and it fails on its own against the coercion. Where two units meet, assert on the pair;
+the seam is where the untested inputs live.
+
+Related to rule 55 but distinct: there the static checker could not see the runtime value, here
+both dynamic tests were fine and neither covered the composition.

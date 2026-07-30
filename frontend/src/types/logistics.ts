@@ -605,30 +605,47 @@ export type MapFilterType = 'all' | 'shipments' | 'fleet' | 'carriers' | 'compli
 // ============================================
 
 // Geofencing Types
+/** THE NULLABLE FIELDS ARE NULLABLE ON PURPOSE. `_alert_out` resolves the zone and vehicle
+ *  names by join and sends `null` when it cannot, with a comment saying why: *"the panel must
+ *  be able to tell a zone it could not resolve from one with an empty name."* `adaptAlert` then
+ *  replaced that `null` with the zone ID, and failing that with `''` — and `'' ?? fallback` is
+ *  `''`, so the panel's `geofenceName ?? 'Zone name unavailable'` could never fire and the row
+ *  rendered a blank line. A deliberate distinction, made on the server and handled in the
+ *  panel, destroyed by the layer between them. */
 export interface GeofenceAlertExtended {
   id: string;
-  vehicleId: string;
-  vehicleNumber: string;
+  vehicleId?: string | null;
+  vehicleNumber?: string | null;
   driverName?: string;
-  geofenceId: string;
-  geofenceName: string;
-  alertType: 'entry' | 'exit' | 'violation';
-  location: GeoLocation;
-  timestamp: string;
+  geofenceId?: string | null;
+  geofenceName?: string | null;
+  /** NOT defaulted to 'violation'. That default is the original defect wearing a fallback:
+   *  every alert, including a routine authorised entry, read "Violation". The panel already
+   *  refuses to guess an unrecognised value — it needs to see the absence to do so. */
+  alertType?: string | null;
+  location?: GeoLocation | null;
+  timestamp?: string | null;
   acknowledged: boolean;
-  severity: 'info' | 'warning' | 'critical';
+  /** An alert whose severity did not arrive is not an informational one. */
+  severity?: 'info' | 'warning' | 'critical' | null;
 }
 
 export interface GeofenceZoneExtended extends GeofenceZone {
-  vehiclesInside: string[];
+  /** OPTIONAL, and it was `string[]` defaulted to `[]`. `_zone_out` does not send it and
+   *  nothing computes it, so the panel's "{n} vehicles inside" read "0 vehicles inside" for
+   *  every zone — a count, not a blank. Present only when a producer supplies one. */
+  vehiclesInside?: string[];
+  /** Derived from `triggerOn`, which the server does send. A real derivation, not a default. */
   alertRules: {
     onEntry: boolean;
     onExit: boolean;
     notifyRoles: string[];
   };
   isActive: boolean;
-  createdAt: string;
-  updatedAt: string;
+  /** `_zone_out` sends neither. They were defaulted to `''`, and `new Date('')` is an
+   *  Invalid Date — which renders as the literal string "Invalid Date". */
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 // Fleet Health & Security Types

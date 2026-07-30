@@ -38,11 +38,15 @@ const getZoneColor = (color: string) => {
   }
 };
 
-const getSeverityColor = (severity: string) => {
+// An UNREPORTED severity is not an informational one. The adapter used to default it to
+// 'info', so an alert whose severity did not arrive was painted the same calm blue as a
+// routine notice; grey says "no severity" without claiming one.
+const getSeverityColor = (severity?: string | null) => {
   switch (severity) {
     case 'critical': return 'text-red-600 bg-red-50';
     case 'warning': return 'text-yellow-600 bg-yellow-50';
-    default: return 'text-blue-600 bg-blue-50';
+    case 'info': return 'text-blue-600 bg-blue-50';
+    default: return 'text-gray-500 bg-gray-100';
   }
 };
 
@@ -235,7 +239,15 @@ export const GeofencingPanel: FC<GeofencingPanelProps> = ({ onAlert }) => {
                       <span className="text-xs bg-gray-200 px-2 py-0.5 rounded">Inactive</span>
                     )}
                   </div>
-                  <p className="text-xs text-gray-500 mt-1">{zone.vehiclesInside.length} vehicles inside</p>
+                  {/* WAS an unconditional "{n} vehicles inside". `_zone_out` does not send
+                      `vehiclesInside` and nothing computes it, so the adapter defaulted it to
+                      `[]` and every zone reported "0 vehicles inside" — a count, which reads
+                      as a measurement, not as a blank. */}
+                  {zone.vehiclesInside && (
+                    <p className="text-xs text-gray-500 mt-1">
+                      {zone.vehiclesInside.length} vehicles inside
+                    </p>
+                  )}
                 </div>
               ))}
             </div>
@@ -352,7 +364,9 @@ export const GeofencingPanel: FC<GeofencingPanelProps> = ({ onAlert }) => {
                   </p>
                   <p className="text-xs text-gray-500 flex items-center gap-1 mt-1">
                     <Clock className="w-3 h-3" />
-                    {new Date(alert.timestamp).toLocaleString()}
+                    {alert.timestamp
+                      ? new Date(alert.timestamp).toLocaleString()
+                      : 'time unreported'}
                   </p>
                 </div>
                 {!alert.acknowledged ? (
