@@ -50,6 +50,36 @@ files for real credentials — never commit them.
 
 ---
 
+## Running the suites
+
+```bash
+cd backend && pytest          # 2,513 pass, 87 skip. Needs Docker: the real-DB
+                              # tests start a TimescaleDB via testcontainers
+cd frontend && npx vitest run  # 445 across 65 files
+cd frontend && npx tsc --noEmit
+```
+
+Most of the backend suite runs against a **real TimescaleDB**, not a mock, so Docker has to be
+up. If containers fail to start with `input/output error` from containerd, the VM is out of
+disk rather than broken — `make lean` frees ~1.5 GB by dropping `backend/dataset` from your
+working tree, and `make unlean` puts it back. See
+[docs/engineering/large-assets.md](docs/engineering/large-assets.md).
+
+**CI excludes exactly one test, and it is written down.** Every `--ignore`/`--deselect` flag in
+`ci-cd.yml` must have an entry in [`backend/tests/test_quarantine.py`](backend/tests/test_quarantine.py)
+carrying an owner, a real diagnosis and an expiry date. That suite fails when a window lapses,
+when a quarantined test starts *passing* (CI skipping working coverage is worse than a known
+failure), and when the register and the workflow drift apart in either direction — so an
+exclusion cannot become permanent by nobody noticing.
+
+Currently quarantined: `test_map_section_to_domain_table_content` — the document mapper's
+table-content branch and its test disagree about what `["asset_id", "status"]` with a
+`"failed"` cell should map to. Owner HARSH, expires 2026-09-23. Four other entries were
+released on 2026-07-30; the story of why they sat there for two weeks, and the rule it earned,
+is in [docs/engineering/test-quarantine.md](docs/engineering/test-quarantine.md).
+
+---
+
 ## Overview
 
 OmniusGrid is a resilient manufacturing operations platform designed for Industry 4.0. It correlates data from across the entire operation, unstructured business documents (spreadsheets, PDFs, images via the intake pipeline), ERP systems (13 connectors), industrial equipment on the factory floor (10 protocol collectors), audio/video sensors, fleet telematics (GeoTab), and yard and transportation logistics, into one queryable, cross-correlated picture. On top of that substrate it provides real-time edge AI inference, an NLP correlation assistant, compliance registries with RAG-backed document search, and secure cloud connectivity for model training and fleet-wide optimization.
@@ -78,8 +108,9 @@ OmniusGrid is a resilient manufacturing operations platform designed for Industr
 
 ## Active Development & Team Progress
 
-> **Snapshot: July 27, 2026.** Both remotes (`origin` = SoundSafe-ai, `backup` = SoundSafe-Dev)
-> are in sync. **`main` was promoted from `hamad/converged-pre-main` on 2026-07-17**; the
+> **Snapshot: July 30, 2026.** Both remotes (`origin` = SoundSafe-ai, `backup` = SoundSafe-Dev)
+> are in sync, and `origin` now carries `alex` (89 commits that had lived only on the mirror).
+> **`main` was promoted from `hamad/converged-pre-main` on 2026-07-17**; the
 > FS-141+ work described below has since landed on `hamad/converged-pre-main` and is **ahead of
 > `main`**, so start new work from `hamad/converged-pre-main` until the next promotion.
 > Reinstall deps after pulling (`pip install -r backend/requirements.txt` — `scipy` is new and
@@ -928,6 +959,47 @@ detector's input include its own subject*, and *a guard that has already been wr
 is the most likely place to be wrong again — re-derive its entry point, not just the part
 that failed*. Every fix is mutation-verified by restoring the real prior code, not a
 reconstruction of it.
+
+### Delivered since — the repository slice (what a checkout costs, and what CI declines to run)
+
+On `hamad/converged-pre-main`. Two findings, and both of my own first numbers were wrong in
+ways that changed the fix.
+
+**`origin` had no `alex` branch.** Eighty-nine commits of Alex's work existed on the mirror
+only, so the primary remote was one accident away from losing all of it. Pushed to
+`origin/alex` at `d5286f1c` — additive, nothing rewritten.
+
+**The 1.5 GB corpus was costing every checkout, not every clone.** The audit said
+`backend/dataset` was "1.57 GB of the 1.59 GB repository — 99% of every clone". That measured
+the *working tree*. Git stores the corpus compressed and deduplicated: the whole repository
+packs to **96 MB**, of which the dataset is **41 MB** — a 37× difference between what a clone
+transfers and what a checkout writes. Measure the pack, not the tree, before claiming a
+transfer cost.
+
+**And it must not be deleted**, which is the opposite of what "generated output in git"
+usually implies. `generate_dataset_enhanced.py` sets no random seed and can call an LLM, so
+the corpus is generated but **not reproducible**: deleting it loses ~500,000 scenarios that
+cannot be regenerated identically, and the fine-tuning results stop being explicable. The
+distinction between *generated* and *reproducible* is the whole decision. So all 28
+`actions/checkout` steps sparse-checkout without it — **no CI job ever read it**, every run was
+writing 1.5 GB for nothing — `make lean`/`make unlean` do the same for a working tree
+(1.6 GB → 104 MB, measured, with all source present), and `.gitignore` stops the next corpus
+landing in git.
+
+**Then a plain `pytest` turned out not to run.** It had been dying at collection since the
+converged merge on 07-17; only the CI command, with its ignore flags, ever completed. Three
+test files still asserted an API that merge `42ed66d8` had replaced — and the quarantine
+register caught the fix, exactly as designed: its staleness half fails when a quarantined test
+starts passing, because CI skipping working coverage is worse than a known failure.
+
+The register had parked all five as *"written against an API that never shipped"*, owned by
+another lane. Half right. The API they wanted never shipped, but **the builders are live** —
+`nlp_correlation.py` and `analysis_sessions.py` call them on every intake — so CI was skipping
+coverage of production code, not of an unbuilt feature. Four entries released (21 tests
+rewritten against each module's documented contract, **no production change**); the fifth
+stays, because it is the only one that needs a taxonomy decision rather than a rewrite. Fixing
+it also exposed a vacuity guard that asserted `--ignore=` was present unconditionally — so
+emptying the ignore list made a guard fail for the good outcome it exists to encourage.
 
 ### Offline demo — `backend/scripts/seed_demo_data.py`
 
@@ -2994,6 +3066,7 @@ The ERP integration system correlates ERP data with operational telemetry to pro
 **Engineering practice**
 - [Defect-class sweeps](docs/engineering/defect-class-sweeps.md) - The fifty-six classes of "code that looks wired and cannot work" found so far, what each sweep found (including the ones that came back clean), which mutation-tested guard keeps each closed, and sixty-two rules for writing a sweep worth trusting — most of them paid for by a detector that was wrong first, including one that reported zero offenders while three pages were broken and one that compared a baseline against itself
 - [Large assets](docs/engineering/large-assets.md) - Why `backend/dataset` is 1.5 GB on disk but only 41 MB packed, why it must not be deleted (the generator sets no seed, so it is generated but NOT reproducible), and the `make lean` / sparse-checkout recipes that keep it off your disk and out of all 28 CI checkouts
+- [The test quarantine](docs/engineering/test-quarantine.md) - What CI is allowed not to run, and the register that gives every exclusion an owner, a diagnosis and an expiry — including the staleness half that fails when a quarantined test starts passing. Records the 2026-07-30 release of four entries, and the rule it earned: before accepting that a quarantined test is another lane's problem, check whether the code under it is *running* — "the test is broken" and "the feature is unbuilt" look identical from the list and have opposite consequences
 
 **Infrastructure & operations**
 - [Database migrations](database/migrations/README.md) - Runner rules (never edit or rename an applied migration), the 019 gap, grandfathered duplicate prefixes, demo-data gating
