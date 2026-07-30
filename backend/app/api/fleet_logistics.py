@@ -313,8 +313,15 @@ def _schedule_out(s: Any, now: Optional[datetime] = None) -> Dict[str, Any]:
 def _order_out(o: Any) -> Dict[str, Any]:
     return {
         "id": str(o.id), "vehicleId": o.vehicle_id, "title": o.title,
+        # `description` was NOT SENT, though the column has always existed. The client's
+        # adapter therefore filled `issueDescription` from `title` — a rename that reads
+        # sensibly and quietly discarded the longer detail a technician had typed. The
+        # completed-work serializer below (`_history_out`) does read `o.description`, so the
+        # same repair carried its description in one view and lost it in the other.
+        "description": o.description,
         "status": o.status, "priority": o.priority, "vendor": o.vendor,
         "cost": o.cost, "category": o.category,
+        "completedAt": o.completed_at.isoformat() if o.completed_at else None,
         "openedAt": o.opened_at.isoformat() if o.opened_at else None,
     }
 

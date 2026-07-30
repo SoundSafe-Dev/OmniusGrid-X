@@ -152,9 +152,18 @@ BASELINE = {
     # then delivers. Re-pinned rather than left in place: a baseline that still lists a
     # fixed entry quietly loses its edge.
     "AgentRolloutCreate.all",
-    "Carrier.contactEmail",
-    "Carrier.contactPhone",
     "CloudGatewayStatus.lastConnectedAt",
+    # The four contact entries (Carrier and Location) were HERE, and are the ninth
+    # finding — a DELETE, not an expose. `carriers` has no contact_phone or
+    # contact_email column: the table carries DOT/MC numbers, C-TPAT and insurance
+    # dates, safety rating, CSA score, SCAC and operating authority, and no way to
+    # reach anybody. The carrier card rendered a "Contact" heading above two empty
+    # lines for every row, and both fields were declared REQUIRED.
+    #
+    # Removed rather than filled with "not recorded", which would be permanent noise on
+    # every row. Carrier contact details are collected nowhere in this product — a gap
+    # in the schema, not something a panel or a type can paper over. The `Location`
+    # pair went with them: nothing rendered those either.
     "DetentionAlert.excessMinutes",
     "DockAppointment.driverPhone",
     # The six yard entries (trailerLicensePlate x4, workcellName x2) were HERE, and
@@ -190,8 +199,6 @@ BASELINE = {
     # Pinned by tests/test_geofence_alert_names_match_the_client.py.
     "HOSViolationAlert.currentLocation",
     "HOSViolationAlert.hoursRemaining",
-    "Location.contactEmail",
-    "Location.contactPhone",
     # `todayAppointments` STAYS, and is the honest kind: `YardManagement` computes it
     # client-side by filtering the appointments list. The sweep cannot tell a local
     # computation from a fabrication, which is why the list is a baseline and not a

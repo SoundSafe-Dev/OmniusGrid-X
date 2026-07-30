@@ -131,8 +131,12 @@ export interface Carrier {
   insuranceExpiry?: string;
   operatingAuthority: 'active' | 'inactive' | 'pending' | 'revoked';
   safetyRating?: 'satisfactory' | 'conditional' | 'unsatisfactory';
-  contactEmail: string;
-  contactPhone: string;
+  /** DELETED: `contactEmail` and `contactPhone` were declared REQUIRED here and `carriers`
+   *  has neither column. The table carries DOT/MC numbers, C-TPAT and insurance dates,
+   *  safety rating, CSA score, SCAC and operating authority — and no way to reach anybody.
+   *  The carrier card rendered a "Contact" heading above two empty lines for every row.
+   *  Carrier contact details are collected nowhere in this product: a gap in the schema,
+   *  not something the type can assert its way out of. */
   billingAddress?: Address;
   isActive: boolean;
   complianceScore: number;
@@ -356,6 +360,10 @@ export interface Location {
   latitude?: number;
   longitude?: number;
   contactName?: string;
+  /** `Location` is a frontend-only shape (shipment origin/destination), not a table, and
+   *  nothing renders these two — kept because a caller constructing a Location may set
+   *  them. The CARRIER equivalents were deleted: `carriers` has no contact columns, and the
+   *  card rendered a "Contact" heading above two empty lines for every row. */
   contactPhone?: string;
   contactEmail?: string;
   hours?: string;
@@ -646,6 +654,9 @@ export interface RepairOrder {
    *  eight characters of the row's UUID and displayed as the heading of every row. */
   workOrderNumber?: string;
   issueDescription: string;
+  /** `repair_orders.description` — the detail, as opposed to `title`, which is the summary
+   *  `issueDescription` is derived from. The serializer omitted it entirely until now. */
+  description?: string | null;
   reportedDate: string;
   startedDate?: string;
   completedDate?: string;

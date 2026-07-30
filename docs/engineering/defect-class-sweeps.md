@@ -2925,3 +2925,38 @@ to drift and nothing for the sweep to report.
 The same argument settled the geofence rename in the other direction: there, the producer had
 the odd names and no consumer, so the producer moved. The rule is not "always change the
 client" — it is "one name per concept, chosen where the concept actually lives".
+
+## Working the list down: 53 → 32
+
+Nine findings so far from the wire-vocabulary baseline, and the distribution is the useful
+part. **Only three of the nine were false claims**; the rest were information the product
+collected, or could have collected, and could not show:
+
+| finding | fix | what the user saw |
+|---|---|---|
+| `currentMileage` | delete | the DUE odometer labelled as the current one |
+| `workOrderNumber` | delete | eight characters of a UUID as a work-order number |
+| cost figures ×3 | delete | "$0" per vehicle and upcoming, "monthly average" = YTD ÷ 12 |
+| `Asset.isInMaintenance` | expose | nothing — no client could see maintenance mode at all |
+| geofence names ×3 | rename producer | **every alert read "Violation"** |
+| yard plate ×4 | expose | a dock door that could not name the trailer at it |
+| `workcellName` ×2 | delete | a blank line for an association the schema lacks |
+| fleet summary | rename client | six blanks under "GeoTab Live", two beside bare units |
+| device ids ×2 | rename both ways | a "GeoTab Device ID" row that never appeared |
+| carrier contact ×2 | delete | a "Contact" heading above two empty lines |
+
+**The distribution matters more than the count.** A sweep that finds thirty "missing field"
+entries and treats them all as bugs to fix would have added columns for carrier contacts and
+a workcell relationship for dock doors — inventing product scope from a lint result. The
+table-aware question (*does this entity's own table have a column, or a reference to one?*)
+is what separates the three answers, and **delete was the most common one**.
+
+Two entries stay on the list deliberately and are worth naming, because they look like
+findings and are not: `LogisticsOverview.todayAppointments` is computed client-side by
+filtering the appointments list, and the `Location` contact pair is a frontend-only shape a
+caller may populate itself. The sweep cannot distinguish either from a fabrication, which is
+exactly why the list is a baseline rather than a defect count.
+
+**One gap recorded rather than closed:** carrier contact details have nowhere to live in this
+schema. That is a real product hole — you cannot phone a carrier from this system — but
+filling it is a migration plus CRUD plus data entry, not a sweep fix.

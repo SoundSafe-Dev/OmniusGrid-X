@@ -71,7 +71,12 @@ const adaptSchedule = (s: any): MaintenanceSchedule => ({ ...s });
 const adaptRepairOrder = (o: any): RepairOrder => ({
   ...o,
   cost: o?.cost,
+  // `title` is the SUMMARY; `description` is the detail a technician typed. The serializer
+  // did not send `description` at all, so this fell back to the title and the detail was
+  // discarded — while `_history_out` on the same table did read it, so one repair carried
+  // its description in the completed-work view and lost it in the active list.
   issueDescription: o?.issueDescription ?? o?.title ?? '',
+  description: o?.description ?? null,
   reportedDate: o?.reportedDate ?? o?.openedAt ?? '',
   partsUsed: o?.partsUsed ?? [],
   vehicleNumber: o?.vehicleNumber ?? o?.vehicleId ?? '',

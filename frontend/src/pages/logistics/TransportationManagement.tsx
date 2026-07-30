@@ -753,11 +753,16 @@ export const TransportationManagement: FC = () => {
                   <span className="capitalize">{carrier.operatingAuthority?.replace('_', ' ')}</span>
                 </div>
               </div>
-              <div className="mt-4 pt-3 border-t border-opsgrid-border">
-                <p className="text-xs text-opsgrid-text-secondary">Contact</p>
-                <p className="text-sm">{carrier.contactPhone}</p>
-                <p className="text-sm text-opsgrid-text-secondary">{carrier.contactEmail}</p>
-              </div>
+              {/* A "Contact" SECTION WITH NOTHING IN IT. `carriers` has no contact_phone or
+                  contact_email column — the table carries DOT/MC numbers, C-TPAT and
+                  insurance dates, safety rating, CSA score, SCAC and operating authority,
+                  and no way to reach anybody. So this rendered a heading above two empty
+                  lines for every carrier.
+                  Removed rather than filled with "not recorded", which would be permanent
+                  noise on every row. Carrier contact details are collected nowhere in this
+                  product; that is a gap in the schema, recorded in
+                  docs/engineering/defect-class-sweeps.md, not something a panel can paper
+                  over. */}
             </div>
           ))}
         </div>
