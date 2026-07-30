@@ -101,7 +101,10 @@ async def list_documents(
     docs = get_document_store()
     if not docs.available:
         raise HTTPException(status_code=503, detail="Document store unavailable.")
-    keys = await docs.list_documents(prefix=f"{_org_id(current_user)}/")
+    try:
+        keys = await docs.list_documents(prefix=f"{_org_id(current_user)}/")
+    except RuntimeError as exc:  # object store unreachable (e.g. SeaweedFS down)
+        raise HTTPException(status_code=503, detail=str(exc))
     return {"count": len(keys), "keys": keys}
 
 

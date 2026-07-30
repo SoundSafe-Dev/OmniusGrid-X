@@ -45,10 +45,6 @@ KNOWN_LANE_FAILURES = {
     "/api/v1/nlp/correlation/intake/{intake_id}": (
         "HARSH — select() given the IntakeItem class rather than a column"
     ),
-    "/api/v1/rag/documents": (
-        "htreinen — reaches SeaweedFS at seaweedfs:8333; should degrade to 503 "
-        "when the object store is absent instead of surfacing a connection error"
-    ),
 }
 
 

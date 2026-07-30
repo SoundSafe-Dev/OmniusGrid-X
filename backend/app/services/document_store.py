@@ -142,14 +142,27 @@ class DocumentStore:
     async def list_documents(
         self, prefix: str = "", bucket: Optional[str] = None
     ) -> List[str]:
-        """List object keys under a prefix (handles pagination)."""
+        """List object keys under a prefix (handles pagination).
+
+        Raises ``RuntimeError`` with a generic, client-safe message if the
+        object store cannot be reached — the real exception (which may name
+        internal hosts/ports) is logged server-side, not propagated.
+        """
         bucket = bucket or self.raw_bucket
         keys: List[str] = []
-        async with self._require_client() as s3:
-            paginator = s3.get_paginator("list_objects_v2")
-            async for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
-                for obj in page.get("Contents", []):
-                    keys.append(obj["Key"])
+        try:
+            async with self._require_client() as s3:
+                paginator = s3.get_paginator("list_objects_v2")
+                async for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+                    for obj in page.get("Contents", []):
+                        keys.append(obj["Key"])
+        except RuntimeError:
+            raise  # aioboto3 not installed - already a clean, client-safe message
+        except Exception as exc:
+            logger.error(
+                "document_store.list_failed", bucket=bucket, prefix=prefix, error=str(exc)
+            )
+            raise RuntimeError("Document store is currently unavailable.") from exc
         return keys
 
     async def generate_presigned_url(
