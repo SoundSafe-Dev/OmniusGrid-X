@@ -18,7 +18,7 @@ from uuid import UUID
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db  # noqa: F401 — kept for non-tenant reads
@@ -606,12 +606,45 @@ def summarize_maintenance(schedules: List[Any], orders: List[Any], now: Optional
     for o in ytd:
         key = o.category or "other"
         by_category[key] = round(by_category.get(key, 0.0) + float(o.cost), 2)
+    # Completed spend per month of the current year, up to and including this one. Every month
+    # that has elapsed is present even at 0.00 — a month in which nothing was repaired really
+    # did cost nothing, and a chart that silently omits it draws a shorter year.
+    monthly: Dict[int, float] = {m: 0.0 for m in range(1, now.month + 1)}
+    for o in ytd:
+        month = _aware(o.completed_at).month
+        if month in monthly:
+            monthly[month] = round(monthly[month] + float(o.cost), 2)
+    monthly_breakdown = [
+        {"month": f"{now.year}-{m:02d}", "cost": monthly[m]} for m in sorted(monthly)
+    ]
+
+    ytd_total = round(sum(float(o.cost) for o in ytd), 2)
+
+    # Estimated cost of maintenance that has NOT been done yet. `None` when no outstanding
+    # schedule carries an estimate at all, which is a different fact from an outstanding
+    # estimate of zero — the panel showed the latter, in a highlighted box reading
+    # "Upcoming (Est.) $0", for a fleet whose upcoming work nobody had costed.
+    outstanding = [
+        s for s in schedules
+        if getattr(s, "status", None) not in ("completed", "cancelled")
+        and getattr(s, "estimated_cost", None) is not None
+    ]
+    upcoming_estimated = (
+        round(sum(float(s.estimated_cost) for s in outstanding), 2) if outstanding else None
+    )
+
     return {
         "scheduledCount": sum(1 for s in schedules if getattr(s, "status", None) == "scheduled"),
         "overdueCount": len(overdue),
         "activeRepairs": len(active),
-        "ytdCosts": round(sum(float(o.cost) for o in ytd), 2),
+        "ytdCosts": ytd_total,
         "costsByCategory": by_category,
+        "monthlyBreakdown": monthly_breakdown,
+        # YTD divided by the months that have ELAPSED. The client computed `ytd / 12` in
+        # January as readily as in December, so the figure it showed was a twelfth of the
+        # year's spend labelled as a monthly average.
+        "monthlyAverage": round(ytd_total / now.month, 2),
+        "upcomingEstimated": upcoming_estimated,
     }
 
 
@@ -624,9 +657,42 @@ async def maintenance_statistics(org_id: UUID = Depends(get_tenant_org_id), db: 
 
 @maintenance_router.get("/costs")
 async def maintenance_costs(org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
+    """The maintenance costs tab.
+
+    THIS USED TO SEND TWO FIGURES AND THE CLIENT INVENTED THREE MORE. `monthlyAverage` was
+    `ytd / 12` — computed in January as readily as in December; `costPerVehicle` and
+    `upcomingEstimated` were hardcoded zeros, the second rendered in a highlighted box reading
+    "Upcoming (Est.) $0"; and `monthlyBreakdown` was a required array the server never sent, so
+    the chart below it drew nothing. A later pass made all four optional and the panel stopped
+    displaying them, which removed the false figures and left four blank rows.
+
+    All four are facts about data this endpoint already has, or one join away, so they are
+    computed here instead. It also loads the SCHEDULES now — costs of work not yet done live
+    there (`maintenance_schedules.estimated_cost`), and the previous call passed `[]`.
+    """
     orders = (await db.execute(_scope(select(RepairOrder), RepairOrder, org_id))).scalars().all()
-    summary = summarize_maintenance([], orders)
-    return {"ytdTotal": summary["ytdCosts"], "byCategory": summary["costsByCategory"]}
+    schedules = (
+        await db.execute(_scope(select(MaintenanceSchedule), MaintenanceSchedule, org_id))
+    ).scalars().all()
+    summary = summarize_maintenance(schedules, orders)
+
+    # Cost per vehicle needs the fleet size, which is not derivable from repair orders: a
+    # vehicle with no repairs this year has no row here and is exactly the vehicle that makes
+    # the average meaningful. `None` for an empty fleet — not 0, and not a division by zero.
+    vehicle_count = (
+        await db.execute(_scope(select(func.count(Vehicle.id)), Vehicle, org_id))
+    ).scalar() or 0
+
+    return {
+        "ytdTotal": summary["ytdCosts"],
+        "byCategory": summary["costsByCategory"],
+        "monthlyBreakdown": summary["monthlyBreakdown"],
+        "monthlyAverage": summary["monthlyAverage"],
+        "upcomingEstimated": summary["upcomingEstimated"],
+        "costPerVehicle": (
+            round(summary["ytdCosts"] / vehicle_count, 2) if vehicle_count else None
+        ),
+    }
 
 
 # ==================== Logistics aggregates ====================

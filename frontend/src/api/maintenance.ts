@@ -50,35 +50,15 @@ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
  */
 const adaptSchedule = (s: any): MaintenanceSchedule => ({ ...s });
 
-/**
- * Renaming is fine here; inventing is not. `repair_orders` really does store title,
- * opened_at, cost, priority and vehicle_id, so mapping those onto the names the panel
- * reads is honest. Two entries were not renames:
- *
- *   `workOrderNumber: o.id.slice(0, 8)` — the first eight characters of a UUID, rendered
- *   as the heading of every row. A technician reads that as a work-order number and
- *   quotes it to a vendor. No system ever issued it. There is no work-order number in
- *   this schema, so the row is keyed on the identifier that does exist.
- *
- *   `estimatedCost: … ?? 0` — the column is `cost`, what the repair COST, and a null one
- *   became "$0" under a label reading "estimated". A repair with no cost recorded is not
- *   a free repair. It stays undefined and the panel omits the line.
- *
- * `partsUsed`, `laborHours`, `assignedTechnician` and `actualCost` have no columns at
- * all; each is rendered conditionally, so they are simply never shown. Recorded rather
- * than faked — see the note in defect-class-sweeps.md.
- */
+// Down to the one field that is genuinely client-side. `issueDescription` and `reportedDate`
+// were renames performed here — real data (`title`, `openedAt`) under names no endpoint sends —
+// and `partsUsed: [] ` defaulted an array for a table that has no parts. Renaming the type to
+// match the wire removed the need for all of it; what is left derives `vehicleNumber`, which
+// the serializer really does not send.
 const adaptRepairOrder = (o: any): RepairOrder => ({
   ...o,
   cost: o?.cost,
-  // `title` is the SUMMARY; `description` is the detail a technician typed. The serializer
-  // did not send `description` at all, so this fell back to the title and the detail was
-  // discarded — while `_history_out` on the same table did read it, so one repair carried
-  // its description in the completed-work view and lost it in the active list.
-  issueDescription: o?.issueDescription ?? o?.title ?? '',
   description: o?.description ?? null,
-  reportedDate: o?.reportedDate ?? o?.openedAt ?? '',
-  partsUsed: o?.partsUsed ?? [],
   vehicleNumber: o?.vehicleNumber ?? o?.vehicleId ?? '',
 });
 
@@ -192,13 +172,14 @@ export const maintenanceApi = {
   createRepairOrder: async (order: Partial<RepairOrder>): Promise<RepairOrder> => {
     if (USE_MOCK) {
       await delay(MOCK_DELAY);
+      // The mock used to mint a `WO-YYYY-NNNN` work-order number here. Nothing on the server
+      // issues one, so the mock path produced an identifier the real path never could — which
+      // is how a synthesised number ended up looking like a product feature.
       const newOrder: RepairOrder = {
         ...order as RepairOrder,
         id: `ro-${Date.now()}`,
-        workOrderNumber: `WO-${new Date().getFullYear()}-${Math.floor(Math.random() * 9000 + 1000)}`,
         status: 'reported',
-        partsUsed: [],
-        reportedDate: new Date().toISOString(),
+        openedAt: new Date().toISOString(),
       };
       return newOrder;
     }
@@ -244,8 +225,8 @@ export const maintenanceApi = {
       await delay(MOCK_DELAY);
       return mockMaintenanceCosts;
     }
-    // Backend /costs returns { ytdTotal, byCategory } and nothing else. The Costs tab
-    // reads five figures, so three of them used to be manufactured here:
+    // THE SERVER NOW COMPUTES ALL SIX. It used to return { ytdTotal, byCategory } and
+    // nothing else, while the Costs tab read five figures, so three were manufactured here:
     //
     //   `costPerVehicle: 0`     — a hardcoded zero, rendered as "Per Vehicle $0".
     //   `upcomingEstimated: 0`  — a hardcoded zero, rendered in a highlighted box as
@@ -256,13 +237,14 @@ export const maintenanceApi = {
     //                             true monthly average roughly sixfold, and it is wrong in
     //                             every month except December.
     //
-    // A figure the server does not send is now absent rather than zero, and the panel
-    // renders what it has. Fabricating a plausible number is worse than omitting it: an
-    // absent row prompts a question, and "$0" answers one.
+    // Removing them was right and left four blank rows; `/maintenance/costs` computes each
+    // from real columns now (repair costs by month, schedules' estimated_cost, the vehicle
+    // count). The conditional spreads stay: a deployment running an older backend still
+    // sends nothing for them, and an absent row prompts a question where "$0" answers one.
     const response = await api.get<any>('/api/v1/maintenance/costs');
     const d = response.data ?? {};
     return {
-      totalYTD: d.ytdTotal ?? d.totalYTD,
+      ytdTotal: d.ytdTotal,
       byCategory: d.byCategory ?? {},
       monthlyBreakdown: d.monthlyBreakdown ?? [],
       ...(d.monthlyAverage != null ? { monthlyAverage: d.monthlyAverage } : {}),

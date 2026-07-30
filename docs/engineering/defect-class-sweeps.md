@@ -2239,6 +2239,13 @@ one of its findings. The habit that catches it:
    credentials (the vendor HTTP call, and nothing else) and stub only that.
    *(Fuller account: § Rule 49.)*
 
+50. **A fixture in a shape no endpoint produces tests the fixture.**
+   The maintenance trend chart labelled its axis with `month.split(' ')[0]` — right for the
+   mock's `"Jan 2024"`, and rendering the server's `"2026-01"` as the literal string. The panel
+   test used the same fixture, so test and code agreed with each other about a format the wire
+   does not send. Fixtures carry what the serializer emits, and nothing else.
+   *(Fuller account: § Rule 50.)*
+
 ---
 
 ## Open observations, not yet tickets
@@ -3692,3 +3699,78 @@ empty list has exactly one meaning.
 
 404 rather than 403 for another tenant's id, matching the rest of that file: distinguishing them
 would confirm the id exists.
+
+## The eleventh finding: seven fields on one interface, and the value standing next to them
+
+`RepairOrder` was the largest cluster the wire-vocabulary sweep had left. `repair_orders` has
+thirteen columns and `_order_out` emits eleven of them; the TypeScript described a richer object
+that no endpoint produces and no migration plans.
+
+The sharpest of the seven is `assignedTechnician`, because everything around it worked.
+`repair_orders.vendor` — the shop that actually did the repair — was sent on every response and
+rendered **nowhere**, while the card offered a `Tech:` line that could never populate. The same
+shape as the `geoTabDeviceId` finding: a row that cannot fill itself standing next to the value
+it should have shown. `category` was in the same state, sent and unread.
+
+The other six split across the sweep's three fixes:
+
+  * **Deleted.** `workOrderNumber` — nothing in this product issues one. It had already been
+    stripped from the panel; leaving the field optional kept the invitation open, and the mock
+    `createRepairOrder` was still accepting it by minting `WO-YYYY-NNNN`. `actualCost` — a
+    second cost on a table with one `cost` column, which IS the actual cost; two names for one
+    number invites populating both. `laborHours` and `partsUsed` (with its `PartUsed` shape) —
+    no columns, no tables, nothing pending.
+  * **Renamed.** `issueDescription` and `reportedDate` were real data under invented names, and
+    the adapter filled them from `title` and `openedAt`. Rule 35.
+
+Renaming the type emptied the adapter: it had grown five fallbacks, four of which existed only
+to bridge names the type had made up. What is left derives `vehicleNumber`, which the serializer
+genuinely does not send.
+
+## The twelfth finding: the first one fixed by making the server send it
+
+`MaintenanceCosts` declared six figures and `/maintenance/costs` sent two. The client made up
+four:
+
+  * `monthlyAverage` was `ytd / 12` — computed in January as readily as in December, so a fleet
+    three weeks into its year saw a twelfth of its spend labelled as a monthly average;
+  * `costPerVehicle` and `upcomingEstimated` were hardcoded zeros, the second in a highlighted
+    box reading **"Upcoming (Est.) $0"**, which reads as *nothing is coming up* rather than
+    *nobody calculated this*;
+  * `monthlyBreakdown` was a required array nothing sent, so the trend chart drew nothing.
+
+An earlier pass removed the fabrications and left four blank rows. That was right, and it was
+not the end of the job — **delete and rename are the cheap two of the three options, and the
+third is the one that finishes the feature.** Every figure is a fact about data the endpoint
+already had: spend per elapsed month, YTD over months elapsed, the sum of
+`maintenance_schedules.estimated_cost` on work not yet done, and YTD over the fleet size. The
+endpoint had been passing `[]` for schedules, which is where the cost of not-yet-done work lives.
+
+`costPerVehicle` needed the one thing repair orders cannot supply: the fleet size. A vehicle
+with no repairs this year has no row among them, and it is exactly the vehicle that makes the
+average meaningful.
+
+### None and zero, three times in one endpoint
+
+* An empty fleet has **no** cost per vehicle. Not zero — and not a division by zero, which is
+  how it became a hardcoded 0 in the first place.
+* Outstanding work that nobody has costed has **no** estimate. Not an estimate of zero, which is
+  what the highlighted box claimed. But a schedule explicitly costed at nothing is a real zero,
+  and collapsing that to `None` would be the same error inverted — so both are pinned.
+* A month in which nothing was repaired **did** cost zero. That one is a number, and dropping it
+  from the breakdown shortens the year and moves every other bar.
+
+## Rule 50 — a fixture in a shape no endpoint produces tests the fixture
+
+The trend chart labelled its axis with `month.month.split(' ')[0]`. That is correct for
+`"Jan 2024"`, which is what the mock contained, and it renders the server's `"2026-01"` as the
+literal string `2026-01`.
+
+The mock had never been wrong about anything else, so nothing pointed at it — and the panel test
+used the same fixture, so the test agreed with the code about a format the server does not send.
+Two artefacts agreeing with each other is not a check; they were copies of one assumption.
+
+The same thing appeared twice more in this cluster: `MaintenancePanel.test.tsx` carried
+`issueDescription` AND `title`, `reportedDate` AND `openedAt`, so it could not distinguish the
+panel reading the wire from the panel reading names the adapter had invented. Fixtures now carry
+exactly what the serializer emits, and the mock uses the wire's date format.

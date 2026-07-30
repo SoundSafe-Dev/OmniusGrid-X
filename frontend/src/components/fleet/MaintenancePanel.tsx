@@ -23,6 +23,18 @@ const getStatusColor = (status: string) => {
 const share = (amount: number, total?: number): number =>
   total && total > 0 ? (amount / total) * 100 : 0;
 
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                     'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// The server sends `YYYY-MM`. This was `month.month.split(' ')[0]`, which suited the mock's
+// "Jan 2024" and rendered the real value as the literal "2026-01" — a label nobody writes on
+// an axis. Anything that is not `YYYY-MM` is passed through rather than mangled.
+const monthLabel = (month: string): string => {
+  const match = /^\d{4}-(\d{2})$/.exec(month);
+  if (!match) return month.split(' ')[0];
+  return MONTH_NAMES[Number(match[1]) - 1] ?? month;
+};
+
 const getPriorityColor = (priority: string) => {
   switch (priority) {
     case 'urgent': return 'text-red-600 font-bold';
@@ -123,7 +135,7 @@ export const MaintenancePanel: FC = () => {
           {/* `|| 0` turned a missing YTD figure into "$0" — a fleet that has spent
               nothing on maintenance all year, which is a claim, not a blank. */}
           <p className="text-2xl font-bold text-green-600">
-            {costs?.totalYTD != null ? `$${costs.totalYTD.toLocaleString()}` : '—'}
+            {costs?.ytdTotal != null ? `$${costs.ytdTotal.toLocaleString()}` : '—'}
           </p>
         </div>
       </div>
@@ -258,13 +270,11 @@ export const MaintenancePanel: FC = () => {
                 <div className="flex items-start justify-between">
                   <div className="flex-1">
                     <div className="flex items-center gap-2">
-                      {/* `workOrderNumber` was the first eight characters of the row's
-                          UUID — an identifier no system issued, displayed as the heading a
-                          technician would quote to a vendor. The schema has no work-order
-                          number; the row is headed by its issue instead. */}
-                      {order.workOrderNumber && (
-                        <span className="font-semibold">{order.workOrderNumber}</span>
-                      )}
+                      {/* Headed by the repair's own summary. It used to be
+                          `workOrderNumber` — the first eight characters of the row's UUID, an
+                          identifier no system issued, printed as the heading a technician
+                          would quote to a vendor. */}
+                      <span className="font-semibold">{order.title}</span>
                       <span className={`px-2 py-0.5 rounded text-xs ${getStatusColor(order.status)}`}>
                         {order.status?.replace(/_/g, ' ')}
                       </span>
@@ -272,29 +282,26 @@ export const MaintenancePanel: FC = () => {
                         {order.priority}
                       </span>
                     </div>
-                    <p className="text-sm text-gray-600 mt-1">{order.issueDescription}</p>
+                    {order.description && (
+                      <p className="text-sm text-gray-600 mt-1">{order.description}</p>
+                    )}
                     <div className="flex items-center gap-4 mt-2 text-xs text-gray-500">
                       <span className="flex items-center gap-1">
                         <Truck className="w-3 h-3" />
                         {order.vehicleNumber}
                       </span>
-                      <span className="flex items-center gap-1">
-                        <Clock className="w-3 h-3" />
-                        Reported: {new Date(order.reportedDate).toLocaleDateString()}
-                      </span>
-                      {order.assignedTechnician && (
-                        <span>Tech: {order.assignedTechnician}</span>
+                      {order.openedAt && (
+                        <span className="flex items-center gap-1">
+                          <Clock className="w-3 h-3" />
+                          Reported: {new Date(order.openedAt).toLocaleDateString()}
+                        </span>
                       )}
-                      {order.laborHours && (
-                        <span>{order.laborHours} hours</span>
-                      )}
+                      {/* WAS "Tech: {assignedTechnician}" — a column that does not exist, so
+                          the line never rendered, while `vendor` (who actually did the work)
+                          arrived on every response and was shown nowhere. */}
+                      {order.vendor && <span>Vendor: {order.vendor}</span>}
+                      {order.category && <span>{order.category}</span>}
                     </div>
-                    {order.partsUsed.length > 0 && (
-                      <div className="mt-2 text-xs">
-                        <span className="text-gray-500">Parts: </span>
-                        {order.partsUsed.map(p => p.description).join(', ')}
-                      </div>
-                    )}
                   </div>
                   <div className="text-right">
                     {/* WAS `${order.estimatedCost}` with the caption "estimated". It was
@@ -308,9 +315,9 @@ export const MaintenancePanel: FC = () => {
                         <p className="text-xs text-gray-500">cost</p>
                       </>
                     )}
-                    {order.actualCost != null && (
-                      <p className="text-xs text-green-600">${order.actualCost.toLocaleString()} actual</p>
-                    )}
+                    {/* `actualCost` was a second cost line on a table with ONE cost column.
+                        It never rendered, and had it ever been populated the card would have
+                        shown the same number twice under two labels. */}
                   </div>
                 </div>
               </div>
@@ -333,10 +340,10 @@ export const MaintenancePanel: FC = () => {
                   highlighted box where it read as "nothing is coming up" rather than
                   "nobody calculated this". A row that is absent prompts a question; a row
                   reading $0 answers one. */}
-              {costs.totalYTD != null && (
+              {costs.ytdTotal != null && (
                 <div className="flex justify-between items-center p-3 bg-opsgrid-bg rounded-lg">
                   <span>Total YTD</span>
-                  <span className="font-bold text-xl">${costs.totalYTD.toLocaleString()}</span>
+                  <span className="font-bold text-xl">${costs.ytdTotal.toLocaleString()}</span>
                 </div>
               )}
               {costs.monthlyAverage != null && (
@@ -380,7 +387,7 @@ export const MaintenancePanel: FC = () => {
                     <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
                       <div 
                         className="h-full bg-opsgrid-primary rounded-full"
-                        style={{ width: `${share(amount, costs.totalYTD)}%` }}
+                        style={{ width: `${share(amount, costs.ytdTotal)}%` }}
                       />
                     </div>
                   </div>
@@ -389,7 +396,7 @@ export const MaintenancePanel: FC = () => {
                       absent, which is exactly when a category breakdown is least
                       meaningful. */}
                   <span className="text-xs text-gray-500 w-12 text-right">
-                    {costs.totalYTD ? `${share(amount, costs.totalYTD).toFixed(1)}%` : '—'}
+                    {costs.ytdTotal ? `${share(amount, costs.ytdTotal).toFixed(1)}%` : '—'}
                   </span>
                 </div>
               ))}
@@ -413,7 +420,7 @@ export const MaintenancePanel: FC = () => {
                         ${month.cost.toLocaleString()}
                       </div>
                     </div>
-                    <span className="text-xs text-gray-500">{month.month.split(' ')[0]}</span>
+                    <span className="text-xs text-gray-500">{monthLabel(month.month)}</span>
                   </div>
                 );
               })}

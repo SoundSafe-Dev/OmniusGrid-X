@@ -242,19 +242,49 @@ BASELINE = {
     # bare units, " mph" and " mi". The client now names its fields after the wire, so
     # there is no adapter to drift and nothing here to report.
     # Pinned by the fleet-card block in TransportationManagement.test.tsx.
-    "MaintenanceCosts.costPerVehicle",
-    "MaintenanceCosts.monthlyAverage",
-    "MaintenanceCosts.monthlyBreakdown",
-    "MaintenanceCosts.totalYTD",
-    "MaintenanceCosts.upcomingEstimated",
+    # The five `MaintenanceCosts.*` entries were HERE, and are the twelfth finding — the
+    # only one so far fixed by the THIRD option, making the server send it. Four of the
+    # five were figures the client manufactured: `monthlyAverage` as `ytd / 12` (computed
+    # in January as readily as in December), `costPerVehicle` and `upcomingEstimated` as
+    # hardcoded zeros, and `monthlyBreakdown` as a required array nothing sent, so the
+    # trend chart drew nothing. An earlier pass removed the fabrications and left four
+    # blank rows, which was right and was not the end of the job.
+    #
+    # Every one is a fact about data `/maintenance/costs` already had or could reach with
+    # one count, so it computes them: spend per elapsed month, YTD over months elapsed,
+    # the sum of `maintenance_schedules.estimated_cost` on work not yet done, and YTD over
+    # the fleet size. The endpoint had been passing `[]` for schedules — the costs of work
+    # not yet done live there.
+    #
+    # `totalYTD` was the fifth and a different case: real data under a name no endpoint
+    # sends. RENAMED to `ytdTotal` — rule 35.
+    #
+    # NONE-VERSUS-ZERO runs through all of it. An empty fleet has no cost per vehicle;
+    # outstanding work nobody costed has no estimate; a month with no repairs cost zero,
+    # and that one IS a number. Pinned by
+    # test_maintenance_costs_are_computed_not_invented.py.
     "MaintenanceSchedule.assignedTechnician",
-    "RepairOrder.actualCost",
-    "RepairOrder.assignedTechnician",
-    "RepairOrder.issueDescription",
-    "RepairOrder.laborHours",
-    "RepairOrder.partsUsed",
-    "RepairOrder.reportedDate",
-    "RepairOrder.workOrderNumber",
+    # The seven `RepairOrder.*` entries were HERE, and are the eleventh finding — the
+    # largest single cluster the sweep had left. `repair_orders` has thirteen columns and
+    # `_order_out` emits eleven of them; the TypeScript described a richer object that no
+    # endpoint produces and no migration plans:
+    #
+    #   * `assignedTechnician` — the sharpest, because everything around it worked.
+    #     `repair_orders.vendor`, who actually did the repair, was sent on every response
+    #     and rendered NOWHERE, while the card offered a "Tech:" line that could never
+    #     populate. Same shape as the `geoTabDeviceId` finding: a row that cannot fill
+    #     itself standing next to the value it should have shown.
+    #   * `workOrderNumber` — deleted rather than left optional. Nothing in this product
+    #     issues one, and an optional field for it is a standing invitation to synthesise
+    #     it again, which is exactly what the mock `createRepairOrder` was still doing.
+    #   * `actualCost` — a second cost on a table with one `cost` column, which IS the
+    #     actual cost. Two names for one number invites populating both.
+    #   * `laborHours`, `partsUsed` (and its `PartUsed` shape) — no columns, no tables.
+    #   * `issueDescription`, `reportedDate` — real data under invented names, filled by the
+    #     adapter from `title` and `openedAt`. RENAMED, not deleted: rule 35.
+    #
+    # `vendor` and `category` are now displayed, so this cluster also shortened the mirror
+    # sweep's list. Pinned by MaintenancePanel.test.tsx.
     "Shipment.currentLocation",
     "Shipment.estimatedDelivery",
     "StrategicRecommendation.costSavings",

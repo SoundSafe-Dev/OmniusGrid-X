@@ -64,12 +64,12 @@ const schedule = (over: Record<string, unknown> = {}) => ({
 })
 
 // Costs is an OBJECT (`MaintenanceCosts`), not a list, and the panel renders
-// `costs.totalYTD.toFixed(...)` unguarded — an array fixture throws during render and
+// `costs.ytdTotal.toFixed(...)` unguarded — an array fixture throws during render and
 // yields an empty document, which reads as a broken component rather than a bad fixture.
 // That has now cost time on four separate page tests in this repo; the rule is to copy
 // the shape from the client's declared return type, never to guess it.
 const COSTS = {
-  totalYTD: 12500,
+  ytdTotal: 12500,
   monthlyAverage: 1040,
   costPerVehicle: 3125,
   upcomingEstimated: 800,
@@ -142,23 +142,23 @@ describe('MaintenancePanel — the priority it shows', () => {
 })
 
 describe('MaintenancePanel — the repair orders tab', () => {
-  // EXACTLY what `_order_out` emits. `repair_orders` has no work-order number, no parts
-  // list, no labour hours and no technician — the adapter used to manufacture the first
-  // two and the panel renders the rest conditionally.
+  // EXACTLY what `_order_out` emits, and now nothing else. The fixture used to carry
+  // `issueDescription`, `reportedDate` and `partsUsed` alongside their real counterparts —
+  // which meant it could not distinguish the panel reading the wire from the panel reading
+  // names the adapter had invented. `repair_orders` has no work-order number, no parts list,
+  // no labour hours and no technician.
   const order = (over: Record<string, unknown> = {}) => ({
     id: '9f1c2b7e-4a3d-4e55-b1aa-77c0e5d13f42',
     vehicleId: 'TRK-001',
     vehicleNumber: 'TRK-001',
     title: 'Brake pads worn past limit',
-    issueDescription: 'Brake pads worn past limit',
+    description: 'Both front pads below 2mm; rotors scored on the near side.',
     status: 'in_progress',
     priority: 'high',
     vendor: 'Acme Brakes',
     cost: 480,
     category: 'brakes',
     openedAt: '2026-07-20T00:00:00Z',
-    reportedDate: '2026-07-20T00:00:00Z',
-    partsUsed: [],
     ...over,
   })
 
@@ -167,9 +167,7 @@ describe('MaintenancePanel — the repair orders tab', () => {
     render(<MaintenancePanel />)
     await screen.findByText('15,000 mile service')
     fireEvent.click(screen.getByRole('button', { name: /repair orders/i }))
-    // findAllBy: the description is the row's body text, and is also its heading when a
-    // real work-order number exists, so the singular query is ambiguous by design.
-    await screen.findAllByText('Brake pads worn past limit')
+    await screen.findByText('Brake pads worn past limit')
   }
 
   it('shows the recorded cost as a cost, not as an estimate', async () => {
@@ -189,27 +187,72 @@ describe('MaintenancePanel — the repair orders tab', () => {
     expect(screen.queryByText('cost')).not.toBeInTheDocument()
   })
 
-  it('does not head the row with an identifier no system issued', async () => {
-    // `workOrderNumber` was `id.slice(0, 8)` — eight characters of a UUID, rendered as
-    // the heading a technician would quote to a vendor. With no real number the heading
-    // is simply absent; the description below already identifies the row.
+  it('heads the row with the repair itself, not an identifier no system issued', async () => {
+    // `workOrderNumber` was `id.slice(0, 8)` — eight characters of a UUID, rendered as the
+    // heading a technician would quote to a vendor. The field is gone entirely now: nothing
+    // in this product issues a work-order number, so an optional field for one was a
+    // standing invitation to synthesise it again. The row is headed by its title.
     await openRepairs()
     expect(screen.queryByText('9f1c2b7e')).not.toBeInTheDocument()
-    expect(screen.getAllByText('Brake pads worn past limit')).toHaveLength(1)
+    expect(screen.getByText('Brake pads worn past limit')).toBeInTheDocument()
   })
 
-  it('uses a real work-order number when one is supplied', async () => {
-    // The positive control: dropping the field entirely would satisfy the test above.
-    await openRepairs(order({ workOrderNumber: 'WO-2026-0042' }))
-    expect(screen.getByText('WO-2026-0042')).toBeInTheDocument()
+  it('shows the title and the description as different things', async () => {
+    // `_order_out` did not send `description` at all, so the adapter filled
+    // `issueDescription` from `title` and the detail a technician typed was discarded —
+    // while `_history_out` on the same table read it, so the same repair carried its
+    // description in the completed-work view and lost it in the active list.
+    await openRepairs()
+    expect(screen.getByText('Brake pads worn past limit')).toBeInTheDocument()
+    expect(
+      screen.getByText('Both front pads below 2mm; rotors scored on the near side.'),
+    ).toBeInTheDocument()
+  })
+
+  it('names the vendor that did the work', async () => {
+    // THE FINDING. The card asked for `assignedTechnician`, a column `repair_orders` does
+    // not have, so the line never rendered — while `vendor`, who actually did the work,
+    // arrived on every response and was displayed nowhere.
+    await openRepairs()
+    expect(screen.getByText(/Acme Brakes/)).toBeInTheDocument()
+    expect(screen.queryByText(/^Tech:/)).not.toBeInTheDocument()
+  })
+
+  it('omits the vendor line rather than labelling an absent one', async () => {
+    // The control on the assertion above: a card that printed "Vendor:" unconditionally
+    // would satisfy it just as well and read as a repair sent to a shop called nothing.
+    await openRepairs(order({ vendor: null }))
+    expect(screen.queryByText(/Vendor:/)).not.toBeInTheDocument()
+  })
+
+  it('shows the category the server sends', async () => {
+    await openRepairs()
+    expect(screen.getByText('brakes')).toBeInTheDocument()
   })
 })
 
 describe('MaintenancePanel — the costs tab', () => {
-  // The server sends `ytdTotal` and `byCategory`. Nothing else. Three of the five figures
-  // on this tab were manufactured in the client: two hardcoded to 0 and one as `ytd / 12`
-  // regardless of the month.
-  const WIRE_COSTS = { totalYTD: 12000, byCategory: { brakes: 3000 }, monthlyBreakdown: [] }
+  // Three of the five figures on this tab were manufactured in the client: two hardcoded to
+  // 0 and one as `ytd / 12` regardless of the month. `/maintenance/costs` computes all of
+  // them now — see test_maintenance_costs_are_computed_not_invented.py for the arithmetic.
+  //
+  // WIRE_COSTS DELIBERATELY OMITS THEM, because the omission path still has to work: a
+  // client can be newer than the backend it talks to, and that is the case where a
+  // fabricated "$0" would come back. The mainline case is `FULL_COSTS` below.
+  const WIRE_COSTS = { ytdTotal: 12000, byCategory: { brakes: 3000 }, monthlyBreakdown: [] }
+
+  const FULL_COSTS = {
+    ytdTotal: 12000,
+    byCategory: { brakes: 3000 },
+    monthlyAverage: 950,
+    costPerVehicle: 400,
+    upcomingEstimated: 275,
+    monthlyBreakdown: [
+      { month: '2026-01', cost: 5000 },
+      { month: '2026-02', cost: 0 },
+      { month: '2026-03', cost: 7000 },
+    ],
+  }
 
   const openCosts = async (c: Record<string, unknown> = WIRE_COSTS) => {
     getMaintenanceCosts.mockResolvedValue(c)
@@ -257,19 +300,42 @@ describe('MaintenancePanel — the costs tab', () => {
     ).toBeInTheDocument()
   })
 
-  it('shows the figures when a deployment does report them', async () => {
-    // The control that keeps the omission honest: these rows must appear when the data
-    // exists, or the fix has deleted a feature rather than stopped a fabrication.
-    await openCosts({ ...WIRE_COSTS, monthlyAverage: 950, costPerVehicle: 400, upcomingEstimated: 275 })
+  it('shows all four figures the server now computes', async () => {
+    // The control that keeps the omissions above honest — and now the mainline case, since
+    // `/maintenance/costs` computes each of these from real columns. Without it the four
+    // tests above are satisfied by a panel that renders nothing at all.
+    await openCosts(FULL_COSTS)
     expect(await screen.findByText('Monthly Average')).toBeInTheDocument()
+    expect(screen.getByText('$950')).toBeInTheDocument()
     expect(screen.getByText('Per Vehicle')).toBeInTheDocument()
     expect(screen.getByText('$400')).toBeInTheDocument()
+    expect(screen.getByText(/Upcoming \(Est\.\)/)).toBeInTheDocument()
+    expect(screen.getByText('$275')).toBeInTheDocument()
+    expect(screen.queryByText(/not reported by this deployment/i)).not.toBeInTheDocument()
+  })
+
+  it('labels the trend axis with month names, not the wire format', async () => {
+    // The label was `month.split(' ')[0]`, which suited the mock's "Jan 2024" and rendered
+    // the server's `YYYY-MM` as the literal "2026-01".
+    await openCosts(FULL_COSTS)
+    await screen.findByText('Monthly Cost Trend')
+    expect(screen.getByText('Jan')).toBeInTheDocument()
+    expect(screen.getByText('Mar')).toBeInTheDocument()
+    expect(screen.queryByText('2026-01')).not.toBeInTheDocument()
+  })
+
+  it('keeps a month that cost nothing on the axis', async () => {
+    // A month with no repairs really did cost zero. Dropping it shortens the year and
+    // moves every other bar, which is the chart telling a different story than the data.
+    await openCosts(FULL_COSTS)
+    await screen.findByText('Monthly Cost Trend')
+    expect(screen.getByText('Feb')).toBeInTheDocument()
   })
 
   it('does not print NaN when the year-to-date total is zero', async () => {
     // `amount / 0` is Infinity and `NaN.toFixed(1)` renders the literal string "NaN",
     // both reachable exactly when a category breakdown means least.
-    await openCosts({ totalYTD: 0, byCategory: { brakes: 0 }, monthlyBreakdown: [] })
+    await openCosts({ ytdTotal: 0, byCategory: { brakes: 0 }, monthlyBreakdown: [] })
     await screen.findByText('Costs by Category')
     expect(screen.queryByText(/NaN/)).not.toBeInTheDocument()
     expect(screen.queryByText(/Infinity/)).not.toBeInTheDocument()

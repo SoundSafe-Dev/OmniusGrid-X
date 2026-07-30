@@ -651,27 +651,45 @@ export interface MaintenanceSchedule {
   notes?: string;
 }
 
-export interface PartUsed {
-  partNumber: string;
-  description: string;
-  quantity: number;
-  unitCost: number;
-}
-
+/** A repair order, named after the wire.
+ *
+ *  THIS INTERFACE USED TO DECLARE SEVEN FIELDS `_order_out` HAS NEVER SENT — the largest
+ *  cluster left in the declared-but-unsent baseline. `repair_orders` has thirteen columns and
+ *  the serializer emits eleven of them; the type described a different, richer object that no
+ *  endpoint produces and no migration plans:
+ *
+ *    * `workOrderNumber` — no such number is issued anywhere in this product. It had been
+ *      synthesised from eight characters of the row's UUID and printed as the heading a
+ *      technician would quote to a vendor; that was already removed, leaving a field nothing
+ *      could fill.
+ *    * `assignedTechnician` — no column, and the sharpest of the seven, because
+ *      `repair_orders.vendor` — who actually did the work — WAS being sent and rendered
+ *      nowhere. The card offered a "Tech:" line that could never populate while the name it
+ *      could have shown arrived on every response. Same shape as the `geoTabDeviceId` finding.
+ *    * `actualCost` — a second cost on a table with one `cost` column, which is the actual
+ *      cost. Two names for one number invites someone to populate both.
+ *    * `laborHours`, `partsUsed` (with its `PartUsed` shape) — no columns, no tables, and no
+ *      pending work that would add them.
+ *    * `issueDescription`, `reportedDate` — real data under invented names. The adapter filled
+ *      them from `title` and `openedAt`, which is rule 35's case: name the field after the
+ *      wire, not after the nicer word. Renamed rather than deleted.
+ *
+ *  What the server sends and the type now says: `title`, `description`, `vendor`, `category`,
+ *  `cost`, `status`, `priority`, `openedAt`, `completedAt`. `vehicleNumber` is the one
+ *  legitimately client-side value, derived by the adapter.
+ */
 export interface RepairOrder {
   id: string;
   vehicleId: string;
+  /** Derived client-side by `adaptRepairOrder`; falls back to the id when absent. */
   vehicleNumber: string;
-  /** No work-order number exists in `repair_orders`. It was synthesised from the first
-   *  eight characters of the row's UUID and displayed as the heading of every row. */
-  workOrderNumber?: string;
-  issueDescription: string;
-  /** `repair_orders.description` — the detail, as opposed to `title`, which is the summary
-   *  `issueDescription` is derived from. The serializer omitted it entirely until now. */
+  /** The summary. Headed the card as of this change — previously the heading was a
+   *  work-order number that no system issues. */
+  title: string;
+  /** The detail a technician typed. `_history_out` on the same table always read it while
+   *  `_order_out` did not send it, so one repair carried its description in the
+   *  completed-work view and lost it in the active list. */
   description?: string | null;
-  reportedDate: string;
-  startedDate?: string;
-  completedDate?: string;
   status: 'reported' | 'diagnosing' | 'in_progress' | 'waiting_parts' | 'completed' | 'cancelled';
   /** MISMATCHED WITH THE SERVER, deliberately left as-is for now: `repair_orders.priority`
    *  is `low | medium | high | critical`, so 'medium' and 'critical' arrive here as values
@@ -679,15 +697,16 @@ export interface RepairOrder {
    *  Reconciling the two vocabularies is a product decision (which set of words does the
    *  operator use?), not a mechanical fix — recorded in defect-class-sweeps.md. */
   priority: 'low' | 'normal' | 'high' | 'urgent';
-  assignedTechnician?: string;
-  /** What the repair cost (`repair_orders.cost`). NOT an estimate — the panel labelled it
-   *  "estimated" and coerced a missing value to 0, so a repair with no cost recorded
-   *  displayed as a free one. */
+  /** The shop or supplier that did the work. Sent on every response since the endpoint was
+   *  written and displayed nowhere, under a card that asked for a technician instead. */
+  vendor?: string | null;
+  /** `repair_orders.category` — likewise sent and never shown. */
+  category?: string | null;
+  /** What the repair cost. NOT an estimate — the panel labelled it "estimated" and coerced a
+   *  missing value to 0, so a repair with no cost recorded displayed as a free one. */
   cost?: number;
-  actualCost?: number;
-  partsUsed: PartUsed[];
-  laborHours?: number;
-  relatedDTCs?: string[];
+  openedAt?: string | null;
+  completedAt?: string | null;
 }
 
 export interface ServiceHistoryEntry {
@@ -705,15 +724,25 @@ export interface ServiceHistoryEntry {
 }
 
 export interface MaintenanceCosts {
-  /** `/maintenance/costs` sends `ytdTotal`. Undefined if it sent nothing at all. */
-  totalYTD?: number;
-  /** OPTIONAL BECAUSE NOTHING COMPUTES THEM. The server sends only `ytdTotal` and
-   *  `byCategory`; these three were manufactured client-side (two hardcoded to 0, one as
-   *  `ytd / 12` regardless of the month) and rendered as figures. */
+  /** Undefined if the endpoint sent nothing at all. Was named `totalYTD` — real data
+   *  under a name no endpoint uses, renamed to what the wire calls it. */
+  ytdTotal?: number;
+  /** OPTIONAL BECAUSE A DEPLOYMENT MAY BE OLDER THAN THIS CLIENT. `/maintenance/costs`
+   *  used to send only `ytdTotal` and `byCategory`, and these three were manufactured
+   *  client-side — two hardcoded to 0, one as `ytd / 12` regardless of the month — and
+   *  rendered as figures. The server computes all three now (repair costs by month,
+   *  `maintenance_schedules.estimated_cost`, and the vehicle count); they stay optional so
+   *  a client talking to an older backend omits the row rather than inventing a zero.
+   *
+   *  `costPerVehicle` and `upcomingEstimated` are also legitimately absent against a
+   *  CURRENT backend: an empty fleet has no cost per vehicle, and outstanding work that
+   *  nobody has costed has no estimate. Neither is zero. */
   monthlyAverage?: number;
   costPerVehicle?: number;
   upcomingEstimated?: number;
   byCategory: Record<string, number>;
+  /** `YYYY-MM` per entry, one for every elapsed month of the current year — including the
+   *  months that cost nothing, which is a number and not a gap. */
   monthlyBreakdown: { month: string; cost: number }[];
 }
 
