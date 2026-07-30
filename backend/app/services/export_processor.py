@@ -53,6 +53,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.services.export_store import get_export_store, export_object_key
+from app.core.tenant import tenant_session
 from app.db.database import AsyncSessionLocal
 from app.db.models import (
     ActionableRegistry,
@@ -273,22 +274,22 @@ class ExportProcessor:
     async def _tenant_session(self, organization_id: Any):
         """Yield a session bound to the caller's tenant via the RLS GUC.
 
-        Mirrors :func:`app.core.tenant.get_tenant_db` for use outside the request
-        lifecycle (background tasks / streaming generators). The GUC is reset in
-        ``finally`` so it cannot leak onto a pooled connection.
+        DELEGATES rather than mirrors. This was a hand-rolled copy under a docstring
+        reading *"Mirrors app.core.tenant.get_tenant_db"* — the same phrase the test
+        harness's copies carried, and the same reason
+        :func:`app.core.tenant.tenant_session` was extracted: a mirror reproduces the
+        original's defects and then keeps them after the original is fixed.
+
+        The copy also differed in a way that mattered. It used a SESSION-scoped GUC
+        (``set_config(..., false)``) so the binding would survive intermediate commits,
+        and reset it in ``finally`` so it could not leak onto a pooled connection —
+        which holds only as long as that reset runs. ``tenant_session`` re-asserts the
+        tenant on every ``after_begin`` instead, so the binding survives commits with a
+        TRANSACTION-scoped GUC. Nothing can outlive the transaction, so there is nothing
+        to reset and no path where a leak depends on cleanup running.
         """
-        async with AsyncSessionLocal() as session:
-            await session.execute(
-                text("SELECT set_config('app.current_org_id', :org, false)"),
-                {"org": str(organization_id)},
-            )
-            try:
-                yield session
-            finally:
-                await session.execute(
-                    text("SELECT set_config('app.current_org_id', '', false)")
-                )
-                await session.commit()
+        async with tenant_session(organization_id) as session:
+            yield session
 
     # --- Telemetry ------------------------------------------------------------
     @staticmethod

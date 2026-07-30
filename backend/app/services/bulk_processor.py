@@ -37,6 +37,7 @@ import structlog
 from sqlalchemy import and_, func, select, text
 
 from app.core.config import settings
+from app.core.tenant import tenant_session
 from app.db.database import AsyncSessionLocal
 from app.db.models import (
     ActionableRegistry,
@@ -251,23 +252,20 @@ class BulkProcessor:
     async def _tenant_session(self, organization_id: Any):
         """Yield a session bound to the caller's tenant via the RLS GUC.
 
-        Mirrors :func:`app.core.tenant.get_tenant_db` for use outside the request
-        lifecycle (background tasks). The GUC is session-scoped (``false``) so it
-        survives the per-row commits, then reset in ``finally`` so it cannot leak
-        onto a pooled connection.
+        DELEGATES rather than mirrors — see the identical note in
+        :meth:`app.services.export_processor.ExportProcessor._tenant_session`. Two copies
+        of the same helper under the same *"Mirrors get_tenant_db"* docstring is the
+        duplication :func:`app.core.tenant.tenant_session` was extracted to end.
+
+        The copy's own docstring named the reason it used a SESSION-scoped GUC: it had to
+        survive the per-row commits this processor makes. ``tenant_session`` gets the same
+        property from an ``after_begin`` listener that re-asserts the tenant on each new
+        transaction — so the binding survives the commits *and* cannot outlive the
+        transaction, which removes the pooled-connection leak the ``finally`` reset was
+        there to prevent.
         """
-        async with AsyncSessionLocal() as session:
-            await session.execute(
-                text("SELECT set_config('app.current_org_id', :org, false)"),
-                {"org": str(organization_id)},
-            )
-            try:
-                yield session
-            finally:
-                await session.execute(
-                    text("SELECT set_config('app.current_org_id', '', false)")
-                )
-                await session.commit()
+        async with tenant_session(organization_id) as session:
+            yield session
 
     @staticmethod
     def _as_uuid(value: Any, field: str) -> uuid.UUID:

@@ -57,10 +57,19 @@ NO_POLICY: dict[str, str] = {
     # Removed rather than left in place: this guard's own staleness check named them, and a
     # baseline that still lists a closed gap is one nobody trusts.
     "error_events": (
-        "REAL GAP. The application layer was fixed this session (triage writes are scoped to "
-        "the caller's org and rowcount-checked; see test_error_triage_sample_redaction_realdb) "
-        "but the table has no policy, so the filter is the only defence. Closing it needs a "
-        "check of the ingestion path, which writes error events with no user context."
+        "REAL GAP, AND BLOCKED ON A GRAIN CHANGE — not on an audit. This table is keyed on "
+        "`fingerprint` ALONE: one row per distinct error for the whole platform, shared by "
+        "every tenant that hits the same bug, with `organization_id` naming only the last one "
+        "to hit it. A tenant policy over that column would hide errors that genuinely are the "
+        "caller's, which is worse than the disclosure it would fix. "
+        "test_error_triage_sample_redaction_realdb.py records that finding and the decision it "
+        "led to: redact the two payload-bearing fields (message_sample, traceback_sample) "
+        "cross-tenant rather than pretend the table is partitioned when it is not. "
+        "Closing this gap means repartitioning — primary key (fingerprint, organization_id), "
+        "a composite foreign key from error_event_buckets, and the ingestion upsert's "
+        "ON CONFLICT and COALESCE rewritten — or a platform-admin role to gate the view on. "
+        "The earlier entry said to 'check the ingestion path', which understated it: the path "
+        "is fine, the grain is the problem."
     ),
     # `edge_agent_status` was HERE and is CLOSED by migration 057. Its entry said to verify the
     # heartbeat path first, because it ran on AsyncSessionLocal and a FORCE policy would have

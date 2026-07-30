@@ -2225,6 +2225,13 @@ one of its findings. The habit that catches it:
    defect was being kept dormant *by*, before removing it.
    *(Fuller account: § Rule 47.)*
 
+48. **A guard answers the question it was asked, so ask the broader one too.**
+   The duplicate-tenant-session guard asked "which test files override `get_tenant_db`?" and
+   answered it correctly while two production services held copies of the same helper. Asking
+   "what in the whole tree binds `app.current_org_id`?" instead returns thirty call sites — and
+   the two helpers among them. Re-derive a long-green guard's population from first principles.
+   *(Fuller account: § Rule 48.)*
+
 ---
 
 ## Open observations, not yet tickets
@@ -3563,3 +3570,69 @@ Ask what a dormant defect was being kept dormant *by*, before removing it. The h
 refuses the rebind — and under the policy that check is unreachable (the other tenant's row is
 filtered out of the lookup), so the collision surfaces as the primary-key violation, which is
 handled too. Both paths, because the SQLite offline path has no policy at all.
+
+## The last recorded gap is a grain problem, not an audit
+
+`error_events` is the fourth entry, and working it produced no migration — deliberately. The
+table is keyed on `fingerprint` ALONE: one row per distinct error for the whole platform, shared
+by every tenant that hits the same bug, with `organization_id` naming only the last one to hit
+it. A tenant policy over that column would hide errors that genuinely are the caller's, which is
+worse than the disclosure it would fix.
+
+`test_error_triage_sample_redaction_realdb.py` already recorded that finding and the decision it
+led to — redact the two payload-bearing fields cross-tenant rather than pretend the table is
+partitioned — with evidence: org A retrieved a row owned by org B whose message carried a
+customer identifier and whose traceback carried a payment-card value. Re-deciding that quietly
+would have been the wrong move; the baseline entry was corrected instead, because it said to
+"check the ingestion path" and the ingestion path is fine. Closing this needs the primary key to
+become `(fingerprint, organization_id)`, a composite foreign key from `error_event_buckets`, and
+the upsert's `ON CONFLICT`/`COALESCE` rewritten — or a platform-admin role to gate the view on.
+
+**An entry that names the wrong precondition is worse than one that names none**, because it
+looks actionable. That is what a baseline is for.
+
+## Two services had their own copy of the tenant session
+
+`tenant_session` was extracted because the test harness held four hand-copied overrides of
+`get_tenant_db`, each under a comment reading *"Mirrors the production get_tenant_db"* — and
+each mirroring the RLS-after-commit defect as faithfully as the behaviour, which is why the suite
+could not see it. A guard closed that for the test doubles.
+
+**Production had two more, and that guard could not see them.**
+`ExportProcessor._tenant_session` and `BulkProcessor._tenant_session`, both
+`@asynccontextmanager`s yielding a bound session, both under the same *"Mirrors
+app.core.tenant.get_tenant_db"* docstring. Found by asking a different question than the guard
+asked: not "which test files override the dependency" but "which code in the whole tree binds
+`app.current_org_id`" — thirty call sites, two of which were helpers rather than call sites.
+
+They were not merely redundant. Both used a SESSION-scoped GUC (`set_config(..., false)`) so the
+binding would survive intermediate commits, and reset it to `''` in a `finally` so it could not
+ride a pooled connection into someone else's request. The reasoning is sound and the reset was
+there — but it holds only while the reset runs. `tenant_session` gets the same
+survive-the-commit property from an `after_begin` listener with a TRANSACTION-scoped GUC:
+nothing outlives the transaction, so there is nothing to reset and no path where a leak depends
+on cleanup running. Both now delegate.
+
+The new guard also sweeps for the other way the thirty inline sites go wrong: a transaction-scoped
+GUC, a commit, and more statements after it — every one of which runs unbound. There are none
+today, and `run_erp_sync` is one `await db.commit()` away from being the first.
+
+**The detector was wrong first, as usual.** With a bare `.get(` in its list of "still talking to
+the database" it flagged `report_download_audit._insert_audit`, whose only line after the commit
+is `logger.error(..., reason=details.get("reason"))` — a dict lookup in an exception handler.
+The token list now names the receiver, and a negative control pins that exact shape.
+
+## Rule 48 — a guard answers the question it was asked, so ask the broader one too
+
+The duplicate-tenant-session guard asked *"which test files override `get_tenant_db`?"* and
+answered it correctly, for years, while two production services held copies of the same helper.
+Nothing was wrong with it. It was scoped to where the copies had been found, which is the natural
+scope and the one that misses the next instance.
+
+The broader question — *"what in the whole tree binds `app.current_org_id`?"* — is barely harder
+to ask and returns thirty call sites instead of four files. Two of them were the helpers.
+
+Related to rule 43 (a guard proves the absence of the shape it models) but distinct: there the
+model was too narrow for the class, here the *search space* was. When a guard has been green for
+a long time, re-derive its population from first principles rather than trusting the enumeration
+it was born with.
