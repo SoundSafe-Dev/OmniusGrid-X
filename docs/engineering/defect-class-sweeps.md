@@ -2267,6 +2267,13 @@ one of its findings. The habit that catches it:
    only where the absent value and the empty one genuinely mean the same thing.
    *(Fuller account: § Rule 53.)*
 
+54. **A widening that removes one finding can cost the detector.**
+   Crediting every `.get("literal")` key would have cleared `AgentRolloutCreate.all` — a
+   genuine false positive — and added 425 names reachable only that way. Measured, then
+   declined. Each widening looks like a bug fix on its own, and a detector can be improved
+   until it reports nothing.
+   *(Fuller account: § Rule 54.)*
+
 ---
 
 ## Open observations, not yet tickets
@@ -3917,3 +3924,56 @@ received `{}` start receiving `null`), and NULL metadata and empty metadata genu
 same thing — a row with no extra attributes. That is **not** true of the other absences in this
 session, which is why a missing cost, a missing estimate and a missing fleet size all stay
 `None` while this one becomes `{}`.
+
+## The fifteenth finding: three interfaces that had each drifted from their endpoint
+
+The last four baseline entries, reported by **one field apiece** because the rest of their names
+exist elsewhere in the tree. Rule 34, for the fourth time in this batch — a global vocabulary
+credits `costSavings` from a maintenance schedule and `lastConnectedAt` from an agent, so the
+sweep sees one field of eleven and the per-interface read finds the other ten.
+
+**`CloudGatewayStatus`** declared eleven fields — an uptime, a certificate expiry, a last-sync
+time and a nested `egressStats` of five more — against a `cloud_gateway.get_stats()` that
+returns four keys. The instructive part: **the page had already worked this out.** It declared
+its own local interface with the four real fields, under a comment reading *"Anything else is
+not sent, so we render strictly from what actually arrives."* That was right, and it left the
+exported type wrong — so the api client still promised eleven fields, the mock still returned
+them, and the next component to use `CloudGatewayStatus` would have inherited the whole fiction.
+A local workaround fixes one call site and preserves the defect for everyone else.
+
+**`MaintenanceSchedule.assignedTechnician`** — deleted. `maintenance_schedules` has no
+technician column and, unlike `repair_orders`, no vendor either: a schedule records what is due
+and when, not who will do it.
+
+**`StrategicRecommendation.expectedImpact`** is free-form by design — the engine documents it as
+`{'oee_improvement': …, 'cost_reduction': …}` and sends a different set per recommendation type.
+The card named three keys in a fixed grid: `oeeImprovement` (right), `costSavings` (the wire says
+`costReduction`) and `timeSavings` (produced by nothing). So the cost figure never appeared on a
+card whose entire purpose is justifying an approval, and two of the engine's three demo
+recommendations — a throughput gain, forty-five days of extra RUL — rendered an empty box.
+
+The fix is not a fourth and fifth named slot. **A fixed grid over an open-ended dict can only
+ever show the keys somebody thought of**, so the card renders what arrives and labels it,
+special-casing only the two it formats as a percentage and a currency.
+
+## Rule 54 — a widening that removes one finding can cost the detector
+
+`AgentRolloutCreate.all` is a genuine false positive: `_resolve_targets` branches on
+`selector.get("all") is True`, and a `*Create` interface describes a REQUEST, so `all` is a name
+the backend really reads. It just lives inside a free-form dict rather than in a signature,
+which is where the parameter walk looks.
+
+The obvious fix — credit the argument of every `.get("literal")` call — works. It was measured
+before being accepted: **425 names are reachable only that way.** A third of the vocabulary's
+discriminating power, spent to remove one baseline entry, and every one of those 425 becomes a
+name the sweep will never report again.
+
+Declined. The entry stays with its reason written out, and a test asserts the widening has not
+since crept in. **Measure what a widening costs before taking it** — each one looks like a bug
+fix on its own, and a detector can be improved until it reports nothing. The two widenings this
+sweep did accept (parameters, subscript assignment) were narrow and each carries a positive and
+a negative control.
+
+The baseline is now two entries: this one, and `LogisticsOverview.todayAppointments`, which the
+page genuinely computes client-side. **Both are non-defects** — which is the state a baseline of
+gaps is supposed to reach, and the point at which it becomes purely a guard against new ones.

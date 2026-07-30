@@ -56,7 +56,11 @@ const rec = (over: Record<string, unknown> = {}) => ({
   recommendationType: 'schedule_change',
   priority: 7,
   description: 'Move the Tuesday changeover to the night shift',
-  expectedImpact: { oeeImprovement: 4.2, costSavings: 1800 },
+  // EXACTLY the keys `/engines/strategic/recommendations` sends, after the casing seam:
+  // `oee_improvement` and `cost_reduction`. It used to say `costSavings`, a name no
+  // endpoint produces, so the card's cost figure agreed with the fixture and with
+  // nothing else (rule 50).
+  expectedImpact: { oeeImprovement: 4.2, costReduction: 1800 },
   confidence: 0.82,
   validUntil: '2026-08-30T00:00:00Z',
   requiresApproval: true,
@@ -168,5 +172,45 @@ describe('StrategicEngine — a failed query suggests nothing about the engine',
     expect(
       await screen.findByText(/Failed to load recommendations/i),
     ).toBeInTheDocument()
+  })
+})
+
+describe('StrategicEngine — the expected-impact grid', () => {
+  const wrapWith = async (impact: Record<string, unknown>) => {
+    getStrategicRecommendations.mockResolvedValue([rec({ expectedImpact: impact })])
+    wrap()
+    await screen.findByText('Move the Tuesday changeover to the night shift')
+  }
+
+  it('shows the cost reduction the server actually sends', async () => {
+    // THE FINDING. The grid named `costSavings`; the key is `cost_reduction`, so the figure
+    // never appeared — on a card whose entire purpose is to justify approving the change.
+    await wrapWith({ costReduction: 4200 })
+    expect(screen.getByText('Cost Reduction')).toBeInTheDocument()
+    expect(screen.getByText('$4,200')).toBeInTheDocument()
+  })
+
+  it('shows an impact the grid was never written for', async () => {
+    // `expectedImpact` is free-form and each recommendation type sends a different set. A
+    // throughput gain or an RUL extension had nowhere to go in three fixed slots, so the box
+    // rendered empty for two of the engine's three demo recommendations.
+    await wrapWith({ throughputGain: 0.04, rulExtensionDays: 45 })
+    expect(screen.getByText('Throughput Gain')).toBeInTheDocument()
+    expect(screen.getByText('RUL Extension')).toBeInTheDocument()
+    expect(screen.getByText('45 days')).toBeInTheDocument()
+  })
+
+  it('labels a key nobody has named yet rather than dropping it', async () => {
+    await wrapWith({ scrapReduction: 12 })
+    expect(screen.getByText('Scrap Reduction')).toBeInTheDocument()
+    expect(screen.getByText('12')).toBeInTheDocument()
+  })
+
+  it('does not render a slot for an impact that was not sent', async () => {
+    // The control: labelling whatever arrives must not mean labelling everything. A card
+    // listing every impact the platform knows about, mostly blank, is the fixed grid again.
+    await wrapWith({ costReduction: 4200 })
+    expect(screen.queryByText('Throughput Gain')).not.toBeInTheDocument()
+    expect(screen.queryByText('OEE Impact')).not.toBeInTheDocument()
   })
 })

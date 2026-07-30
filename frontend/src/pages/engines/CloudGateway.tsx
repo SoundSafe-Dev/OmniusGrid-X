@@ -4,17 +4,14 @@ import { Cloud, Upload, Shield, Clock, Server } from 'lucide-react';
 import { Card, Badge, Button, SkeletonCard } from '../../components';
 import { enginesApi } from '../../api';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
+import type { CloudGatewayStatus } from '../../types';
 
 // The backend `/cloud/status` (cloud_gateway.get_stats) returns only these
 // fields — connection flag, queue size, endpoint host and the mTLS flag.
-// Anything else (egress totals, compression, bandwidth, cert expiry, uptime)
-// is not sent, so we render strictly from what actually arrives.
-interface CloudStatus {
-  connected: boolean;
-  queueSize: number;
-  endpoint: string;
-  mtlsEnabled: boolean;
-}
+// Anything else (egress totals, compression, bandwidth, cert expiry, uptime) is not sent, so
+// we render strictly from what actually arrives. This used to be a LOCAL interface declared
+// here, because the exported `CloudGatewayStatus` still described eleven fields the endpoint
+// does not send; the exported one now matches the wire, so there is one type instead of two.
 
 export const CloudGateway: FC = () => {
   const queryClient = useQueryClient();
@@ -39,7 +36,7 @@ export const CloudGateway: FC = () => {
     );
   }
 
-  const status = data as unknown as CloudStatus | undefined;
+  const status = data as unknown as CloudGatewayStatus | undefined;
   // EVERY FIELD BELOW USED TO READ AS A FACT WHEN THERE WAS NO STATUS AT ALL. The error
   // banner rendered, and then the page went on to state — in full sentences, with red
   // icons — that the gateway was Disconnected and Offline, that the queue held 0 items,

@@ -291,6 +291,34 @@ interface RecommendationCardProps {
   onReject: () => void;
 }
 
+
+// `expectedImpact` is an open-ended dict — the engine sends a different set of keys per
+// recommendation type (`oee_improvement`, `cost_reduction`, `throughput_gain`,
+// `rul_extension_days`) — so the card labels whatever arrives rather than naming three slots
+// in advance. `costSavings` and `timeSavings` were two of those three names and matched
+// nothing the server sends.
+const IMPACT_LABELS: Record<string, string> = {
+  oeeImprovement: 'OEE Impact',
+  costReduction: 'Cost Reduction',
+  throughputGain: 'Throughput Gain',
+  rulExtensionDays: 'RUL Extension',
+};
+
+const impactLabel = (key: string): string =>
+  IMPACT_LABELS[key] ??
+  // camelCase -> "Camel Case", so an impact nobody has named yet still reads as words.
+  key.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase());
+
+const impactValue = (key: string, value: unknown): string => {
+  if (typeof value !== 'number') return String(value);
+  if (key === 'costReduction') return `$${value.toLocaleString()}`;
+  if (key === 'rulExtensionDays') return `${value.toLocaleString()} days`;
+  // The remaining known impacts are fractions; anything unrecognised is shown as sent rather
+  // than multiplied by a hundred on a guess.
+  if (key in IMPACT_LABELS) return `+${formatPercentage(value)}`;
+  return value.toLocaleString();
+};
+
 const RecommendationCard: FC<RecommendationCardProps> = ({ rec, onApprove, onReject }) => {
   return (
     <div className="p-4 bg-opsgrid-bg rounded-lg border border-opsgrid-border">
@@ -315,31 +343,25 @@ const RecommendationCard: FC<RecommendationCardProps> = ({ rec, onApprove, onRej
         <p className="text-sm text-opsgrid-text-secondary mb-3">Asset: {rec.assetName}</p>
       )}
 
+      {/* THREE FIXED SLOTS, TWO OF WHICH COULD NEVER FILL. `expectedImpact` is free-form —
+          the engine documents it as `{'oee_improvement': ..., 'cost_reduction': ...}` and
+          sends a different set per recommendation type — and this grid named `costSavings`
+          (the key is `costReduction`) and `timeSavings` (nothing produces it). So a
+          recommendation whose impact was a throughput gain or forty-five days of extra RUL
+          showed an empty box, and the cost figure never appeared at all.
+
+          Rendered from what arrives instead. The two known keys keep their formatting; the
+          rest are labelled from the key, which is the only honest thing to do with an
+          open-ended dict. */}
       <div className="grid grid-cols-3 gap-4 mb-4 p-3 bg-opsgrid-panel rounded">
-        {rec.expectedImpact.oeeImprovement !== undefined && (
-          <div>
-            <p className="text-xs text-opsgrid-text-secondary">OEE Impact</p>
-            <p className="font-medium text-status-running">
-              +{formatPercentage(rec.expectedImpact.oeeImprovement)}
-            </p>
-          </div>
-        )}
-        {rec.expectedImpact.costSavings !== undefined && (
-          <div>
-            <p className="text-xs text-opsgrid-text-secondary">Cost Savings</p>
-            <p className="font-medium text-status-running">
-              ${rec.expectedImpact.costSavings.toLocaleString()}
-            </p>
-          </div>
-        )}
-        {rec.expectedImpact.timeSavings !== undefined && (
-          <div>
-            <p className="text-xs text-opsgrid-text-secondary">Time Savings</p>
-            <p className="font-medium text-status-running">
-              {rec.expectedImpact.timeSavings}h
-            </p>
-          </div>
-        )}
+        {Object.entries(rec.expectedImpact ?? {})
+          .filter(([, value]) => value !== undefined && value !== null)
+          .map(([key, value]) => (
+            <div key={key}>
+              <p className="text-xs text-opsgrid-text-secondary">{impactLabel(key)}</p>
+              <p className="font-medium text-status-running">{impactValue(key, value)}</p>
+            </div>
+          ))}
       </div>
 
       <div className="flex items-center gap-3">

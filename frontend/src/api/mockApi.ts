@@ -732,18 +732,14 @@ export const mockApi = {
   // AI Engines - Cloud Gateway
   getCloudGatewayStatus: async (): Promise<CloudGatewayStatus> => {
     await delay(MOCK_DELAY);
+    // Four keys, matching `cloud_gateway.get_stats()`. It used to return an uptime, a
+    // certificate expiry, a last-sync time and a five-field `egressStats` — a richer gateway
+    // than the one that exists, and only reachable in mock mode (rule 50).
     return {
       connected: true,
-      lastSyncAt: new Date().toISOString(),
-      connectionUptimeSeconds: 86400 * 5,
-      mTlsCertificateExpiry: new Date(Date.now() + 86400000 * 90).toISOString(),
-      egressStats: {
-        totalBytesSent: 157286400,
-        totalBytesCompressed: 133693440,
-        compressionRatio: 0.85,
-        averageBandwidthKbps: 256,
-        queueDepth: 12,
-      },
+      queueSize: 12,
+      endpoint: 'cloud.omniusgrid.internal',
+      mtlsEnabled: true,
     };
   },
 };

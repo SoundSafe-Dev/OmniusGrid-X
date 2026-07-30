@@ -195,8 +195,15 @@ BASELINE = {
     # and renaming the TypeScript field to `maintenanceMode`, which is what the casing seam
     # then delivers. Re-pinned rather than left in place: a baseline that still lists a
     # fixed entry quietly loses its edge.
+    # A FALSE POSITIVE OF THIS SWEEP, kept because the fix costs more than the finding.
+    # `AgentRolloutCreate` describes a REQUEST, and `_resolve_targets` branches on
+    # `selector.get("all") is True`, so `all` is a name the backend really does read — it just
+    # lives inside a free-form dict rather than in a signature, which is where the parameter
+    # walk above looks. Crediting the argument of every `.get("literal")` call would remove it
+    # and add 425 names reachable ONLY that way: a third of the vocabulary's discriminating
+    # power spent on one entry. Measured before deciding, and declined;
+    # `test_the_vocabulary_stays_narrow_enough_to_report_anything` keeps it declined.
     "AgentRolloutCreate.all",
-    "CloudGatewayStatus.lastConnectedAt",
     # The four contact entries (Carrier and Location) were HERE, and are the ninth
     # finding — a DELETE, not an expose. `carriers` has no contact_phone or
     # contact_email column: the table carries DOT/MC numbers, C-TPAT and insurance
@@ -307,6 +314,25 @@ BASELINE = {
     # gated a "Current GPS Location (GeoTab)" card behind a condition that was never true.
     # Pinned by test_yard_driver_phone_is_resolved_realdb.py and
     # test_detention_alert_names_the_trailer_realdb.py.
+    # The last four were HERE, and are the fifteenth finding — three interfaces that had each
+    # drifted from their endpoint, reported by ONE field apiece because the rest of their names
+    # exist elsewhere in the tree (rule 34, for the fourth time).
+    #
+    #   * `CloudGatewayStatus` declared ELEVEN fields — an uptime, a certificate expiry, a
+    #     last-sync time and a nested `egressStats` of five — and `cloud_gateway.get_stats()`
+    #     returns four keys. The page had already worked this out and declared its OWN local
+    #     interface with the four real ones, under a comment saying so; that left the EXPORTED
+    #     type wrong, so the api client still promised eleven and only the mock could deliver
+    #     them. One type now, matching the wire.
+    #   * `MaintenanceSchedule.assignedTechnician` — DELETED. `maintenance_schedules` has no
+    #     technician column and, unlike `repair_orders`, no vendor either: a schedule records
+    #     what is due and when, not who will do it.
+    #   * `StrategicRecommendation.expectedImpact` — the grid named three keys and the engine
+    #     sends a different set per recommendation type (`cost_reduction`, `throughput_gain`,
+    #     `rul_extension_days`). `costSavings` is `costReduction` on the wire, so the cost
+    #     figure never appeared on a card whose whole purpose is justifying an approval, and
+    #     `timeSavings` is produced by nothing. The dict is free-form by design, so the card
+    #     renders what arrives and labels it, rather than naming slots in advance.
     "LogisticsOverview.todayAppointments",
     # `LogisticsOverview.vehiclesIdle` was HERE, and is the seventh finding. The fleet
     # card promised totalVehicles/vehiclesMoving/vehiclesIdle/avgSpeed/
@@ -338,7 +364,6 @@ BASELINE = {
     # outstanding work nobody costed has no estimate; a month with no repairs cost zero,
     # and that one IS a number. Pinned by
     # test_maintenance_costs_are_computed_not_invented.py.
-    "MaintenanceSchedule.assignedTechnician",
     # The seven `RepairOrder.*` entries were HERE, and are the eleventh finding — the
     # largest single cluster the sweep had left. `repair_orders` has thirteen columns and
     # `_order_out` emits eleven of them; the TypeScript described a richer object that no
@@ -360,8 +385,6 @@ BASELINE = {
     #
     # `vendor` and `category` are now displayed, so this cluster also shortened the mirror
     # sweep's list. Pinned by MaintenancePanel.test.tsx.
-    "StrategicRecommendation.costSavings",
-    "StrategicRecommendation.timeSavings",
 }
 
 
@@ -394,6 +417,28 @@ class TestTheSweepIsNotVacuous:
         `carrierName` is asserted rather than one of the two that prompted this, so the check
         does not merely restate the change that motivated it."""
         assert "carrierName" in _wire_vocabulary()
+
+    def test_the_vocabulary_stays_narrow_enough_to_report_anything(self):
+        """A DETECTOR CAN BE WIDENED UNTIL IT REPORTS NOTHING, and each widening looks like a
+        bug fix on its own.
+
+        Crediting the argument of every `.get("literal")` call would have removed
+        `AgentRolloutCreate.all` — genuinely a false positive, since `_resolve_targets`
+        branches on `selector.get("all") is True` and a `*Create` interface describes a
+        REQUEST. It was measured before being accepted: 425 names are reachable ONLY that way,
+        so the fix costs a third of the vocabulary's discriminating power to remove one
+        baseline entry. Declined, and the entry says so instead.
+
+        This asserts the vocabulary has not since acquired them. The number is a floor on
+        precision, not a target."""
+        vocab = _wire_vocabulary()
+        # Keys read from request bodies by `.get()` and named nowhere else in the tree.
+        get_only = {"/aggregates", "/alarms/trend", "/cache-hit-ratio"}
+        leaked = sorted(get_only & vocab)
+        assert not leaked, (
+            f"the vocabulary has been widened to credit `.get()` keys: {leaked}. That removes "
+            "one baseline entry and adds ~425 names the sweep will then never report."
+        )
 
     def test_the_subscript_form_does_not_credit_arbitrary_indexing(self):
         """The control on the widening. Only a CONSTANT STRING subscript is a wire name; a

@@ -24,7 +24,6 @@ export const mockMaintenanceSchedules: MaintenanceSchedule[] = [
     status: 'scheduled',
     priority: 'normal',
     estimatedCost: 125,
-    assignedTechnician: 'Tom Anderson',
     notes: 'Use synthetic oil as per manufacturer recommendation',
   },
   {
@@ -38,7 +37,6 @@ export const mockMaintenanceSchedules: MaintenanceSchedule[] = [
     status: 'overdue',
     priority: 'high',
     estimatedCost: 450,
-    assignedTechnician: 'Mike Rodriguez',
     notes: 'Driver reported squealing brakes',
   },
   {
@@ -65,7 +63,6 @@ export const mockMaintenanceSchedules: MaintenanceSchedule[] = [
     status: 'scheduled',
     priority: 'high',
     estimatedCost: 350,
-    assignedTechnician: 'Steve Williams',
     notes: 'Critical service - P0705 code active',
   },
   {
@@ -92,7 +89,6 @@ export const mockMaintenanceSchedules: MaintenanceSchedule[] = [
     status: 'overdue',
     priority: 'urgent',
     estimatedCost: 150,
-    assignedTechnician: 'Lisa Thompson',
     notes: 'Vehicle cannot operate commercially until inspection completed',
   },
   {

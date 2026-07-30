@@ -232,13 +232,14 @@ export const MaintenancePanel: FC = () => {
                         {item.dueMileage != null && (
                           <span>Due at {item.dueMileage.toLocaleString()} mi</span>
                         )}
-                        {item.assignedTechnician && (
-                          <span>Tech: {item.assignedTechnician}</span>
-                        )}
+
                       </div>
                     </div>
                     <div className="text-right">
-                      {item.estimatedCost && (
+                      {/* `item.estimatedCost &&` — a FALSY check on a number, so a service
+                          quoted at exactly nothing rendered no figure at all, exactly as if
+                          nobody had quoted it. A zero estimate is a quote. */}
+                      {item.estimatedCost != null && (
                         <p className="font-medium text-green-600">${item.estimatedCost}</p>
                       )}
                       <span className={`text-xs ${getPriorityColor(item.priority)}`}>

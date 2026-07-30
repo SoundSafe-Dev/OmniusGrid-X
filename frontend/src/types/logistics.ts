@@ -697,7 +697,10 @@ export interface MaintenanceSchedule {
   status: 'scheduled' | 'overdue' | 'completed' | 'cancelled';
   priority: 'low' | 'normal' | 'high' | 'urgent';
   estimatedCost?: number;
-  assignedTechnician?: string;
+  /** `assignedTechnician` was HERE. `maintenance_schedules` has no technician column and,
+   *  unlike `repair_orders`, no vendor either — a schedule records WHAT is due and WHEN,
+   *  not who will do it. The card offered a "Tech:" line that could never populate; the
+   *  same field on `RepairOrder` at least had `vendor` standing beside it. */
   notes?: string;
 }
 
