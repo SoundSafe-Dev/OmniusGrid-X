@@ -2981,3 +2981,40 @@ is removed at the source rather than exempted.
 
 Nine of ten entries investigated so far were real. That ratio is the only thing that makes a
 36-rule document worth keeping.
+
+## FS-207: the CI quarantine now expires
+
+`ci-cd.yml` passes three `--ignore` and two `--deselect` flags to pytest. Every one is
+justified — the ignored files fail at **collection**, so without them the whole backend job
+dies before running anything — but a flag in a workflow file has no expiry, no owner, and no
+record of what would have to be true to remove it.
+
+That is a suppression, and this document is largely a record of what suppressions do: they
+convert a defect into a survivable condition, and survivable conditions are never revisited
+(rule 22). Six tests were being skipped by a mechanism with no way to notice.
+
+`test_ci_quarantine_expires.py` asserts four things:
+
+1. **The list and CI are the same set** — in both directions. A new `--ignore` added to the
+   workflow with no entry in the list fails the test, which is the only thing standing
+   between "we skipped one broken file" and a job that quietly stops running half the suite.
+2. **Each quarantined file still fails to collect.** A stale quarantine is worse than none:
+   it hides a working test *and* makes the whole list untrustworthy. Run in a subprocess,
+   because a broken import in-process would take the guard down with it.
+3. **Each deselected test still fails.** Same question, one level finer; these fail on an
+   assertion rather than at collection, so they can be run directly.
+4. **The expiry has not passed**, and no expiry is more than a year out — a date far enough
+   away is the same as no date.
+
+Each entry carries the owner and the precise fix. The three collection errors are import
+mismatches in the intake lane's scenario builders: two import `build_document_scenarios` /
+`build_image_scenarios` where the modules export `build_scenarios`, and the third expects a
+`CrossFileScenarioBuilder` class in a function-based module. **The code was deliberately not
+touched** — that lane is still building those assertions, and renaming the import would
+surface a body of expectations I would then be tempted to edit. Recording the mismatch makes
+the owner's change a two-minute one; making it myself would make it somebody's afternoon.
+
+Controlled both ways: an undocumented `--ignore` added to the real workflow is named, and a
+back-dated expiry fails with the owner and the fix. **And the guard rejected its own first
+draft** — one entry's `fix` field said only "as above.", which the `test_every_entry_says_who_and_how`
+assertion refused as too thin to act on.
