@@ -510,8 +510,8 @@ the UI were all already there, only the write was missing — and the component 
 failures. The other three were uncalled and were removed. Notably a hand fix of this exact
 class had already run (FS-15, "routes that never existed") and left these behind.
 
-**Both suites are green: backend 2,319 passed, frontend 384 passed, 0 failed** — across
-197 backend and 60 frontend test files. Every guard listed above is mutation-tested:
+**Both suites are green: backend 2,350 passed, frontend 384 passed, 0 failed** — across
+202 backend and 60 frontend test files. Every guard listed above is mutation-tested:
 reintroduce the defect and the test must fail, checked individually, because a guard that
 cannot fail is indistinguishable from one that passes.
 
@@ -595,7 +595,7 @@ left the PREVIOUS test's "healthy: connected" on screen as the current result. A
 delete-user said nothing, and "row still there" is what success looks like until the list
 refetches — an admin who believes they revoked access, and did not.
 
-**Seven sweeps are now permanent guards**, each with a control proving it can fail:
+**Ten sweeps are now permanent guards**, each with a control proving it can fail:
 phrase-based empty states, widgets that disappear when a query fails, mutations with no
 error surface, qualifiers the frontend never renders, and — the mirror of that last one —
 TypeScript fields the frontend renders that no backend source emits, response-model fields
@@ -642,6 +642,27 @@ column that could feed the field, or a reference to one that does?* The answer s
 entry into rename the producer, expose what exists, or delete the field — three different
 fixes that a list of names alone cannot distinguish.
 
+**The sharpest find of the whole slice came from reading one handler.** A sweep for request
+fields no column holds came back almost clean — which was misleading, because twelve route
+handlers take an untyped `Dict[str, Any]` body that no schema describes. Reading one of them
+found `organization_id=payload.get("organization_id")`: the tenant taken from the request. A
+guard written for that shape found **thirteen more**, all identical, plus one that preferred the
+client's value with a fallback to the right one.
+
+Thirteen were saved by row-level security, where a policy's `USING` clause acts as an INSERT's
+`WITH CHECK` — so the write failed with a 500. `vehicles` was the exception: no policy, nothing
+between the body and the row, and a create naming another organisation **succeeded**. Same
+defect, same three files, and the only one that shipped was the one whose table lacked a second
+layer. Migration 055 closes that, and a new guard asserts that **every** table carrying an
+`organization_id` has a FORCEd policy — which found six tables with none and five whose policy
+is not forced, each now recorded with what closing it requires.
+
+That change was caught by a test the *previous* author wrote for exactly this: it asserted
+`vehicles` had no RLS, in order to record that the application filter was the only defence, and
+failed on the next run with *"good, but this test's premise no longer holds; check whether the
+sibling logistics tables were covered too."* A guard built to expire, firing across authors and
+months apart.
+
 **The guards needed as much correcting as the code.** The emptiness sweep reported zero
 offenders while three pages were unguarded: its phrase cap hid a hundred-character empty
 state, and its proximity window found an unrelated mutation's error branch and called the
@@ -651,7 +672,7 @@ cases was to count braces and use the real bounds. A third computed its own base
 the tree it then compared against, so it could never fail for any input. **Three guards,
 three different ways of being confidently wrong** — running a guard does not test it;
 breaking the tree on purpose does, and every one of them is now controlled that way.
-Rules 21–38 are recorded in `docs/engineering/defect-class-sweeps.md`.
+Rules 21–41 are recorded in `docs/engineering/defect-class-sweeps.md`.
 
 ### Delivered since — FS-141+ (release path, backups, and the guards that weren't guarding)
 
@@ -2956,7 +2977,7 @@ The ERP integration system correlates ERP data with operational telemetry to pro
 - [Implementation Summary](IMPLEMENTATION_SUMMARY.md) - Complete feature inventory
 
 **Engineering practice**
-- [Defect-class sweeps](docs/engineering/defect-class-sweeps.md) - The thirty-seven classes of "code that looks wired and cannot work" found so far, what each sweep found (including the ones that came back clean), which mutation-tested guard keeps each closed, and thirty-eight rules for writing a sweep worth trusting — most of them paid for by a detector that was wrong first, including one that reported zero offenders while three pages were broken and one that compared a baseline against itself
+- [Defect-class sweeps](docs/engineering/defect-class-sweeps.md) - The thirty-seven classes of "code that looks wired and cannot work" found so far, what each sweep found (including the ones that came back clean), which mutation-tested guard keeps each closed, and forty-one rules for writing a sweep worth trusting — most of them paid for by a detector that was wrong first, including one that reported zero offenders while three pages were broken and one that compared a baseline against itself
 
 **Infrastructure & operations**
 - [Database migrations](database/migrations/README.md) - Runner rules (never edit or rename an applied migration), the 019 gap, grandfathered duplicate prefixes, demo-data gating
