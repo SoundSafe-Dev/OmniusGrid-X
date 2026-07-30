@@ -47,6 +47,22 @@ const SRC = join(__dirname, '..')
  *  matched the bare word and inflated every file's query count by one. */
 const QUERIES = /\buse(?:Infinite)?Query\s*[<(]/g
 /**
+ * A SIXTH BROADENING, and the same lesson as the five above: a detector that knows one idiom
+ * under-counts a codebase that uses two.
+ *
+ * The scope was `useQuery` alone, which is the population the defect was FOUND in — and
+ * fourteen components fetch by hand instead, `await maintenanceApi.getX()` inside a
+ * `useEffect`, then set state. They render empty states from data that can fail to arrive
+ * exactly as react-query's can; the only difference is who owns the `catch`.
+ *
+ * `ErrorTriage` is the one that made this visible: it has four empty states, handles failure
+ * in its own state, and was entirely outside this file's population — so nothing had ever
+ * checked which branch a failure lands in.
+ *
+ * Rule 48 applied to a guard that had already been broadened five times.
+ */
+const MANUAL_FETCH = /\bawait\s+\w*[Aa]pi\.|\bawait\s+fetch\(|\.then\s*\(/
+/**
  * PER EMPTY STATE, not per file and not per count — and both earlier versions were wrong
  * in ways that hid live defects.
  *
@@ -74,7 +90,7 @@ const QUERIES = /\buse(?:Infinite)?Query\s*[<(]/g
  * lesson the tenant-session guard learned about `AsyncSessionLocal`.
  */
 const ERROR_BRANCH =
-  /\b(?:isError|[A-Za-z]+Error)\s*(?:\?|&&|=)|!\s*(?:isError|[A-Za-z]+Error)\b|if\s*\(\s*(?:isError|[A-Za-z]+Error)\s*\)|status\s*===\s*['"]error['"]/
+  /\b(?:isError|[A-Za-z]+Error|error)\s*(?:\?|&&|=)|!\s*(?:isError|[A-Za-z]+Error|error)\b|if\s*\(\s*(?:isError|[A-Za-z]+Error|error)\s*\)|status\s*===\s*['"]error['"]/
 /**
  * Comments are stripped before any of this runs, for two reasons that turned out to be
  * the same reason. A comment EXPLAINING this defect quotes the empty-state text, so the
@@ -93,8 +109,36 @@ const COMMENT = /\/\*[\s\S]*?\*\/|(?<![:'"`])\/\/[^\n]*/g
  * cannot see that, and reported three correct empty states as unguarded. Distance is the
  * wrong question for this idiom: the guard is unconditional from that point on.
  */
+/**
+ * `error` BARE, added with the manual-fetch broadening and for the same reason.
+ *
+ * react-query hands you `isError`; a component that fetches by hand holds its own
+ * `const [error, setError] = useState<string | null>(null)` and writes `if (error) return`.
+ * All three fleet panels do exactly that, correctly and completely — and were reported as
+ * unguarded the moment they entered the population, because the pattern knew five idioms and
+ * this was the sixth.
+ *
+ * The word alone is too loose to match anywhere (`setError(`, `onError=`, `errorMessage`), so
+ * it is anchored to the three shapes that actually branch: `if (error)`, `error ?`/`error &&`,
+ * and `!error`.
+ */
 const EARLY_RETURN =
-  /if\s*\([^)]*\b(?:isError|[A-Za-z]+Error)\b[^)]*\)\s*\{?\s*(?:return|\n\s*return)/
+  /if\s*\([^)]*\b(?:isError|[A-Za-z]+Error|error)\b[^)]*\)\s*\{?\s*(?:return|\n\s*return)/
+
+/**
+ * THE THREE-STATE TERNARY, which guards everything after it exactly as an early return does.
+ *
+ * `HealthSecurityPanel` renders `isLoading ? <skeletons/> : error ? <message/> : (<>…entire
+ * page…</>)`. Every empty state in the component sits inside that last branch and is therefore
+ * unreachable on failure — and all five were reported, because the error arm and the empty
+ * states are thousands of characters apart and `CHAIN_WINDOW` is a proximity check.
+ *
+ * Deliberately narrow: it requires the LOADING arm too. A bare `error ? a : b` somewhere in a
+ * file must not excuse an unguarded empty state elsewhere in it, and only this specific chain
+ * is a whole-render guard.
+ */
+const THREE_STATE_CHAIN =
+  /\b(?:isLoading|loading|isPending)\b[^]{0,400}?\?[^]{0,4000}?\)\s*:\s*(?:isError|[A-Za-z]+Error|error)\s*\?/
 
 /** How far back to look for a failure branch in the same conditional chain. Used only
  *  for the inline forms — a ternary, an `&&`, or an `isError=` prop — which really are
@@ -209,18 +253,22 @@ export const NOT_A_QUERY_EMPTY_STATE: Record<string, string> = {
   // describes THAT assessment, not the absence of a response.
   'No notification dispatched for this assessment':
     'pages/predictive/PredictiveMaintenance.tsx',
+  // A ROUTER FALLBACK, not a query result. `App.tsx` renders it for an unmatched URL, and
+  // entered this population only because `.then(` appears in its lazy route imports. There is
+  // no request behind it that could have failed instead.
+  'Page not found': 'App.tsx',
 }
 
 export function fallsThroughToEmptiness(raw: string, _file = ''): string[] {
   const source = raw.replace(COMMENT, ' ')
-  if (!(source.match(QUERIES) ?? []).length) return []
+  if (!(source.match(QUERIES) ?? []).length && !MANUAL_FETCH.test(source)) return []
   const unguarded: string[] = []
   for (const pattern of EMPTY_STATE) {
     for (const match of source.matchAll(pattern)) {
       const phrase = match[1].trim()
       if (phrase in NOT_A_QUERY_EMPTY_STATE) continue
       const before = source.slice(0, match.index!)
-      if (EARLY_RETURN.test(before)) continue
+      if (EARLY_RETURN.test(before) || THREE_STATE_CHAIN.test(before)) continue
       const chain = before.slice(Math.max(0, before.length - CHAIN_WINDOW))
       const chainStart = before.length - chain.length
       const guarded = [...chain.matchAll(new RegExp(ERROR_BRANCH.source, 'g'))].some((e) =>
@@ -419,15 +467,53 @@ describe('the per-item exemptions stay honest', () => {
   })
 })
 
+/**
+ * OWNED BY ANOTHER LANE, and surfaced only when this sweep's population grew to include
+ * components that fetch by hand rather than through react-query. Every one of them sets its
+ * own error state and renders the empty branch anyway.
+ *
+ * They are listed rather than fixed because editing another lane's subsystem blind is how you
+ * break something you cannot test, and asserted BOTH ways — a new offender outside this list
+ * fails, and an entry that starts passing also fails — so the list cannot quietly rot.
+ *
+ * Do not add to this list to make your own change go green.
+ */
+const KNOWN_LANE_OFFENDERS: Record<string, string> = {
+  'components/kanban/TaskDetailModal.tsx': 'HARSH — kanban',
+  'components/nlp/ChatHistoryModal.tsx': 'HARSH — correlation AI / NLP',
+  'components/nlp/ContextPanel.tsx': 'HARSH — correlation AI / NLP',
+  'components/nlp/DataSourcesPanel.tsx': 'HARSH — correlation AI / NLP',
+  'components/nlp/IntakeSelectorDialog.tsx': 'HARSH — intake',
+  'components/nlp/RealTimeDataPanel.tsx': 'HARSH — correlation AI / NLP',
+  'components/nlp/SessionList.tsx': 'HARSH — correlation AI / NLP',
+  'pages/intake/IntakeInbox.tsx': 'HARSH — intake',
+}
+
 describe('no querying component renders a failure as emptiness', () => {
   it('has no offenders', () => {
     expect(
-      OFFENDERS.map(
+      OFFENDERS.filter((o) => !(o.file in KNOWN_LANE_OFFENDERS)).map(
         (o) =>
           `${o.file} — a failed query falls through to ${JSON.stringify(o.states)}, ` +
           `which reads as a fact about the world rather than about the request`,
       ),
     ).toEqual([])
+  })
+
+  it('the lane list names nothing that is already fixed', () => {
+    // Shrinking is the good direction, so this fails loudly rather than rotting: an entry
+    // that no longer offends is a claim about somebody else's code that is no longer true.
+    const offending = new Set(OFFENDERS.map((o) => o.file))
+    expect(
+      Object.keys(KNOWN_LANE_OFFENDERS).filter((f) => !offending.has(f)),
+    ).toEqual([])
+  })
+
+  it('every lane entry names an owner', () => {
+    const anonymous = Object.entries(KNOWN_LANE_OFFENDERS)
+      .filter(([, owner]) => !/^(HARSH|Hridyansh|htreinen|Alex) — /.test(owner))
+      .map(([file]) => file)
+    expect(anonymous).toEqual([])
   })
 })
 

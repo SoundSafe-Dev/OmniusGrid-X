@@ -217,8 +217,15 @@ export const GeofencingPanel: FC<GeofencingPanelProps> = ({ onAlert }) => {
           {/* Zone List */}
           <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg">
             <div className="max-h-[200px] overflow-y-auto">
+              {/* `error` GATES THE EMPTY STATE, not just the banner above. The panel
+                  rendered its failure message AND then "No geofence zones. Use + to create
+                  one." below it — two statements about the same fetch, one of which invites
+                  the operator to create a zone that may already exist. The banner explains
+                  what happened; this stops the list contradicting it. */}
               {isLoading ? (
                 <SkeletonCard lines={3} />
+              ) : error ? (
+                <p className="p-4 text-sm text-gray-500 text-center">Zones unavailable.</p>
               ) : zones.length === 0 ? (
                 <p className="p-4 text-sm text-gray-500 text-center">No geofence zones. Use + to create one.</p>
               ) : zones.map(zone => (
@@ -328,7 +335,10 @@ export const GeofencingPanel: FC<GeofencingPanelProps> = ({ onAlert }) => {
             </button>
           </div>
           <div className="max-h-[250px] overflow-y-auto">
-            {!isLoading && alerts.length === 0 && (
+            {!isLoading && error && (
+              <p className="p-4 text-sm text-gray-500 text-center">Alerts unavailable.</p>
+            )}
+            {!isLoading && !error && alerts.length === 0 && (
               <p className="p-4 text-sm text-gray-500 text-center">No geofence alerts.</p>
             )}
             {alerts.slice(0, 20).map(alert => (

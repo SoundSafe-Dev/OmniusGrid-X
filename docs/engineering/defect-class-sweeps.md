@@ -2322,6 +2322,13 @@ one of its findings. The habit that catches it:
    connection on it. The attribute not causing trouble at the time is the one that will.
    *(Fuller account: § Rule 61.)*
 
+62. **A guard's scope is a hypothesis, and it is usually the place you first looked.**
+   The failure-is-not-emptiness sweep had been broadened five times — always about the shape of
+   the check, never about which files it ran on. Its scope was `useQuery`, the library both
+   original findings happened to use; fourteen components fetch by hand and render empty states
+   from data that can fail identically. Ask what the class is, then ask what the population is.
+   *(Fuller account: § Rule 62.)*
+
 ---
 
 ## Open observations, not yet tickets
@@ -4438,3 +4445,59 @@ One list across four walks, keyed by path alone, meant a DELETE-only failure rea
 but passing"* to the POST walk — whose staleness check then reported it as fixed and demanded
 its removal. Caught immediately, because that check exists and is asserted both ways. A shared
 baseline needs every dimension the thing it describes varies along.
+
+## The failure-is-not-emptiness sweep had a population, not a class
+
+`failureIsNotEmptiness.test.ts` is the most-revised guard in this repository — five documented
+broadenings, each found by the next false positive, with a comment explaining every one. Its
+scope was `useQuery` **and** a literal empty state, on the reasoning that "the query is what can
+fail, and the empty string is where the failure lands."
+
+That is the population the defect was found in, not the class. **Fourteen components fetch by
+hand** — `await maintenanceApi.getX()` inside a `useEffect`, then `setState` — and render empty
+states from data that can fail to arrive exactly as react-query's can. The only difference is
+who owns the `catch`. `ErrorTriage` has four empty states, handles failure in its own state, and
+was entirely outside the guard's reach: nothing had ever checked which branch a failure lands in.
+
+Rule 48, applied to a guard that had already been broadened five times.
+
+### The broadening produced three false positives, and each was a missing idiom
+
+* **Bare `error`.** react-query hands you `isError`; a hand-fetching component holds
+  `const [error, setError] = useState<string | null>(null)` and writes `if (error) return`. All
+  three fleet panels do exactly that, correctly, and were all reported. The word alone is too
+  loose to match on (`setError(`, `onError=`, `errorMessage`), so it is anchored to the three
+  shapes that actually branch.
+* **The three-state ternary.** `HealthSecurityPanel` renders
+  `isLoading ? <skeletons/> : error ? <message/> : (<>…entire page…</>)`. Every empty state sits
+  in that last branch and is unreachable on failure — and all five were reported, because the
+  error arm and the empty states are thousands of characters apart and the chain check is a
+  proximity window. The file already had this insight for `if (isError) return`; the ternary
+  form is the same guard wearing different syntax. Deliberately narrow: it requires the loading
+  arm too, so a bare `error ? a : b` elsewhere in a file cannot excuse an unguarded empty state.
+* **A router fallback.** `App.tsx`'s "Page not found" entered the population only because
+  `.then(` appears in its lazy route imports. There is no request behind it that could have
+  failed instead.
+
+### And one real finding
+
+`GeofencingPanel` renders an error banner **and then the content anyway**, so a failed load
+showed *"Failed to load geofence zones and alerts"* above *"No geofence zones. Use + to create
+one."* Two statements about the same fetch, one of which invites the operator to create a zone
+that may already exist. The banner explains what happened; the list now stops contradicting it.
+
+The other eight offenders are HARSH's — kanban, NLP and intake — recorded with owners and
+asserted both ways rather than edited blind.
+
+## Rule 62 — a guard's scope is a hypothesis, and it is usually the place you first looked
+
+Every broadening of this file so far had been about the *shape* of the check: which idioms count
+as an error branch, how far to look, whether comments count. The scope itself — "components that
+call `useQuery`" — had never been questioned, because it was true of both original findings.
+
+Ask what the class actually is, then ask what the population is. Here the class is "a failure
+rendered as a fact about the world" and the population is "anything that fetches", which is
+strictly larger than "anything that uses the library we happened to be using when we found it".
+
+The same shape as rule 48, one level up: there the guard asked the right question of too few
+files; here it asked it of the right files for the wrong reason.
