@@ -27,11 +27,18 @@ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 // `metadata` blob (whose inner keys the casing seam deliberately does not
 // rename), but the trailer components read top-level trailer.contents /
 // trailer.poNumber. Lift them onto each trailer.
-const adaptTrailer = (t: any): YardTrailer => ({
-  ...t,
-  contents: t?.contents ?? t?.metadata?.contents,
-  poNumber: t?.poNumber ?? t?.metadata?.po_number,
-});
+// NOTHING IS SYNTHESISED HERE ANY MORE. This read
+//   contents: t?.contents ?? t?.metadata?.contents
+//   poNumber: t?.poNumber ?? t?.metadata?.po_number
+// — two fields `yard_trailers` has no column for, fished out of the free-form `meta_data`
+// blob, which nothing writes either key into. Both are gone from `YardTrailer` now.
+//
+// TYPESCRIPT DID NOT CATCH THE ORPHANS. Excess-property checking is relaxed for an object
+// literal that spreads an `any`, so `{ ...t, contents: … }` kept compiling after the type
+// stopped declaring `contents`. That is exactly why an adapter's inventions are invisible to
+// a static sweep over the types, and why `maintenance.realmode.test.ts` and this module's
+// real-mode tests assert the adapter's OUTPUT rather than its declarations.
+const adaptTrailer = (t: any): YardTrailer => ({ ...t });
 
 // Mock Data
 const mockTrailers: YardTrailer[] = [

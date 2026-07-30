@@ -75,8 +75,14 @@ def _seed(admin_sync_url, org_id):
                     "INSERT INTO dock_appointments (id, organization_id, dock_door_id, "
                     "trailer_id, carrier_id, driver_id, appointment_type, status, "
                     "scheduled_start, scheduled_end) "
+                    # TWO HOURS OUT, not `now()`. The endpoint's window is
+                    # `scheduled_start >= start_date` with `start_date` defaulting to the
+                    # request's own `now()`, so an appointment seeded at the current instant
+                    # sits microseconds BEFORE the window opens and is filtered out. The test
+                    # passed or failed on scheduling jitter — it happened to pass when another
+                    # module ran first and lost the race in the other direction.
                     "VALUES (%s, %s, %s, %s, %s, %s, 'inbound', 'scheduled', "
-                    "now(), now() + interval '1 hour')",
+                    "now() + interval '2 hours', now() + interval '3 hours')",
                     (ids[key], org_id, ids["door"], ids["trailer_with"], ids["carrier"], driver),
                 )
     finally:

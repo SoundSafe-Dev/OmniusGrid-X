@@ -2274,6 +2274,19 @@ one of its findings. The habit that catches it:
    until it reports nothing.
    *(Fuller account: § Rule 54.)*
 
+55. **A static sweep cannot see what an adapter makes up at runtime.**
+   Deleting two fields from `YardTrailer` left `adaptTrailer` synthesising both, with `tsc`
+   clean throughout: excess-property checking is relaxed for a literal that spreads an `any`.
+   Assert the adapter's OUTPUT against exactly what the serializer emits — the mock branch is
+   not the code that ships.
+   *(Fuller account: § Rule 55.)*
+
+56. **A fixture on a boundary is a coin flip.**
+   An appointment seeded at `now()` sat microseconds outside a window opening at the request's
+   `now()`, so the test passed or failed on jitter and looked like cross-test pollution. Put
+   fixtures well inside the range under test, unless the edge is the assertion.
+   *(Fuller account: § Rule 56.)*
+
 ---
 
 ## Open observations, not yet tickets
@@ -3977,3 +3990,50 @@ a negative control.
 The baseline is now two entries: this one, and `LogisticsOverview.todayAppointments`, which the
 page genuinely computes client-side. **Both are non-defects** — which is the state a baseline of
 gaps is supposed to reach, and the point at which it becomes purely a guard against new ones.
+
+## Rule 55 — a static sweep cannot see what an adapter makes up at runtime
+
+Deleting `contents` and `poNumber` from `YardTrailer` left `adaptTrailer` still synthesising
+both — fishing them out of the free-form `meta_data` blob, which nothing writes either key into
+— and `tsc --noEmit` stayed clean the whole time.
+
+TypeScript relaxes excess-property checking for an object literal that spreads an `any`. So
+`{ ...t, contents: … }` keeps compiling once the type stops declaring `contents`, and the
+orphaned line survives every static check the repository has: the type says the field is gone,
+the compiler agrees, and the object still carries it.
+
+That is a structural limit, not an oversight. `test_frontend_fields_exist_on_the_wire.py`
+compares DECLARATIONS against the backend tree; an adapter's inventions are not declarations.
+The whole reason `currentMileage` was a defect rather than a typo is that the adapter
+manufactured it at runtime.
+
+**Assert the adapter's output.** `maintenance.realmode.test.ts` and `yard.realmode.test.ts` feed
+each adapter exactly what the serializer emits and assert that nothing else comes back — the
+harder half, because most tests check a value is present and this class is about a value that is
+present and made up.
+
+The control makes the point in one run: restoring the metadata synthesis leaves `tsc` clean and
+turns the real-mode test red.
+
+### Why this file and not the mock branch
+
+`src/test/setup.ts` stubs `VITE_USE_MOCK='true'` before any module evaluates, so every frontend
+unit test has always taken the mock fork — the real branch of ~213 forks across `src/api/` is
+run by nothing. `loadInRealMode` resets the module registry and re-imports against the real
+value. Two more modules are covered now; the maintenance client is where the sweep started, and
+it had none.
+
+## Rule 56 — a fixture on a boundary is a coin flip
+
+`test_the_appointment_row_gets_the_phone` seeded an appointment at `now()`. The endpoint's window
+is `scheduled_start >= start_date`, with `start_date` defaulting to the *request's* `now()` —
+which is microseconds later. The row sat just outside the window and the test passed or failed on
+scheduling jitter: green in isolation when I first wrote it, red in isolation an hour later, green
+in the full suite because another module ran first and shifted the timing.
+
+An order-dependent failure reads as pollution from a neighbouring test, and the instinct is to
+look for shared state. Here there was none — both runs were correct, and the fixture was the
+thing that was wrong. Seeding two hours out removes the race entirely.
+
+**Put fixtures well inside the range under test, not on its edge**, unless the edge IS the
+assertion — in which case seed both sides of it deliberately.
