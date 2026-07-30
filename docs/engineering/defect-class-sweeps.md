@@ -2196,6 +2196,14 @@ one of its findings. The habit that catches it:
    sat in the same three files.
    *(Fuller account: § Rule 43.)*
 
+44. **A hand-maintained number in prose is a claim that will be wrong.** The README said "206
+   backend test files" against a measured 201, cited rules 21–38 when the doc had reached 41,
+   and said thirty-seven classes when the table had grown past it. A rule range and a class
+   count change rarely and are worth asserting; a test count changes every commit and pinning
+   it would make every new test fail the suite. Re-measure the rest at each milestone rather
+   than trusting them — two of those three were wrong when measured.
+   *(Fuller account: § Rule 44.)*
+
 ---
 
 ## Open observations, not yet tickets

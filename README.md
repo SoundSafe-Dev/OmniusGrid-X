@@ -687,7 +687,7 @@ cases was to count braces and use the real bounds. A third computed its own base
 the tree it then compared against, so it could never fail for any input. **Three guards,
 three different ways of being confidently wrong** — running a guard does not test it;
 breaking the tree on purpose does, and every one of them is now controlled that way.
-Rules 21–43 are recorded in `docs/engineering/defect-class-sweeps.md`.
+Rules 21–44 are recorded in `docs/engineering/defect-class-sweeps.md`.
 
 ### Delivered since — FS-141+ (release path, backups, and the guards that weren't guarding)
 
@@ -2992,7 +2992,7 @@ The ERP integration system correlates ERP data with operational telemetry to pro
 - [Implementation Summary](IMPLEMENTATION_SUMMARY.md) - Complete feature inventory
 
 **Engineering practice**
-- [Defect-class sweeps](docs/engineering/defect-class-sweeps.md) - The forty-two classes of "code that looks wired and cannot work" found so far, what each sweep found (including the ones that came back clean), which mutation-tested guard keeps each closed, and forty-three rules for writing a sweep worth trusting — most of them paid for by a detector that was wrong first, including one that reported zero offenders while three pages were broken and one that compared a baseline against itself
+- [Defect-class sweeps](docs/engineering/defect-class-sweeps.md) - The forty-two classes of "code that looks wired and cannot work" found so far, what each sweep found (including the ones that came back clean), which mutation-tested guard keeps each closed, and forty-four rules for writing a sweep worth trusting — most of them paid for by a detector that was wrong first, including one that reported zero offenders while three pages were broken and one that compared a baseline against itself
 
 **Infrastructure & operations**
 - [Database migrations](database/migrations/README.md) - Runner rules (never edit or rename an applied migration), the 019 gap, grandfathered duplicate prefixes, demo-data gating
