@@ -4304,3 +4304,37 @@ control in the shape of the real defect, and a negative control from the real fa
 Both are now written against the exact sentences that produced them, so a regex that stops
 matching wrapped text, or loses its subject attribution, fails on the sample rather than on a
 count.
+
+## The twenty-third call site
+
+Correcting the stale `_scope` comment meant reading what `_scope` is for, and that raised the
+obvious next question: does every query against those four tables actually use it?
+
+Twenty-two of twenty-three did. `vehicle_service_history` took **no `org_id` dependency at all**
+— the only handler in the file that did not — and filtered `repair_orders` on `vehicle_id` and
+status alone, returning `_history_out`: description, cost, vendor, and the technician's notes.
+Its sibling one function above, same table, same shape, was scoped.
+
+On Postgres migration 051's FORCEd policy filtered the rows anyway, so there was no leak there.
+On the **SQLite offline path there is no policy**, which is the case `_scope` exists for: any
+caller with a vehicle id got that vehicle's repair history regardless of whose vehicle it was.
+And `repair_orders.vehicle_id` is a bare VARCHAR with no foreign key, so two tenants using the
+same id is not exotic.
+
+**Twenty-two right and one wrong is the state in which the one is invisible.** Nothing about it
+looks unusual, and a reviewer's eye is calibrated by the twenty-two. So the question — *is this
+`select()` wrapped in `_scope`?* — is asked by a parser now, along with the smell that made it
+findable in the first place: a handler that queries a tenant table and takes no `org_id`.
+
+Both assertions fire on the real pre-fix handler, which is the control that matters; a synthetic
+sample would only have proved the regex works.
+
+### What the real-DB test can and cannot show
+
+`test_service_history_is_scoped_realdb.py` passes against the **pre-fix** code too, because the
+policy was doing the filtering. That is not a weakness to hide — it is the finding. The source
+check is what caught this, and the behavioural test pins the other half: that adding the filter
+did not break the endpoint for its owner, that the status predicate and the ordering survived
+being moved inside `_scope`, and that the two layers agree rather than one masking the other.
+
+Two layers that disagree are worse than one, because whichever answers first decides.

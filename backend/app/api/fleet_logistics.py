@@ -525,12 +525,30 @@ async def list_vehicle_repair_orders(vehicle_id: str, org_id: UUID = Depends(get
 
 
 @maintenance_router.get("/vehicles/{vehicle_id}/history")
-async def vehicle_service_history(vehicle_id: str, db: AsyncSession = Depends(get_tenant_db)):
-    """Service history = completed repair orders for the vehicle, newest first."""
+async def vehicle_service_history(
+    vehicle_id: str,
+    org_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db),
+):
+    """Service history = completed repair orders for the vehicle, newest first.
+
+    THE ONE HANDLER IN THIS FILE THAT TOOK NO `org_id` AND CALLED NO `_scope`. It filtered on
+    `vehicle_id` and status alone, and returned `_history_out` — description, cost, vendor and
+    the technician's notes.
+
+    On Postgres migration 051's FORCEd policy covers it, so there was no leak there. On the
+    SQLite offline path there is no policy at all, which is the case `_scope` exists for: any
+    caller who knew a vehicle id got that vehicle's repair history regardless of whose vehicle
+    it was. The sibling endpoint one function up — same table, same shape — was scoped.
+    """
     orders = (await db.execute(
-        select(RepairOrder).where(
-            RepairOrder.vehicle_id == vehicle_id,
-            RepairOrder.status == "completed",
+        _scope(
+            select(RepairOrder).where(
+                RepairOrder.vehicle_id == vehicle_id,
+                RepairOrder.status == "completed",
+            ),
+            RepairOrder,
+            org_id,
         ).order_by(RepairOrder.completed_at.desc())
     )).scalars().all()
     return [_history_out(o) for o in orders]
