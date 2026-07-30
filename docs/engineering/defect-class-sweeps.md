@@ -2120,6 +2120,15 @@ one of its findings. The habit that catches it:
    difference by construction. Pin baselines as literals. The tell is that the expected
    and actual values come from the same function call.
 
+32. **A feature is not one thing, and finding one defect in it says nothing about the
+   rest.** Maintenance mode was wrong in five places — schema, write, read-under-RLS,
+   response model, call site — found by four separate sweeps weeks apart, each fix looking
+   complete at the time. A sweep is organised by SHAPE, not by feature, so it sees one seam
+   and walks past the others. When a sweep finds a defect in something, walk the whole path
+   by hand before believing the feature works. And check the contract from both ends: the
+   server not sending what the client reads, and the client not sending what the server
+   reads, are different defects that no single sweep finds.
+
 ---
 
 ## Open observations, not yet tickets

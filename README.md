@@ -510,8 +510,8 @@ the UI were all already there, only the write was missing — and the component 
 failures. The other three were uncalled and were removed. Notably a hand fix of this exact
 class had already run (FS-15, "routes that never existed") and left these behind.
 
-**Both suites are green: backend 2,241 passed, frontend 370 passed, 0 failed** — across
-191 backend and 59 frontend test files. Every guard listed above is mutation-tested:
+**Both suites are green: backend 2,247 passed, frontend 377 passed, 0 failed** — across
+192 backend and 60 frontend test files. Every guard listed above is mutation-tested:
 reintroduce the defect and the test must fail, checked individually, because a guard that
 cannot fail is indistinguishable from one that passes.
 
@@ -612,6 +612,18 @@ year-to-date by twelve in every month). A fabricated value is always the one tha
 most normal — a zero in a currency column is unremarkable, which is exactly why it survives
 review.
 
+**Maintenance mode turned out to be wrong in five places, found by four different
+sweeps.** No column; a write that was neither tenant-scoped nor rowcount-checked (under RLS
+an UPDATE is *filtered*, so it returns 200 having matched nothing); an engine read that
+treated an RLS-invisible row as "available to command"; a response model that never
+declared the field, so no client could see which assets were out of service; and a caller
+that posted the flag as a JSON body when the endpoint reads it from the query string —
+which made *taking an asset out of maintenance put it in*. Each fix looked complete at the
+time, because each defect sits on a different seam and a sweep is organised by shape rather
+than by feature. The last two point in opposite directions — server not sending what the
+client reads, client not sending what the server reads — and neither sweep could have found
+the other.
+
 **The guards needed as much correcting as the code.** The emptiness sweep reported zero
 offenders while three pages were unguarded: its phrase cap hid a hundred-character empty
 state, and its proximity window found an unrelated mutation's error branch and called the
@@ -621,7 +633,7 @@ cases was to count braces and use the real bounds. A third computed its own base
 the tree it then compared against, so it could never fail for any input. **Three guards,
 three different ways of being confidently wrong** — running a guard does not test it;
 breaking the tree on purpose does, and every one of them is now controlled that way.
-Rules 21–31 are recorded in `docs/engineering/defect-class-sweeps.md`.
+Rules 21–32 are recorded in `docs/engineering/defect-class-sweeps.md`.
 
 ### Delivered since — FS-141+ (release path, backups, and the guards that weren't guarding)
 
@@ -2926,7 +2938,7 @@ The ERP integration system correlates ERP data with operational telemetry to pro
 - [Implementation Summary](IMPLEMENTATION_SUMMARY.md) - Complete feature inventory
 
 **Engineering practice**
-- [Defect-class sweeps](docs/engineering/defect-class-sweeps.md) - The thirty-seven classes of "code that looks wired and cannot work" found so far, what each sweep found (including the ones that came back clean), which mutation-tested guard keeps each closed, and thirty-one rules for writing a sweep worth trusting — most of them paid for by a detector that was wrong first, including one that reported zero offenders while three pages were broken and one that compared a baseline against itself
+- [Defect-class sweeps](docs/engineering/defect-class-sweeps.md) - The thirty-seven classes of "code that looks wired and cannot work" found so far, what each sweep found (including the ones that came back clean), which mutation-tested guard keeps each closed, and thirty-two rules for writing a sweep worth trusting — most of them paid for by a detector that was wrong first, including one that reported zero offenders while three pages were broken and one that compared a baseline against itself
 
 **Infrastructure & operations**
 - [Database migrations](database/migrations/README.md) - Runner rules (never edit or rename an applied migration), the 019 gap, grandfathered duplicate prefixes, demo-data gating
