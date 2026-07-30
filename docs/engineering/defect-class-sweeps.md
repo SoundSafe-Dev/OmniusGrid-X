@@ -2294,6 +2294,13 @@ one of its findings. The habit that catches it:
    coverage on both sides. Where two units meet, assert on the pair.
    *(Fuller account: § Rule 57.)*
 
+58. **A mock-only defect is a defect with a delay.**
+   A mock branch is the specification the next author reads. `createRepairOrder` minted a
+   `WO-YYYY-NNNN` in its fixture and a synthesised work-order number ended up as the heading a
+   technician quotes to a vendor. Fix the real branch even when nothing calls it, and where the
+   fabrication belongs to a fixture, write down what makes it wrong to promote.
+   *(Fuller account: § Rule 58.)*
+
 ---
 
 ## Open observations, not yet tickets
@@ -4099,3 +4106,55 @@ the seam is where the untested inputs live.
 
 Related to rule 55 but distinct: there the static checker could not see the runtime value, here
 both dynamic tests were fine and neither covered the composition.
+
+## The literal-default guard: turning the third hand-audit into a check
+
+Three coercion defects were found by reading adapters — `geofenceName ?? ''`,
+`alertType ?? 'violation'`, `latitude ?? 0`. Rule 39 says six hand-fixes and no guard is a class
+that will come back, and this was the third pass over the same shape, so the audit is now a
+test.
+
+**The rule it encodes: an API client may choose what to SEND; it may not decide what the server
+MEANT.** The dangerous form is a LITERAL default on a value that came from the server —
+`field: response.x ?? 0`. Deliberately not flagged:
+
+* `a ?? b` where both sides are field reads. That is a **rename** (`geofenceId ?? zoneId`), one
+  of the three legitimate fixes this codebase applies, and a guard that forbade it would forbid
+  the cure.
+* Request-side defaults. `limit: params.limit ?? 1000` is the client deciding what to ask for.
+
+Twenty-eight sites, each classified with its kind — REQUEST, ERROR, BENIGN, MOCK-ONLY — and a
+test asserting every reason states which. Sorting them was most of the value:
+
+* **Live, and fixed:** the three geofencing coercions.
+* **Real branch, no consumer, fixed anyway:** `timestamp: d?.lastSeen ?? new Date()` in
+  `getDiagnostics`. Every fault code on a device that has never reported would have been stamped
+  with the current time — the most confident thing the row could say and the one thing nobody
+  knows. Dead code gets called eventually; that is how the synthesised work-order number shipped.
+* **Mock-only, left with the caveat written down:** `driveHoursRemaining: … || 0` in
+  `getDriverHOS`, which has no consumer. It is the exact shape the backend warns about —
+  `hos_drive_hours_remaining` is NULL for a driver who has not reported, and 0 means *out of
+  hours*. The baseline entry says so, so wiring the method up without fixing it fails a review
+  that reads the entry.
+* **Benign-ish, recorded as such:** `totalSchedules: d.scheduledCount ?? 0` and its two
+  siblings, reachable only on a 200 that omits the counters. "0 overdue" is a claim, and the
+  entry says to revisit if that path ever becomes reachable.
+
+The control reintroduces two of the fixed coercions and the guard names both, by file and field.
+
+## Rule 58 — a mock-only defect is a defect with a delay
+
+`getDriverHOS` and `getDiagnostics` have no callers, so their fabrications hurt nobody today,
+and the temptation is to leave them or delete the methods. Neither is right on its own.
+
+A mock branch is the specification the next author reads. `createRepairOrder` minted
+`WO-YYYY-NNNN` in its mock, which is how a synthesised work-order number came to look like a
+product feature and ended up displayed as the heading a technician quotes to a vendor — the real
+path could never produce one. The fixture taught everybody the wrong contract, and the code that
+shipped followed it.
+
+So: fix the real branch even when nothing calls it, and where the fabrication genuinely belongs
+to a fixture, **write down what makes it wrong to promote**. The baseline entry for
+`driveHoursRemaining` names the exact reason (`NULL` means unreported, `0` means out of hours),
+which is the thing a future author needs and would otherwise have to rediscover from a backend
+comment three files away.

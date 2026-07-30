@@ -363,7 +363,10 @@ export interface GeoTabDiagnostic {
   name: string;
   source: string;
   value?: string;
-  timestamp: string;
+  /** The device's `lastSeen`, which is a heartbeat's time standing in for a fault's — the
+   *  closest thing the payload carries. NULL when the device has never reported; it used to
+   *  fall back to `new Date()`, stamping every fault code with the current time. */
+  timestamp: string | null;
   isActive: boolean;
 }
 

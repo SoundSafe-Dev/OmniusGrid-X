@@ -818,7 +818,12 @@ export const geoTabApi = {
       diagnosticCode: code,
       name: code,
       source: 'OBDII',
-      timestamp: d?.lastSeen ?? new Date().toISOString(),
+      // NOT `?? new Date()`. A device that has never reported would have had every fault
+      // code stamped with the CURRENT time — "this fault occurred just now" — which is the
+      // most confident thing the row could say and the one thing nobody knows. `lastSeen` is
+      // already an approximation (a heartbeat's time standing in for a fault's), and
+      // approximating an approximation with `now()` is where it stops being one.
+      timestamp: d?.lastSeen ?? null,
       isActive: true,
     }));
   },
