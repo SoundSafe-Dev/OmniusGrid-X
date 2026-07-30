@@ -1,4 +1,4 @@
-"""Every table with an `organization_id` should have a tenant policy. Eleven do not.
+"""Every table with an `organization_id` should have a tenant policy. Eight do not.
 
 Migrations 011, 033 and 051 each enumerated the tables they covered. That works exactly once:
 every table added afterwards starts outside every policy, and nothing says so —
@@ -13,10 +13,10 @@ day it lands rather than the day somebody reads a handler carefully.
 
 THE BASELINE BELOW IS A LIST OF GAPS, NOT A LIST OF APPROVALS. Two entries are genuine
 exemptions — `users` and `api_keys` are read before any tenant is known, so a policy keyed on
-`app.current_org_id` would lock out authentication itself. The other nine are real holes with
+`app.current_org_id` would lock out authentication itself. The other six are real holes with
 real reasons for not being closed in this change, and each says what closing it requires.
 Closing one is a migration plus an audit of every query against that table, in the order
-migration 051 insists on: application layer first, policy second. Doing eleven of those blind
+migration 051 insists on: application layer first, policy second. Doing eight of those blind
 would be reckless — enabling FORCE on `users` without tracing every auth path is how you take
 down login.
 
@@ -62,11 +62,13 @@ NO_POLICY: dict[str, str] = {
         "but the table has no policy, so the filter is the only defence. Closing it needs a "
         "check of the ingestion path, which writes error events with no user context."
     ),
-    "edge_agent_status": (
-        "REAL GAP. Written by the ingestion worker, which binds the tenant GUC per message — "
-        "so a policy would probably work, but the heartbeat path has to be verified first: it "
-        "runs on AsyncSessionLocal and a FORCE policy would silently drop every write."
-    ),
+    # `edge_agent_status` was HERE and is CLOSED by migration 057. Its entry said to verify the
+    # heartbeat path first, because it ran on AsyncSessionLocal and a FORCE policy would have
+    # dropped every write. Verifying it found worse: the heartbeat never wrote organization_id
+    # AT ALL, while both read endpoints filter on it — so /admin/collectors was empty for every
+    # tenant in every deployment since the endpoint was written. Closing the gap meant giving
+    # the agent a tenant (from its certificate, with the CA no longer copying the CSR's subject)
+    # before the policy could go on. See test_edge_fleet_tenancy_realdb.py.
 }
 
 #: Tables with RLS enabled but NOT forced. The owner bypasses the policy, so this reads as
@@ -176,7 +178,7 @@ class TestTheBaselineStaysHonest:
 
     def test_every_entry_says_what_closing_it_requires(self):
         """An entry reading "TODO" is a gap with extra steps. Two of these are permanent
-        exemptions and say so; the other nine name the thing to check first."""
+        exemptions and say so; the other six name the thing to check first."""
         for table, reason in {**NO_POLICY, **NO_FORCE}.items():
             assert len(reason) > 60, f"{table}'s reason is too thin to act on: {reason!r}"
 
@@ -186,7 +188,7 @@ class TestTheBaselineStaysHonest:
         assert "EXEMPT BY NECESSITY" in NO_POLICY["users"]
         assert "EXEMPT BY NECESSITY" in NO_POLICY["api_keys"]
         real_gaps = [t for t, r in NO_POLICY.items() if "EXEMPT BY NECESSITY" not in r]
-        assert len(real_gaps) == 2, (
+        assert len(real_gaps) == 1, (
             f"the count of real gaps changed ({real_gaps}) — if one was closed, remove it; if "
             "one was added, that is a regression this test should not have allowed"
         )

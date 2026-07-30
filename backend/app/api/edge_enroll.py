@@ -12,6 +12,7 @@ edge endpoints (heartbeat, telemetry uplink) depend on it to obtain a verified
 
 import hmac
 
+import structlog
 from fastapi import APIRouter, Header, HTTPException, Request, status
 from pydantic import BaseModel
 
@@ -23,6 +24,7 @@ from app.services.edge_ca import (
 )
 
 router = APIRouter()
+logger = structlog.get_logger(__name__)
 
 
 class EnrollRequest(BaseModel):
@@ -37,6 +39,49 @@ class EnrollResponse(BaseModel):
 
 def _bootstrap_token() -> str:
     return getattr(settings, "EDGE_BOOTSTRAP_TOKEN", "") or ""
+
+
+async def _enrolment_organization_id() -> str | None:
+    """Which tenant this agent is being enrolled into — decided by the SERVER.
+
+    There is deliberately no `organization_id` on :class:`EnrollRequest`. An
+    agent that names its own tenant is the same defect this codebase has now
+    fixed in twenty-six handlers, and a certificate would make the claim durable
+    and CA-signed rather than merely trusted for one request.
+
+    Two sources, in order:
+
+    1. ``EDGE_ENROLLMENT_ORGANIZATION_ID`` — explicit, per edge gateway. This is
+       what a multi-tenant deployment sets.
+    2. The single organisation, when there is exactly one. Unambiguous, so it
+       needs no configuration, and it is what every deployment of this platform
+       looks like today.
+
+    More than one organisation and no setting is ambiguous, and returns ``None``
+    so the caller can refuse. Guessing here would attribute a fleet to whichever
+    tenant happened to be first.
+    """
+    configured = (getattr(settings, "EDGE_ENROLLMENT_ORGANIZATION_ID", "") or "").strip()
+    if configured:
+        return configured
+
+    from sqlalchemy import select
+
+    from app.db.database import AsyncSessionLocal
+    from app.db.models import Organization
+
+    try:
+        async with AsyncSessionLocal() as session:
+            rows = (
+                await session.execute(select(Organization.id).limit(2))
+            ).scalars().all()
+    except Exception as e:
+        # A database this path cannot reach is not evidence of one organisation.
+        # Refuse, so the failure surfaces as "cannot determine the tenant"
+        # rather than as an unattributed certificate or a 500.
+        logger.warning("edge_enrolment_org_lookup_failed", error=str(e))
+        return None
+    return str(rows[0]) if len(rows) == 1 else None
 
 
 @router.post("/api/v1/edge/enroll", response_model=EnrollResponse, tags=["Edge"])
@@ -57,8 +102,22 @@ async def enroll_agent(
     if not presented or not hmac.compare_digest(presented, expected):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="invalid bootstrap token")
 
+    organization_id = await _enrolment_organization_id()
+    if organization_id is None:
+        # Refuse rather than issue an unattributed certificate. An agent whose
+        # certificate carries no tenant heartbeats fine and then never appears
+        # on anybody's fleet page — a silent half-enrolment is worse than a
+        # loud refusal naming the setting that fixes it.
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail=(
+                "cannot determine which organization to enroll this agent into: "
+                "more than one exists and EDGE_ENROLLMENT_ORGANIZATION_ID is not set"
+            ),
+        )
+
     try:
-        cert_pem = edge_ca.sign_csr(body.csr, body.agent_id)
+        cert_pem = edge_ca.sign_csr(body.csr, body.agent_id, organization_id=organization_id)
     except CertificateVerificationError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(e))
 

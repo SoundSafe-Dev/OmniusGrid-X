@@ -77,6 +77,13 @@ class Settings(BaseSettings):
     EDGE_CA_KEY_PATH: str = "/certs/edge-ca.key"
     EDGE_BOOTSTRAP_TOKEN: str = ""   # one-time token agents present to enroll
     EDGE_CERT_TTL_DAYS: int = 30     # validity of issued agent certificates
+    # The tenant enrolling agents are issued certificates for. Server-side and
+    # deliberately NOT a field on the enrolment request: an agent that names its
+    # own organisation is the tenant-from-the-body defect. Blank means "resolve
+    # it", which succeeds only where the answer is unambiguous — exactly one
+    # organisation exists. A multi-tenant deployment must set this per edge
+    # gateway; enrolment refuses rather than guessing.
+    EDGE_ENROLLMENT_ORGANIZATION_ID: str = ""
 
     # Distributed tracing (OpenTelemetry). Off by default; a no-op when disabled.
     OTEL_ENABLED: bool = False

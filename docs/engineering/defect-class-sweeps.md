@@ -2212,6 +2212,19 @@ one of its findings. The habit that catches it:
    the mutation, because whether the copy is patched is exactly what varies.
    *(Fuller account: § Rule 45.)*
 
+46. **A filter added to a read is a claim about the write path.**
+   `WHERE organization_id = :org` asserts that something fills that column. Nothing did, so
+   `/admin/collectors` was empty for every tenant since the endpoint was written — a leak
+   converted into a permanent emptiness by a fix that was otherwise right. Check the writer in
+   the same commit, and assert the column from the write side against the database.
+   *(Fuller account: § Rule 46.)*
+
+47. **Fixing one half of a defect can arm the other half.**
+   One tenant claiming another's `agent_id` was inert while the tenancy column was never
+   written; attributing the row made the last heartbeat win the tenancy. Ask what a dormant
+   defect was being kept dormant *by*, before removing it.
+   *(Fuller account: § Rule 47.)*
+
 ---
 
 ## Open observations, not yet tickets
@@ -3470,3 +3483,83 @@ mutation as well as the fix — because in that test's context the module's copy
 the patched one, and the entire defect is that this varies. The test now poisons
 `app.core.tenant.AsyncSessionLocal` with a maker that raises and asserts `tenant_session` still
 works. Simulate the broken state rather than hoping the test runs in it.
+
+## Class 43: a scoped read against a column the write path never fills
+
+`GET /api/v1/edge/fleet` backs the `/admin/collectors` page. It filtered on
+`EdgeAgentStatus.organization_id` — and `POST /api/v1/edge/heartbeat`, the only writer of that
+table, **never set that column**. Nothing else in the tree did either; the only three
+occurrences of `organization_id` in `app/api/edge_fleet.py` were the two read filters and a
+comment.
+
+So the column was NULL on every row ever written, `NULL = '<uuid>'` is NULL, no row could
+satisfy the predicate, and the fleet page was **empty for every tenant in every deployment since
+the endpoint was written**. `/fleet/{agent_id}` 404'd for the same reason. An operator reads
+that as "no agents are enrolled." The frontend even says so in as many words: *"No edge agents
+have reported yet. Agents appear here once they enroll and send a heartbeat."*
+
+**The filter was not the mistake.** It was added as a security fix, and the comment above it
+still explains why: the read used to be unscoped, so every authenticated user saw every tenant's
+agent ids, versions, certificate expiry and buffer depths. That fix was right. It scoped a read
+against a column the write path never populated, and so converted a leak into a permanent
+emptiness — and nothing failed, because there was no test on either endpoint. The only edge
+fleet tests covered the pure liveness helper, which needs no database.
+
+### The obvious fix would have been a hole
+
+An agent's tenant belongs in its certificate: already verified, already the identity the
+heartbeat trusts. But `sign_csr` did `.subject_name(csr.subject)` — it copied the CSR's entire
+subject into the signed certificate and validated only the CN. Every other attribute was
+client-supplied and came back CA-signed, indistinguishable from a server assertion.
+
+Reading the organisation out of that subject would have been **the tenant-from-the-body defect
+wearing a certificate**, and worse than the original: durable for the certificate's lifetime and
+carrying the CA's signature. The CA now builds the subject itself, from the agent id it checked
+and the organisation the *server* chose; anything else in the CSR is discarded. The guard
+asserts the whole subject, not just the O — `{CN, O}` and nothing else — so the next attribute
+somebody starts trusting is covered before it is trusted.
+
+Enrolment decides the organisation server-side: `EDGE_ENROLLMENT_ORGANIZATION_ID` if set, else
+the single organisation when there is exactly one, else **refuse**. There is deliberately no
+`organization_id` on the enrolment request.
+
+### Migration 057, and why unattributed rows are deleted rather than kept
+
+Once the policy is on, a row with a NULL `organization_id` is readable by no tenant and
+updatable by no tenant — and it makes its agent permanently broken, because the next heartbeat
+cannot see the row through the policy, tries to INSERT, and hits the primary key. Deleting them
+is what makes the upgrade self-healing: the next heartbeat recreates each row, attributed.
+Nothing is lost that a thirty-second heartbeat does not restore.
+
+A certificate issued before agents carried an organisation has no tenant to bind, so its
+heartbeat is refused with a 409 naming the remedy rather than failing the policy check with a
+500. Certificates are issued for `EDGE_CERT_TTL_DAYS` (30), so **the transition window closes
+itself within one certificate lifetime** — which is the fact that made closing this gap safe.
+
+## Rule 46 — a filter added to a read is a claim about the write path
+
+Adding `WHERE organization_id = :org` asserts that something fills `organization_id`. Nobody
+did, and nobody had to: the read got safer, the tests stayed green, and the page went blank.
+
+A scoping fix is only half a change. Check the writer in the same commit — and when a column is
+supposed to be populated, assert it **from the write side**, against the database, not by
+reading the handler that is supposed to set it.
+
+The tell is available statically and cheaply: a column that appears in `WHERE` clauses and never
+on the left of an assignment is a column nobody writes.
+
+## Rule 47 — fixing one half of a defect can arm the other half
+
+`agent_id` is the primary key of `edge_agent_status` — one global namespace across every tenant
+— and the CA signs a certificate for whatever id is asked for. While the organisation column was
+never written, that was inert: a second tenant enrolling the same id overwrote counters on a row
+nobody could read.
+
+Attributing the row gives it teeth. The last heartbeat would win the *tenancy*, so B enrolling
+`agent-of-a` moves A's agent onto B's fleet page and off A's. The fix for one defect created the
+conditions for the next, in the same file, in the same commit.
+
+Ask what a dormant defect was being kept dormant *by*, before removing it. The heartbeat now
+refuses the rebind — and under the policy that check is unreachable (the other tenant's row is
+filtered out of the lookup), so the collision surfaces as the primary-key violation, which is
+handled too. Both paths, because the SQLite offline path has no policy at all.
