@@ -253,6 +253,12 @@ export const NOT_A_QUERY_EMPTY_STATE: Record<string, string> = {
   // describes THAT assessment, not the absence of a response.
   'No notification dispatched for this assessment':
     'pages/predictive/PredictiveMaintenance.tsx',
+  // FIELDS OF A TASK ALREADY IN HAND, not results of a fetch. `TaskDetailModal` takes the
+  // task as a prop and renders `task.description || 'No description provided'`; a task with
+  // no description genuinely has none, and no request could have failed instead. Its one real
+  // empty state — the assignee dropdown's "No users available" — is a fetch and is guarded.
+  'No description provided': 'components/kanban/TaskDetailModal.tsx',
+  'No due date': 'components/kanban/TaskDetailModal.tsx',
   // A ROUTER FALLBACK, not a query result. `App.tsx` renders it for an unmatched URL, and
   // entered this population only because `.then(` appears in its lazy route imports. There is
   // no request behind it that could have failed instead.
@@ -468,31 +474,22 @@ describe('the per-item exemptions stay honest', () => {
 })
 
 /**
- * OWNED BY ANOTHER LANE, and surfaced only when this sweep's population grew to include
- * components that fetch by hand rather than through react-query. Every one of them sets its
- * own error state and renders the empty branch anyway.
+ * NO LANE BASELINE ANY MORE, and the list is worth recording as history.
  *
- * They are listed rather than fixed because editing another lane's subsystem blind is how you
- * break something you cannot test, and asserted BOTH ways — a new offender outside this list
- * fails, and an entry that starts passing also fails — so the list cannot quietly rot.
+ * Broadening the population past `useQuery` surfaced eight offenders in the kanban, NLP and
+ * intake components — every one of them setting no error state at all, catching the failure,
+ * and rendering the empty branch. They were listed with owners rather than fixed, on the
+ * reasoning that editing another lane's subsystem blind is how you break what you cannot test.
  *
- * Do not add to this list to make your own change go green.
+ * They were then checked against `docs/planning/next-week-task-pool.md`: none of the eight
+ * files appears in any assigned item, so touching them collides with nobody's work in flight.
+ * All eight are fixed, the list is gone, and the assertion below is unconditional again — a
+ * baseline that reaches zero should be deleted, not kept as a monument.
  */
-const KNOWN_LANE_OFFENDERS: Record<string, string> = {
-  'components/kanban/TaskDetailModal.tsx': 'HARSH — kanban',
-  'components/nlp/ChatHistoryModal.tsx': 'HARSH — correlation AI / NLP',
-  'components/nlp/ContextPanel.tsx': 'HARSH — correlation AI / NLP',
-  'components/nlp/DataSourcesPanel.tsx': 'HARSH — correlation AI / NLP',
-  'components/nlp/IntakeSelectorDialog.tsx': 'HARSH — intake',
-  'components/nlp/RealTimeDataPanel.tsx': 'HARSH — correlation AI / NLP',
-  'components/nlp/SessionList.tsx': 'HARSH — correlation AI / NLP',
-  'pages/intake/IntakeInbox.tsx': 'HARSH — intake',
-}
-
 describe('no querying component renders a failure as emptiness', () => {
   it('has no offenders', () => {
     expect(
-      OFFENDERS.filter((o) => !(o.file in KNOWN_LANE_OFFENDERS)).map(
+      OFFENDERS.map(
         (o) =>
           `${o.file} — a failed query falls through to ${JSON.stringify(o.states)}, ` +
           `which reads as a fact about the world rather than about the request`,
@@ -500,21 +497,6 @@ describe('no querying component renders a failure as emptiness', () => {
     ).toEqual([])
   })
 
-  it('the lane list names nothing that is already fixed', () => {
-    // Shrinking is the good direction, so this fails loudly rather than rotting: an entry
-    // that no longer offends is a claim about somebody else's code that is no longer true.
-    const offending = new Set(OFFENDERS.map((o) => o.file))
-    expect(
-      Object.keys(KNOWN_LANE_OFFENDERS).filter((f) => !offending.has(f)),
-    ).toEqual([])
-  })
-
-  it('every lane entry names an owner', () => {
-    const anonymous = Object.entries(KNOWN_LANE_OFFENDERS)
-      .filter(([, owner]) => !/^(HARSH|Hridyansh|htreinen|Alex) — /.test(owner))
-      .map(([file]) => file)
-    expect(anonymous).toEqual([])
-  })
 })
 
 // ---------------------------------------------------------------------------

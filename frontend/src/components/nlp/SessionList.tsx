@@ -22,10 +22,15 @@ export const SessionList: React.FC<SessionListProps> = ({
   const { confirm, alert } = useDialog();
   const [sessions, setSessions] = useState<AnalysisSession[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  // The catch below already clears the list "to avoid showing stale data", which is right —
+  // and left "No sessions found" as the only thing on screen. Clearing and saying nothing
+  // happened are different acts.
+  const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
   const loadSessions = async () => {
     setIsLoading(true);
+    setError(null);
     try {
       console.log('[SessionList] Loading sessions...');
       const response = await analysisSessionsApi.listSessions(50, 0, 'active');
@@ -35,6 +40,7 @@ export const SessionList: React.FC<SessionListProps> = ({
       console.error('[SessionList] Error loading sessions:', error);
       // On error, clear sessions to avoid showing stale data
       setSessions([]);
+      setError('Could not load sessions.');
     } finally {
       setIsLoading(false);
     }
@@ -124,6 +130,8 @@ export const SessionList: React.FC<SessionListProps> = ({
           <div className="p-4 text-center text-opsgrid-text-secondary text-sm">
             Loading sessions...
           </div>
+        ) : error ? (
+          <div className="p-4 text-center text-status-alarm text-sm">{error}</div>
         ) : filteredSessions.length === 0 ? (
           <div className="p-4 text-center text-opsgrid-text-secondary text-sm">
             No sessions found

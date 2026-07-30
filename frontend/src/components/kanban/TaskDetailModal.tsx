@@ -35,6 +35,10 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formData, setFormData] = useState<Partial<Task>>({});
   const [users, setUsers] = useState<User[]>([]);
+  // A failed fetch left the list empty and the dropdown said "No users available", which
+  // reads as an organisation with nobody in it — so the operator stops trying to assign
+  // rather than retrying.
+  const [usersError, setUsersError] = useState(false);
   const [showAssignDropdown, setShowAssignDropdown] = useState(false);
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -44,6 +48,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
     const fetchUsers = async () => {
       if (!isOpen) return;
       setIsLoadingUsers(true);
+      setUsersError(false);
       try {
         // Use the shared API client: it resolves the base URL per environment
         // (same-origin in prod, not a hardcoded localhost:8000) and attaches the
@@ -54,6 +59,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
         setUsers(response.data.items || []);
       } catch (error) {
         console.error('Failed to fetch users:', error);
+        setUsersError(true);
       } finally {
         setIsLoadingUsers(false);
       }
@@ -378,6 +384,10 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                 <div className="absolute z-10 mt-1 w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg max-h-60 overflow-y-auto">
                   {isLoadingUsers ? (
                     <div className="px-3 py-2 text-sm text-gray-500">Loading users...</div>
+                  ) : usersError ? (
+                    <div className="px-3 py-2 text-sm text-status-alarm">
+                      Could not load users.
+                    </div>
                   ) : users.length === 0 ? (
                     <div className="px-3 py-2 text-sm text-gray-500">No users available</div>
                   ) : (

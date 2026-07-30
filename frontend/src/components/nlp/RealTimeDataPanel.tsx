@@ -17,6 +17,11 @@ export const RealTimeDataPanel: React.FC<RealTimeDataPanelProps> = ({
   const [kanban, setKanban] = useState<any>(null);
   const [registries, setRegistries] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
+  // Every tab's data starts as `null`, and a failed fetch left it that way — so the panel
+  // rendered "No data available" for a request that never returned. The tab-level empty
+  // states below ("No telemetry data", "No alarms", …) are reached only once data HAS
+  // arrived, so the one gate here covers all five.
+  const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'telemetry' | 'alarms' | 'kanban' | 'registries'>('telemetry');
 
   useEffect(() => {
@@ -28,6 +33,7 @@ export const RealTimeDataPanel: React.FC<RealTimeDataPanelProps> = ({
 
   const loadData = async () => {
     setIsLoading(true);
+    setError(null);
     try {
       switch (activeTab) {
         case 'telemetry': {
@@ -51,8 +57,9 @@ export const RealTimeDataPanel: React.FC<RealTimeDataPanelProps> = ({
           break;
         }
       }
-    } catch (error) {
-      console.error('Error loading context data:', error);
+    } catch (err) {
+      console.error('Error loading context data:', err);
+      setError('Could not load this context.');
     } finally {
       setIsLoading(false);
     }
@@ -75,6 +82,14 @@ export const RealTimeDataPanel: React.FC<RealTimeDataPanelProps> = ({
     }
 
     const data = { telemetry, alarms, kanban, registries }[activeTab];
+
+    if (error) {
+      return (
+        <div className="text-center py-8">
+          <p className="text-sm text-status-alarm">{error}</p>
+        </div>
+      );
+    }
 
     if (!data) {
       return (

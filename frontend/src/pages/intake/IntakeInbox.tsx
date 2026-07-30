@@ -10,6 +10,9 @@ import { Upload, FileText, Image, FileSpreadsheet, Loader2, CheckCircle, Search 
 export const IntakeInbox: React.FC = () => {
   const [items, setItems] = useState<IntakeItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  // A failed load rendered "No items in the inbox" above "Upload data to get started" — an
+  // invitation to re-upload work that may already be there.
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [analyzing, setAnalyzing] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -26,11 +29,13 @@ export const IntakeInbox: React.FC = () => {
 
   const loadIntakeItems = async () => {
     setIsLoading(true);
+    setLoadError(null);
     try {
       const response = await nlpCorrelationApi.listIntakeItems(50, 0, statusFilter === 'all' ? undefined : statusFilter);
       setItems(response.items);
     } catch (error) {
       console.error('Error loading intake items:', error);
+      setLoadError('Could not load the inbox.');
     } finally {
       setIsLoading(false);
     }
@@ -261,6 +266,13 @@ export const IntakeInbox: React.FC = () => {
         {isLoading ? (
           <div className="flex items-center justify-center py-8">
             <Loader2 className="w-8 h-8 animate-spin text-opsgrid-primary" />
+          </div>
+        ) : loadError ? (
+          <div className="text-center py-8 text-status-alarm" role="alert">
+            <p>{loadError}</p>
+            <p className="text-sm text-opsgrid-text-secondary">
+              This is a loading failure, not an empty inbox.
+            </p>
           </div>
         ) : filteredItems.length === 0 ? (
           <div className="text-center py-8 text-opsgrid-text-secondary">

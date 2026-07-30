@@ -16,6 +16,9 @@ export const ChatHistoryModal: React.FC<ChatHistoryModalProps> = ({
 }) => {
   const [messages, setMessages] = useState<SessionMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  // Without this a failed fetch left `messages` empty and the modal said "No chat history
+  // found" — a claim that the conversation did not happen.
+  const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [sessionIdFilter, setSessionIdFilter] = useState<string | undefined>();
   const [sessions, setSessions] = useState<AnalysisSession[]>([]);
@@ -39,11 +42,13 @@ export const ChatHistoryModal: React.FC<ChatHistoryModalProps> = ({
 
   const loadChatHistory = async () => {
     setIsLoading(true);
+    setError(null);
     try {
       const history = await analysisSessionsApi.getChatHistory(100, 0, sessionIdFilter);
       setMessages(history);
-    } catch (error) {
-      console.error('Error loading chat history:', error);
+    } catch (err) {
+      console.error('Error loading chat history:', err);
+      setError('Could not load chat history.');
     } finally {
       setIsLoading(false);
     }
@@ -122,6 +127,8 @@ export const ChatHistoryModal: React.FC<ChatHistoryModalProps> = ({
         <div className="flex-1 overflow-y-auto p-4">
           {isLoading ? (
             <div className="text-center text-opsgrid-text-secondary py-8">Loading...</div>
+          ) : error ? (
+            <div className="text-center text-status-alarm py-8">{error}</div>
           ) : messages.length === 0 ? (
             <div className="text-center text-opsgrid-text-secondary py-8">
               No chat history found

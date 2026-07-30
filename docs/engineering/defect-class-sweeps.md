@@ -4501,3 +4501,39 @@ strictly larger than "anything that uses the library we happened to be using whe
 
 The same shape as rule 48, one level up: there the guard asked the right question of too few
 files; here it asked it of the right files for the wrong reason.
+
+## The eight, fixed
+
+The lane baseline recorded eight offenders in kanban, NLP and intake, on the reasoning that
+editing another lane's subsystem blind is how you break what you cannot test. Checked against
+`docs/planning/next-week-task-pool.md` first: Harsh's assigned items are the scenario builders,
+the deselected mappers, the quarantine expiry, the `simulated` flag, the Gemma adapter, the
+kanban RLS work in `kanban.py`, the intake 500 and splitting `CorrelationAIPane.tsx`. Alex's are
+header parsing and docs. **None of the eight files appears in any assigned item**, so the fix
+collides with nothing in flight.
+
+**Not one of the eight had an error state at all.** Every one caught the failure, logged it, and
+rendered the empty branch. Two are worth quoting:
+
+* `SessionList` clears its list in the catch, under a comment reading *"On error, clear sessions
+  to avoid showing stale data."* The author thought about it and got the first half right —
+  clearing IS correct — then left "No sessions found" as the only thing on screen. Clearing the
+  data and saying nothing happened are different acts.
+* `IntakeInbox` rendered *"No items in the inbox"* above *"Upload data to get started with AI
+  analysis"* — an invitation to re-upload work that may already be there.
+
+`RealTimeDataPanel` needed one gate for five empty states: every tab's data starts `null` and
+the per-tab strings ("No telemetry data", "No alarms", …) are reached only once data has
+arrived, so the top-level `!data` branch is where a failure lands.
+
+`TaskDetailModal` was the mixed case. Of its three flagged strings, two — "No description
+provided" and "No due date" — are fields of a task the modal receives as a **prop**; a task with
+no description genuinely has none and no request could have failed instead. Only the assignee
+dropdown's "No users available" is a fetch. The two are exempted by name, the one is gated.
+
+### The baseline is deleted, not kept
+
+A list of other people's defects earns its place by being shorter than the work. Once it reaches
+zero it is a monument, and the assertion beneath it should be unconditional again. Its two
+companion tests — "names nothing already fixed" and "every entry names an owner" — went with it;
+they existed to keep the list honest, and there is no list.

@@ -33,6 +33,10 @@ export const DataSourcesPanel = React.forwardRef<DataSourcesPanelHandle, DataSou
   const [isDragging, setIsDragging] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  // Distinct from `uploadError`, which is about a file the user just added. This one is
+  // about the LIST: a failed load left it empty and the panel said "No data sources added
+  // yet", telling the user they had added nothing.
+  const [loadError, setLoadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useImperativeHandle(ref, () => ({
@@ -52,11 +56,17 @@ export const DataSourcesPanel = React.forwardRef<DataSourcesPanelHandle, DataSou
 
   const loadDataSources = async (targetSessionId = sessionId) => {
     setIsLoading(true);
+    setLoadError(null);
     try {
       const sources = await analysisSessionsApi.listSessionData(targetSessionId);
       setDataSources(sources);
     } catch (error) {
       console.error('Error loading data sources:', error);
+      setLoadError(
+        isSessionNotFound(error)
+          ? 'This session no longer exists.'
+          : 'Could not load data sources.',
+      );
     } finally {
       setIsLoading(false);
     }
@@ -302,6 +312,8 @@ export const DataSourcesPanel = React.forwardRef<DataSourcesPanelHandle, DataSou
           <div className="text-center text-opsgrid-text-secondary text-sm py-4">
             Loading data sources...
           </div>
+        ) : loadError ? (
+          <div className="text-center text-status-alarm text-sm py-4">{loadError}</div>
         ) : dataSources.length === 0 ? (
           <div className="text-center text-opsgrid-text-secondary text-sm py-4">
             No data sources added yet
