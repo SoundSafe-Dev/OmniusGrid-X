@@ -110,17 +110,23 @@ jobs:
         #
         # test_shared_key_detector.py::test_normalize_key was on this list and PASSES
         # now, so CI was skipping working coverage. Removed.
+        #
+        # 2026-07-30: four more came off. The three scenario-builder files and
+        # test_image_domain_mapper.py::test_map_image_domains were all one defect —
+        # tests still asserting the API that merge 42ed66d8 replaced — and they now
+        # collect and pass. CI runs 21 rewritten tests over builders that
+        # nlp_correlation.py and analysis_sessions.py call on every intake.
+        #
+        # One deselect remains, and it is the only one that needs a decision rather
+        # than a rewrite: the document mapper's table-content branch genuinely
+        # disagrees with its test about what it should return.
         run: |
           # --cov-fail-under=54 set from the MEASURED baseline (55% at the time of
           # writing) with a 1-point margin, so this is a ratchet: it cannot be met
           # by deleting tests, and it fails if new untested code dilutes the total.
           # Raise it as coverage improves; do NOT lower it to make a build pass.
           pytest --cov=app --cov-report=xml --cov-report=term --cov-fail-under=54 \
-            --ignore=tests/test_document_scenario_builder.py \
-            --ignore=tests/test_image_scenario_builder.py \
-            --ignore=tests/test_cross_file_scenario_builder.py \
-            --deselect tests/test_document_domain_mapper.py::test_map_section_to_domain_table_content \
-            --deselect tests/test_image_domain_mapper.py::test_map_image_domains
+            --deselect tests/test_document_domain_mapper.py::test_map_section_to_domain_table_content
 
       - name: Upload coverage
         uses: codecov/codecov-action@v3

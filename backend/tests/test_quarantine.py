@@ -49,52 +49,38 @@ class Quarantined:
 # enough that nobody inherits it silently.
 _EXPIRY = date(2026, 9, 23)
 
+#: FOUR ENTRIES WERE RELEASED ON 2026-07-30, by the staleness check below doing
+#: exactly what it was built for. All four were the same defect — a test left
+#: asserting an API the converged merge 42ed66d8 had replaced — and none of them
+#: needed a production change:
+#:
+#:   tests/test_document_scenario_builder.py     rewritten, 8 tests
+#:   tests/test_image_scenario_builder.py        rewritten, 6 tests
+#:   tests/test_cross_file_scenario_builder.py   rewritten, 7 tests
+#:   tests/test_image_domain_mapper.py::test_map_image_domains   one test repaired
+#:
+#: The register said these were "written against an API that never shipped" and
+#: left them for the owning lane. That was half right: the API they wanted never
+#: shipped, but the builders they cover are live — nlp_correlation.py and
+#: analysis_sessions.py call them on every intake — so CI was skipping coverage
+#: of production code, not of an unbuilt feature. The rewrites assert the
+#: contract each module's own docstring states.
 REGISTER: tuple[Quarantined, ...] = (
-    Quarantined(
-        target="tests/test_document_scenario_builder.py",
-        owner="HARSH (intake/parsing)",
-        # A real diagnosis, not "fails at collection". This is a one-line import
-        # mismatch, which is worth the owner knowing before they budget time for it.
-        diagnosis=(
-            "ImportError: the test imports `build_document_scenarios` but "
-            "app/services/document_scenario_builder.py exports `build_scenarios`. "
-            "Either the function was renamed without updating the test, or the test "
-            "was written against a planned API. Nothing is broken at runtime — no "
-            "production code imports the name the test expects."
-        ),
-        expires=_EXPIRY,
-        kind="collection",
-    ),
-    Quarantined(
-        target="tests/test_image_scenario_builder.py",
-        owner="HARSH (intake/parsing)",
-        diagnosis=(
-            "ImportError on import from app/services/image_scenario_builder.py — "
-            "same shape as the document builder above."
-        ),
-        expires=_EXPIRY,
-        kind="collection",
-    ),
-    Quarantined(
-        target="tests/test_cross_file_scenario_builder.py",
-        owner="HARSH (intake/parsing)",
-        diagnosis=(
-            "ImportError on import from app/services/cross_file_scenario_builder.py "
-            "— same shape as the two above."
-        ),
-        expires=_EXPIRY,
-        kind="collection",
-    ),
     Quarantined(
         target="tests/test_document_domain_mapper.py::test_map_section_to_domain_table_content",
         owner="HARSH (intake/parsing)",
-        diagnosis="Assertion failure in table-content domain mapping; collects fine.",
-        expires=_EXPIRY,
-    ),
-    Quarantined(
-        target="tests/test_image_domain_mapper.py::test_map_image_domains",
-        owner="HARSH (intake/parsing)",
-        diagnosis="Assertion failure in image domain mapping; collects fine.",
+        # The one entry that is NOT a stale-API mismatch, and the reason it stays.
+        # map_section_to_domain returns None for a table whose header row is
+        # ["asset_id", "status"] with a "failed" cell, where the test expects MNT.
+        # That is a disagreement about what the mapper should do, not about what
+        # it is called: either table-content mapping has a gap, or the test's
+        # expectation was never right. Deciding needs the lane that owns the
+        # keyword sets — the other four did not need anyone's judgement.
+        diagnosis=(
+            "map_section_to_domain returns None where the test expects MNT for "
+            "table content; collects fine. NOT an API mismatch — a genuine "
+            "disagreement about mapping behaviour."
+        ),
         expires=_EXPIRY,
     ),
 )

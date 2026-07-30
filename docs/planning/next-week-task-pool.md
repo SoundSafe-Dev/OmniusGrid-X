@@ -69,13 +69,42 @@ These cost a conversation, not a sprint, and each blocks real work.
    Done when: the answer is written down, and #13/#14 are either scheduled or closed as
    won't-do.
 
-2. **Quarantined tests — fix or delete?** · *blocks #10, #11, #12*
-   Three test files are `--ignore`d and two tests deselected in `ci-cd.yml`. They fail at
-   *collection*, so a module and its tests disagree about the API. Fixing and deleting are
-   both defensible; leaving them excluded is not, because the exclusion is invisible in a
-   green build.
+2. **Quarantined tests — MOSTLY ANSWERED 2026-07-30. One left, and it is the real one.**
+   Four of the five were fixed: the three scenario-builder files were rewritten against the
+   API their modules actually export (8 + 6 + 7 tests) and
+   `test_image_domain_mapper.py::test_map_image_domains` was repaired. All four `--ignore`
+   /`--deselect` flags are out of `ci-cd.yml` and both registers are updated. **No production
+   code changed** — every one was a test left asserting the API that merge `42ed66d8`
+   replaced.
 
-   Done when: a decision per file, and #12 is scheduled regardless of which way it goes.
+   The register had reasoned these were "written against an API that never shipped" and left
+   them for the owning lane. Half right, and the wrong half mattered: the API they wanted
+   never shipped, but the builders they cover are **live on the intake path** —
+   `nlp_correlation.py:1594/1655/1794` and `analysis_sessions.py:972` call them on every
+   intake — so CI was skipping coverage of shipped code, not of an unbuilt feature. Worth
+   remembering the next time a quarantine entry says "not mine to touch": check whether the
+   thing under test is running in production before deciding it is someone else's problem.
+
+   **Still open, and it needs HARSH specifically:**
+   `test_document_domain_mapper.py::test_map_section_to_domain_table_content`.
+   `map_section_to_domain` returns `None` for a table whose header row is
+   `["asset_id", "status"]` with a `"failed"` cell, where the test expects `MNT`. That is a
+   disagreement about what the mapper *should* do — either table-content mapping has a gap or
+   the expectation was never right — and it is the only one of the five that needs a decision
+   about the intended taxonomy rather than a rewrite. It stays quarantined, expiring
+   2026-09-23.
+
+   Done when: HARSH decides which of the mapper and the test is wrong, and #12 is scheduled.
+
+2b. **The quarantine is tracked in two files that duplicate the same list.** S
+   `tests/test_quarantine.py` and `tests/test_ci_quarantine_expires.py` both hold a register
+   of what CI excludes, both check it against `ci-cd.yml`, and both had to be edited by hand
+   for the change above. Two sources of truth for "what is CI skipping" is the exact drift
+   these registers exist to prevent — they just cannot catch it in each other. Collapse to
+   one, with the other importing it.
+
+   Done when: one register is the source of truth and removing an entry means editing one
+   file.
 
 3. **`main` promotion window** · *pairs with #39*
    `hamad/converged-pre-main` is well ahead of `main`, and every dev is told to branch from

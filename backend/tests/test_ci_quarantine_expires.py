@@ -54,41 +54,24 @@ class Quarantined:
 #:
 #: `expires` is a date by which someone has to either fix the test or write down a new
 #: reason. It is deliberately not far away — the value of an expiry is that it arrives.
-IGNORED_FILES: dict[str, Quarantined] = {
-    "test_document_scenario_builder.py": Quarantined(
-        reason=(
-            "ImportError at collection: imports `build_document_scenarios` from "
-            "app.services.document_scenario_builder, which exports `build_scenarios`."
-        ),
-        owner="intake lane (scenario builders)",
-        expires="2026-09-30",
-        fix="rename the import to `build_scenarios`, then run the file and see what the "
-            "assertions expect — the name is the collection error, not necessarily the "
-            "whole failure.",
-    ),
-    "test_image_scenario_builder.py": Quarantined(
-        reason=(
-            "ImportError at collection: imports `build_image_scenarios` from "
-            "app.services.image_scenario_builder, which exports `build_scenarios`."
-        ),
-        owner="intake lane (scenario builders)",
-        expires="2026-09-30",
-        fix="rename the import to `build_scenarios`; same caveat as the document builder.",
-    ),
-    "test_cross_file_scenario_builder.py": Quarantined(
-        reason=(
-            "ImportError at collection: imports a `CrossFileScenarioBuilder` CLASS from "
-            "app.services.cross_file_scenario_builder, which is function-based and exports "
-            "`build_cross_file_scenarios`."
-        ),
-        owner="intake lane (scenario builders)",
-        expires="2026-09-30",
-        fix="this one is not a rename — the test expects a class that was never written. "
-            "Either the module grows one or the test is rewritten against the function.",
-    ),
-}
+#: EMPTIED ON 2026-07-30. All three ignored files were rewritten against the API the
+#: modules actually export and now collect and pass (8 + 6 + 7 tests), so their
+#: --ignore flags came out of ci-cd.yml.
+#:
+#: The note at the top of this file said the renames were "not mine to make" because
+#: the assertions might encode behaviour the lane was still building. Checking that
+#: assumption is what dissolved it: the builders are not unbuilt, they are live on the
+#: intake path — nlp_correlation.py:1594/1655/1794 and analysis_sessions.py:972 call
+#: them — so the quarantine was hiding a gap in coverage of shipped code. The rewrites
+#: assert each module's documented contract and change no production code.
+IGNORED_FILES: dict[str, Quarantined] = {}
 
 #: Individually deselected tests. Same contract, smaller blast radius.
+#:
+#: test_image_domain_mapper.py::test_map_image_domains was released on 2026-07-30 —
+#: it was the same stale-API defect as the files above (it subscripted the mapping
+#: object and passed its text under the wrong key), not the taxonomy disagreement
+#: this entry guessed at.
 DESELECTED: dict[str, Quarantined] = {
     "tests/test_document_domain_mapper.py::test_map_section_to_domain_table_content": (
         Quarantined(
@@ -96,18 +79,12 @@ DESELECTED: dict[str, Quarantined] = {
                    "branch does not return what the test expects.",
             owner="intake lane (domain mappers)",
             expires="2026-09-30",
-            fix="run it and compare the mapper's output to the expectation; one of the two "
-                "is wrong and the test does not say which.",
+            fix="map_section_to_domain returns None for a table whose header row is "
+                "['asset_id', 'status'] with a 'failed' cell, where the test expects MNT. "
+                "One of the two is wrong and the assertion does not say which — decide "
+                "which is the intended taxonomy first. This is the only one of the "
+                "original five that needs that decision rather than a rewrite.",
         )
-    ),
-    "tests/test_image_domain_mapper.py::test_map_image_domains": Quarantined(
-        reason="fails on assertion, not collection; the image mapper returns a different "
-               "domain set than the test expects.",
-        owner="intake lane (domain mappers)",
-        expires="2026-09-30",
-        fix="run the single test and diff the mapper's returned domains against the "
-            "expected list. As with the document mapper, one of the two is wrong and the "
-            "assertion does not say which — decide which is the intended taxonomy first.",
     ),
 }
 
@@ -123,9 +100,25 @@ class TestTheSweepIsNotVacuous:
         assert "pytest" in _workflow_text()
 
     def test_it_finds_the_exclusion_flags(self):
+        """Each flag form must appear in the workflow while its register has entries.
+
+        This asserted both forms unconditionally, which was right while the quarantine
+        held five items and wrong the moment it held fewer: emptying IGNORED_FILES on
+        2026-07-30 made a guard fail for the good outcome it exists to encourage. The
+        condition is what the guard actually means — a register with entries and no
+        matching flag in CI means the sweep below is inspecting nothing.
+        """
         text = _workflow_text()
-        assert "--ignore=" in text
-        assert "--deselect" in text
+        if IGNORED_FILES:
+            assert "--ignore=" in text, (
+                f"{len(IGNORED_FILES)} file(s) are registered as quarantined but the "
+                "workflow has no --ignore flag; the sweep is checking nothing"
+            )
+        if DESELECTED:
+            assert "--deselect" in text, (
+                f"{len(DESELECTED)} test(s) are registered as deselected but the "
+                "workflow has no --deselect flag; the sweep is checking nothing"
+            )
 
 
 class TestTheListMatchesCi:
