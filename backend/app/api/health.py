@@ -518,7 +518,17 @@ async def metrics():
 
 
 async def _vacuum_telemetry() -> None:
-    async with engine.connect() as connection:
+    # RESOLVED AT CALL TIME, from the module that owns it. This used the `engine` captured by
+    # `from app.db.database import ...` at import, and the test harness rebinds that name PER
+    # MODULE — so `app.api.health`'s copy was the placeholder, and the endpoint answered
+    # `role "placeholder" does not exist` to any test that reached it. Rule 45, and the same
+    # correction `core.tenant.tenant_session` needed for the same reason.
+    #
+    # Production has one engine, so this was never a live defect. It made the endpoint
+    # untestable, which is how it stayed unreached until a write-surface walk found it.
+    from app.db import database as _database
+
+    async with _database.engine.connect() as connection:
         autocommit_connection = await connection.execution_options(
             isolation_level="AUTOCOMMIT"
         )

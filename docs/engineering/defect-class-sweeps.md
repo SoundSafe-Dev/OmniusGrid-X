@@ -2315,6 +2315,13 @@ one of its findings. The habit that catches it:
    of the defect, not on how many of them are left.
    *(Fuller account: § Rule 60.)*
 
+61. **Sweep every name a module exports, not the one that broke.**
+   `conftest` rebinds `AsyncSessionLocal` across `sys.modules` because patching a hardcoded
+   list let `role "placeholder" does not exist` into the smoke suite. It swept one of the two
+   names `app.db.database` exports; six modules bind `engine`, and one of them opens a
+   connection on it. The attribute not causing trouble at the time is the one that will.
+   *(Fuller account: § Rule 61.)*
+
 ---
 
 ## Open observations, not yet tickets
@@ -4338,3 +4345,60 @@ did not break the endpoint for its owner, that the status predicate and the orde
 being moved inside `_scope`, and that the two layers agree rather than one masking the other.
 
 Two layers that disagree are worse than one, because whichever answers first decides.
+
+## Class 54: the write surface was never walked
+
+`test_realdb_endpoint_smoke.py` walks every GET against a migrated Postgres and asserts none of
+them 5xx. Nothing walked POST or PATCH, and the failure mode there is different: a body the
+handler did not expect should come back 422, and instead crashes inside the handler as a 500 the
+caller cannot act on. This codebase already names that distinction — `_uuid_or_404` and
+`_iso_or_400` both exist because somebody hit a 500 that should have been a 4xx — and neither
+was enforced anywhere.
+
+An **empty body** is the right probe: valid input to the test, invalid input to every handler,
+no ids to collide with, nothing written if a handler wrongly accepts it. `payload["name"]` on
+`{}` is a KeyError; `payload.get("name")` flowing into a NOT NULL column is an IntegrityError.
+Both are 500s that should be 422s.
+
+### The first version passed while testing nothing
+
+`/api/v1/auth/logout` is the **fourth route in registration order**. An empty POST to it
+succeeds, revokes the caller's session, and all 137 probes after it came back 401 — which the
+first version counted as acceptable, on the reasoning that a 401 means the walk never reached
+the handler. **133 of 141 probes were 401.** The walk was asserting, over and over, that an
+unauthenticated request is rejected.
+
+It was caught by mutation testing and not by reading: deliberately breaking a handler to
+`payload["name"]` produced no failure, and the endpoint answered 400 correctly when probed on
+its own. The gap between those two facts is the whole bug.
+
+Two changes, and the second is the one that matters:
+
+* logout and refresh are skipped, along with the three agent-certificate endpoints, whose 401
+  for a user's bearer token is the correct answer rather than a lost session;
+* **401 is no longer acceptable**, and the walk asserts at the end that it is still
+  authenticated. If a future endpoint revokes the session, every probe after it fails and names
+  itself, instead of 137 silent passes.
+
+### What it found once it worked
+
+* `/admin/database/vacuum` answering `role "placeholder" does not exist` — **rule 45 in a
+  handler nobody had reached.** `_vacuum_telemetry` used the `engine` captured by
+  `from app.db.database import ...` at import.
+* Three HARSH-lane 500s, recorded in a known-failure list asserted both ways.
+* Legitimate 503s from Redis and `pg_stat_statements` being absent, now allowed for the same
+  reason the GET walk allows them: degrading is the correct behaviour.
+
+## Rule 61 — sweep every name a module exports, not the one that broke
+
+`conftest` rebinds `AsyncSessionLocal` across `sys.modules` for every `app.*` module that binds
+it, under a comment explaining that patching a hardcoded list of eight while forty-one bind the
+name is how `role "placeholder" does not exist` reached the smoke suite. That fix was right, and
+it swept **one of the two names `app.db.database` exports.**
+
+Six modules bind `engine`, including `app.api.health`, whose `_vacuum_telemetry` opens a
+connection on it directly. The same error, from the same cause, one attribute over — and
+invisible because nothing reached that handler until a write-surface walk did.
+
+When the fix for a stale-binding problem is "sweep the modules", sweep the module's whole public
+surface. The attribute that was not causing trouble at the time is the one that will.

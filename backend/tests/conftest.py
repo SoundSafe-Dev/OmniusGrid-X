@@ -308,6 +308,23 @@ async def app(tenant_async_url):
     }
     for module in patched_modules:
         module.AsyncSessionLocal = test_session_maker
+
+    # `engine` NEEDS THE SAME SWEEP, and did not have it. The comment above says this is kept
+    # "complete and self-maintaining", and it swept one of the two names `app.db.database`
+    # exports: six modules bind `engine`, including `app.db.database` itself and
+    # `app.api.health`, whose `_vacuum_telemetry` opens a connection on it directly.
+    #
+    # The consequence was invisible because nothing reached that handler. A walk over the POST
+    # surface did, and got `role "placeholder" does not exist` — the exact error this sweep
+    # exists to prevent, from the exact cause, one attribute over.
+    patched_engines = [
+        module
+        for name, module in list(sys.modules.items())
+        if name.startswith("app.") and getattr(module, "engine", None) is not None
+    ]
+    original_engines = {module: module.engine for module in patched_engines}
+    for module in patched_engines:
+        module.engine = test_engine
     original_async_session_local = original_session_locals.get(
         db_module, db_module.AsyncSessionLocal
     )
@@ -356,6 +373,8 @@ async def app(tenant_async_url):
     fastapi_app.dependency_overrides.clear()
     for module, original in original_session_locals.items():
         module.AsyncSessionLocal = original
+    for module, original in original_engines.items():
+        module.engine = original
     await test_engine.dispose()
 
 
