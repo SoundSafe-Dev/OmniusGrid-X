@@ -510,8 +510,8 @@ the UI were all already there, only the write was missing — and the component 
 failures. The other three were uncalled and were removed. Notably a hand fix of this exact
 class had already run (FS-15, "routes that never existed") and left these behind.
 
-**Both suites are green: backend 2,350 passed, frontend 384 passed, 0 failed** — across
-202 backend and 60 frontend test files. Every guard listed above is mutation-tested:
+**Both suites are green: backend 2,365 passed, frontend 384 passed, 0 failed** — across
+206 backend and 60 frontend test files. Every guard listed above is mutation-tested:
 reintroduce the defect and the test must fail, checked individually, because a guard that
 cannot fail is indistinguishable from one that passes.
 
@@ -595,7 +595,7 @@ left the PREVIOUS test's "healthy: connected" on screen as the current result. A
 delete-user said nothing, and "row still there" is what success looks like until the list
 refetches — an admin who believes they revoked access, and did not.
 
-**Ten sweeps are now permanent guards**, each with a control proving it can fail:
+**Twelve sweeps are now permanent guards**, each with a control proving it can fail:
 phrase-based empty states, widgets that disappear when a query fails, mutations with no
 error surface, qualifiers the frontend never renders, and — the mirror of that last one —
 TypeScript fields the frontend renders that no backend source emits, response-model fields
@@ -663,6 +663,19 @@ failed on the next run with *"good, but this test's premise no longer holds; che
 sibling logistics tables were covered too."* A guard built to expire, firing across authors and
 months apart.
 
+**One class, three guards, twenty-six handlers.** "The caller decides which tenant" turned out
+to have three separate spellings, and each guard was clean while the next variant sat in the
+same three files: a tenant *assigned* from a request body (14 handlers), a tenant *received* as
+an optional query parameter (8), and a tenant filter applied *conditionally* (4 —
+`if org is not None: stmt = stmt.where(...)`, so a user with no organisation read everything).
+The notification router had the worst of them: an unscoped `DELETE` letting any authenticated
+user remove any tenant's subscription by id, on a table with no policy to fall back on, with a
+`rowcount == 0 -> 404` check that proved a row had been deleted rather than that it was yours.
+
+Whether any given instance leaked or merely broke depended entirely on whether its table
+carried a policy — which is why `vehicles` (the one fleet table without one) was the single
+handler whose defect wrote a real cross-tenant row while thirteen identical ones returned 500s.
+
 **The guards needed as much correcting as the code.** The emptiness sweep reported zero
 offenders while three pages were unguarded: its phrase cap hid a hundred-character empty
 state, and its proximity window found an unrelated mutation's error branch and called the
@@ -672,7 +685,7 @@ cases was to count braces and use the real bounds. A third computed its own base
 the tree it then compared against, so it could never fail for any input. **Three guards,
 three different ways of being confidently wrong** — running a guard does not test it;
 breaking the tree on purpose does, and every one of them is now controlled that way.
-Rules 21–41 are recorded in `docs/engineering/defect-class-sweeps.md`.
+Rules 21–43 are recorded in `docs/engineering/defect-class-sweeps.md`.
 
 ### Delivered since — FS-141+ (release path, backups, and the guards that weren't guarding)
 
@@ -2977,7 +2990,7 @@ The ERP integration system correlates ERP data with operational telemetry to pro
 - [Implementation Summary](IMPLEMENTATION_SUMMARY.md) - Complete feature inventory
 
 **Engineering practice**
-- [Defect-class sweeps](docs/engineering/defect-class-sweeps.md) - The thirty-seven classes of "code that looks wired and cannot work" found so far, what each sweep found (including the ones that came back clean), which mutation-tested guard keeps each closed, and forty-one rules for writing a sweep worth trusting — most of them paid for by a detector that was wrong first, including one that reported zero offenders while three pages were broken and one that compared a baseline against itself
+- [Defect-class sweeps](docs/engineering/defect-class-sweeps.md) - The thirty-seven classes of "code that looks wired and cannot work" found so far, what each sweep found (including the ones that came back clean), which mutation-tested guard keeps each closed, and forty-three rules for writing a sweep worth trusting — most of them paid for by a detector that was wrong first, including one that reported zero offenders while three pages were broken and one that compared a baseline against itself
 
 **Infrastructure & operations**
 - [Database migrations](database/migrations/README.md) - Runner rules (never edit or rename an applied migration), the 019 gap, grandfathered duplicate prefixes, demo-data gating
