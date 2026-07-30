@@ -192,7 +192,13 @@ async def initialize_registries(
     - Default registry items for each domain
     - Compliance standard mappings
     """
-    organization_id = request.organization_id or current_user.organization_id
+    # THE TOKEN, and only the token. This was
+    #     request.organization_id or current_user.organization_id
+    # which PREFERS the client's value and falls back to the authenticated one — so the
+    # fallback made it look safe while the primary path let a caller initialise registries
+    # for any organisation they named. A fallback to the right answer is not a guard; it is
+    # the wrong answer with a safety net nobody reaches.
+    organization_id = current_user.organization_id
     
     logger.info("initializing_registries", organization_id=str(organization_id))
     

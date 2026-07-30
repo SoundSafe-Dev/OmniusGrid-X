@@ -77,11 +77,22 @@ class VehicleCreatedResponse(BaseModel):
 @router.post("/carriers", response_model=CarrierResponse, dependencies=[Depends(require_operator_or_admin)])
 async def create_carrier(
     data: CarrierCreate,
+    organization_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """Create new carrier profile"""
     carrier = await transportation_management_service.create_carrier(
-        organization_id=data.organization_id,
+    # FROM THE TOKEN, NEVER THE REQUEST. This read `data.organization_id`, a field the
+    # client supplies, so a caller could file the row under any organisation they named.
+    # Removed by hand six times already in this codebase — the yard list, dock doors, dock
+    # schedule, maintenance schedule, geofence zones and dashboard overview each carry a
+    # comment saying so — which is why it is now a guard
+    # (test_no_handler_takes_its_tenant_from_the_body.py) rather than a seventh comment.
+    #
+    # The `*Create` schema still declares the field, so an existing client may keep sending
+    # one; it is ignored. Making it optional there is a separate change with its own readers
+    # to check.
+        organization_id=organization_id,
         carrier_name=data.carrier_name,
         dot_number=data.dot_number,
         mc_number=data.mc_number,
@@ -177,11 +188,22 @@ async def get_carrier_compliance(
 @router.post("/drivers", response_model=DriverResponse, dependencies=[Depends(require_operator_or_admin)])
 async def create_driver(
     data: DriverCreate,
+    organization_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """Create new driver profile"""
     driver = await transportation_management_service.create_driver(
-        organization_id=data.organization_id,
+    # FROM THE TOKEN, NEVER THE REQUEST. This read `data.organization_id`, a field the
+    # client supplies, so a caller could file the row under any organisation they named.
+    # Removed by hand six times already in this codebase — the yard list, dock doors, dock
+    # schedule, maintenance schedule, geofence zones and dashboard overview each carry a
+    # comment saying so — which is why it is now a guard
+    # (test_no_handler_takes_its_tenant_from_the_body.py) rather than a seventh comment.
+    #
+    # The `*Create` schema still declares the field, so an existing client may keep sending
+    # one; it is ignored. Making it optional there is a separate change with its own readers
+    # to check.
+        organization_id=organization_id,
         first_name=data.first_name,
         last_name=data.last_name,
         carrier_id=data.carrier_id,
@@ -336,11 +358,22 @@ async def get_driver_hos(
 @router.post("/shipments", response_model=ShipmentResponse, dependencies=[Depends(require_operator_or_admin)])
 async def create_shipment(
     data: ShipmentCreate,
+    organization_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """Create new shipment"""
     shipment = await transportation_management_service.create_shipment(
-        organization_id=data.organization_id,
+    # FROM THE TOKEN, NEVER THE REQUEST. This read `data.organization_id`, a field the
+    # client supplies, so a caller could file the row under any organisation they named.
+    # Removed by hand six times already in this codebase — the yard list, dock doors, dock
+    # schedule, maintenance schedule, geofence zones and dashboard overview each carry a
+    # comment saying so — which is why it is now a guard
+    # (test_no_handler_takes_its_tenant_from_the_body.py) rather than a seventh comment.
+    #
+    # The `*Create` schema still declares the field, so an existing client may keep sending
+    # one; it is ignored. Making it optional there is a separate change with its own readers
+    # to check.
+        organization_id=organization_id,
         shipment_number=data.shipment_number,
         shipment_type=data.shipment_type,
         origin=data.origin,
@@ -530,11 +563,22 @@ async def get_shipment_costs(
 @router.post("/routes", response_model=RouteResponse, dependencies=[Depends(require_operator_or_admin)])
 async def create_route(
     data: RouteCreate,
+    organization_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """Create optimized route"""
     route = await transportation_management_service.create_route(
-        organization_id=data.organization_id,
+    # FROM THE TOKEN, NEVER THE REQUEST. This read `data.organization_id`, a field the
+    # client supplies, so a caller could file the row under any organisation they named.
+    # Removed by hand six times already in this codebase — the yard list, dock doors, dock
+    # schedule, maintenance schedule, geofence zones and dashboard overview each carry a
+    # comment saying so — which is why it is now a guard
+    # (test_no_handler_takes_its_tenant_from_the_body.py) rather than a seventh comment.
+    #
+    # The `*Create` schema still declares the field, so an existing client may keep sending
+    # one; it is ignored. Making it optional there is a separate change with its own readers
+    # to check.
+        organization_id=organization_id,
         origin=data.origin,
         destination=data.destination,
         waypoints=data.waypoints,
@@ -572,11 +616,22 @@ async def get_routes(
 @router.post("/load-plans", response_model=LoadPlanResponse, dependencies=[Depends(require_operator_or_admin)])
 async def create_load_plan(
     data: LoadPlanCreate,
+    organization_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """Create load plan for shipment"""
     load_plan = await transportation_management_service.create_load_plan(
-        organization_id=data.organization_id,
+    # FROM THE TOKEN, NEVER THE REQUEST. This read `data.organization_id`, a field the
+    # client supplies, so a caller could file the row under any organisation they named.
+    # Removed by hand six times already in this codebase — the yard list, dock doors, dock
+    # schedule, maintenance schedule, geofence zones and dashboard overview each carry a
+    # comment saying so — which is why it is now a guard
+    # (test_no_handler_takes_its_tenant_from_the_body.py) rather than a seventh comment.
+    #
+    # The `*Create` schema still declares the field, so an existing client may keep sending
+    # one; it is ignored. Making it optional there is a separate change with its own readers
+    # to check.
+        organization_id=organization_id,
         shipment_id=data.shipment_id,
         trailer_id=data.trailer_id,
         load_sequence=data.load_sequence,
@@ -609,6 +664,7 @@ async def get_load_plan(
 @router.post("/freight-charges", response_model=FreightChargeResponse, dependencies=[Depends(require_operator_or_admin)])
 async def create_freight_charge(
     data: FreightChargeCreate,
+    organization_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """Create freight charge"""
@@ -616,7 +672,17 @@ async def create_freight_charge(
     billing_engine = FreightBillingEngine()
     
     charge = await billing_engine.create_freight_charge(
-        organization_id=data.organization_id,
+    # FROM THE TOKEN, NEVER THE REQUEST. This read `data.organization_id`, a field the
+    # client supplies, so a caller could file the row under any organisation they named.
+    # Removed by hand six times already in this codebase — the yard list, dock doors, dock
+    # schedule, maintenance schedule, geofence zones and dashboard overview each carry a
+    # comment saying so — which is why it is now a guard
+    # (test_no_handler_takes_its_tenant_from_the_body.py) rather than a seventh comment.
+    #
+    # The `*Create` schema still declares the field, so an existing client may keep sending
+    # one; it is ignored. Making it optional there is a separate change with its own readers
+    # to check.
+        organization_id=organization_id,
         shipment_id=data.shipment_id,
         charge_type=data.charge_type,
         amount=data.amount,
@@ -723,13 +789,25 @@ async def get_vehicles(
 @router.post("/vehicles", response_model=VehicleCreatedResponse)
 async def create_vehicle(
     payload: dict,
+    organization_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """Register a fleet vehicle."""
     from app.db.logistics_models import Vehicle
 
     vehicle = Vehicle(
-        organization_id=payload.get("organization_id"),
+        # FROM THE TOKEN, NEVER THE PAYLOAD. This read `payload.get("organization_id")`,
+        # which let any caller file a vehicle under any organisation they named — the IDOR
+        # shape this codebase forbids and has already removed from the yard, dock-door,
+        # dock-schedule, maintenance-schedule and geofence handlers, each with a comment
+        # saying so. Every sibling handler in THIS file already takes the org from
+        # `get_tenant_org_id`; only the create missed it.
+        #
+        # It was also broken when the field was simply absent: `payload.get` returns None,
+        # and a vehicle with no organisation belongs to no tenant — invisible to its own
+        # creator through any scoped read, and picked up by anything that scans the table
+        # unscoped.
+        organization_id=organization_id,
         carrier_id=payload.get("carrier_id"),
         vehicle_number=payload.get("vehicle_number") or payload.get("vehicleNumber"),
         vin=payload.get("vin"),

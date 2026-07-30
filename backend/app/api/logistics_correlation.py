@@ -163,12 +163,23 @@ async def get_truck_asset_readiness(
 @router.post("/load-quality", response_model=LoadQualityLogResponse, dependencies=[Depends(require_operator_or_admin)])
 async def log_load_quality_issue(
     data: LoadQualityLogCreate,
+    organization_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """Log shipping defect and correlate to manufacturing root cause"""
     correlator = LoadQualityCorrelator()
     log = await correlator.log_quality_issue(
-        organization_id=data.organization_id,
+    # FROM THE TOKEN, NEVER THE REQUEST. This read `data.organization_id`, a field the
+    # client supplies, so a caller could file the row under any organisation they named.
+    # Removed by hand six times already in this codebase — the yard list, dock doors, dock
+    # schedule, maintenance schedule, geofence zones and dashboard overview each carry a
+    # comment saying so — which is why it is now a guard
+    # (test_no_handler_takes_its_tenant_from_the_body.py) rather than a seventh comment.
+    #
+    # The `*Create` schema still declares the field, so an existing client may keep sending
+    # one; it is ignored. Making it optional there is a separate change with its own readers
+    # to check.
+        organization_id=organization_id,
         shipment_id=data.shipment_id,
         defect_type=data.defect_type or 'damaged',
         severity=data.severity or 'major',

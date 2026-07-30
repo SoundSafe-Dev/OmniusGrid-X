@@ -3094,3 +3094,60 @@ nine findings and needed three corrections (rules 34, 36, and its own vacuous ba
 
 Breadth is not free: every heuristic that widens coverage also widens the space of results
 nobody can act on, and a sweep is only useful while people still read its output.
+
+## Fourteen handlers asked the caller which tenant to write to
+
+The mirror of rule 38 — request models declaring fields no column holds — came back almost
+clean: one finding, `UserCreate.password`, which is correct by design (hashed into
+`password_hash`, never stored). But that clean result is misleading, and the reason matters
+more than the result.
+
+**The maintenance-schedule `priority` defect went through `payload: Dict[str, Any]`.** Twelve
+route handlers take an untyped dict body, so there is no schema to check what they accept or
+silently drop — the request-model sweep cannot see any of them. A sweep coming back clean over
+the part of the system that *has* schemas says nothing about the part that does not.
+
+Reading one of those handlers found this:
+
+```python
+organization_id=payload.get("organization_id")   # POST /transportation/vehicles
+```
+
+A guard written for that shape then found **thirteen more**, all identical
+(`organization_id=data.organization_id`), plus `initialize_registries`, which did
+`request.organization_id or current_user.organization_id` — preferring the client's value with
+a fallback to the right one, so the fallback made it look safe.
+
+**Thirteen of the fourteen were saved by row-level security, and one was not.** On an
+RLS-covered table a FOR ALL policy's USING clause acts as the INSERT's WITH CHECK, so the
+database refused the cross-tenant write and the caller got a 500 — bad error handling, not a
+breach. `pg_class.relrowsecurity` is **false** for `vehicles`: migration 051's loop does not
+cover it, nothing stood between the body and the row, and a create naming another organisation
+succeeded. The mutation test confirms it.
+
+That is the argument against leaning on RLS. Thirteen handlers were wrong and survived because
+a policy caught them; the fourteenth was wrong in exactly the same way and shipped the defect,
+and **nothing in the handler said which was which**.
+
+## Rule 39 — six hand-fixes and no guard is a class that will come back
+
+This shape had already been removed by hand from the yard trailer list, the dock doors, the
+dock schedule, the maintenance schedule, the geofence zones and the dashboard overview. Each
+carries a careful comment explaining *"From the TOKEN, never the payload"*. Fourteen more
+instances were sitting in the same three files.
+
+A comment records a fix; only a guard prevents the next one. The moment a defect is fixed for
+the *second* time, the fix to write is the check — and the AST is worth the extra work over a
+grep, because `organization_id=organization_id` and `organization_id=data.organization_id`
+differ only in the value expression, and a substring search matches both plus every comment
+explaining the defect (rule 37).
+
+## Rule 40 — never act on truncated diagnostic output
+
+The guard's first run printed thirteen offenders; `head -10` showed nine. Nine were fixed, the
+guard was re-run, and four "new" ones appeared — which briefly looked like the fix having
+caused them. They had been there all along, below the cut.
+
+Pipe a guard's output to `cat`, or count the lines before believing the list is complete. This
+cost one confused re-run here; on a longer list it would have meant shipping a partial fix and
+believing it whole.

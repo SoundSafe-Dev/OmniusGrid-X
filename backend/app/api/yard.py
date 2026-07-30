@@ -82,11 +82,22 @@ async def _resolve_trailer_plates(trailer_ids, db: AsyncSession) -> Dict[str, An
 @router.post("/trailers/checkin", response_model=YardTrailerResponse, dependencies=[Depends(require_operator_or_admin)])
 async def trailer_check_in(
     data: YardTrailerCreate,
+    organization_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """Process trailer check-in to yard"""
     trailer = await yard_management_service.check_in_trailer(
-        organization_id=data.organization_id,
+    # FROM THE TOKEN, NEVER THE REQUEST. This read `data.organization_id`, a field the
+    # client supplies, so a caller could file the row under any organisation they named.
+    # Removed by hand six times already in this codebase — the yard list, dock doors, dock
+    # schedule, maintenance schedule, geofence zones and dashboard overview each carry a
+    # comment saying so — which is why it is now a guard
+    # (test_no_handler_takes_its_tenant_from_the_body.py) rather than a seventh comment.
+    #
+    # The `*Create` schema still declares the field, so an existing client may keep sending
+    # one; it is ignored. Making it optional there is a separate change with its own readers
+    # to check.
+        organization_id=organization_id,
         trailer_number=data.trailer_number,
         carrier_id=data.carrier_id,
         driver_id=data.driver_id,
@@ -281,12 +292,16 @@ async def assign_trailer_to_dock(
 @router.post("/dock/appointments", response_model=DockAppointmentResponse, dependencies=[Depends(require_operator_or_admin)])
 async def create_dock_appointment(
     data: DockAppointmentCreate,
+    organization_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """Schedule dock appointment"""
     try:
         appointment = await dock_scheduler.schedule_appointment(
-            organization_id=data.organization_id,
+    # FROM THE TOKEN, NEVER THE REQUEST — see the guard in
+    # test_no_handler_takes_its_tenant_from_the_body.py. `data.organization_id` is
+    # client-supplied, so a caller could file the row under any organisation they named.
+            organization_id=organization_id,
             dock_door_id=data.dock_door_id,
             scheduled_start=data.scheduled_start,
             scheduled_end=data.scheduled_end,
@@ -382,11 +397,15 @@ async def complete_appointment(
 @router.post("/moves", response_model=YardMoveResponse, dependencies=[Depends(require_operator_or_admin)])
 async def record_yard_move(
     data: YardMoveCreate,
+    organization_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """Record yard jockey move"""
     move = await yard_management_service.record_yard_move(
-        organization_id=data.organization_id,
+    # FROM THE TOKEN, NEVER THE REQUEST — see the guard in
+    # test_no_handler_takes_its_tenant_from_the_body.py. `data.organization_id` is
+    # client-supplied, so a caller could file the row under any organisation they named.
+        organization_id=organization_id,
         trailer_id=data.trailer_id,
         from_location=data.from_location,
         to_location=data.to_location,
@@ -446,11 +465,15 @@ async def get_dwell_time_analytics(
 @router.post("/driver-wait-times", response_model=DriverWaitTimeResponse, dependencies=[Depends(require_operator_or_admin)])
 async def create_driver_wait_time(
     data: DriverWaitTimeCreate,
+    organization_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """Create driver wait time record"""
     wait_time = await yard_management_service.create_driver_wait_time(
-        organization_id=data.organization_id,
+    # FROM THE TOKEN, NEVER THE REQUEST — see the guard in
+    # test_no_handler_takes_its_tenant_from_the_body.py. `data.organization_id` is
+    # client-supplied, so a caller could file the row under any organisation they named.
+        organization_id=organization_id,
         driver_id=data.driver_id,
         trailer_id=data.trailer_id,
         check_in_at=data.check_in_at,
@@ -466,11 +489,15 @@ async def create_driver_wait_time(
 @router.post("/checkpoints", response_model=YardCheckPointResponse, dependencies=[Depends(require_operator_or_admin)])
 async def record_checkpoint(
     data: YardCheckPointCreate,
+    organization_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """Record trailer checkpoint passage"""
     checkpoint = await yard_management_service.record_checkpoint(
-        organization_id=data.organization_id,
+    # FROM THE TOKEN, NEVER THE REQUEST — see the guard in
+    # test_no_handler_takes_its_tenant_from_the_body.py. `data.organization_id` is
+    # client-supplied, so a caller could file the row under any organisation they named.
+        organization_id=organization_id,
         trailer_id=data.trailer_id,
         checkpoint_type=data.checkpoint_type,
         checkpoint_name=data.checkpoint_name,
