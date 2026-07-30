@@ -1,9 +1,31 @@
 """Pydantic Schemas for API"""
 
 from datetime import datetime
-from typing import Optional, Dict, Any, List, Literal
+from typing import Annotated, Optional, Dict, Any, List, Literal
 from uuid import UUID
-from pydantic import ConfigDict, AliasChoices, BaseModel, Field
+from pydantic import BeforeValidator, ConfigDict, AliasChoices, BaseModel, Field
+
+
+def _none_is_empty(value: Any) -> Any:
+    """A NULL JSON column is an object with no extra attributes, which is `{}`."""
+    return {} if value is None else value
+
+
+#: `metadata` as it comes off a row, tolerating the NULL the column can actually hold.
+#:
+#: `Dict[str, Any] = Field(default_factory=dict)` REJECTS None. The factory fires only when the
+#: key is ABSENT — and `model_validate(orm_row)` does not omit the key, it supplies the
+#: attribute's value, which is `None` for any row not written through the ORM. Seventeen of the
+#: twenty-one `meta_data` columns in the migrations are declared with no DEFAULT, so the NULL is
+#: not hypothetical: a data import, a partner integration, or a plain `INSERT` produces one, and
+#: the whole LIST endpoint then 500s for that tenant — not the one row, the page.
+#:
+#: Three schemas had already been changed to `Optional[...] = None` for exactly this, one table
+#: at a time, after `test_yard_trailer_plate_is_resolved.py` found it on appointments. That
+#: changes the wire contract (clients receive `null` where they had `{}`); coercing keeps the
+#: contract and covers every schema at once. NULL and `{}` genuinely mean the same thing here,
+#: which is what makes the coercion honest rather than a papered-over absence.
+JsonMetadata = Annotated[Dict[str, Any], BeforeValidator(_none_is_empty)]
 
 
 # Asset Schemas
@@ -87,7 +109,7 @@ class AlarmCreate(BaseModel):
     severity: str  # critical, high, medium, low, info
     message: str
     description: Optional[str] = None
-    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
+    metadata: JsonMetadata = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class AlarmResponse(AlarmCreate):
@@ -113,7 +135,7 @@ class OperationCreate(BaseModel):
     operation_name: str
     job_id: Optional[str] = None
     planned_duration: Optional[int] = None  # seconds
-    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
+    metadata: JsonMetadata = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class OperationResponse(OperationCreate):
@@ -193,7 +215,7 @@ class YardTrailerBase(BaseModel):
     weight_lbs: Optional[float] = None
     temperature_setpoint: Optional[float] = None
     temperature_actual: Optional[float] = None
-    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
+    metadata: JsonMetadata = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class YardTrailerCreate(YardTrailerBase):
@@ -288,7 +310,7 @@ class YardMoveBase(BaseModel):
     to_location: str
     move_type: Optional[str] = None  # check_in, dock, yard_relocate, check_out
     duration_seconds: Optional[float] = None
-    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
+    metadata: JsonMetadata = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class YardMoveCreate(YardMoveBase):
@@ -327,7 +349,7 @@ class DriverWaitTimeBase(BaseModel):
     detention_charge: Optional[float] = None
     demurrage_charge: Optional[float] = None
     is_billed: bool = False
-    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
+    metadata: JsonMetadata = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class DriverWaitTimeCreate(DriverWaitTimeBase):
@@ -358,7 +380,7 @@ class YardCheckPointBase(BaseModel):
     weight_lbs: Optional[float] = None
     inspection_status: Optional[str] = None  # passed, failed, pending
     inspector_id: Optional[UUID] = None
-    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
+    metadata: JsonMetadata = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class YardCheckPointCreate(YardCheckPointBase):
@@ -509,7 +531,7 @@ class ShipmentBase(BaseModel):
     temperature_required: bool = False
     temperature_min: Optional[float] = None
     temperature_max: Optional[float] = None
-    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
+    metadata: JsonMetadata = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class ShipmentCreate(ShipmentBase):
@@ -597,7 +619,7 @@ class LoadPlanBase(BaseModel):
     special_instructions: Optional[str] = None
     is_executed: bool = False
     executed_at: Optional[datetime] = None
-    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
+    metadata: JsonMetadata = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class LoadPlanCreate(LoadPlanBase):
@@ -637,7 +659,7 @@ class FreightChargeBase(BaseModel):
     billed_at: Optional[datetime] = None
     invoice_number: Optional[str] = None
     approved_at: Optional[datetime] = None
-    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
+    metadata: JsonMetadata = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class FreightChargeCreate(FreightChargeBase):
@@ -675,7 +697,7 @@ class DockAppointmentBase(BaseModel):
     status: str = "scheduled"  # scheduled, in_progress, completed, cancelled, no_show
     priority: str = "normal"
     compliance_required: bool = False
-    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
+    metadata: JsonMetadata = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class DockAppointmentCreate(DockAppointmentBase):
@@ -745,7 +767,7 @@ class TruckAssetCorrelationBase(BaseModel):
     detention_incurred: bool = False
     detention_charge: Optional[float] = None
     efficiency_score: Optional[float] = None
-    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
+    metadata: JsonMetadata = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class TruckAssetCorrelationCreate(TruckAssetCorrelationBase):
@@ -777,7 +799,7 @@ class LoadQualityLogBase(BaseModel):
     claim_filed: bool = False
     claim_amount: Optional[float] = None
     resolved_at: Optional[datetime] = None
-    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
+    metadata: JsonMetadata = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class LoadQualityLogCreate(LoadQualityLogBase):

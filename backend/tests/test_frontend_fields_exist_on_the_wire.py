@@ -208,7 +208,6 @@ BASELINE = {
     # every row. Carrier contact details are collected nowhere in this product — a gap
     # in the schema, not something a panel or a type can paper over. The `Location`
     # pair went with them: nothing rendered those either.
-    "DetentionAlert.excessMinutes",
     # `DockDoor.estimatedReleaseAt` was HERE, and came out of the per-interface audit
     # rule 34 says this sweep cannot do. `DockDoor` declared five fields `dock_doors`
     # does not have, and only this one was reported — the others (`supportedEquipment`,
@@ -221,7 +220,6 @@ BASELINE = {
     # have been the `currentMileage` defect exactly: the right number, the wrong label.
     # A schema-vs-table assertion in test_yard_trailer_plate_is_resolved.py now keeps
     # DockDoorResponse honest.
-    "DockAppointment.driverPhone",
     # The six yard entries (trailerLicensePlate x4, workcellName x2) were HERE, and
     # are the sixth finding — the one that needed TWO of the three fixes:
     #   * `trailerLicensePlate` was EXPOSED. Both dock_doors.current_trailer_id and
@@ -285,6 +283,30 @@ BASELINE = {
     # AND THE SWEEP COULD NOT SEE THE FIX. The two Driver ids stayed listed after the server
     # started sending them, because `_wire_vocabulary` collected dict-literal keys and not
     # `row["name"] = ...`. Widened, with both a positive and a negative control above.
+    # The four yard entries were HERE, and are the fourteenth finding — two joins and two
+    # deletions, plus a whole interface that had drifted from its endpoint.
+    #
+    #   * `YardTrailer.driverPhone` and `DockAppointment.driverPhone` — SERVED. Both tables
+    #     carry `driver_id` and `drivers.phone` is where the number lives, so this is the same
+    #     join as `trailerLicensePlate` one finding earlier. It is the number an operator calls
+    #     about a trailer sitting on the yard, rendered in three places and sent by nothing.
+    #   * `YardTrailer.contents` — DELETED, with `poNumber` beside it. `yard_trailers` records
+    #     what the trailer IS — type, seal, weight, temperature setpoint — and nothing about
+    #     what is inside it. The inventory table printed a dash on every row under a column
+    #     headed "Contents"; it shows the seal number now, which exists.
+    #   * `DetentionAlert.excessMinutes` — RENAMED, and it was the only one of that
+    #     interface's TWELVE fields the sweep could report: `carrierName`, `location` and
+    #     `estimatedCost` are all named by other tables, so the global vocabulary credits them.
+    #     Rule 34 again. The banner appears only when a trailer is costing money and it read
+    #     "<id> • " above "$" and "N/A excess". The numbers were being sent under the
+    #     endpoint's names; the carrier, yard location and plate were not sent at all and are
+    #     real columns on the row the loop already held.
+    #
+    # `YardTrailer.lastLocation` went too, unreported for the same reason as
+    # `Driver.lastLocation` — credited from `vehicles.last_location`, a different table. It
+    # gated a "Current GPS Location (GeoTab)" card behind a condition that was never true.
+    # Pinned by test_yard_driver_phone_is_resolved_realdb.py and
+    # test_detention_alert_names_the_trailer_realdb.py.
     "LogisticsOverview.todayAppointments",
     # `LogisticsOverview.vehiclesIdle` was HERE, and is the seventh finding. The fleet
     # card promised totalVehicles/vehiclesMoving/vehiclesIdle/avgSpeed/
@@ -340,8 +362,6 @@ BASELINE = {
     # sweep's list. Pinned by MaintenancePanel.test.tsx.
     "StrategicRecommendation.costSavings",
     "StrategicRecommendation.timeSavings",
-    "YardTrailer.contents",
-    "YardTrailer.driverPhone",
 }
 
 

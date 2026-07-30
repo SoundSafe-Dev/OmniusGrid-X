@@ -1,4 +1,4 @@
-import { FC, useState, useEffect } from 'react';
+import { FC, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   Truck,
@@ -274,21 +274,33 @@ export const YardManagement: FC = () => {
             Detention Alerts ({alerts.length})
           </h3>
           <div className="space-y-2">
+            {/* EVERY FIELD READ HERE USED TO BE UNDEFINED. The row showed the trailer id
+                above a bare " • ", then "$" with no number and "N/A excess" — on a banner
+                that only appears when a trailer is actually costing money. The numbers were
+                being sent under the endpoint's names; the carrier, the yard location and the
+                plate were not being sent at all and are real columns.
+
+                Keyed on `trailerId`, not `alert.id`: the alert is computed rather than
+                stored, so there is no id, and every row shared `key={undefined}`. */}
             {alerts.map(alert => (
-              <div key={alert.id} className="flex items-center justify-between bg-opsgrid-bg rounded-lg p-3">
+              <div key={alert.trailerId} className="flex items-center justify-between bg-opsgrid-bg rounded-lg p-3">
                 <div className="flex items-center gap-3">
                   <Truck className="w-4 h-4 text-opsgrid-text-secondary" />
                   <div>
-                    <p className="font-medium">{alert.trailerLicensePlate || alert.trailerId}</p>
+                    <p className="font-medium">{alert.licensePlate || alert.trailerNumber}</p>
                     <p className="text-sm text-opsgrid-text-secondary">
-                      {alert.carrierName} • {alert.location}
+                      {[alert.carrierName, alert.yardLocation].filter(Boolean).join(' • ') || '—'}
                     </p>
                   </div>
                 </div>
                 <div className="text-right">
-                  <p className="font-medium text-red-500">${alert.estimatedCost}</p>
+                  <p className="font-medium text-red-500">
+                    ${alert.currentCharge.toLocaleString()}
+                  </p>
                   <p className="text-sm text-opsgrid-text-secondary">
-                    {formatDuration(alert.excessMinutes)} excess
+                    {alert.status === 'detention'
+                      ? `${formatDuration(alert.detentionMinutes)} excess`
+                      : `${formatDuration(alert.freeMinutes - alert.elapsedMinutes)} of free time left`}
                   </p>
                 </div>
               </div>
@@ -430,8 +442,13 @@ export const YardManagement: FC = () => {
                           ${trailer.detentionCost}
                         </div>
                       </td>
+                      {/* A "Contents" column printed `contents || '-'` — a dash on every
+                          row, under a heading promising something `yard_trailers` has never
+                          recorded. It records what the trailer IS: type, seal, weight,
+                          temperature setpoint. The seal number is the identifying detail
+                          that exists, so the column shows that. */}
                       <td className="px-4 py-3 text-sm text-opsgrid-text-secondary truncate max-w-xs">
-                        {trailer.contents || '-'}
+                        {trailer.sealNumber || '-'}
                       </td>
                     </tr>
                   ))}
@@ -744,7 +761,6 @@ const TrailerDetailModal: FC<{
   onClose: () => void;
   onChanged: () => void;
 }> = ({ trailer, doors, onClose, onChanged }) => {
-  const [location, setLocation] = useState<any>(null);
   const [assignDoorId, setAssignDoorId] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -762,13 +778,6 @@ const TrailerDetailModal: FC<{
       setBusy(null);
     }
   };
-
-  useEffect(() => {
-    // Fetch real-time location if in transit
-    if (trailer.status === 'in_transit' && trailer.lastLocation) {
-      setLocation(trailer.lastLocation);
-    }
-  }, [trailer]);
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -805,46 +814,25 @@ const TrailerDetailModal: FC<{
             </div>
           </div>
 
-          {location && (
-            <div className="bg-opsgrid-bg rounded-lg p-4">
-              <div className="flex items-center gap-2 mb-2">
-                <MapPin className="w-4 h-4 text-opsgrid-primary" />
-                <h4 className="font-medium">Current GPS Location (GeoTab)</h4>
-              </div>
-              <div className="grid grid-cols-3 gap-4 text-sm">
-                <div>
-                  <p className="text-opsgrid-text-secondary">Latitude</p>
-                  <p>{location.latitude.toFixed(4)}</p>
-                </div>
-                <div>
-                  <p className="text-opsgrid-text-secondary">Longitude</p>
-                  <p>{location.longitude.toFixed(4)}</p>
-                </div>
-                <div>
-                  <p className="text-opsgrid-text-secondary">Speed</p>
-                  <p>{location.speed?.toFixed(0) || 0} mph</p>
-                </div>
-              </div>
-              <p className="text-xs text-opsgrid-text-secondary mt-2">
-                Last updated: {new Date(location.timestamp).toLocaleString()}
-              </p>
-            </div>
-          )}
+          {/* A "Current GPS Location (GeoTab)" card sat here — latitude, longitude, speed
+              and a last-updated time — behind `location`, a piece of state set by exactly one
+              effect: `if (trailer.status === 'in_transit' && trailer.lastLocation)`.
+              `yard_trailers` has no position column; the name was credited to the type by
+              `vehicles.last_location`, a different table, so the condition was never true and
+              the card never rendered. The heading was the most specific claim in it: GeoTab
+              is not the source of a trailer's position, because nothing is. */}
 
           <div className="grid grid-cols-2 gap-4">
-            <div>
-              <p className="text-sm text-opsgrid-text-secondary">PO Number</p>
-              <p className="font-medium">{trailer.poNumber || '-'}</p>
-            </div>
+            {/* A "PO Number" field sat beside this one, reading `poNumber || '-'`. No such
+                column exists on `yard_trailers`; a purchase order belongs to a shipment. */}
             <div>
               <p className="text-sm text-opsgrid-text-secondary">Seal Number</p>
               <p className="font-medium">{trailer.sealNumber || '-'}</p>
             </div>
-          </div>
-
-          <div>
-            <p className="text-sm text-opsgrid-text-secondary">Contents</p>
-            <p className="font-medium">{trailer.contents || '-'}</p>
+            <div>
+              <p className="text-sm text-opsgrid-text-secondary">Yard Location</p>
+              <p className="font-medium">{trailer.yardLocation || '-'}</p>
+            </div>
           </div>
 
           {trailer.driverName && (

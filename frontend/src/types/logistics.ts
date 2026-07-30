@@ -15,12 +15,23 @@ export interface YardTrailer {
   expectedDuration?: number; // minutes
   detentionRisk: 'low' | 'medium' | 'high';
   detentionCost: number;
-  contents?: string;
-  poNumber?: string;
+  /** `contents` and `poNumber` were HERE and are gone. `yard_trailers` records what the
+   *  trailer IS — type, seal, weight, temperature setpoint — and nothing about what is inside
+   *  it or which purchase order it belongs to. The inventory table printed `contents || '-'`
+   *  in a column headed "Contents", so every row showed a dash under a heading promising
+   *  something the schema has never held. */
   sealNumber?: string;
+  /** `driverName` has no column either — `yard_trailers.driver_id` references `drivers`, and
+   *  resolving a name there is the same join that now resolves the phone. Left declared
+   *  because the panel renders it conditionally and the join is a one-line follow-up; the
+   *  phone was the field an operator actually needs. */
   driverName?: string;
-  driverPhone?: string;
-  lastLocation?: GeoLocation;
+  /** Resolved through `yard_trailers.driver_id` -> `drivers.phone`. The number an operator
+   *  calls about a trailer sitting on the yard, declared and rendered in two places and sent
+   *  by nothing until now. */
+  driverPhone?: string | null;
+  /** `yard_trailers` has no position column; this is credited to the vocabulary by
+   *  `vehicles.last_location`. Rule 34's blind spot, same as `Driver.lastLocation`. */
   createdAt: string;
   updatedAt: string;
 }
@@ -451,19 +462,43 @@ export interface LogisticsOverview {
   carrierComplianceIssues: number;
 }
 
+/** Live detention exposure, named after `/api/v1/yard/detention-alerts`.
+ *
+ *  EVERY FIELD ON THIS INTERFACE WAS WRONG, and the banner it feeds appears only when a
+ *  trailer is at risk or already accruing charges — which is to say, only when it matters. It
+ *  rendered the trailer id above a bare " • ", a "$" with no number, and "N/A excess".
+ *
+ *  The numbers were all being sent under different names (`detention_minutes`,
+ *  `current_charge`, `elapsed_minutes`, `free_minutes`), so those are renames — rule 35. The
+ *  identifying details genuinely were not sent, and are real columns on the row the endpoint
+ *  already had in hand, so those are now served.
+ *
+ *  Only `excessMinutes` appeared in the wire-vocabulary sweep: `carrierName`, `location` and
+ *  `estimatedCost` all exist on OTHER interfaces, so the global vocabulary credits them and the
+ *  sweep sees nothing. Rule 34, and the reason this one needed reading against its own
+ *  endpoint.
+ *
+ *  There is no `id`: the alert is computed, not stored. `trailerId` is the natural key and is
+ *  what the list should be keyed on — it was keyed on `alert.id`, so every row shared
+ *  `undefined`.
+ */
 export interface DetentionAlert {
-  id: string;
   trailerId: string;
-  trailerLicensePlate?: string;
-  driverName?: string;
-  carrierName: string;
-  location: string;
-  checkInTime: string;
-  currentDurationMinutes: number;
-  freeTimeMinutes: number;
-  excessMinutes: number;
-  estimatedCost: number;
-  severity: 'low' | 'medium' | 'high' | 'critical';
+  /** `yard_trailers.trailer_number` — the human-readable identifier on the trailer. */
+  trailerNumber: string;
+  /** 'at_risk' before free time expires, 'detention' once charges are accruing. Replaces a
+   *  four-value `severity` union nothing ever produced. */
+  status: 'at_risk' | 'detention';
+  licensePlate?: string | null;
+  yardLocation?: string | null;
+  carrierName?: string | null;
+  checkInAt: string;
+  elapsedMinutes: number;
+  freeMinutes: number;
+  /** Minutes past free time. Zero while 'at_risk'. */
+  detentionMinutes: number;
+  currentCharge: number;
+  hourlyRate: number;
 }
 
 // `HOSViolationAlert` was declared here and referenced by NOTHING — one occurrence in the

@@ -17,7 +17,7 @@ from app.db.database import get_db  # noqa: F401  (kept for any non-tenant reads
 from app.middleware.tenant_isolation import get_tenant_db, get_tenant_org_id
 from app.db.models import (
     YardTrailer, DockDoor, YardMove, DriverWaitTime,
-    DockAppointment, YardCheckPoint, Carrier
+    DockAppointment, YardCheckPoint, Carrier, Driver
 )
 from app.models.schemas import (
     YardTrailerCreate, YardTrailerUpdate, YardTrailerResponse,
@@ -75,6 +75,27 @@ async def _resolve_trailer_plates(trailer_ids, db: AsyncSession) -> Dict[str, An
         select(YardTrailer.id, YardTrailer.license_plate).where(YardTrailer.id.in_(ids))
     )).all()
     return {str(tid): plate for tid, plate in rows}
+
+
+async def _resolve_driver_phones(driver_ids, db: AsyncSession) -> Dict[str, Any]:
+    """Map {driver_id -> phone} in one query.
+
+    The trailer card and the trailer detail panel both render `trailer.driverPhone`, and the
+    appointment row renders `appt.driverPhone` — the number an operator calls when a trailer
+    has been sitting on the yard. Neither was ever sent: `yard_trailers.driver_id` and
+    `dock_appointments.driver_id` reference `drivers`, and the phone lives there.
+
+    The same shape as `_resolve_trailer_plates` above, for the same reason and with the same
+    batching. `drivers.phone` is nullable, so a driver with no number recorded stays `None` and
+    the line is omitted rather than showing an empty one.
+    """
+    ids = {d for d in driver_ids if d}
+    if not ids:
+        return {}
+    rows = (await db.execute(
+        select(Driver.id, Driver.phone).where(Driver.id.in_(ids))
+    )).all()
+    return {str(did): phone for did, phone in rows}
 
 
 # ==================== Yard Trailer Endpoints ====================
@@ -161,11 +182,16 @@ async def get_yard_inventory(
     carrier_names = await _resolve_carrier_names(
         {t.carrier_id for t in trailers if t.carrier_id}, db
     )
+    driver_phones = await _resolve_driver_phones({t.driver_id for t in trailers}, db)
 
     items: List[Dict[str, Any]] = []
     for t in trailers:
         row = YardTrailerResponse.model_validate(t).model_dump(mode="json", by_alias=True)
         row["carrierName"] = carrier_names.get(str(t.carrier_id))
+        # The number an operator calls about a trailer sitting on the yard. Declared by the
+        # client, rendered on the card and in the detail panel, and sent by nothing —
+        # `yard_trailers.driver_id` references `drivers`, where the phone is.
+        row["driverPhone"] = driver_phones.get(str(t.driver_id))
         row["licensePlate"] = t.license_plate
         row["detentionCost"] = t.detention_cost
         row["detentionRisk"] = t.detention_risk
@@ -350,12 +376,14 @@ async def get_dock_schedule(
         {a.carrier_id for a in appointments if a.carrier_id}, db
     )
     plates = await _resolve_trailer_plates({a.trailer_id for a in appointments}, db)
+    driver_phones = await _resolve_driver_phones({a.driver_id for a in appointments}, db)
 
     items: List[Dict[str, Any]] = []
     for a in appointments:
         row = DockAppointmentResponse.model_validate(a).model_dump(mode="json", by_alias=True)
         row["carrierName"] = carrier_names.get(str(a.carrier_id))
         row["trailer_license_plate"] = plates.get(str(a.trailer_id))
+        row["driverPhone"] = driver_phones.get(str(a.driver_id))
         items.append(row)
     return items
 
@@ -577,6 +605,7 @@ async def get_detention_alerts(
     trailers = (await db.execute(query)).scalars().all()
     now = datetime.now(timezone.utc)
     alerts = []
+    at_risk = []
     for t in trailers:
         alert = build_detention_alert(
             trailer_number=t.trailer_number,
@@ -586,6 +615,22 @@ async def get_detention_alerts(
         )
         if alert:
             alerts.append(alert)
+            at_risk.append(t)
+
+    # THE BANNER RENDERS FOUR THINGS AND THREE OF THEM WERE NOT SENT. It shows the trailer, the
+    # carrier, where in the yard it is sitting, and what it is costing — and this dict carried
+    # only the identifiers and the numbers, so the row read "<id> • " above "$" and
+    # "N/A excess". All three are real columns (`license_plate`, `yard_location`, and the
+    # carrier's name one join away), on rows this loop already has in hand.
+    #
+    # An operator reads this banner to go and move a specific trailer. Its whole value is
+    # saying WHICH trailer and WHERE.
+    carrier_names = await _resolve_carrier_names({t.carrier_id for t in at_risk}, db)
+    for alert, t in zip(alerts, at_risk):
+        alert["license_plate"] = t.license_plate
+        alert["yard_location"] = t.yard_location
+        alert["carrier_name"] = carrier_names.get(str(t.carrier_id))
+
     # Worst exposure first.
     alerts.sort(key=lambda a: a["current_charge"], reverse=True)
     return alerts

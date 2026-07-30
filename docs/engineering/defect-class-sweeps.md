@@ -2260,6 +2260,13 @@ one of its findings. The habit that catches it:
    which. Widen with both a positive and a negative control.
    *(Fuller account: § Rule 52.)*
 
+53. **A NULL a column can hold is a value the schema has to accept.**
+   `Dict[str, Any] = Field(default_factory=dict)` rejects `None` — the factory fires only when
+   the key is ABSENT, and `model_validate(orm_row)` supplies the attribute's value. Seventeen
+   `meta_data` columns have no DDL default, so one raw INSERT 500s a whole list page. Coerce
+   only where the absent value and the empty one genuinely mean the same thing.
+   *(Fuller account: § Rule 53.)*
+
 ---
 
 ## Open observations, not yet tickets
@@ -3853,3 +3860,60 @@ A baseline that does not move when the code does is evidence about **one of the 
 worth a minute to find out which. The widening carries a positive control (`carrierName` is
 credited) and a negative one (a variable subscript credits nothing) — a vocabulary that absorbs
 names too freely stops reporting anything, which is the same failure as one that reads nothing.
+
+## The fourteenth finding: the yard, and an interface that had drifted whole
+
+Four entries, two joins and two deletions — and one of them turned out to be a twelve-field
+interface with two fields right.
+
+**Served.** `YardTrailer.driverPhone` and `DockAppointment.driverPhone`. Both tables carry
+`driver_id` and `drivers.phone` is where the number lives, so this is the same join as
+`trailerLicensePlate` one finding earlier in the same file. It is the number an operator calls
+about a trailer sitting on the yard, rendered in three places and sent by nothing.
+
+**Deleted.** `YardTrailer.contents`, with `poNumber` beside it. `yard_trailers` records what the
+trailer IS — type, seal, weight, temperature setpoint — and nothing about what is inside it. The
+inventory table printed a dash on every row under a column headed "Contents"; it shows the seal
+number now, which exists. `YardTrailer.lastLocation` went too, unreported by the sweep for the
+same reason as `Driver.lastLocation` — credited from `vehicles.last_location`, a different
+table. It gated a "Current GPS Location (GeoTab)" card behind a condition that was never true.
+
+**`DetentionAlert` had drifted entirely.** The banner appears only when a trailer is at risk or
+already accruing charges — only when it matters — and it read `<trailer id>` above a bare
+`" • "`, then `"$"` with no number and `"N/A excess"`. Every field it rendered was `undefined`,
+including the React `key`, so every row shared one.
+
+The numbers were all being sent under the endpoint's names (`detention_minutes`,
+`current_charge`, `elapsed_minutes`, `free_minutes`) — renames. The identifying details were
+genuinely absent and are real columns on the row the loop already held: `license_plate`,
+`yard_location`, and the carrier's name one join away. The alert also has no `id`, because it is
+computed rather than stored, and a four-value `severity` union nothing ever produced was
+replaced by the `status` the builder really emits.
+
+**Only `excessMinutes` was reported.** `carrierName`, `location` and `estimatedCost` all exist on
+other interfaces, so the global vocabulary credits them and the sweep sees nothing — rule 34,
+for the third time in this batch. The per-interface read against its own endpoint is what found
+the rest.
+
+## Rule 53 — a NULL a column can hold is a value the schema has to accept
+
+`metadata: Dict[str, Any] = Field(default_factory=dict)` **rejects** `None`. The factory fires
+only when the key is ABSENT — and `model_validate(orm_row)` does not omit the key, it supplies
+the attribute's value. Seventeen of the twenty-one `meta_data` columns in the migrations are
+declared with no DEFAULT, so any row not written through the ORM has `None` there, and
+`model_validate` raises inside the list loop: the whole PAGE 500s for that tenant, not the row.
+
+Twelve schemas were in that state. Three had already been changed to `Optional[...] = None`, one
+table at a time, after the same defect was found on appointments — nobody had asked the question
+across the file.
+
+**Found by accident**, which is the part worth recording. A real-DB test for an unrelated fix
+seeded its trailers with raw SQL, as every real-DB test here does, and seven of its eight
+assertions failed on a validation error that had nothing to do with what was being tested. A
+test that touches the database the way other systems touch it finds things no unit test can.
+
+Coercion rather than `Optional`, deliberately: `Optional` changes the wire contract (clients that
+received `{}` start receiving `null`), and NULL metadata and empty metadata genuinely mean the
+same thing — a row with no extra attributes. That is **not** true of the other absences in this
+session, which is why a missing cost, a missing estimate and a missing fleet size all stay
+`None` while this one becomes `{}`.
