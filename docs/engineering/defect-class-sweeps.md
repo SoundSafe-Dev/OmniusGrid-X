@@ -3059,3 +3059,38 @@ Method rule 14 said a substring match on source is satisfied by prose. Three occ
 one file say something stronger: **the prose density around a defect is highest exactly where
 the assertion looks**, because that is where the explanation goes. Strip comments in every
 source-text assertion as a matter of course, not when one fails.
+
+## The narrow question beats the broad one: response models against their own tables
+
+The wire-vocabulary sweep asks *does any backend file produce this name?* — a broad question
+with a fuzzy answer, which is why it credited four of `DockDoor`'s five phantom fields (rule
+34) and why it needed a request-vs-response correction (rule 36).
+
+`test_response_models_match_their_tables.py` asks a narrow one instead: **is this field a
+column of THIS entity's table, an alias of one, or an explicitly-listed value the handler
+resolves?** No vocabulary, no heuristics, and the pairing is mechanical
+(`DockDoorResponse` ↔ `DockDoor`). It covers 34 response models and it is *stronger* on every
+model it covers, at the cost of covering nothing else.
+
+It found **nothing new**, which is the result worth recording: the DockDoor audit was the last
+of them, and 34 models are now proven rather than unexamined.
+
+Two exceptions, both listed with who fills them: `DockDoorResponse.trailer_license_plate`
+(denormalised by the handler in one batched query) and `TaskColumnResponse.task_count`
+(computed with a batched `GROUP BY`). A third class needed crediting rather than exempting —
+fourteen models expose the `meta_data` column as `metadata` through `AliasChoices`, and a
+guard that reported all fourteen would have been ignored within a day.
+
+**Both directions of the response-model trap are now guarded.** Declaring a field with no
+source fails this test; failing to declare a field the handler resolves fails the per-feature
+test that resolved it. The two defects look nothing alike and cost the same.
+
+## Rule 38 — prefer the check with a definite answer, even if it covers less
+
+Given a choice between a sweep that inspects everything approximately and one that inspects
+part of the system exactly, the exact one is worth more per line. The broad sweep has produced
+nine findings and needed three corrections (rules 34, 36, and its own vacuous baseline at rule
+31); the narrow one was right first time and its false-positive surface is a two-entry list.
+
+Breadth is not free: every heuristic that widens coverage also widens the space of results
+nobody can act on, and a sweep is only useful while people still read its output.
