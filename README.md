@@ -510,8 +510,8 @@ the UI were all already there, only the write was missing — and the component 
 failures. The other three were uncalled and were removed. Notably a hand fix of this exact
 class had already run (FS-15, "routes that never existed") and left these behind.
 
-**Both suites are green: backend 2,247 passed, frontend 377 passed, 0 failed** — across
-192 backend and 60 frontend test files. Every guard listed above is mutation-tested:
+**Both suites are green: backend 2,263 passed, frontend 381 passed, 0 failed** — across
+194 backend and 60 frontend test files. Every guard listed above is mutation-tested:
 reintroduce the defect and the test must fail, checked individually, because a guard that
 cannot fail is indistinguishable from one that passes.
 
@@ -624,6 +624,21 @@ than by feature. The last two point in opposite directions — server not sendin
 client reads, client not sending what the server reads — and neither sweep could have found
 the other.
 
+**Working the contract sweep's list produced four more, each needing a different fix.**
+Every geofence alert read **"Violation"** — including routine authorised entries — because the
+endpoint sent `eventType` and the panel switched on `alertType`, so the ternary fell through
+to its last branch. A dock door could not name the trailer at it, because the plate lives on
+`yard_trailers` and nobody joined it. `workcellName` was **deleted** rather than resolved:
+`dock_doors` has no workcell relationship to resolve through. And a card headed *"Fleet Status
+(GeoTab Live)"* rendered six blanks, two beside bare units — the client's declared shape shared
+no field name with any response — while the payload itself carried `simulated: true` and the
+sentence *"not valid for DOT/ELD compliance reporting"* that nothing read.
+
+That is the value of asking the question table-aware: *does this entity's own table have a
+column that could feed the field, or a reference to one that does?* The answer sorts each
+entry into rename the producer, expose what exists, or delete the field — three different
+fixes that a list of names alone cannot distinguish.
+
 **The guards needed as much correcting as the code.** The emptiness sweep reported zero
 offenders while three pages were unguarded: its phrase cap hid a hundred-character empty
 state, and its proximity window found an unrelated mutation's error branch and called the
@@ -633,7 +648,7 @@ cases was to count braces and use the real bounds. A third computed its own base
 the tree it then compared against, so it could never fail for any input. **Three guards,
 three different ways of being confidently wrong** — running a guard does not test it;
 breaking the tree on purpose does, and every one of them is now controlled that way.
-Rules 21–32 are recorded in `docs/engineering/defect-class-sweeps.md`.
+Rules 21–35 are recorded in `docs/engineering/defect-class-sweeps.md`.
 
 ### Delivered since — FS-141+ (release path, backups, and the guards that weren't guarding)
 
@@ -2938,7 +2953,7 @@ The ERP integration system correlates ERP data with operational telemetry to pro
 - [Implementation Summary](IMPLEMENTATION_SUMMARY.md) - Complete feature inventory
 
 **Engineering practice**
-- [Defect-class sweeps](docs/engineering/defect-class-sweeps.md) - The thirty-seven classes of "code that looks wired and cannot work" found so far, what each sweep found (including the ones that came back clean), which mutation-tested guard keeps each closed, and thirty-two rules for writing a sweep worth trusting — most of them paid for by a detector that was wrong first, including one that reported zero offenders while three pages were broken and one that compared a baseline against itself
+- [Defect-class sweeps](docs/engineering/defect-class-sweeps.md) - The thirty-seven classes of "code that looks wired and cannot work" found so far, what each sweep found (including the ones that came back clean), which mutation-tested guard keeps each closed, and thirty-five rules for writing a sweep worth trusting — most of them paid for by a detector that was wrong first, including one that reported zero offenders while three pages were broken and one that compared a baseline against itself
 
 **Infrastructure & operations**
 - [Database migrations](database/migrations/README.md) - Runner rules (never edit or rename an applied migration), the 019 gap, grandfathered duplicate prefixes, demo-data gating
