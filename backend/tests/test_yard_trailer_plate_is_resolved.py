@@ -125,6 +125,48 @@ class TestTheAppointmentNamesItsTrailer:
         assert match[0].get("trailer_license_plate") == "PLT-4417"
 
 
+class TestTheDoorCarriesOnlyWhatItHas:
+    """The per-interface audit rule 34 says the global sweep cannot do.
+
+    `DockDoor` declared `supportedEquipment: string[]`, `hasLoadingEquipment`,
+    `maxWeightCapacity`, `currentAppointmentId` and `estimatedReleaseAt`. `dock_doors`
+    carries door_number, door_type, status, equipment_capabilities (a JSON OBJECT, not a
+    list), current_trailer_id, last_occupied_at and is_active — and nothing else. None of the
+    five was ever reported by the wire-vocabulary sweep, because its vocabulary is global: a
+    name that exists as a column on ANY table passes.
+
+    `estimatedReleaseAt` was the one that rendered — "Release: HH:MM", a prediction nothing
+    produces, so the line never appeared. `last_occupied_at` exists and means something
+    different (when the door was last occupied, a fact about the past); mapping one onto the
+    other would have been the `currentMileage` defect exactly — the right number under the
+    wrong label.
+    """
+
+    async def test_the_door_reports_its_equipment_capabilities(self, client_a, yard):
+        door = await _door(client_a, yard["door"])
+        assert "equipment_capabilities" in door
+
+    async def test_the_door_reports_when_it_was_last_occupied(self, client_a, yard):
+        """Present as a key even when null, so the client can tell "never occupied" from
+        "this deployment does not send it"."""
+        door = await _door(client_a, yard["door"])
+        assert "last_occupied_at" in door
+
+    def test_the_schema_declares_no_field_the_table_lacks(self):
+        """The audit itself, asserted. Every response field must correspond to a column —
+        or to a denormalised value the handler resolves, of which there is exactly one."""
+        from app.db.models import DockDoor
+        from app.models.schemas import DockDoorResponse
+
+        columns = {c.name for c in DockDoor.__table__.columns}
+        resolved = {"trailer_license_plate"}  # joined from yard_trailers by the handler
+        declared = set(DockDoorResponse.model_fields)
+        assert not (declared - columns - resolved), (
+            "DockDoorResponse declares fields dock_doors does not have and the handler does "
+            f"not resolve: {sorted(declared - columns - resolved)}"
+        )
+
+
 class TestARawInsertedAppointmentDoesNotFiveHundred:
     """A SECOND defect, found because this file's fixture writes rows with psycopg2.
 

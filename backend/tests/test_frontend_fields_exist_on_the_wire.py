@@ -177,6 +177,18 @@ BASELINE = {
     # in the schema, not something a panel or a type can paper over. The `Location`
     # pair went with them: nothing rendered those either.
     "DetentionAlert.excessMinutes",
+    # `DockDoor.estimatedReleaseAt` was HERE, and came out of the per-interface audit
+    # rule 34 says this sweep cannot do. `DockDoor` declared five fields `dock_doors`
+    # does not have, and only this one was reported — the others (`supportedEquipment`,
+    # `hasLoadingEquipment`, `maxWeightCapacity`, `currentAppointmentId`) name columns
+    # that exist on OTHER tables, and a global vocabulary credits them.
+    #
+    # It rendered "Release: HH:MM", a prediction nothing produces. `last_occupied_at`
+    # exists and means something different — when the door was last occupied, a fact
+    # about the past — so the card shows that instead. Mapping one onto the other would
+    # have been the `currentMileage` defect exactly: the right number, the wrong label.
+    # A schema-vs-table assertion in test_yard_trailer_plate_is_resolved.py now keeps
+    # DockDoorResponse honest.
     "DockAppointment.driverPhone",
     # The six yard entries (trailerLicensePlate x4, workcellName x2) were HERE, and
     # are the sixth finding — the one that needed TWO of the three fixes:
@@ -187,7 +199,6 @@ BASELINE = {
     #   * `workcellName` was DELETED. dock_doors has no workcell relationship of any
     #     kind, so nothing could ever have fed it.
     # Pinned by tests/test_yard_trailer_plate_is_resolved.py.
-    "DockDoor.estimatedReleaseAt",
     # `ErrorListParams.sort` was HERE and was a FALSE POSITIVE of this sweep, not a
     # defect: `list_errors` accepts `sort` and the client sends it correctly. The
     # vocabulary collected `AnnAssign` targets but not function PARAMETERS, so every
@@ -309,8 +320,15 @@ class TestTheThreeFindingsStayFixed:
     would not notice one of these coming back if another were removed at the same time."""
 
     def test_current_mileage_is_gone(self):
+        # COMMENTS STRIPPED. This assertion has now failed twice against FIXED code, because
+        # prose about a defect gathers precisely around the defect: first the comment
+        # explaining the deletion, then a comment in the DockDoor audit citing
+        # `currentMileage` as the precedent for not mapping `last_occupied_at` onto
+        # `estimatedReleaseAt`. Method rule 14, three times in one file — the lesson is that
+        # ANY substring assertion over source must strip comments first, not that this
+        # particular one needed it.
         assert "MaintenanceSchedule.currentMileage" not in _declared_but_unsent()
-        text = (FRONTEND / "types" / "logistics.ts").read_text()
+        text = COMMENT.sub(" ", (FRONTEND / "types" / "logistics.ts").read_text())
         assert "currentMileage" not in text, (
             "a schedule knows when service is DUE; it does not know the vehicle's "
             "present odometer"

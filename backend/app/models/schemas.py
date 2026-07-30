@@ -274,6 +274,8 @@ class DockDoorResponse(DockDoorBase):
     # deleted it from every response and the fix would have done nothing visible — the
     # same way `AssetResponse` silently swallowed `maintenance_mode`.
     trailer_license_plate: Optional[str] = None
+    # Declared explicitly so it survives the response model, like the plate above. The door
+    # card now shows "Last occupied" instead of an `estimatedReleaseAt` no column produces.
     last_occupied_at: Optional[datetime]
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None

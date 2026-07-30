@@ -47,14 +47,26 @@ export interface DockDoor {
   status: 'available' | 'occupied' | 'reserved' | 'maintenance' | 'blocked';
   currentTrailerId?: string;
   trailerLicensePlate?: string;
-  supportedEquipment: string[];
-  hasLoadingEquipment: boolean;
-  maxWeightCapacity: number; // kg
-  currentAppointmentId?: string;
-  estimatedReleaseAt?: string;
+  /** `dock_doors.equipment_capabilities` — a JSON OBJECT, not a list. This was declared as
+   *  `supportedEquipment: string[]`, a name the wire does not use and a shape the column
+   *  does not hold, so it was both unsourced and untypeable. Nothing rendered it. */
+  equipmentCapabilities?: Record<string, unknown> | null;
+  /** `dock_doors.last_occupied_at`. NOT an estimated release: it records when the door was
+   *  last occupied, which is a fact about the past. `estimatedReleaseAt` was declared here
+   *  and rendered as "Release: HH:MM" — a prediction nothing produces, so the line never
+   *  appeared. Mapping `last_occupied_at` onto it would have been the `currentMileage`
+   *  defect exactly: the right number under the wrong label. */
+  lastOccupiedAt?: string | null;
+  isActive?: boolean;
   createdAt: string;
   updatedAt: string;
 }
+// DELETED FROM DockDoor, all four unsourced and unrendered: `hasLoadingEquipment`,
+// `maxWeightCapacity`, `currentAppointmentId` (appointments reference doors, not the
+// reverse) and `estimatedReleaseAt`. `dock_doors` carries door_number, door_type, status,
+// equipment_capabilities, current_trailer_id, last_occupied_at and is_active — nothing else.
+// This is the per-interface audit rule 34 says the global sweep cannot do: its vocabulary
+// credits a name that exists as a column on ANY table, so none of these were ever reported.
 
 export interface DockAppointment {
   id: string;

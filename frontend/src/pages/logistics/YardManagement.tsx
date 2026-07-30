@@ -473,9 +473,14 @@ export const YardManagement: FC = () => {
                 <div className="mt-3 pt-3 border-t border-opsgrid-border">
                   <p className="text-sm font-medium">Occupied by:</p>
                   <p className="text-sm text-opsgrid-text-secondary">{door.trailerLicensePlate}</p>
-                  {door.estimatedReleaseAt && (
-                    <p className="text-xs text-opsgrid-text-secondary mt-1">
-                      Release: {new Date(door.estimatedReleaseAt).toLocaleTimeString()}
+                  {/* WAS `door.estimatedReleaseAt`, rendered as "Release: HH:MM" — a
+                      prediction no column produces, so the line never appeared. The door
+                      knows when it was last occupied, which is a different and true thing;
+                      mapping one onto the other would be the `currentMileage` defect again,
+                      the right number under the wrong label. */}
+                  {door.lastOccupiedAt && (
+                    <p className="text-xs text-opsgrid-text-secondary">
+                      Last occupied: {new Date(door.lastOccupiedAt).toLocaleTimeString()}
                     </p>
                   )}
                 </div>

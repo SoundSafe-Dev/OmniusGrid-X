@@ -3018,3 +3018,44 @@ Controlled both ways: an undocumented `--ignore` added to the real workflow is n
 back-dated expiry fails with the owner and the fix. **And the guard rejected its own first
 draft** — one entry's `fix` field said only "as above.", which the `test_every_entry_says_who_and_how`
 assertion refused as too thin to act on.
+
+## The per-interface audit: DockDoor against its own table
+
+Rule 34 says the global sweep credits a name that exists as a column on *any* table, so it
+cannot tell whether a field belongs to the entity declaring it. `DockDoor` is what that
+blind spot was hiding. The interface declared:
+
+| declared | reality |
+|---|---|
+| `supportedEquipment: string[]` | the column is `equipment_capabilities`, a JSON **object** |
+| `hasLoadingEquipment: boolean` | no column |
+| `maxWeightCapacity: number` | no column |
+| `currentAppointmentId` | no column — appointments reference doors, not the reverse |
+| `estimatedReleaseAt` | no column, and **it rendered**: "Release: HH:MM" |
+
+`dock_doors` carries `door_number`, `door_type`, `status`, `equipment_capabilities`,
+`current_trailer_id`, `last_occupied_at` and `is_active`. Nothing else. Only
+`estimatedReleaseAt` was reported by the global sweep, and only because no other table has a
+column by that name.
+
+**`last_occupied_at` exists and is not the same thing.** It records when the door was last
+occupied — a fact about the past — where `estimatedReleaseAt` is a prediction. Mapping one
+onto the other would have been the `currentMileage` defect exactly: the right number under
+the wrong label, which is how that one shipped. The card shows "Last occupied" now.
+
+The audit is pinned as an assertion rather than a one-off: `DockDoorResponse`'s declared
+fields must all be columns of `dock_doors`, minus one explicitly-listed denormalised value
+the handler resolves. That generalises to any response model, and is cheaper than the global
+sweep because it needs no vocabulary — just the table.
+
+## Rule 37 — prose about a defect gathers around the defect, so strip comments in every source assertion
+
+`assert "currentMileage" not in logistics_ts` has now failed twice against **fixed** code.
+First the comment explaining the deletion contained the word; then, months of work later in
+the same session, a comment in the DockDoor audit cited `currentMileage` as the precedent for
+*not* mapping `last_occupied_at` onto `estimatedReleaseAt`.
+
+Method rule 14 said a substring match on source is satisfied by prose. Three occurrences in
+one file say something stronger: **the prose density around a defect is highest exactly where
+the assertion looks**, because that is where the explanation goes. Strip comments in every
+source-text assertion as a matter of course, not when one fails.
