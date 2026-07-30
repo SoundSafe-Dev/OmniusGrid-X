@@ -14,7 +14,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The thirty-seven classes
+## The forty-two classes
 
 The first five were all originally found in ERP. The sixth came out of the fifth, the
 seventh out of two failing tests that turned out to share a cause, and the eighth out of
@@ -65,6 +65,11 @@ to ask where else it could live.
 | A widget that vanishes when its query fails | every JSX gate on a query-derived value | **1 live: the fleet page's vehicle map, with no string to grep for** | `failureIsNotEmptiness.test.ts` (second detector) |
 | A claim rendered beside a handled error | every falsy ternary branch / coerced count outside an error branch | **6 live: gateway mTLS + queue, model badge, MLOps ×3, dashboard heading, strategic tiles** | the per-page suites; rule 24 |
 | A mutation whose failure reaches nobody | every `useMutation` in the frontend | **9 live across 3 files, incl. delete-user and a stale connection-test success** | `mutationFailureIsVisible.test.ts` |
+| A tenant taken from the request BODY | every route handler in `app/api` | **14 live; 13 saved by a policy, `vehicles` had none and wrote the row** | `test_no_handler_takes_its_tenant_from_the_body.py` |
+| A tenant taken as a client-supplied PARAMETER | same, second variant | **8 live: 6 geotab + operations + yard detention, all Optional so a bare request filtered by nothing** | same guard, parameter check |
+| A tenant filter applied CONDITIONALLY | `if org is not None: … where(…)` | **4 live in one router: an unscoped DELETE, two leaking reads, a latent dispatch fan-out** | `test_notification_tenant_isolation_realdb.py` |
+| A tenant table with no policy | every table carrying `organization_id` | **6 with no RLS, 5 with RLS but no FORCE; `vehicles` closed by migration 055, 9 recorded** | `test_every_tenant_table_has_a_policy.py` |
+| A response model declaring a field its table lacks | 34 `*Response` models | **clean after the DockDoor audit — 5 fields deleted there** | `test_response_models_match_their_tables.py` |
 | A TS field the wire never carries | every `types/*.ts` field a component reads | **3 live: a relabelled odometer, a UUID slice shown as a work-order number, 3 of 5 cost figures** | `test_frontend_fields_exist_on_the_wire.py` |
 | A field the compliance check reads that nothing writes | `hos_drive_hours_remaining` and its neighbours | **1 live, and the worst of the session: every fleet cleared of HOS violations** | `test_hos_remaining_is_derived.py` |
 
@@ -2129,6 +2134,68 @@ one of its findings. The habit that catches it:
    server not sending what the client reads, and the client not sending what the server
    reads, are different defects that no single sweep finds.
 
+33. **Fixing a correctness defect is where performance and robustness defects get
+   introduced.** The join that made the geofence alert readable also added an N+1 and a
+   500-on-real-data, and neither was in the code being fixed — both were in the fix. Run
+   the whole suite, not the new file.
+   *(Fuller account: § Rule 33.)*
+
+34. **A global vocabulary passes a name that is wrong for the entity holding it.** Six
+   `DockDoor` fields were declared against a table carrying none of them and the
+   wire-vocabulary sweep reported none, because each name is a column on some other table.
+   Per-entity audits are a different, narrower job.
+   *(Fuller account: § Rule 34.)*
+
+35. **Name the field after the wire, not after the nicer word.** Mapping `active_devices`
+   to `vehiclesActive` in a client made the sweep report the new name as unsourced —
+   correctly, since nothing produces it, and a reader cannot tell a rename from a
+   fabrication either. One name per concept, chosen where the concept lives.
+   *(Fuller account: § Rule 35.)*
+
+36. **A request field checked against a response vocabulary is a false positive by
+   construction.** `ErrorListParams.sort` sat on a baseline as unsourced while the endpoint
+   accepted it: the vocabulary collected class attributes but not function parameters, so
+   it was comparing what the backend CONSUMES against what it PRODUCES.
+   *(Fuller account: § Rule 36.)*
+
+37. **Prose about a defect gathers around the defect, so strip comments in every source
+   assertion.** `assert "currentMileage" not in logistics_ts` failed twice against FIXED
+   code — first the comment explaining the deletion, then one citing it as a precedent.
+   *(Fuller account: § Rule 37.)*
+
+38. **Prefer the check with a definite answer, even if it covers less.** The broad
+   wire-vocabulary sweep produced nine findings and needed three corrections; the narrow
+   response-model-versus-table audit was right first time with a two-entry false-positive
+   surface.
+   *(Fuller account: § Rule 38.)*
+
+39. **Six hand-fixes and no guard is a class that will come back.** The tenant-from-body
+   shape had been removed by hand from six handlers, each with a careful comment, while
+   fourteen more instances sat in the same three files. A comment records a fix; only a
+   guard prevents the next one.
+   *(Fuller account: § Rule 39.)*
+
+40. **Never act on truncated diagnostic output.** A guard printed thirteen offenders, `head
+   -10` showed nine, nine were fixed, and four "new" ones appeared on the re-run — briefly
+   looking like the fix had caused them.
+   *(Fuller account: § Rule 40.)*
+
+41. **A migration that enumerates its targets leaves the next arrival unprotected.** 011,
+   033 and 051 each named their tables; `vehicles` arrived between them and had no policy,
+   which is why it was the one handler whose tenant defect wrote a real cross-tenant row.
+   *(Fuller account: § Rule 41.)*
+
+42. **A test asserting emptiness must be given something to find.** `_load_rules(None) ==
+   []` passed against a restored fan-out because the test omitted the fixture that seeds
+   rows. Rule 21 in ordinary clothing: a fixture left off a parameter list.
+   *(Fuller account: § Rule 42.)*
+
+43. **A guard proves the absence of the shape it models, not of the class.** Three guards
+   for "the caller decides which tenant" — assignment from a body (14 handlers), a query
+   parameter (8), a conditionally-applied filter (4) — each clean while the next variant
+   sat in the same three files.
+   *(Fuller account: § Rule 43.)*
+
 ---
 
 ## Open observations, not yet tickets
@@ -3315,3 +3382,31 @@ All three are "the caller decides which tenant", and no single check saw more th
 After writing a guard, the useful question is not *did it pass* but **what shape does it model,
 and what else could express the same defect?** Each variant here was found by reading code the
 previous guard had just declared clean.
+
+## Rule 44 — a hand-maintained number in prose is a claim that will be wrong
+
+The README stated "206 backend test files". The measured figure was 201. Nobody lied: the
+number had been incremented by hand at each milestone and drifted, the way every hand-maintained
+count does. Two other claims in the same paragraph had drifted the same way — the rule range said
+21–38 while the doc had reached 41, and the class count said thirty-seven while the table had
+grown past it.
+
+The method-rules index had drifted **three separate times**: rules 22–27 were written as
+sections while the numbered list stopped at 21, then 28–31, then 33–43. Each repair was by hand,
+which is precisely the situation rule 39 describes — a comment records a fix, only a guard
+prevents the next one. `test_method_rules_are_indexed.py` now asserts the list is contiguous
+from 1, that every `## Rule N` section has a list entry and vice versa, and that the README
+cites the real range.
+
+**Which numbers deserve a guard and which do not.** A rule range and a class count change rarely
+and mean something, so they are worth asserting. A test count changes on every commit — pinning
+it would make every new test fail the suite, which converts a documentation nicety into an
+obstacle. Those stay hand-written and are re-measured at each milestone rather than trusted;
+this document's own counts were re-measured to write this paragraph, and two of the three were
+wrong.
+
+Writing the guard also required scoping care worth recording: several prose sections in this file
+enumerate with the identical `1. **…**` formatting — the five maintenance-mode defects, the four
+things the CI-quarantine guard asserts — so a file-wide regex reports duplicate rules 1–5 and is
+useless. The check reads only between the list's heading and the next `---`, and a separate
+assertion proves that scoping is narrower than the whole file.
