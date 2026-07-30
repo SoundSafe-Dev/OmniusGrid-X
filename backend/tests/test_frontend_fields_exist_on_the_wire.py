@@ -169,7 +169,17 @@ BASELINE = {
     "DockDoor.estimatedReleaseAt",
     "Driver.currentShipmentId",
     "Driver.currentVehicleId",
-    "Driver.geoTabDeviceId",
+    # `Driver.geoTabDeviceId` and `Vehicle.geoTabDeviceId` were HERE, and are the
+    # eighth finding — one field name hiding TWO different defects:
+    #   * vehicles DO have one, `vehicles.geotab_device_id`, but the casing seam
+    #     produces `geotabDeviceId` with a lower-case t, so the declared name matched
+    #     nothing and the detail row never rendered;
+    #   * drivers do NOT. The column is `eld_device_id` — an ELD, a different system
+    #     with different compliance meaning — so the panel offered a "GeoTab Device ID"
+    #     row that could never populate while the id the driver DOES have was sent and
+    #     never displayed.
+    # Both rows are conditional, so neither made a false claim; they were simply never
+    # there, which is why nothing reported them.
     "ErrorListParams.sort",
     # The six `GeofenceAlert*` entries were HERE, and are the fifth finding: the
     # endpoint sent zoneId/eventType/createdAt while the client read
@@ -215,7 +225,6 @@ BASELINE = {
     "StrategicRecommendation.timeSavings",
     "Vehicle.currentLocation",
     "Vehicle.currentShipmentId",
-    "Vehicle.geoTabDeviceId",
     "YardTrailer.contents",
     "YardTrailer.driverPhone",
 }

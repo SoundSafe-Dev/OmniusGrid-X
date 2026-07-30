@@ -165,7 +165,11 @@ export interface Driver {
   lastLocation?: GeoLocation;
   currentVehicleId?: string;
   currentShipmentId?: string;
-  geoTabDeviceId?: string; // GeoTab device ID
+  /** WAS `geoTabDeviceId`. Drivers have no GeoTab device — the column is
+   *  `drivers.eld_device_id`, an ELD, which is a different system. The detail panel showed
+   *  a "GeoTab Device ID" row that could never populate while the id the driver DOES have
+   *  was sent and never displayed. */
+  eldDeviceId?: string;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -245,7 +249,10 @@ export interface Vehicle {
   currentDriverId?: string;
   currentShipmentId?: string;
   currentLocation?: GeoLocation;
-  geoTabDeviceId?: string;
+  /** `vehicles.geotab_device_id`. WAS `geoTabDeviceId` with a capital T — the casing seam
+   *  produces `geotabDeviceId`, so the declared name matched nothing and the row never
+   *  rendered. Rule 35: name the field after the wire. */
+  geotabDeviceId?: string;
   odometer?: number;
   fuelLevel?: number;
   engineHours?: number;

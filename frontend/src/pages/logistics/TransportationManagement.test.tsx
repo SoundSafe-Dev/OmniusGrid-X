@@ -234,6 +234,62 @@ describe('TransportationManagement — HOS compliance', () => {
   })
 })
 
+describe('TransportationManagement — device identifiers', () => {
+  // TWO DIFFERENT DEFECTS BEHIND ONE FIELD NAME. Both detail panels showed a
+  // "GeoTab Device ID" row reading `x.geoTabDeviceId`:
+  //
+  //   * Vehicles DO have one — `vehicles.geotab_device_id` — but the casing seam produces
+  //     `geotabDeviceId` with a lower-case t, so the declared name matched nothing.
+  //   * Drivers do NOT. The column is `eld_device_id`: an ELD, a different system with
+  //     different compliance meaning. The row could never populate, while the id the driver
+  //     actually has was being sent and never displayed.
+  //
+  // Both rows are conditional, so neither made a false claim — they were simply never
+  // there, which is why nothing ever reported them.
+  // The device rows live in a DETAIL panel, which opens on selecting a row — reaching the
+  // tab is not enough, and a test that stopped there passed for the wrong reason (the row
+  // it was looking for had not been rendered yet, not because the id was correct).
+  const openDetail = async (tab: RegExp, rowText: string | RegExp) => {
+    await waitFor(() => expect(getDrivers).toHaveBeenCalled(), SETTLE)
+    fireEvent.click(await screen.findByRole('button', { name: tab }, SETTLE))
+    fireEvent.click(await screen.findByText(rowText, undefined, SETTLE))
+  }
+
+  it("shows a vehicle's GeoTab device id", async () => {
+    getVehicles.mockResolvedValue(
+      page({ items: [{ id: 'v-1', vehicleNumber: 'TRK-1', status: 'available',
+                       geotabDeviceId: 'gt-device-77' }], total: 1 }),
+    )
+    wrap()
+    // One tab holds both lists: "Fleet & Drivers". `/vehicles/i` matched no tab at all,
+    // and the test then timed out looking for the row rather than for the tab.
+    await openDetail(/fleet/i, 'TRK-1')
+    expect(await screen.findByText('gt-device-77', undefined, SETTLE)).toBeInTheDocument()
+  })
+
+  it("shows a driver's ELD device id, labelled as an ELD", async () => {
+    getDrivers.mockResolvedValue(
+      page({ items: [driver({ eldDeviceId: 'eld-device-42' })], total: 1 }),
+    )
+    wrap()
+    await openDetail(/fleet/i, 'Dana Driver')
+    expect(await screen.findByText('eld-device-42', undefined, SETTLE)).toBeInTheDocument()
+    expect(screen.getByText('ELD Device ID')).toBeInTheDocument()
+    // The panel must not call an ELD a GeoTab device: they are different systems, and on a
+    // driver record the distinction is a compliance one.
+    expect(screen.queryByText('GeoTab Device ID')).not.toBeInTheDocument()
+  })
+
+  it('shows no device row when the driver has no ELD id', async () => {
+    // The control: a row that always renders would satisfy the test above and print an
+    // empty identifier for every driver.
+    getDrivers.mockResolvedValue(page({ items: [driver()], total: 1 }))
+    wrap()
+    await openDetail(/fleet/i, 'Dana Driver')
+    expect(screen.queryByText('ELD Device ID')).not.toBeInTheDocument()
+  })
+})
+
 describe('TransportationManagement — the fleet card', () => {
   it('shows the figures the endpoint actually reports', async () => {
     // The positive control. Six tiles used to render blank because the client declared

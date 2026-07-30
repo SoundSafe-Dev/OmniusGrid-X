@@ -1299,10 +1299,14 @@ const DriverDetailModal: FC<{ driver: Driver; onClose: () => void }> = ({ driver
             </div>
           )}
 
-          {driver.geoTabDeviceId && (
+          {/* WAS "GeoTab Device ID" reading `driver.geoTabDeviceId`. Drivers have no
+              GeoTab device: the column is `eld_device_id`, an ELD, which is a different
+              system with different compliance meaning. The row could never populate, and
+              the id the driver DOES have was being sent and never shown. */}
+          {driver.eldDeviceId && (
             <div className="bg-opsgrid-bg rounded-lg p-3">
-              <p className="text-xs text-opsgrid-text-secondary">GeoTab Device ID</p>
-              <p className="text-sm font-mono">{driver.geoTabDeviceId}</p>
+              <p className="text-xs text-opsgrid-text-secondary">ELD Device ID</p>
+              <p className="text-sm font-mono">{driver.eldDeviceId}</p>
             </div>
           )}
         </div>
@@ -1434,10 +1438,12 @@ const VehicleDetailModal: FC<{ vehicle: Vehicle; onClose: () => void }> = ({ veh
             </div>
           </div>
 
-          {vehicle.geoTabDeviceId && (
+          {/* `geotabDeviceId`, not `geoTabDeviceId`. The column is `geotab_device_id` and
+              the casing seam lower-cases the t, so the old name matched nothing. */}
+          {vehicle.geotabDeviceId && (
             <div className="bg-opsgrid-bg rounded-lg p-3">
               <p className="text-xs text-opsgrid-text-secondary">GeoTab Device ID</p>
-              <p className="text-sm font-mono">{vehicle.geoTabDeviceId}</p>
+              <p className="text-sm font-mono">{vehicle.geotabDeviceId}</p>
             </div>
           )}
         </div>
