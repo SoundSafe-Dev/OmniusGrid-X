@@ -268,6 +268,12 @@ class DockDoorResponse(DockDoorBase):
     id: UUID
     organization_id: UUID
     current_trailer_id: Optional[UUID]
+    # DENORMALISED, and declared here for a specific reason: `response_model` DROPS
+    # anything the schema does not name. The handler now resolves the plate from
+    # `yard_trailers` via `current_trailer_id`, and without this line FastAPI would have
+    # deleted it from every response and the fix would have done nothing visible — the
+    # same way `AssetResponse` silently swallowed `maintenance_mode`.
+    trailer_license_plate: Optional[str] = None
     last_occupied_at: Optional[datetime]
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
@@ -695,6 +701,24 @@ class DockAppointmentResponse(DockAppointmentBase):
     # rather than omitting the field. Response-only; create/update keep their
     # stricter types.
     appointment_type: Optional[str] = None
+    # THE SAME DEFECT THE COMMENT ABOVE DESCRIBES, one class over. `dock_appointments`
+    # declares `meta_data = Column(JSON, default={})` — a PYTHON-side default, so a row
+    # written by a migration, a seeder or any raw INSERT holds NULL, and the ORM hands this
+    # field an explicit None. `Dict[str, Any]` with a `default_factory` does not save you
+    # from an explicit None, so `GET /yard/dock/appointments` answered 500 with
+    # "metadata: Input should be a valid dictionary" — a validation error naming OUR schema
+    # rather than the row, so nobody would think to look at the data.
+    #
+    # `DockDoorResponse` was fixed for exactly this (see `equipment_capabilities` there) and
+    # the appointment beside it was left. Method rule 18: the second instance is in the
+    # nearest neighbour of the first.
+    metadata: Optional[Dict[str, Any]] = Field(
+        default=None,
+        validation_alias=AliasChoices('meta_data', 'metadata'),
+        serialization_alias='metadata',
+    )
+    status: Optional[str] = None
+    priority: Optional[str] = None
     id: UUID
     organization_id: UUID
     dock_door_id: Optional[UUID] = None

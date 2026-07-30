@@ -56,6 +56,27 @@ async def _resolve_carrier_names(carrier_ids, db: AsyncSession) -> Dict[str, Any
     return {str(cid): name for cid, name in rows}
 
 
+async def _resolve_trailer_plates(trailer_ids, db: AsyncSession) -> Dict[str, Any]:
+    """Map {trailer_id -> license_plate} in one query.
+
+    The dock-door card renders `door.trailerLicensePlate` as bare text and the appointment
+    row renders `appt.trailerLicensePlate || appt.trailerId || '-'`. Neither was ever sent:
+    `dock_doors.current_trailer_id` and `dock_appointments.trailer_id` reference
+    `yard_trailers`, and the plate lives there. The door card showed an empty line where the
+    trailer at the dock should be identified.
+
+    One query, not one per row — the same shape as `_resolve_carrier_names` directly above,
+    and for the same reason.
+    """
+    ids = {t for t in trailer_ids if t}
+    if not ids:
+        return {}
+    rows = (await db.execute(
+        select(YardTrailer.id, YardTrailer.license_plate).where(YardTrailer.id.in_(ids))
+    )).all()
+    return {str(tid): plate for tid, plate in rows}
+
+
 # ==================== Yard Trailer Endpoints ====================
 
 @router.post("/trailers/checkin", response_model=YardTrailerResponse, dependencies=[Depends(require_operator_or_admin)])
@@ -213,8 +234,23 @@ async def get_dock_doors(
     query = select(DockDoor).where(DockDoor.organization_id == organization_id)
     if status:
         query = query.where(DockDoor.status == status)
-    result = await db.execute(query)
-    return result.scalars().all()
+    doors = (await db.execute(query)).scalars().all()
+
+    # `trailerLicensePlate` is what the door card prints to identify the trailer at the
+    # dock, and it was never sent — the plate is on `yard_trailers`, reached through
+    # `current_trailer_id`. Returning ORM rows directly is what made that easy to miss:
+    # the response model quietly describes only the columns of one table.
+    plates = await _resolve_trailer_plates({d.current_trailer_id for d in doors}, db)
+    items: List[Dict[str, Any]] = []
+    for d in doors:
+        row = DockDoorResponse.model_validate(d).model_dump(mode="json", by_alias=True)
+        # snake_case ON THE WIRE. `/api/v1/yard` is registered on the frontend casing
+        # seam, which converts `trailer_license_plate` to `trailerLicensePlate` — writing
+        # the camel form here would survive the transform unchanged and arrive as a second,
+        # differently-spelled key.
+        row["trailer_license_plate"] = plates.get(str(d.current_trailer_id))
+        items.append(row)
+    return items
 
 
 @router.post("/dock/doors/{door_id}/assign/{trailer_id}", response_model=dict, dependencies=[Depends(require_operator_or_admin)])
@@ -298,11 +334,13 @@ async def get_dock_schedule(
     carrier_names = await _resolve_carrier_names(
         {a.carrier_id for a in appointments if a.carrier_id}, db
     )
+    plates = await _resolve_trailer_plates({a.trailer_id for a in appointments}, db)
 
     items: List[Dict[str, Any]] = []
     for a in appointments:
         row = DockAppointmentResponse.model_validate(a).model_dump(mode="json", by_alias=True)
         row["carrierName"] = carrier_names.get(str(a.carrier_id))
+        row["trailer_license_plate"] = plates.get(str(a.trailer_id))
         items.append(row)
     return items
 

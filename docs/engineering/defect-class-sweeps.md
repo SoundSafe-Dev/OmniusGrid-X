@@ -2835,3 +2835,52 @@ was in the code being fixed — both were in the fix. The correctness change is 
 code is least reviewed, because attention is on the defect. Run the **whole** suite, not the
 new file: the isolation suite caught the crash, and the new file's own N+1 guard had to be
 repaired before it could catch anything.
+
+## Triaging the rest, table-aware: three fixes, not one
+
+The wire-vocabulary baseline is a list of names, and a name alone does not say what to do
+about it. The question that makes it actionable is **does this entity's own table have a
+column that could feed the field, or a reference to one that does?** — and it sorts every
+entry into one of three fixes:
+
+| answer | fix | example |
+|---|---|---|
+| the producer uses a different name | rename the producer | `eventType` → `alertType` |
+| a column or reference exists | expose it | `trailerLicensePlate` through `current_trailer_id` |
+| nothing could ever feed it | delete the field | `workcellName` on a dock door |
+
+The yard cluster needed **two of the three at once**. `dock_doors.current_trailer_id` and
+`dock_appointments.trailer_id` both reference `yard_trailers`, where the plate lives — so the
+door card was printing an empty line exactly where the trailer occupying the dock should be
+named, and that is an expose. `workcellName` sat next to it and is a delete: `dock_doors` has
+no workcell relationship of any kind, so the card was rendering a blank for an association
+this schema does not have.
+
+**The response model nearly ate the fix, again.** `GET /yard/dock/doors` declares
+`response_model=List[DockDoorResponse]`, so resolving the plate in the handler without
+declaring it on the schema would have deleted it from every response and changed nothing
+visible — the same trap that hid `maintenance_mode` on `AssetResponse`, hit twice in one
+session. Worth stating as a habit: **after adding a field to a handler, check what the
+response model does to it.**
+
+**And the fixture found a second, unrelated 500.** `dock_appointments.meta_data` is
+`Column(JSON, default={})` — a *Python-side* default, so a row written by a migration, a
+seeder or a raw INSERT holds NULL, the ORM hands the field an explicit None, and
+`metadata: Dict[str, Any]` rejected it. `GET /yard/dock/appointments` answered 500 with
+"metadata: Input should be a valid dictionary", an error naming our own schema rather than
+the row. `DockDoorResponse` carries a long comment describing this exact failure being fixed
+for `equipment_capabilities`; the appointment schema beside it was left alone. Rule 18, and
+the fixture that caught it was not looking for it.
+
+## Rule 34 — a global vocabulary passes a name that is wrong for the entity holding it
+
+`DockDoor.workcellId`, `supportedEquipment`, `hasLoadingEquipment`, `maxWeightCapacity`,
+`currentAppointmentId` and `estimatedReleaseAt` are all declared on a table that carries
+none of them — `dock_doors` has `equipment_capabilities` as JSON and nothing else — and the
+wire-vocabulary sweep reports **none** of them. Its vocabulary is global: a name that exists
+as a column on *any* table passes, whatever entity declares it.
+
+That is a deliberate trade (a per-entity vocabulary needs a type-to-table mapping the sweep
+does not have), but it bounds the claim. The sweep finds names nothing anywhere produces; it
+does not find names produced *somewhere else*. Auditing one interface against its own table,
+end to end, is a different and narrower job — and it is where the rest of `DockDoor` lives.

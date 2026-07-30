@@ -464,7 +464,10 @@ export const YardManagement: FC = () => {
                 <h3 className="font-semibold">{door.doorNumber}</h3>
                 <span className={`w-3 h-3 rounded-full ${getDoorStatusColor(door.status)}`} />
               </div>
-              <p className="text-sm text-opsgrid-text-secondary mb-2">{door.workcellName}</p>
+              {/* `door.workcellName` was here, rendering an empty line: `dock_doors` has no
+                  workcell relationship, so no endpoint could have filled it. The door type
+                  is what the row actually knows about itself. */}
+              <p className="text-sm text-opsgrid-text-secondary mb-2">{door.doorType ?? '—'}</p>
               <p className="text-sm capitalize">{door.status?.replace('_', ' ')}</p>
               {door.currentTrailerId && (
                 <div className="mt-3 pt-3 border-t border-opsgrid-border">

@@ -22,7 +22,7 @@ step is always one of three: rename it to what the wire calls it, delete it, or 
 server send it. `currentMileage` needed the second; `priority` on a maintenance schedule
 needed the third (migration 054).
 
-FIVE FINDINGS SO FAR:
+SIX FINDINGS SO FAR:
 
   * `MaintenanceSchedule.currentMileage` — the due odometer shown as the current one.
   * `RepairOrder.workOrderNumber` — the first eight characters of a UUID, shown as the
@@ -39,6 +39,9 @@ FIVE FINDINGS SO FAR:
   * `GeofenceAlert.alertType` / `.geofenceId` / `.geofenceName` — the endpoint and the client
     had drifted to entirely different names, so the panel's ternary fell through to its last
     branch and every alert, including a routine authorised entry, read "Violation".
+  * `DockDoor.trailerLicensePlate` and friends — the first entry needing two DIFFERENT fixes
+    in one cluster: the plate exposed through a join that existed, `workcellName` deleted
+    because the relationship does not.
 
 Its sibling `test_qualifiers_reach_the_frontend.py` asks the mirror question: which fields
 does the BACKEND send that no frontend file reads? Between them the contract is checked in
@@ -153,13 +156,17 @@ BASELINE = {
     "Carrier.contactPhone",
     "CloudGatewayStatus.lastConnectedAt",
     "DetentionAlert.excessMinutes",
-    "DetentionAlert.trailerLicensePlate",
     "DockAppointment.driverPhone",
-    "DockAppointment.trailerLicensePlate",
-    "DockAppointment.workcellName",
+    # The six yard entries (trailerLicensePlate x4, workcellName x2) were HERE, and
+    # are the sixth finding — the one that needed TWO of the three fixes:
+    #   * `trailerLicensePlate` was EXPOSED. Both dock_doors.current_trailer_id and
+    #     dock_appointments.trailer_id reference yard_trailers, where the plate lives,
+    #     so the door card printed an empty line where the trailer at the dock should
+    #     be named. Resolved in one batched query per list.
+    #   * `workcellName` was DELETED. dock_doors has no workcell relationship of any
+    #     kind, so nothing could ever have fed it.
+    # Pinned by tests/test_yard_trailer_plate_is_resolved.py.
     "DockDoor.estimatedReleaseAt",
-    "DockDoor.trailerLicensePlate",
-    "DockDoor.workcellName",
     "Driver.currentShipmentId",
     "Driver.currentVehicleId",
     "Driver.geoTabDeviceId",
@@ -197,7 +204,6 @@ BASELINE = {
     "Vehicle.currentLocation",
     "Vehicle.currentShipmentId",
     "Vehicle.geoTabDeviceId",
-    "YardMove.trailerLicensePlate",
     "YardTrailer.contents",
     "YardTrailer.driverPhone",
 }

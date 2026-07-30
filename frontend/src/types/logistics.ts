@@ -28,8 +28,22 @@ export interface YardTrailer {
 export interface DockDoor {
   id: string;
   doorNumber: string;
-  workcellId: string;
-  workcellName: string;
+  /** `dock_doors.door_type` — inbound | outbound | cross_dock. A real column that the API
+   *  has always sent and this interface never declared. */
+  doorType?: string | null;
+  /** OPTIONAL, and unfed: `dock_doors` has no `workcell_id` column. Nothing reads it, so
+   *  there is no render defect — but it was declared as REQUIRED, which is a promise the
+   *  wire cannot keep. `workcellName` sat beside it and was rendered; it is deleted rather
+   *  than resolved, because there is no workcell relationship here to resolve through. The
+   *  card printed a blank line for an association this schema does not have.
+   *
+   *  NOTE: several fields below (`supportedEquipment`, `hasLoadingEquipment`,
+   *  `maxWeightCapacity`, `currentAppointmentId`, `estimatedReleaseAt`) have the same
+   *  problem — `dock_doors` carries only `equipment_capabilities` as JSON. They did not
+   *  surface in the wire-vocabulary sweep because its vocabulary is GLOBAL: a name that
+   *  exists as a column on any table passes, even when this entity has no such column.
+   *  Recorded rather than fixed here; auditing one interface end to end is its own task. */
+  workcellId?: string;
   status: 'available' | 'occupied' | 'reserved' | 'maintenance' | 'blocked';
   currentTrailerId?: string;
   trailerLicensePlate?: string;
@@ -51,7 +65,6 @@ export interface DockAppointment {
   doorId?: string;
   doorNumber?: string;
   workcellId: string;
-  workcellName: string;
   appointmentType: 'pickup' | 'delivery' | 'transfer';
   scheduledArrival: string;
   actualArrival?: string;
