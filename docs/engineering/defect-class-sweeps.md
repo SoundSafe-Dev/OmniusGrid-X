@@ -3190,5 +3190,30 @@ indistinguishable from a deliberate exemption.
 
 The durable fix is not another enumerating migration. It is a test that asserts **every table
 carrying an `organization_id` column has a policy**, so a new table fails the suite the day it
-lands rather than the day someone reads a handler carefully. That is now
-`test_every_tenant_table_has_a_policy.py`.
+lands rather than the day someone reads a handler carefully. That is
+`test_every_tenant_table_has_a_policy.py`, and running it for the first time was informative:
+
+**61 tenant tables. Six with no policy, five with a policy that is not FORCEd.**
+
+| state | tables |
+|---|---|
+| no RLS, exempt by necessity | `users`, `api_keys` — read *before* a tenant is known, so a policy keyed on `app.current_org_id` would lock out login |
+| no RLS, real gap | `error_events`, `edge_agent_status`, `notification_subscriptions`, `notification_deliveries` |
+| RLS without FORCE | five `erp_*` tables |
+
+The unFORCEd ones are the more dangerous state, and `app/api/erp_integrations.py` already says
+why in a comment: its background sync *"appeared to work only because no ERP table has FORCE
+ROW LEVEL SECURITY and the dev connection owns them"*. `relrowsecurity = true` on those tables
+reads as protected while the only connection that matters is exempt.
+
+**None of the nine is closed here, deliberately.** Each needs a migration plus an audit of
+every query against that table — application layer first, policy second, the order 051
+insists on. `error_events` is written by an ingestion path with no user context;
+`notification_deliveries` by a dispatcher running as a background task; the ERP tables by a
+sync that may or may not bind a GUC on every path. Enabling FORCE on `users` without tracing
+every auth query is how you take down login. So the baseline records each with **what closing
+it requires**, and the guard's job is that the list cannot grow.
+
+The two permanent exemptions are marked `EXEMPT BY NECESSITY` and a test asserts the count of
+*real* gaps separately, so the two kinds cannot blur into each other over time — which is what
+turns a gap list into an approval list.
