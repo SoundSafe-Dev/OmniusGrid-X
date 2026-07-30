@@ -162,6 +162,64 @@ class TestTheRowIsReachableAfterwards:
             _cleanup(admin_sync_url, number)
 
 
+class TestTheSecondLayerExistsNow:
+    """`vehicles` was the one fleet table with no row-level security, which is exactly why
+    this was the one handler whose defect shipped rather than 500ing.
+
+    Migration 011 covered the core tables, 033 extended it, and 051 was written for "the four
+    fleet/maintenance tables that had none" — naming them explicitly. `vehicles` arrived in
+    025: too late for the first two, not on the third's list. Twelve of its thirteen sibling
+    logistics tables were covered; this one fell between two migrations.
+
+    Migration 055 closes it, in the order 051 insists on: application layer first (all seven
+    functions querying Vehicle already run on `get_tenant_db`), policy second.
+    """
+
+    def test_row_level_security_is_enabled_and_forced(self, admin_sync_url):
+        """FORCE matters as much as ENABLE. Without it the table owner bypasses the policy,
+        and `relrowsecurity = true` reads as protected while the application's own connection
+        is exempt — which is worse than no policy, because it answers the question wrongly."""
+        import psycopg2
+
+        conn = psycopg2.connect(admin_sync_url)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT relrowsecurity, relforcerowsecurity FROM pg_class "
+                    "WHERE relname = 'vehicles'"
+                )
+                row = cur.fetchone()
+            assert row is not None, "the vehicles table is gone"
+            enabled, forced = row
+            assert enabled, "vehicles has no row-level security (migration 055)"
+            assert forced, "vehicles has RLS but not FORCE — the owner bypasses it"
+        finally:
+            conn.close()
+
+    def test_the_policy_compares_text_without_a_cast(self, admin_sync_url):
+        """`vehicles.organization_id` is varchar, not uuid. A `::uuid` cast in the policy —
+        copied from 011/033, where the column IS uuid — would raise on every row, and the
+        table would look protected while every query against it errored."""
+        import psycopg2
+
+        conn = psycopg2.connect(admin_sync_url)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT data_type FROM information_schema.columns "
+                    "WHERE table_name = 'vehicles' AND column_name = 'organization_id'"
+                )
+                assert cur.fetchone()[0] == "character varying"
+                cur.execute(
+                    "SELECT qual FROM pg_policies "
+                    "WHERE tablename = 'vehicles' AND policyname = 'tenant_isolation'"
+                )
+                qual = cur.fetchone()[0]
+            assert "::uuid" not in qual, f"the policy casts a varchar column: {qual}"
+        finally:
+            conn.close()
+
+
 class TestTheRequiredFieldIsStillRequired:
     async def test_a_vehicle_with_no_number_is_refused(self, client_a):
         """The negative control. Accepting anything would satisfy every test above and lose

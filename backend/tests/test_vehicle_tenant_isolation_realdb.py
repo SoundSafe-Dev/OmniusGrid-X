@@ -93,26 +93,47 @@ class TestTheListIsScopedToTheCaller:
         assert str(vehicle_b) in b_ids and str(vehicle_b) not in a_ids
 
 
-class TestTheTableHasNoRlsToFallBackOn:
-    """Records WHY this needed an application-layer fix, and fails if that stops
-    being true — at which point the filter is defence in depth rather than the only
-    defence, and this file's framing should be revisited."""
+class TestTheTableNowHasASecondLayer:
+    """THIS CLASS USED TO ASSERT THE OPPOSITE, and it is the reason the change was noticed.
 
-    async def test_vehicles_has_no_row_level_security(self, admin_sync_url):
+    It read `assert row[0] is False` — recording that `vehicles` had no row-level security, so
+    the explicit filter in every handler was the ONLY protection — and its failure message
+    said: "vehicles now has RLS enabled — good, but this test's premise no longer holds; check
+    whether the sibling logistics tables were covered too."
+
+    That is exactly what happened. Migration 055 enabled it, and the check that had been
+    recording the gap failed on the next run with instructions for what to do about it. A guard
+    written to fail when its own premise expires, doing so across authors, months apart.
+
+    The answer to the question it asked: twelve of the thirteen sibling logistics tables were
+    already covered — 011 took the core tables, 033 extended them, 051 took "the four
+    fleet/maintenance tables that had none" and named them. `vehicles` arrived in 025, too late
+    for the first two and not on the third's list. It was the only one left, and it was the one
+    table where the tenant-from-body defect actually wrote a cross-tenant row instead of
+    failing with a 500.
+
+    The application filter is still the first line, and the tests above still cover it. It is
+    now defence in depth rather than the only defence.
+    """
+
+    async def test_vehicles_has_row_level_security(self, admin_sync_url):
         import psycopg2
 
         conn = psycopg2.connect(admin_sync_url)
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT relrowsecurity FROM pg_class WHERE relname = 'vehicles'"
+                    "SELECT relrowsecurity, relforcerowsecurity FROM pg_class "
+                    "WHERE relname = 'vehicles'"
                 )
                 row = cur.fetchone()
         finally:
             conn.close()
         assert row is not None, "vehicles table missing"
-        assert row[0] is False, (
-            "vehicles now has RLS enabled — good, but this test's premise (that the "
-            "explicit filter is the ONLY protection) no longer holds; check whether "
-            "the sibling logistics tables were covered too"
+        enabled, forced = row
+        assert enabled, "migration 055 enabled RLS on vehicles; it is off again"
+        assert forced, (
+            "RLS without FORCE lets the table owner bypass the policy, so "
+            "relrowsecurity=true reads as protected while the application's own connection "
+            "is exempt — worse than no policy, because it answers the question wrongly"
         )

@@ -3151,3 +3151,44 @@ caused them. They had been there all along, below the cut.
 Pipe a guard's output to `cat`, or count the lines before believing the list is complete. This
 cost one confused re-run here; on a longer list it would have meant shipping a partial fix and
 believing it whole.
+
+## Migration 055: the table that fell between two migrations
+
+`vehicles` was the only fleet table without row-level security, and that is not a coincidence
+about `vehicles` — it is what made it the one handler out of fourteen whose tenant-from-body
+defect actually wrote a cross-tenant row instead of failing with a 500.
+
+How the gap happened, and it is worth recording because it will happen again: 011 covered the
+core tables. 033 extended that. 051 was written for *"the four fleet/maintenance tables that
+had none"* and named them explicitly. `vehicles` arrived in 025 — too late for the first two,
+not on the third's list. **A migration that enumerates its targets protects exactly those
+targets, and the next table to arrive is unprotected by default.**
+
+Migration 055 closes it, in the order 051 insists on: application layer first, policy second.
+Verified before writing it — all seven functions that query `Vehicle` across `app/api` and
+`app/services` already run on `get_tenant_db`, so no read was about to start returning zero
+rows. `organization_id` is `varchar` here, as on 051's four, so the policy compares text with
+no `::uuid` cast; copying 011's cast would raise on every row and leave the table looking
+protected while every query against it errored.
+
+**The change was caught by a guard the previous author wrote for exactly this.**
+`test_vehicle_tenant_isolation_realdb.py` asserted `relrowsecurity is False` — recording that
+the explicit filter was the *only* protection — with a failure message reading: *"vehicles now
+has RLS enabled — good, but this test's premise no longer holds; check whether the sibling
+logistics tables were covered too."*
+
+That is a test written to fail when its own premise expires, firing across authors and months
+apart, and handing the next person the exact question to answer. It is the same mechanism as
+the CI-quarantine expiry and the pinned `get_db` debt counts, and this is the first time in
+this session one of them has caught *me*.
+
+## Rule 41 — a migration that enumerates its targets leaves the next arrival unprotected
+
+011, 033 and 051 each named the tables they covered. Every table added afterwards starts
+outside every policy, and nothing says so — `relrowsecurity` is simply false, which is
+indistinguishable from a deliberate exemption.
+
+The durable fix is not another enumerating migration. It is a test that asserts **every table
+carrying an `organization_id` column has a policy**, so a new table fails the suite the day it
+lands rather than the day someone reads a handler carefully. That is now
+`test_every_tenant_table_has_a_policy.py`.
