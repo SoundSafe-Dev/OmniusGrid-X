@@ -544,9 +544,16 @@ next step and teaches the lesson this codebase keeps relearning.
     Still worth Alex knowing: the two remotes drifted because pushes went to one of them. The
     branch is safe now, but keeping it that way means pushing both.
 
-61. **Three branches carry `node_modules` in git** · M · *measured 2026-07-30*
-    `backup/alex`, `origin/HARSH-CONTRIBUTION` and `origin/htreinen` each track **~19,050
-    files** under `node_modules/`. Converged tracks zero.
+61. **Four branches carry `node_modules` in git** · M · *re-measured 2026-07-30*
+    `backup/alex` (19,048), `origin/alex` (19,048), `origin/HARSH-CONTRIBUTION` (19,056) and
+    `origin/htreinen` (19,048). Converged tracks zero.
+
+    **`origin/alex` is on this list because of #60, deliberately.** Pushing Alex's 89
+    single-homed commits to `origin` mirrored the branch as it stood, `node_modules` and all.
+    Stripping them would have rewritten his history without asking him, which is a worse thing
+    to do to someone's only remaining copy than carrying the files for a few more days. The
+    ordering matters if this comes up again: *preserve first, clean second, and let the owner
+    do the cleaning.*
 
     Two consequences, and the second is the expensive one: any merge from them tries to bring
     2.3 M lines with it, and their real diffs are unreadable — `git diff` against converged
@@ -629,11 +636,14 @@ next step and teaches the lesson this codebase keeps relearning.
     outstanding branch — same coordinated window as #49, not a separate one. See
     `docs/engineering/large-assets.md`.
 
-48. **Wire `check_migrations.py` into CI** · S
-    It is a `Makefile` target referenced by no workflow, so nothing checks the migration
-    chain on a pull request — which is how #45's problems accumulated.
+48. **Wire `check_migrations.py` into CI** · S · ✅ **ALREADY DONE** · ⚠️ *entry was stale, verified 2026-07-30*
+    This was closed by FS-203 and the entry was never updated. `quality-gates.yml:147-169`
+    runs it as the `migration-hygiene` job — blocking (no `continue-on-error`), on every push
+    to the branch namespaces that exist and on every PR to `main`.
 
-    Done when: it runs on every PR and fails the build on a broken chain.
+    Checked because a stale "do this" is more expensive than a stale "done": it costs
+    somebody the whole investigation before they find the work already exists. Both stale
+    entries found this way so far (#55, #48) were stale in that direction.
 
 49. **Rotate `HAMAD_IDE.pem`** · S · *needs coordination*
     The key was untracked in FS-01 but **remains in git history on both remotes**.
