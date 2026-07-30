@@ -171,6 +171,26 @@ class NotificationService:
         import asyncio
 
         org_id = organization_id or event.get("organization_id")
+        # FAIL CLOSED ON A MISSING TENANT. `_load_rules` used to drop its organisation filter
+        # when `org_id` was None — `if org_id is not None: stmt = stmt.where(...)` — so a
+        # dispatch with no organisation loaded EVERY tenant's subscriptions and delivered the
+        # event to all of them. Not a read leak: an outbound delivery of one tenant's alarm
+        # text to another tenant's webhook, Slack channel or mailbox.
+        #
+        # LATENT, NOT LIVE: both callers today pass a real organisation (the test endpoint and
+        # the RUL notifier). But `organization_id` is Optional with a None default, so the next
+        # caller to omit it gets the fan-out silently and nothing in the signature warns them.
+        if org_id is None:
+            logger.warning(
+                "notification_dispatch_without_tenant",
+                title=event.get("title"),
+                severity=event.get("severity"),
+                detail=(
+                    "refusing to dispatch: an event with no organisation would match every "
+                    "tenant's subscriptions and deliver to all of them"
+                ),
+            )
+            return []
         rules = await self._load_rules(org_id)
         # The channel adapters are sync and blocking (SMTP retries, httpx with
         # 10s timeouts): run them in a worker thread so one slow delivery can't
@@ -200,9 +220,14 @@ class NotificationService:
         from app.db.database import AsyncSessionLocal
         from app.db.notification_models import NotificationSubscription
         async with AsyncSessionLocal() as session:
-            stmt = select(NotificationSubscription).where(NotificationSubscription.enabled == True)  # noqa: E712
-            if org_id is not None:
-                stmt = stmt.where(NotificationSubscription.organization_id == org_id)
+            # UNCONDITIONAL. The `if org_id is not None` that used to wrap the second clause
+            # turned a missing tenant into "every tenant" — see the guard in `dispatch`, which
+            # now refuses before reaching this. Kept strict here too: a helper that fans out
+            # when its argument is absent is one call away from doing it again.
+            stmt = select(NotificationSubscription).where(
+                NotificationSubscription.enabled == True,  # noqa: E712
+                NotificationSubscription.organization_id == org_id,
+            )
             rows = (await session.execute(stmt)).scalars().all()
         return [{
             "id": str(r.id), "channel": r.channel, "target": r.target,

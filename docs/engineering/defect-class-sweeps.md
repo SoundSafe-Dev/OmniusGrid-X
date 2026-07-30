@@ -3217,3 +3217,54 @@ it requires**, and the guard's job is that the list cannot grow.
 The two permanent exemptions are marked `EXEMPT BY NECESSITY` and a test asserts the count of
 *real* gaps separately, so the two kinds cannot blur into each other over time — which is what
 turns a gap list into an approval list.
+
+## The notification router: a conditional tenant filter, four times
+
+Auditing `notification_subscriptions` — one of the four tables the policy guard recorded as
+having no RLS — to see whether a policy could be added found the reason it mattered. Four
+defects in one router and its service, all the same shape:
+
+```python
+org = getattr(current_user, "organization_id", None)
+stmt = select(...)
+if org is not None:
+    stmt = stmt.where(... == org)
+```
+
+**A user whose `organization_id` is NULL had the filter skipped and read everything.** Absence
+read as unrestricted access — and precisely the case this codebase's own `get_tenant_org_id`
+exists to refuse: it raises 403 there and its docstring explains *"we fail closed rather than
+fail open"*. A local `_org` helper reimplemented the same idea with the opposite default, in a
+router whose tables have no policy to fall back on.
+
+| where | consequence |
+|---|---|
+| `list_subscriptions` | every tenant's subscriptions |
+| `delivery_log` | every tenant's **alarm titles and detail text** — the most specific operational information in the system |
+| `delete_subscription` | **no tenant clause at all**: any authenticated user could delete any tenant's subscription by id |
+| `_load_rules` (dispatcher) | every tenant's subscriptions **dispatched to** — an outbound delivery of one tenant's alarm to another's webhook, Slack or mailbox |
+
+The delete is the live destructive one: the endpoint's `rowcount == 0 -> 404` check already
+existed and was measuring the wrong thing — it proved a row had been deleted, not that it was
+yours.
+
+**The dispatcher one is latent and worth separating.** Both callers pass a real organisation
+today (the test endpoint and the RUL notifier), so the None path was unreachable. But
+`organization_id` is `Optional` with a `None` default, so the next caller to omit it inherits
+the fan-out and nothing in the signature says so. Fixed by refusing rather than by hoping.
+
+Every handler now depends on `get_tenant_org_id` and scopes unconditionally. The RLS gap on
+these two tables stays open: the handlers use `AsyncSessionLocal` and bind no GUC, so a FORCEd
+policy would empty every read — the audit the baseline asked for turned out to be the
+application layer itself, and that is now done. The migration is the next step, not this one.
+
+## Rule 42 — a test asserting emptiness must be given something to find
+
+`test_the_helper_is_strict_even_when_called_directly` called `_load_rules(None)` and asserted
+`[]`. It omitted the fixture that seeds subscriptions, so the table was empty and the assertion
+held whatever the filter did. Restoring the fan-out did not fail it.
+
+The mutation check is the only reason that surfaced — the test passed, read sensibly, and
+inspected nothing. This is rule 21 in its most ordinary clothing: not a clever regex or a
+proximity window, just a fixture left off a parameter list. **Every negative assertion needs a
+positive premise, and for a database test that means rows.**
