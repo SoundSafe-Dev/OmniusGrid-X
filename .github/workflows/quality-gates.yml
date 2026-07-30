@@ -59,6 +59,13 @@ jobs:
         ports: ['5432:5432']
     steps:
       - uses: actions/checkout@v4
+        with:
+          # backend/dataset is a 1.5 GB LLM-generated training corpus that NO job
+          # reads. Excluding it keeps the checkout at ~100 MB instead of 1.6 GB.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -86,6 +93,13 @@ jobs:
     # (which SQLite create_all masks) fail the merge instead of prod.
     steps:
       - uses: actions/checkout@v4
+        with:
+          # backend/dataset is a 1.5 GB LLM-generated training corpus that NO job
+          # reads. Excluding it keeps the checkout at ~100 MB instead of 1.6 GB.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -140,6 +154,13 @@ jobs:
     # wrote them.
     steps:
       - uses: actions/checkout@v4
+        with:
+          # backend/dataset is a 1.5 GB LLM-generated training corpus that NO job
+          # reads. Excluding it keeps the checkout at ~100 MB instead of 1.6 GB.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -179,6 +200,13 @@ jobs:
     #                  random is worse than one with named exclusions.
     steps:
       - uses: actions/checkout@v4
+        with:
+          # backend/dataset is a 1.5 GB LLM-generated training corpus that NO job
+          # reads. Excluding it keeps the checkout at ~100 MB instead of 1.6 GB.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -222,6 +250,13 @@ jobs:
     # to nightly.
     steps:
       - uses: actions/checkout@v4
+        with:
+          # backend/dataset is a 1.5 GB LLM-generated training corpus that NO job
+          # reads. Excluding it keeps the checkout at ~100 MB instead of 1.6 GB.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -247,6 +282,13 @@ jobs:
     # promtool unit tests that assert the deterministic alerts actually fire.
     steps:
       - uses: actions/checkout@v4
+        with:
+          # backend/dataset is a 1.5 GB LLM-generated training corpus that NO job
+          # reads. Excluding it keeps the checkout at ~100 MB instead of 1.6 GB.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
       - name: Install promtool
         run: |
           PROM_VERSION=2.53.1
@@ -293,6 +335,13 @@ jobs:
     # the output, so a typo'd field or an unbuildable overlay fails the merge.
     steps:
       - uses: actions/checkout@v4
+        with:
+          # backend/dataset is a 1.5 GB LLM-generated training corpus that NO job
+          # reads. Excluding it keeps the checkout at ~100 MB instead of 1.6 GB.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
       - name: Setup kustomize
         run: |
           curl -sL "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.4.3/kustomize_v5.4.3_linux_amd64.tar.gz" \
@@ -345,6 +394,13 @@ jobs:
     # Cluster and KEDA ScaledObjects pass their operators' validating webhooks).
     steps:
       - uses: actions/checkout@v4
+        with:
+          # backend/dataset is a 1.5 GB LLM-generated training corpus that NO job
+          # reads. Excluding it keeps the checkout at ~100 MB instead of 1.6 GB.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
       - name: Create kind cluster
         uses: helm/kind-action@v1.10.0
         with:
@@ -413,6 +469,13 @@ jobs:
     # Calico ("OK (reachable)" / "OK (blocked)").
     steps:
       - uses: actions/checkout@v4
+        with:
+          # backend/dataset is a 1.5 GB LLM-generated training corpus that NO job
+          # reads. Excluding it keeps the checkout at ~100 MB instead of 1.6 GB.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
       - name: Create kind cluster (no default CNI)
         uses: helm/kind-action@v1.10.0
         with:
@@ -465,6 +528,13 @@ jobs:
     # proves a real CNI agrees with this model); this is the fast feedback loop.
     steps:
       - uses: actions/checkout@v4
+        with:
+          # backend/dataset is a 1.5 GB LLM-generated training corpus that NO job
+          # reads. Excluding it keeps the checkout at ~100 MB instead of 1.6 GB.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
       - name: Setup kustomize
         run: |
           curl -sL "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.4.3/kustomize_v5.4.3_linux_amd64.tar.gz" \
@@ -500,6 +570,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # backend/dataset is a 1.5 GB LLM-generated training corpus that NO job
+          # reads. Excluding it keeps the checkout at ~100 MB instead of 1.6 GB.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -517,6 +594,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # backend/dataset is a 1.5 GB LLM-generated training corpus that NO job
+          # reads. Excluding it keeps the checkout at ~100 MB instead of 1.6 GB.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -545,6 +629,13 @@ jobs:
     if: ${{ github.event_name == 'push' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # backend/dataset is a 1.5 GB LLM-generated training corpus that NO job
+          # reads. Excluding it keeps the checkout at ~100 MB instead of 1.6 GB.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -582,6 +673,13 @@ jobs:
     if: ${{ github.event_name == 'push' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # backend/dataset is a 1.5 GB LLM-generated training corpus that NO job
+          # reads. Excluding it keeps the checkout at ~100 MB instead of 1.6 GB.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -618,6 +716,13 @@ jobs:
     if: ${{ github.event_name == 'push' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # backend/dataset is a 1.5 GB LLM-generated training corpus that NO job
+          # reads. Excluding it keeps the checkout at ~100 MB instead of 1.6 GB.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -654,6 +759,13 @@ jobs:
     if: ${{ github.event_name == 'push' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # backend/dataset is a 1.5 GB LLM-generated training corpus that NO job
+          # reads. Excluding it keeps the checkout at ~100 MB instead of 1.6 GB.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -700,6 +812,13 @@ jobs:
         ports: ['8169:8069']
     steps:
       - uses: actions/checkout@v4
+        with:
+          # backend/dataset is a 1.5 GB LLM-generated training corpus that NO job
+          # reads. Excluding it keeps the checkout at ~100 MB instead of 1.6 GB.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -750,6 +869,13 @@ jobs:
       ALLOW_DEV_TOKEN: "false"
     steps:
       - uses: actions/checkout@v4
+        with:
+          # backend/dataset is a 1.5 GB LLM-generated training corpus that NO job
+          # reads. Excluding it keeps the checkout at ~100 MB instead of 1.6 GB.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -809,6 +935,13 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
+        with:
+          # backend/dataset is a 1.5 GB LLM-generated training corpus that NO job
+          # reads. Excluding it keeps the checkout at ~100 MB instead of 1.6 GB.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -821,6 +954,13 @@ jobs:
     # lockfile is at 0 vulnerabilities. One documented ignore below.
     steps:
       - uses: actions/checkout@v4
+        with:
+          # backend/dataset is a 1.5 GB LLM-generated training corpus that NO job
+          # reads. Excluding it keeps the checkout at ~100 MB instead of 1.6 GB.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -861,6 +1001,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # backend/dataset is a 1.5 GB LLM-generated training corpus that NO job
+          # reads. Excluding it keeps the checkout at ~100 MB instead of 1.6 GB.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
 
       - name: Root .dockerignore must be tracked
         run: |
@@ -894,6 +1041,13 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
+        with:
+          # backend/dataset is a 1.5 GB LLM-generated training corpus that NO job
+          # reads. Excluding it keeps the checkout at ~100 MB instead of 1.6 GB.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
       - name: Run k6 smoke load test
         uses: grafana/setup-k6-action@v1
       - name: Execute

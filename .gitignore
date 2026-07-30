@@ -76,6 +76,20 @@ backend/dataset/test_*.jsonl
 *.bak
 *.swp
 
+# GENERATED TRAINING CORPORA. `backend/dataset/**/scenarios.jsonl` (191 files, 1.5 GB on
+# disk, ~41 MB packed) is already tracked and is NOT removed — it was produced by
+# `generate_dataset_enhanced.py`, which sets no random seed and can call an LLM, so it is
+# NOT reproducible: deleting it loses ~500,000 scenarios that cannot be regenerated
+# identically. See `docs/engineering/large-assets.md`.
+#
+# These patterns stop the NEXT corpus from landing in git. Anything new goes to an object
+# store or a release artefact.
+backend/dataset/**/*.generated.jsonl
+backend/dataset/**/train.jsonl
+backend/dataset/**/validation.jsonl
+backend/dataset/**/training_data.jsonl
+backend/dataset/**/*_gemma4.jsonl
+
 # Stress-test dataset (large generated output, not source)
 Stress Test Workbooks/
 dataset_synthesis/output/

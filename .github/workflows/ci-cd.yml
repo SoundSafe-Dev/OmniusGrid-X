@@ -62,6 +62,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # See the note on the other checkout steps: backend/dataset is a
+          # 1.5 GB corpus no job reads.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -192,6 +199,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # See the note on the other checkout steps: backend/dataset is a
+          # 1.5 GB corpus no job reads.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -295,6 +309,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # See the note on the other checkout steps: backend/dataset is a
+          # 1.5 GB corpus no job reads.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
 
       - name: Configure kubectl
         uses: azure/setup-kubectl@v3
@@ -402,6 +423,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # See the note on the other checkout steps: backend/dataset is a
+          # 1.5 GB corpus no job reads.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
 
       - name: Configure kubectl
         uses: azure/setup-kubectl@v3
@@ -517,6 +545,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # See the note on the other checkout steps: backend/dataset is a
+          # 1.5 GB corpus no job reads.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
 
       - name: Generate release notes
         run: |

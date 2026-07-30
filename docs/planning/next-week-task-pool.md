@@ -507,15 +507,13 @@ next step and teaches the lesson this codebase keeps relearning.
 
 # Hamad — deploy & infrastructure
 
-60. **`backup/alex` exists on NO origin remote** · S · ⚠️ *measured 2026-07-30* · **do this first**
-    89 commits of Alex's work live on the mirror only. `origin` has no `alex` branch at all. If
-    the backup remote is lost, so is that branch.
+60. **`backup/alex` exists on NO origin remote** · S · ✅ DONE 2026-07-30
+    89 commits of Alex's work lived on the mirror only; `origin` had no `alex` branch at all.
+    Pushed to `origin/alex` at `d5286f1c` — additive, creating a new ref, nothing rewritten and
+    nothing on the mirror touched.
 
-    Nobody has touched other people's branches deliberately, which is right — so this needs the
-    owner, not a fix from outside. Alex (or whoever holds the credentials) should push it to
-    `origin` and keep both remotes in step from then on.
-
-    Done when: `git ls-remote origin` lists it.
+    Still worth Alex knowing: the two remotes drifted because pushes went to one of them. The
+    branch is safe now, but keeping it that way means pushing both.
 
 61. **Three branches carry `node_modules` in git** · M · *measured 2026-07-30*
     `backup/alex`, `origin/HARSH-CONTRIBUTION` and `origin/htreinen` each track **~19,050
@@ -583,19 +581,24 @@ next step and teaches the lesson this codebase keeps relearning.
 
     Done when: `load-test` either runs against a real target or is gone.
 
-59. **1.57 GB of the 1.59 GB repository is `backend/dataset`** · M · *measured 2026-07-30*
-    191 files, up to 18 MB each (`scenarios.jsonl` per domain). **99% of every clone**, every
-    CI checkout and every branch switch. It is the reason `check-added-large-files` is a
-    hook nobody can enforce, and it makes the eight stale branches expensive to even inspect.
+59. **`backend/dataset`: 1.5 GB on disk, 41 MB packed** · S · ✅ MOSTLY DONE · ⚠️ *my own figure was wrong*
+    **Corrected and largely fixed 2026-07-30.** The original entry said "1.57 GB of the 1.59 GB
+    repository — 99% of every clone". That measured the WORKING TREE. Git stores the corpus
+    compressed and deduplicated: the whole repository packs to **96 MB**, of which the dataset
+    is **41 MB**. The clone was never the problem — the checkout is.
 
-    Note the datasets are Gemma training corpora — the DECISION is Harsh's (see #1, #15); the
-    repository-hygiene consequence is platform's.
+    **Do not delete it.** `generate_dataset_enhanced.py` sets no random seed and can call an LLM,
+    so the corpus is *generated* but **not reproducible**: deleting it loses ~500,000 scenarios
+    that cannot be regenerated identically, and the fine-tuning results stop being explicable.
 
-    Do: decide whether they belong in git at all. Git LFS, a release artefact, or an object
-    store are all better than the default. Whatever is chosen, history still carries them, so
-    a clone stays 1.6 GB until history is rewritten — which is #49's window, not a separate one.
+    Done: all 28 `actions/checkout` steps now sparse-checkout without it (no job read it, so
+    every CI run was writing 1.5 GB for nothing); `make lean` / `make unlean` do the same for a
+    developer's working tree, measured at 1.6 GB → 104 MB; `.gitignore` now stops the NEXT
+    corpus landing in git.
 
-    Done when: a decision is recorded, and new datasets cannot be committed by accident.
+    Left open, and small: getting 41 MB out of history needs a rewrite, which breaks every
+    outstanding branch — same coordinated window as #49, not a separate one. See
+    `docs/engineering/large-assets.md`.
 
 48. **Wire `check_migrations.py` into CI** · S
     It is a `Makefile` target referenced by no workflow, so nothing checks the migration

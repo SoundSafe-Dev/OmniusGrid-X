@@ -28,6 +28,16 @@ tracing: ## Start the stack with the tracing profile (OTel collector + Jaeger)
 	# UI was permanently empty and nothing indicated why.
 	OTEL_ENABLED=true docker-compose --profile tracing up -d
 
+lean: ## Drop the 1.5 GB training corpus from THIS checkout (keeps it in git)
+	@git sparse-checkout init --no-cone 2>/dev/null || true
+	@printf '/*\n!/backend/dataset/\n' > .git/info/sparse-checkout
+	@git sparse-checkout reapply
+	@echo "backend/dataset is no longer checked out. 'make unlean' restores it."
+
+unlean: ## Restore the training corpus to this checkout
+	@git sparse-checkout disable
+	@echo "backend/dataset restored."
+
 test: test-backend test-edge test-frontend ## Run all test suites
 
 smoke: ## Deployment-free end-to-end smoke (in-process app + SQLite)
