@@ -841,9 +841,29 @@ async def get_sync_status(
 ):
     """
     Get sync status for ERP integration.
+
+    An empty list here meant two different things: this integration has never synced, or there
+    is no such integration for you. The first is the operator's answer to "did the sync run?";
+    the second is a wrong id or another tenant's. Same response, opposite implications — so the
+    integration is resolved first and an unknown one is a 404, leaving `[]` with exactly one
+    meaning: it exists, it is yours, and it has not synced.
+
+    404 rather than 403 for another tenant's id, matching the rest of this file: distinguishing
+    them would confirm the id exists.
     """
     from sqlalchemy import select
-    
+
+    integration = (
+        await db.execute(
+            select(IntegrationConfiguration.id).where(
+                IntegrationConfiguration.id == integration_id,
+                IntegrationConfiguration.organization_id == current_user.organization_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if integration is None:
+        raise HTTPException(status_code=404, detail="Integration not found")
+
     result = await db.execute(
         select(ERPSyncStatus).where(
             ERPSyncStatus.integration_id == integration_id,

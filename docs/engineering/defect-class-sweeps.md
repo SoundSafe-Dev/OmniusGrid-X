@@ -2232,6 +2232,13 @@ one of its findings. The habit that catches it:
    the two helpers among them. Re-derive a long-green guard's population from first principles.
    *(Fuller account: § Rule 48.)*
 
+49. **A suite that skipped is not a suite that passed.**
+   The four ERP real-DB suites report 25 passed, 29 skipped — and the 29 are every test that
+   touches the function migration 058 could break, skipped for want of vendor credentials. Read
+   the skip count, not just the pass count; then notice which part actually needed the
+   credentials (the vendor HTTP call, and nothing else) and stub only that.
+   *(Fuller account: § Rule 49.)*
+
 ---
 
 ## Open observations, not yet tickets
@@ -3636,3 +3643,52 @@ Related to rule 43 (a guard proves the absence of the shape it models) but disti
 model was too narrow for the class, here the *search space* was. When a guard has been green for
 a long time, re-derive its population from first principles rather than trusting the enumeration
 it was born with.
+
+## Migration 058: the five ERP tables that read as protected and were not
+
+RLS enabled without FORCE is the more dangerous state, not a lesser one. The owner bypasses the
+policy, and the application connects as the owner in several deployments — so
+`relrowsecurity = true` answers the question, and answers it wrongly.
+`app/api/erp_integrations.py` records what that cost in a comment: its background sync *"appeared
+to work only because no ERP table has FORCE ROW LEVEL SECURITY and the dev connection owns
+them."* The tenant GUC that sync now sets had never actually been under test.
+
+Every live writer turned out to bind the tenant already: `run_erp_sync` sets it explicitly and
+holds one transaction with a single commit, so the transaction-scoped GUC covers every statement;
+the mapping routes run on `get_tenant_db`; the webhook path sets it after resolving the tenant
+from the integration record. The dynamics, oracle and SAP `*_data_extraction` services and
+`erp_database_replication` also write these tables and take their session as a parameter — but
+**nothing imports them**: ~1,800 lines reachable from no router, no worker and no test but one
+honesty check.
+
+## Rule 49 — a suite that skipped is not a suite that passed
+
+The baseline entry asked for "one real-DB run to confirm before the migration", and the run was
+available: four real-Postgres ERP suites. They report **25 passed, 29 skipped** — and the 29 are
+`test_erp_sync_e2e_realdb.py` and `test_erp_platform_integration_realdb.py` in full, skipped for
+want of live Dataverse credentials. Every test that touches `run_erp_sync` is in that 29.
+
+The migration header had already been written claiming those suites confirmed it. Green, from a
+suite that never executed the code the change can break — the same shape as every "verdict from
+absence" defect in this document, this time in the verification rather than the product.
+
+The fix is not to acquire credentials. It is to notice which part actually needs them: the vendor
+HTTP call, and nothing else. `test_erp_background_sync_under_force_realdb.py` stubs the connector
+and drives the real `run_erp_sync` against real Postgres with the real policy — then asserts
+FORCE is actually on first, because a successful write proves nothing while the owner is exempt.
+Controlled by deleting the `_set_tenant_guc` call: three of its tests go red.
+
+**Read the skip count, not just the pass count.** A skipped test is an unanswered question
+wearing a green tick.
+
+## An empty list that meant two different things
+
+Found while writing the above. `GET /erp/integrations/{id}/sync-status` returned `200 []` for
+another tenant's integration id — no leak; the explicit filter and the policy both held. But `[]`
+also means *"this integration has never synced"*, which is the operator's answer to "did the sync
+run?", and the ambiguity was there for the OWNER too: a wrong id and a never-synced integration
+were the same response. The integration is now resolved first and an unknown one is a 404, so an
+empty list has exactly one meaning.
+
+404 rather than 403 for another tenant's id, matching the rest of that file: distinguishing them
+would confirm the id exists.

@@ -1,4 +1,4 @@
-"""Every table with an `organization_id` should have a tenant policy. Eight do not.
+"""Every table with an `organization_id` should have a tenant policy. Three do not.
 
 Migrations 011, 033 and 051 each enumerated the tables they covered. That works exactly once:
 every table added afterwards starts outside every policy, and nothing says so —
@@ -13,19 +13,19 @@ day it lands rather than the day somebody reads a handler carefully.
 
 THE BASELINE BELOW IS A LIST OF GAPS, NOT A LIST OF APPROVALS. Two entries are genuine
 exemptions — `users` and `api_keys` are read before any tenant is known, so a policy keyed on
-`app.current_org_id` would lock out authentication itself. The other six are real holes with
-real reasons for not being closed in this change, and each says what closing it requires.
+`app.current_org_id` would lock out authentication itself. The third is a real hole with a
+real reason for not being closed in this change, and each says what closing it requires.
 Closing one is a migration plus an audit of every query against that table, in the order
-migration 051 insists on: application layer first, policy second. Doing eight of those blind
+migration 051 insists on: application layer first, policy second. Doing them blind
 would be reckless — enabling FORCE on `users` without tracing every auth path is how you take
 down login.
 
 FORCE MATTERS AS MUCH AS ENABLE. Without it the table owner bypasses the policy, and the
 application connects as the owner in several deployments — so `relrowsecurity = true` reads as
 protected while the only connection that matters is exempt. `app/api/erp_integrations.py`
-already records this in a comment: its background sync "appeared to work only because no ERP
-table has FORCE ROW LEVEL SECURITY and the dev connection owns them". Five ERP tables are
-still in that state.
+already recorded this in a comment: its background sync "appeared to work only because no ERP
+table has FORCE ROW LEVEL SECURITY and the dev connection owns them". Those five tables were
+the last entries here, and migration 058 closed them.
 """
 
 from __future__ import annotations
@@ -83,19 +83,17 @@ NO_POLICY: dict[str, str] = {
 #: Tables with RLS enabled but NOT forced. The owner bypasses the policy, so this reads as
 #: protected and is not — worse than no policy, because it answers the question wrongly.
 NO_FORCE: dict[str, str] = {
-    "erp_entities": "ERP lane. See the comment in app/api/erp_integrations.py: the background "
-                    "sync 'appeared to work only because no ERP table has FORCE and the dev "
-                    "connection owns them'. Adding FORCE requires that sync to bind a GUC.",
-    "erp_sync_status": "ERP lane. Written by run_erp_sync per entity type; that function "
-                       "already calls _set_tenant_guc, so FORCE may be safe here — it needs "
-                       "one real-DB run to confirm before the migration.",
-    "erp_data_mappings": "ERP lane. Written by the mapping registry, which runs from a request "
-                         "and should already be bound; verify before adding FORCE.",
-    "erp_correlations": "ERP lane. Written by the correlation analyzers, several of which run "
-                        "as background tasks — those are the ones to check first.",
-    "erp_integration_events": "ERP lane. Append-only audit of sync events, written from both "
-                              "the request path and the background sync; both need a bound GUC "
-                              "before FORCE goes on.",
+    # ALL FIVE erp_* tables were HERE and are CLOSED by migration 058. Each entry named its own
+    # precondition and they were not the same — the sync path, the mapping registry, the
+    # correlation analyzers, the webhook append. Every live writer turned out to bind the GUC
+    # already; the three *_data_extraction services and erp_database_replication also write
+    # these tables and take their session as a parameter, but nothing imports them.
+    #
+    # The confirming run nearly did not happen: the two real-Postgres ERP suites skip in full
+    # without live Dataverse credentials, so "25 passed" would have confirmed the migration
+    # against tests that never ran the code it can break. See
+    # test_erp_background_sync_under_force_realdb.py, which stubs the vendor call and is
+    # controlled by deleting the _set_tenant_guc call.
 }
 
 TENANT_TABLES_SQL = """
@@ -187,7 +185,7 @@ class TestTheBaselineStaysHonest:
 
     def test_every_entry_says_what_closing_it_requires(self):
         """An entry reading "TODO" is a gap with extra steps. Two of these are permanent
-        exemptions and say so; the other six name the thing to check first."""
+        exemptions and say so; the third names the thing to check first."""
         for table, reason in {**NO_POLICY, **NO_FORCE}.items():
             assert len(reason) > 60, f"{table}'s reason is too thin to act on: {reason!r}"
 
