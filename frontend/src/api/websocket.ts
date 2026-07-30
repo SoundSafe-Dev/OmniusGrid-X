@@ -89,7 +89,10 @@ export class WebSocketManager {
     this.ws = token ? new WebSocket(WS_URL, ['bearer.v1', token]) : new WebSocket(WS_URL);
 
     this.ws.onopen = () => {
-      console.log('WebSocket connected');
+      // `debug`, not `log`: this fires on every reconnect (six attempts with backoff
+      // before the polling fallback), so at `log` level a flapping link floods the
+      // console and buries whatever the operator opened it to see.
+      console.debug('WebSocket connected');
       this.reconnectAttempts = 0;
       this.polling = false; // recovered: clears polling fallback via 'connected'
       this.flushMessageQueue();
@@ -114,7 +117,7 @@ export class WebSocketManager {
     };
 
     this.ws.onclose = () => {
-      console.log('WebSocket disconnected');
+      console.debug('WebSocket disconnected');
       this.stopHeartbeat();
       if (this.manualClose) {
         this.emitStatus('disconnected');

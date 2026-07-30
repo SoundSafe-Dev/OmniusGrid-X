@@ -32,9 +32,7 @@ export const SessionList: React.FC<SessionListProps> = ({
     setIsLoading(true);
     setError(null);
     try {
-      console.log('[SessionList] Loading sessions...');
       const response = await analysisSessionsApi.listSessions(50, 0, 'active');
-      console.log('[SessionList] Loaded sessions:', response.sessions.length, response.sessions.map(s => ({ id: s.id, title: s.title })));
       setSessions(response.sessions);
     } catch (error) {
       console.error('[SessionList] Error loading sessions:', error);
@@ -80,7 +78,6 @@ export const SessionList: React.FC<SessionListProps> = ({
 
     try {
       const result = await analysisSessionsApi.cleanupOrphanedSessions();
-      console.log('[SessionList] Cleanup result:', result);
       await alert({
         title: 'Cleanup complete',
         message: `Cleaned up ${result.deleted_count} orphaned sessions.`,
