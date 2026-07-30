@@ -711,9 +711,34 @@ async def compliance_summary(db: AsyncSession = Depends(get_tenant_db)):
     carriers = (await db.execute(select(Carrier).where(Carrier.is_active == True))).scalars().all()  # noqa: E712
     drivers = (await db.execute(select(Driver).where(Driver.is_active == True))).scalars().all()  # noqa: E712
     now = datetime.now(timezone.utc)
+
+    # `(d.hos_drive_hours_today or 0) >= 11` COUNTED AN UNREPORTED DRIVER AS COMPLIANT. Both
+    # columns are nullable and NULL means the driver has not reported — not that they have
+    # driven zero hours — so a fleet where nobody had reported produced `activeViolations: 0`,
+    # which the Compliance tab renders in GREEN. An all-clear on DOT-regulated hours, generated
+    # by the absence of the data that would decide it.
+    #
+    # This is the second time this exact class has been found on HOS. The first was
+    # `hosDriveHoursRemaining === 0` on the driver list, where `null === 0` is false and every
+    # fleet came back clean; the fix there derives the remaining hours and leaves them NULL
+    # when the consumed figure is missing too. Same column family, different endpoint, and the
+    # rollup was never brought into line.
+    #
+    # A driver is now assessable only if both figures are present. The counts are separate
+    # because "no violations" and "nobody reported" are different facts, and
+    # `/logistics_correlation`'s driver_compliance block already reports them that way.
+    # The FMCSA limits live on HOSComplianceMonitor, which is what judges an individual
+    # driver. A third copy of 11.0 and 70.0 here is a third place to update.
+    from app.services.transportation_management import HOSComplianceMonitor
+
+    assessable = [
+        d for d in drivers
+        if d.hos_drive_hours_today is not None and d.hos_cycle_hours is not None
+    ]
     hos_violations = sum(
-        1 for d in drivers
-        if (d.hos_drive_hours_today or 0) >= 11 or (d.hos_cycle_hours or 0) >= 70
+        1 for d in assessable
+        if d.hos_drive_hours_today >= HOSComplianceMonitor.MAX_DRIVE_HOURS_DAY
+        or d.hos_cycle_hours >= HOSComplianceMonitor.MAX_CYCLE_HOURS
     )
     expiring_soon = sum(
         1 for c in carriers
@@ -725,4 +750,8 @@ async def compliance_summary(db: AsyncSession = Depends(get_tenant_db)):
         "ctpatCertified": sum(1 for c in carriers if c.ctpat_certified),
         "activeViolations": hos_violations,
         "safetyAlerts": expiring_soon,
+        # So a zero can be read. `activeViolations: 0` means something different depending on
+        # whether it was computed over the whole fleet or over nobody.
+        "driversAssessed": len(assessable),
+        "driversUnassessable": len(drivers) - len(assessable),
     }

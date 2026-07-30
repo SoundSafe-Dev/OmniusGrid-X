@@ -2301,6 +2301,13 @@ one of its findings. The habit that catches it:
    fabrication belongs to a fixture, write down what makes it wrong to promote.
    *(Fuller account: § Rule 58.)*
 
+59. **Search for the fix, not the defect.**
+   Three HOS endpoints coerced NULL hours to zero and counted an unreported driver as
+   compliant; two were fixed months apart by people looking at the endpoint in front of them.
+   `(x or 0) >= 11` is unsearchable — it looks like every other guard clause. `unassessable`,
+   `missing_data` and `is None` are distinctive. Grep for what you just wrote.
+   *(Fuller account: § Rule 59.)*
+
 ---
 
 ## Open observations, not yet tickets
@@ -4158,3 +4165,58 @@ to a fixture, **write down what makes it wrong to promote**. The baseline entry 
 `driveHoursRemaining` names the exact reason (`NULL` means unreported, `0` means out of hours),
 which is the thing a future author needs and would otherwise have to rediscover from a backend
 comment three files away.
+
+## The same HOS defect, third endpoint
+
+`/api/v1/logistics/compliance/summary` counted violations as
+
+    (d.hos_drive_hours_today or 0) >= 11 or (d.hos_cycle_hours or 0) >= 70
+
+Both columns are nullable and NULL means the driver has **not reported** — not that they have
+driven zero hours. Every unreported driver coerced to 0, cleared both thresholds, and the tab
+rendered `activeViolations: 0`, which `TransportationManagement` paints **green**. An all-clear
+on DOT-regulated hours, produced by the absence of the data that would decide it.
+
+This is the third place the same class has been found on the same column family:
+
+  * `hosDriveHoursRemaining === 0` on the driver list — `null === 0` is false, so every fleet
+    came back with no violations under a green "No HOS violations detected";
+  * `HOSComplianceMonitor.check_compliance`, fixed by collecting a `missing_data` list before
+    judging anything;
+  * this rollup, which neither fix reached.
+
+`/logistics_correlation`'s `driver_compliance` block already reported `unassessable_drivers`
+alongside its violation count, for exactly this reason. **The shape existed, on the other
+endpoint.** A fix applied where the defect was found does not travel to where the same defect
+also is, and the thing that makes it travel is a name — searching for `unassessable` finds the
+pattern; searching for the defect finds nothing, because the defect looks like ordinary code.
+
+The rollup now counts over the drivers it could assess and reports `driversAssessed` /
+`driversUnassessable`. The tile paints zero green only when something was assessed, grey
+otherwise, with the count that explains it. It also imported 11.0 and 70.0 as literals while
+`HOSComplianceMonitor` held the canonical FMCSA values — a third copy, and the one furthest
+from anybody looking for them.
+
+**Rule 37 caught this file's own test on its first run.** The comment above the fix quotes
+`(d.hos_drive_hours_today or 0) >= 11` while explaining what was wrong with it, and the source
+assertion `">= 11" not in summary` matched the prose describing the defect — reporting the fixed
+code as unfixed. Fourth occurrence of that trap. Comments are stripped before the assertion now,
+as every other source assertion here already does.
+
+## Rule 59 — search for the fix, not the defect
+
+Three HOS endpoints had the same coercion. Two were fixed, months apart, each time by someone
+looking at the endpoint in front of them.
+
+A defect of this class is invisible to search: `(x or 0) >= 11` is ordinary code and looks like
+every other guard clause. The FIX is not — `unassessable_drivers`, `missing_data`,
+`hos_drive_hours_remaining is None` are all distinctive strings, and each names the concept the
+other sites are missing.
+
+So when you fix one, grep for what you just wrote and see who else should have it. That is a
+thirty-second check that would have found this rollup twice.
+
+The generalisation: a codebase's fixes are more searchable than its bugs, and the second
+instance of a class is usually adjacent to the first — same table, same columns, same domain
+vocabulary. `_scope`, `tenant_session`, `availability_only`, `unassessable` — each of those was
+introduced once and had to be carried by hand to the other places that needed it.

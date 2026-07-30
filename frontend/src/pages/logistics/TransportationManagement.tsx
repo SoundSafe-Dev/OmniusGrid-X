@@ -784,11 +784,31 @@ export const TransportationManagement: FC = () => {
                 <p className="text-sm text-opsgrid-text-secondary">CT-PAT Certified</p>
                 <p className="text-2xl font-bold text-green-500">{complianceSummary.ctpatCertified}</p>
               </div>
+              {/* GREEN ZERO WAS AN ALL-CLEAR NOBODY HAD EARNED. The rollup counted
+                  `(hos_drive_hours_today or 0) >= 11`, so a driver who had not reported
+                  coerced to zero hours and cleared the threshold; a fleet where nobody had
+                  reported showed 0 violations in green. The count is now taken over the
+                  drivers it could actually assess, and zero is only green when there were
+                  some — otherwise it is grey, with the number that explains it. */}
               <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-4">
                 <p className="text-sm text-opsgrid-text-secondary">Active Violations</p>
-                <p className={`text-2xl font-bold ${complianceSummary.activeViolations > 0 ? 'text-red-500' : 'text-green-500'}`}>
+                <p className={`text-2xl font-bold ${
+                  complianceSummary.activeViolations > 0
+                    ? 'text-red-500'
+                    : complianceSummary.driversAssessed === 0
+                      ? 'text-opsgrid-text-secondary'
+                      : 'text-green-500'
+                }`}>
                   {complianceSummary.activeViolations}
                 </p>
+                {complianceSummary.driversUnassessable != null
+                  && complianceSummary.driversUnassessable > 0 && (
+                  <p className="text-xs text-yellow-600 mt-1">
+                    {complianceSummary.driversUnassessable} driver
+                    {complianceSummary.driversUnassessable === 1 ? '' : 's'} unassessed — no
+                    hours reported
+                  </p>
+                )}
               </div>
               <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-4">
                 <p className="text-sm text-opsgrid-text-secondary">Safety Alerts</p>

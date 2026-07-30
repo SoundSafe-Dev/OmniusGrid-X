@@ -699,6 +699,12 @@ export const transportationApi = {
     ctpatCertified: number;
     activeViolations: number;
     safetyAlerts: number;
+    /** How many drivers the violation count was actually computed over, and how many had not
+     *  reported the hours it needs. `activeViolations: 0` means something different depending
+     *  on which of those is which — the tile paints zero GREEN, and a fleet where nobody had
+     *  reported used to get that green. Optional: an older backend sends neither. */
+    driversAssessed?: number;
+    driversUnassessable?: number;
   }> => {
     if (USE_MOCK) {
       await delay(MOCK_DELAY);
@@ -707,6 +713,8 @@ export const transportationApi = {
         ctpatCertified: mockCarriers.filter(c => c.ctpatCertified).length,
         activeViolations: 2,
         safetyAlerts: 1,
+        driversAssessed: mockDrivers.length,
+        driversUnassessable: 0,
       };
     }
     const response = await api.get('/api/v1/logistics/compliance/summary');
