@@ -4220,3 +4220,29 @@ The generalisation: a codebase's fixes are more searchable than its bugs, and th
 instance of a class is usually adjacent to the first — same table, same columns, same domain
 vocabulary. `_scope`, `tenant_session`, `availability_only`, `unassessable` — each of those was
 introduced once and had to be carried by hand to the other places that needed it.
+
+## Rule 59 applied to its own commit, immediately
+
+The rule says: when you fix one instance, grep for what you just wrote. Doing that on
+`unassessable` found the carrier rollup in `transportation_management.py`, which was already
+correct and thorough — it counts violations, unassessable drivers and compliant drivers
+separately, with a comment explaining that subtracting only violations would count the
+unassessable ones as compliant.
+
+**One line below it was not.**
+
+    'csa_score': float(carrier.csa_score) if carrier.csa_score else None
+
+A falsy test, and **0 is the best possible CSA score.** A carrier with a spotless safety record
+reported "no score on file" — which is exactly what an operator sees for a carrier nobody has
+assessed. `erp_integrations.py` had the twin: a sync that finished in under a second stores 0 and
+reported its duration as unrecorded.
+
+This is the same class pointing the other way. Everything above was absence dressed as data — a
+NULL coerced to a plausible number. These two are **data dressed as absence**: a real,
+meaningful zero discarded by a truthiness test. Both come from the same habit of writing `if x`
+where the question is `if x is not None`, and the second direction is harder to notice, because
+the value it hides is the good news.
+
+The sweep for the shape found five sites; three were datetimes, which are never falsy, so they
+were already equivalent to an `is not None` check. Two were real.

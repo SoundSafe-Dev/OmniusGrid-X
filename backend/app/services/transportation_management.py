@@ -692,7 +692,13 @@ class TransportationManagementService:
                     )
                 },
                 'safety_rating': carrier.safety_rating,
-                'csa_score': float(carrier.csa_score) if carrier.csa_score else None,
+                # `if carrier.csa_score` is FALSY, and 0 is the BEST possible CSA score —
+                # a carrier with a spotless safety record reported "no score on file",
+                # which is what an operator sees for a carrier nobody has assessed. The
+                # check is on absence, not on truth.
+                'csa_score': (
+                    float(carrier.csa_score) if carrier.csa_score is not None else None
+                ),
                 'driver_compliance': {
                     'total_drivers': len(drivers),
                     'hos_violations': hos_violations,

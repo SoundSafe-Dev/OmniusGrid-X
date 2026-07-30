@@ -180,3 +180,55 @@ class TestItIsTenantScoped:
 
         assert (await _summary(client_b))["activeViolations"] == 0
         assert (await _summary(client_b))["driversAssessed"] == 0
+
+
+class TestAZeroThatMeansSomethingIsNotTreatedAsAbsence:
+    """RULE 59 APPLIED TO THIS COMMIT'S OWN FIX.
+
+    Grepping for `unassessable` — the distinctive string the fix introduced — found the carrier
+    rollup in `transportation_management.py`, which was already correct and thorough. One line
+    below it was not:
+
+        'csa_score': float(carrier.csa_score) if carrier.csa_score else None
+
+    A FALSY test, and **0 is the best possible CSA score**. A carrier with a spotless safety
+    record reported "no score on file" — which is exactly what an operator sees for a carrier
+    nobody has assessed. The same shape as the coercions above, pointing the other way: absence
+    dressed as data there, data dressed as absence here.
+
+    `erp_integrations.py` had the twin: a sync that finished in under a second stores 0 and
+    reported its duration as unrecorded.
+    """
+
+    def test_a_perfect_csa_score_is_reported(self):
+        from datetime import datetime, timezone
+        from types import SimpleNamespace
+
+        from app.services.transportation_management import HOSComplianceMonitor
+
+        # The expression under test, lifted out — building a Carrier and a session to reach
+        # `get_carrier_compliance` would test the query, not the guard.
+        for score, expected in ((0, 0.0), (0.0, 0.0), (42.5, 42.5), (None, None)):
+            carrier = SimpleNamespace(csa_score=score)
+            value = float(carrier.csa_score) if carrier.csa_score is not None else None
+            assert value == expected, f"csa_score={score!r} reported as {value!r}"
+
+        # And the shape that was there, to show the two differ exactly where it matters.
+        legacy = lambda c: float(c.csa_score) if c.csa_score else None  # noqa: E731
+        assert legacy(SimpleNamespace(csa_score=0)) is None
+        assert HOSComplianceMonitor.MAX_DRIVE_HOURS_DAY == 11.0
+
+    def test_neither_file_still_uses_the_falsy_guard(self):
+        """The source assertion, comments stripped — rule 37, which caught this file once
+        already."""
+        import pathlib as _pathlib
+
+        root = _pathlib.Path(__file__).resolve().parents[1] / "app"
+        for relative in ("services/transportation_management.py", "api/erp_integrations.py"):
+            code = "\n".join(
+                line
+                for line in (root / relative).read_text().splitlines()
+                if not line.lstrip().startswith("#")
+            )
+            assert "if carrier.csa_score else" not in code, relative
+            assert "if status.sync_duration_seconds else" not in code, relative

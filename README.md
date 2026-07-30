@@ -510,7 +510,7 @@ the UI were all already there, only the write was missing — and the component 
 failures. The other three were uncalled and were removed. Notably a hand fix of this exact
 class had already run (FS-15, "routes that never existed") and left these behind.
 
-**Both suites are green: backend 2,462 passed, frontend 436 passed, 0 failed** — across
+**Both suites are green: backend 2,464 passed, frontend 436 passed, 0 failed** — across
 211 backend and 64 frontend test files (three backend files are quarantined in CI, each with an
 owner and an expiry — see `test_ci_quarantine_expires.py`). Every guard listed above is
 mutation-tested:

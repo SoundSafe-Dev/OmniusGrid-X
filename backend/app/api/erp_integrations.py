@@ -880,7 +880,14 @@ async def get_sync_status(
             last_sync_status=status.last_sync_status,
             records_synced=status.records_synced,
             records_failed=status.records_failed,
-            sync_duration_seconds=float(status.sync_duration_seconds) if status.sync_duration_seconds else None,
+            # `is not None`, not truthiness: a sync that finished in under a second stores
+            # 0 and reported "duration not recorded", which is the answer for a sync that
+            # never ran.
+            sync_duration_seconds=(
+                float(status.sync_duration_seconds)
+                if status.sync_duration_seconds is not None
+                else None
+            ),
             next_sync_at=status.next_sync_at,
             updated_at=status.updated_at
         )
