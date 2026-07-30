@@ -394,7 +394,16 @@ next step and teaches the lesson this codebase keeps relearning.
     Done when: `main` matches the converged branch, CI is green on it, and every dev has been
     told to rebase.
 
-40. **Frontend WebSocket defaults to `ws://`** · S
+40. **Frontend WebSocket defaults to `ws://`** · S · ✅ DONE
+    *Was already half-fixed when picked up: `fleetHealth.ts`'s socket helper had been removed
+    (it opened `/ws/fleet-health`, a route the backend does not serve, and defaulted to
+    `ws://`), and `websocket.ts` already derived the scheme from `window.location.protocol`.
+    The unfinished half was the test — the derivation was correct and NOTHING asserted it, so a
+    regression would have been silent until an operator on HTTPS noticed the fleet had stopped
+    updating, which reads as a quiet fleet rather than a broken socket. `getWsUrl` and
+    `getApiUrl` are exported and covered by `src/api/urlDerivation.test.ts`; reverting the
+    scheme turns three of its nine red. The localhost audit found two fallbacks, both
+    dev-gated and both correct.*
     `api/fleetHealth.ts:156` defaults to the insecure scheme, so **fleet-health sockets
     break on any HTTPS deployment** — production included.
 

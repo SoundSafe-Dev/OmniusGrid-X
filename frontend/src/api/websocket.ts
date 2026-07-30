@@ -3,7 +3,13 @@ import { WebSocketMessage } from '../types';
 // WS endpoint resolution mirrors client.ts: VITE_WS_URL wins; dev builds hit
 // the backend on :8000; production builds use same-origin (nginx proxies /ws),
 // upgrading to wss: when the page is https.
-const getWsUrl = (): string => {
+//
+// EXPORTED SO IT CAN BE TESTED. `fleetHealth.ts` used to open its own socket with a
+// hardcoded `ws://`, which fails on any HTTPS deployment; that helper is gone and this is
+// the single derivation left. It was correct and nothing asserted it, so a regression to
+// `ws://` would have been silent until an operator on an HTTPS deployment noticed the fleet
+// had stopped updating — which looks like a quiet fleet, not a broken socket.
+export const getWsUrl = (): string => {
   const envUrl = import.meta.env.VITE_WS_URL;
   if (envUrl) return envUrl;
   if (import.meta.env.DEV) {
