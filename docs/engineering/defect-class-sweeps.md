@@ -4402,3 +4402,39 @@ invisible because nothing reached that handler until a write-surface walk did.
 
 When the fix for a stale-binding problem is "sweep the modules", sweep the module's whole public
 surface. The attribute that was not causing trouble at the time is the one that will.
+
+## Completing the walk: PUT and DELETE
+
+PUT is the same probe as POST. DELETE needed a different one — **a fresh random UUID rather than
+the seeded organisation id the other walks fill with.** Filling every `{...}` with a real id is
+harmless when the request only reads; on DELETE it is the difference between probing and
+destroying. Nothing in the database has the random id, so every route exercises its not-found
+path, which is the path most likely to be wrong because the happy path is the one everybody
+tests.
+
+**One route is never probed at all, and not because it might fail.** `/api/v1/gdpr/data-delete`
+takes no path parameter and erases the caller's data on request; a probe that "passes" there has
+deleted the organisation the rest of the walk is about. It is the one place where the cost of
+finding out exceeds the finding.
+
+### What it found
+
+`PUT /api/v1/feature-flags/{key}` and `POST /api/v1/feature-flags/` raised a raw
+`ConnectionError` when Redis was absent. The **same file's** GET, list and DELETE handlers all
+degrade to 503, two of them under comments reading *"store (redis) unreachable — match the list
+endpoint"* and *"match GET/list (503)"*. Four handlers had the caveat and two did not, in a file
+whose author clearly knew about it.
+
+That is the twenty-two-and-one shape again at a smaller scale, and it is why the walk is worth
+more than reading the file: nothing about the two exceptions looks wrong beside the four.
+
+`DELETE /api/v1/rag/documents/{doc_id}` surfaces a SeaweedFS connection error for the same
+reason the GET walk already records `/api/v1/rag/documents` — one root cause, two methods,
+htreinen's lane.
+
+### The known-failure list had to be keyed by method
+
+One list across four walks, keyed by path alone, meant a DELETE-only failure read as *"listed
+but passing"* to the POST walk — whose staleness check then reported it as fixed and demanded
+its removal. Caught immediately, because that check exists and is asserted both ways. A shared
+baseline needs every dimension the thing it describes varies along.

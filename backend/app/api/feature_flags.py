@@ -87,6 +87,8 @@ async def create_feature_flag(
         )
     except FeatureFlagError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    except Exception as exc:  # store (redis) unreachable — match GET/list/DELETE (503)
+        raise HTTPException(status_code=503, detail=f"Feature flag store unavailable: {exc}")
 
 
 @router.put("/{key}", summary="Update a feature flag")
@@ -108,6 +110,8 @@ async def update_feature_flag(
         raise HTTPException(status_code=404, detail=str(exc))
     except FeatureFlagError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    except Exception as exc:  # store (redis) unreachable — match GET/list/DELETE (503)
+        raise HTTPException(status_code=503, detail=f"Feature flag store unavailable: {exc}")
 
 
 @router.delete("/{key}", summary="Delete a feature flag")

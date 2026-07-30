@@ -25,28 +25,39 @@ where they are.
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 
 from tests.route_walk import http_paths
 
 pytest.importorskip("testcontainers")
 
-#: Routes whose 5xx on an empty body is owned by another lane, mirroring the GET walk's list.
+#: `(method, path)` whose 5xx is owned by another lane, mirroring the GET walk's list.
+#:
+#: KEYED BY METHOD, and it was not at first. A DELETE-only failure listed by path alone read as
+#: "in the list but passing" to the POST walk, whose staleness check then reported it as fixed.
+#: One list across four walks needs the method or every entry is stale in three of them.
 #: Asserted BOTH ways below: a new 5xx outside this list fails, and an entry that starts
 #: passing also fails, so the list cannot quietly rot.
 #:
 #: Do not add to this list to make your own change go green.
-KNOWN_LANE_FAILURES: dict[str, str] = {
-    "/api/v1/kanban/board/view": (
+KNOWN_LANE_FAILURES: dict[tuple[str, str], str] = {
+    ("POST", "/api/v1/kanban/board/view"): (
         "HARSH — writes a default board on read and the INSERT violates the task_boards "
         "policy; the same root cause the GET walk records for /kanban/board"
     ),
-    "/api/v1/engines/correlation/integration/initialize-registries": (
+    ("POST", "/api/v1/engines/correlation/integration/initialize-registries"): (
         "HARSH — same write-on-read shape against actionable_registries: the INSERT runs on "
         "a session whose tenant GUC is not bound, so the policy rejects it"
     ),
-    "/api/v1/engines/correlation/generate": (
+    ("POST", "/api/v1/engines/correlation/generate"): (
         "HARSH — correlation_ai_engine; 500 on an empty scenario body rather than a 422"
+    ),
+    ("DELETE", "/api/v1/rag/documents/{doc_id}"): (
+        "htreinen — reaches SeaweedFS and surfaces the connection error; should degrade to "
+        "503 when the object store is absent. The GET walk records the same root cause for "
+        "/api/v1/rag/documents"
     ),
 }
 
@@ -63,6 +74,11 @@ SKIP_EXACT = {
     # Session-mutating: calling these ends the walk's own authentication.
     "/api/v1/auth/logout",
     "/api/v1/auth/refresh",
+    # NEVER PROBED, AND NOT BECAUSE IT MIGHT FAIL. `/api/v1/gdpr/data-delete` takes no path
+    # parameter and erases the caller's data on request — a probe that "passes" here has
+    # deleted the organisation the rest of the walk is about. It is the one route where the
+    # cost of finding out is higher than the finding.
+    "/api/v1/gdpr/data-delete",
     # AGENT-CERTIFICATE AUTH, not user auth. `require_agent` reads a forwarded client
     # certificate, so a 401 for a user's bearer token is the correct answer and not a lost
     # session — which is the only reason 401 is otherwise treated as a failure here.
@@ -90,9 +106,41 @@ def _probe_path(path: str, fill: str) -> str:
     )
 
 
+async def _walk(client, app, method: str, fill: str, send):
+    """Probe every route serving `method`, returning `(failures, probed)`."""
+    failures: dict[str, str] = {}
+    probed: set[str] = set()
+    for path in http_paths(app, method, skip=SKIP_EXACT):
+        probed.add(path)
+        try:
+            response = await send(_probe_path(path, fill))
+        except Exception as exc:  # noqa: BLE001 — an exception escaping IS the failure
+            failures[path] = f"raised {type(exc).__name__}: {exc}"
+            continue
+        if response.status_code not in ACCEPTABLE:
+            failures[path] = f"{response.status_code}: {response.text[:160]}"
+    return failures, probed
+
+
+async def _assert_still_authenticated(client, method: str) -> None:
+    """The check the first version of this file needed and did not have.
+
+    It is not enough that the loop ran — the requests have to have been authenticated when
+    they ran. One endpoint that ends the session turns every later probe into a 401, and a walk
+    that accepts 401 reports success for all of them.
+    """
+    response = await client.get("/api/v1/assets/")
+    assert response.status_code != 401, (
+        f"the {method} walk lost its own authentication partway through, so an unknown number "
+        "of probes never reached a handler. Something it called revokes the session — add it "
+        "to SKIP_EXACT."
+    )
+
+
 @pytest.mark.asyncio
 async def test_no_post_5xxs_on_an_empty_body(app, client_a, seeded_orgs):
     """THE ASSERTION THIS FILE EXISTS FOR."""
+    METHOD = "POST"
     fill = str(seeded_orgs["org_a_id"])
     failures: dict[str, str] = {}
     probed: set[str] = set()
@@ -123,7 +171,9 @@ async def test_no_post_5xxs_on_an_empty_body(app, client_a, seeded_orgs):
         "SKIP_EXACT."
     )
 
-    unexpected = {p: d for p, d in failures.items() if p not in KNOWN_LANE_FAILURES}
+    unexpected = {
+        p: d for p, d in failures.items() if (METHOD, p) not in KNOWN_LANE_FAILURES
+    }
     assert not unexpected, (
         "these POST endpoints 5xx on an empty body instead of answering 422:\n  "
         + "\n  ".join(f"{p}  ->  {d}" for p, d in sorted(unexpected.items()))
@@ -131,9 +181,12 @@ async def test_no_post_5xxs_on_an_empty_body(app, client_a, seeded_orgs):
         "Declare it on the request model, or validate it and raise 400/422."
     )
 
-    fixed = sorted(set(KNOWN_LANE_FAILURES) - set(failures))
+    fixed = sorted(
+        path for (method, path) in KNOWN_LANE_FAILURES
+        if method == METHOD and path not in failures
+    )
     assert not fixed, (
-        f"these are in KNOWN_LANE_FAILURES and now pass; remove them: {fixed}"
+        f"these {METHOD} routes are in KNOWN_LANE_FAILURES and now pass; remove them: {fixed}"
     )
 
 
@@ -142,6 +195,7 @@ async def test_no_patch_5xxs_on_an_empty_body(app, client_a, seeded_orgs):
     """PATCH is the sharper of the two: an update handler is usually written against a body
     that has already been through a create, so the "what if this field is absent" path is the
     one nobody walks."""
+    METHOD = "PATCH"
     fill = str(seeded_orgs["org_a_id"])
     failures: dict[str, str] = {}
     probed: set[str] = set()
@@ -157,7 +211,64 @@ async def test_no_patch_5xxs_on_an_empty_body(app, client_a, seeded_orgs):
             failures[path] = f"{response.status_code}: {response.text[:160]}"
 
     assert len(probed) > 5, f"only {len(probed)} PATCH routes probed"
-    assert not failures, (
+    await _assert_still_authenticated(client_a, METHOD)
+
+    unexpected = {
+        p: d for p, d in failures.items() if (METHOD, p) not in KNOWN_LANE_FAILURES
+    }
+    assert not unexpected, (
         "these PATCH endpoints 5xx on an empty body:\n  "
-        + "\n  ".join(f"{p}  ->  {d}" for p, d in sorted(failures.items()))
+        + "\n  ".join(f"{p}  ->  {d}" for p, d in sorted(unexpected.items()))
+    )
+
+
+@pytest.mark.asyncio
+async def test_no_put_5xxs_on_an_empty_body(app, client_a, seeded_orgs):
+    """PUT completes the write surface. Two of the twenty-five take no path parameter — both
+    are settings updates — and the rest are filled with a UUID that matches nothing."""
+    METHOD = "PUT"
+    fill = str(uuid.uuid4())
+    failures, probed = await _walk(
+        client_a, app, "PUT", fill, lambda p: client_a.put(p, json={})
+    )
+
+    assert len(probed) > 15, f"only {len(probed)} PUT routes probed"
+    await _assert_still_authenticated(client_a, "PUT")
+
+    unexpected = {
+        p: d for p, d in failures.items() if (METHOD, p) not in KNOWN_LANE_FAILURES
+    }
+    assert not unexpected, (
+        "these PUT endpoints 5xx on an empty body:\n  "
+        + "\n  ".join(f"{p}  ->  {d}" for p, d in sorted(unexpected.items()))
+    )
+
+
+@pytest.mark.asyncio
+async def test_no_delete_5xxs_on_an_unknown_id(app, client_a, seeded_orgs):
+    """A DELETE for a row that does not exist must be a 404, not a crash.
+
+    A FRESH RANDOM UUID, not the seeded organisation id the other walks use. Filling every
+    `{...}` with a real id is harmless when the request only reads; on DELETE it is the
+    difference between probing and destroying. Nothing in the database has this id, so every
+    route here is exercising its not-found path — which is the path most likely to be wrong,
+    because the happy path is the one everybody tests.
+    """
+    METHOD = "DELETE"
+    fill = str(uuid.uuid4())
+    failures, probed = await _walk(
+        client_a, app, "DELETE", fill, lambda p: client_a.delete(p)
+    )
+
+    assert len(probed) > 15, f"only {len(probed)} DELETE routes probed"
+    await _assert_still_authenticated(client_a, "DELETE")
+
+    unexpected = {
+        p: d for p, d in failures.items() if (METHOD, p) not in KNOWN_LANE_FAILURES
+    }
+    assert not unexpected, (
+        "these DELETE endpoints 5xx for an id that does not exist:\n  "
+        + "\n  ".join(f"{p}  ->  {d}" for p, d in sorted(unexpected.items()))
+        + "\n\nAn unknown id is a 404. A 500 here usually means the id reached the database "
+        "unvalidated, or a rowcount of zero was treated as an error."
     )
