@@ -134,11 +134,23 @@ async def alarms_trend(
         default={**{s: 0 for s in ordered}, "total": 0},
     )
 
+    # HOW MANY ASSETS THIS WAS COMPUTED OVER. `oee/trend`, `health/distribution` and
+    # `assets/at-risk` all report it and these two did not — so an all-zero alarm trend was
+    # indistinguishable between a fleet of fifty with nothing wrong (good news) and an
+    # organisation with no assets at all (nothing was examined). Three of five reporting it is
+    # the state in which the other two look fine.
+    asset_count = (
+        await db.execute(
+            select(func.count(Asset.id)).where(Asset.organization_id == org_id)
+        )
+    ).scalar() or 0
+
     return {
         "bucket": bucket_name,
         "hours": hours,
         "severities": ordered,
         "series": series,
+        "asset_count": asset_count,
     }
 
 
@@ -202,10 +214,19 @@ async def throughput_trend(
     total = sum(p["total_parts"] for p in series)
     good = sum(p["good_parts"] for p in series)
 
+    # See the note in `alarms_trend`: a throughput series of zeroes says nothing about
+    # whether anything was there to produce parts.
+    asset_count = (
+        await db.execute(
+            select(func.count(Asset.id)).where(Asset.organization_id == org_id)
+        )
+    ).scalar() or 0
+
     return {
         "bucket": bucket_name,
         "hours": hours,
         "series": series,
+        "asset_count": asset_count,
         "totals": {
             "total_parts": total,
             "good_parts": good,
