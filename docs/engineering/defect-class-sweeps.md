@@ -3268,3 +3268,50 @@ The mutation check is the only reason that surfaced — the test passed, read se
 inspected nothing. This is rule 21 in its most ordinary clothing: not a clever regex or a
 proximity window, just a fixture left off a parameter list. **Every negative assertion needs a
 positive premise, and for a database test that means rows.**
+
+## The second variant: a client-supplied tenant *parameter*
+
+The body-tenant guard was clean, so the class looked closed. It was not — the guard checks for
+a tenant **assigned** from a request, and eight handlers were **receiving** one as a query
+parameter instead:
+
+| handler | shape |
+|---|---|
+| `geotab.py` × 6 | `organization_id: Optional[UUID] = None`, on `Depends(get_db)` |
+| `operations.get_active_operations` | optional param, and the tenant join only happened *if* one was sent |
+| `yard.get_detention_alerts` | optional param, filter applied only when present |
+
+Every one was **Optional**, which is the dangerous half: a request that simply omitted the
+parameter filtered by nothing at all. Whether that leaked depended entirely on whether the
+table carried a policy — the same coin-flip that decided the fourteen body-tenant handlers.
+
+**The geotab six also escaped the existing `get_db` guard**, and the reason is instructive:
+that guard inspects a handler's own body for references to RLS-protected models, and these
+handlers pass `db` to `geotab_service` and query nothing directly. An indirection of one
+function call was enough to hide six handlers from a check written specifically to find them —
+rule 34's shape again, in a different guard.
+
+Their failure mode was the empty one rather than the leaky one: `get_db` binds no tenant GUC,
+so the policy filtered every row and those endpoints returned nothing to anybody, including for
+their own organisation. `geotab.py` had already been *removed* from the `get_db` debt list when
+`get_fleet_summary` was fixed — the file was marked done with six handlers still wrong.
+
+`workcells.get_organization` is the one legitimate case and stays: `GET
+/organizations/{organization_id}` must accept the id, and it compares against the token and
+404s. It is allowlisted with that reason, and a further test asserts the comparison still
+exists — an allowlist entry that claims a handler validates its input has to be checked, or it
+is just a hole with a docstring.
+
+## Rule 43 — a guard proves the absence of the shape it models, not of the class
+
+Three guards have now been written for one class — tenant chosen by the caller — and each was
+clean while the next variant sat in the same three files:
+
+1. `organization_id=payload.get(...)` — assignment from a body. **14 handlers.**
+2. `organization_id: Optional[UUID] = None` — a query parameter. **8 handlers.**
+3. `if org is not None: stmt = stmt.where(...)` — a filter applied conditionally. **4 handlers.**
+
+All three are "the caller decides which tenant", and no single check saw more than one of them.
+After writing a guard, the useful question is not *did it pass* but **what shape does it model,
+and what else could express the same defect?** Each variant here was found by reading code the
+previous guard had just declared clean.

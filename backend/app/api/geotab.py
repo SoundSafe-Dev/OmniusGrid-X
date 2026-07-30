@@ -35,10 +35,18 @@ webhook_router = APIRouter(prefix="/geotab", tags=["geotab"],
 
 @router.get("/devices")
 async def get_geotab_devices(
-    organization_id: Optional[UUID] = None,
-    db: AsyncSession = Depends(get_db)
+    organization_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """List GeoTab devices (drivers' ELD assignments + device registry)"""
+    # ORG FROM THE TOKEN, SESSION FROM get_tenant_db. This took `organization_id` as a
+    # client-supplied query parameter and ran on `get_db`, which binds no tenant GUC —
+    # so on the RLS-protected tables the service queries, the policy filtered every row
+    # and the endpoint returned nothing to anyone, including for its own organisation.
+    # The same pair of mistakes was fixed on `get_fleet_summary` in this file and on five
+    # transportation handlers; these six were missed because their queries live in the
+    # SERVICE, so the get_db guard — which inspects handler bodies for RLS models —
+    # cannot see them.
     return await geotab_service.get_devices(
         organization_id=organization_id,
         db=db
@@ -48,10 +56,18 @@ async def get_geotab_devices(
 @router.get("/devices/{device_id}/location")
 async def get_device_location(
     device_id: str,
-    organization_id: Optional[UUID] = None,
-    db: AsyncSession = Depends(get_db)
+    organization_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Latest known position for a GeoTab device"""
+    # ORG FROM THE TOKEN, SESSION FROM get_tenant_db. This took `organization_id` as a
+    # client-supplied query parameter and ran on `get_db`, which binds no tenant GUC —
+    # so on the RLS-protected tables the service queries, the policy filtered every row
+    # and the endpoint returned nothing to anyone, including for its own organisation.
+    # The same pair of mistakes was fixed on `get_fleet_summary` in this file and on five
+    # transportation handlers; these six were missed because their queries live in the
+    # SERVICE, so the get_db guard — which inspects handler bodies for RLS models —
+    # cannot see them.
     try:
         return await geotab_service.get_device_location(
             device_id=device_id,
@@ -67,10 +83,18 @@ async def get_device_trips(
     device_id: str,
     from_time: Optional[datetime] = Query(None, alias="from"),
     to_time: Optional[datetime] = Query(None, alias="to"),
-    organization_id: Optional[UUID] = None,
-    db: AsyncSession = Depends(get_db)
+    organization_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Trips for a GeoTab device within a time window (default: last 24h)"""
+    # ORG FROM THE TOKEN, SESSION FROM get_tenant_db. This took `organization_id` as a
+    # client-supplied query parameter and ran on `get_db`, which binds no tenant GUC —
+    # so on the RLS-protected tables the service queries, the policy filtered every row
+    # and the endpoint returned nothing to anyone, including for its own organisation.
+    # The same pair of mistakes was fixed on `get_fleet_summary` in this file and on five
+    # transportation handlers; these six were missed because their queries live in the
+    # SERVICE, so the get_db guard — which inspects handler bodies for RLS models —
+    # cannot see them.
     now = datetime.now(timezone.utc)
     return await geotab_service.get_device_trips(
         device_id=device_id,
@@ -86,14 +110,22 @@ async def get_device_trips(
     dependencies=[Depends(get_current_active_user)],
 )
 async def get_geotab_exceptions(
-    organization_id: Optional[UUID] = None,
+    organization_id: UUID = Depends(get_tenant_org_id),
     driver_id: Optional[UUID] = None,
     device_id: Optional[str] = None,
     exception_type: Optional[str] = None,
     hours_back: int = Query(24, ge=1, le=168),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get GeoTab exceptions (harsh braking, speeding, HOS violations)"""
+    # ORG FROM THE TOKEN, SESSION FROM get_tenant_db. This took `organization_id` as a
+    # client-supplied query parameter and ran on `get_db`, which binds no tenant GUC —
+    # so on the RLS-protected tables the service queries, the policy filtered every row
+    # and the endpoint returned nothing to anyone, including for its own organisation.
+    # The same pair of mistakes was fixed on `get_fleet_summary` in this file and on five
+    # transportation handlers; these six were missed because their queries live in the
+    # SERVICE, so the get_db guard — which inspects handler bodies for RLS models —
+    # cannot see them.
     try:
         exceptions = await geotab_service.get_exceptions(
             organization_id=organization_id,
@@ -120,10 +152,18 @@ async def get_geotab_exceptions(
 )
 async def get_device_diagnostics(
     device_id: str,
-    organization_id: Optional[UUID] = None,
-    db: AsyncSession = Depends(get_db)
+    organization_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get GeoTab device diagnostics (DTC codes, reefer status, etc.)"""
+    # ORG FROM THE TOKEN, SESSION FROM get_tenant_db. This took `organization_id` as a
+    # client-supplied query parameter and ran on `get_db`, which binds no tenant GUC —
+    # so on the RLS-protected tables the service queries, the policy filtered every row
+    # and the endpoint returned nothing to anyone, including for its own organisation.
+    # The same pair of mistakes was fixed on `get_fleet_summary` in this file and on five
+    # transportation handlers; these six were missed because their queries live in the
+    # SERVICE, so the get_db guard — which inspects handler bodies for RLS models —
+    # cannot see them.
     try:
         diagnostics = await geotab_service.get_device_diagnostics(
             device_id=device_id,
@@ -161,10 +201,18 @@ async def geotab_webhook(
 )
 async def get_driver_hos_geotab(
     driver_id: UUID,
-    organization_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    organization_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get driver HOS status from GeoTab"""
+    # ORG FROM THE TOKEN, SESSION FROM get_tenant_db. This took `organization_id` as a
+    # client-supplied query parameter and ran on `get_db`, which binds no tenant GUC —
+    # so on the RLS-protected tables the service queries, the policy filtered every row
+    # and the endpoint returned nothing to anyone, including for its own organisation.
+    # The same pair of mistakes was fixed on `get_fleet_summary` in this file and on five
+    # transportation handlers; these six were missed because their queries live in the
+    # SERVICE, so the get_db guard — which inspects handler bodies for RLS models —
+    # cannot see them.
     try:
         hos_status = await geotab_service.get_driver_hos(
             driver_id=driver_id,

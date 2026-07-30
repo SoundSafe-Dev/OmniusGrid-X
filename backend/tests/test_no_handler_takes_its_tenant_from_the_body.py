@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import ast
 import pathlib
+import re
 
 import pytest
 
@@ -98,6 +99,58 @@ def _tenant_from_request(tree: ast.AST) -> list[tuple[str, int]]:
     return found
 
 
+#: Handlers that take a tenant as a PARAMETER and validate it against the token. A path
+#: parameter naming a resource is legitimate — `GET /organizations/{organization_id}` has to
+#: accept one — provided the handler refuses when it is not the caller's.
+VALIDATED_PATH_PARAM: dict[str, str] = {
+    "workcells.get_organization": (
+        "path parameter on GET /organizations/{organization_id}, compared against "
+        "get_tenant_org_id and 404'd when it differs — the resource id IS the tenant here, so "
+        "accepting it is unavoidable and checking it is the whole job."
+    ),
+}
+
+
+def _client_supplied_tenant_params(tree: ast.AST, module: str) -> list[tuple[str, int]]:
+    """Route handlers taking `organization_id`/`org_id` as a client-supplied parameter.
+
+    THE SECOND VARIANT OF THE SAME CLASS, and the AST check above misses it: these handlers do
+    not ASSIGN the tenant from a request, they RECEIVE it as a query parameter and use it in a
+    where clause. Eight were found this way — six in geotab.py, plus get_active_operations and
+    get_detention_alerts — and every one was Optional, so a request that simply omitted the
+    parameter filtered by nothing at all.
+
+    Whether that leaked depended entirely on whether the table carried a policy, which is the
+    same coin-flip that decided the fourteen body-tenant handlers.
+    """
+    found = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if not any(
+            isinstance(d, ast.Call)
+            and isinstance(d.func, ast.Attribute)
+            and d.func.attr in ROUTE_DECORATORS
+            for d in node.decorator_list
+        ):
+            continue
+        if f"{module}.{node.name}" in VALIDATED_PATH_PARAM:
+            continue
+        args = node.args
+        params = [*args.posonlyargs, *args.args, *args.kwonlyargs]
+        defaults = list(args.defaults) + list(args.kw_defaults or [])
+        # right-align defaults with parameters
+        padded = [None] * (len(params) - len(defaults)) + defaults
+        for param, default in zip(params, padded):
+            if param.arg not in TENANT_NAMES:
+                continue
+            rendered = ast.unparse(default) if default is not None else ""
+            if "Depends" in rendered:
+                continue
+            found.append((node.name, node.lineno))
+    return found
+
+
 FILES = sorted(API.rglob("*.py"))
 OFFENDERS: list[str] = []
 for path in FILES:
@@ -154,6 +207,71 @@ async def run_sync(payload: dict):
     row = Thing(organization_id=payload.get("organization_id"))
 """
         assert _tenant_from_request(ast.parse(source)) == []
+
+
+PARAM_OFFENDERS: list[str] = []
+for path in FILES:
+    for func, line in _client_supplied_tenant_params(ast.parse(path.read_text()), path.stem):
+        PARAM_OFFENDERS.append(f"{path.name}:{line} {func}()")
+
+
+class TestNoHandlerTakesItsTenantFromAParameter:
+    def test_there_are_no_offenders(self):
+        assert not PARAM_OFFENDERS, (
+            "these route handlers accept the organisation as a client-supplied parameter "
+            "rather than deriving it from the token:\n  " + "\n  ".join(PARAM_OFFENDERS) +
+            "\n\nUse `Depends(get_tenant_org_id)`. If it is a PATH parameter naming the "
+            "resource, validate it against the token and add the handler to "
+            "VALIDATED_PATH_PARAM with the reason."
+        )
+
+    def test_it_flags_an_optional_query_parameter(self):
+        """The shape as found, and Optional is the dangerous part: a request omitting the
+        parameter filtered by nothing at all."""
+        source = """
+@router.get("/devices")
+async def get_geotab_devices(organization_id: Optional[UUID] = None, db=Depends(get_db)):
+    return await service.get_devices(organization_id=organization_id, db=db)
+"""
+        assert _client_supplied_tenant_params(ast.parse(source), "geotab") == [
+            ("get_geotab_devices", 3)
+        ]
+
+    def test_it_accepts_the_dependency_form(self):
+        source = """
+@router.get("/devices")
+async def get_geotab_devices(organization_id: UUID = Depends(get_tenant_org_id)):
+    return []
+"""
+        assert _client_supplied_tenant_params(ast.parse(source), "geotab") == []
+
+    def test_it_accepts_a_validated_path_parameter(self):
+        """`GET /organizations/{organization_id}` must accept one; it compares against the
+        token and 404s. Listing it is not a loophole — the entry says what makes it safe, and
+        `test_the_allowed_path_params_still_validate` checks the comparison is still there."""
+        source = """
+@router.get("/{organization_id}")
+async def get_organization(organization_id: UUID, org_id=Depends(get_tenant_org_id)):
+    if str(organization_id) != str(org_id):
+        raise HTTPException(status_code=404, detail="organization not found")
+"""
+        assert _client_supplied_tenant_params(ast.parse(source), "workcells") == []
+
+    def test_the_allowed_path_params_still_validate(self):
+        """An allowlist entry claims the handler CHECKS the parameter. If someone removes the
+        comparison, the entry silently becomes a hole — so the comparison is asserted, with
+        comments stripped (rule 37)."""
+        for key in VALIDATED_PATH_PARAM:
+            module, func = key.split(".", 1)
+            source = (API / f"{module}.py").read_text()
+            source = re.sub(r"#[^\n]*", "", source)
+            start = source.index(f"async def {func}(")
+            body = source[start : start + 900]
+            assert "get_tenant_org_id" in body, f"{key} no longer derives a tenant to compare"
+            assert "!=" in body and "404" in body, (
+                f"{key} is allowlisted as a VALIDATED path parameter but no longer compares "
+                "it against the token"
+            )
 
 
 class TestNoHandlerTakesItsTenantFromTheBody:

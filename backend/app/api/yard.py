@@ -555,7 +555,7 @@ def build_detention_alert(
 
 @router.get("/detention-alerts", response_model=List[dict])
 async def get_detention_alerts(
-    organization_id: Optional[UUID] = None,
+    organization_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """Live detention exposure for trailers still in the yard.
@@ -569,8 +569,10 @@ async def get_detention_alerts(
         YardTrailer.check_in_at.isnot(None),
         YardTrailer.check_out_at.is_(None),
     )
-    if organization_id:
-        query = query.where(YardTrailer.organization_id == organization_id)
+    # UNCONDITIONAL. `organization_id` was a client-supplied optional query parameter, so a
+    # bare request filtered by nothing — every other handler in this file was moved to
+    # `get_tenant_org_id` and this one was missed.
+    query = query.where(YardTrailer.organization_id == str(organization_id))
 
     trailers = (await db.execute(query)).scalars().all()
     now = datetime.now(timezone.utc)

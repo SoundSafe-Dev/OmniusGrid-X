@@ -14,7 +14,7 @@ from app.db.models import Operation, Asset, PackMLState
 from app.models.schemas import OperationCreate, OperationResponse
 
 from app.api.auth import get_current_active_user
-from app.core.tenant import get_tenant_db
+from app.core.tenant import get_tenant_db, get_tenant_org_id
 from app.middleware.rbac import require_operator_or_admin
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
@@ -99,19 +99,23 @@ async def list_operations(
 
 @router.get("/active", response_model=ActiveOperationsResponse)
 async def get_active_operations(
-    organization_id: Optional[UUID] = None,
     workcell_id: Optional[UUID] = None,
+    organization_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get currently running operations"""
-    query = select(Operation).where(Operation.status == 'running')
-    
-    if organization_id or workcell_id:
-        query = query.join(Asset)
-        if organization_id:
-            query = query.where(Asset.organization_id == organization_id)
-        if workcell_id:
-            query = query.where(Asset.workcell_id == workcell_id)
+    # THE TENANT JOIN IS NO LONGER OPTIONAL. `organization_id` was a client-supplied query
+    # parameter — the IDOR shape — and the join that applied it only happened when the caller
+    # sent one, so a bare `GET /operations/active` filtered by nothing at all. `operations`
+    # carries a policy, so RLS was doing the work; the request was asking the caller which
+    # tenant to use and being saved by the database.
+    query = (
+        select(Operation)
+        .join(Asset)
+        .where(Operation.status == 'running', Asset.organization_id == organization_id)
+    )
+    if workcell_id:
+        query = query.where(Asset.workcell_id == workcell_id)
     
     result = await db.execute(query)
     operations = result.scalars().all()
