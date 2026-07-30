@@ -217,9 +217,28 @@ class NotificationService:
 
     async def _load_rules(self, org_id: Optional[str]) -> List[Dict[str, Any]]:
         from sqlalchemy import select
-        from app.db.database import AsyncSessionLocal
+        from app.core.tenant import tenant_session
         from app.db.notification_models import NotificationSubscription
-        async with AsyncSessionLocal() as session:
+
+        # REFUSE BEFORE OPENING A SESSION. Two reasons, and the second only appeared once the
+        # policy existed:
+        #   * a None organisation used to drop the filter and load every tenant's rules;
+        #   * `tenant_session(None)` binds the GUC to the string "None", which migration 056's
+        #     policy casts to uuid and rejects — so the query fails with
+        #     `invalid input syntax for type uuid: "None"` rather than returning nothing.
+        # Either way there is no such thing as "the rules for no organisation", so this answers
+        # without asking the database.
+        if org_id is None:
+            logger.warning(
+                "notification_rules_requested_without_tenant",
+                detail="returning no rules; a dispatch with no organisation matches nobody",
+            )
+            return []
+        # TENANT-BOUND, so migration 056's policy does not empty this. The dispatcher runs from
+        # a background task with no request behind it, which is exactly the case the baseline
+        # in test_every_tenant_table_has_a_policy.py said had to be checked before a policy
+        # could go on these two tables.
+        async with tenant_session(org_id) as session:
             # UNCONDITIONAL. The `if org_id is not None` that used to wrap the second clause
             # turned a missing tenant into "every tenant" — see the guard in `dispatch`, which
             # now refuses before reaching this. Kept strict here too: a helper that fans out
@@ -237,11 +256,11 @@ class NotificationService:
 
     async def _record_deliveries(self, event: Dict[str, Any], org_id: Optional[str],
                                  results: List[Dict[str, Any]]) -> None:
-        from app.db.database import AsyncSessionLocal
+        from app.core.tenant import tenant_session
         from app.db.notification_models import NotificationDelivery
         if not results:
             return
-        async with AsyncSessionLocal() as session:
+        async with tenant_session(org_id) as session:
             for res in results:
                 session.add(NotificationDelivery(
                     organization_id=org_id,

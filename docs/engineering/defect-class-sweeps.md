@@ -3418,3 +3418,47 @@ enumerate with the identical `1. **…**` formatting — the five maintenance-mo
 things the CI-quarantine guard asserts — so a file-wide regex reports duplicate rules 1–5 and is
 useless. The check reads only between the list's heading and the next `---`, and a separate
 assertion proves that scoping is narrower than the whole file.
+
+## Migration 056: closing two of the four recorded gaps
+
+The policy-coverage baseline recorded `notification_subscriptions` and
+`notification_deliveries` as REAL GAPS, and each entry said what closing them required: *"a
+check of the dispatcher, which reads subscriptions from a background task with no request
+behind it."* Doing that check found four defects rather than a clean bill (see the section
+above), and fixing them was the actual precondition — every session in that router was an
+unbound `AsyncSessionLocal`, so a FORCEd policy would have **emptied every read** instead of
+protecting anything.
+
+All six sessions now go through `core.tenant.tenant_session`, which binds the GUC and
+re-asserts it per transaction, and migration 056 adds the policy. Two of the four real gaps are
+closed; the guard's own staleness check named them for removal from the baseline, which is what
+a baseline is for.
+
+**The migration was wrong on its first run, loudly.** It omitted the `::uuid` cast and the whole
+chain failed to build the test schema: `operator does not exist: uuid = text`. The ORM declares
+`Column(UUIDString(), …)`, which reads like a varchar — and genuinely is one on the tables in
+051 and 055 — but `022_notifications.sql` declares `organization_id UUID`. **The DDL is the
+authority on a column's type, not the model**: a custom SQLAlchemy type can render as either.
+Better to be loudly wrong than quietly wrong here — a policy comparing incompatible types raises
+on every row rather than silently matching none.
+
+## Rule 45 — a module-level copy of a patched name is a defect waiting for a new caller
+
+`tenant_session` held `AsyncSessionLocal`, captured by `from app.db.database import …` at
+import. The test harness rebinds that name **per module**, sweeping `sys.modules` for anything
+carrying the attribute — and whether `app.core.tenant`'s copy is among the rebound ones varies
+by test.
+
+That was invisible for as long as the helper was only reached through the `get_tenant_db`
+dependency, which the suite overrides wholesale. Pointing a **service** at it — the notification
+dispatcher — surfaced it instantly as one failing RUL test whose error had been swallowed into a
+warning log: `role "placeholder" does not exist`.
+
+The helper now looks the name up on `app.db.database` at call time. There is one binding that
+matters and it reads it, instead of holding a copy that may or may not have been patched.
+
+**And the first test for this was too weak.** It compared engines, which passed under the
+mutation as well as the fix — because in that test's context the module's copy *happened* to be
+the patched one, and the entire defect is that this varies. The test now poisons
+`app.core.tenant.AsyncSessionLocal` with a maker that raises and asserts `tenant_session` still
+works. Simulate the broken state rather than hoping the test runs in it.

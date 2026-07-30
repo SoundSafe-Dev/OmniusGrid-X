@@ -145,6 +145,151 @@ class TestTheListsAreScopedUnconditionally:
         assert "Alarm text for org A" not in b_titles
 
 
+class TestTheSharedSessionHelperResolvesLate:
+    """`tenant_session` held a copy of `AsyncSessionLocal` captured at import.
+
+    The test harness rebinds that name PER MODULE — conftest sweeps `sys.modules` for anything
+    carrying the attribute — and when `app.core.tenant`'s copy was not among the rebound ones,
+    the helper opened a session against the placeholder DATABASE_URL and failed with
+    `role "placeholder" does not exist`.
+
+    That stayed invisible for as long as `tenant_session` was only reached through the
+    `get_tenant_db` dependency, which the suite overrides wholesale. Moving the notification
+    dispatcher onto it — a SERVICE calling it directly — surfaced it immediately, as one failing
+    RUL test whose error was swallowed into a warning log.
+
+    Resolving the name on the module at call time removes the class: there is one binding that
+    matters and this reads it, rather than holding a copy that may or may not have been patched.
+    """
+
+    async def test_it_ignores_a_stale_copy_on_its_own_module(self, app, monkeypatch):
+        """THE ASSERTION THIS CLASS EXISTS FOR, and the first version of it was too weak.
+
+        Comparing engines passed under the mutation as well as the fix, because in this test's
+        context `app.core.tenant`'s copy happens to be the patched one — the whole defect is
+        that whether it is patched varies by test. So the stale copy is SIMULATED: the module
+        global is replaced with a maker that raises, and `tenant_session` must still work by
+        looking the name up on `app.db.database` at call time.
+        """
+        from app.core import tenant as tenant_module
+
+        def poisoned():  # pragma: no cover - called only if the helper keeps a copy
+            raise AssertionError(
+                "tenant_session used its own module-level AsyncSessionLocal instead of "
+                "resolving app.db.database's at call time"
+            )
+
+        monkeypatch.setattr(tenant_module, "AsyncSessionLocal", poisoned)
+        async with tenant_module.tenant_session(uuid4()) as session:
+            assert session is not None
+
+    async def test_an_explicit_session_maker_still_wins(self, app):
+        """The parameter exists so conftest can inject its own; late resolution must not
+        override it."""
+        from app.core.tenant import tenant_session
+        from app.db import database as database_module
+
+        used = {}
+
+        def maker():
+            used["called"] = True
+            return database_module.AsyncSessionLocal()
+
+        async with tenant_session(uuid4(), session_maker=maker):
+            pass
+        assert used.get("called"), "the injected session maker was ignored"
+
+
+class TestThePolicyIsTheSecondLayer:
+    """Migration 056 put a FORCEd policy on both notification tables.
+
+    The application filter is the first line and the tests above cover it. This class covers the
+    second, and the distinction matters: for most of this router's life the filter was the ONLY
+    protection, and it was conditional — `if org is not None` — so a user with no organisation
+    read everything. A policy would have caught that.
+
+    The precondition was the harder half. Every session here used to be an unbound
+    `AsyncSessionLocal`, so a FORCEd policy would have emptied every read rather than protecting
+    it; all six now go through `core.tenant.tenant_session`, which binds the GUC and re-asserts
+    it per transaction.
+    """
+
+    async def test_both_tables_are_protected_and_forced(self, admin_sync_url, app):
+        """FORCE as well as ENABLE. Without it the owner bypasses the policy, and the
+        application connects as the owner in several deployments — so `relrowsecurity = true`
+        would read as protected while the only connection that matters is exempt."""
+        import psycopg2
+
+        conn = psycopg2.connect(admin_sync_url)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT relname, relrowsecurity, relforcerowsecurity FROM pg_class "
+                    "WHERE relname = ANY(%s)",
+                    (["notification_subscriptions", "notification_deliveries"],),
+                )
+                rows = {name: (enabled, forced) for name, enabled, forced in cur.fetchall()}
+        finally:
+            conn.close()
+        assert rows.get("notification_subscriptions") == (True, True)
+        assert rows.get("notification_deliveries") == (True, True)
+
+    async def test_the_policy_casts_to_uuid(self, admin_sync_url, app):
+        """`organization_id` is a real `UUID` column here (022_notifications.sql), unlike the
+        varchar columns in 051 and 055 — so the text GUC must be cast. The first version of
+        migration 056 omitted the cast and the whole chain failed to build with
+        `operator does not exist: uuid = text`. The ORM's `Column(UUIDString())` reads like a
+        varchar, which is what led me wrong: the DDL is the authority on a column's type."""
+        import psycopg2
+
+        conn = psycopg2.connect(admin_sync_url)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT data_type FROM information_schema.columns WHERE table_name = "
+                    "'notification_subscriptions' AND column_name = 'organization_id'"
+                )
+                assert cur.fetchone()[0] == "uuid"
+                cur.execute(
+                    "SELECT qual FROM pg_policies WHERE tablename = "
+                    "'notification_subscriptions' AND policyname = 'tenant_isolation'"
+                )
+                qual = cur.fetchone()[0]
+        finally:
+            conn.close()
+        assert "::uuid" in qual, f"the policy compares a uuid column to text: {qual}"
+
+    async def test_a_session_bound_to_one_tenant_cannot_see_the_other(
+        self, app, admin_sync_url, seeded_orgs, subscriptions
+    ):
+        """The policy on its own, with NO application filter in the query — which is the only
+        way to show the second layer is really there rather than the first one working.
+
+        THE `app` FIXTURE IS REQUIRED, and its absence is not a subtle failure: `tenant_session`
+        opens `AsyncSessionLocal`, which only points at the testcontainer once `app` has rebound
+        it, so without it this raises `role "placeholder" does not exist`. That is the same trap
+        that made three engine tests pass for the wrong reason earlier (rule 23) — it errored
+        loudly here only because the assertion is positive; an emptiness assertion would have
+        been satisfied by the broken connection."""
+        from sqlalchemy import select
+
+        from app.core.tenant import tenant_session
+        from app.db.notification_models import NotificationSubscription
+
+        async with tenant_session(seeded_orgs["org_a_id"]) as session:
+            names = {
+                r.name
+                for r in (
+                    await session.execute(select(NotificationSubscription))
+                ).scalars().all()
+            }
+        assert "Sub A" in names, "the policy hid the caller's own row"
+        assert "Sub B" not in names, (
+            "an unfiltered query on a tenant-bound session returned another tenant's row — "
+            "the policy is not in force"
+        )
+
+
 class TestTheDispatcherFailsClosed:
     """The worst of the four, and the only LATENT one — worth separating from the rest.
 

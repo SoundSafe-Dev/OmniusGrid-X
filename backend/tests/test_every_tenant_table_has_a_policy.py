@@ -45,6 +45,17 @@ NO_POLICY: dict[str, str] = {
         "EXEMPT BY NECESSITY. Same shape as users: a key is looked up to discover which "
         "tenant the caller belongs to, so the lookup cannot be filtered by that tenant."
     ),
+    # `notification_subscriptions` and `notification_deliveries` were HERE and are CLOSED by
+    # migration 056. Their entries said what closing them required — "a check of the dispatcher,
+    # which reads subscriptions from a background task with no request behind it" — and that
+    # check found four defects rather than a clean bill: two reads that dropped their filter for
+    # a user with no organisation, a DELETE with no organisation clause at all, and a dispatcher
+    # that would have delivered one tenant's alarm to another's webhook. All five handlers now
+    # take the tenant from `get_tenant_org_id`, and every session (including the dispatcher's
+    # two) goes through `core.tenant.tenant_session`, which is what made the policy addable.
+    #
+    # Removed rather than left in place: this guard's own staleness check named them, and a
+    # baseline that still lists a closed gap is one nobody trusts.
     "error_events": (
         "REAL GAP. The application layer was fixed this session (triage writes are scoped to "
         "the caller's org and rowcount-checked; see test_error_triage_sample_redaction_realdb) "
@@ -55,15 +66,6 @@ NO_POLICY: dict[str, str] = {
         "REAL GAP. Written by the ingestion worker, which binds the tenant GUC per message — "
         "so a policy would probably work, but the heartbeat path has to be verified first: it "
         "runs on AsyncSessionLocal and a FORCE policy would silently drop every write."
-    ),
-    "notification_subscriptions": (
-        "REAL GAP. Handlers are already tenant-scoped (Notifications page tests cover it). "
-        "Closing it needs a check of the dispatcher, which reads subscriptions from a "
-        "background task with no request behind it."
-    ),
-    "notification_deliveries": (
-        "REAL GAP, same dispatcher as notification_subscriptions — it WRITES delivery rows "
-        "from that background task, so both have to move together."
     ),
 }
 
@@ -184,7 +186,7 @@ class TestTheBaselineStaysHonest:
         assert "EXEMPT BY NECESSITY" in NO_POLICY["users"]
         assert "EXEMPT BY NECESSITY" in NO_POLICY["api_keys"]
         real_gaps = [t for t, r in NO_POLICY.items() if "EXEMPT BY NECESSITY" not in r]
-        assert len(real_gaps) == 4, (
+        assert len(real_gaps) == 2, (
             f"the count of real gaps changed ({real_gaps}) — if one was closed, remove it; if "
             "one was added, that is a regression this test should not have allowed"
         )

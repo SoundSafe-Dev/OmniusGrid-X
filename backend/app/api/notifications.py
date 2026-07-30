@@ -9,7 +9,7 @@ from sqlalchemy import select, delete
 from app.db.database import AsyncSessionLocal
 from app.db.notification_models import NotificationSubscription, NotificationDelivery
 from app.api.auth import get_current_active_user
-from app.core.tenant import get_tenant_org_id
+from app.core.tenant import get_tenant_org_id, tenant_session
 from app.services.notifications import notification_service
 
 router = APIRouter()
@@ -51,7 +51,13 @@ async def create_subscription(
     organization_id=Depends(get_tenant_org_id),
 ):
     sub = NotificationSubscription(organization_id=str(organization_id), **body.model_dump())
-    async with AsyncSessionLocal() as session:
+    async with tenant_session(organization_id) as session:
+        # `tenant_session`, NOT `AsyncSessionLocal`. These handlers opened their own
+        # unbound session and relied entirely on the explicit organisation filter — and
+        # `notification_subscriptions` / `notification_deliveries` had no policy either,
+        # so that filter was the only thing separating tenants. Binding the GUC is what
+        # lets migration 056 add the second layer; the shared helper re-asserts it on
+        # every transaction, which is the part a hand-rolled `set_config` gets wrong.
         session.add(sub)
         await session.commit()
         await session.refresh(sub)
@@ -62,7 +68,7 @@ async def create_subscription(
 async def list_subscriptions(
     organization_id=Depends(get_tenant_org_id),
 ) -> List[Dict[str, Any]]:
-    async with AsyncSessionLocal() as session:
+    async with tenant_session(organization_id) as session:
         # UNCONDITIONAL. The `if org is not None` that used to wrap this returned every
         # tenant's subscriptions for a user with no organisation.
         stmt = select(NotificationSubscription).where(
@@ -79,7 +85,7 @@ async def delete_subscription(
     subscription_id: str,
     organization_id=Depends(get_tenant_org_id),
 ):
-    async with AsyncSessionLocal() as session:
+    async with tenant_session(organization_id) as session:
         # SCOPED BY ORGANISATION AS WELL AS ID. This deleted on `id` alone, so any
         # authenticated user could delete any other tenant's notification subscription by
         # guessing or leaking its id — a cross-tenant destructive write, on a table with no
@@ -111,7 +117,7 @@ async def send_test(body: TestEvent, organization_id=Depends(get_tenant_org_id))
 @router.get("/log")
 async def delivery_log(limit: int = Query(default=100, ge=1, le=1000),
                        organization_id=Depends(get_tenant_org_id)) -> List[Dict[str, Any]]:
-    async with AsyncSessionLocal() as session:
+    async with tenant_session(organization_id) as session:
         # UNCONDITIONAL, like the subscription list. The delivery log carries alarm titles and
         # detail strings from whatever fired the notification, so an unfiltered read hands one
         # tenant another tenant's alarm text — which is the most specific operational

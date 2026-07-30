@@ -100,7 +100,22 @@ async def tenant_session(org_id: UUID, session_maker=None):
     Only the session maker differs between the two, so that is the only thing
     injected. Everything below runs identically in tests and in production.
     """
-    async with (session_maker or AsyncSessionLocal)() as session:
+    # RESOLVED AT CALL TIME, from the one module that owns it. This read the module-global
+    # `AsyncSessionLocal` captured by `from app.db.database import ...` at import — and the test
+    # harness rebinds that name PER MODULE (conftest sweeps sys.modules for anything carrying
+    # the attribute). When `app.core.tenant`'s copy is not among the rebound ones, this opened a
+    # session against the placeholder DATABASE_URL and failed with `role "placeholder" does not
+    # exist` — which is what happened the moment a SERVICE started calling this directly rather
+    # than going through the `get_tenant_db` dependency the suite overrides wholesale.
+    #
+    # Looking the name up on the module removes the whole class: there is one binding that
+    # matters and this reads it, rather than holding a copy that may or may not have been
+    # patched.
+    if session_maker is None:
+        from app.db import database as _database
+
+        session_maker = _database.AsyncSessionLocal
+    async with session_maker() as session:
         # set_config/RLS are Postgres features; on other dialects (SQLite dev,
         # smoke tests) tenant scoping falls back to the endpoints' explicit
         # organization_id filters, so skip the GUC round-trips entirely.
