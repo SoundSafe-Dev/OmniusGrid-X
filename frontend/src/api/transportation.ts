@@ -737,6 +737,28 @@ export const transportationApi = {
 };
 
 // GeoTab Integration API
+/** What `/geotab/fleet/summary` actually reports. Every field optional because a
+ *  deployment with no telematics configured sends none of them, and a blank tile is
+ *  honest where a zero would claim a measurement. */
+export interface FleetSummary {
+  /** NAMED AFTER THE WIRE, not after a nicer word. The endpoint counts DEVICES, and
+   *  calling them `totalVehicles` was part of what made the original mismatch invisible —
+   *  the shape read plausibly while sharing no field name with any response. One name per
+   *  concept means no adapter to drift, and nothing for the wire-vocabulary sweep to
+   *  report as unsourced. */
+  totalDevices?: number;
+  activeDevices?: number;
+  totalDrivers?: number;
+  driversOnDuty?: number;
+  driversDriving?: number;
+  exceptionsToday?: number;
+  totalMilesToday?: number;
+  averageFuelEfficiency?: number;
+  /** True when the figures come from the simulator rather than a device. */
+  simulated?: boolean;
+  dataSourceWarning?: string | null;
+}
+
 export const geoTabApi = {
   // Devices
   getDevices: async (): Promise<GeoTabDevice[]> => {
@@ -849,29 +871,58 @@ export const geoTabApi = {
     return (response.data?.exceptions ?? response.data) as GeoTabException[];
   },
 
-  // Fleet Summary from GeoTab
-  getFleetSummary: async (): Promise<{
-    totalVehicles: number;
-    vehiclesMoving: number;
-    vehiclesIdle: number;
-    vehiclesOffline: number;
-    avgSpeed: number;
-    totalDistanceToday: number;
-    fuelConsumedToday: number;
-  }> => {
+  /**
+   * Fleet summary from GeoTab.
+   *
+   * THE DECLARED SHAPE AND THE WIRE HAD NOTHING IN COMMON. This promised
+   * `totalVehicles / vehiclesMoving / vehiclesIdle / vehiclesOffline / avgSpeed /
+   * totalDistanceToday / fuelConsumedToday` and returned `response.data` untouched;
+   * `/geotab/fleet/summary` sends `total_devices / active_devices / total_drivers /
+   * drivers_on_duty / drivers_driving / exceptions_today / hos_violations_today /
+   * average_fuel_efficiency / total_miles_today`. Not one field overlapped, so every
+   * figure on the "Fleet Status (GeoTab Live)" card was `undefined` — rendering blanks
+   * next to bare units, " mph" and " mi".
+   *
+   * Mapped to the counterparts that genuinely exist. `avgSpeed` and `fuelConsumedToday`
+   * have none — the server reports fuel EFFICIENCY, which is a different quantity — so
+   * they are absent rather than zero, and the card omits those tiles.
+   *
+   * AND THE PAYLOAD SAYS IT IS SIMULATED. Every GeoTab response carries
+   * `simulated: true`, `data_source: 'geotab_simulator'` and a warning that the figures
+   * are "not valid for DOT/ELD compliance reporting" — added server-side precisely so a
+   * consumer could tell. Nothing read it, and the card's heading said "Live". It is
+   * carried through here so the UI can stop claiming that.
+   */
+  getFleetSummary: async (): Promise<FleetSummary> => {
     if (USE_MOCK) {
       await delay(MOCK_DELAY);
       return {
-        totalVehicles: 3,
-        vehiclesMoving: 2,
-        vehiclesIdle: 1,
-        vehiclesOffline: 0,
-        avgSpeed: 58,
-        totalDistanceToday: 1250,
-        fuelConsumedToday: 375,
+        totalDevices: 3,
+        activeDevices: 2,
+        totalDrivers: 4,
+        driversOnDuty: 2,
+        driversDriving: 1,
+        exceptionsToday: 3,
+        totalMilesToday: 1250,
+        averageFuelEfficiency: 7.4,
+        simulated: true,
       };
     }
-    const response = await api.get('/api/v1/geotab/fleet/summary');
-    return response.data;
+    const response = await api.get<Record<string, any>>('/api/v1/geotab/fleet/summary');
+    const d = response.data ?? {};
+    // `/api/v1/geotab` is not registered on the casing seam, so these arrive snake_case.
+    // The camelCase fallbacks cover a deployment that registers the prefix later.
+    return {
+      totalDevices: d.total_devices ?? d.totalDevices,
+      activeDevices: d.active_devices ?? d.activeDevices,
+      totalDrivers: d.total_drivers ?? d.totalDrivers,
+      driversOnDuty: d.drivers_on_duty ?? d.driversOnDuty,
+      driversDriving: d.drivers_driving ?? d.driversDriving,
+      exceptionsToday: d.exceptions_today ?? d.exceptionsToday,
+      totalMilesToday: d.total_miles_today ?? d.totalMilesToday,
+      averageFuelEfficiency: d.average_fuel_efficiency ?? d.averageFuelEfficiency,
+      simulated: Boolean(d.simulated),
+      dataSourceWarning: d.warning ?? null,
+    };
   },
 };

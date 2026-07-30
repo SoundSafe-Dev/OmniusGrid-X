@@ -2884,3 +2884,44 @@ That is a deliberate trade (a per-entity vocabulary needs a type-to-table mappin
 does not have), but it bounds the claim. The sweep finds names nothing anywhere produces; it
 does not find names produced *somewhere else*. Auditing one interface against its own table,
 end to end, is a different and narrower job — and it is where the rest of `DockDoor` lives.
+
+## "Fleet Status (GeoTab Live)" — six blanks under a claim of live data
+
+`geoTabApi.getFleetSummary` declared a return type of
+`{ totalVehicles, vehiclesMoving, vehiclesIdle, vehiclesOffline, avgSpeed,
+totalDistanceToday, fuelConsumedToday }` and returned `response.data` untouched.
+`/geotab/fleet/summary` sends `total_devices, active_devices, total_drivers,
+drivers_on_duty, drivers_driving, exceptions_today, hos_violations_today,
+average_fuel_efficiency, total_miles_today`.
+
+**Not one field overlapped.** Every figure on the card was `undefined`, two of them printed
+beside bare units — `" mph"`, `" mi"` — which reads as a measurement rather than an absent
+one. The declared shape was plausible enough that nobody compared it to a response.
+
+**And the payload says it is simulated.** Every GeoTab response carries `simulated: true`,
+`data_source: "geotab_simulator"` and the sentence *"Not measured from a device and not valid
+for DOT/ELD compliance reporting"* — stamped server-side precisely so a consumer could tell.
+Nothing read it, and the heading said **Live**. That is rule 25 on the most sensitive data in
+the product: a qualifier nobody renders is a qualifier that does not exist.
+
+The card now shows only the figures the endpoint reports, renders `—` rather than a bare
+unit for the ones it does not, and labels the panel *simulated* with the server's own warning
+when the flag is set. `avgSpeed` and fuel *consumed* were deleted: the server reports fuel
+*efficiency*, which is a different quantity.
+
+## Rule 35 — name the field after the wire, not after the nicer word
+
+The first version of this fix mapped `active_devices` → `vehiclesActive` in the client, and
+the wire-vocabulary sweep immediately reported `vehiclesActive` as unsourced — correctly, in
+the sense that no server file spells it. The sweep cannot tell a client-side rename from a
+fabrication, and neither can a reader six months later.
+
+Renaming the TypeScript fields to `totalDevices` / `activeDevices` / `totalMilesToday`
+removed the adapter entirely. It is also more honest: the endpoint counts **devices**, and
+calling them vehicles was part of what made the original mismatch invisible — the shape read
+plausibly while sharing no field name with any response. One name per concept means nothing
+to drift and nothing for the sweep to report.
+
+The same argument settled the geofence rename in the other direction: there, the producer had
+the odd names and no consumer, so the producer moved. The rule is not "always change the
+client" — it is "one name per concept, chosen where the concept actually lives".

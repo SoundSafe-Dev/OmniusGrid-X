@@ -44,6 +44,23 @@ import { Button, Tooltip, TooltipTrigger, TooltipContent } from '../../component
 // driver who had reported nothing was painted as a driver running short of hours.
 // Module scope because the drivers table and the driver detail panel are separate
 // components and both have to answer this the same way.
+// A tile that renders nothing rather than a bare unit. The fleet card previously printed
+// "{undefined} mph" and "{undefined} mi" — a label, a space and a unit — which reads as a
+// measurement of zero rather than as an absent one.
+const FleetStat: FC<{ label: string; value?: number; unit?: string; tone?: string }> = ({
+  label,
+  value,
+  unit,
+  tone,
+}) => (
+  <div className="bg-opsgrid-bg rounded-lg p-3">
+    <p className="text-xs text-opsgrid-text-secondary">{label}</p>
+    <p className={`text-xl font-bold ${tone ?? ''}`}>
+      {value == null ? '—' : unit ? `${value} ${unit}` : value}
+    </p>
+  </div>
+);
+
 const hosClass = (hours: number | null | undefined): string =>
   hours == null
     ? 'text-opsgrid-text-secondary'
@@ -297,35 +314,33 @@ export const TransportationManagement: FC = () => {
       )}
       {fleetSummary && (
         <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-4">
-          <h3 className="font-semibold mb-4 flex items-center gap-2">
+          <h3 className="font-semibold mb-1 flex items-center gap-2">
             <Activity className="w-5 h-5 text-opsgrid-primary" />
-            Fleet Status (GeoTab Live)
+            {/* WAS "Fleet Status (GeoTab Live)". Every GeoTab payload carries
+                `simulated: true` and a warning that the figures are "not valid for DOT/ELD
+                compliance reporting" — stamped server-side precisely so a consumer could
+                tell — and nothing read it while the heading claimed the data was live. */}
+            Fleet Status{fleetSummary.simulated ? ' (simulated)' : ' (GeoTab Live)'}
           </h3>
+          {fleetSummary.simulated && (
+            <p role="alert" className="text-xs text-status-warning mb-3">
+              {fleetSummary.dataSourceWarning ??
+                'Simulated telematics. Not measured from a device and not valid for DOT/ELD compliance reporting.'}
+            </p>
+          )}
+          {/* Only the figures the endpoint actually reports. This card promised
+              totalVehicles / vehiclesMoving / vehiclesIdle / avgSpeed / totalDistanceToday
+              / fuelConsumedToday, and the API sends none of those names — so all six
+              rendered blank, two of them beside bare units (" mph", " mi"). `avgSpeed` and
+              fuel CONSUMED have no counterpart at all; the server reports fuel
+              EFFICIENCY, which is a different quantity, and is shown as itself. */}
           <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
-            <div className="bg-opsgrid-bg rounded-lg p-3">
-              <p className="text-xs text-opsgrid-text-secondary">Total Vehicles</p>
-              <p className="text-xl font-bold">{fleetSummary.totalVehicles}</p>
-            </div>
-            <div className="bg-opsgrid-bg rounded-lg p-3">
-              <p className="text-xs text-opsgrid-text-secondary">Moving</p>
-              <p className="text-xl font-bold text-green-500">{fleetSummary.vehiclesMoving}</p>
-            </div>
-            <div className="bg-opsgrid-bg rounded-lg p-3">
-              <p className="text-xs text-opsgrid-text-secondary">Idle</p>
-              <p className="text-xl font-bold text-yellow-500">{fleetSummary.vehiclesIdle}</p>
-            </div>
-            <div className="bg-opsgrid-bg rounded-lg p-3">
-              <p className="text-xs text-opsgrid-text-secondary">Avg Speed</p>
-              <p className="text-xl font-bold">{fleetSummary.avgSpeed} mph</p>
-            </div>
-            <div className="bg-opsgrid-bg rounded-lg p-3">
-              <p className="text-xs text-opsgrid-text-secondary">Distance Today</p>
-              <p className="text-xl font-bold">{fleetSummary.totalDistanceToday} mi</p>
-            </div>
-            <div className="bg-opsgrid-bg rounded-lg p-3">
-              <p className="text-xs text-opsgrid-text-secondary">Fuel Today</p>
-              <p className="text-xl font-bold">{fleetSummary.fuelConsumedToday} gal</p>
-            </div>
+            <FleetStat label="Devices" value={fleetSummary.totalDevices} />
+            <FleetStat label="Active" value={fleetSummary.activeDevices} tone="text-green-500" />
+            <FleetStat label="Drivers" value={fleetSummary.totalDrivers} />
+            <FleetStat label="On Duty" value={fleetSummary.driversOnDuty} tone="text-yellow-500" />
+            <FleetStat label="Distance Today" value={fleetSummary.totalMilesToday} unit="mi" />
+            <FleetStat label="Fuel Efficiency" value={fleetSummary.averageFuelEfficiency} unit="mpg" />
           </div>
         </div>
       )}

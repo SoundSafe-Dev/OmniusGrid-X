@@ -124,10 +124,19 @@ beforeEach(() => {
     activeViolations: 0,
     safetyAlerts: 0,
   })
+  // THE SHAPE THE CLIENT NOW RETURNS, which is mapped from what the endpoint actually
+  // sends (`total_devices`, `active_devices`, `total_miles_today`, …). The old fixture used
+  // `vehiclesMoving`/`vehiclesIdle`/`avgSpeed`, names that appeared in the client's declared
+  // return type and in no server response — so the card's six figures were all undefined on
+  // the real path while this fixture kept the tests green.
   getFleetSummary.mockResolvedValue({
-    totalVehicles: 3,
-    vehiclesMoving: 2,
-    vehiclesIdle: 1,
+    totalDevices: 3,
+    activeDevices: 2,
+    totalDrivers: 4,
+    driversOnDuty: 2,
+    totalMilesToday: 1250,
+    averageFuelEfficiency: 7.4,
+    simulated: false,
   })
 })
 
@@ -222,6 +231,52 @@ describe('TransportationManagement — HOS compliance', () => {
       SETTLE,
     )
     expect(screen.queryByText(/HOS status unknown/i)).not.toBeInTheDocument()
+  })
+})
+
+describe('TransportationManagement — the fleet card', () => {
+  it('shows the figures the endpoint actually reports', async () => {
+    // The positive control. Six tiles used to render blank because the client declared
+    // names — totalVehicles, vehiclesMoving, avgSpeed, fuelConsumedToday — that no server
+    // response has ever carried.
+    wrap()
+    expect(await screen.findByText('Devices', undefined, SETTLE)).toBeInTheDocument()
+    expect(screen.getByText('3')).toBeInTheDocument()
+    expect(screen.getByText('1250 mi')).toBeInTheDocument()
+  })
+
+  it('renders a dash rather than a bare unit for a figure it does not have', async () => {
+    // It printed "{undefined} mi" — a label, a space and a unit — which reads as a
+    // measurement rather than an absent one.
+    getFleetSummary.mockResolvedValue({ totalDevices: 3, simulated: false })
+    wrap()
+    await screen.findByText('Devices', undefined, SETTLE)
+    expect(screen.queryByText(/^\s*mi$/)).not.toBeInTheDocument()
+    expect(screen.getAllByText('—').length).toBeGreaterThan(0)
+  })
+
+  it('does not call simulated telematics live', async () => {
+    // THE ASSERTION THIS BLOCK EXISTS FOR. Every GeoTab payload carries `simulated: true`
+    // and a warning that the figures are not valid for DOT/ELD compliance — stamped
+    // server-side so a consumer could tell — and the heading said "GeoTab Live".
+    getFleetSummary.mockResolvedValue({
+      totalDevices: 3,
+      simulated: true,
+      dataSourceWarning: 'Simulated telematics. Not measured from a device and not valid for DOT/ELD compliance reporting.',
+    })
+    wrap()
+    expect(await screen.findByText(/Fleet Status \(simulated\)/, undefined, SETTLE)).toBeInTheDocument()
+    expect(screen.queryByText(/GeoTab Live/)).not.toBeInTheDocument()
+    expect(screen.getByText(/not valid for DOT\/ELD compliance/i)).toBeInTheDocument()
+  })
+
+  it('still says Live when the data is not simulated', async () => {
+    // The control that keeps the warning meaningful: labelling everything "simulated"
+    // would satisfy the test above and make the distinction worthless.
+    getFleetSummary.mockResolvedValue({ totalDevices: 3, simulated: false })
+    wrap()
+    expect(await screen.findByText(/GeoTab Live/, undefined, SETTLE)).toBeInTheDocument()
+    expect(screen.queryByText(/not valid for DOT/i)).not.toBeInTheDocument()
   })
 })
 

@@ -182,8 +182,20 @@ BASELINE = {
     "HOSViolationAlert.hoursRemaining",
     "Location.contactEmail",
     "Location.contactPhone",
+    # `todayAppointments` STAYS, and is the honest kind: `YardManagement` computes it
+    # client-side by filtering the appointments list. The sweep cannot tell a local
+    # computation from a fabrication, which is why the list is a baseline and not a
+    # defect count.
     "LogisticsOverview.todayAppointments",
-    "LogisticsOverview.vehiclesIdle",
+    # `LogisticsOverview.vehiclesIdle` was HERE, and is the seventh finding. The fleet
+    # card promised totalVehicles/vehiclesMoving/vehiclesIdle/avgSpeed/
+    # totalDistanceToday/fuelConsumedToday; /geotab/fleet/summary sends total_devices/
+    # active_devices/total_drivers/drivers_on_duty/total_miles_today/
+    # average_fuel_efficiency. NOT ONE FIELD OVERLAPPED, so all six figures on a card
+    # headed "Fleet Status (GeoTab Live)" were undefined — two of them printed beside
+    # bare units, " mph" and " mi". The client now names its fields after the wire, so
+    # there is no adapter to drift and nothing here to report.
+    # Pinned by the fleet-card block in TransportationManagement.test.tsx.
     "MaintenanceCosts.costPerVehicle",
     "MaintenanceCosts.monthlyAverage",
     "MaintenanceCosts.monthlyBreakdown",
