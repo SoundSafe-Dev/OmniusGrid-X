@@ -40,9 +40,10 @@ class TestEvent(BaseModel):
 # does: `get_tenant_org_id` raises 403 for exactly that case and documents why — "we fail
 # closed rather than fail open".
 #
-# The tables have no row-level security either (recorded in
-# test_every_tenant_table_has_a_policy.py), so the filter was the only thing standing between
-# tenants — and it was conditional.
+# At the time the tables had no row-level security either, so the conditional filter was the
+# only thing standing between tenants. Migration 056 policied both, in the order migration 051
+# insists on: this file's handlers were moved onto `tenant_session` FIRST, because a FORCEd
+# policy over unbound sessions would have emptied every read rather than protecting it.
 
 
 @router.post("/subscriptions")

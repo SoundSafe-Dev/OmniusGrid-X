@@ -152,11 +152,11 @@ def _to_out(row: EdgeAgentStatus, now: datetime) -> AgentStatusOut:
 async def list_fleet(user: User = Depends(require_admin)) -> List[AgentStatusOut]:
     """List this organization's agents. Backs the /admin/collectors page.
 
-    Was gated on get_current_active_user with an unscoped `select(...)`. Since
-    edge_agent_status carries organization_id but has no RLS policy and this
-    runs on AsyncSessionLocal rather than the tenant session, every
-    authenticated user saw every tenant's agents — ids, versions, cert expiry
-    and buffer stats. Now admin-only and organization-scoped.
+    Was gated on get_current_active_user with an unscoped `select(...)`. At the time
+    `edge_agent_status` had no policy AND this ran on AsyncSessionLocal rather than the
+    tenant session, so every authenticated user saw every tenant's agents — ids, versions,
+    cert expiry and buffer stats. Now admin-only, organization-scoped, and migration 057
+    added the policy underneath it.
     """
     now = datetime.now(timezone.utc)
     # Both layers, in migration 051's order: the explicit filter AND the policy. The filter is

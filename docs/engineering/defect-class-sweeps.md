@@ -2308,6 +2308,13 @@ one of its findings. The habit that catches it:
    `missing_data` and `is None` are distinctive. Grep for what you just wrote.
    *(Fuller account: § Rule 59.)*
 
+60. **A non-vacuity check keyed on defect count inverts when you fix them.**
+   The no-RLS-claim scan asserted `len(_claims()) >= 5` to prove it still worked, and went red
+   the moment the five claims were corrected — because correcting them put them in the past
+   tense, which the scan skips by design. Key non-vacuity on a synthetic control in the shape
+   of the defect, not on how many of them are left.
+   *(Fuller account: § Rule 60.)*
+
 ---
 
 ## Open observations, not yet tickets
@@ -4246,3 +4253,54 @@ the value it hides is the good news.
 
 The sweep for the shape found five sites; three were datetimes, which are never falsy, so they
 were already equivalent to an `is not None` check. Two were real.
+
+## Class 53: a comment that argues for the code beneath it, and is no longer true
+
+`fleet_logistics._scope` opened with *"NEEDED EXPLICITLY because these four tables …
+carry `organization_id` but have NO row-level security."* Migration **051** policied all four
+with FORCE, and the sentence was never updated. It is repeated at four write sites in the same
+file as the justification for taking the organisation from the token rather than the payload —
+which remains the right thing to do, for a reason that stopped being the stated one.
+
+**Three of the five stale claims were made stale by migrations written in this session.** 056
+policied the two notification tables; 057 policied `edge_agent_status`. Each left behind a
+comment saying the table it had just protected was unprotected. The claim decays every time
+somebody does the right thing somewhere else — which is the definition of a fact that should not
+be maintained by hand.
+
+And it decays in the dangerous direction. *"This table has no policy, so the filter is all that
+stands between you and a cross-tenant read"* is load-bearing: it is the argument for the code
+beneath it. Stale, it does not become harmlessly out of date — it becomes a false account of why
+the code is shaped the way it is, and the next reader either trusts it and over-builds, or checks
+it, finds it wrong, and trusts the rest of the file less. A comment that explains itself survives
+review; that is exactly what makes a wrong one durable.
+
+The claims are checked against `pg_class` now. Past tense is exempt on purpose — `alarms.py` says
+*"`alarms` HAD no RLS policy; migration 046 turned a latent bug into a real one"*, a statement
+about history, which stays true.
+
+### The detector was wrong twice, both found by running it
+
+* It matched **line by line**, and the claim in `_scope`'s docstring wraps across a line break
+  (`carry \`organization_id\` but have NO` / `row-level security`). The four tables it is
+  actually about were never checked. The text is joined before matching.
+* It attributed **every table token within two lines**, which made `user_management.py` a false
+  positive: *"``users`` has no RLS policy: ``audit_logs`` DOES"* names the contrast as well as
+  the subject. Only tables in the sentence BEFORE the phrase are its subject — which is where
+  English puts them, and it is also what excludes the contrast that follows.
+
+## Rule 60 — a non-vacuity check keyed on defect count inverts when you fix them
+
+The first version asserted `len(_claims()) >= 5` as its "the scan still works" floor. Five stale
+claims existed, so it passed — and it **failed the moment they were corrected**, because
+correcting them meant putting them in the past tense, which is precisely what the scan is built
+to skip.
+
+The check was measuring the defects, not the detector. A guard that goes red on success teaches
+people to weaken it, and the weakening is indistinguishable from the scan quietly breaking.
+
+Key non-vacuity on something that does not move when the codebase improves: a synthetic positive
+control in the shape of the real defect, and a negative control from the real false positive.
+Both are now written against the exact sentences that produced them, so a regex that stops
+matching wrapped text, or loses its subject attribution, fails on the sample rather than on a
+count.

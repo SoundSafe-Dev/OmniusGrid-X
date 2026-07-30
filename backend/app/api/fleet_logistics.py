@@ -68,10 +68,15 @@ logistics_router = APIRouter(tags=["Transportation Management"], dependencies=_a
 def _scope(query, model, org_id: UUID):
     """Restrict a query to the caller's organization.
 
-    NEEDED EXPLICITLY because these four tables — geofence_zones, geofence_alerts,
-    maintenance_schedules, repair_orders — carry `organization_id` but have NO
-    row-level security. `get_tenant_db` sets the tenant GUC, and no policy reads it
-    here, so the session alone protects nothing on them.
+    THE FIRST OF TWO LAYERS, in the order migration 051's header insists on: application
+    filter first, policy second. It was written when these four tables — geofence_zones,
+    geofence_alerts, maintenance_schedules, repair_orders — carried `organization_id` with
+    no policy at all, so it was the only thing protecting them; 051 then added ENABLE +
+    FORCE to all four.
+
+    It stays, and not merely out of habit. The filter is what works on the SQLite offline
+    path, where row-level security does not exist, and it is what makes a missing predicate
+    a visible bug rather than a silently empty page.
 
     `organization_id` is VARCHAR(36) on all four, not a UUID column: comparing it to a
     UUID object matches zero rows rather than raising, which reads as "scoping works"
@@ -119,9 +124,10 @@ async def create_zone(
         raise HTTPException(status_code=400, detail="name is required")
     center = payload.get("center") or {}
     zone = GeofenceZone(
-        # From the TOKEN, never the payload. Taking it from the body let a caller
-        # file a record under any organization they cared to name, and — because
-        # these tables have no RLS — nothing downstream would question it.
+        # From the TOKEN, never the payload. Taking it from the body let a caller file a
+        # record under any organization they cared to name, and at the time these tables had
+        # no policy, so nothing downstream would have questioned it. Migration 051 policied
+        # them; the token is still the only honest source for a tenant.
         organization_id=str(org_id),
         name=payload["name"],
         zone_type=payload.get("zoneType", "circle"),
@@ -441,9 +447,10 @@ async def create_schedule(
         raise HTTPException(status_code=400, detail="vehicleId is required")
     scheduled = payload.get("scheduledDate") or payload.get("dueDate")
     schedule = MaintenanceSchedule(
-        # From the TOKEN, never the payload. Taking it from the body let a caller
-        # file a record under any organization they cared to name, and — because
-        # these tables have no RLS — nothing downstream would question it.
+        # From the TOKEN, never the payload. Taking it from the body let a caller file a
+        # record under any organization they cared to name, and at the time these tables had
+        # no policy, so nothing downstream would have questioned it. Migration 051 policied
+        # them; the token is still the only honest source for a tenant.
         organization_id=str(org_id),
         vehicle_id=vehicle,
         maintenance_type=payload.get("serviceType") or payload.get("maintenanceType") or payload.get("maintenance_type") or "inspection",
@@ -540,9 +547,10 @@ async def add_service_history(
     if not vehicle_id:
         raise HTTPException(status_code=400, detail="vehicleId is required")
     order = RepairOrder(
-        # From the TOKEN, never the payload. Taking it from the body let a caller
-        # file a record under any organization they cared to name, and — because
-        # these tables have no RLS — nothing downstream would question it.
+        # From the TOKEN, never the payload. Taking it from the body let a caller file a
+        # record under any organization they cared to name, and at the time these tables had
+        # no policy, so nothing downstream would have questioned it. Migration 051 policied
+        # them; the token is still the only honest source for a tenant.
         organization_id=str(org_id),
         vehicle_id=vehicle_id,
         title=payload.get("description") or payload.get("serviceType") or "Service",
@@ -568,9 +576,10 @@ async def create_repair_order(
     if not (payload.get("vehicleId") or payload.get("vehicle_id")) or not payload.get("title"):
         raise HTTPException(status_code=400, detail="vehicleId and title are required")
     order = RepairOrder(
-        # From the TOKEN, never the payload. Taking it from the body let a caller
-        # file a record under any organization they cared to name, and — because
-        # these tables have no RLS — nothing downstream would question it.
+        # From the TOKEN, never the payload. Taking it from the body let a caller file a
+        # record under any organization they cared to name, and at the time these tables had
+        # no policy, so nothing downstream would have questioned it. Migration 051 policied
+        # them; the token is still the only honest source for a tenant.
         organization_id=str(org_id),
         vehicle_id=payload.get("vehicleId") or payload.get("vehicle_id"),
         schedule_id=payload.get("scheduleId"),
