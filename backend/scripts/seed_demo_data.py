@@ -67,6 +67,31 @@ A_CONVEYOR = "33333333-0000-4000-8000-000000000005"
 
 ERP_INT = "44444444-0000-4000-8000-000000000001"
 
+
+def _webhook_secret(integration_id: str) -> str:
+    """A distinct, deterministic webhook secret per seeded integration.
+
+    IT WAS THE LITERAL "demo-secret", which is two problems in one string.
+
+    Migration 049 puts a UNIQUE index on `configuration->>'webhook_secret'`, because the
+    receiver identifies an integration BY its secret — it verifies the request's exact bytes
+    against every candidate, so two integrations sharing a secret makes the sender ambiguous.
+    One seeded integration never collides; a second one, or a second demo organisation, is
+    rejected by the index with a constraint error rather than a useful message.
+
+    And a fixed secret committed to the repository is a signing key anybody can read: a demo
+    deployment would accept a forged webhook from anyone who has cloned this.
+
+    DETERMINISTIC, not random. The seeder is re-runnable — it deletes the integration before
+    inserting it — and `--verify` checks the result in the same process, but a demo operator
+    wiring up a real sender needs the secret to survive a re-seed. Derived from the
+    integration id, so it is stable per integration and distinct between them.
+    """
+    import hashlib
+
+    digest = hashlib.sha256(f"omniusgrid-demo-webhook:{integration_id}".encode()).hexdigest()
+    return f"demo-{digest[:32]}"
+
 CARRIER_A = "55555555-0000-4000-8000-000000000001"  # Great Lakes Freight
 CARRIER_B = "55555555-0000-4000-8000-000000000002"  # Prairie Express
 DRIVER_1 = "66666666-0000-4000-8000-000000000001"
@@ -440,7 +465,7 @@ async def main(verify: bool = False) -> int:
                            "base_url": "https://sap.demo.omniusgrid.local",
                            "auth_config": {"client_id": "omnius-demo"},
                            "rate_limit": {"requests_per_minute": 60, "burst_limit": 10},
-                           "timeout": 30, "webhook_secret": "demo-secret",
+                           "timeout": 30, "webhook_secret": _webhook_secret(ERP_INT),
                            "client": "100", "service_path": "/sap/opu/odata/sap"},
             authentication={"client_id": "omnius-demo"}, is_active=True,
             health_status="success", last_health_check=NOW - timedelta(minutes=12),

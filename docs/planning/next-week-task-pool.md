@@ -321,7 +321,17 @@ next step and teaches the lesson this codebase keeps relearning.
     Done when: all three are rotated and stored as repository secrets, and the
     `erp-sap-sandbox`, `erp-intuit-sandbox` and `erp-dynamics-sandbox` jobs stop skipping.
 
-31. **Give seeded ERP integrations a `webhook_secret`** · S
+31. **Give seeded ERP integrations a `webhook_secret`** · S · ✅ DONE
+    *Partly stale when picked up: the seeder DID set one, but as the literal `"demo-secret"` —
+    which is two problems in one string. Migration 049's unique index means a second seeded
+    integration (or a second demo organisation) is rejected by a constraint rather than
+    anything readable; and a signing key committed to the repository would let anyone who has
+    cloned this forge a webhook against a demo deployment. Now derived per integration id:
+    distinct between integrations, stable across re-seeds, since the seeder deletes and
+    reinserts on every run and an operator wiring up a real sender needs the value to survive
+    that. `test_demo_can_receive_a_signed_webhook_realdb.py` proves a webhook signed with the
+    seeded secret is ACCEPTED end to end, with a wrong-signature control — the seeder writing a
+    well-formed secret proves nothing if the receiver would reject it.*
     Migration 049 enforces uniqueness and the demo seeder sets no secret — so the demo
     cannot exercise the webhook path at all, and two seeded integrations would collide if it
     did.
