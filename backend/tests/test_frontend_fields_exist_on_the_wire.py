@@ -87,6 +87,18 @@ def _wire_vocabulary() -> set[str]:
                 for target in node.targets:
                     if isinstance(target, ast.Name):
                         vocab.add(target.id)
+            # FUNCTION PARAMETERS TOO. A `*Params` interface on the frontend describes a
+            # REQUEST, and the names a request may carry are the endpoint's own parameters —
+            # which are `ast.arg` nodes, not `AnnAssign`, so the walk above never saw them.
+            # `ErrorListParams.sort` was reported as unsourced while
+            # `list_errors(..., sort: Literal["count", "last_seen", "first_seen"] = "count")`
+            # accepts it, and the client sends it correctly. The sweep was conflating what
+            # the backend PRODUCES with what it CONSUMES; a request field checked against a
+            # response vocabulary is a false positive by construction.
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                args = node.args
+                for arg in (*args.posonlyargs, *args.args, *args.kwonlyargs):
+                    vocab.add(arg.arg)
             elif isinstance(node, ast.keyword) and node.arg in (
                 "alias",
                 "serialization_alias",
@@ -176,6 +188,13 @@ BASELINE = {
     #     kind, so nothing could ever have fed it.
     # Pinned by tests/test_yard_trailer_plate_is_resolved.py.
     "DockDoor.estimatedReleaseAt",
+    # `ErrorListParams.sort` was HERE and was a FALSE POSITIVE of this sweep, not a
+    # defect: `list_errors` accepts `sort` and the client sends it correctly. The
+    # vocabulary collected `AnnAssign` targets but not function PARAMETERS, so every
+    # query param an endpoint accepts was invisible — and a `*Params` interface
+    # describes a REQUEST, whose valid names are exactly those parameters. The sweep
+    # was checking what the backend CONSUMES against what it PRODUCES. Fixed in
+    # `_wire_vocabulary`; the entry is gone because it was never real.
     "Driver.currentShipmentId",
     "Driver.currentVehicleId",
     # `Driver.geoTabDeviceId` and `Vehicle.geoTabDeviceId` were HERE, and are the
@@ -189,7 +208,6 @@ BASELINE = {
     #     never displayed.
     # Both rows are conditional, so neither made a false claim; they were simply never
     # there, which is why nothing reported them.
-    "ErrorListParams.sort",
     # The six `GeofenceAlert*` entries were HERE, and are the fifth finding: the
     # endpoint sent zoneId/eventType/createdAt while the client read
     # geofenceId/alertType/timestamp, with no overlap. `alertType` undefined made the

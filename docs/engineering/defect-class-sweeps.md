@@ -2960,3 +2960,24 @@ exactly why the list is a baseline rather than a defect count.
 **One gap recorded rather than closed:** carrier contact details have nowhere to live in this
 schema. That is a real product hole — you cannot phone a carrier from this system — but
 filling it is a migration plus CRUD plus data entry, not a sweep fix.
+
+## Rule 36 — a request field checked against a response vocabulary is a false positive by construction
+
+`ErrorListParams.sort` sat on the baseline as an unsourced field. It is not: `list_errors`
+declares `sort: Literal["count", "last_seen", "first_seen"] = "count"` and the client sends
+it correctly.
+
+The sweep's vocabulary collected `AnnAssign` targets — class attributes — but function
+**parameters** are `ast.arg` nodes, so every query parameter an endpoint accepts was
+invisible to it. And a `*Params` interface on the frontend describes a **request**, whose
+valid names are exactly those parameters. The sweep was checking what the backend *consumes*
+against what it *produces*.
+
+Fixed by adding parameter names to the vocabulary. Only one entry moved, so the gap was
+narrow — but the cost of that class of false positive is not the entry, it is the reader who
+investigates a working field and concludes the sweep is noisy. **A sweep gets one or two
+false positives before people stop reading its output**, which is why every one found here
+is removed at the source rather than exempted.
+
+Nine of ten entries investigated so far were real. That ratio is the only thing that makes a
+36-rule document worth keeping.
