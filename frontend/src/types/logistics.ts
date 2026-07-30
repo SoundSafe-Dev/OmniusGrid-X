@@ -493,9 +493,17 @@ export interface FleetUpdate {
 export interface GeofenceAlert {
   id: string;
   vehicleId: string;
+  /** Denormalised from the vehicle; null when the referenced vehicle is not resolvable. */
+  vehicleNumber?: string | null;
   geofenceId: string;
-  geofenceName: string;
+  /** Denormalised from the zone. NULL means the server could not resolve the zone — which
+   *  is not the same as a zone with no name, and the panel says so. */
+  geofenceName?: string | null;
+  /** `geofence_alerts.event_type`. The API used to send this as `eventType`, so it arrived
+   *  undefined and the panel's ternary fell through to "Violation" for every alert. */
   alertType: 'entry' | 'exit' | 'violation';
+  severity?: string;
+  acknowledged?: boolean;
   location: GeoLocation;
   timestamp: string;
 }

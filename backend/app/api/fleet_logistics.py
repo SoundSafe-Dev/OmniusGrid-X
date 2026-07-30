@@ -28,6 +28,7 @@ from app.db.logistics_models import (
     GeofenceZone,
     MaintenanceSchedule,
     RepairOrder,
+    Vehicle,
 )
 from app.db.models import Carrier, Driver, Shipment
 
@@ -193,11 +194,72 @@ async def list_alerts(
     if vehicle_id:
         query = query.where(GeofenceAlert.vehicle_id == vehicle_id)
     alerts = (await db.execute(query)).scalars().all()
+
+    # THE NAMES THE CLIENT ACTUALLY READS. This emitted `zoneId`, `eventType` and
+    # `createdAt`; `GeofenceAlert` in TypeScript declares `geofenceId`, `alertType` and
+    # `timestamp`, and nothing in the frontend reads the three names that were being sent.
+    #
+    # `alertType` was the damaging one. `GeofencingPanel` renders
+    #
+    #     alert.alertType === 'entry' ? 'Entered' : alert.alertType === 'exit' ? 'Exited'
+    #                                             : 'Violation'
+    #
+    # so an undefined field matched neither branch and EVERY alert — every routine entry
+    # into an authorised zone — displayed as "Violation". A falsy ternary branch that
+    # asserts, again.
+    #
+    # `geofenceName` and `vehicleNumber` need the zone and the vehicle, which the alert row
+    # references by id. Fetched in two batched queries rather than per row: an N+1 behind
+    # an alert list would be a performance defect introduced while fixing a correctness one.
+    zone_names: Dict[str, str] = {}
+    vehicle_numbers: Dict[str, str] = {}
+
+    # ONLY IDS THAT ARE ACTUALLY UUIDS. `geofence_alerts.zone_id` and `.vehicle_id` are
+    # `String(36)`, while `geofence_zones.id` and `vehicles.id` are UUID columns — so an
+    # `IN (...)` against a free-form string raises `DataError: invalid UUID` and 500s the
+    # whole endpoint. Integrations do write non-UUID identifiers here (the tenant-isolation
+    # suite seeds `'VEH-a'`, which is what caught this), and a device reference that is not
+    # an internal id is not a reason to fail the list — those rows simply resolve to None.
+    def _uuids(values):
+        out = set()
+        for value in values:
+            try:
+                out.add(str(UUID(str(value))))
+            except (ValueError, AttributeError, TypeError):
+                continue
+        return out
+
+    zone_ids = _uuids(a.zone_id for a in alerts if a.zone_id)
+    vehicle_ids = _uuids(a.vehicle_id for a in alerts if a.vehicle_id)
+    if zone_ids:
+        zone_names = {
+            str(z.id): z.name
+            for z in (await db.execute(
+                _scope(select(GeofenceZone).where(GeofenceZone.id.in_(zone_ids)),
+                       GeofenceZone, org_id)
+            )).scalars().all()
+        }
+    if vehicle_ids:
+        vehicle_numbers = {
+            str(v.id): v.vehicle_number
+            for v in (await db.execute(
+                _scope(select(Vehicle).where(Vehicle.id.in_(vehicle_ids)), Vehicle, org_id)
+            )).scalars().all()
+        }
+
     return [{
-        "id": str(a.id), "zoneId": a.zone_id, "vehicleId": a.vehicle_id,
-        "eventType": a.event_type, "severity": a.severity, "location": a.location or {},
+        "id": str(a.id),
+        "geofenceId": a.zone_id,
+        # None, not "" — the panel must be able to tell a zone it could not resolve from
+        # one with an empty name. A blank would read as an unnamed zone.
+        "geofenceName": zone_names.get(str(a.zone_id)) if a.zone_id else None,
+        "vehicleId": a.vehicle_id,
+        "vehicleNumber": vehicle_numbers.get(str(a.vehicle_id)) if a.vehicle_id else None,
+        "alertType": a.event_type,
+        "severity": a.severity,
+        "location": a.location or {},
         "acknowledged": a.acknowledged,
-        "createdAt": a.created_at.isoformat() if a.created_at else None,
+        "timestamp": a.created_at.isoformat() if a.created_at else None,
     } for a in alerts]
 
 

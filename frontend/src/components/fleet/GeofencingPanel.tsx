@@ -330,10 +330,26 @@ export const GeofencingPanel: FC<GeofencingPanelProps> = ({ onAlert }) => {
                   <MapPin className="w-4 h-4" />
                 </div>
                 <div className="flex-1">
+                  {/* THE FALSY BRANCH ASSERTED A VIOLATION. The API sent `eventType`, not
+                      `alertType`, so this matched neither 'entry' nor 'exit' and every
+                      alert — every routine entry into an authorised zone — rendered as
+                      "Violation". The field name is fixed server-side; this now also
+                      refuses to guess when the value is one it does not recognise, because
+                      the next unmapped event type would land in exactly the same place. */}
                   <p className="text-sm font-medium">
-                    {alert.vehicleNumber} - {alert.alertType === 'entry' ? 'Entered' : alert.alertType === 'exit' ? 'Exited' : 'Violation'}
+                    {alert.vehicleNumber ?? 'Unknown vehicle'} —{' '}
+                    {alert.alertType === 'entry'
+                      ? 'Entered'
+                      : alert.alertType === 'exit'
+                        ? 'Exited'
+                        : alert.alertType === 'violation'
+                          ? 'Violation'
+                          : `Event: ${alert.alertType ?? 'unreported'}`}
                   </p>
-                  <p className="text-xs text-gray-600">{alert.geofenceName}</p>
+                  {/* A zone the server could not resolve is not an unnamed zone. */}
+                  <p className="text-xs text-gray-600">
+                    {alert.geofenceName ?? 'Zone name unavailable'}
+                  </p>
                   <p className="text-xs text-gray-500 flex items-center gap-1 mt-1">
                     <Clock className="w-3 h-3" />
                     {new Date(alert.timestamp).toLocaleString()}

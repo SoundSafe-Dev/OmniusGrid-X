@@ -2784,3 +2784,54 @@ The corollary is about direction. Defects 4 and 5 point opposite ways — the se
 sending what the client reads, and the client not sending what the server reads — and
 neither sweep could have found the other. A contract has two ends and needs checking from
 both.
+
+## Every geofence alert read "Violation"
+
+Triaging the wire-vocabulary baseline table-aware — *does the entity's own table have a
+column that could feed this field?* — separated the entries into three real fixes: rename
+the producer, expose an existing column, or delete the field. The geofence cluster was the
+first kind, and the largest single finding left on the list.
+
+`GET /geofencing/alerts` emitted `zoneId`, `eventType` and `createdAt`. The TypeScript
+`GeofenceAlert` declares `geofenceId`, `alertType` and `timestamp`. **No overlap on any
+field that matters**, and nothing in the frontend read the names being sent — the producer
+and its only consumer had drifted completely apart.
+
+`alertType` is the one that did damage. `GeofencingPanel` renders
+
+```tsx
+alert.alertType === 'entry' ? 'Entered' : alert.alertType === 'exit' ? 'Exited' : 'Violation'
+```
+
+An undefined field matches neither branch, so the last one fires — and the last one is an
+assertion. **Every alert read "Violation"**: routine authorised entries, exits, everything.
+That is the sixth time in this sweep that a falsy ternary branch has stated something it had
+not earned, and it is now the most reliable single shape to grep for in this codebase.
+
+`geofenceName` and `vehicleNumber` were undefined too, so a row could not say which zone or
+which vehicle. Both live on other tables and are now resolved in two batched queries.
+
+**Three separate corrections were needed to get that right**, and the second and third both
+came from running things rather than reading them:
+
+*The N+1 guard was vacuous.* It attached `before_cursor_execute` to
+`app.db.database.engine` — but `conftest` builds its own `test_engine` and rebinds every
+module's `AsyncSessionLocal` to it, so nothing was ever recorded and `len([]) <= 1` passed
+for any implementation. A deliberate per-row-query mutation did not fail it. Fixed by
+listening on the `Engine` **class**, which catches every instance, plus an assertion that
+*something* was recorded at all.
+
+*The batching 500'd on real data.* `geofence_alerts.zone_id` and `.vehicle_id` are
+`String(36)` while the tables they reference have UUID primary keys, so `IN (…)` against a
+free-form string raises `DataError: invalid UUID`. Integrations do write device identifiers
+there — the existing tenant-isolation suite seeds `'VEH-a'`, which is what caught it. Only
+parseable UUIDs are looked up now; the rest resolve to `None`, because a device reference
+that is not an internal id is not a reason to fail the whole list.
+
+## Rule 33 — fixing a correctness defect is where performance and robustness defects get introduced
+
+The join that made the alert readable also added an N+1 and a 500-on-real-data, and neither
+was in the code being fixed — both were in the fix. The correctness change is the moment the
+code is least reviewed, because attention is on the defect. Run the **whole** suite, not the
+new file: the isolation suite caught the crash, and the new file's own N+1 guard had to be
+repaired before it could catch anything.

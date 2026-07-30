@@ -22,7 +22,7 @@ step is always one of three: rename it to what the wire calls it, delete it, or 
 server send it. `currentMileage` needed the second; `priority` on a maintenance schedule
 needed the third (migration 054).
 
-FOUR FINDINGS SO FAR:
+FIVE FINDINGS SO FAR:
 
   * `MaintenanceSchedule.currentMileage` — the due odometer shown as the current one.
   * `RepairOrder.workOrderNumber` — the first eight characters of a UUID, shown as the
@@ -36,6 +36,9 @@ FOUR FINDINGS SO FAR:
     and nothing in the product could show which assets were out of service. The frontend's
     name for it had never been sent by any endpoint under any spelling. Adding a column is
     not the same as exposing it; see `test_maintenance_mode_reaches_the_client.py`.
+  * `GeofenceAlert.alertType` / `.geofenceId` / `.geofenceName` — the endpoint and the client
+    had drifted to entirely different names, so the panel's ternary fell through to its last
+    branch and every alert, including a routine authorised entry, read "Violation".
 
 Its sibling `test_qualifiers_reach_the_frontend.py` asks the mirror question: which fields
 does the BACKEND send that no frontend file reads? Between them the contract is checked in
@@ -161,12 +164,13 @@ BASELINE = {
     "Driver.currentVehicleId",
     "Driver.geoTabDeviceId",
     "ErrorListParams.sort",
-    "GeofenceAlert.alertType",
-    "GeofenceAlert.geofenceId",
-    "GeofenceAlert.geofenceName",
-    "GeofenceAlertExtended.alertType",
-    "GeofenceAlertExtended.geofenceId",
-    "GeofenceAlertExtended.geofenceName",
+    # The six `GeofenceAlert*` entries were HERE, and are the fifth finding: the
+    # endpoint sent zoneId/eventType/createdAt while the client read
+    # geofenceId/alertType/timestamp, with no overlap. `alertType` undefined made the
+    # panel's ternary fall through to its last branch, so EVERY alert — including a
+    # routine authorised entry — rendered as "Violation". Fixed on the producer side,
+    # because nothing consumed the names it was sending.
+    # Pinned by tests/test_geofence_alert_names_match_the_client.py.
     "HOSViolationAlert.currentLocation",
     "HOSViolationAlert.hoursRemaining",
     "Location.contactEmail",
