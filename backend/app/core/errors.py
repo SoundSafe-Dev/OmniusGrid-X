@@ -18,7 +18,7 @@ This is response *shape* only — distinct from the error-capture/triage subsyst
 owned on the integration branch.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Mapping, Optional
 
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
@@ -107,10 +107,18 @@ def _envelope(
     details: Any,
     trace_id: Optional[str],
     instance: Optional[str] = None,
+    headers: Optional[Mapping[str, str]] = None,
 ) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
         media_type=PROBLEM_JSON,
+        # Headers the raiser attached are part of the response's MEANING, not
+        # decoration: RFC 9110 makes `Allow` on a 405 and `WWW-Authenticate` on a
+        # 401 mandatory, and a client that follows the spec cannot act on either
+        # response without them. Starlette's router raises 405 with `Allow`
+        # already set and FastAPI's auth dependencies raise 401 with the
+        # challenge; this envelope rebuilt the response and dropped both.
+        headers=dict(headers) if headers else None,
         content={
             # RFC-9457 standard members (additive).
             "type": _problem_type(code),
@@ -155,6 +163,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         return _envelope(
             message, code, exc.status_code, details,
             _trace_id(request), _instance(request),
+            headers=getattr(exc, "headers", None),
         )
 
     @app.exception_handler(RequestValidationError)

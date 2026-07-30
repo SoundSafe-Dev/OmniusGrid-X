@@ -436,12 +436,40 @@ next step and teaches the lesson this codebase keeps relearning.
 
 # Hamad — platform, frontend, CI
 
-38. **Flip `api-contract` to blocking** · S
-    `continue-on-error: true`, with a comment saying both known blockers are fixed and it
-    needs one green run. ~400 property-checked operations are advisory, so a contract
-    regression cannot fail a build.
+38. **Flip `api-contract` to blocking** · ~~S~~ **M** · ⚠️ *three premises tested 2026-07-30, all false*
+    The job says it is "ready to flip pending one green CI run". It is not, and it could not
+    have been. I ran it.
 
-    Done when: the job is blocking and green.
+    **(a) "schemathesis can't be run locally" — false.** It is pinned in
+    `requirements-dev.txt` and installs and runs fine. That sentence is the stated reason the
+    job stayed advisory, and it had stopped being true.
+
+    **(b) The job cannot finish.** Measured: **~2.5 minutes per operation** (21 health
+    operations, 4 verdicts in 10 minutes) × **451 operations ≈ 19 hours**. Nothing caps it —
+    there is no `max_examples`, no registered hypothesis profile anywhere in the repo, and no
+    `timeout-minutes` on the job, so it runs into GitHub's 6-hour limit and gets killed. With
+    `continue-on-error: true` that kill is invisible. **This job has never passed and cannot,
+    so "observed green in CI" was never reachable.**
+
+    **(c) It also genuinely failed.** ✅ **FIXED** — the first real defect it found is now
+    closed: the problem+json envelope discarded `exc.headers`, so **every 405 the API has ever
+    returned lacked `Allow` (RFC 9110 §15.5.6) and every 401 lacked `WWW-Authenticate`
+    (§11.6.1)** — both mandatory, both needed by a client to act on the response. One defect,
+    but it failed on all 451 operations, because schemathesis probes each with an undeclared
+    method. Fixed in `app/core/errors.py` and mutation-verified by
+    `tests/test_error_envelope_keeps_required_headers.py`.
+
+    **And note what a green run would prove.** Only **195/457 routes (43%) declare a
+    `response_model`** (#43), and schemathesis can only check what is declared — so this gate
+    validates well under half the API even when it works. #43 is a prerequisite for this gate
+    meaning what its name implies, not a separate nice-to-have.
+
+    Do: cap the property search (a hypothesis profile with a small `max_examples` for CI),
+    add `timeout-minutes` so a runaway fails loudly instead of silently, re-run to enumerate
+    what remains, then flip. The cap is a real trade-off — fewer examples find fewer bugs —
+    so it wants a deliberate number, not a default.
+
+    Done when: the job completes inside its timeout, is blocking, and green.
 
 39. **Promote `main`** · S · *needs #3*
     The mechanical half of #3. Every dev is told to branch from `main`, which is well behind
