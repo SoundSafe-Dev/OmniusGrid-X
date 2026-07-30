@@ -4,8 +4,26 @@ Written 2026-07-26 for **Harsh as Product Manager**. Grouped by lane so it can b
 out as-is; every task is independently assignable, so reassign freely.
 
 Numbers are stable references — a task keeps its number if it moves lane.
-**Every figure below was verified against the repository today.** Tasks marked *verify
-first* may already be fixed; the shape of the work depends on what is actually true.
+**Every figure below was verified against the repository on 2026-07-26.** Tasks marked
+*verify first* may already be fixed; the shape of the work depends on what is actually true.
+
+> ### ⚠️ Verify before you start — the pool drifts faster than it is read
+>
+> **Re-audited 2026-07-30.** Of the four items picked up since this was written, **three had
+> already been partly or wholly done**:
+>
+> * **#31** — the seeder DID set a webhook secret; it was a shared literal, which was a
+>   different and worse defect than the one recorded. Now done.
+> * **#40** — the `ws://` socket helper had already been deleted and the scheme already derived
+>   from the page protocol. The only missing half was a test. Now done.
+> * **#55** — `overlays/dr` exists, builds, and is linted by two CI jobs. Entry corrected.
+> * **#43** — the ratio had moved the wrong way (191/417 → 195/458) because new routes landed
+>   undeclared. Baseline corrected.
+>
+> This is not a criticism of the pool; it is what a written snapshot does while sixty-odd
+> commits a day land against it. **Spend the first ten minutes of any item reproducing the
+> claim.** If it does not reproduce, correct the entry in place with the date and what you
+> found — that is worth more than the task was.
 
 Sizes: **S** under half a day · **M** 1–2 days · **L** 3+ days.
 
@@ -436,12 +454,16 @@ next step and teaches the lesson this codebase keeps relearning.
 
     Done when: at least one real caller uses it, or it is deleted.
 
-43. **`response_model` coverage: 191/417 (45%)** · M
-    Undeclared responses make the OpenAPI schema fiction for more than half the API, which
-    also weakens #38 — schemathesis can only check what is declared.
+43. **`response_model` coverage: 195/458 (42%)** · M · ⚠️ *baseline was stale*
+    **Re-measured 2026-07-30.** The entry said 191/417 (45%). The route count has grown since
+    it was written, so the ratio has gone DOWN while the absolute number went up — new routes
+    are landing without a declared response. Measure before claiming progress against this one.
 
-    Done when: coverage is meaningfully above 45%, prioritising the routes the frontend
-    actually calls.
+    Undeclared responses make the OpenAPI schema fiction for more than half the API, which also
+    weakens #38 — schemathesis can only check what is declared.
+
+    Done when: coverage is meaningfully above 42%, prioritising the routes the frontend
+    actually calls, AND new routes cannot land undeclared (otherwise the ratio drifts back).
 
 44. **GeoTab is 100% synthetic** · M
     16 `random.uniform` sites in `geotab_service.py`, including **DOT-regulated
@@ -484,6 +506,96 @@ next step and teaches the lesson this codebase keeps relearning.
 ---
 
 # Hamad — deploy & infrastructure
+
+60. **`backup/alex` exists on NO origin remote** · S · ⚠️ *measured 2026-07-30* · **do this first**
+    89 commits of Alex's work live on the mirror only. `origin` has no `alex` branch at all. If
+    the backup remote is lost, so is that branch.
+
+    Nobody has touched other people's branches deliberately, which is right — so this needs the
+    owner, not a fix from outside. Alex (or whoever holds the credentials) should push it to
+    `origin` and keep both remotes in step from then on.
+
+    Done when: `git ls-remote origin` lists it.
+
+61. **Three branches carry `node_modules` in git** · M · *measured 2026-07-30*
+    `backup/alex`, `origin/HARSH-CONTRIBUTION` and `origin/htreinen` each track **~19,050
+    files** under `node_modules/`. Converged tracks zero.
+
+    Two consequences, and the second is the expensive one: any merge from them tries to bring
+    2.3 M lines with it, and their real diffs are unreadable — `git diff` against converged
+    reports 20,000 changed files, so nobody can see what the branch actually contains. That is
+    a review nobody will do.
+
+    Do: the branch owners strip `node_modules` (it is already in `.gitignore` on converged) and
+    force-push, or the branches are re-cut from converged with only the real changes cherry-picked.
+
+    Done when: `git ls-tree -r <branch> | grep -c node_modules/` is 0 on all three.
+
+62. **Eight branches have not moved since 17 July** · S · *measured 2026-07-30*
+    `HARSH-CONTRIBUTION`, `htreinen`, `feature/gemma-correlation-ai` and five `hridyansh/*`
+    branches, each 28–112 commits ahead of converged, all last committed 2026-07-17 — while
+    converged has taken 70+ commits since. The `origin` and `backup` copies have also drifted
+    apart from each other (`backup/hridyansh/integration` is 38 commits ahead of `origin`'s;
+    `backup/feature/RAG-Compliance-Doc-Pipeline` is 282 ahead).
+
+    Every day this holds, the eventual merge gets harder and the chance the work is re-done by
+    someone else goes up — which is the concrete form of "devs working uselessly".
+
+    Do: for each, decide merge / re-cut / delete. A branch nobody will merge should be deleted,
+    not left as a decision somebody has to keep re-making.
+
+    Done when: each of the eight has a recorded decision.
+
+57. **`pre-commit` cannot be made blocking by flipping the flag** · M · *measured 2026-07-30*
+    The job is `continue-on-error: true` under a comment reading *"Advisory while the existing
+    tree is brought into compliance."* The tree is **not** in compliance, and the gap is much
+    larger than that comment implies.
+
+    `pre-commit run --all-files` rewrites **781 files — 45,405 insertions, 33,106 deletions**:
+    ruff (262 errors, 260 auto-fixed, 2 remaining), ruff-format, prettier, trailing-whitespace
+    and end-of-file-fixer, across `backend/tests` (191), `backend/app` (131), `frontend/src`
+    (~90), `edge-agent` (40) and `database/migrations` (14).
+
+    **Do not just flip the flag.** The compliance commit touches every lane's files at once, so
+    it will conflict with all eleven outstanding branches — the eight that have not moved since
+    17 July would each need a manual rebase through a whole-tree reformat.
+
+    Do: agree a freeze window, land the reformat as ONE commit that changes nothing else, have
+    every open branch rebase, and only then flip the flag. The 2 unfixable ruff errors need
+    reading first — they are the only part that is not mechanical.
+
+    Done when: the job is blocking and green, and `git log` shows the reformat as a single
+    isolated commit.
+
+    *(Verified by running it. The working tree was reverted; nothing was reformatted.)*
+
+58. **Two CI jobs are advisory and one is deliberately so** · S · *measured 2026-07-30*
+    Beyond #38's `api-contract`:
+
+    * `pre-commit` — see #57, and it is the substantial one.
+    * `load-test` (k6, `--vus 5 --duration 30s`) — `continue-on-error: true` and pointed at
+      `BASE_URL: http://localhost:8000`, which CI does not stand up, so it is a smoke run
+      against nothing. Either stand the app up for it or delete the job; a load test that
+      cannot fail and has no target is a green tick for no work.
+    * SBOM generation (`ci-cd.yml`) — **deliberate and correctly reasoned**, under a comment
+      saying *"generation failure must not block a deploy."* Leave it. Recorded here so the
+      next audit does not re-flag it.
+
+    Done when: `load-test` either runs against a real target or is gone.
+
+59. **1.57 GB of the 1.59 GB repository is `backend/dataset`** · M · *measured 2026-07-30*
+    191 files, up to 18 MB each (`scenarios.jsonl` per domain). **99% of every clone**, every
+    CI checkout and every branch switch. It is the reason `check-added-large-files` is a
+    hook nobody can enforce, and it makes the eight stale branches expensive to even inspect.
+
+    Note the datasets are Gemma training corpora — the DECISION is Harsh's (see #1, #15); the
+    repository-hygiene consequence is platform's.
+
+    Do: decide whether they belong in git at all. Git LFS, a release artefact, or an object
+    store are all better than the default. Whatever is chosen, history still carries them, so
+    a clone stays 1.6 GB until history is rewritten — which is #49's window, not a separate one.
+
+    Done when: a decision is recorded, and new datasets cannot be committed by accident.
 
 48. **Wire `check_migrations.py` into CI** · S
     It is a `Makefile` target referenced by no workflow, so nothing checks the migration
@@ -543,12 +655,18 @@ next step and teaches the lesson this codebase keeps relearning.
     Done when: all seven workloads have liveness/readiness probes, requests and limits, and
     a non-root `securityContext`.
 
-55. **`overlays/dr` does not exist** · M
-    `docs/deployment/dr-datacenter-outage.md` describes a procedure that **cannot be
-    executed**, because the manifests it references were never written.
+55. **`overlays/dr` — the overlay EXISTS; what is left is verifying it** · M · ⚠️ *entry was stale*
+    **Corrected 2026-07-30.** The overlay was written (FS-230): distinct namespace, DR
+    hostnames, cold-site replica counts. It builds, and `quality-gates.yml` already lints it
+    alongside base/staging/production in two separate jobs. Do not write it again.
 
-    Done when: the overlay exists and the runbook's steps run against it, or the runbook is
-    withdrawn.
+    Its own header states the part that IS still open, and states it accurately: *"UNVERIFIED
+    AGAINST A REAL CLUSTER. There is no second cluster to try it on."* It also does not create
+    cross-region replication — that is pgBackRest's job and it is what actually determines the
+    RPO, so applying this overlay to an empty cluster gives you running pods with no data.
+
+    Done when: the runbook's steps have been executed against a second cluster, including the
+    restore step — which is the one that matters and which the overlay does not replace.
 
 56. **CNPG cutover — what makes PITR real** · L
     `docs/runbooks/database-backup-restore.md` still says *"Restoring PITR (not yet done)"*
