@@ -137,6 +137,32 @@ def _envelope(
     )
 
 
+def _is_nul_byte_error(exc: BaseException) -> bool:
+    """True when this exception is Postgres rejecting a NUL byte in the input.
+
+    Walks ``__cause__``/``__context__`` because SQLAlchemy wraps the driver error
+    twice — asyncpg's CharacterNotInRepertoireError arrives inside an
+    AsyncAdapt_asyncpg_dbapi.Error inside a sqlalchemy.exc.DBAPIError — so matching on
+    the outermost type would never fire.
+
+    Matches on the class NAME rather than importing asyncpg, so the check costs nothing
+    when the driver changes and cannot break the error handler by failing to import. The
+    message test is the belt to that braces: 0x00 is the only byte that produces this
+    error for UTF-8 input.
+    """
+    seen = set()
+    current: Optional[BaseException] = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if type(current).__name__ == "CharacterNotInRepertoireError":
+            return True
+        text = str(current)
+        if "invalid byte sequence for encoding" in text and "0x00" in text:
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
 def _instance(request: Request) -> Optional[str]:
     try:
         return request.url.path
@@ -179,7 +205,31 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(Exception)
     async def _unhandled(request: Request, exc: Exception) -> JSONResponse:
-        # Never leak internals; log with the trace id for correlation.
         tid = _trace_id(request)
+
+        # A NUL byte in the request is a CLIENT error, and the only one of Postgres's
+        # data errors that can be attributed to the request with certainty.
+        #
+        # Postgres text columns cannot store 0x00 at all, so a string containing one can
+        # never be written however the endpoint is fixed — and nothing in this codebase
+        # generates a NUL, so it arrived in the payload. Returning 500 told the caller
+        # the server had broken and a retry might work, when the request was simply
+        # unstorable.
+        #
+        # DELIBERATELY NARROW. The tempting version of this maps every asyncpg DataError
+        # to 400, which would also relabel our own bad values — a wrong cast, a
+        # miscomputed id — as the caller's fault and hide real defects behind a 4xx.
+        # This matches one exception type whose cause is unambiguous. Everything else
+        # stays a 500.
+        if _is_nul_byte_error(exc):
+            logger.warning(
+                "request_contained_nul_byte", trace_id=tid, path=request.url.path
+            )
+            return _envelope(
+                "Request contains a NUL byte (0x00), which cannot be stored.",
+                "bad_request", 400, {}, tid, _instance(request),
+            )
+
+        # Never leak internals; log with the trace id for correlation.
         logger.error("unhandled_exception", error=str(exc), trace_id=tid, path=request.url.path)
         return _envelope("internal server error", "internal_error", 500, {}, tid, _instance(request))
