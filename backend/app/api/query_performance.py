@@ -1,7 +1,7 @@
 """Query Performance Monitoring API Routes"""
 
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 try:
     from sqlalchemy import text
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,7 +23,7 @@ router = APIRouter(dependencies=[Depends(require_admin)])
 
 @router.get("/slow-queries")
 async def get_slow_queries(
-    limit: int = 50,
+    limit: int = Query(50, ge=1, description="Maximum rows to return."),
     db: AsyncSession = Depends(get_db)
 ):
     """Get slow queries (>1 second execution time)."""
@@ -61,7 +61,7 @@ async def get_slow_queries(
 
 @router.get("/table-performance")
 async def get_table_performance(
-    limit: int = 50,
+    limit: int = Query(50, ge=1, description="Maximum rows to return."),
     db: AsyncSession = Depends(get_db)
 ):
     """Get performance statistics by table."""
@@ -103,7 +103,7 @@ async def get_table_performance(
 
 @router.get("/index-usage")
 async def get_index_usage(
-    limit: int = 100,
+    limit: int = Query(100, ge=1, description="Maximum rows to return."),
     db: AsyncSession = Depends(get_db)
 ):
     """Get index usage statistics."""
@@ -139,7 +139,7 @@ async def get_index_usage(
 
 @router.get("/missing-indexes")
 async def get_missing_indexes(
-    limit: int = 50,
+    limit: int = Query(50, ge=1, description="Maximum rows to return."),
     db: AsyncSession = Depends(get_db)
 ):
     """Get tables that may benefit from additional indexes."""
@@ -175,7 +175,7 @@ async def get_missing_indexes(
 
 @router.get("/query-analysis")
 async def get_query_analysis(
-    limit: int = 100,
+    limit: int = Query(100, ge=1, description="Maximum rows to return."),
     db: AsyncSession = Depends(get_db)
 ):
     """Get comprehensive query performance analysis."""
@@ -233,7 +233,7 @@ async def record_performance_snapshot(
 @router.get("/history")
 async def get_performance_history(
     hours: int = 24,
-    limit: int = 100,
+    limit: int = Query(100, ge=1, description="Maximum rows to return."),
     db: AsyncSession = Depends(get_db)
 ):
     """Get query performance history."""
@@ -271,7 +271,7 @@ async def get_performance_history(
 
 @router.get("/frequent-queries")
 async def get_frequent_queries(
-    limit: int = 50,
+    limit: int = Query(50, ge=1, description="Maximum rows to return."),
     db: AsyncSession = Depends(get_db)
 ):
     """Get most frequently executed queries."""
@@ -324,7 +324,7 @@ async def refresh_frequent_queries_view(
 
 @router.get("/table-bloat")
 async def get_table_bloat(
-    limit: int = 50,
+    limit: int = Query(50, ge=1, description="Maximum rows to return."),
     db: AsyncSession = Depends(get_db)
 ):
     """Get table size and bloat statistics."""

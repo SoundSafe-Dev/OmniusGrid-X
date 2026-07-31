@@ -1,7 +1,7 @@
 """API routes for AI Engine management"""
 
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from datetime import datetime, timezone
 from uuid import UUID
@@ -198,8 +198,8 @@ async def analyze_correlation(
 
 @router.get("/correlation/scenarios")
 async def list_scenarios(
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(50, ge=1, description="Maximum rows to return."),
+    offset: int = Query(0, ge=0, description="Rows to skip."),
     db: AsyncSession = Depends(get_db)
 ):
     """List generated correlation scenarios"""

@@ -2,7 +2,7 @@
 
 from typing import Optional, Dict, Any, List
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -150,7 +150,7 @@ async def cancel_command(
 async def get_asset_commands(
     asset_id: str,
     status: Optional[str] = None,
-    limit: int = 50,
+    limit: int = Query(50, ge=1, description="Maximum rows to return."),
     current_user = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_tenant_db),
     org_id: UUID = Depends(get_tenant_org_id),

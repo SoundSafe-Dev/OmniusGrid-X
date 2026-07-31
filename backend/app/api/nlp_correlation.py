@@ -9,7 +9,7 @@ import json
 from typing import List, Dict, Any, Optional, Set
 from uuid import UUID
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, UploadFile, File, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, Field
 import math
@@ -1830,8 +1830,8 @@ async def cross_correlate_intake(
 
 @router.get("/intake/list")
 async def list_intake_items(
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(50, ge=1, description="Maximum rows to return."),
+    offset: int = Query(0, ge=0, description="Rows to skip."),
     status: Optional[str] = None,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)

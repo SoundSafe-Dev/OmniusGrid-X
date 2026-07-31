@@ -413,8 +413,8 @@ async def create_session(
 
 @router.get("", response_model=SessionListResponse)
 async def list_sessions(
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(50, ge=1, description="Maximum rows to return."),
+    offset: int = Query(0, ge=0, description="Rows to skip."),
     status: Optional[str] = None,
     db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
@@ -1332,8 +1332,8 @@ async def session_chat(
 @router.get("/{session_id}/messages", response_model=List[SessionMessageResponse])
 async def get_session_messages(
     session_id: UUID,
-    limit: int = 100,
-    offset: int = 0,
+    limit: int = Query(100, ge=1, description="Maximum rows to return."),
+    offset: int = Query(0, ge=0, description="Rows to skip."),
     db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
@@ -1478,8 +1478,8 @@ async def generate_session_title(
 
 @router.get("/chat/history", response_model=List[SessionMessageResponse])
 async def get_chat_history(
-    limit: int = 100,
-    offset: int = 0,
+    limit: int = Query(100, ge=1, description="Maximum rows to return."),
+    offset: int = Query(0, ge=0, description="Rows to skip."),
     session_id: Optional[UUID] = None,
     db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
@@ -1522,8 +1522,8 @@ async def get_chat_history(
 @router.get("/chat/search", response_model=List[SessionMessageResponse])
 async def search_chat_history(
     q: str = Query(..., description="Search query"),
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(50, ge=1, description="Maximum rows to return."),
+    offset: int = Query(0, ge=0, description="Rows to skip."),
     session_id: Optional[UUID] = None,
     db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
@@ -1571,7 +1571,7 @@ async def search_chat_history(
 @router.get("/{session_id}/context/telemetry")
 async def get_session_telemetry_context(
     session_id: UUID,
-    limit: int = 50,
+    limit: int = Query(50, ge=1, description="Maximum rows to return."),
     db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
@@ -1653,7 +1653,7 @@ async def get_session_telemetry_context(
 @router.get("/{session_id}/context/alarms")
 async def get_session_alarms_context(
     session_id: UUID,
-    limit: int = 50,
+    limit: int = Query(50, ge=1, description="Maximum rows to return."),
     db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
@@ -1737,7 +1737,7 @@ async def get_session_alarms_context(
 @router.get("/{session_id}/context/kanban")
 async def get_session_kanban_context(
     session_id: UUID,
-    limit: int = 50,
+    limit: int = Query(50, ge=1, description="Maximum rows to return."),
     db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
@@ -1815,7 +1815,7 @@ async def get_session_kanban_context(
 @router.get("/{session_id}/context/registries")
 async def get_session_registries_context(
     session_id: UUID,
-    limit: int = 50,
+    limit: int = Query(50, ge=1, description="Maximum rows to return."),
     db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
