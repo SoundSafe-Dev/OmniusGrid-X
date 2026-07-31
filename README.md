@@ -75,7 +75,7 @@ python scripts/contract_ratchet.py contract-report.xml   # conformance may rise,
 ```
 
 It needs a **migrated** database owned by the `omniusgrid` role — the migration chain
-`GRANT`s to that name and rolls back without it. 327 of 451 operations conform today; the
+`GRANT`s to that name and rolls back without it. 348 of 451 operations conform today; the
 job blocks on a ratchet rather than demanding green, and the remaining 152 are enumerated in
 [docs/engineering/api-contract-gate.md](docs/engineering/api-contract-gate.md).
 

@@ -3,18 +3,22 @@
 
 WHY A RATCHET AND NOT A PASS/FAIL GATE.
 
-The contract suite drives all 451 documented operations with generated input. 299 of
-them conform; 152 do not, and the bulk of those are one behaviour — generated input
-reaching Postgres unvalidated and surfacing as a 500 (64 DataError, 32 IntegrityError)
-where the contract promises a 4xx. Fixing that is per-endpoint work spread across
-every lane, so demanding a fully green suite today would mean either leaving the job
-advisory (which is how it stayed unable to finish for weeks, killed at six hours with
-`continue-on-error` hiding it) or blocking every build until unrelated work lands.
+The contract suite drives all 451 documented operations with generated input. 348 of
+them conform. The rest are dominated by one behaviour — generated input reaching
+Postgres unvalidated and surfacing as a 500 where the contract promises a 4xx — which
+is per-endpoint work spread across every lane, so demanding a fully green suite would
+mean either leaving the job advisory (which is how it stayed unable to finish for
+weeks, killed at six hours with `continue-on-error` hiding it) or blocking every build
+until unrelated work lands.
 
 A ratchet gives the third option, and it is the same instrument `--cov-fail-under=54`
 already uses in this repo: pin the measured number, fail the build if it drops. From
 today a new route that does not conform, or a change that breaks one that did, fails
-CI — while the existing 152 are burned down deliberately. The number only moves up.
+CI — while the rest are burned down deliberately. The number only moves up.
+
+Note that ~37 of the remainder CANNOT pass without a deliberate policy change (Pydantic
+strict mode, typed path converters); see docs/engineering/api-contract-gate.md. The
+practical ceiling is around 412, not 451.
 
 RAISE IT when you fix operations. Do NOT lower it to make a build pass: a lowered
 ratchet is indistinguishable from no ratchet, and the whole point is that the number
@@ -28,10 +32,16 @@ import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-#: RAISED 2026-07-31 from 290 after documenting the status codes the shared error
-#: envelope actually emits (400 and 405 globally, 503 on the eleven routers that raise
-#: it). Two runs then scored 327 and 331, against a pre-fix band of 294-303 — the gain
-#: clears the noise, which is the standard for moving this number.
+#: RAISED 2026-07-31 to 339, after two changes each of which cleared the noise:
+#:   * documenting the status codes the error envelope emits (400/405 globally, 503 on
+#:     the eleven routers that raise it) -> 327, 331 from a band of 294-303;
+#:   * typing 23 path params as UUID instead of str -> 348 and 348.
+#:
+#: Those last two runs were IDENTICAL, which is itself a result: several of the 14
+#: flapping operations were flapping because malformed ids left different rows behind
+#: on different runs. Fixing the type removed the variance as well as the 500s. The
+#: floor keeps its 9-point margin anyway — two identical runs are not yet evidence that
+#: the spread is gone.
 #:
 #: THE MARGIN IS DELIBERATE AND MEASURED. Ten pre-fix runs scored 294, 296, 297, 297,
 #: 297, 298, 299, 300, 302 and 303 with no code change — `derandomize=True` did not
@@ -42,11 +52,11 @@ from pathlib import Path
 #: Pinning at the best observed score would fail roughly half of all builds, and a gate
 #: that cries wolf is a gate somebody disables — exactly how its predecessor ended up
 #: advisory and killed at six hours. So the floor sits 9 below the observed minimum of
-#: 327: wide enough to absorb the measured spread, tight enough that losing a handful
+#: 348: wide enough to absorb the measured spread, tight enough that losing a handful
 #: of operations still fails the build.
 #:
 #: Raise it when a fix clears the noise, as this one did. Never lower it.
-BASELINE_PASSING = 318
+BASELINE_PASSING = 339
 
 #: Total operations the schema documents, checked so a collapse in collection cannot
 #: pass the ratchet by making "passing" small and "total" equally small.

@@ -88,7 +88,7 @@ envelope rebuilt the response from `exc.headers`. Fixed in `c1e3ef56`.
 
 ## Why a ratchet
 
-**327–331 of 451** operations conform (floor: 318). The remaining ~124 are dominated by
+**348 of 451** operations conform (floor: 339). The remaining ~103 are dominated by
 **one behaviour**: generated input reaching Postgres unvalidated and surfacing as a 500
 where the contract promises a 4xx (`DataError`, `ForeignKeyViolationError`,
 `CharacterNotInRepertoireError`). That is per-endpoint validation work spread across every
@@ -96,7 +96,7 @@ lane.
 
 | check | count | nature |
 |---|---|---|
-| `ServerError` | 80 | real: unvalidated input reaching the database |
+| `ServerError` | ~59 | real: unvalidated input reaching the database (was 80; 23 path params typed UUID closed the rest) |
 | `AcceptedNegativeData` | 24 | real: endpoint accepted input its own schema forbids |
 | `UnsupportedMethodResponse` | 13 | routing shape — see below |
 | `UndefinedContentType` | 4 | xlsx and Prometheus-text responses, undeclared |
@@ -130,13 +130,13 @@ time — a behaviour change across many routes.
 ### So the realistic ceiling is not 451
 
 Roughly **37 operations cannot pass without a deliberate policy change**, and 2 more are the
-undeclared xlsx/Prometheus content types. The genuinely fixable population is the ~80
+undeclared xlsx/Prometheus content types. The genuinely fixable population is the remaining
 `ServerError`s: unvalidated input reaching Postgres. Treat ~412 as the target, not 451, and
 do not let a future ratchet-raiser mistake the difference for remaining work.
 
 Demanding a green suite would leave two bad options: stay advisory (how this job spent
 weeks achieving nothing), or block every build until unrelated work lands. The ratchet is
-the third: pin the measured number, fail on a drop, burn the 152 down deliberately. Same
+the third: pin the measured number, fail on a drop, burn the rest down deliberately. Same
 instrument as `--cov-fail-under=54`, and the same rule — **raise it, never lower it.**
 
 ### The floor carries a measured margin
@@ -145,12 +145,22 @@ Ten runs with no code change between them scored **294, 296, 297, 297, 297, 298,
 302, 303**. `derandomize=True` did not remove the spread, and neither did a freshly migrated
 database (two controlled fresh-DB runs scored 299 and 297).
 
-The floor is **318**, raised from 290 on 2026-07-31 once a fix cleared the noise: documenting
-the status codes the error envelope actually emits took conformance to 327 and 331, against
-a pre-fix band of 294–303. That is the standard for moving this number — a gain larger than
-the spread, measured twice.
+The floor is **339**, raised from 290 in two steps on 2026-07-31, each time only after a fix
+cleared the noise — the standard for moving this number is a gain larger than the spread,
+measured twice:
 
-It sits 9 below the observed minimum. Pinned at the best observed score it would fail roughly
+| change | runs | floor |
+|---|---|---|
+| (baseline) | 294–303 | 290 |
+| status codes the envelope emits declared | 327, 331 | 318 |
+| 23 path params typed `UUID` not `str` | 348, 348 | 339 |
+
+Those last two runs were **identical**, which is a result in itself: several of the 14
+flapping operations were flapping because malformed ids left different rows behind on
+different runs. Fixing the type removed variance as well as 500s. The margin is kept anyway —
+two identical runs are not yet evidence the spread is gone.
+
+It sits 9 below the observed minimum of 348. Pinned at the best observed score it would fail roughly
 half of all builds, and *a gate that cries wolf is a gate somebody disables* — which is
 precisely how its predecessor ended up advisory and killed at six hours.
 
