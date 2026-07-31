@@ -100,18 +100,32 @@ instrument as `--cov-fail-under=54`, and the same rule — **raise it, never low
 
 ### The floor carries a measured margin
 
-Four consecutive runs scored **294, 296, 297, 300** with no code change between them —
-including two with `derandomize=True` and one against a freshly migrated database, so the
-spread is neither hypothesis's seed nor accumulated DB state. A few health endpoints
-genuinely report a dependency's timing.
+Ten runs with no code change between them scored **294, 296, 297, 297, 297, 298, 299, 300,
+302, 303**. `derandomize=True` did not remove the spread, and neither did a freshly migrated
+database (two controlled fresh-DB runs scored 299 and 297).
 
-The floor is **290**: below the observed minimum of 294, still catching any structural loss.
-Pinned at the best observed score it would fail roughly half of all builds, and *a gate that
-cries wolf is a gate somebody disables* — which is precisely how its predecessor ended up
-advisory and killed at six hours.
+The floor is **290**: below every observed score, still catching any structural loss. Pinned
+at the best observed score it would fail roughly half of all builds, and *a gate that cries
+wolf is a gate somebody disables* — which is precisely how its predecessor ended up advisory
+and killed at six hours.
 
-Tightening it means making those endpoints deterministic **first**, not raising the number
-and hoping.
+### The residual noise is 14 known operations
+
+Diffing two runs against brand-new databases isolates it. 146 failures are identical; **14
+operations flip verdict between runs**, and they are not random:
+
+| operations | why they vary |
+|---|---|
+| `GET /api/v1/admin/query-performance/{index-usage,missing-indexes,table-bloat,table-performance}` | read live Postgres statistics, which change as the suite itself exercises the database |
+| `GET /api/v1/model-monitoring/{data-drift,drift,performance}/history/{model_id}` | time-window queries whose window moves during the run |
+| `POST /api/v1/auth/refresh` | token lifetime is time-dependent |
+| `POST /api/v1/{data-residency/tag,data-residency/validate,gdpr/processing-records,notifications/test}`, `PUT /api/v1/user/context` | write endpoints whose result depends on what earlier operations in the same run created |
+
+**This is the list to work through before tightening the floor** — raising the number
+without addressing them installs exactly the flakiness the margin exists to avoid. The first
+seven are the interesting ones: an endpoint whose response shape depends on live statistics
+or on the current time cannot be contract-tested reproducibly, and that is worth knowing
+independently of this gate.
 
 ### What stops the ratchet being fooled
 
