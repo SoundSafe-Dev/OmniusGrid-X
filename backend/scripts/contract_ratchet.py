@@ -3,7 +3,7 @@
 
 WHY A RATCHET AND NOT A PASS/FAIL GATE.
 
-The contract suite drives all 451 documented operations with generated input. 348 of
+The contract suite drives all 451 documented operations with generated input. ~360 of
 them conform. The rest are dominated by one behaviour — generated input reaching
 Postgres unvalidated and surfacing as a 500 where the contract promises a 4xx — which
 is per-endpoint work spread across every lane, so demanding a fully green suite would
@@ -32,16 +32,18 @@ import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-#: RAISED 2026-07-31 to 339, after two changes each of which cleared the noise:
+#: RAISED 2026-07-31 to 350, in three steps, each only after a fix cleared the noise:
 #:   * documenting the status codes the error envelope emits (400/405 globally, 503 on
 #:     the eleven routers that raise it) -> 327, 331 from a band of 294-303;
-#:   * typing 23 path params as UUID instead of str -> 348 and 348.
+#:   * typing 23 path params as UUID instead of str -> 348 and 348;
+#:   * declaring the real content type on nine export/metrics routes, plus five more
+#:     UUID path params -> 360 and 359.
 #:
-#: Those last two runs were IDENTICAL, which is itself a result: several of the 14
+#: The UUID pair (348, 348) was IDENTICAL, which is itself a result: several of the 14
 #: flapping operations were flapping because malformed ids left different rows behind
 #: on different runs. Fixing the type removed the variance as well as the 500s. The
-#: floor keeps its 9-point margin anyway — two identical runs are not yet evidence that
-#: the spread is gone.
+#: floor keeps its 9-point margin anyway — a couple of close runs are not yet evidence
+#: that the spread is gone.
 #:
 #: THE MARGIN IS DELIBERATE AND MEASURED. Ten pre-fix runs scored 294, 296, 297, 297,
 #: 297, 298, 299, 300, 302 and 303 with no code change — `derandomize=True` did not
@@ -52,11 +54,11 @@ from pathlib import Path
 #: Pinning at the best observed score would fail roughly half of all builds, and a gate
 #: that cries wolf is a gate somebody disables — exactly how its predecessor ended up
 #: advisory and killed at six hours. So the floor sits 9 below the observed minimum of
-#: 348: wide enough to absorb the measured spread, tight enough that losing a handful
+#: 359: wide enough to absorb the measured spread, tight enough that losing a handful
 #: of operations still fails the build.
 #:
 #: Raise it when a fix clears the noise, as this one did. Never lower it.
-BASELINE_PASSING = 339
+BASELINE_PASSING = 350
 
 #: Total operations the schema documents, checked so a collapse in collection cannot
 #: pass the ratchet by making "passing" small and "total" equally small.

@@ -77,3 +77,15 @@ coherently and is idempotent.
   (`DEFAULT NOW()`), not just an ORM-side one — a raw INSERT otherwise writes
   NULL and the row vanishes from time-ordered queries. See `044`/`045`, enforced
   by `test_schema_parity.py`.
+- **A migration that uses an extension function must create the extension.** Never
+  rely on it being present, and never rely on the test harness creating it —
+  `tests/conftest.py` runs `CREATE EXTENSION IF NOT EXISTS pgcrypto` when it builds a
+  container, which is why `009_audit_logs.sql` could call `digest()` for months with a
+  green test suite while **every production audit insert failed**. The trigger raised
+  `UndefinedFunctionError`, `app/services/audit.py` swallowed it by design ("never fail
+  the audited operation"), and the audit trail was empty. Fixed by `059`; enforced by
+  `test_schema_extensions_come_from_migrations.py`, which fails on any extension the
+  harness creates and no migration does.
+- Prefer proving the dependency over assuming it. `059` runs `digest()` in a guarded
+  `DO $$` block after `CREATE EXTENSION` and raises if it is still unusable — a failed
+  migration is a better outcome than a feature that quietly discards data.

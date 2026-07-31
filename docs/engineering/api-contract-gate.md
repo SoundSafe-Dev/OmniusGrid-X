@@ -84,11 +84,39 @@ Separately, the gate found that **every 405 lacked `Allow` and every 401 lacked
 `WWW-Authenticate`** — both mandatory under RFC 9110, both discarded when the problem+json
 envelope rebuilt the response from `exc.headers`. Fixed in `c1e3ef56`.
 
+### The most serious thing it found: the audit trail had never recorded a row
+
+Four `UndefinedFunctionError` 500s turned out to be `function digest(bytea, unknown) does
+not exist`. `009_audit_logs.sql` triggers on every insert into `audit_logs` and calls
+`calculate_audit_hash()`, whose body is `encode(digest(...), 'hex')` — **pgcrypto**. No
+migration ever created the extension.
+
+So the trigger raised on every insert, and `app/services/audit.py` catches it deliberately
+("never fail the audited operation"), logs `audit_log_write_failed`, and lets the request
+through. Every audited action succeeded; every audit row was rejected. Verified on a freshly
+migrated database: a manual `INSERT` failed and `SELECT count(*)` returned **0**.
+
+**It survived because the test harness was compensating for the missing migration.**
+`tests/conftest.py:91` runs `CREATE EXTENSION IF NOT EXISTS pgcrypto` when building a test
+container, so the real-DB suite exercised a working audit trail while a real deployment had
+none. The tests were not wrong about the code — they were wrong about the *database*.
+
+Fixed by migration `059`, which also probes `digest()` after creating the extension and
+raises if it is still unusable: a failed migration is a better outcome than an audit trail
+that silently discards rows. `test_schema_extensions_come_from_migrations.py` closes the
+class — any extension created by `conftest` and by no migration now fails the build.
+
+> **Note the length of the chain.** A gate that could not finish, made to finish; which then
+> could not explain its own failures, made to explain them; and only then did a documented
+> security feature turn out never to have worked. Each fix was a prerequisite for seeing the
+> next problem — which is the argument for repairing a broken gate rather than routing
+> around it.
+
 ---
 
 ## Why a ratchet
 
-**348 of 451** operations conform (floor: 339). The remaining ~103 are dominated by
+**359–360 of 451** operations conform (floor: 350). The remaining ~92 are dominated by
 **one behaviour**: generated input reaching Postgres unvalidated and surfacing as a 500
 where the contract promises a 4xx (`DataError`, `ForeignKeyViolationError`,
 `CharacterNotInRepertoireError`). That is per-endpoint validation work spread across every
@@ -96,12 +124,12 @@ lane.
 
 | check | count | nature |
 |---|---|---|
-| `ServerError` | ~59 | real: unvalidated input reaching the database (was 80; 23 path params typed UUID closed the rest) |
+| `ServerError` | 51 | real: unvalidated input reaching the database (was 84; typing 28 path params closed most of it) |
 | `AcceptedNegativeData` | 24 | real: endpoint accepted input its own schema forbids |
 | `UnsupportedMethodResponse` | 13 | routing shape — see below |
-| `UndefinedContentType` | 4 | xlsx and Prometheus-text responses, undeclared |
 | `RejectedPositiveData` | 2 | endpoint refused input its schema permits |
 | `UndefinedStatusCode` | 2 | was 49 before the status codes were documented |
+| `UndefinedContentType` | 0 | was 307; the problem+json media type, then nine export/metrics routes |
 
 ### Two categories are policy disagreements, not defects
 
@@ -154,6 +182,7 @@ measured twice:
 | (baseline) | 294–303 | 290 |
 | status codes the envelope emits declared | 327, 331 | 318 |
 | 23 path params typed `UUID` not `str` | 348, 348 | 339 |
+| nine export/metrics content types + 5 more UUID params | 360, 359 | 350 |
 
 Those last two runs were **identical**, which is a result in itself: several of the 14
 flapping operations were flapping because malformed ids left different rows behind on

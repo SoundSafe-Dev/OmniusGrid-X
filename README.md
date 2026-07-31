@@ -75,7 +75,7 @@ python scripts/contract_ratchet.py contract-report.xml   # conformance may rise,
 ```
 
 It needs a **migrated** database owned by the `omniusgrid` role — the migration chain
-`GRANT`s to that name and rolls back without it. 348 of 451 operations conform today; the
+`GRANT`s to that name and rolls back without it. 360 of 451 operations conform today; the
 job blocks on a ratchet rather than demanding green, and the remaining 152 are enumerated in
 [docs/engineering/api-contract-gate.md](docs/engineering/api-contract-gate.md).
 
@@ -1014,6 +1014,57 @@ rewritten against each module's documented contract, **no production change**); 
 stays, because it is the only one that needs a taxonomy decision rather than a rewrite. Fixing
 it also exposed a vacuity guard that asserted `--ignore=` was present unconditionally — so
 emptying the ignore list made a guard fail for the good outcome it exists to encourage.
+
+### Delivered since — the gate that could not run, and what it found once it could
+
+On `hamad/converged-pre-main`. The `api-contract` job had been advisory for weeks under a
+comment saying it was ready to flip "pending one green CI run". That run was unreachable, and
+the chain from there to the most serious finding of the slice is the point of this entry.
+
+**It could not finish.** Measured at ~2.5 minutes per operation × 451 ≈ **19 hours**, against
+GitHub's 6-hour limit, so it was killed every run and `continue-on-error: true` hid the kill.
+Nothing was slow: one request 45 ms, one `call_and_validate` 0.1 s, building a strategy
+0.14 s, drawing an example 0.0 s. **Every component fast and the whole impossible is the
+signature of a feedback loop, not a slow part** — and looking for the slow part is what kept
+it broken. There were two loops: `from_asgi` gave every generated example a new event loop
+while the app's singletons stayed bound to the first, and the websocket queue processor's
+error path had no backoff, so it span at full CPU on the resulting failures. That second one
+is a production bug in its own right: *an error path with no delay is a spin, and a failure
+that cannot change is not something to retry.*
+
+**It could not have been green either.** The job never ran migrations, so every DB-backed
+operation 500'd against an empty database — and it used `POSTGRES_USER=test` while the
+migration chain `GRANT`s to the `omniusgrid` role by name, so migrations would have rolled
+back even if the step had existed.
+
+**Then it could not explain itself.** Moving the suite onto a real uvicorn server silenced
+the app's own logging — `uvicorn.Config` applies its own `dictConfig` — so every 500 reported
+only "internal server error". A regression introduced while fixing something else, and worth
+remembering: moving a test off an in-process transport costs you the diagnostics that
+transport gave you for free.
+
+**And only then did this surface. The audit trail had never recorded a single row.**
+`009_audit_logs.sql` triggers on every insert into `audit_logs` and calls
+`calculate_audit_hash()`, whose body is `encode(digest(...), 'hex')` — pgcrypto. No migration
+ever created the extension, so the trigger raised on every insert, and `audit.py` catches it
+deliberately ("never fail the audited operation"), logs `audit_log_write_failed`, and lets
+the request through. Every audited action succeeded; every audit row was rejected. Verified
+on a freshly migrated database: `SELECT count(*)` returned **0**.
+
+It survived because `tests/conftest.py:91` runs `CREATE EXTENSION IF NOT EXISTS pgcrypto`
+when it builds a test container. The suite exercised a working audit trail while a real
+deployment had none — **the tests were not wrong about the code, they were wrong about the
+database.** A guard now fails the build for any extension the harness creates and no
+migration does.
+
+The gate now runs all 451 operations in ~8 minutes and **blocks**, as a ratchet on a measured
+floor rather than demanding green, because ~37 operations cannot pass without a deliberate
+policy change (Pydantic strict mode, typed path converters) and the practical ceiling is ~412.
+Conformance went 299 → **360** along the way: the problem+json content type (304 operations at
+once), `Allow` on every 405 and `WWW-Authenticate` on every 401 — both RFC 9110 musts that the
+error envelope was discarding — the four status codes the envelope emits and nothing declared,
+28 path params typed `str` that turned a malformed id into a 500 instead of a 422, and nine
+export routes that returned xlsx, PDF or CSV while the schema promised JSON.
 
 ### Offline demo — `backend/scripts/seed_demo_data.py`
 
@@ -3080,7 +3131,7 @@ The ERP integration system correlates ERP data with operational telemetry to pro
 **Engineering practice**
 - [Defect-class sweeps](docs/engineering/defect-class-sweeps.md) - The fifty-six classes of "code that looks wired and cannot work" found so far, what each sweep found (including the ones that came back clean), which mutation-tested guard keeps each closed, and sixty-two rules for writing a sweep worth trusting — most of them paid for by a detector that was wrong first, including one that reported zero offenders while three pages were broken and one that compared a baseline against itself
 - [Large assets](docs/engineering/large-assets.md) - Why `backend/dataset` is 1.5 GB on disk but only 41 MB packed, why it must not be deleted (the generator sets no seed, so it is generated but NOT reproducible), and the `make lean` / sparse-checkout recipes that keep it off your disk and out of all 28 CI checkouts
-- [The API contract gate](docs/engineering/api-contract-gate.md) - The schemathesis job that drives all 451 documented operations, why it could never finish (every component fast, the whole impossible — a per-example event loop plus a retry path with no backoff), the four independent faults that each alone would have stopped it, and why it blocks as a *ratchet* on a measured floor of 290 rather than demanding a green suite
+- [The API contract gate](docs/engineering/api-contract-gate.md) - The schemathesis job that drives all 451 documented operations, why it could never finish (every component fast, the whole impossible — a per-example event loop plus a retry path with no backoff), the four independent faults that each alone would have stopped it, why it blocks as a *ratchet* on a measured floor rather than demanding a green suite, and what it has found since — including an audit trail that had never recorded a single row
 - [The test quarantine](docs/engineering/test-quarantine.md) - What CI is allowed not to run, and the register that gives every exclusion an owner, a diagnosis and an expiry — including the staleness half that fails when a quarantined test starts passing. Records the 2026-07-30 release of four entries, and the rule it earned: before accepting that a quarantined test is another lane's problem, check whether the code under it is *running* — "the test is broken" and "the feature is unbuilt" look identical from the list and have opposite consequences
 
 **Infrastructure & operations**
