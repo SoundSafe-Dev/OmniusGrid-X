@@ -18,6 +18,7 @@ Design notes:
   against SeaweedFS, MinIO, or real AWS S3 by changing env vars only.
 """
 
+import re
 from typing import Optional, List, Dict, Any
 from functools import lru_cache
 
@@ -37,12 +38,37 @@ except ImportError:  # aioboto3 not installed - service disabled until used
 logger = structlog.get_logger()
 
 
+_DOC_ID_RE = re.compile(r"^(?!\.+$)[A-Za-z0-9._-]{1,128}$")
+
+
+class InvalidDocumentId(ValueError):
+    """A caller-supplied doc_id that cannot safely be used in an object key."""
+
+
+def validate_doc_id(doc_id: str) -> str:
+    """Reject a doc_id that would escape the tenant prefix or break the key.
+
+    Object keys are ``{org_id}/{doc_id}/{filename}``. Because ``doc_id`` comes
+    straight from the client, an unvalidated ``../other-org`` would write
+    outside the caller's own prefix, and any ``/`` silently breaks the
+    three-segment layout that key parsers rely on.
+    """
+    if not isinstance(doc_id, str) or not _DOC_ID_RE.match(doc_id):
+        raise InvalidDocumentId(
+            "doc_id must be 1-128 characters of letters, digits, "
+            "'.', '_' or '-'."
+        )
+    return doc_id
+
+
 def build_document_key(org_id: str, doc_id: str, filename: str) -> str:
     """Build a stable object key for a source document.
 
-    Structure: ``{org_id}/{doc_id}/{filename}``. The ``doc_id`` (a UUID) keeps
-    keys unique and stable even when two uploads share a filename.
+    Structure: ``{org_id}/{doc_id}/{filename}``. The ``doc_id`` keeps keys
+    unique and stable even when two uploads share a filename. ``doc_id`` is
+    validated first — see ``validate_doc_id``.
     """
+    validate_doc_id(doc_id)
     return f"{org_id}/{doc_id}/{filename}"
 
 
