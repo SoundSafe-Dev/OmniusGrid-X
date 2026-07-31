@@ -115,7 +115,7 @@ OmniusGrid is a resilient manufacturing operations platform designed for Industr
 | **Operations** | K3s-orchestrated, CloudNativePG HA (auto-failover + PITR), KEDA lag-based worker autoscaling, automatic disaster recovery. The deploy applies the monitoring/autoscaling/HA-DB stacks itself, each gated on its operator's CRDs being present |
 | **Logistics** | YMS/TMS with GeoTab telematics, detention billing, HOS compliance, dock-production sync, webhook processing |
 | **Task Management** | Kanban board with task grouping, assignment, approval workflows |
-| **Compliance** | Actionable registries (OSHA, ISO, internal), data correlation mapping, scoring |
+| **Compliance** | Actionable registries (OSHA, ISO, internal), data correlation mapping, scoring. **Compliance Assistant** — grounded Q&A over the policy corpus (SOPs, OSHA, collective agreements) with inline citations, presigned links to the source documents, and the forms an answer implies you must file |
 | **Analytics** | Recharts integration with temperature trends, vibration analysis, OEE metrics, asset health distribution |
 
 ---
@@ -1083,6 +1083,67 @@ error envelope was discarding — the four status codes the envelope emits and n
 28 path params typed `str` that turned a malformed id into a 500 instead of a 422, and nine
 export routes that returned xlsx, PDF or CSV while the schema promised JSON.
 
+### Delivered since — the Compliance Assistant, and a badge nobody could read
+
+On `hamad/converged-pre-main`. Hudson's RAG pipeline had been complete and working since
+July — SeaweedFS → BGE-M3 dense+sparse → Qdrant hybrid RRF → BGE reranker → generation, five
+endpoints, an eval suite. **Nothing in the frontend touched it.** Zero hits for `api/v1/rag`
+under `frontend/src`. A finished backend with no consumer is indistinguishable from an
+unfinished one from the outside, and that is most of what this slice fixes: a
+**Compliance Assistant** tab that asks a policy question and answers it from documents the
+reader can open.
+
+**Two retrieval legs, one of them uncited.** The document leg answers *what the policy says*.
+A second leg reads the org's own `erp_entities` rows live from Postgres and puts them in the
+prompt **unnumbered**, so the answer can say "the agreement requires X; three of your open work
+orders show Y" instead of paraphrasing a policy the reader could have found themselves. Only
+Qdrant chunks get `[n]` markers and `Citation` objects; `RagAnswer` carries no trace of the ERP
+block, and a test pins its field list so a later debugging field cannot quietly publish it.
+
+The obvious alternative — index ERP rows into Qdrant as documents — was rejected, and the
+reasons are recorded because the idea will come back: the blobs would not exist (a citation you
+cannot open is worse than none), every ERP sync would need a re-index, the rows would compete
+for the five rerank slots that belong to policy text, and the citations would then have to be
+filtered back out. **Both legs are already scoped by the same `org_id` from the same JWT**, so
+they are tenant-consistent by construction rather than by coordination. Verified against a real
+Postgres: cross-tenant isolation holds both ways, and the *same* corpus reorders by question —
+WorkOrder first for a lockout question, Employee first for a certification one.
+
+**The audit trail is the log line, and it is not optional polish.** The ERP contribution is
+invisible in the response by design, so `rag_retriever.answered` carrying `erp_rows`,
+`erp_entity_types` and `erp_chars` is the *only* record that operational data shaped a given
+answer. For a compliance tool, one eventually gets challenged.
+
+**A citation you cannot open.** `DocumentStore.generate_presigned_url` had existed since the
+first RAG commit and no endpoint exposed it, so every citation was a filename and a page
+number. `POST /rag/documents/link` exposes it — POST rather than GET so the key stays out of
+access logs, and with an `{org_id}/` prefix check that is load-bearing: the key arrives from
+the client, and without it any authenticated user presigns any tenant's document by editing one
+UUID, receiving a URL that keeps working for an hour after the check would have failed.
+Verified end to end against real SeaweedFS, including the two refusals.
+
+**Then the screenshot found something the whole suite had missed.** Rendering the page in a
+browser showed the "Form" badge as a blank white pill. `STATUS_COLORS.info` was
+`bg-opsgrid-primary text-white`, and `--color-primary` is `#fafafa` in the **default dark
+theme** — white on white. Not a new bug and not confined to this page: **ten call sites**, the
+ERP type column, the admin role chips, the NLP domain and priority tags, the fleet vehicle
+count. Every one illegible in the theme most people use, and legible in light, which is exactly
+why it survived. Every other entry in that table already pairs a theme-variable background with
+`text-opsgrid-bg`; `info` was the one that did not.
+
+Worth keeping as a class: **467 unit tests, a typecheck and four defect-class sweeps all passed
+over a control that rendered nothing.** No assertion in the codebase compares a foreground to
+its background, so contrast was invisible to every gate we had — the bug was in the one
+dimension the tests do not have an opinion about. It took looking at the page. The rule that
+makes the collision impossible is now pinned in `statusColors.test.ts`.
+
+**Honest about what is not verified.** The presign path and the ERP leg were both exercised
+against live services; the full query path through embeddings, reranking and generation was
+not. `rag-inference` needs torch plus ~5 GB of weights and the local Docker VM had 2.7 GB free,
+so the build fails on `ENOSPC`. When it runs, the A/B worth doing is the same question with
+`RAG_ERP_CONTEXT_ENABLED` on and off — if the answers do not differ, the routing keywords are
+not earning their place. Full detail in [`docs/compliance_assistant.md`](docs/compliance_assistant.md).
+
 ### Offline demo — `backend/scripts/seed_demo_data.py`
 
 The whole platform demos with **no live edge, cloud, or external services**.
@@ -1101,6 +1162,7 @@ thing that still needs its model is the Correlation-AI **inference** (a ready
 | Mobile app / Kanban / demo API | **Harsh** | Merged; kanban/nlp files received mechanical-only fixes on the convergence branch (flagged in commit messages). |
 | MLOps (model registry + training + monitoring) | **Harsh** | `model_registry` / `model_training_runs`; model-monitoring drift + performance tracking. |
 | RAG / compliance doc pipeline (SeaweedFS/S3 + Gemma inference) | **Hudson** (htreinen) | `htreinen`, `feature/RAG-Compliance-Doc-Pipeline`. `/api/v1/rag`; containerization seam in `docs/RAG_CONTAINERIZATION.md`. His `origin` is the SoundSafe-Dev mirror. |
+| Compliance Assistant page + the operational-context leg | **Hamad** | Consumes Hudson's pipeline; does not change it. `docs/compliance_assistant.md`. Coordinate with Hudson before altering `rag_retriever.py` prompt assembly — the citation numbering is a contract with the UI. |
 | Tenant isolation / RBAC / security hardening | **Hridyansh** | `hridyansh/tenant-isolation-middleware`. RLS enforced through the canonical `app.current_org_id` GUC everywhere (incl. ERP tables). |
 | OTA / edge command dispatch / agent releases | **Hridyansh** | `hridyansh/edge-command-dispatch`, `hridyansh/edge-agent-retry-logic`. Rollout orchestrator + agent-side executor; `ota-rollout-worker` runs in compose + k8s. |
 | ERP integration surface / package layout | **Hridyansh** | `hridyansh/integration`, `hridyansh/integration-erp`, `hridyansh/package-renaming-fix`. |
@@ -1369,7 +1431,8 @@ How each frontend page is wired to the backend (primary endpoints; all under
 | Transportation (TMS) | `transportation`, `geotab`, `geofencing`, `maintenance`, `fleet` (health) | transportation_management, geotab_service, routing |
 | Kanban | `kanban` | kanban / correlation task creation |
 | ERP | `erp/integrations`, `erp/webhooks` | erp_connector_factory, erp_webhook_receiver |
-| Intake / Correlation | `nlp`, `analysis-sessions`, `platform-correlation`, `rag` | correlation_ai_engine, rag_retriever, intake parsers |
+| Intake / Correlation | `nlp`, `analysis-sessions`, `platform-correlation` | correlation_ai_engine, intake parsers |
+| Compliance Assistant | `rag/query`, `rag/documents/link` | rag_retriever (Qdrant + BGE), rag_erp_context, document_store |
 | Notifications | `notifications` | notification_service |
 | Admin — Error Triage | `admin/errors` | error_tracker |
 | Admin — Audit / Settings | `audit`, `organizations`, `feature-flags`, `admin/query-performance` | audit_trail, feature_flags |

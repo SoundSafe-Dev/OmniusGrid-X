@@ -134,10 +134,37 @@ directions, `is_active` filtering, and routing reordering the *same* corpus by
 question (WorkOrder first for a lockout question, Employee first for a
 certification question).
 
+The page itself was rendered in Chromium against the mock layer
+(`frontend/e2e/compliance-assistant.visual.ts` — a throwaway harness, not picked
+up by `npm run e2e`, which matches `*.spec.ts`). That is how the badge bug below
+was found, and it is worth repeating after any change to the panels:
+
+```bash
+VITE_USE_MOCK=true npm run dev &
+npx tsx e2e/compliance-assistant.visual.ts   # screenshots to /tmp/compliance-shots
+```
+
 **Not yet verified end to end:** the full query path through embeddings,
 reranking, and generation. `rag-inference` builds locally and pulls ~5 GB of
 weights, and the Docker VM had 2.7 GB free. Standing that up is the remaining
-gap — run the A/B with `RAG_ERP_CONTEXT_ENABLED` on and off when you do.
+gap — run the A/B with `RAG_ERP_CONTEXT_ENABLED` on and off when you do. If the
+answers do not differ, the routing keywords in `_ENTITY_ROUTES` are not earning
+their place.
+
+---
+
+## One thing this slice found that had nothing to do with RAG
+
+The "Form" badge rendered as a blank white pill. `STATUS_COLORS.info` was
+`bg-opsgrid-primary text-white`, and `--color-primary` is `#fafafa` in the
+default dark theme — white on white. Pre-existing, ten call sites across ERP,
+admin, NLP and fleet, and invisible to 467 passing unit tests because nothing in
+the suite compares a foreground colour to its background.
+
+Recorded as class 60 in `docs/engineering/defect-class-sweeps.md`. The reason it
+belongs in *this* doc too: it is the argument for rendering the page as a
+verification step rather than trusting a green suite, and the next person adding
+a panel here is as exposed to it as this one was.
 
 ---
 

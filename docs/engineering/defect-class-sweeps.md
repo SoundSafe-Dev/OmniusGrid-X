@@ -14,7 +14,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The fifty-nine classes
+## The sixty classes
 
 The first five were all originally found in ERP. The sixth came out of the fifth, the
 seventh out of two failing tests that turned out to share a cause, and the eighth out of
@@ -4672,6 +4672,49 @@ widen the exemption list rather than trust the check.
 
 Both directions are mutation-verified — reverting the real fix must fail, and the
 compliant file must stay unflagged. The second half is the one that usually goes untested.
+
+## Class 60 — a control whose foreground and background resolve to the same colour
+
+Found by looking at the page, which is the only reason it was found at all.
+
+The Compliance Assistant's "Form" badge rendered as a blank white pill. `STATUS_COLORS.info`
+was `bg-opsgrid-primary text-white`; `bg-opsgrid-primary` is `var(--color-primary)`, which is
+`#fafafa` in the **default dark theme** and `#171717` in light. White text on a white
+background.
+
+Swept across every badge variant: `info` was the only entry pairing a theme-following
+background with a fixed foreground. Every other entry already used `text-opsgrid-bg` — the
+opposite end of whichever theme is active — and the fixed-colour backgrounds (`bg-status-*`,
+`bg-packml-*`) are exempt because they do not move with the theme, so a fixed foreground
+beside them is a real decision rather than a coin flip.
+
+**Ten call sites, all illegible in the theme most people use:** the ERP integration type
+column, the admin user-role chips, the NLP domain and priority tags in four components, the
+fleet vehicle count, and the new Forms panel. None of them wrong at the call site. The variant
+was.
+
+Guard: `frontend/src/utils/statusColors.test.ts` asserts the rule rather than the instance — a
+`bg-opsgrid-*` background must pair with `text-opsgrid-bg`. Mutation-verified in both
+directions.
+
+## Rule 67 — a test suite has no opinion about what the screen looks like
+
+This is the part worth keeping. **467 unit tests, a passing typecheck, and the four
+frontend defect-class guards all ran green over a control that displayed nothing.** They were
+not weak tests; the page tests asserted the badge's *text content*, which was present and
+correct in the DOM the whole time.
+
+No assertion anywhere in this codebase compares a foreground colour to its background, so
+contrast is not a dimension the suite can fail in. The bug lived in the one axis every gate
+was blind to, and it had been there long enough to reach ten call sites.
+
+It survived a second way: it is perfectly legible in light theme. A defect that only appears
+under the *default* setting, and disappears under the one a developer might toggle to while
+debugging, is one that a screenshot finds in a second and a green suite never will.
+
+The correction is not "write contrast tests" — it is that **rendering the thing and looking at
+it is a distinct verification method, not a weaker substitute for the suite.** Classes 1–59
+were all found by reading code or running tests. This one could not have been.
 
 ## What the six cost, and what they bought
 
