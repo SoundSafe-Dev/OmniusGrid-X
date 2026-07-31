@@ -237,6 +237,15 @@ class Settings(BaseSettings):
     # cap stops a pathological document from exploding embeddings/Qdrant/memory.
     RAG_MAX_UPLOAD_BYTES: int = 50 * 1024 * 1024  # 50 MiB, mirrors ingress
     RAG_MAX_CHUNKS_PER_DOC: int = 2000  # hard cap; larger docs are truncated + flagged
+    # Async indexing worker (app/workers/rag_indexing.py). The worker claims
+    # queued rag_documents rows with FOR UPDATE SKIP LOCKED, so it is safe at
+    # any replica count — unlike the singleton OTA dispatcher.
+    RAG_INDEX_WORKER_ENABLED: bool = True
+    RAG_INDEX_POLL_INTERVAL_SECONDS: int = 5
+    RAG_INDEX_MAX_ATTEMPTS: int = 3
+    # Must exceed worst-case indexing time: compose runs RAG_INFERENCE_TIMEOUT
+    # at 180s PER EMBED BATCH, and a large document has many batches.
+    RAG_INDEX_STALE_INDEXING_SECONDS: int = 900
     # Per-citation snippet preview length. A citation shows a window of its source
     # chunk; too short and the cited fact falls outside the preview (e.g. a long
     # table row or an unstructured .txt chunk whose match sits past the cutoff).
