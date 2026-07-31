@@ -12,7 +12,7 @@ scoped to the caller's organization explicitly.
 """
 
 from datetime import datetime, timezone
-from typing import Optional, List
+from typing import Any, Dict, Optional, List
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy import select, and_, delete
@@ -28,7 +28,50 @@ import structlog
 
 logger = structlog.get_logger()
 
+from pydantic import BaseModel  # noqa: E402
+
 router = APIRouter()
+
+# ---- Response schemas (pool #43). Documented, not reshaped.
+
+
+class MessageResponse(BaseModel):
+    """Consent record / withdraw / erasure all acknowledge with one message."""
+
+    message: str
+
+
+class ConsentListResponse(BaseModel):
+    items: List[Dict[str, Any]]
+    total: int
+
+
+class ProcessingRecordListResponse(BaseModel):
+    items: List[Dict[str, Any]]
+    total: int
+
+
+class ProcessingRecordCreated(BaseModel):
+    id: str
+    processing_activity: str
+    message: str
+
+
+class UserDataExport(BaseModel):
+    """A GDPR Article 15 subject-access export.
+
+    `user` and `consents` stay open objects deliberately: this payload is the
+    legal deliverable, and a response model that FILTERS it is the one thing it
+    must never be. If a column is added to the user record, an under-declared
+    model would quietly withhold it from a data-subject request — a compliance
+    failure that returns 200.
+    """
+
+    user: Dict[str, Any]
+    consents: List[Dict[str, Any]]
+    export_timestamp: str
+
+
 
 
 async def _get_tenant_user(
@@ -99,7 +142,7 @@ async def _anonymize_user(user: User, db: AsyncSession) -> None:
     await db.commit()
 
 
-@router.post("/consent", summary="Record consent", description="Record user consent for data processing activities.")
+@router.post("/consent", response_model=MessageResponse, summary="Record consent", description="Record user consent for data processing activities.")
 @rate_limit("100/minute")
 async def record_consent(
     request: Request,
@@ -141,7 +184,7 @@ async def record_consent(
     return {"message": "Consent recorded successfully"}
 
 
-@router.get("/consent", summary="Get user consents", description="Get all consent records for the current user.")
+@router.get("/consent", response_model=ConsentListResponse, summary="Get user consents", description="Get all consent records for the current user.")
 @rate_limit("100/minute")
 async def get_user_consents(
     request: Request,
@@ -169,7 +212,7 @@ async def get_user_consents(
     return {"items": consent_list, "total": len(consent_list)}
 
 
-@router.put("/consent/{consent_id}/withdraw", summary="Withdraw consent", description="Withdraw previously given consent.")
+@router.put("/consent/{consent_id}/withdraw", response_model=MessageResponse, summary="Withdraw consent", description="Withdraw previously given consent.")
 @rate_limit("100/minute")
 async def withdraw_consent(
     request: Request,
@@ -208,7 +251,7 @@ async def withdraw_consent(
     return {"message": "Consent withdrawn successfully"}
 
 
-@router.get("/data-export", summary="Export user data", description="Export all user data in machine-readable format (GDPR data portability).")
+@router.get("/data-export", response_model=UserDataExport, summary="Export user data", description="Export all user data in machine-readable format (GDPR data portability).")
 @rate_limit("10/hour")
 async def export_user_data(
     request: Request,
@@ -225,7 +268,7 @@ async def export_user_data(
     return user_data
 
 
-@router.delete("/data-delete", summary="Delete user data", description="Delete all user data (GDPR right to be forgotten). This action is irreversible.")
+@router.delete("/data-delete", response_model=MessageResponse, summary="Delete user data", description="Delete all user data (GDPR right to be forgotten). This action is irreversible.")
 @rate_limit("10/hour")
 async def delete_user_data(
     request: Request,
@@ -252,6 +295,7 @@ async def delete_user_data(
 
 @router.get(
     "/admin/users/{user_id}/data-export",
+    response_model=UserDataExport,
     summary="Export a tenant user's data",
     description="Admin-assisted GDPR export for a user in the administrator's organization.",
     dependencies=[Depends(require_admin)],
@@ -276,6 +320,7 @@ async def admin_export_user_data(
 
 @router.delete(
     "/admin/users/{user_id}/data-delete",
+    response_model=MessageResponse,
     summary="Delete a tenant user's data",
     description="Admin-assisted GDPR erasure for a user in the administrator's organization.",
     dependencies=[Depends(require_admin)],
@@ -306,7 +351,7 @@ async def admin_delete_user_data(
     return {"message": "User data deleted successfully. This action is irreversible."}
 
 
-@router.get("/processing-records", summary="Get data processing records", description="Get data processing records for the organization.")
+@router.get("/processing-records", response_model=ProcessingRecordListResponse, summary="Get data processing records", description="Get data processing records for the organization.")
 @rate_limit("100/minute")
 async def get_processing_records(
     request: Request,
@@ -342,7 +387,7 @@ async def get_processing_records(
     return {"items": record_list, "total": len(record_list)}
 
 
-@router.post("/processing-records", summary="Create data processing record", description="Create a new data processing record.", dependencies=[Depends(require_admin)])
+@router.post("/processing-records", response_model=ProcessingRecordCreated, summary="Create data processing record", description="Create a new data processing record.", dependencies=[Depends(require_admin)])
 @rate_limit("10/minute")
 async def create_processing_record(
     request: Request,

@@ -1,6 +1,6 @@
 """Data Retention Policies API Routes"""
 
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -34,6 +34,86 @@ from app.middleware.tenant_isolation import get_tenant_db, get_tenant_org_id
 # A guard (tests/test_data_retention_router_unmounted.py) fails if it is mounted
 # without that change. The tenant-scoped retention surface is `tenant_router`.
 router = APIRouter()
+
+# ---- Response schemas (pool #43). Documented, not reshaped.
+
+
+class HistorianPolicyOut(BaseModel):
+    """`_historian_policy_payload`, shared by get / create / update."""
+
+    id: str
+    organization_id: str
+    metric_name: str
+    hot_retention_days: int
+    warm_retention_days: int
+    cold_retention_days: int
+    ingestion_priority: str
+    ingestion_sample_rate: float
+    max_ingest_age_seconds: int
+    archival_enabled: bool
+    created_by: Optional[str] = None
+    created_at: str
+    updated_at: str
+
+
+class HistorianPolicyList(BaseModel):
+    policies: List[HistorianPolicyOut]
+    count: int
+
+
+class EnforceResult(BaseModel):
+    organization_id: str
+    deleted_rows: int
+
+
+class RetentionStatusResponse(BaseModel):
+    #: Rows describe TimescaleDB hypertable chunks; the columns depend on the
+    #: server's Timescale version, so they stay open.
+    tables: List[Dict[str, Any]]
+    count: int
+
+
+class RetentionConfigOut(BaseModel):
+    table_name: str
+    hot_retention_days: int
+    warm_retention_days: int
+    cold_retention_days: int
+    compliance_retention_days: int
+    compliance_standard: Optional[str] = None
+    archival_enabled: bool
+    archival_destination: Optional[str] = None
+    created_at: Optional[Any] = None
+    updated_at: Optional[Any] = None
+
+
+class ConfigCreated(BaseModel):
+    message: str
+    config: Dict[str, Any]
+
+
+class PolicyUpdated(BaseModel):
+    message: str
+    table_name: str
+    retention_days: int
+
+
+class OperationResults(BaseModel):
+    """`/archive` and `/purge` both report a message plus per-table results."""
+
+    message: str
+    results: List[Dict[str, Any]]
+
+
+class ComplianceCheckResponse(BaseModel):
+    compliance_checks: List[Dict[str, Any]]
+    count: int
+
+
+class AggregatesResponse(BaseModel):
+    aggregates: List[Dict[str, Any]]
+    count: int
+
+
 tenant_router = APIRouter()
 
 
@@ -95,7 +175,7 @@ _HISTORIAN_POLICY_COLUMNS = """
 """
 
 
-@tenant_router.get("/policies")
+@tenant_router.get("/policies", response_model=HistorianPolicyList)
 async def list_historian_retention_policies(
     organization_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),
@@ -115,7 +195,7 @@ async def list_historian_retention_policies(
     return {"policies": policies, "count": len(policies)}
 
 
-@tenant_router.get("/policies/{metric_name}")
+@tenant_router.get("/policies/{metric_name}", response_model=HistorianPolicyOut)
 async def get_historian_retention_policy(
     metric_name: str,
     organization_id: UUID = Depends(get_tenant_org_id),
@@ -138,7 +218,7 @@ async def get_historian_retention_policy(
     return _historian_policy_payload(row)
 
 
-@tenant_router.post("/policies", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_admin)])
+@tenant_router.post("/policies", response_model=HistorianPolicyOut, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_admin)])
 async def create_historian_retention_policy(
     policy: HistorianRetentionCreate,
     current_user: User = Depends(get_current_active_user),
@@ -181,7 +261,7 @@ async def create_historian_retention_policy(
     return _historian_policy_payload(result.fetchone())
 
 
-@tenant_router.put("/policies/{metric_name}", dependencies=[Depends(require_admin)])
+@tenant_router.put("/policies/{metric_name}", response_model=HistorianPolicyOut, dependencies=[Depends(require_admin)])
 async def update_historian_retention_policy(
     metric_name: str,
     policy: HistorianRetentionSettings,
@@ -271,7 +351,7 @@ class RetentionPolicyUpdate(BaseModel):
     retention_days: int
 
 
-@router.get("/status")
+@router.get("/status", response_model=RetentionStatusResponse)
 async def get_retention_status(
     db: AsyncSession = Depends(get_db)
 ):
@@ -306,7 +386,7 @@ async def get_retention_status(
         )
 
 
-@router.get("/config/{table_name}")
+@router.get("/config/{table_name}", response_model=RetentionConfigOut)
 async def get_retention_config(
     table_name: str,
     db: AsyncSession = Depends(get_db)
@@ -347,7 +427,7 @@ async def get_retention_config(
         )
 
 
-@router.post("/config", dependencies=[Depends(require_admin)])
+@router.post("/config", response_model=ConfigCreated, dependencies=[Depends(require_admin)])
 async def create_retention_config(
     config: RetentionConfig,
     current_user: User = Depends(get_current_active_user),
@@ -409,7 +489,7 @@ async def create_retention_config(
         )
 
 
-@router.put("/policy/{table_name}", dependencies=[Depends(require_admin)])
+@router.put("/policy/{table_name}", response_model=PolicyUpdated, dependencies=[Depends(require_admin)])
 async def update_retention_policy(
     table_name: str,
     policy: RetentionPolicyUpdate,
@@ -438,7 +518,7 @@ async def update_retention_policy(
         )
 
 
-@router.post("/archive", dependencies=[Depends(require_admin)])
+@router.post("/archive", response_model=OperationResults, dependencies=[Depends(require_admin)])
 async def archive_to_cold_storage(
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
@@ -470,7 +550,7 @@ async def archive_to_cold_storage(
         )
 
 
-@router.post("/purge", dependencies=[Depends(require_admin)])
+@router.post("/purge", response_model=OperationResults, dependencies=[Depends(require_admin)])
 async def purge_old_data(
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
@@ -502,7 +582,7 @@ async def purge_old_data(
         )
 
 
-@router.get("/compliance")
+@router.get("/compliance", response_model=ComplianceCheckResponse)
 async def check_compliance_retention(
     db: AsyncSession = Depends(get_db)
 ):
@@ -533,7 +613,7 @@ async def check_compliance_retention(
         )
 
 
-@router.get("/aggregates")
+@router.get("/aggregates", response_model=AggregatesResponse)
 async def get_continuous_aggregates(
     db: AsyncSession = Depends(get_db)
 ):

@@ -91,9 +91,10 @@ absolute number rose while the ratio fell).
 | 2026-07-31 | 243 | `fleet_health` ×7 |
 | 2026-07-31 | 229 | `notifications` ×5, `dashboard_analytics` ×5, minus 6 that were never debt (204) |
 | 2026-07-31 | 209 | `exports` ×13, minus 8 that were never debt (binary media types) |
-| 2026-07-31 | **197** | `query_performance` ×12 |
+| 2026-07-31 | 197 | `query_performance` ×12 |
+| 2026-07-31 | **184** | `gdpr` ×9, `data_retention` ×12 (the pool counted 8) |
 
-**41 routes off the list, of which 27 were declarations and 14 were miscounts.**
+**74 routes off the list, of which 60 were declarations and 14 were miscounts.**
 Both halves matter: the ratchet is only worth obeying if its number is honest, and
 14 routes that could never be declared would have made the target unreachable.
 
@@ -161,6 +162,16 @@ helpers directly. A `**spread` in a returned dict is skipped rather than guessed
 at. **A partial check that names its gaps is worth more than a total one that is
 wrong** — and between the two files, both shapes are covered.
 
-This is the leverage that makes the remaining ~197 routes safe to do at pace:
-the expensive part of each declaration was reading the handler carefully enough
-to be sure no key was missed, and that part is now mechanical.
+This is the leverage that makes the remaining routes safe to do at pace: the
+expensive part of each declaration was reading the handler carefully enough to be
+sure no key was missed, and that part is now mechanical. It paid immediately —
+`gdpr` (9) and `data_retention` (12) went in as one pass and the sweep, now
+covering 72 handlers, confirmed both clean without a hand-written test each.
+
+## One shape declared deliberately open
+
+`UserDataExport` (`GET /gdpr/data-export`) keeps `user` and `consents` as open
+objects. This payload is a GDPR Article 15 subject-access response — the legal
+deliverable — and a response model that FILTERS it is the one thing it must never
+be. An under-declared model would quietly withhold a column from a data-subject
+request and return 200 while doing it.
