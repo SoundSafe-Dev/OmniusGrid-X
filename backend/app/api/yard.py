@@ -243,10 +243,22 @@ async def update_trailer(
 @router.post("/dock/doors", response_model=DockDoorResponse, dependencies=[Depends(require_operator_or_admin)])
 async def create_dock_door(
     data: DockDoorCreate,
+    org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """Create new dock door"""
-    door = DockDoor(**data.model_dump())
+    # Server-side override: ignore any client-supplied organization_id and bind the
+    # door to the authenticated user's organization — the same rule assets.py:100
+    # already applies. This was the only endpoint in the API that stored the client's
+    # value, so a request could name someone else's tenant. Row-level security is
+    # forced on dock_doors and would reject that write, but relying on it alone means
+    # the outcome depends on the database ROLE rather than the code: a connection with
+    # BYPASSRLS turns the same request into a genuine cross-tenant write, and even
+    # where RLS holds, the caller gets a 500 from a policy violation instead of a row
+    # bound to their own tenant. Two independent controls, neither trusted alone.
+    payload = data.model_dump()
+    payload["organization_id"] = org_id
+    door = DockDoor(**payload)
     db.add(door)
     await db.commit()
     return door
