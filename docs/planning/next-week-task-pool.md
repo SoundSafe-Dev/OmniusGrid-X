@@ -651,10 +651,24 @@ next step and teaches the lesson this codebase keeps relearning.
     Beyond #38's `api-contract`:
 
     * `pre-commit` — see #57, and it is the substantial one.
-    * `load-test` (k6, `--vus 5 --duration 30s`) — `continue-on-error: true` and pointed at
-      `BASE_URL: http://localhost:8000`, which CI does not stand up, so it is a smoke run
-      against nothing. Either stand the app up for it or delete the job; a load test that
-      cannot fail and has no target is a green tick for no work.
+    * `load-test` — ✅ **FIXED 2026-07-31. It now has a target and BLOCKS.** It was broken
+      twice over, and the second one is the part that would have survived the obvious fix:
+      besides having no app to talk to, the script hit `/api/v1/telemetry` and
+      `/api/v1/dashboard`, **neither of which is a route** (every telemetry endpoint is
+      scoped to an asset; `dashboard` is a router prefix), while `/api/v1/assets` and
+      `/api/v1/alarms` only 307-redirected. Four of eight endpoints were wrong, so standing
+      the app up alone would still have produced ~50% errors.
+
+      The job now migrates a schema, starts the app under uvicorn, waits for readiness
+      rather than sleeping a guess, and runs k6 against it. Verified with a real k6 binary
+      in **both** directions — app up: exit 0, 100/100 checks; app down: exit 99 — because
+      "it passes" was never the property in doubt.
+
+      One trap worth recording: k6 derives its exit code from **thresholds only** — a failed
+      `check()` does not fail the run. Reaching for `--no-thresholds` to drop the latency
+      SLOs would have made the job incapable of failing again. The script now selects a
+      CI profile internally (`CI_SMOKE=true`) that keeps the error-rate thresholds and drops
+      only the latency ones, which on a shared runner measure the runner's neighbours.
     * SBOM generation (`ci-cd.yml`) — **deliberate and correctly reasoned**, under a comment
       saying *"generation failure must not block a deploy."* Leave it. Recorded here so the
       next audit does not re-flag it.

@@ -1076,10 +1076,42 @@ jobs:
             exit 1
           fi
 
-  # --- task 20: k6 load test (non-blocking) --------------------------------
+  # --- task 20: k6 smoke load test ------------------------------------------
   load-test:
     runs-on: ubuntu-latest
-    continue-on-error: true
+    # BLOCKING as of 2026-07-30, and it now has a target. It previously ran k6 against
+    # BASE_URL=http://localhost:8000 with nothing in the job listening on it, under a
+    # comment reading "harmless smoke run otherwise" — every request failed with a
+    # connection error, the `http_req_failed: rate<0.01` threshold was breached every
+    # time, and `continue-on-error: true` turned that into a green tick for no work.
+    #
+    # It was broken a second way that standing the app up would NOT have fixed: the
+    # script hit '/api/v1/telemetry' and '/api/v1/dashboard', neither of which is a
+    # route. Every telemetry endpoint is scoped to an asset, and 'dashboard' is a
+    # router prefix. Both 404'd, and '/api/v1/assets' and '/api/v1/alarms' only
+    # 307-redirected. Four of eight endpoints were wrong, so even against a healthy
+    # app it would have reported ~50% errors. All eight now verified 200 against a
+    # migrated database, including the two response-shape checks.
+    #
+    # WHAT IT ASSERTS, deliberately narrowly: that the app serves its main read paths
+    # under concurrency without erroring. It does NOT assert the latency SLOs in the
+    # script's own `thresholds` — p(95)<500ms on a shared GitHub runner measures the
+    # runner's neighbours, and a gate that fails for reasons the author cannot act on
+    # is one that gets disabled. The stage plan in the script is a 29-minute
+    # 1000-user profile for running against real infrastructure; CI overrides it with
+    # 5 VUs for 30s, which is a smoke test and is described as one.
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: timescale/timescaledb:latest-pg15
+        env:
+          POSTGRES_USER: omniusgrid
+          POSTGRES_PASSWORD: omniusgrid_dev_password
+          POSTGRES_DB: omniusgrid_test
+        options: >-
+          --health-cmd pg_isready --health-interval 10s
+          --health-timeout 5s --health-retries 5
+        ports: ['5432:5432']
     steps:
       - uses: actions/checkout@v4
         with:
@@ -1089,13 +1121,50 @@ jobs:
             /*
             !/backend/dataset/
           sparse-checkout-cone-mode: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install backend deps
+        working-directory: ./backend
+        run: pip install -r requirements.txt
+      - name: Migrate the schema
+        working-directory: ./backend
+        env:
+          DATABASE_URL: postgresql://omniusgrid:omniusgrid_dev_password@localhost:5432/omniusgrid_test
+        run: python scripts/migrate.py
+      - name: Start the app
+        working-directory: ./backend
+        env:
+          DATABASE_URL: postgresql+asyncpg://omniusgrid:omniusgrid_dev_password@localhost:5432/omniusgrid_test
+          JWT_SECRET_KEY: test-secret-key
+          ALLOW_DEV_TOKEN: "true"
+        run: |
+          nohup python -m uvicorn app.main:app --host 127.0.0.1 --port 8002 \
+            --log-level warning > uvicorn.log 2>&1 &
+          # Wait for readiness rather than sleeping a guessed interval: a fixed sleep
+          # either wastes time or starts k6 against a half-open socket.
+          for i in $(seq 1 60); do
+            curl -sf http://127.0.0.1:8002/health >/dev/null && echo "app ready" && exit 0
+            sleep 2
+          done
+          echo "app did not become ready; last 50 log lines:" && tail -50 uvicorn.log && exit 1
       - name: Run k6 smoke load test
         uses: grafana/setup-k6-action@v1
       - name: Execute
         uses: grafana/run-k6-action@v1
         with:
           path: tests/load/k6-load-test.js
-          flags: --vus 5 --duration 30s
         env:
-          # Points at whatever the CI stands up; harmless smoke run otherwise.
-          BASE_URL: http://localhost:8000
+          BASE_URL: http://127.0.0.1:8002
+          API_TOKEN: dev-token
+          # Selects the smoke profile INSIDE the script: 5 VUs for 30s, and error-rate
+          # thresholds without the latency SLOs. Doing it there rather than with
+          # `--no-thresholds` here is the whole point — k6 exits non-zero on a breached
+          # threshold and NOT on a failed check, so `--no-thresholds` would have made
+          # this job incapable of failing, which is the state it is being rescued from.
+          CI_SMOKE: "true"
+      - name: App log on failure
+        if: failure()
+        working-directory: ./backend
+        run: tail -100 uvicorn.log
