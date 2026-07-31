@@ -110,7 +110,7 @@ async def submit_command(
 
 @router.get("/status/{command_id}", response_model=CommandResponse)
 async def get_command_status(
-    command_id: str,
+    command_id: UUID,
     current_user = Depends(get_current_active_user)
 ):
     """Get status of a specific command"""
@@ -127,7 +127,7 @@ async def get_command_status(
 
 @router.post("/cancel/{command_id}", dependencies=[Depends(require_operator_or_admin)])
 async def cancel_command(
-    command_id: str,
+    command_id: UUID,
     current_user: User = Depends(get_current_active_user)
 ):
     """Cancel a pending or executing command"""
@@ -148,7 +148,7 @@ async def cancel_command(
 
 @router.get("/asset/{asset_id}", response_model=List[CommandResponse])
 async def get_asset_commands(
-    asset_id: str,
+    asset_id: UUID,
     status: Optional[str] = None,
     limit: int = Query(50, ge=1, description="Maximum rows to return."),
     current_user = Depends(get_current_active_user),
@@ -206,7 +206,7 @@ async def get_queue_status(
 
 @router.post("/asset/{asset_id}/emergency-stop", dependencies=[Depends(require_admin)])
 async def emergency_stop(
-    asset_id: str,
+    asset_id: UUID,
     current_user: User = Depends(get_current_active_user),
     org_id: UUID = Depends(get_tenant_org_id),
 ):

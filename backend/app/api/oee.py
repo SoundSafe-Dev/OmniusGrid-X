@@ -1,5 +1,6 @@
 """API routes for OEE (Overall Equipment Effectiveness)"""
 
+from uuid import UUID
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -46,7 +47,7 @@ class OEEHistoricalRequest(BaseModel):
 
 @router.get("/current/{asset_id}", response_model=OEEResponse)
 async def get_current_oee(
-    asset_id: str,
+    asset_id: UUID,
     time_window_hours: float = Query(default=1.0, ge=0.5, le=24),
     current_user = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_tenant_db),
@@ -73,7 +74,7 @@ async def get_current_oee(
     oee = await oee_calculator.calculate_oee(asset_id, time_window_hours)
     
     return {
-        "asset_id": asset_id,
+        "asset_id": str(asset_id),
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "availability": oee.availability,
         "performance": oee.performance,
@@ -90,7 +91,7 @@ async def get_current_oee(
 
 @router.get("/historical/{asset_id}")
 async def get_historical_oee(
-    asset_id: str,
+    asset_id: UUID,
     hours: int = Query(default=24, ge=1, le=168),
     aggregation: str = Query(default="hourly", pattern="^(hourly|daily|shift)$"),
     current_user = Depends(get_current_active_user),
@@ -118,14 +119,14 @@ async def get_historical_oee(
     
     # Get historical data
     data = await oee_calculator.get_historical_oee(
-        asset_id=asset_id,
+        asset_id=str(asset_id),
         start_time=start_time,
         end_time=end_time,
         aggregation=aggregation
     )
     
     return {
-        "asset_id": asset_id,
+        "asset_id": str(asset_id),
         "aggregation": aggregation,
         "start_time": start_time.isoformat(),
         "end_time": end_time.isoformat(),
@@ -219,7 +220,7 @@ async def get_oee_dashboard_summary(
 
 @router.get("/losses/{asset_id}")
 async def get_oee_losses(
-    asset_id: str,
+    asset_id: UUID,
     hours: int = Query(default=8, ge=1, le=72),
     current_user = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_tenant_db),
@@ -253,7 +254,7 @@ async def get_oee_losses(
     total_loss = availability_loss + performance_loss + quality_loss
     
     return {
-        "asset_id": asset_id,
+        "asset_id": str(asset_id),
         "period_hours": hours,
         "oee": oee.oee,
         "losses": {

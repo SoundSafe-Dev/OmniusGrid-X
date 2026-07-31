@@ -103,12 +103,36 @@ lane.
 | `RejectedPositiveData` | 2 | endpoint refused input its schema permits |
 | `UndefinedStatusCode` | 2 | was 49 before the status codes were documented |
 
-The 13 `UnsupportedMethodResponse` are not a defect to fix in one place. They look like
-`GET /api/v1/alarms/acknowledge-all` returning **422 rather than 405**, because the literal
-path is shadowed by `GET /api/v1/alarms/{alarm_id}` and "acknowledge-all" is parsed as an
-alarm id. Getting a 405 would mean typed path converters (`{alarm_id:uuid}`) so a non-UUID
-fails to match at routing time — a behaviour change across many routes, and worth deciding
-deliberately rather than to satisfy a checker.
+### Two categories are policy disagreements, not defects
+
+Worth reading before anyone spends a day "fixing" 37 non-bugs.
+
+**The 24 `AcceptedNegativeData`** are schemathesis mutating a valid request to violate the
+schema and expecting a 4xx. Sixteen mutate the body, seven add an unknown query parameter,
+one sends a null body. Both underlying behaviours are deliberate:
+
+* `{"is_enabled": 0}` where the schema says boolean returns **201**, because Pydantic's
+  default lax mode coerces `0` → `False`. Verified directly: lax accepts it, `strict=True`
+  rejects it. Adopting strict mode across the models would satisfy this check and break
+  every client currently sending `1`/`"true"`.
+* An unknown query parameter is ignored, which is ordinary REST practice and what most
+  clients rely on for forward compatibility.
+
+Neither is wrong. They encode a strictness policy this API has not adopted, and adopting it
+is a product decision with a compatibility cost — not a defect fix.
+
+**The 13 `UnsupportedMethodResponse`** are a routing shape. `GET /api/v1/alarms/acknowledge-all`
+returns **422 rather than 405**, because the literal path is shadowed by
+`GET /api/v1/alarms/{alarm_id}` and "acknowledge-all" is parsed as an alarm id. Getting a 405
+would mean typed path converters (`{alarm_id:uuid}`) so a non-UUID fails to match at routing
+time — a behaviour change across many routes.
+
+### So the realistic ceiling is not 451
+
+Roughly **37 operations cannot pass without a deliberate policy change**, and 2 more are the
+undeclared xlsx/Prometheus content types. The genuinely fixable population is the ~80
+`ServerError`s: unvalidated input reaching Postgres. Treat ~412 as the target, not 451, and
+do not let a future ratchet-raiser mistake the difference for remaining work.
 
 Demanding a green suite would leave two bad options: stay advisory (how this job spent
 weeks achieving nothing), or block every build until unrelated work lands. The ratchet is

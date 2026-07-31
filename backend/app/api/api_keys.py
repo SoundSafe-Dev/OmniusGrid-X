@@ -178,7 +178,7 @@ async def list_api_keys(
 @rate_limit("10/minute")
 async def revoke_api_key(
     request: Request,
-    key_id: str,
+    key_id: UUID,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):

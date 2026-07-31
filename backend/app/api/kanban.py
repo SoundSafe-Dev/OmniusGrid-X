@@ -400,7 +400,7 @@ async def create_task(
 
 @router.get("/tasks/{task_id}", response_model=TaskResponse)
 async def get_task(
-    task_id: str,
+    task_id: UUID,
     session: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
@@ -412,7 +412,7 @@ async def get_task(
 
 @router.put("/tasks/{task_id}", response_model=TaskResponse, dependencies=[Depends(require_operator_or_admin)])
 async def update_task(
-    task_id: str,
+    task_id: UUID,
     task_update: TaskUpdate,
     background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_tenant_db),
@@ -517,7 +517,7 @@ async def update_task(
 
 @router.delete("/tasks/{task_id}", dependencies=[Depends(require_operator_or_admin)])
 async def delete_task(
-    task_id: str,
+    task_id: UUID,
     session: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
@@ -547,7 +547,7 @@ async def delete_task(
 
 @router.post("/tasks/{task_id}/move", response_model=TaskResponse, dependencies=[Depends(require_operator_or_admin)])
 async def move_task(
-    task_id: str,
+    task_id: UUID,
     move_request: TaskMoveRequest,
     background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_tenant_db),
@@ -631,7 +631,7 @@ async def move_task(
 
 @router.post("/tasks/{task_id}/approve", response_model=TaskResponse, dependencies=[Depends(require_operator_or_admin)])
 async def approve_task(
-    task_id: str,
+    task_id: UUID,
     approval: TaskApprovalRequest,
     background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_tenant_db),
@@ -722,7 +722,7 @@ async def approve_task(
 
 @router.post("/tasks/{task_id}/start", response_model=TaskResponse, dependencies=[Depends(require_operator_or_admin)])
 async def start_task(
-    task_id: str,
+    task_id: UUID,
     background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
@@ -784,7 +784,7 @@ async def start_task(
 
 @router.post("/tasks/{task_id}/complete", response_model=TaskResponse, dependencies=[Depends(require_operator_or_admin)])
 async def complete_task(
-    task_id: str,
+    task_id: UUID,
     background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
@@ -952,7 +952,7 @@ async def execute_completion_actions(task_id: str, actions: Dict[str, Any], orga
 
 @router.get("/tasks/{task_id}/comments", response_model=List[TaskCommentResponse])
 async def get_task_comments(
-    task_id: str,
+    task_id: UUID,
     limit: int = Query(50, ge=1, le=200),
     session: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
@@ -970,7 +970,7 @@ async def get_task_comments(
 
 @router.post("/tasks/{task_id}/comments", response_model=TaskCommentResponse, dependencies=[Depends(require_operator_or_admin)])
 async def add_task_comment(
-    task_id: str,
+    task_id: UUID,
     comment: TaskCommentBase,
     background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_tenant_db),
@@ -1005,7 +1005,7 @@ async def add_task_comment(
 
 @router.post("/tasks/{task_id}/timer/start", response_model=TaskTimerResponse, dependencies=[Depends(require_operator_or_admin)])
 async def start_task_timer(
-    task_id: str,
+    task_id: UUID,
     timer_data: TaskTimerStart,
     session: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
@@ -1051,7 +1051,7 @@ async def start_task_timer(
 
 @router.post("/tasks/{task_id}/timer/stop", response_model=TaskTimerResponse, dependencies=[Depends(require_operator_or_admin)])
 async def stop_task_timer(
-    task_id: str,
+    task_id: UUID,
     timer_data: TaskTimerStop,
     session: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
@@ -1102,7 +1102,7 @@ async def stop_task_timer(
 
 @router.get("/tasks/{task_id}/time-logs", response_model=List[TaskTimerResponse])
 async def get_task_time_logs(
-    task_id: str,
+    task_id: UUID,
     session: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
@@ -1362,7 +1362,7 @@ async def create_task_rule(
 
 @router.put("/rules/{rule_id}", response_model=TaskRuleResponse, dependencies=[Depends(require_admin)])
 async def update_task_rule(
-    rule_id: str,
+    rule_id: UUID,
     rule_update: TaskRuleUpdate,
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
@@ -1413,7 +1413,7 @@ async def update_task_rule(
 
 @router.post("/rules/{rule_id}/test", response_model=TaskRuleTestResponse, dependencies=[Depends(require_admin)])
 async def test_task_rule(
-    rule_id: str,
+    rule_id: UUID,
     test_data: TaskRuleTestRequest,
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
@@ -1543,7 +1543,7 @@ async def get_premade_rules(
 
 @router.delete("/rules/{rule_id}", dependencies=[Depends(require_admin)])
 async def delete_task_rule(
-    rule_id: str,
+    rule_id: UUID,
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):

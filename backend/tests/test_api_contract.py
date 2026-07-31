@@ -58,8 +58,16 @@ def _serve_app_once() -> str:
     import uvicorn
 
     port = _free_port()
+    # log_config=None matters more than it looks. uvicorn.Config otherwise applies its
+    # own dictConfig, which silences the loggers the app already configured — including
+    # the `unhandled_exception` record that app.core.errors emits with the failing
+    # exception before returning its deliberately opaque "internal server error" body.
+    # Without this, an operation that 500s reports the envelope and NOTHING about the
+    # cause, and the gate tells you an endpoint is broken while withholding why. That
+    # was a regression introduced by moving off the in-process ASGI transport, where
+    # pytest had been capturing those records for free.
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning",
-                            lifespan="on")
+                            log_config=None, lifespan="on")
     server = uvicorn.Server(config)
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
