@@ -27,7 +27,7 @@ from app.api import rag
 # model-monitoring/drift (Harsh's lane) and admin query-performance diagnostics.
 from app.api import model_monitoring, query_performance
 from app.core.config import settings
-from app.core.responses import common_responses
+from app.core.responses import common_responses, unavailable_responses
 from app.core.logging_filters import install_sensitive_query_access_log_filter
 from app.db.database import init_db
 from app.services.websocket_manager import websocket_manager
@@ -318,7 +318,7 @@ app.include_router(dashboard.router, prefix="/api/v1/dashboard", tags=["Dashboar
 # Fleet-wide trends/aggregates for the operations dashboard (FS-192). Same
 # prefix as above: these are dashboard resources, just aggregate-shaped.
 app.include_router(dashboard_analytics.router, prefix="/api/v1/dashboard", tags=["Dashboard"], responses=common_responses)
-app.include_router(health.router, prefix="", tags=["Health"], responses=common_responses)
+app.include_router(health.router, prefix="", tags=["Health"], responses=unavailable_responses)
 app.include_router(engines.router, prefix="/api/v1/engines", tags=["AI Engines"], responses=common_responses)
 app.include_router(yard.router, prefix="/api/v1/yard", tags=["Yard Management"], responses=common_responses)
 app.include_router(transportation.router, prefix="/api/v1/transportation", tags=["Transportation Management"], responses=common_responses)
@@ -328,7 +328,7 @@ app.include_router(oee.router, prefix="/api/v1/oee", tags=["OEE"], responses=com
 app.include_router(health_index.router, prefix="/api/v1/health-index", tags=["Asset Health Index"], responses=common_responses)
 app.include_router(simulation.router, prefix="/api/v1/simulation", tags=["Simulation / Digital Twin"], responses=common_responses)
 app.include_router(notifications.router, prefix="/api/v1/notifications", tags=["Notifications"], responses=common_responses)
-app.include_router(edge_enroll.router, tags=["Edge"], responses=common_responses)
+app.include_router(edge_enroll.router, tags=["Edge"], responses=unavailable_responses)
 app.include_router(edge_ingest.router, tags=["Edge"], responses=common_responses)
 app.include_router(edge_fleet.router, tags=["Edge"], responses=common_responses)
 app.include_router(kanban.router, prefix="/api/v1/kanban", tags=["Kanban"], responses=common_responses)
@@ -344,7 +344,7 @@ app.include_router(audit.router, prefix="/api/v1/audit", tags=["Audit Logs"], re
 app.include_router(api_keys.router, prefix="/api/v1/api-keys", tags=["API Keys"], responses=common_responses)
 app.include_router(gdpr.router, prefix="/api/v1/gdpr", tags=["GDPR Compliance"], responses=common_responses)
 app.include_router(compliance.router, prefix="/api/v1/compliance", tags=["Compliance"], responses=common_responses)
-app.include_router(compliance_reports.router, prefix="/api/v1/compliance", tags=["Compliance Reports"], responses=common_responses)
+app.include_router(compliance_reports.router, prefix="/api/v1/compliance", tags=["Compliance Reports"], responses=unavailable_responses)
 app.include_router(
     compliance_reports.public_router,
     prefix="/api/v1/compliance",
@@ -352,7 +352,7 @@ app.include_router(
     responses=common_responses,
 )
 app.include_router(data_residency.router, prefix="/api/v1/data-residency", tags=["Data Residency"], responses=common_responses)
-app.include_router(erp_integrations.router, tags=["ERP Integrations"], responses=common_responses)
+app.include_router(erp_integrations.router, tags=["ERP Integrations"], responses=unavailable_responses)
 app.include_router(erp_webhooks.router, tags=["ERP Integrations"], responses=common_responses)
 app.include_router(platform_correlation.router, tags=["NLP Correlation"], responses=common_responses)
 # Fleet logistics (D20-D21): geofencing, maintenance, and logistics aggregates.
@@ -363,10 +363,10 @@ app.include_router(kpi.router, prefix="/api/v1/kpi", tags=["KPIs"], responses=co
 app.include_router(workcells.workcells_router, prefix="/api/v1/workcells", tags=["Workcells"], responses=common_responses)
 app.include_router(workcells.organizations_router, prefix="/api/v1/organizations", tags=["Organizations"], responses=common_responses)
 app.include_router(fleet_health.router, prefix="/api/v1/fleet", tags=["Fleet Health"], responses=common_responses)
-app.include_router(feature_flags.router, prefix="/api/v1/feature-flags", tags=["Feature Flags"], responses=common_responses)
-app.include_router(sso.router, prefix="/api/v1/sso", tags=["SSO"], responses=common_responses)
-app.include_router(bulk_operations.router, prefix="/api/v1/bulk", tags=["Bulk Operations"], responses=common_responses)
-app.include_router(exports.router, prefix="/api/v1/exports", tags=["Exports"], responses=common_responses)
+app.include_router(feature_flags.router, prefix="/api/v1/feature-flags", tags=["Feature Flags"], responses=unavailable_responses)
+app.include_router(sso.router, prefix="/api/v1/sso", tags=["SSO"], responses=unavailable_responses)
+app.include_router(bulk_operations.router, prefix="/api/v1/bulk", tags=["Bulk Operations"], responses=unavailable_responses)
+app.include_router(exports.router, prefix="/api/v1/exports", tags=["Exports"], responses=unavailable_responses)
 # Signature-authorized export downloads (no bearer; used by delivery email links).
 app.include_router(exports.public_router, prefix="/api/v1/exports", tags=["Exports"], responses=common_responses)
 app.include_router(error_tracking.router, prefix="/api/v1/admin/errors", tags=["Error Triage"], responses=common_responses)
@@ -386,10 +386,10 @@ app.include_router(
     tags=["Data Retention"],
     responses=common_responses,
 )
-app.include_router(rag.router, prefix="/api/v1/rag", tags=["RAG"], responses=common_responses)
+app.include_router(rag.router, prefix="/api/v1/rag", tags=["RAG"], responses=unavailable_responses)
 # Newly wired (were unmounted): model-monitoring/drift + admin query diagnostics.
-app.include_router(model_monitoring.router, prefix="/api/v1/model-monitoring", tags=["Model Monitoring"], responses=common_responses)
-app.include_router(query_performance.router, prefix="/api/v1/admin/query-performance", tags=["Query Performance"], responses=common_responses)
+app.include_router(model_monitoring.router, prefix="/api/v1/model-monitoring", tags=["Model Monitoring"], responses=unavailable_responses)
+app.include_router(query_performance.router, prefix="/api/v1/admin/query-performance", tags=["Query Performance"], responses=unavailable_responses)
 
 
 @app.get("/")

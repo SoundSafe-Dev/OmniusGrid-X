@@ -88,10 +88,27 @@ envelope rebuilt the response from `exc.headers`. Fixed in `c1e3ef56`.
 
 ## Why a ratchet
 
-299 of 451 operations conform. The remaining 152 are mostly **one behaviour**: generated
-input reaching Postgres unvalidated and surfacing as a 500 where the contract promises a
-4xx — **64 `DataError` + 32 `IntegrityError`**. That is per-endpoint validation work spread
-across every lane.
+**327–331 of 451** operations conform (floor: 318). The remaining ~124 are dominated by
+**one behaviour**: generated input reaching Postgres unvalidated and surfacing as a 500
+where the contract promises a 4xx (`DataError`, `ForeignKeyViolationError`,
+`CharacterNotInRepertoireError`). That is per-endpoint validation work spread across every
+lane.
+
+| check | count | nature |
+|---|---|---|
+| `ServerError` | 80 | real: unvalidated input reaching the database |
+| `AcceptedNegativeData` | 24 | real: endpoint accepted input its own schema forbids |
+| `UnsupportedMethodResponse` | 13 | routing shape — see below |
+| `UndefinedContentType` | 4 | xlsx and Prometheus-text responses, undeclared |
+| `RejectedPositiveData` | 2 | endpoint refused input its schema permits |
+| `UndefinedStatusCode` | 2 | was 49 before the status codes were documented |
+
+The 13 `UnsupportedMethodResponse` are not a defect to fix in one place. They look like
+`GET /api/v1/alarms/acknowledge-all` returning **422 rather than 405**, because the literal
+path is shadowed by `GET /api/v1/alarms/{alarm_id}` and "acknowledge-all" is parsed as an
+alarm id. Getting a 405 would mean typed path converters (`{alarm_id:uuid}`) so a non-UUID
+fails to match at routing time — a behaviour change across many routes, and worth deciding
+deliberately rather than to satisfy a checker.
 
 Demanding a green suite would leave two bad options: stay advisory (how this job spent
 weeks achieving nothing), or block every build until unrelated work lands. The ratchet is
@@ -104,10 +121,14 @@ Ten runs with no code change between them scored **294, 296, 297, 297, 297, 298,
 302, 303**. `derandomize=True` did not remove the spread, and neither did a freshly migrated
 database (two controlled fresh-DB runs scored 299 and 297).
 
-The floor is **290**: below every observed score, still catching any structural loss. Pinned
-at the best observed score it would fail roughly half of all builds, and *a gate that cries
-wolf is a gate somebody disables* — which is precisely how its predecessor ended up advisory
-and killed at six hours.
+The floor is **318**, raised from 290 on 2026-07-31 once a fix cleared the noise: documenting
+the status codes the error envelope actually emits took conformance to 327 and 331, against
+a pre-fix band of 294–303. That is the standard for moving this number — a gain larger than
+the spread, measured twice.
+
+It sits 9 below the observed minimum. Pinned at the best observed score it would fail roughly
+half of all builds, and *a gate that cries wolf is a gate somebody disables* — which is
+precisely how its predecessor ended up advisory and killed at six hours.
 
 ### The residual noise is 14 known operations
 

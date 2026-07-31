@@ -28,23 +28,25 @@ import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-#: Measured 2026-07-30 against a migrated TimescaleDB, after the problem+json content
-#: type (304 operations) and the 405/401 header fixes landed. Runtime ~8 minutes.
+#: RAISED 2026-07-31 from 290 after documenting the status codes the shared error
+#: envelope actually emits (400 and 405 globally, 503 on the eleven routers that raise
+#: it). Two runs then scored 327 and 331, against a pre-fix band of 294-303 — the gain
+#: clears the noise, which is the standard for moving this number.
 #:
-#: THE MARGIN IS DELIBERATE AND MEASURED. Four consecutive runs scored 294, 296, 297
-#: and 300 conforming operations with no code change — including two with
-#: `derandomize=True` and one against a freshly migrated database, so the spread is
-#: not hypothesis's seed and not accumulated DB state. A handful of operations are
-#: genuinely timing-dependent (health endpoints that report a dependency's state,
-#: mostly). Pinning the ratchet at the best observed score would fail roughly half of
-#: all builds for no reason, and a gate that cries wolf is a gate somebody disables —
-#: which is exactly how its predecessor ended up advisory and killed at six hours.
+#: THE MARGIN IS DELIBERATE AND MEASURED. Ten pre-fix runs scored 294, 296, 297, 297,
+#: 297, 298, 299, 300, 302 and 303 with no code change — `derandomize=True` did not
+#: remove the spread and neither did a freshly migrated database. Fourteen operations
+#: flip verdict between runs; they are named in docs/engineering/api-contract-gate.md,
+#: and four of them read live Postgres statistics that the suite itself perturbs.
 #:
-#: So the floor sits below the observed minimum of 294. It still catches a real
-#: regression: losing 5+ operations means something structural broke. Tightening it
-#: requires making those endpoints deterministic FIRST, not simply raising the number
-#: and hoping.
-BASELINE_PASSING = 290
+#: Pinning at the best observed score would fail roughly half of all builds, and a gate
+#: that cries wolf is a gate somebody disables — exactly how its predecessor ended up
+#: advisory and killed at six hours. So the floor sits 9 below the observed minimum of
+#: 327: wide enough to absorb the measured spread, tight enough that losing a handful
+#: of operations still fails the build.
+#:
+#: Raise it when a fix clears the noise, as this one did. Never lower it.
+BASELINE_PASSING = 318
 
 #: Total operations the schema documents, checked so a collapse in collection cannot
 #: pass the ratchet by making "passing" small and "total" equally small.
