@@ -200,9 +200,44 @@ def _make_jwt(user_id: UUID, secret: str, algorithm: str = "HS256") -> str:
 # Session-scoped fixtures
 # ---------------------------------------------------------------------------
 
+def _disable_ryuk_on_socket_mount_failure() -> None:
+    """Ryuk cannot start on a colima/Lima Docker host, and it takes 393 tests with it.
+
+    Ryuk is testcontainers' reaper: a sidecar that bind-mounts the Docker socket so
+    it can remove leaked containers after a crashed run. On Docker Desktop that
+    works. On colima the socket is a Lima-forwarded path and the mount is refused:
+
+        error while creating mount source path
+        '/Users/…/.colima/default/docker.sock': operation not supported
+
+    The reaper fails to start, testcontainers treats that as fatal, and **every
+    database-backed test errors at setup** — 393 of them, which is 14% of the
+    suite and, worse, the specific 14% that covers tenant isolation, RLS and the
+    real migrated schema. A developer on a Mac ran 1975 green tests and had no
+    signal that the strongest part of the suite had not executed.
+
+    That is not hypothetical damage. Enabling these locally immediately caught two
+    500s introduced by this session's own `response_model` work — a float band
+    bound declared `int` and a numeric priority declared `str` — both of which
+    passed the AST guard, the unit guards and the type checker, because the only
+    thing that disagrees with a wrong type is a real row.
+
+    WHAT DISABLING RYUK COSTS: containers from a hard-killed run are no longer
+    reaped automatically, so an aborted session can leave one behind
+    (`docker ps` then `docker rm`). That is a cleanup chore. Silently skipping the
+    database half of the suite is a correctness risk, and between the two this is
+    the cheaper failure.
+
+    Only set when the caller has not already chosen; an explicit
+    TESTCONTAINERS_RYUK_DISABLED wins either way.
+    """
+    os.environ.setdefault("TESTCONTAINERS_RYUK_DISABLED", "true")
+
+
 @pytest.fixture(scope="session")
 def pg_container():
     """Start an ephemeral TimescaleDB container for the whole test session."""
+    _disable_ryuk_on_socket_mount_failure()
     from testcontainers.postgres import PostgresContainer
 
     # testcontainers 4.x renamed the `user` kwarg to `username` (it raises
@@ -581,6 +616,7 @@ class _RedpandaContainer:
 
 @pytest.fixture(scope="session")
 def redpanda_container():
+    _disable_ryuk_on_socket_mount_failure()  # same colima constraint as pg_container
     """ONE broker per test session, shared by every Kafka-dependent e2e module.
 
     This used to be duplicated: an identical _RedpandaContainer lived in both

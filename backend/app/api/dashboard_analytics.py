@@ -101,8 +101,12 @@ class AvailabilityTrendResponse(BaseModel):
 
 class HealthBandItem(BaseModel):
     band: str
-    min: int
-    max: int
+    #: FLOATS, not ints. HEALTH_BANDS' top band is (…, 100.01) — an exclusive
+    #: upper bound expressed as a fraction — and pydantic rejects a float with a
+    #: fractional part for an int field, so `int` turned this endpoint into a 500.
+    #: Caught only once the 393 database-backed tests could run.
+    min: float
+    max: float
     count: int
 
 

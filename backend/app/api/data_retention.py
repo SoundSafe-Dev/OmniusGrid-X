@@ -47,7 +47,9 @@ class HistorianPolicyOut(BaseModel):
     hot_retention_days: int
     warm_retention_days: int
     cold_retention_days: int
-    ingestion_priority: str
+    #: INT, not str. It is a numeric priority (1..n) and the name reads like a
+    #: label — the kind of guess a reader makes and a database refuses.
+    ingestion_priority: int
     ingestion_sample_rate: float
     max_ingest_age_seconds: int
     archival_enabled: bool
