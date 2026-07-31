@@ -511,7 +511,10 @@ ALERTS_ACTIVE = Gauge(
 )
 
 
-@router.get("/metrics")
+# CONTENT_TYPE_LATEST is Prometheus's exposition format
+# ("text/plain; version=0.0.4; charset=utf-8"), not JSON. Declaring it keeps the
+# OpenAPI document honest about what a scraper actually receives.
+@router.get("/metrics", responses={200: {"content": {"text/plain": {}}}})
 async def metrics():
     """Prometheus metrics endpoint"""
     return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)

@@ -683,7 +683,7 @@ async def delete_scheduled_export(
 
 
 # --- Telemetry (CSV) ----------------------------------------------------------
-@router.get("/telemetry/{asset_id}", summary="Export telemetry as CSV (date-range filtered)")
+@router.get("/telemetry/{asset_id}", responses={200: {"content": {"text/csv": {}}}}, summary="Export telemetry as CSV (date-range filtered)")
 async def export_telemetry_csv(
     asset_id: UUID,
     background_tasks: BackgroundTasks,
@@ -747,7 +747,7 @@ async def export_telemetry_csv(
 
 
 # --- Kanban tasks (Excel) -----------------------------------------------------
-@router.get("/kanban/tasks", summary="Export Kanban tasks as Excel")
+@router.get("/kanban/tasks", responses={200: {"content": {XLSX_MEDIA_TYPE: {}}}}, summary="Export Kanban tasks as Excel")
 async def export_kanban_tasks(
     task_status: Optional[str] = Query(None, alias="status", description="Filter by task status"),
     columns: Optional[str] = Query(None, description="Ordered subset of task columns"),
@@ -768,7 +768,7 @@ async def export_kanban_tasks(
 
 
 # --- Registries (Excel) -------------------------------------------------------
-@router.get("/registries", summary="Export registries as Excel")
+@router.get("/registries", responses={200: {"content": {XLSX_MEDIA_TYPE: {}}}}, summary="Export registries as Excel")
 async def export_registries(
     registry_type: Optional[str] = Query(None),
     columns: Optional[str] = Query(None, description="Ordered subset of registry columns"),
@@ -788,7 +788,7 @@ async def export_registries(
     )
 
 
-@router.get("/registries/{registry_id}/items", summary="Export a registry's items as Excel")
+@router.get("/registries/{registry_id}/items", responses={200: {"content": {XLSX_MEDIA_TYPE: {}}}}, summary="Export a registry's items as Excel")
 async def export_registry_items(
     registry_id: UUID,
     columns: Optional[str] = Query(None, description="Ordered subset of registry-item columns"),
@@ -818,7 +818,7 @@ async def export_registry_items(
 
 
 # --- OEE (PDF) ----------------------------------------------------------------
-@router.get("/oee/summary", summary="Export a fleet OEE summary as PDF")
+@router.get("/oee/summary", responses={200: {"content": {"application/pdf": {}}}}, summary="Export a fleet OEE summary as PDF")
 async def export_oee_summary(
     time_window_hours: float = Query(24.0, ge=0.5, le=24),
     current_user: User = Depends(get_current_active_user),
@@ -867,7 +867,7 @@ async def export_oee_summary(
     )
 
 
-@router.get("/oee/{asset_id}", summary="Export a single asset's OEE report as PDF")
+@router.get("/oee/{asset_id}", responses={200: {"content": {"application/pdf": {}}}}, summary="Export a single asset's OEE report as PDF")
 async def export_oee_report(
     asset_id: UUID,
     time_window_hours: float = Query(1.0, ge=0.5, le=24),
@@ -910,12 +910,12 @@ async def _get_owned_job(job_id: str, current_user: User) -> dict:
     return job
 
 
-@router.get("/jobs/{job_id}", summary="Get an export job's status/progress")
+@router.get("/jobs/{job_id}", responses={200: {"content": {"text/csv": {}}}}, summary="Get an export job's status/progress")
 async def get_export_job(job_id: str, current_user: User = Depends(get_current_active_user)):
     return _job_public(await _get_owned_job(job_id, current_user))
 
 
-@router.get("/jobs/{job_id}/download", summary="Download a finished async export")
+@router.get("/jobs/{job_id}/download", responses={200: {"content": {"text/csv": {}}}}, summary="Download a finished async export")
 async def download_export_job(job_id: str, current_user: User = Depends(get_current_active_user)):
     job = await _get_owned_job(job_id, current_user)
     if job.get("status") != "completed":
