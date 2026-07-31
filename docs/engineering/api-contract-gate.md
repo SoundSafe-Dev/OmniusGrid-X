@@ -155,6 +155,37 @@ returns **422 rather than 405**, because the literal path is shadowed by
 would mean typed path converters (`{alarm_id:uuid}`) so a non-UUID fails to match at routing
 time — a behaviour change across many routes.
 
+### Known limitation: this gate runs with RLS inert
+
+The contract job connects as the database superuser, and **a superuser bypasses row-level
+security even where `FORCE ROW LEVEL SECURITY` is set**. So every tenant-isolation policy
+in the schema is switched off for the duration of this suite.
+
+That matters twice over. It means the gate cannot catch a contract failure that only
+appears under RLS — and it means results from it must not be read as statements about
+tenant isolation. Doing exactly that produced a false alarm during this work: a dock-door
+create with someone else's `organization_id` in the body returned **200 and wrote the
+row**, which looks like a cross-tenant write and is not one. The policy was present,
+forced, and correct; the connection was simply exempt.
+
+`tests/conftest.py:139` gets this right for the real-DB suite — it creates a
+`NOSUPERUSER NOBYPASSRLS` role explicitly because "superusers bypass RLS even with
+FORCE", so the isolation tests are sound. **This gate does not do the same yet.**
+
+Two things follow, and the second is not answerable from this repository:
+
+1. Give the contract job a restricted role, the way `conftest` does. Expect conformance
+   to *drop* when it lands — endpoints that currently sail through will start meeting the
+   policies — so it needs a deliberate re-baseline, which is a different act from
+   lowering the floor to make a build pass and must be recorded as such.
+2. **Check which role production connects as.** `DATABASE_URL` comes from the
+   `database-credentials` secret, which is not in the repo, so the answer is
+   operational. If that role is the cluster owner or otherwise carries `BYPASSRLS`, then
+   every RLS policy in the schema is decorative in production too, and the tenant model
+   rests on application-level scoping alone. Worth confirming rather than assuming — the
+   check is one query: `SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname =
+   current_user;`
+
 ### So the realistic ceiling is not 451
 
 Roughly **37 operations cannot pass without a deliberate policy change**, and 2 more are the
