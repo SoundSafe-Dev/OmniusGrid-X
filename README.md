@@ -1229,6 +1229,11 @@ thing that still needs its model is the Correlation-AI **inference** (a ready
 | Edge platform, backend platform, frontend/UI, deploy/CI, schema, observability, docs | **Hamad** | `hamad/converged-pre-main` (integration → `main`). The convergence program + the FS fixed-sprints above. |
 | *(ramp-up)* — under Harsh's lane | **Alex** | New contributor (joining the correlation/MLOps area under Harsh); not yet assigned a branch or task. |
 
+> 📋 **The next 104 fixed sprints are planned in
+> [`docs/planning/fixed-sprints-241-343.md`](docs/planning/fixed-sprints-241-343.md)** — FS-241
+> through FS-343, weighted 45 build / 21 fix / 22 test / 16 review across five waves, with a
+> measured lane map so the work stays clear of other devs' active files.
+
 > 📋 **Next week's work is pooled in
 > [`docs/planning/next-week-task-pool.md`](docs/planning/next-week-task-pool.md)** — 56
 > independently-assignable tickets with sizes and acceptance criteria, for **Harsh (Product
