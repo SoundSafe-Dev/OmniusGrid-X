@@ -274,6 +274,12 @@ AUTHENTICATED_OPERATIONAL_MUTATIONS = {
     ("POST", "/api/v1/rag/ingest"),
     ("POST", "/api/v1/rag/query"),
     ("DELETE", "/api/v1/rag/documents/{doc_id}"),
+    # Presigns a document the caller was already shown as a citation, so it is a
+    # POST only to keep the S3 key out of URLs and access logs — it mutates
+    # nothing. Any authenticated member of the org may open their own org's
+    # documents; the handler rejects a key outside the caller's `{org_id}/`
+    # prefix before it reaches the store.
+    ("POST", "/api/v1/rag/documents/link"),
     # model-monitoring (Harsh, MLOps drift) is authenticated. The admin
     # query-performance mutations + org-settings PUT moved to the
     # ADMIN_ROUTE_INVENTORY when their gate was consolidated onto the canonical

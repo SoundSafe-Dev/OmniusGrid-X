@@ -25,6 +25,7 @@ import {
   UploadCloud,
   HeartPulse,
   SlidersHorizontal,
+  ShieldCheck,
 } from 'lucide-react';
 import { useUIStore, useAuthStore } from '../../stores';
 import { cn } from '../../utils';
@@ -48,6 +49,7 @@ const navItems: NavItem[] = [
   { path: '/oee', label: 'OEE', icon: BarChart3, description: 'Overall Equipment Effectiveness analytics' },
   { path: '/kanban', label: 'Kanban Board', icon: KanbanIcon, description: 'Task management and workflow tracking' },
   { path: '/nlp', label: 'Correlation AI', icon: MessageSquare, description: 'AI-powered cross-domain analysis' },
+  { path: '/compliance', label: 'Compliance Assistant', icon: ShieldCheck, description: 'Ask about policy, OSHA, and union agreements — answered from your document library, with sources' },
   { path: '/intake', label: 'Intake Inbox', icon: Inbox, description: 'Upload operational data for AI analysis' },
   {
     path: '/engines',

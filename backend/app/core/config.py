@@ -269,6 +269,24 @@ class Settings(BaseSettings):
     RAG_RERANK_TOP_N: int = 5  # passages kept after rerank, sent to the LLM
     RAG_MAX_CONTEXT_CHARS: int = 12000  # cap on concatenated context
 
+    # Operational context (ERP) blended into the generation prompt.
+    # A SECOND retrieval leg, deliberately not a second corpus: ERP rows are read
+    # live from Postgres at query time and appended to the prompt UNNUMBERED, so
+    # they inform the answer while only document chunks carry [n] citations.
+    # Keeping them out of Qdrant means no re-index on every ERP sync, no synthetic
+    # "documents" with no blob behind them, and no competition for the rerank slots
+    # that belong to policy text.
+    #
+    # CANDIDATE_ROWS is the DB read (most recent rows, filtered in Python because
+    # entity_data is JSON not JSONB - see rag_erp_context); CONTEXT_ROWS/CHARS are
+    # what survives into the prompt. The prompt budget is deliberately ~4x smaller
+    # than RAG_MAX_CONTEXT_CHARS: operational records qualify the documents, they
+    # do not replace them.
+    RAG_ERP_CONTEXT_ENABLED: bool = True
+    RAG_ERP_CANDIDATE_ROWS: int = 300  # rows read from Postgres before filtering
+    RAG_ERP_CONTEXT_ROWS: int = 40  # rows that reach the prompt
+    RAG_ERP_CONTEXT_CHARS: int = 3000  # cap on the rendered operational block
+
     # Application
     ENVIRONMENT: str = "development"   # development | staging | production
     DEBUG: bool = True

@@ -1,0 +1,1 @@
+export { ComplianceAssistant } from './ComplianceAssistant';

@@ -60,6 +60,10 @@ const TransportationManagement = named(() => import('./pages/logistics'), 'Trans
 
 const ERPIntegrations = named(() => import('./pages/erp'), 'ERPIntegrations')
 
+// Grounded compliance Q&A over the RAG document corpus — a different surface from
+// CorrelationAIPane below, which analyses operational data rather than policy.
+const ComplianceAssistant = named(() => import('./pages/compliance'), 'ComplianceAssistant')
+
 const CorrelationAIPane = named(() => import('./components/nlp/CorrelationAIPane'), 'CorrelationAIPane')
 const IntakeInbox = named(() => import('./pages/intake/IntakeInbox'), 'IntakeInbox')
 
@@ -124,6 +128,9 @@ const App: FC = () => {
 
                 {/* ERP integrations (its data feeds Correlation AI on interaction) */}
                 <Route path="/erp" element={<ERPIntegrations />} />
+
+                {/* Compliance Assistant (RAG Q&A over the policy corpus) */}
+                <Route path="/compliance" element={<ComplianceAssistant />} />
 
                 {/* NLP & Intake */}
                 <Route path="/nlp" element={<CorrelationAIPane />} />
