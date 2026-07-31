@@ -658,11 +658,21 @@ git commit -m "fix(rag): validate caller-supplied doc_id before building object 
 **Interfaces:**
 - Consumes: `RagDocument` from Task 1.
 - Produces, all importable from `app.services.rag_index_queue`:
-  - `@dataclass(frozen=True) class ClaimedDocument: org_id: str; doc_id: str; s3_key: str; filename: str; kind: str; attempts: int`
+  - `@dataclass(frozen=True) class ClaimedDocument: org_id: str; doc_id: str; s3_key: str; filename: str; kind: str; attempts: int; started_at: datetime`
   - `async def upsert_queued(*, org_id: str, doc_id: str, uploaded_by: str | None, filename: str, s3_key: str, kind: str) -> None`
   - `async def claim_next(org_id: str) -> ClaimedDocument | None`
-  - `async def finalize(*, org_id: str, doc_id: str, attempts: int, status: str, num_blocks: int = 0, num_chunks: int = 0, reason: str | None = None, error: str | None = None) -> bool`
-  - `async def requeue_or_fail(*, org_id: str, doc_id: str, attempts: int, error: str) -> str` (returns the new status)
+  - `async def finalize(*, org_id: str, doc_id: str, attempts: int, started_at: datetime, status: str, num_blocks: int = 0, num_chunks: int = 0, reason: str | None = None, error: str | None = None) -> bool`
+  - `async def requeue_or_fail(*, org_id: str, doc_id: str, attempts: int, started_at: datetime, error: str) -> str | None` (returns the new status, or **None** if the guard matched nothing — i.e. the claim was superseded and nothing was written)
+
+**Claim identity — read before writing `finalize`.** Guarding on
+`status='indexing' AND attempts=N` alone is **insufficient and was proven wrong
+against a real database**. `upsert_queued` resets `attempts` to 0 and the next
+`claim_next` returns it to 1, so the value recycles: worker W1 claims
+(`attempts=1`), the user re-ingests, worker W2 claims the new generation
+(`attempts=1` again), and W1's stale finalize then matches W2's live claim and
+overwrites it. Both `finalize` and `requeue_or_fail` must additionally match
+`started_at`, which `claim_next` stamps with microsecond precision inside the
+locking transaction and `upsert_queued` nulls.
   - `async def recover_stale() -> int`
   - `async def get_status(org_id: str, doc_id: str) -> dict | None`
   - `async def list_for_org(org_id: str) -> list[dict]`
@@ -752,6 +762,7 @@ async def test_finalize_writes_terminal_state(app, seeded_orgs):
         org_id=str(org_id),
         doc_id=claimed.doc_id,
         attempts=claimed.attempts,
+        started_at=claimed.started_at,
         status="indexed",
         num_blocks=3,
         num_chunks=7,
@@ -779,6 +790,7 @@ async def test_finalize_is_discarded_when_row_was_requeued_midflight(
         org_id=str(org_id),
         doc_id=claimed.doc_id,
         attempts=claimed.attempts,
+        started_at=claimed.started_at,
         status="indexed",
         num_chunks=7,
     )
@@ -786,6 +798,64 @@ async def test_finalize_is_discarded_when_row_was_requeued_midflight(
     assert ok is False, "stale finalize must not win"
     status = await q.get_status(str(org_id), "doc-1")
     assert status["status"] == "queued"
+
+
+async def test_stale_finalize_cannot_land_on_a_later_claim(app, seeded_orgs):
+    """The ABA case: attempts recycles, so it alone cannot identify a claim.
+
+    W1 claims (attempts=1), the user re-ingests (attempts reset to 0), W2
+    claims the new generation (attempts back to 1). W1's stale finalize must
+    NOT match W2's live claim. Guarding on attempts alone fails this test.
+    """
+    org_id = seeded_orgs["org_a_id"]
+    await _queue_doc(org_id)
+
+    w1 = await q.claim_next(str(org_id))
+    await _queue_doc(org_id)              # user re-ingests mid-pass
+    w2 = await q.claim_next(str(org_id))  # new generation, attempts recycled
+
+    assert w1.attempts == w2.attempts == 1, "precondition: attempts recycled"
+    assert w1.started_at != w2.started_at, "claims must be distinguishable"
+
+    landed = await q.finalize(
+        org_id=str(org_id),
+        doc_id=w1.doc_id,
+        attempts=w1.attempts,
+        started_at=w1.started_at,
+        status="indexed",
+        num_chunks=99,
+    )
+
+    assert landed is False, "W1's stale finalize overwrote W2's live claim"
+    status = await q.get_status(str(org_id), "doc-1")
+    assert status["status"] == "indexing", "W2's claim must still be live"
+    assert status["num_chunks"] == 0, "stale chunk count must not be written"
+
+
+async def test_stale_requeue_cannot_release_a_later_claim(app, seeded_orgs):
+    """Same ABA guard on the failure path.
+
+    Without it, W1's stale requeue flips W2's live claim back to 'queued' and a
+    third worker indexes the same document concurrently with W2.
+    """
+    org_id = seeded_orgs["org_a_id"]
+    await _queue_doc(org_id)
+
+    w1 = await q.claim_next(str(org_id))
+    await _queue_doc(org_id)
+    w2 = await q.claim_next(str(org_id))
+
+    outcome = await q.requeue_or_fail(
+        org_id=str(org_id),
+        doc_id=w1.doc_id,
+        attempts=w1.attempts,
+        started_at=w1.started_at,
+        error="qdrant unreachable",
+    )
+
+    assert outcome is None, "a discarded requeue must not report a status"
+    status = await q.get_status(str(org_id), "doc-1")
+    assert status["status"] == "indexing", "W2's claim must still be live"
 
 
 async def test_requeue_or_fail_retries_then_fails(app, seeded_orgs):
@@ -798,6 +868,7 @@ async def test_requeue_or_fail_retries_then_fails(app, seeded_orgs):
             org_id=str(org_id),
             doc_id=claimed.doc_id,
             attempts=claimed.attempts,
+            started_at=claimed.started_at,
             error="qdrant unreachable",
         )
         assert outcome == "queued"
@@ -807,6 +878,7 @@ async def test_requeue_or_fail_retries_then_fails(app, seeded_orgs):
         org_id=str(org_id),
         doc_id=claimed.doc_id,
         attempts=claimed.attempts,
+        started_at=claimed.started_at,
         error="qdrant unreachable",
     )
 
@@ -915,7 +987,14 @@ TERMINAL_STATUSES = ("indexed", "skipped", "failed")
 
 @dataclass(frozen=True)
 class ClaimedDocument:
-    """A row this worker has exclusively claimed for one indexing pass."""
+    """A row this worker has exclusively claimed for one indexing pass.
+
+    ``started_at`` is the claim's identity, not just a timestamp: ``attempts``
+    recycles across re-ingest generations (upsert resets it to 0, the next
+    claim returns it to 1), so it cannot distinguish this claim from a later
+    one. ``started_at`` is stamped inside the locking transaction and nulled by
+    ``upsert_queued``, so it uniquely identifies one pass.
+    """
 
     org_id: str
     doc_id: str
@@ -923,6 +1002,7 @@ class ClaimedDocument:
     filename: str
     kind: str
     attempts: int
+    started_at: datetime
 
 
 def _now() -> datetime:
@@ -1027,10 +1107,11 @@ async def claim_next(org_id: str) -> Optional[ClaimedDocument]:
         if row is None:
             return None
 
+        started_at = _now()
         row.status = "indexing"
         row.attempts += 1
-        row.started_at = _now()
-        row.updated_at = _now()
+        row.started_at = started_at
+        row.updated_at = started_at
         claimed = ClaimedDocument(
             org_id=str(org_id),
             doc_id=row.doc_id,
@@ -1038,6 +1119,7 @@ async def claim_next(org_id: str) -> Optional[ClaimedDocument]:
             filename=row.filename,
             kind=row.kind,
             attempts=row.attempts,
+            started_at=started_at,
         )
         await session.commit()
         logger.info(
@@ -1053,6 +1135,7 @@ async def finalize(
     org_id: str,
     doc_id: str,
     attempts: int,
+    started_at: datetime,
     status: str,
     num_blocks: int = 0,
     num_chunks: int = 0,
@@ -1061,11 +1144,14 @@ async def finalize(
 ) -> bool:
     """Write a terminal status, but only if our claim is still the current one.
 
-    The ``status='indexing' AND attempts=:attempts`` filter is what makes a
-    re-ingest safe: if the caller re-uploaded this doc_id mid-pass, the row is
-    already back to 'queued' with attempts reset, this UPDATE matches nothing,
-    and the stale result is discarded instead of overwriting the new work.
-    Returns True if the write landed.
+    The guard makes a re-ingest safe: if the caller re-uploaded this doc_id
+    mid-pass, the row is already back to 'queued' and this UPDATE matches
+    nothing, so the stale result is discarded instead of overwriting the new
+    work. Returns True if the write landed.
+
+    ``started_at`` is part of the guard because ``attempts`` alone is NOT
+    sufficient — it recycles (upsert resets to 0, next claim returns it to 1),
+    so a stale finalize can otherwise match a different worker's live claim.
     """
     if status not in TERMINAL_STATUSES:
         raise ValueError(f"not a terminal status: {status}")
@@ -1079,6 +1165,7 @@ async def finalize(
                 RagDocument.doc_id == doc_id,
                 RagDocument.status == "indexing",
                 RagDocument.attempts == attempts,
+                RagDocument.started_at == started_at,
             )
             .values(
                 status=status,
@@ -1098,31 +1185,46 @@ async def finalize(
 
 
 async def requeue_or_fail(
-    *, org_id: str, doc_id: str, attempts: int, error: str
-) -> str:
-    """Return a failed pass to 'queued', or to 'failed' once attempts run out."""
+    *, org_id: str, doc_id: str, attempts: int, started_at: datetime, error: str
+) -> Optional[str]:
+    """Return a failed pass to 'queued', or to 'failed' once attempts run out.
+
+    Guarded on the same claim identity as ``finalize``: a stale requeue would
+    otherwise flip a *live* claim back to 'queued', letting a third worker index
+    the same document concurrently with the one still running.
+
+    Returns the new status, or ``None`` when the guard matched nothing — the
+    caller must not report a failure for a row it did not actually write, or the
+    worker emits terminal failure logs for a document sitting healthy in
+    'queued'.
+    """
     next_status = (
         "queued" if attempts < settings.RAG_INDEX_MAX_ATTEMPTS else "failed"
     )
     now = _now()
     async with AsyncSessionLocal() as session:
         await _set_org(session, org_id)
-        await session.execute(
+        result = await session.execute(
             update(RagDocument)
             .where(
                 RagDocument.organization_id == str(org_id),
                 RagDocument.doc_id == doc_id,
                 RagDocument.status == "indexing",
                 RagDocument.attempts == attempts,
+                RagDocument.started_at == started_at,
             )
             .values(
                 status=next_status,
                 error=error[:2000],
+                started_at=None,
                 completed_at=now if next_status == "failed" else None,
                 updated_at=now,
             )
         )
         await session.commit()
+    if result.rowcount == 0:
+        logger.info("rag_index_queue.requeue_discarded", doc_id=doc_id)
+        return None
     logger.warning(
         "rag_index_queue.pass_failed",
         doc_id=doc_id,
@@ -1258,6 +1360,8 @@ parse, chunk, embed, or upsert — that is the whole point of the 202 contract.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 
 from app.services.rag_ingestion import IngestionPipeline
@@ -1379,6 +1483,7 @@ async def test_index_document_reports_skipped_for_unsupported_kind():
         filename="a.bin",
         kind="unsupported",
         attempts=1,
+        started_at=datetime.now(timezone.utc),
     )
 
     result = await _pipeline(_FakeDocs(b"binary")).index_document(claimed)
@@ -1396,6 +1501,7 @@ async def test_index_document_reports_skipped_when_no_text_extracted():
         filename="a.txt",
         kind="text",
         attempts=1,
+        started_at=datetime.now(timezone.utc),
     )
 
     result = await _pipeline(_FakeDocs(b"   ")).index_document(claimed)
@@ -1720,6 +1826,8 @@ def queue_calls(monkeypatch):
 
 
 def _claimed(doc_id="doc-1", kind="text"):
+    from datetime import datetime, timezone
+
     from app.services.rag_index_queue import ClaimedDocument
 
     return ClaimedDocument(
@@ -1729,6 +1837,7 @@ def _claimed(doc_id="doc-1", kind="text"):
         filename="a.txt",
         kind=kind,
         attempts=1,
+        started_at=datetime.now(timezone.utc),
     )
 
 
@@ -1864,6 +1973,7 @@ async def _process_one(claimed, pipeline) -> None:
             org_id=claimed.org_id,
             doc_id=claimed.doc_id,
             attempts=claimed.attempts,
+            started_at=claimed.started_at,
             error=str(exc),
         )
         return
@@ -1872,6 +1982,7 @@ async def _process_one(claimed, pipeline) -> None:
         org_id=claimed.org_id,
         doc_id=claimed.doc_id,
         attempts=claimed.attempts,
+        started_at=claimed.started_at,
         status=result.status,
         num_blocks=result.num_blocks,
         num_chunks=result.num_chunks,

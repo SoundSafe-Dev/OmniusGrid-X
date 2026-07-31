@@ -180,11 +180,36 @@ LIMIT 1 FOR UPDATE SKIP LOCKED`, then set `indexing`, `attempts += 1`,
 `started_at = now()`, commit.
 
 **Finalize is conditional**: `UPDATE … WHERE status='indexing' AND
-attempts=:claimed_attempts`. If a re-ingest resets the row to `queued` while a
-pass is in flight, the stale finalize matches nothing and is discarded, and the
-fresh row is claimed cleanly. This is the guard `_finish_publication` uses at
-`compliance_report_queue.py:197`. Without it a slow pass could stamp `indexed`
-over a legitimately re-queued document.
+attempts=:claimed_attempts AND started_at=:claimed_started_at`. If a re-ingest
+resets the row to `queued` while a pass is in flight, the stale finalize matches
+nothing and is discarded, and the fresh row is claimed cleanly. This extends the
+guard `_finish_publication` uses at `compliance_report_queue.py:197`.
+
+`started_at` is load-bearing, not decoration. An earlier draft of this design
+guarded on `status` and `attempts` alone, which is **insufficient**: because
+`upsert_queued` resets `attempts` to 0 and the next `claim_next` returns it to
+1, the guard value recycles across re-ingest generations. The resulting ABA
+collision was reproduced against a real database:
+
+1. Worker W1 claims doc X (`attempts=1`, `indexing`) and starts a long embed.
+2. The user re-uploads X — `upsert_queued` sets `queued`, `attempts=0`.
+3. Worker W2 claims the new generation — `attempts` is back to `1`.
+4. W1 finishes the OLD content and finalizes with `attempts=1` — which now
+   matches **W2's live claim**. The stale write lands: the row reports
+   `indexed` with the previous upload's chunk count while W2 is still writing
+   vectors for the new one.
+
+`claim_next` writes a microsecond-precision `started_at` inside the locking
+transaction and `upsert_queued` nulls it, so `started_at` uniquely identifies
+one claim without a second migration. `requeue_or_fail` carries the same guard —
+there, a stale requeue would flip a live claim back to `queued`, letting a third
+worker index the same document concurrently with W2.
+
+**`requeue_or_fail` reports only what it wrote.** Its return value is derived
+from the UPDATE's `rowcount`, not from the Python-side `attempts` argument: a
+stale call whose guard matched nothing must not report `failed` for a document
+that is actually sitting healthy in `queued`, or the worker emits terminal
+failure logs and alerts for a live row.
 
 **Crash mid-index** leaves a row in `indexing`. `recover_stale()` runs at the top
 of each poll and returns rows older than `RAG_INDEX_STALE_INDEXING_SECONDS` to
