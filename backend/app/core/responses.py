@@ -82,8 +82,38 @@ class ErrorEnvelope(BaseModel):
     }
 
 
+#: The media type ``app.core.errors`` actually sets on every error response.
+#: Kept as one constant so the declaration below cannot drift from the code that
+#: builds the response.
+PROBLEM_JSON = "application/problem+json"
+
+
 def _resp(description: str) -> Dict[str, Any]:
-    return {"model": ErrorEnvelope, "description": description}
+    """Document one error status.
+
+    ``content`` is explicit because FastAPI defaults an additional response's media
+    type to ``application/json``, while every error here is emitted as
+    ``application/problem+json`` (RFC 9457) by ``app.core.errors._envelope``. FS-80
+    documented the status codes and inherited that default, so the schema said
+    ``application/json`` for responses the API has never sent — the OpenAPI document
+    that the generated TypeScript SDK is built from was wrong for every 4xx/5xx on
+    every route. The contract suite reported it 304 times, once per operation; it is
+    one defect, not 304.
+    """
+    return {
+        "model": ErrorEnvelope,
+        "description": description,
+        # The $ref is spelled out rather than left empty: FastAPI attaches the model's
+        # schema to the DEFAULT media type only, so without this the problem+json entry
+        # would be declared but schema-less, and response bodies for every error would
+        # go unvalidated — the content-type check would pass while checking nothing.
+        # `model` stays so ErrorEnvelope keeps its place in components/schemas; the
+        # application/json entry FastAPI adds alongside is harmless, since the checks
+        # ask whether what was RECEIVED is documented.
+        "content": {
+            PROBLEM_JSON: {"schema": {"$ref": "#/components/schemas/ErrorEnvelope"}}
+        },
+    }
 
 
 # Attached at the include_router mount in app.main so every route documents the

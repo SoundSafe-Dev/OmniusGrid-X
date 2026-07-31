@@ -38,20 +38,40 @@ jobs:
   # --- task 12: property-based API contract tests ---------------------------
   api-contract:
     runs-on: ubuntu-latest
-    # Advisory (ready to flip pending one green CI run). The two known blockers
-    # are now fixed: (1) FS-80 documents 401/403/404/422/429/500 on every router
-    # mount (app/core/responses.py), and (2) migrations 039/040 repaired the
-    # ORM<->schema drift that 500'd reads on a real postgres. Kept advisory only
-    # because schemathesis (a CI-only dev dep) can't be run locally to prove the
-    # full ~400-op property suite is clean; flip to blocking once this job is
-    # observed green in CI.
-    continue-on-error: true
+    # BLOCKING, as a RATCHET rather than a pass/fail gate. Rebuilt 2026-07-30 after
+    # measuring what this job actually did: nothing. Every stated reason it stayed
+    # advisory was false, and it could not have gone green.
+    #
+    #   * It could not FINISH. ~2.5 min per operation x 451 = ~19 hours against
+    #     GitHub's 6h limit, so it was killed every run and `continue-on-error: true`
+    #     hid the kill. The cost was not the API: one request is ~45ms. It was that
+    #     `from_asgi` drives the app in-process, so every generated example ran on a
+    #     NEW event loop while the app's singletons stayed bound to the first — and
+    #     the websocket queue processor, whose error path had no backoff, then span at
+    #     full CPU forever. The suite now runs the app under uvicorn on a real port,
+    #     one long-lived loop, exactly like production. Full run: ~8.5 minutes.
+    #   * It had NO SCHEMA. This job never ran migrations, so every DB-backed
+    #     operation 500'd against an empty database. It also used POSTGRES_USER=test
+    #     while the migration chain grants to the `omniusgrid` role, so migrations
+    #     could not have run even if the step had existed.
+    #   * "schemathesis can't be run locally" was simply out of date — it is pinned in
+    #     requirements-dev.txt.
+    #
+    # 299 of 451 operations now conform. The remaining 152 are mostly one behaviour —
+    # generated input reaching Postgres unvalidated and surfacing as a 500 where the
+    # contract promises a 4xx — which is per-endpoint work across every lane. So this
+    # ratchets on the measured number instead of demanding green: a regression fails
+    # the build today, and the 152 are burned down deliberately. Same instrument as
+    # --cov-fail-under, and the same rule: raise it, never lower it.
+    timeout-minutes: 30
     services:
       postgres:
         image: timescale/timescaledb:latest-pg15
         env:
-          POSTGRES_USER: test
-          POSTGRES_PASSWORD: test
+          # Must be `omniusgrid`: 004_query_optimization.sql and others GRANT to that
+          # role by name, and the whole chain rolls back if it does not exist.
+          POSTGRES_USER: omniusgrid
+          POSTGRES_PASSWORD: omniusgrid_dev_password
           POSTGRES_DB: omniusgrid_test
         options: >-
           --health-cmd pg_isready --health-interval 10s
@@ -73,12 +93,33 @@ jobs:
       - name: Install dev deps
         working-directory: ./backend
         run: pip install -r requirements-dev.txt
+      - name: Migrate the schema
+        working-directory: ./backend
+        # Without this the contract suite runs against an empty database and every
+        # DB-backed operation 500s, which is what it did for weeks.
+        env:
+          DATABASE_URL: postgresql://omniusgrid:omniusgrid_dev_password@localhost:5432/omniusgrid_test
+        run: python scripts/migrate.py
       - name: Run schemathesis contract tests
         working-directory: ./backend
         env:
-          DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/omniusgrid_test
+          DATABASE_URL: postgresql+asyncpg://omniusgrid:omniusgrid_dev_password@localhost:5432/omniusgrid_test
           RUN_CONTRACT_TESTS: "1"
-        run: pytest tests/test_api_contract.py -q
+          JWT_SECRET_KEY: test-secret-key
+        # Individual failures do not fail the step; the ratchet below decides. The
+        # junit report is the input, so a crashed or truncated run cannot be mistaken
+        # for a clean one — contract_ratchet.py rejects a report whose operation count
+        # collapsed.
+        run: pytest tests/test_api_contract.py -q --junitxml=contract-report.xml || true
+      - name: Conformance must not regress
+        working-directory: ./backend
+        run: python scripts/contract_ratchet.py contract-report.xml
+      - name: Upload contract report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-contract-report
+          path: backend/contract-report.xml
 
   # --- FS-114: real-DB guard suite (schema parity + endpoint/write smoke) ---
   backend-realdb:

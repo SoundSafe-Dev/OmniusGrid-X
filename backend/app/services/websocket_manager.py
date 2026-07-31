@@ -293,7 +293,19 @@ class WebSocketManager:
             logger.warning("websocket_message_queue_full", dropped_message=True)
     
     async def _process_message_queue(self):
-        """Process messages from ingestion worker and broadcast to clients"""
+        """Process messages from ingestion worker and broadcast to clients.
+
+        The error path here used to log and immediately re-enter the loop. That is
+        safe only while every failure is transient: a PERSISTENT one (the queue bound
+        to a dead event loop, below) raises on entry every time, so the loop spun at
+        full CPU emitting the same line forever and never stopped. It was found by the
+        API contract suite, where it made an operation hang indefinitely — each ASGI
+        call runs on a new event loop, so after the first one this task could never
+        succeed again. Two rules come out of it, and they apply to any `while running`
+        worker: an error path with no delay is a spin, and a failure that cannot
+        change is not something to retry.
+        """
+        consecutive_errors = 0
         while self._running:
             try:
                 # Get message from queue with timeout
@@ -304,15 +316,43 @@ class WebSocketManager:
                     )
                 except asyncio.TimeoutError:
                     continue
-                
+
                 # Broadcast based on scope
                 if scope_type == 'org':
                     await self._broadcast_filtered(scope_id, message)
-                
+
                 self._message_queue.task_done()
-                
-            except Exception as e:
+                consecutive_errors = 0
+
+            except asyncio.CancelledError:
+                # Shutdown, not a fault. Never swallow this into the retry path.
+                raise
+            except RuntimeError as e:
+                # The queue's internal futures belong to the loop that first awaited
+                # them. Once this task is running on a different loop, EVERY get()
+                # raises and no amount of retrying helps, so stop rather than spin.
+                if "different event loop" in str(e) or "attached to a different loop" in str(e):
+                    logger.warning(
+                        "message_queue_processor_stopped_wrong_loop",
+                        error=str(e),
+                        reason="queue is bound to another event loop; retrying cannot succeed",
+                    )
+                    return
+                consecutive_errors += 1
                 logger.error("message_queue_processor_error", error=str(e))
+                await self._error_backoff(consecutive_errors)
+            except Exception as e:
+                consecutive_errors += 1
+                logger.error("message_queue_processor_error", error=str(e))
+                await self._error_backoff(consecutive_errors)
+
+    async def _error_backoff(self, consecutive_errors: int) -> None:
+        """Sleep between repeated failures so the loop cannot burn a core.
+
+        Capped at 5s: long enough that a persistent fault costs nothing, short enough
+        that recovery from a transient one is not noticeably delayed.
+        """
+        await asyncio.sleep(min(0.1 * (2 ** min(consecutive_errors - 1, 6)), 5.0))
     
     async def _broadcast_filtered(self, organization_id: str, message: WebSocketMessage):
         """Broadcast message to subscribed clients only"""
