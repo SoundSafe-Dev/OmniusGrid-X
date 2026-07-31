@@ -213,7 +213,7 @@ The pipeline is complete and now has one consumer. These are the gaps that consu
 - **FS-284 · `GET /rag/documents` returns raw S3 keys** · S · needs FS-241
   No filenames, dates, or status. Callers must parse `key.split("/")[1]`.
 
-- **FS-284b · 393 tests cannot run locally** · M · **schedule this early**
+- **FS-284b · 393 tests cannot run locally** · M · ✅ **DONE 2026-07-31** — see status section
   Every `*_realdb*` and testcontainers-backed test errors at setup on a Mac/colima host:
   `error while creating mount source path '/Users/…/.colima/default/docker.sock': operation not
   supported` — Ryuk cannot bind-mount the socket. **1975 tests pass and 393 never execute**, and
@@ -483,6 +483,43 @@ produce.
 - **FS-343 · Demo-path hardening** · M
   `seed_demo_data.py` covers every page; confirm it still does after 100 sprints of change, and
   make that a CI check rather than a manual one.
+
+---
+
+## Execution status — 2026-07-31
+
+**Done, verified, pushed:**
+
+| Sprint | Result |
+|---|---|
+| **FS-284b** | 393 tests unblocked. `make test` went 1975 → 2715. Found and fixed two 500s introduced by the FS-253… work — a float band bound typed `int`, a numeric priority typed `str`. |
+| **FS-254** | `audit` ×5 declared. |
+| *(pre-plan)* | The coverage ratchet, the shared route walker, the AST returned-keys sweep, and 65 routes declared across `fleet_health`, `notifications`, `dashboard_analytics`, `exports`, `query_performance`, `gdpr`, `data_retention`, `audit`. **250 → 179 undeclared.** |
+
+**FS-284b changed how the rest of this plan should be executed.** It was written as
+a testing item and it belongs first, ahead of Wave A: every `response_model` batch
+before it was landing unverified against a real database, and two of them were
+broken. Any remaining batch (FS-253, 255–258) should now be run with the full
+suite, not the hermetic one.
+
+**Not started.** Everything else. The realistic constraints, recorded so the next
+session does not rediscover them:
+
+- **Needs a second cluster** — FS-296, FS-297, FS-298, FS-324, FS-325. The DR
+  overlay's own header says it: *"UNVERIFIED AGAINST A REAL CLUSTER. There is no
+  second cluster to try it on."* No amount of local effort changes that.
+- **Needs disk** — FS-293. `rag-inference` wants ~5 GB of model weights; the Docker
+  VM is at 95% with 2.7 GB free. Reclaimable space exists but pruning deletes
+  someone's images.
+- **Needs external access** — FS-269, FS-270 (credential rotation), FS-300 (Intuit
+  sandbox consent), FS-322 (cross-region replication).
+- **Needs another person's decision** — FS-308, FS-309, FS-311, FS-312, FS-315,
+  FS-317, FS-320. The plan already called these *conversations, not sprints*.
+- **Needs a coordinated freeze window** — FS-326. The reformat touches every lane's
+  files at once and all eleven outstanding branches would have to rebase through it.
+
+Roughly 60 of the 104 are executable by one person without any of the above. The
+rest are gated on something a session cannot supply.
 
 ---
 
