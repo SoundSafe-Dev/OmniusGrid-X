@@ -12,6 +12,7 @@ the dev org+user).
 
 import json
 import os
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -99,6 +100,12 @@ class RagClient:
         }
 
     def ingest(self, path: Path, content_type: str, doc_id: str, timeout=300) -> Dict[str, Any]:
+        """Upload, then poll until indexing reaches a terminal status.
+
+        Ingestion is asynchronous (202 + worker), but this returns the SAME
+        shape the synchronous endpoint used to, so callers and their assertions
+        are unchanged.
+        """
         body, boundary = _multipart({"doc_id": doc_id}, "file", path.name, path.read_bytes(), content_type)
         headers = {
             "Authorization": f"Bearer {self.token}",
@@ -106,7 +113,28 @@ class RagClient:
             "Content-Type": f"multipart/form-data; boundary={boundary}",
         }
         status, raw = _do("POST", f"{self.base}/api/v1/rag/ingest", headers, body, timeout)
-        return json.loads(raw)
+        accepted = json.loads(raw)
+        return self.await_indexed(accepted["doc_id"], timeout=timeout)
+
+    def await_indexed(self, doc_id: str, timeout=300, interval=2.0) -> Dict[str, Any]:
+        """Poll a document's status until terminal, or raise on timeout."""
+        deadline = time.monotonic() + timeout
+        last: Dict[str, Any] = {}
+        while time.monotonic() < deadline:
+            _, last = self._json(
+                "GET",
+                f"/api/v1/rag/documents/{urllib.parse.quote(doc_id)}/status",
+            )
+            if last.get("status") in ("indexed", "skipped", "failed"):
+                return {
+                    **last,
+                    "stored": True,
+                    "indexed": last["status"] == "indexed",
+                }
+            time.sleep(interval)
+        raise ApiError(
+            408, f"doc {doc_id} still {last.get('status')} after {timeout}s"
+        )
 
     def ingest_bytes(self, filename, content_type, data: bytes, doc_id: str, timeout=120):
         """Ingest raw bytes (for robustness tests: empty, oversized, corrupt…).
