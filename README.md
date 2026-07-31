@@ -1197,11 +1197,35 @@ literal dict its handler returns — 50 handlers checked, mutation-verified agai
 it was written for. It names its own blind spots (helper-built returns, `**spread`) rather than
 claiming totality, and the companion file covers those.
 
-**250 → 184**, of which 60 were declarations and 14 were miscounts. Lane map, method and the
+**250 → 179**, of which 65 were declarations and 14 were miscounts. Lane map, method and the
 running tally are in
 [`docs/planning/hamad-response-model-burndown.md`](docs/planning/hamad-response-model-burndown.md);
 the clash map there was derived from each dev's **own commits**, since every stale branch
 appears to touch 82 API files purely by being 28–112 commits behind.
+
+### Delivered since — 393 tests that never ran, and the two 500s they were hiding
+
+On `hamad/converged-pre-main`. `make test` reported **1975 passing**. It now reports **2715**,
+and the 740 that appeared are the database-backed ones — tenant isolation, RLS, the real
+migrated schema. **The suite was strongest exactly where nobody could run it.**
+
+Testcontainers' reaper bind-mounts the Docker socket; on colima that socket is a Lima-forwarded
+path and the mount is refused, so the reaper fails, testcontainers treats it as fatal, and every
+DB-backed test **errors at setup**. Errors, not failures — which is why 393 of them scrolled
+past as environment noise in every run.
+
+**They caught two 500s within seconds of being enabled, both introduced by the `response_model`
+work in the slice above.** A health band whose upper bound is `100.01` declared `int`; a numeric
+retention priority declared `str`. Both keys were named correctly, so the AST sweep passed them;
+the unit guards validated against fixtures written by the same person who made the wrong
+assumption, so they agreed with it. **The only thing that disagrees with a wrong type is a real
+row from a real column** — and that is precisely what those 393 tests provide and nothing else in
+the suite does.
+
+The cost is that a hard-killed run can now leave a container behind. That is a cleanup chore;
+silently skipping the database half of a suite is a correctness risk, and this codebase has
+already paid for that shape once — the audit trail passed for months against a `pgcrypto`
+extension `conftest` created and no migration installed.
 
 ### Offline demo — `backend/scripts/seed_demo_data.py`
 

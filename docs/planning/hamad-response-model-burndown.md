@@ -92,7 +92,8 @@ absolute number rose while the ratio fell).
 | 2026-07-31 | 229 | `notifications` ×5, `dashboard_analytics` ×5, minus 6 that were never debt (204) |
 | 2026-07-31 | 209 | `exports` ×13, minus 8 that were never debt (binary media types) |
 | 2026-07-31 | 197 | `query_performance` ×12 |
-| 2026-07-31 | **184** | `gdpr` ×9, `data_retention` ×12 (the pool counted 8) |
+| 2026-07-31 | 184 | `gdpr` ×9, `data_retention` ×12 (the pool counted 8) |
+| 2026-07-31 | **179** | `audit` ×5 |
 
 **74 routes off the list, of which 60 were declarations and 14 were miscounts.**
 Both halves matter: the ratchet is only worth obeying if its number is honest, and
@@ -146,6 +147,14 @@ inherits it.
 3. **`query_performance`'s seven list endpoints each return `count`**, and the
    first version of their models declared only the items key — which would have
    deleted `count` from all seven at once.
+
+4. **Two 500s of my own making, found only when 393 unrunnable tests were
+   unblocked.** `HealthBandItem.min/max` declared `int` against a band whose upper
+   bound is `100.01`; `HistorianPolicyOut.ingestion_priority` declared `str`
+   against a numeric column. Both keys were named correctly — the AST sweep
+   compares names — and the unit guards validated against fixtures I wrote, so
+   they agreed with my own wrong assumption. **The only thing that disagrees with
+   a wrong type is a real row from a real column.** See FS-284b.
 
 ## The check is now automatic
 

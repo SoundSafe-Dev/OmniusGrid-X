@@ -3,7 +3,7 @@
 Admin-only endpoints for viewing and managing security audit logs.
 """
 
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from datetime import datetime
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -15,10 +15,64 @@ from app.middleware.tenant_isolation import get_tenant_db
 from app.db.models import AuditLog, User
 from app.middleware.rbac import require_admin
 
+from pydantic import BaseModel  # noqa: E402
+
 router = APIRouter()
 
 
-@router.get("/logs", summary="List audit logs", description="Retrieve audit logs with optional filtering. Admin access required.")
+# ---- Response schemas (pool #43 / FS-254). Documented, not reshaped.
+
+
+class AuditLogOut(BaseModel):
+    id: str
+    timestamp: Optional[Any] = None
+    user_id: Optional[str] = None
+    organization_id: Optional[str] = None
+    action: str
+    resource_type: Optional[str] = None
+    resource_id: Optional[str] = None
+    details: Optional[Any] = None
+    ip_address: Optional[str] = None
+    user_agent: Optional[str] = None
+    #: The tamper-evidence chain. Nullable because rows written before migration
+    #: 009's trigger existed have none — and, for a stretch this codebase has
+    #: documented, because the trigger raised on every insert and no row was
+    #: written at all.
+    hash_chain: Optional[str] = None
+    created_at: Optional[Any] = None
+
+
+class AuditLogList(BaseModel):
+    items: List[AuditLogOut]
+    total: int
+    skip: int
+    limit: int
+
+
+class HashChainVerification(BaseModel):
+    verified: bool
+    total_logs: int
+    #: Absent on the clean path, present when links fail — so it is optional
+    #: rather than an empty list, matching what the handler sends.
+    errors: Optional[List[Any]] = None
+    message: str
+
+
+class AuditActionList(BaseModel):
+    actions: List[str]
+    total: int
+
+
+class AuditSummary(BaseModel):
+    total_logs: int
+    by_action: Dict[str, Any]
+    by_resource_type: Dict[str, Any]
+    by_user: Dict[str, Any]
+    time_range: Dict[str, Any]
+
+
+
+@router.get("/logs", response_model=AuditLogList, summary="List audit logs", description="Retrieve audit logs with optional filtering. Admin access required.")
 async def list_audit_logs(
     current_user: User = Depends(require_admin),
     user_id: Optional[UUID] = None,
@@ -104,7 +158,7 @@ async def list_audit_logs(
     }
 
 
-@router.get("/logs/{log_id}", summary="Get audit log details", description="Retrieve detailed information about a specific audit log entry. Admin access required.")
+@router.get("/logs/{log_id}", response_model=AuditLogOut, summary="Get audit log details", description="Retrieve detailed information about a specific audit log entry. Admin access required.")
 async def get_audit_log(
     log_id: UUID,
     current_user: User = Depends(require_admin),
@@ -139,7 +193,7 @@ async def get_audit_log(
     }
 
 
-@router.get("/verify", summary="Verify hash chain integrity", description="Verify the integrity of the audit log hash chain to detect tampering. Admin access required.")
+@router.get("/verify", response_model=HashChainVerification, summary="Verify hash chain integrity", description="Verify the integrity of the audit log hash chain to detect tampering. Admin access required.")
 async def verify_hash_chain(
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_tenant_db)
@@ -200,7 +254,7 @@ async def verify_hash_chain(
     }
 
 
-@router.get("/actions", summary="List available audit actions", description="Retrieve a list of all unique audit actions recorded in the system. Admin access required.")
+@router.get("/actions", response_model=AuditActionList, summary="List available audit actions", description="Retrieve a list of all unique audit actions recorded in the system. Admin access required.")
 async def list_audit_actions(
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_tenant_db)
@@ -217,7 +271,7 @@ async def list_audit_actions(
     }
 
 
-@router.get("/summary", summary="Audit log summary", description="Get a summary of audit log statistics by action and time period. Admin access required.")
+@router.get("/summary", response_model=AuditSummary, summary="Audit log summary", description="Get a summary of audit log statistics by action and time period. Admin access required.")
 async def audit_log_summary(
     current_user: User = Depends(require_admin),
     start_time: Optional[datetime] = None,
