@@ -311,6 +311,47 @@ services:
       - omniusgrid-network
     command: python -m app.workers.ota_rollouts
 
+  # Drains the rag_documents queue: claims 'queued' rows and indexes them.
+  # Profiled with the rest of the RAG stack because it depends on seaweedfs,
+  # qdrant and rag-inference. Deliberately has NO redpanda dependency - the
+  # rag_documents row is the queue (FOR UPDATE SKIP LOCKED), so there is no
+  # outbox dispatcher to run and this is safe to scale past one replica.
+  rag-indexing-worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: omniusgrid-rag-indexing-worker
+    restart: unless-stopped
+    profiles: ["rag"]
+    environment:
+      DATABASE_URL: postgresql://omniusgrid:${POSTGRES_PASSWORD:-omniusgrid_dev_password}@timescaledb:5432/omniusgrid
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev_secret_key_change_in_production}
+      SCHEDULERS_IN_API: "false"
+      QDRANT_URL: http://qdrant:6333
+      S3_ENDPOINT_URL: http://seaweedfs:8333
+      RAG_INFERENCE_URL: http://rag-inference:8000
+      RAG_EMBED_BATCH: ${RAG_EMBED_BATCH:-8}
+      RAG_INFERENCE_TIMEOUT: ${RAG_INFERENCE_TIMEOUT:-180}
+      RAG_INDEX_WORKER_ENABLED: ${RAG_INDEX_WORKER_ENABLED:-true}
+      RAG_INDEX_POLL_INTERVAL_SECONDS: ${RAG_INDEX_POLL_INTERVAL_SECONDS:-5}
+      RAG_INDEX_MAX_ATTEMPTS: ${RAG_INDEX_MAX_ATTEMPTS:-3}
+      RAG_INDEX_STALE_INDEXING_SECONDS: ${RAG_INDEX_STALE_INDEXING_SECONDS:-900}
+      VISION_MODEL_ENABLED: "false"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      timescaledb:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_started
+      qdrant:
+        condition: service_started
+    networks:
+      - omniusgrid-network
+    command: python -m app.workers.rag_indexing
+
   # Frontend - React Dashboard
   frontend:
     build:
