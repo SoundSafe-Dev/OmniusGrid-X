@@ -105,6 +105,7 @@ ingest(){
   echo "Uploading $(basename "$f") …"
   curl -sS -X POST "$BACKEND/api/v1/rag/ingest" \
     -H "Authorization: Bearer $TOKEN" -F "file=@$f" | python3 -m json.tool
+  echo "Ingestion is async: poll GET $BACKEND/api/v1/rag/documents/{doc_id}/status until it reaches indexed/skipped/failed."
 }
 
 query(){
