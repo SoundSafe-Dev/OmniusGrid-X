@@ -2329,6 +2329,28 @@ one of its findings. The habit that catches it:
    from data that can fail identically. Ask what the class is, then ask what the population is.
    *(Fuller account: § Rule 62.)*
 
+63. **Every component fast and the whole impossible is a feedback loop, not a slow part.**
+   The contract job needed ~19 hours for work whose every measured piece was milliseconds. Two
+   loops compounded: a new event loop per generated example, and an error path with no delay
+   spinning on the failures that caused. Profiling the parts is what kept it broken.
+   *(Fuller account: § Rule 63.)*
+
+64. **A fixture that provisions what migrations do not makes the suite an unreliable witness.**
+   `conftest` created the pgcrypto extension; no migration did. The real-DB suite exercised a
+   working audit trail while a real deployment recorded nothing. The tests were not wrong about
+   the code — they were wrong about the database, which is the environment nobody inspects by
+   hand. *(Fuller account: § Rule 64.)*
+
+65. **A security claim that has not eliminated the harness is not a finding.**
+   A cross-tenant write appeared to succeed; the suite was connecting as a superuser, and a
+   superuser bypasses RLS even where FORCE is set. One query against `pg_roles` settled it.
+   Run that query before writing the bug report. *(Fuller account: § Rule 65.)*
+
+66. **A guard that cries wolf on compliant code gets loosened until it catches nothing.**
+   The tenant-id sweep flagged a file that was already correct, because it overrode via a
+   dict-key assignment the pattern missed. Mutation-verify BOTH directions: the real offender
+   must fail, and the compliant file must stay unflagged. *(Fuller account: § Rule 66.)*
+
 ---
 
 ## Open observations, not yet tickets
@@ -4547,7 +4569,7 @@ advisory for weeks under a comment saying it was ready to flip "pending one gree
 run"; that run was unreachable, and each fix was a prerequisite for seeing the next
 problem. The order is the finding.
 
-## Rule 67 — every component fast and the whole impossible is a feedback loop, not a slow part
+## Rule 63 — every component fast and the whole impossible is a feedback loop, not a slow part
 
 The job needed ~2.5 minutes per operation × 451 ≈ **19 hours**, against a 6-hour limit.
 Measured individually: one HTTP request 45 ms, one `call_and_validate` 0.1 s, building a
@@ -4580,7 +4602,7 @@ trigger raised on every insert, `app/services/audit.py` caught it by design ("ne
 the audited operation"), and **the audit trail recorded nothing at all**. Verified on a
 freshly migrated database: `SELECT count(*)` returned 0.
 
-## Rule 68 — a fixture that provisions what migrations do not makes the suite an unreliable witness
+## Rule 64 — a fixture that provisions what migrations do not makes the suite an unreliable witness
 
 Class 56 survived because `tests/conftest.py:91` runs
 `CREATE EXTENSION IF NOT EXISTS pgcrypto` when building a test container. The real-DB
@@ -4626,7 +4648,7 @@ RLS is forced on the table and would reject the write, so this was defence-in-de
 rather than an open door — but relying on it alone makes correctness depend on the
 database **role** rather than the code.
 
-## Rule 69 — a security claim that has not eliminated the harness is not a finding
+## Rule 65 — a security claim that has not eliminated the harness is not a finding
 
 Class 59 was found beside a false alarm. A dock-door create naming another tenant
 returned **200 and wrote the row**, which reads exactly like a cross-tenant write. It was
@@ -4641,7 +4663,7 @@ evidence about tenant isolation.
 The check that resolved it was one query against `pg_roles`. Run it before writing the
 bug report, not after.
 
-## Rule 70 — a guard that cries wolf on compliant code gets loosened until it catches nothing
+## Rule 66 — a guard that cries wolf on compliant code gets loosened until it catches nothing
 
 The first version of the class-59 sweep reported `assets.py` as an offender while it was
 already correct: it overrides via `payload["organization_id"] = org_id`, a dict-key

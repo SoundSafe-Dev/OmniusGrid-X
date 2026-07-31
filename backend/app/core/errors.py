@@ -24,6 +24,8 @@ from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
+import re
+
 import structlog
 
 logger = structlog.get_logger()
@@ -163,6 +165,37 @@ def _is_nul_byte_error(exc: BaseException) -> bool:
     return False
 
 
+_FK_DETAIL = re.compile(
+    r'Key \((?P<column>[\w, ]+)\)=\([^)]*\) is not present in table "(?P<table>\w+)"'
+)
+
+
+def _foreign_key_target(exc: BaseException) -> Optional[Dict[str, str]]:
+    """Return {column, table} when this is Postgres rejecting an unknown reference.
+
+    A foreign-key violation says the row you pointed at does not exist. In a request
+    context that pointer came from the payload — `trailer_id`, `shipment_id`,
+    `dock_door_id` — so it is the caller's mistake, and 500 both misleads them and
+    buries a real 4xx in the error budget.
+
+    THE RESPONSE NAMES THE COLUMN AND TABLE, and nothing else. Postgres's DETAIL line
+    also contains the offending VALUE, which may be another tenant's identifier; echoing
+    it back would turn an error message into a probe for what exists. The constraint name
+    is likewise withheld — it is schema shape the caller has no use for.
+    """
+    seen = set()
+    current: Optional[BaseException] = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if type(current).__name__ == "ForeignKeyViolationError" or "violates foreign key constraint" in str(current):
+            match = _FK_DETAIL.search(str(current))
+            if match:
+                return {"column": match.group("column"), "table": match.group("table")}
+            return {"column": "", "table": ""}
+        current = current.__cause__ or current.__context__
+    return None
+
+
 def _instance(request: Request) -> Optional[str]:
     try:
         return request.url.path
@@ -229,6 +262,28 @@ def register_exception_handlers(app: FastAPI) -> None:
                 "Request contains a NUL byte (0x00), which cannot be stored.",
                 "bad_request", 400, {}, tid, _instance(request),
             )
+
+        # A reference to a row that does not exist is the caller's mistake.
+        fk = _foreign_key_target(exc)
+        if fk is not None:
+            # STILL LOGGED AT ERROR. The status is now the caller's, but the cause might
+            # not be: our own code can insert a bad reference too, and a 4xx that goes
+            # unlogged would hide that class of bug completely. The status code answers
+            # the client; the log entry keeps the server honest.
+            logger.error(
+                "foreign_key_violation",
+                error=str(exc),
+                trace_id=tid,
+                path=request.url.path,
+                referenced_table=fk["table"] or None,
+                column=fk["column"] or None,
+            )
+            detail = (
+                f"Reference in '{fk['column']}' does not exist in '{fk['table']}'."
+                if fk["table"]
+                else "The request references a record that does not exist."
+            )
+            return _envelope(detail, "bad_request", 400, {}, tid, _instance(request))
 
         # Never leak internals; log with the trace id for correlation.
         logger.error("unhandled_exception", error=str(exc), trace_id=tid, path=request.url.path)
