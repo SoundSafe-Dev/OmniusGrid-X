@@ -348,6 +348,13 @@ services:
         condition: service_started
       qdrant:
         condition: service_started
+      # rag-inference's healthcheck has a 600s start_period because first
+      # boot downloads several GB of model weights. Without waiting on
+      # service_healthy here, documents queued at startup would exhaust
+      # RAG_INDEX_MAX_ATTEMPTS (the worker polls every 5s) and be marked
+      # permanently failed long before inference is actually ready.
+      rag-inference:
+        condition: service_healthy
     networks:
       - omniusgrid-network
     command: python -m app.workers.rag_indexing
