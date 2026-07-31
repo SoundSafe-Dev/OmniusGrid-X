@@ -38,7 +38,7 @@ except ImportError:  # aioboto3 not installed - service disabled until used
 logger = structlog.get_logger()
 
 
-_DOC_ID_RE = re.compile(r"^(?!\.+$)[A-Za-z0-9._-]{1,128}$")
+_DOC_ID_RE = re.compile(r"^(?!\.+\Z)[A-Za-z0-9._-]{1,128}\Z")
 
 
 class InvalidDocumentId(ValueError):

@@ -38,6 +38,12 @@ def test_accepts_safe_doc_ids(doc_id):
         "has space",
         "semi;colon",
         "null\x00byte",
+        "foo\n",  # trailing newline (CRLF/log-injection vector)
+        "a\n",
+        ".\n",
+        "..\n",
+        "foo\r",  # trailing carriage return
+        "..\r",
     ],
 )
 def test_rejects_unsafe_doc_ids(doc_id):
