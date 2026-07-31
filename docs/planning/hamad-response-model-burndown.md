@@ -90,7 +90,8 @@ absolute number rose while the ratio fell).
 | 2026-07-31 | **250** | baseline, measured from the live route table |
 | 2026-07-31 | 243 | `fleet_health` ×7 |
 | 2026-07-31 | 229 | `notifications` ×5, `dashboard_analytics` ×5, minus 6 that were never debt (204) |
-| 2026-07-31 | **209** | `exports` ×13, minus 8 that were never debt (binary media types) |
+| 2026-07-31 | 209 | `exports` ×13, minus 8 that were never debt (binary media types) |
+| 2026-07-31 | **197** | `query_performance` ×12 |
 
 **41 routes off the list, of which 27 were declarations and 14 were miscounts.**
 Both halves matter: the ratchet is only worth obeying if its number is honest, and
@@ -140,3 +141,26 @@ a field — has so far found two bugs that had nothing to do with coverage:
 The second one also caught the ratchet: `_serves_a_binary` initially believed the
 declaration and excluded the route from the count. A guard that reads a lie
 inherits it.
+
+3. **`query_performance`'s seven list endpoints each return `count`**, and the
+   first version of their models declared only the items key — which would have
+   deleted `count` from all seven at once.
+
+## The check is now automatic
+
+Finding (3) by eye, after finding (1) by eye, was the signal. `test_response_models_match_their_returns.py`
+walks the AST of every API module, finds handlers whose decorator sets
+`response_model=`, and compares the model's fields to the keys of every literal
+dict the handler returns. 50 handlers checked, mutation-verified against the
+`count` bug it was written for.
+
+It states its own blind spots rather than pretending to totality: handlers that
+return a variable or a helper call have no keys in the syntax, so they are covered
+instead by `test_declared_models_do_not_drop_fields`, which calls the shaping
+helpers directly. A `**spread` in a returned dict is skipped rather than guessed
+at. **A partial check that names its gaps is worth more than a total one that is
+wrong** — and between the two files, both shapes are covered.
+
+This is the leverage that makes the remaining ~197 routes safe to do at pace:
+the expensive part of each declaration was reading the handler carefully enough
+to be sure no key was missed, and that part is now mechanical.

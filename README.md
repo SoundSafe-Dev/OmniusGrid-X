@@ -1187,7 +1187,17 @@ against it, and both directions can break a working endpoint:
   new ratchet, which initially believed the declaration and excluded the route — **a guard
   that reads a lie inherits it.**
 
-**250 → 209**, of which 27 were declarations and 14 were miscounts. Lane map, method and the
+**Then the third find made the check automatic.** `query_performance`'s seven list endpoints
+each return `{<items>, "count"}`, and the first version of their models declared only the items
+key — which would have deleted `count` from all seven at once. Catching that by eye, after
+catching the UUID one by eye, was the signal: reading each handler carefully enough to be sure
+no key is missed does not scale to ~197 remaining routes. `test_response_models_match_their_returns.py`
+now walks the AST of every API module and compares each model's fields to the keys of every
+literal dict its handler returns — 50 handlers checked, mutation-verified against the exact bug
+it was written for. It names its own blind spots (helper-built returns, `**spread`) rather than
+claiming totality, and the companion file covers those.
+
+**250 → 197**, of which 39 were declarations and 14 were miscounts. Lane map, method and the
 running tally are in
 [`docs/planning/hamad-response-model-burndown.md`](docs/planning/hamad-response-model-burndown.md);
 the clash map there was derived from each dev's **own commits**, since every stale branch
