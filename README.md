@@ -1057,6 +1057,23 @@ deployment had none — **the tests were not wrong about the code, they were wro
 database.** A guard now fails the build for any extension the harness creates and no
 migration does.
 
+**And one more the same thread turned up.** `create_dock_door` did
+`DockDoor(**data.model_dump())`, and `DockDoorCreate` carries `organization_id` — so the tenant
+a row landed in came from the request body. One offender among 18 schemas carrying that field;
+every other handler already ignored it. Row-level security is forced on the table and would
+reject the write, so this was defence-in-depth rather than an open door — but relying on RLS
+alone makes correctness depend on the database **role** instead of the code.
+
+That distinction is worth keeping, because it arrived attached to a false alarm: the same
+request returned **200 and wrote the row** during testing, which reads exactly like a
+cross-tenant write. It was not one. The contract suite connects as a superuser, and *a
+superuser bypasses RLS even where `FORCE ROW LEVEL SECURITY` is set*. The policy was present,
+forced and correct; the connection was exempt. `conftest.py:139` already avoids this for the
+real-DB suite by creating a `NOSUPERUSER NOBYPASSRLS` role — the contract gate does not yet,
+and its docs now say its results are not evidence about tenant isolation. **A security claim
+that has not eliminated the harness as the cause is not yet a finding**, and the check that
+settled it was one query against `pg_roles`.
+
 The gate now runs all 451 operations in ~8 minutes and **blocks**, as a ratchet on a measured
 floor rather than demanding green, because ~37 operations cannot pass without a deliberate
 policy change (Pydantic strict mode, typed path converters) and the practical ceiling is ~412.
@@ -3129,7 +3146,7 @@ The ERP integration system correlates ERP data with operational telemetry to pro
 - [Implementation Summary](IMPLEMENTATION_SUMMARY.md) - Complete feature inventory
 
 **Engineering practice**
-- [Defect-class sweeps](docs/engineering/defect-class-sweeps.md) - The fifty-six classes of "code that looks wired and cannot work" found so far, what each sweep found (including the ones that came back clean), which mutation-tested guard keeps each closed, and sixty-two rules for writing a sweep worth trusting — most of them paid for by a detector that was wrong first, including one that reported zero offenders while three pages were broken and one that compared a baseline against itself
+- [Defect-class sweeps](docs/engineering/defect-class-sweeps.md) - The fifty-nine classes of "code that looks wired and cannot work" found so far, what each sweep found (including the ones that came back clean), which mutation-tested guard keeps each closed, and seventy rules for writing a sweep worth trusting — most of them paid for by a detector that was wrong first, including one that reported zero offenders while three pages were broken and one that compared a baseline against itself
 - [Large assets](docs/engineering/large-assets.md) - Why `backend/dataset` is 1.5 GB on disk but only 41 MB packed, why it must not be deleted (the generator sets no seed, so it is generated but NOT reproducible), and the `make lean` / sparse-checkout recipes that keep it off your disk and out of all 28 CI checkouts
 - [The API contract gate](docs/engineering/api-contract-gate.md) - The schemathesis job that drives all 451 documented operations, why it could never finish (every component fast, the whole impossible — a per-example event loop plus a retry path with no backoff), the four independent faults that each alone would have stopped it, why it blocks as a *ratchet* on a measured floor rather than demanding a green suite, and what it has found since — including an audit trail that had never recorded a single row
 - [The test quarantine](docs/engineering/test-quarantine.md) - What CI is allowed not to run, and the register that gives every exclusion an owner, a diagnosis and an expiry — including the staleness half that fails when a quarantined test starts passing. Records the 2026-07-30 release of four entries, and the rule it earned: before accepting that a quarantined test is another lane's problem, check whether the code under it is *running* — "the test is broken" and "the feature is unbuilt" look identical from the list and have opposite consequences

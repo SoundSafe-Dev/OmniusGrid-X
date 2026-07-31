@@ -14,7 +14,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The forty-two classes
+## The fifty-nine classes
 
 The first five were all originally found in ERP. The sixth came out of the fifth, the
 seventh out of two failing tests that turned out to share a cause, and the eighth out of
@@ -4537,3 +4537,124 @@ A list of other people's defects earns its place by being shorter than the work.
 zero it is a monument, and the assertion beneath it should be unconditional again. Its two
 companion tests — "names nothing already fixed" and "every entry names an owner" — went with it;
 they existed to keep the list honest, and there is no list.
+
+---
+
+# The contract-gate slice — six classes found by repairing a gate nobody could run
+
+Every class below was found downstream of one repair. The `api-contract` job had been
+advisory for weeks under a comment saying it was ready to flip "pending one green CI
+run"; that run was unreachable, and each fix was a prerequisite for seeing the next
+problem. The order is the finding.
+
+## Rule 67 — every component fast and the whole impossible is a feedback loop, not a slow part
+
+The job needed ~2.5 minutes per operation × 451 ≈ **19 hours**, against a 6-hour limit.
+Measured individually: one HTTP request 45 ms, one `call_and_validate` 0.1 s, building a
+strategy 0.14 s, drawing an example 0.0 s. Nothing was slow.
+
+Two loops compounded. `from_asgi` drives the app in-process, so every generated example
+ran on a new event loop while the app's module-level singletons stayed bound to the
+first — and `_process_message_queue` caught the resulting `RuntimeError`, logged it, and
+re-entered the loop with no delay, spinning at full CPU forever.
+
+Looking for the slow component is what kept this broken. When the parts are all fast,
+stop profiling parts and start looking for something that feeds itself.
+
+## Class 55 — an error path with no delay is a spin
+
+`while self._running:` … `except Exception: logger.error(...)` and straight back round.
+Safe while every failure is transient; with a permanent one — a queue bound to a dead
+event loop — it is an infinite tight loop that never exits and never recovers.
+
+**Not test-only.** Any `while running` worker does this the first time a fault stops
+being transient. Fixed with exponential backoff plus a terminal case for the
+unrecoverable error. Guard: `test_ws_queue_processor_cannot_spin.py`, one test per
+failure kind — permanent stops, transient sleeps, cancellation propagates.
+
+## Class 56 — a migration that depends on an extension it does not create
+
+`009_audit_logs.sql` triggers on every insert into `audit_logs` and calls
+`encode(digest(...), 'hex')`. `digest()` is pgcrypto. No migration created it, so the
+trigger raised on every insert, `app/services/audit.py` caught it by design ("never fail
+the audited operation"), and **the audit trail recorded nothing at all**. Verified on a
+freshly migrated database: `SELECT count(*)` returned 0.
+
+## Rule 68 — a fixture that provisions what migrations do not makes the suite an unreliable witness
+
+Class 56 survived because `tests/conftest.py:91` runs
+`CREATE EXTENSION IF NOT EXISTS pgcrypto` when building a test container. The real-DB
+suite exercised a working audit trail while a real deployment had none.
+
+**The tests were not wrong about the code. They were wrong about the database.** That is
+the general shape: any environment difference the harness papers over is a difference the
+suite can no longer see, and it papers over exactly the environments nobody inspects by
+hand. Guard: `test_schema_extensions_come_from_migrations.py` fails on any extension
+`conftest` creates and no migration does.
+
+## Class 57 — client input that can never be stored, reported as a server fault
+
+Postgres text columns cannot hold `0x00`. A request carrying one raised
+`CharacterNotInRepertoireError` and returned **500** — telling the caller to retry
+something that can never succeed, and filing a non-incident into error tracking each time.
+
+The mapping is deliberately narrow: **one** exception type whose cause is unambiguous,
+because nothing in this codebase generates a NUL byte, so the byte came from the payload.
+The tempting version maps every `DataError` to 400 and would relabel our own bad values
+as the caller's fault. `test_every_other_database_error_stays_a_500` fails if anyone
+widens it.
+
+## Class 58 — an id path parameter typed `str` where the column is a UUID
+
+`DELETE /api/v1/api-keys/0` returned 500: the parameter was `key_id: str`, so "0" reached
+a uuid column and asyncpg raised. 28 path params across nine routers had drifted from a
+convention 145 others already followed.
+
+**Not every `*_id` is a UUID** — `geotab.device_id` is GeoTab's identifier,
+`rag.doc_id` lives in the vector store, `data_residency.record_id` is polymorphic — so
+the guard works from an explicit allowlist with a reason per entry, and a companion test
+fails on entries whose subject no longer exists. That companion immediately caught an
+exemption written from memory for a parameter that does not exist.
+
+## Class 59 — a tenant id taken from the request body
+
+`create_dock_door` did `DockDoor(**data.model_dump())` where `DockDoorCreate` carries
+`organization_id`, so the tenant a row landed in came from the client. One offender among
+18 schemas that carry the field; every other handler already ignored it.
+
+RLS is forced on the table and would reject the write, so this was defence-in-depth
+rather than an open door — but relying on it alone makes correctness depend on the
+database **role** rather than the code.
+
+## Rule 69 — a security claim that has not eliminated the harness is not a finding
+
+Class 59 was found beside a false alarm. A dock-door create naming another tenant
+returned **200 and wrote the row**, which reads exactly like a cross-tenant write. It was
+not one: the contract suite connects as a superuser, and **a superuser bypasses RLS even
+where `FORCE ROW LEVEL SECURITY` is set**. The policy was present, forced and correct.
+
+`conftest.py:139` already avoids this by creating a `NOSUPERUSER NOBYPASSRLS` role for
+the real-DB suite, precisely because superusers bypass RLS. The contract gate does not
+yet, and `docs/engineering/api-contract-gate.md` records that its results are not
+evidence about tenant isolation.
+
+The check that resolved it was one query against `pg_roles`. Run it before writing the
+bug report, not after.
+
+## Rule 70 — a guard that cries wolf on compliant code gets loosened until it catches nothing
+
+The first version of the class-59 sweep reported `assets.py` as an offender while it was
+already correct: it overrides via `payload["organization_id"] = org_id`, a dict-key
+assignment the naive pattern missed. Shipping that would have trained the next reader to
+widen the exemption list rather than trust the check.
+
+Both directions are mutation-verified — reverting the real fix must fail, and the
+compliant file must stay unflagged. The second half is the one that usually goes untested.
+
+## What the six cost, and what they bought
+
+The gate now runs all 451 operations in ~8 minutes and blocks as a ratchet. Conformance
+went 299 → 360 along the way, and the sequence is the argument for repairing a broken
+gate rather than routing around it: a job that could not finish, made to finish; which
+then could not explain its own failures, made to explain them; and only then did a
+documented security feature turn out never to have worked.
