@@ -110,6 +110,65 @@ class TestTheModelNamesEveryKeyTheHandlerProduces:
         )
 
 
+class TestExportsShapersMatchTheirModels:
+    """`exports.py` builds every JSON payload through three shapers, so the same
+    three models cover eleven routes. That leverage cuts both ways: one dropped
+    field is dropped from list, create, get and update at once."""
+
+    @staticmethod
+    def _template():
+        now = datetime(2026, 7, 31, tzinfo=timezone.utc)
+        return SimpleNamespace(
+            id=uuid4(), organization_id=uuid4(), name="n", description=None,
+            export_type="telemetry", export_format="csv", columns=None, filters=None,
+            created_by=None, created_at=now, updated_at=now,
+        )
+
+    @staticmethod
+    def _schedule():
+        now = datetime(2026, 7, 31, tzinfo=timezone.utc)
+        return SimpleNamespace(
+            id=uuid4(), organization_id=uuid4(), template_id=uuid4(), name="s",
+            frequency="daily", timezone="UTC", next_run_at=None, recipients=None,
+            is_active=True, last_run_at=None, last_status=None, created_by=None,
+            created_at=now, updated_at=now,
+        )
+
+    @staticmethod
+    def _job():
+        return {
+            "job_id": "j1", "type": "telemetry", "status": "completed", "total": 5,
+            "processed": 5, "succeeded": 5, "failed": 0, "filename": "f.csv",
+            "created_at": "2026-07-31T00:00:00Z", "updated_at": "2026-07-31T00:00:00Z",
+        }
+
+    def test_template_out(self):
+        from app.api import exports as ex
+        produced = set(ex._template_dict(self._template()))
+        assert produced == set(ex.ExportTemplateOut.model_fields)
+
+    def test_schedule_out(self):
+        from app.api import exports as ex
+        produced = set(ex._schedule_dict(self._schedule()))
+        assert produced == set(ex.ScheduledExportOut.model_fields)
+
+    def test_job_out_omits_the_server_side_file_path(self):
+        from app.api import exports as ex
+        produced = set(ex._job_public(self._job()))
+        assert produced == set(ex.ExportJobOut.model_fields)
+        # `_job_public` exists to keep `file_path` off the wire. If it ever
+        # reappears, the model must not be the thing that quietly hides it again.
+        assert "file_path" not in produced
+
+    def test_the_shapers_validate_with_null_columns_and_recipients(self):
+        """`columns or []` / `recipients or []` — the null-column path is what a
+        freshly-created row looks like before the worker fills it in."""
+        from app.api import exports as ex
+        ex.ExportTemplateOut.model_validate(ex._template_dict(self._template()))
+        ex.ScheduledExportOut.model_validate(ex._schedule_dict(self._schedule()))
+        ex.ExportJobOut.model_validate(ex._job_public(self._job()))
+
+
 class TestTheModelAcceptsWhatTheHandlerProduces:
     """Naming a key is not enough — the declared TYPE has to accept the value.
 

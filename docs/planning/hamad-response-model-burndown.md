@@ -83,6 +83,60 @@ deliberately: without it the ratio drifts back while the burn-down is still runn
 exactly what happened between the pool being written and today (191/417 → 195/458 — the
 absolute number rose while the ratio fell).
 
+## Progress
+
+| Date | Undeclared | What moved |
+|---|---|---|
+| 2026-07-31 | **250** | baseline, measured from the live route table |
+| 2026-07-31 | 243 | `fleet_health` ×7 |
+| 2026-07-31 | 229 | `notifications` ×5, `dashboard_analytics` ×5, minus 6 that were never debt (204) |
+| 2026-07-31 | **209** | `exports` ×13, minus 8 that were never debt (binary media types) |
+
+**41 routes off the list, of which 27 were declarations and 14 were miscounts.**
+Both halves matter: the ratchet is only worth obeying if its number is honest, and
+14 routes that could never be declared would have made the target unreachable.
+
+## What is deliberately NOT debt
+
+The count excludes two categories, in the ratchet itself rather than as an
+exemption list, because neither is unfinished work:
+
+- **204 No Content** (6 routes). RFC 9110 §15.3.5 forbids a body. There is
+  nothing to declare and never will be.
+- **A declared non-JSON media type** (8 routes). `response_model` describes a JSON
+  schema; there is none for an xlsx or a PDF. The export routes state their real
+  type through `responses={200: {"content": {...}}}`, which is what #38's fix
+  used and what the contract gate reads.
+
 ## Skipped, with reasons
 
-*(appended as they are hit — a route listed here is a decision, not an oversight)*
+*(a route listed here is a decision, not an oversight)*
+
+Nothing skipped yet. Every route attempted so far had a shape that could be
+pinned down exactly.
+
+## Defects found while declaring
+
+The method — read the handler, check the consumer, declare, prove it cannot drop
+a field — has so far found two bugs that had nothing to do with coverage:
+
+1. **`DELETE /notifications/subscriptions/{id}` would have started returning 500.**
+   It returns `{"deleted": subscription_id}`, and that value is the path parameter
+   FastAPI already parsed into a `UUID`. Typing the field `str` is the obvious
+   reading of the handler; pydantic v2 does not coerce UUID to str, so response
+   validation would have failed on every successful delete. Found by validating
+   the model against a real UUID rather than trusting the read. Typed `UUID`,
+   which serialises to the identical JSON string.
+
+2. **`GET /exports/jobs/{job_id}` declared `text/csv` and has never served one.**
+   It is the status/progress endpoint returning `_job_public`, JSON; the CSV is
+   one segment down at `/download`, and the media type was almost certainly copied
+   from that neighbour. This is the exact inverse of the defect #38 fixed across
+   nine export routes — same class, opposite direction — and it survived that
+   sweep because the sweep looked for *handlers returning binaries*, not for
+   *declarations claiming one*. Anyone generating a client from this schema would
+   have typed the polling endpoint as a file download.
+
+The second one also caught the ratchet: `_serves_a_binary` initially believed the
+declaration and excluded the route from the count. A guard that reads a lie
+inherits it.

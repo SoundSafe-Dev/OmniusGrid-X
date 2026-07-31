@@ -1144,6 +1144,55 @@ so the build fails on `ENOSPC`. When it runs, the A/B worth doing is the same qu
 `RAG_ERP_CONTEXT_ENABLED` on and off — if the answers do not differ, the routing keywords are
 not earning their place. Full detail in [`docs/compliance_assistant.md`](docs/compliance_assistant.md).
 
+### Delivered since — the contract gate's blind half, and two lies it was told
+
+On `hamad/converged-pre-main`. Pool #43. The API contract gate now runs and blocks,
+but **schemathesis can only check what is declared** — and 250 of 453 routes declared no
+`response_model`, so the gate was reporting confidently on 45% of the surface. #43 is not a
+nice-to-have beside #38; it is the reason #38's score means anything.
+
+**The ratchet came before the burn-down, because the pool proves it had to.** Coverage was
+191/417 when the pool was written and 203/453 five days later: the absolute number rose while
+the ratio stood still, because new routes landed undeclared as fast as old ones were fixed.
+A burn-down without a ratchet is a treadmill. The count may now only go down.
+
+**The guard nearly shipped blind, in the way these guards do.** The first count said *total: 2,
+undeclared: 2*. `app.routes` holds 74 objects of which two are real routes; the rest are lazy
+`_IncludedRouter` containers whose children carry relative paths. `test_route_auth_walk`
+already carried that scar in a comment — so the traversal is now extracted and shared rather
+than copied, because two walks free to regress independently is defect class 7. A vacuity test
+fails if the walk ever sees fewer than 400 routes again, and both guards are mutation-verified.
+
+**Fourteen routes were never debt, and saying so mattered.** Six are 204s — RFC 9110 forbids a
+body, so there is nothing to declare and never will be. Eight serve xlsx or PDF, where
+`response_model` describes a JSON schema that does not exist; they state their real media type
+through `responses={200: {"content": …}}`, which is what #38's fix used. Leaving them in would
+have made the target unreachable, and *a target that cannot be reached stops being read as one*.
+
+**Then the work found two defects that had nothing to do with coverage.** Declaring a
+`response_model` is not additive — FastAPI filters the response through it *and* validates
+against it, and both directions can break a working endpoint:
+
+- `DELETE /notifications/subscriptions/{id}` returns `{"deleted": subscription_id}`, and that
+  value is the path parameter FastAPI already parsed into a `UUID`. Typing the field `str` is
+  the obvious reading of the handler; **pydantic v2 does not coerce UUID to str**, so every
+  successful delete would have started returning 500 on a route that worked the day before.
+  Caught by validating the model against a real UUID instead of reading the handler and
+  believing it.
+- `GET /exports/jobs/{job_id}` declared `text/csv` and **has never served a CSV** — it is the
+  status endpoint returning JSON, and the media type was copied from its `/download`
+  neighbour one segment away. That is the exact inverse of what #38 fixed across nine export
+  routes: same class, opposite direction, and it survived that sweep because the sweep looked
+  for handlers *returning* binaries, not for declarations *claiming* one. It also caught the
+  new ratchet, which initially believed the declaration and excluded the route — **a guard
+  that reads a lie inherits it.**
+
+**250 → 209**, of which 27 were declarations and 14 were miscounts. Lane map, method and the
+running tally are in
+[`docs/planning/hamad-response-model-burndown.md`](docs/planning/hamad-response-model-burndown.md);
+the clash map there was derived from each dev's **own commits**, since every stale branch
+appears to touch 82 API files purely by being 28–112 commits behind.
+
 ### Offline demo — `backend/scripts/seed_demo_data.py`
 
 The whole platform demos with **no live edge, cloud, or external services**.

@@ -39,12 +39,16 @@ from tests._route_tree import http_routes
 #: The measured number of routes serving an undeclared response, 2026-07-31.
 #: LOWER THIS as routes are declared. Raising it means a route landed without a
 #: response_model, which is the thing this file exists to prevent.
-MAX_UNDECLARED = 229
+MAX_UNDECLARED = 209
 
 #: Total routes when that number was measured. A large swing means something
 #: structural changed and the ratchet's denominator is no longer comparable.
 EXPECTED_TOTAL = 453
 TOTAL_TOLERANCE = 0.15
+
+
+#: Media types that carry no JSON schema, so `response_model` cannot describe them.
+_NON_JSON = ("application/pdf", "text/csv", "application/vnd.openxmlformats", "application/octet-stream")
 
 
 def _has_no_body(route) -> bool:
@@ -59,10 +63,30 @@ def _has_no_body(route) -> bool:
     return getattr(route, "status_code", None) == 204
 
 
+def _serves_a_binary(route) -> bool:
+    """The route returns a PDF, an xlsx, or a CSV stream — not JSON.
+
+    `response_model` describes a JSON schema; there is none for a spreadsheet. The
+    export routes state their real media type through
+    `responses={200: {"content": {...}}}`, which is what the contract gate reads
+    and what fixed pool #38's "nine export routes that returned xlsx, PDF or CSV
+    while the schema promised JSON".
+
+    So the honest count treats a declared non-JSON content type as *documented*,
+    not missing. Only routes with NEITHER a response_model nor a declared media
+    type are real debt — an undeclared route serving JSON.
+    """
+    for spec in (getattr(route, "responses", None) or {}).values():
+        for media in (spec or {}).get("content", {}):
+            if any(media.startswith(prefix) for prefix in _NON_JSON):
+                return True
+    return False
+
+
 def _undeclared() -> list[str]:
     out = []
     for route, path, methods in http_routes(app):
-        if _has_no_body(route):
+        if _has_no_body(route) or _serves_a_binary(route):
             continue
         if getattr(route, "response_model", None) is None:
             module = getattr(route.endpoint, "__module__", "?").split(".")[-1]
