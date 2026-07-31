@@ -39,7 +39,7 @@ from tests._route_tree import http_routes
 #: The measured number of routes serving an undeclared response, 2026-07-31.
 #: LOWER THIS as routes are declared. Raising it means a route landed without a
 #: response_model, which is the thing this file exists to prevent.
-MAX_UNDECLARED = 243
+MAX_UNDECLARED = 229
 
 #: Total routes when that number was measured. A large swing means something
 #: structural changed and the ratchet's denominator is no longer comparable.
@@ -47,9 +47,23 @@ EXPECTED_TOTAL = 453
 TOTAL_TOLERANCE = 0.15
 
 
+def _has_no_body(route) -> bool:
+    """204 No Content — RFC 9110 §15.3.5 forbids a body, so there is nothing to
+    declare and never will be.
+
+    Counting these as debt would mean the burn-down could never reach zero, and a
+    target that cannot be reached stops being read as a target. They are excluded
+    from the denominator rather than granted an exemption, because they are not
+    unfinished work.
+    """
+    return getattr(route, "status_code", None) == 204
+
+
 def _undeclared() -> list[str]:
     out = []
     for route, path, methods in http_routes(app):
+        if _has_no_body(route):
+            continue
         if getattr(route, "response_model", None) is None:
             module = getattr(route.endpoint, "__module__", "?").split(".")[-1]
             out.append(f"{','.join(sorted(methods)):<12} {path}  [{module}]")

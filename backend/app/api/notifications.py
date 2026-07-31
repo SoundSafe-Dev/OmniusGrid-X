@@ -16,6 +16,61 @@ from app.services.notifications import notification_service
 router = APIRouter()
 
 
+class SubscriptionResponse(BaseModel):
+    """One row of `GET /subscriptions`.
+
+    snake_case on the wire — the frontend client registers `/api/v1/notifications`
+    with the casing seam, so `min_severity` reaches TypeScript as `minSeverity`.
+    Renaming here would break that transform, not fix it.
+    """
+
+    id: str
+    name: str
+    channel: str
+    target: str
+    min_severity: str
+    domain: Optional[str] = None
+    asset_id: Optional[str] = None
+    enabled: bool
+
+
+class SubscriptionCreated(BaseModel):
+    """`POST /subscriptions` deliberately echoes three fields, not the whole row —
+    the client's `SubscriptionCreated` reads exactly these and refetches the list."""
+
+    id: str
+    name: str
+    channel: str
+
+
+class SubscriptionDeleted(BaseModel):
+    #: UUID, not str. The handler returns the raw path parameter — which FastAPI
+    #: parsed into a `UUID` — and pydantic v2 does NOT coerce UUID to str: typing
+    #: this `str` turns every successful delete into a 500 at response-validation
+    #: time, on a route that worked before the model was attached. UUID serialises
+    #: to the same JSON string, so the wire format is unchanged.
+    deleted: UUID
+
+
+class TestDispatchResult(BaseModel):
+    """`results` is whatever `notification_service.dispatch` returned per matched
+    subscription; its shape is the service's, so it is passed through untyped
+    rather than guessed at here."""
+
+    matched: int
+    results: List[Dict[str, Any]]
+
+
+class DeliveryLogEntry(BaseModel):
+    id: str
+    channel: str
+    severity: str
+    title: str
+    delivered: bool
+    detail: Optional[str] = None
+    created_at: Optional[str] = None
+
+
 class SubscriptionCreate(BaseModel):
     name: str
     channel: str = Field(..., pattern="^(webhook|slack|email)$")
@@ -47,7 +102,7 @@ class TestEvent(BaseModel):
 # policy over unbound sessions would have emptied every read rather than protecting it.
 
 
-@router.post("/subscriptions")
+@router.post("/subscriptions", response_model=SubscriptionCreated)
 async def create_subscription(
     body: SubscriptionCreate,
     organization_id=Depends(get_tenant_org_id),
@@ -66,7 +121,7 @@ async def create_subscription(
     return {"id": str(sub.id), "name": sub.name, "channel": sub.channel}
 
 
-@router.get("/subscriptions")
+@router.get("/subscriptions", response_model=List[SubscriptionResponse])
 async def list_subscriptions(
     organization_id=Depends(get_tenant_org_id),
 ) -> List[Dict[str, Any]]:
@@ -82,7 +137,7 @@ async def list_subscriptions(
              "enabled": r.enabled} for r in rows]
 
 
-@router.delete("/subscriptions/{subscription_id}")
+@router.delete("/subscriptions/{subscription_id}", response_model=SubscriptionDeleted)
 async def delete_subscription(
     subscription_id: UUID,
     organization_id=Depends(get_tenant_org_id),
@@ -108,7 +163,7 @@ async def delete_subscription(
     return {"deleted": subscription_id}
 
 
-@router.post("/test")
+@router.post("/test", response_model=TestDispatchResult)
 async def send_test(body: TestEvent, organization_id=Depends(get_tenant_org_id)):
     """Dispatch a test event through matching subscriptions."""
     event = body.model_dump()
@@ -116,7 +171,7 @@ async def send_test(body: TestEvent, organization_id=Depends(get_tenant_org_id))
     return {"matched": len(results), "results": results}
 
 
-@router.get("/log")
+@router.get("/log", response_model=List[DeliveryLogEntry])
 async def delivery_log(limit: int = Query(default=100, ge=1, le=1000),
                        organization_id=Depends(get_tenant_org_id)) -> List[Dict[str, Any]]:
     async with tenant_session(organization_id) as session:
