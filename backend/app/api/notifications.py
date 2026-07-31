@@ -1,5 +1,6 @@
 """API routes for the Notifications & delivery center."""
 
+from uuid import UUID
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -83,7 +84,7 @@ async def list_subscriptions(
 
 @router.delete("/subscriptions/{subscription_id}")
 async def delete_subscription(
-    subscription_id: str,
+    subscription_id: UUID,
     organization_id=Depends(get_tenant_org_id),
 ):
     async with tenant_session(organization_id) as session:

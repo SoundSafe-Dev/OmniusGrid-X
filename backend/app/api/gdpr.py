@@ -173,7 +173,7 @@ async def get_user_consents(
 @rate_limit("100/minute")
 async def withdraw_consent(
     request: Request,
-    consent_id: str,
+    consent_id: UUID,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_tenant_db)
 ):

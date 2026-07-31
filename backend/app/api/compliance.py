@@ -114,7 +114,7 @@ async def create_vendor_assessment(
 @rate_limit("10/minute")
 async def update_vendor_assessment(
     request: Request,
-    assessment_id: str,
+    assessment_id: UUID,
     risk_level: Optional[str] = None,
     next_review_date: Optional[date] = None,
     findings: Optional[List[str]] = None,
@@ -249,7 +249,7 @@ async def create_security_asset(
 @rate_limit("10/minute")
 async def update_security_asset(
     request: Request,
-    asset_id: str,
+    asset_id: UUID,
     classification: Optional[str] = None,
     location: Optional[str] = None,
     status: Optional[str] = None,
@@ -295,7 +295,7 @@ async def update_security_asset(
 @rate_limit("10/minute")
 async def delete_security_asset(
     request: Request,
-    asset_id: str,
+    asset_id: UUID,
     current_user: User = Depends(get_current_active_user),
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),
