@@ -65,6 +65,20 @@ disk rather than broken — `make lean` frees ~1.5 GB by dropping `backend/datas
 working tree, and `make unlean` puts it back. See
 [docs/engineering/large-assets.md](docs/engineering/large-assets.md).
 
+The **API contract gate** is separate and opt-in, because it stands the app up under
+uvicorn and drives all 451 documented operations with generated input (~8 min):
+
+```bash
+cd backend
+RUN_CONTRACT_TESTS=1 pytest tests/test_api_contract.py -q --junitxml=contract-report.xml || true
+python scripts/contract_ratchet.py contract-report.xml   # conformance may rise, never fall
+```
+
+It needs a **migrated** database owned by the `omniusgrid` role — the migration chain
+`GRANT`s to that name and rolls back without it. 299 of 451 operations conform today; the
+job blocks on a ratchet rather than demanding green, and the remaining 152 are enumerated in
+[docs/engineering/api-contract-gate.md](docs/engineering/api-contract-gate.md).
+
 **CI excludes exactly one test, and it is written down.** Every `--ignore`/`--deselect` flag in
 `ci-cd.yml` must have an entry in [`backend/tests/test_quarantine.py`](backend/tests/test_quarantine.py)
 carrying an owner, a real diagnosis and an expiry date. That suite fails when a window lapses,
@@ -3066,6 +3080,7 @@ The ERP integration system correlates ERP data with operational telemetry to pro
 **Engineering practice**
 - [Defect-class sweeps](docs/engineering/defect-class-sweeps.md) - The fifty-six classes of "code that looks wired and cannot work" found so far, what each sweep found (including the ones that came back clean), which mutation-tested guard keeps each closed, and sixty-two rules for writing a sweep worth trusting — most of them paid for by a detector that was wrong first, including one that reported zero offenders while three pages were broken and one that compared a baseline against itself
 - [Large assets](docs/engineering/large-assets.md) - Why `backend/dataset` is 1.5 GB on disk but only 41 MB packed, why it must not be deleted (the generator sets no seed, so it is generated but NOT reproducible), and the `make lean` / sparse-checkout recipes that keep it off your disk and out of all 28 CI checkouts
+- [The API contract gate](docs/engineering/api-contract-gate.md) - The schemathesis job that drives all 451 documented operations, why it could never finish (every component fast, the whole impossible — a per-example event loop plus a retry path with no backoff), the four independent faults that each alone would have stopped it, and why it blocks as a *ratchet* on a measured floor of 290 rather than demanding a green suite
 - [The test quarantine](docs/engineering/test-quarantine.md) - What CI is allowed not to run, and the register that gives every exclusion an owner, a diagnosis and an expiry — including the staleness half that fails when a quarantined test starts passing. Records the 2026-07-30 release of four entries, and the rule it earned: before accepting that a quarantined test is another lane's problem, check whether the code under it is *running* — "the test is broken" and "the feature is unbuilt" look identical from the list and have opposite consequences
 
 **Infrastructure & operations**

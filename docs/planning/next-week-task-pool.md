@@ -464,12 +464,28 @@ next step and teaches the lesson this codebase keeps relearning.
     validates well under half the API even when it works. #43 is a prerequisite for this gate
     meaning what its name implies, not a separate nice-to-have.
 
-    Do: cap the property search (a hypothesis profile with a small `max_examples` for CI),
-    add `timeout-minutes` so a runaway fails loudly instead of silently, re-run to enumerate
-    what remains, then flip. The cap is a real trade-off — fewer examples find fewer bugs —
-    so it wants a deliberate number, not a default.
+    ✅ **DONE 2026-07-30 (477b6854). The job finishes in ~8 minutes and BLOCKS.** It was not
+    slow, it was broken in four independent ways, each of which alone would have stopped it:
+    ASGI in-process execution gave every generated example a new event loop while the app's
+    singletons stayed bound to the first; the websocket queue processor's error path had no
+    backoff, so it span at full CPU on the resulting failures; the job never ran migrations,
+    so every DB-backed operation 500'd against an empty database; and it used
+    `POSTGRES_USER=test` while the migration chain GRANTs to the `omniusgrid` role by name.
+    The suite now serves the app under uvicorn on a real port — one long-lived loop, like
+    production.
 
-    Done when: the job completes inside its timeout, is blocking, and green.
+    It blocks as a **ratchet** (`scripts/contract_ratchet.py`), not pass/fail: 299 of 451
+    operations conform, and the floor is 290 with a measured margin — four consecutive runs
+    scored 294/296/297/300 with no code change, so a floor at the best score would fail half
+    of all builds and a gate that cries wolf gets switched off.
+
+    **What is left is #43's problem, and it is now enumerated.** The 152 non-conforming
+    operations are mostly ONE behaviour: generated input reaching Postgres unvalidated and
+    surfacing as a 500 where the contract promises a 4xx — **64 `DataError` + 32
+    `IntegrityError`**. That is per-endpoint validation work spread across every lane, and it
+    is exactly what a contract gate is for. Each fix raises the ratchet.
+
+    Done when: the remaining 152 are burned down and the floor is raised toward 451.
 
 39. **Promote `main`** · S · *needs #3*
     The mechanical half of #3. Every dev is told to branch from `main`, which is well behind
