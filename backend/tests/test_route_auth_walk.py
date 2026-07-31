@@ -311,24 +311,12 @@ def client():
     app.dependency_overrides.pop(get_tenant_db, None)
 
 
-def _flatten(routes, prefix=""):
-    """Recursively expand router containers, carrying include prefixes.
-
-    fastapi >=0.130 keeps include_router() results as lazy _IncludedRouter
-    entries in app.routes (child Route.path is RELATIVE; the prefix lives on
-    the container's include_context) — without recursion + prefix carrying
-    the walk silently visits ~6 routes and passes vacuously.
-    """
-    for route in routes:
-        ctx = getattr(route, "include_context", None)
-        if ctx is not None:
-            child_prefix = prefix + (getattr(ctx, "prefix", "") or "")
-            yield from _flatten(ctx.included_router.routes, child_prefix)
-        elif getattr(route, "routes", None) is not None and not isinstance(route, Route):
-            # Mount containers carry their own path prefix; plain routers don't
-            yield from _flatten(route.routes, prefix + (getattr(route, "path", "") or ""))
-        else:
-            yield route, prefix
+# The traversal moved to tests/_route_tree.py when a second guard
+# (test_response_model_coverage_ratchet) needed it. Copying it would have given
+# the two walks freedom to regress independently — defect class 7, a test double
+# that reimplements what it stands in for — and the failure mode here is silent:
+# a walk that stops recursing sees 2 routes of 453 and passes.
+from tests._route_tree import flatten as _flatten  # noqa: E402
 
 
 def _http_routes():

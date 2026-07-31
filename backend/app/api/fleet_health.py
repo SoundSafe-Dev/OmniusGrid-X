@@ -52,6 +52,67 @@ class DtcItem(BaseModel):
     vehicleNumber: Optional[str] = None
 
 
+class VehicleHealthItem(BaseModel):
+    """One row of `_vehicle_row`, shared by the fleet list and the single-vehicle
+    endpoint because they return the same dict.
+
+    Declares exactly the nine keys `_vehicle_row` produces and no more. The
+    frontend's `VehicleHealthStatus` also carries optional `driverId`,
+    `driverName` and `fuelLevel`; none is ever sent, and adding them here as
+    `Optional[...] = None` would not document them — it would start emitting
+    three nulls that were previously absent keys. A response model has to match
+    what the handler returns, not what a consumer could tolerate.
+    """
+
+    vehicleId: str
+    vehicleNumber: str
+    status: str
+    lastCommunication: str
+    dtcs: List[DtcItem]
+    safetyScore: int
+    securityStatus: str
+    engineHours: int
+    odometer: int
+
+
+class SecurityEventItem(BaseModel):
+    """`_security_out` — the list, the single-vehicle list, and the PATCH all
+    return it, so all three share this model."""
+
+    id: str
+    vehicleId: Optional[str] = None
+    vehicleNumber: Optional[str] = None
+    eventType: str
+    timestamp: Optional[str] = None
+    severity: str
+    #: `GeoTabException.location` is a JSON column; the handler passes it through
+    #: untouched (`e.location or None`), so its shape is the sender's, not ours.
+    location: Optional[Any] = None
+    description: str
+    acknowledged: bool
+
+
+class DriverSafetyItem(BaseModel):
+    """`_driver_safety_out`, shared by the fleet list and the per-driver route.
+
+    `idleTimeHours` and `seatbeltViolations` are hardcoded 0 and `trend` is
+    hardcoded "stable" — declared because the handler does return them, not
+    because anything measures them. See #44: a figure nothing computes should not
+    be mistaken for one that is measured.
+    """
+
+    driverId: str
+    driverName: str
+    overallScore: int
+    harshBrakingEvents: int
+    harshAccelerationEvents: int
+    speedingEvents: int
+    idleTimeHours: int
+    seatbeltViolations: int
+    period: str
+    trend: str
+
+
 class GeoPosition(BaseModel):
     latitude: Optional[float] = None
     longitude: Optional[float] = None
@@ -174,7 +235,7 @@ def _vehicle_row(vid, dtcs, exc_count: int) -> dict:
 
 # ---------------------------------------------------------------- health / DTCs
 
-@router.get("/health")
+@router.get("/health", response_model=List[VehicleHealthItem])
 async def fleet_health(org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
     diags = await _active_diagnostics(db, org_id)
     excs = await _exceptions(db, org_id)
@@ -210,7 +271,7 @@ async def fleet_health_stats(org_id: UUID = Depends(get_tenant_org_id), db: Asyn
     }
 
 
-@router.get("/health/{vehicle_id}")
+@router.get("/health/{vehicle_id}", response_model=VehicleHealthItem)
 async def vehicle_health(vehicle_id: str, org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
     # Scoped instead of building the whole fleet aggregation and linear-searching
     # it. A vehicle with no active diagnostics returns the default row (exactly
@@ -251,7 +312,7 @@ def _security_out(e: GeoTabException) -> dict:
     }
 
 
-@router.get("/security/events")
+@router.get("/security/events", response_model=List[SecurityEventItem])
 async def security_events(
     acknowledged: Optional[bool] = Query(None),
     severity: Optional[str] = Query(None),
@@ -271,7 +332,7 @@ class SecurityEventAcknowledge(BaseModel):
     acknowledged: bool = True
 
 
-@router.patch("/security/events/{event_id}", dependencies=[Depends(require_operator_or_admin)])
+@router.patch("/security/events/{event_id}", response_model=SecurityEventItem, dependencies=[Depends(require_operator_or_admin)])
 async def acknowledge_security_event(
     event_id: UUID,
     payload: SecurityEventAcknowledge,
@@ -318,7 +379,7 @@ async def acknowledge_security_event(
     return _security_out(event)
 
 
-@router.get("/vehicles/{vehicle_id}/security")
+@router.get("/vehicles/{vehicle_id}/security", response_model=List[SecurityEventItem])
 async def vehicle_security(vehicle_id: str, org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
     excs = await _exceptions(db, org_id, device_id=vehicle_id)
     return [_security_out(e) for e in excs]
@@ -326,7 +387,7 @@ async def vehicle_security(vehicle_id: str, org_id: UUID = Depends(get_tenant_or
 
 # --------------------------------------------------------------- driver safety
 
-@router.get("/safety/drivers")
+@router.get("/safety/drivers", response_model=List[DriverSafetyItem])
 async def driver_safety(org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
     drivers = (await db.execute(select(Driver).where(Driver.organization_id == org_id))).scalars().all()
     excs = await _exceptions(db, org_id)
@@ -350,7 +411,7 @@ def _driver_safety_out(d: Driver, counts: dict) -> dict:
     }
 
 
-@router.get("/safety/drivers/{driver_id}")
+@router.get("/safety/drivers/{driver_id}", response_model=DriverSafetyItem)
 async def one_driver_safety(driver_id: str, org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
     from fastapi import HTTPException
     d = (await db.execute(select(Driver).where(Driver.id == driver_id, Driver.organization_id == org_id))).scalar_one_or_none()
