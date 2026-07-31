@@ -46,6 +46,7 @@ class ClaimedDocument:
     filename: str
     kind: str
     attempts: int
+    started_at: datetime
 
 
 def _now() -> datetime:
@@ -150,10 +151,11 @@ async def claim_next(org_id: str) -> Optional[ClaimedDocument]:
         if row is None:
             return None
 
+        claimed_at = _now()
         row.status = "indexing"
         row.attempts += 1
-        row.started_at = _now()
-        row.updated_at = _now()
+        row.started_at = claimed_at
+        row.updated_at = claimed_at
         claimed = ClaimedDocument(
             org_id=str(org_id),
             doc_id=row.doc_id,
@@ -161,6 +163,7 @@ async def claim_next(org_id: str) -> Optional[ClaimedDocument]:
             filename=row.filename,
             kind=row.kind,
             attempts=row.attempts,
+            started_at=claimed_at,
         )
         await session.commit()
         logger.info(
@@ -176,6 +179,7 @@ async def finalize(
     org_id: str,
     doc_id: str,
     attempts: int,
+    started_at: datetime,
     status: str,
     num_blocks: int = 0,
     num_chunks: int = 0,
@@ -184,9 +188,17 @@ async def finalize(
 ) -> bool:
     """Write a terminal status, but only if our claim is still the current one.
 
-    The ``status='indexing' AND attempts=:attempts`` filter is what makes a
-    re-ingest safe: if the caller re-uploaded this doc_id mid-pass, the row is
-    already back to 'queued' with attempts reset, this UPDATE matches nothing,
+    The guard is ``status='indexing' AND attempts=:attempts AND
+    started_at=:started_at`` — all three, not just ``attempts``. ``attempts``
+    alone is not enough: ``upsert_queued`` resets it to 0 on every re-ingest,
+    and the next ``claim_next`` walks it back up from 1, so the same value
+    recycles across generations of the same doc_id (an ABA hazard). Two
+    workers racing on successive generations can both see ``attempts == 1``.
+    ``started_at`` is stamped fresh (microsecond precision) inside the locking
+    transaction in ``claim_next`` and nulled by ``upsert_queued``, so it is
+    the piece that actually identifies one claimed pass. If the caller
+    re-uploaded this doc_id mid-pass, the row is already back to 'queued'
+    with a new generation's attempts/started_at, this UPDATE matches nothing,
     and the stale result is discarded instead of overwriting the new work.
     Returns True if the write landed.
     """
@@ -202,6 +214,7 @@ async def finalize(
                 RagDocument.doc_id == doc_id,
                 RagDocument.status == "indexing",
                 RagDocument.attempts == attempts,
+                RagDocument.started_at == started_at,
             )
             .values(
                 status=status,
@@ -221,31 +234,50 @@ async def finalize(
 
 
 async def requeue_or_fail(
-    *, org_id: str, doc_id: str, attempts: int, error: str
-) -> str:
-    """Return a failed pass to 'queued', or to 'failed' once attempts run out."""
+    *, org_id: str, doc_id: str, attempts: int, started_at: datetime, error: str
+) -> Optional[str]:
+    """Return a failed pass to 'queued', or to 'failed' once attempts run out.
+
+    Guarded on ``status='indexing' AND attempts=:attempts AND
+    started_at=:started_at`` for the same ABA reason as ``finalize``:
+    ``attempts`` resets to 0 on every re-ingest and recycles across
+    generations of the same doc_id, so it cannot alone distinguish this pass
+    from a later one. Without ``started_at`` in the guard, a worker finishing
+    a stale pass could flip a *different*, currently-live claim back to
+    'queued' — releasing a document a second worker is still indexing, so a
+    third worker could start indexing it concurrently.
+
+    Returns the status actually written, or ``None`` if the guard matched no
+    row (our claim is stale and the write was correctly discarded) — callers
+    must not treat ``None`` as "failed".
+    """
     next_status = (
         "queued" if attempts < settings.RAG_INDEX_MAX_ATTEMPTS else "failed"
     )
     now = _now()
     async with AsyncSessionLocal() as session:
         await _set_org(session, org_id)
-        await session.execute(
+        result = await session.execute(
             update(RagDocument)
             .where(
                 RagDocument.organization_id == str(org_id),
                 RagDocument.doc_id == doc_id,
                 RagDocument.status == "indexing",
                 RagDocument.attempts == attempts,
+                RagDocument.started_at == started_at,
             )
             .values(
                 status=next_status,
                 error=error[:2000],
+                started_at=None,
                 completed_at=now if next_status == "failed" else None,
                 updated_at=now,
             )
         )
         await session.commit()
+    if result.rowcount == 0:
+        logger.info("rag_index_queue.requeue_discarded", doc_id=doc_id)
+        return None
     logger.warning(
         "rag_index_queue.pass_failed",
         doc_id=doc_id,
@@ -266,11 +298,13 @@ async def recover_stale() -> int:
             await _set_org(session, org_id)
             rows = (
                 await session.execute(
-                    select(RagDocument).where(
+                    select(RagDocument)
+                    .where(
                         RagDocument.organization_id == str(org_id),
                         RagDocument.status == "indexing",
                         RagDocument.updated_at <= cutoff,
                     )
+                    .with_for_update(skip_locked=True)
                 )
             ).scalars().all()
             for row in rows:
@@ -279,6 +313,8 @@ async def recover_stale() -> int:
                 if exhausted:
                     row.error = "Indexing abandoned; worker did not finish."
                     row.completed_at = _now()
+                else:
+                    row.started_at = None
                 row.updated_at = _now()
                 recovered += 1
             if rows:

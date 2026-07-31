@@ -59,6 +59,7 @@ async def test_finalize_writes_terminal_state(app, seeded_orgs):
         org_id=str(org_id),
         doc_id=claimed.doc_id,
         attempts=claimed.attempts,
+        started_at=claimed.started_at,
         status="indexed",
         num_blocks=3,
         num_chunks=7,
@@ -86,6 +87,7 @@ async def test_finalize_is_discarded_when_row_was_requeued_midflight(
         org_id=str(org_id),
         doc_id=claimed.doc_id,
         attempts=claimed.attempts,
+        started_at=claimed.started_at,
         status="indexed",
         num_chunks=7,
     )
@@ -105,6 +107,7 @@ async def test_requeue_or_fail_retries_then_fails(app, seeded_orgs):
             org_id=str(org_id),
             doc_id=claimed.doc_id,
             attempts=claimed.attempts,
+            started_at=claimed.started_at,
             error="qdrant unreachable",
         )
         assert outcome == "queued"
@@ -114,6 +117,7 @@ async def test_requeue_or_fail_retries_then_fails(app, seeded_orgs):
         org_id=str(org_id),
         doc_id=claimed.doc_id,
         attempts=claimed.attempts,
+        started_at=claimed.started_at,
         error="qdrant unreachable",
     )
 
@@ -121,6 +125,48 @@ async def test_requeue_or_fail_retries_then_fails(app, seeded_orgs):
     status = await q.get_status(str(org_id), "doc-1")
     assert status["status"] == "failed"
     assert "qdrant" in status["error"]
+
+
+async def test_stale_finalize_cannot_land_on_a_later_claim(app, seeded_orgs):
+    """The ABA case: attempts recycles, so it alone cannot identify a claim."""
+    org_id = seeded_orgs["org_a_id"]
+    await _queue_doc(org_id)
+
+    w1 = await q.claim_next(str(org_id))
+    await _queue_doc(org_id)              # user re-ingests mid-pass
+    w2 = await q.claim_next(str(org_id))  # new generation, attempts recycled
+
+    assert w1.attempts == w2.attempts == 1, "precondition: attempts recycled"
+    assert w1.started_at != w2.started_at, "claims must be distinguishable"
+
+    landed = await q.finalize(
+        org_id=str(org_id), doc_id=w1.doc_id, attempts=w1.attempts,
+        started_at=w1.started_at, status="indexed", num_chunks=99,
+    )
+
+    assert landed is False, "W1's stale finalize overwrote W2's live claim"
+    status = await q.get_status(str(org_id), "doc-1")
+    assert status["status"] == "indexing", "W2's claim must still be live"
+    assert status["num_chunks"] == 0, "stale chunk count must not be written"
+
+
+async def test_stale_requeue_cannot_release_a_later_claim(app, seeded_orgs):
+    """Same ABA guard on the failure path."""
+    org_id = seeded_orgs["org_a_id"]
+    await _queue_doc(org_id)
+
+    w1 = await q.claim_next(str(org_id))
+    await _queue_doc(org_id)
+    w2 = await q.claim_next(str(org_id))
+
+    outcome = await q.requeue_or_fail(
+        org_id=str(org_id), doc_id=w1.doc_id, attempts=w1.attempts,
+        started_at=w1.started_at, error="qdrant unreachable",
+    )
+
+    assert outcome is None, "a discarded requeue must not report a status"
+    status = await q.get_status(str(org_id), "doc-1")
+    assert status["status"] == "indexing", "W2's claim must still be live"
 
 
 async def test_recover_stale_requeues_abandoned_indexing_rows(app, seeded_orgs):
