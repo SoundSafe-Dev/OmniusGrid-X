@@ -2351,6 +2351,13 @@ one of its findings. The habit that catches it:
    dict-key assignment the pattern missed. Mutation-verify BOTH directions: the real offender
    must fail, and the compliant file must stay unflagged. *(Fuller account: § Rule 66.)*
 
+67. **A test suite has no opinion about what the screen looks like.**
+   A badge rendered white-on-white in the default theme and survived 467 unit tests, a
+   typecheck and four defect-class guards — the page tests asserted its text content, which
+   was in the DOM and correct. Nothing here compares a foreground colour to its background,
+   so contrast is not a dimension the suite can fail in. Render it and look at it; that is a
+   distinct method, not a weaker substitute. *(Fuller account: § Rule 67.)*
+
 ---
 
 ## Open observations, not yet tickets
