@@ -600,7 +600,17 @@ class TransportationManagementService:
                 weight_distribution=weight_distribution or {},
                 space_utilization_percent=space_utilization_percent,
                 special_instructions=special_instructions,
-                planned_by=planned_by
+                # `str(...)`, because `load_plans.planned_by` is `Column(String(36))` and
+                # NOT a `UUIDColumn` like its neighbours. `UUIDColumn` binds `str(value)`
+                # through its TypeDecorator; a plain VARCHAR does not, so asyncpg raised
+                #
+                #     invalid input for query argument $5: UUID(...) (expected str, got UUID)
+                #
+                # and every caller supplying `planned_by` got a 500. Found by the contract
+                # gate (FS-259). Same trap the `_scope` helper in fleet_logistics documents
+                # from the other direction — a VARCHAR column holding ids is not a UUID
+                # column, and the difference only shows on the wire.
+                planned_by=str(planned_by) if planned_by is not None else None
             )
             session.add(load_plan)
             await session.commit()

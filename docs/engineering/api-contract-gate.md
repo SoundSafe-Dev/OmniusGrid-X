@@ -279,10 +279,10 @@ input reaching the database — and all are reproducible from the run artefacts:
 | ~~`POST /api/v1/commands/submit`~~ | `{"asset_id": ""}` reached a UUID column. **Fixed** — the body field is typed `UUID`, so it is the 422 the schema promised. |
 | ~~`POST /api/v1/user/goals`~~ | `{"title": ""}`. **Fixed, and the input was irrelevant** — see below. |
 | `POST /api/v1/fleet/releases` | `{"config_bundle": "0", ...}`. **Not an application defect**: `OTA_SIGNING_PRIVATE_KEY_PATH` is unset, so `sign_bundle` cannot load a key. Environmental, like the 503s, and OTA is another dev's lane. |
-| `POST /api/v1/transportation/load-plans` | a `shipment_id` naming no row |
-| `POST /api/v1/twin/optimize` | `{"asset_ids": []}` |
-| `POST /api/v1/bulk/assets/import` | a generated multipart body |
-| `PUT /api/v1/data-retention/policies/{metric_name}` | not the shrunk body — that one 422s correctly when reproduced directly, so the failing draw is something else and is not guessed at here |
+| ~~`POST /api/v1/transportation/load-plans`~~ | **Fixed.** `load_plans.planned_by` is `Column(String(36))`, not a `UUIDColumn`, so a UUID object was bound to a VARCHAR and asyncpg raised `expected str, got UUID`. |
+| ~~`POST /api/v1/twin/optimize`~~ | **Fixed by the handler below** — its three `model_validator`s all raise `ValueError`. |
+| `POST /api/v1/bulk/assets/import` | a generated multipart body. Not yet diagnosed. |
+| ~~`PUT /api/v1/data-retention/policies/{metric_name}`~~ | **Fixed by the handler below.** Not the endpoint at all. |
 
 Three more (`/api/v1/logistics/logistics/*`) are in `logistics_correlation.py`, which is
 another dev's lane.
@@ -327,6 +327,38 @@ to say so. `delete_user_goal`, in the same file, reassigns the list and was righ
 Both are pinned by `tests/test_user_goals_roundtrip_realdb.py`, which reads every goal back
 through a **separate request**, because the silent half is invisible in the response that
 created it.
+
+### The 500 that was in the error handler, not in any endpoint
+
+`PUT /data-retention/policies/{metric_name}` was in the list above. Reproducing it directly
+returned **422**, which is what made it worth chasing rather than guessing at: the shrunk
+body schemathesis reported was not the one that failed.
+
+The app's own `unhandled_exception` record gave the answer:
+
+    Object of type ValueError is not JSON serializable
+
+`@model_validator` raising a bare `ValueError` is the documented pydantic v2 way to express
+a cross-field rule. Pydantic puts the **live exception object** in the error's `ctx`, the
+envelope handler passed `exc.errors()` straight to `JSONResponse`, `json.dumps` raised, and
+the generic handler turned that into a 500.
+
+**The validator worked perfectly; reporting it was what failed.** Every request that broke
+a cross-field rule got a server error where the schema promises 422 — four validators
+today, across `data_retention` and `twin_optimizer`, and any that land later. It also
+explains the second entry above: `POST /twin/optimize` has three such validators and was
+failing for the same reason, not for one of its own.
+
+The fix stringifies the exception before encoding rather than reaching for
+`jsonable_encoder` alone, which stops the crash but renders `ctx` as `{}` — dropping the
+only text that says *which* rule was broken and leaving a 422 nobody can act on.
+
+Pinned by `tests/test_validation_errors_are_422_not_500.py`, mutation-verified against the
+original handler. Writing it also caught a trap worth recording: the test module uses
+`from __future__ import annotations`, so mounting the model with `payload: model` made the
+annotation the *string* `"model"`, FastAPI fell back to treating it as a query parameter,
+and the assertions failed against the wrong error — looking exactly like a broken fix
+rather than a broken harness.
 
 ### The ~20 `503`s are the harness, not the API
 

@@ -203,6 +203,45 @@ def _instance(request: Request) -> Optional[str]:
         return None
 
 
+def _jsonable_validation_errors(exc: RequestValidationError) -> Any:
+    """`exc.errors()`, made encodable — WITHOUT throwing the message away.
+
+    A `@model_validator` that raises a bare `ValueError` (the documented way to express a
+    cross-field rule) makes pydantic v2 put the LIVE EXCEPTION OBJECT in the error's
+    `ctx`:
+
+        {'type': 'value_error', 'msg': 'Value error, ...',
+         'ctx': {'error': ValueError('retention days must satisfy hot <= warm <= cold')}}
+
+    `JSONResponse` then calls `json.dumps` on it, raises
+    `TypeError: Object of type ValueError is not JSON serializable`, and the generic
+    handler below turns that into a **500**. So every request that violated a cross-field
+    rule got a server error where the schema promises 422 — the validator worked
+    perfectly and the envelope reporting it was what failed.
+
+    Found by the contract gate (FS-259) on `PUT /data-retention/policies/{metric_name}`;
+    it affects every model with such a validator, which today is that one plus the three
+    in `twin_optimizer`.
+
+    `jsonable_encoder` alone would fix the crash and encode the exception as `{}`, which
+    silently drops the only text saying WHICH rule was broken. Stringifying it first keeps
+    that, and `msg` and `ctx` then agree.
+    """
+    from fastapi.encoders import jsonable_encoder
+
+    cleaned = []
+    for error in exc.errors():
+        error = dict(error)
+        ctx = error.get("ctx")
+        if isinstance(ctx, Mapping):
+            error["ctx"] = {
+                key: str(value) if isinstance(value, BaseException) else value
+                for key, value in ctx.items()
+            }
+        cleaned.append(error)
+    return jsonable_encoder(cleaned)
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     """Wire the envelope handlers onto a FastAPI app."""
 
@@ -231,7 +270,7 @@ def register_exception_handlers(app: FastAPI) -> None:
             "request validation failed",
             "validation_error",
             status.HTTP_422_UNPROCESSABLE_ENTITY,
-            {"errors": exc.errors()},
+            {"errors": _jsonable_validation_errors(exc)},
             _trace_id(request),
             _instance(request),
         )
