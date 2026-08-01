@@ -107,8 +107,17 @@ The pipeline is complete and now has one consumer. These are the gaps that consu
 ### Platform
 
 - **FS-252 · Adopt the generated SDK** · S — pool #42
-  Generated, committed, zero importers — so neither used nor verified, and free to drift.
-  *Done when:* at least one real caller uses it, or it is deleted. Both are acceptable outcomes.
+  ~~Generated, committed, zero importers — so neither used nor verified, and free to drift.~~
+  **PREMISE CORRECTED 2026-08-01.** It is *not* committed — `frontend/src/api/generated/`
+  holds a README and nothing else — so it cannot drift, and there is no stale artifact to
+  delete. The generation path was run end to end and **works**: `scripts/generate_sdk.sh`
+  dumps 375 paths and `openapi-typescript` produces a 2.3 MB `schema.d.ts` in ~0.5s.
+
+  So this is a live decision, not a blocked one, and both outcomes remain open. Still zero
+  importers. `schema.d.ts` is now gitignored (an untracked 2.3 MB artifact is the same
+  `git status` noise `backend/openapi.json` is ignored to prevent) — that is a tidiness
+  choice, **not** a decision against adoption; adopting-and-committing means removing that
+  line. *Needs a decision, not implementation.*
 
 - **FS-253 … FS-258 · `response_model` burn-down, six batches** · M each
   **184 undeclared remain** (from 250). Continue the method in
@@ -158,9 +167,12 @@ The pipeline is complete and now has one consumer. These are the gaps that consu
 ### Infrastructure
 
 - **FS-261 · Wire `monitoring/`, `autoscaling/`, `database-ha/` into an overlay** · M — pool #50
-  Reviewed YAML that has run nowhere but a kind cluster.
-  *Done when:* `kustomize build overlays/production` contains them, or `ci-cd.yml` applies the
-  operator-gated stacks in a documented step, with the four k8s gates still green.
+  ~~Reviewed YAML that has run nowhere but a kind cluster.~~
+  **CORRECTED IN PLACE 2026-08-01 — already delivered** via the second branch of its own
+  done-when. `ci-cd.yml` applies all three stacks to staging and production in documented
+  steps, each gated on the operator's CRDs being present and printing an explicit SKIP with
+  install instructions when they are not, and the monitoring/database-ha applies are piped
+  through `strip_placeholder_secrets.py`. *Done.*
 
 - **FS-262 · Probes, limits and `securityContext` for the seven workloads** · M — pool #54
   ~~Four workers, otel and jaeger. Without probes a wedged worker is never restarted.~~

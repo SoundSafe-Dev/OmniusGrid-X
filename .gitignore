@@ -139,6 +139,15 @@ docs/**/*.pdf
 # Guards read app.openapi() live instead, so this artifact is never committed.
 backend/openapi.json
 
+# The generated TypeScript client (2.3 MB from 375 paths). Produced on demand by
+# scripts/generate_sdk.sh, which works — verified 2026-08-01. Ignored rather than
+# committed because NOTHING IMPORTS IT TODAY: an untracked 2.3 MB artifact is the
+# same `git status` noise the block above exists to prevent.
+#
+# NOT a decision against adopting it. FS-252 owns "one real caller uses it, or it is
+# deleted"; if the answer is adopt-and-commit, remove this line as part of that.
+frontend/src/api/generated/schema.d.ts
+
 # junit report written by the api-contract job (backend/scripts/contract_ratchet.py
 # reads it); regenerated every run, never committed.
 backend/contract-report.xml
