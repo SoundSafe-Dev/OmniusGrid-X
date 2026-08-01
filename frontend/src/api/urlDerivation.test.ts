@@ -106,6 +106,47 @@ describe('the WebSocket scheme follows the page protocol', () => {
 
     expect(await wsUrl()).toBe('ws://localhost:8000/ws')
   })
+
+  it('follows VITE_API_URL in dev instead of assuming :8000', async () => {
+    // THE DEFECT THIS PAIR GUARDS. `VITE_API_URL` is the documented way to point the dev
+    // frontend at a backend, and this branch ignored it — so running the API on any other
+    // port gave a socket retrying forever against nothing while every HTTP call succeeded.
+    // Hit for real during a QA sweep with the backend on :8100.
+    vi.stubEnv('DEV', true)
+    vi.stubEnv('VITE_API_URL', 'http://127.0.0.1:8100')
+    setLocation('http://localhost:3100/dashboard')
+
+    expect(await wsUrl()).toBe('ws://127.0.0.1:8100/ws')
+  })
+
+  it('upgrades to wss when VITE_API_URL is https', async () => {
+    vi.stubEnv('DEV', true)
+    vi.stubEnv('VITE_API_URL', 'https://staging.example.com')
+    setLocation('http://localhost:3100/dashboard')
+
+    expect(await wsUrl()).toBe('wss://staging.example.com/ws')
+  })
+
+  it('still lets VITE_WS_URL beat VITE_API_URL', async () => {
+    // Order matters: the socket genuinely does live elsewhere on some setups, and the
+    // explicit variable has to keep winning over the one that was inferred.
+    vi.stubEnv('DEV', true)
+    vi.stubEnv('VITE_API_URL', 'http://127.0.0.1:8100')
+    vi.stubEnv('VITE_WS_URL', 'ws://elsewhere:9999/socket')
+    setLocation('http://localhost:3100/dashboard')
+
+    expect(await wsUrl()).toBe('ws://elsewhere:9999/socket')
+  })
+
+  it('falls back to :8000 when VITE_API_URL is unparseable', async () => {
+    // A typo in an env var should not leave the app with no socket derivation at all —
+    // `new URL()` throws, and this runs at module load.
+    vi.stubEnv('DEV', true)
+    vi.stubEnv('VITE_API_URL', 'http://[not a url')
+    setLocation('http://localhost:5173/dashboard')
+
+    expect(await wsUrl()).toBe('ws://localhost:8000/ws')
+  })
 })
 
 describe('the API base is same-origin in production', () => {

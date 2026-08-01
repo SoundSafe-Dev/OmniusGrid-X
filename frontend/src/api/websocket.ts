@@ -13,6 +13,26 @@ export const getWsUrl = (): string => {
   const envUrl = import.meta.env.VITE_WS_URL;
   if (envUrl) return envUrl;
   if (import.meta.env.DEV) {
+    // FOLLOW VITE_API_URL WHEN IT IS SET, rather than assuming :8000.
+    //
+    // `VITE_API_URL` is the documented knob for pointing the dev frontend at a backend,
+    // and this branch ignored it — so moving the API to another port gave a socket that
+    // retried against nothing, forever, while every HTTP call worked. One backend needed
+    // two env vars in agreement and only one of them was written down. Hit while running
+    // the app on :8100 during a QA sweep on 2026-08-01.
+    //
+    // VITE_WS_URL still wins above, for the case where the socket really is elsewhere.
+    const apiUrl = import.meta.env.VITE_API_URL;
+    if (apiUrl) {
+      try {
+        const parsed = new URL(apiUrl, window.location.origin);
+        const scheme = parsed.protocol === 'https:' ? 'wss' : 'ws';
+        return `${scheme}://${parsed.host}/ws`;
+      } catch {
+        // An unparseable VITE_API_URL is the developer's typo, not a reason to have no
+        // socket at all; fall through to the default rather than throwing at module load.
+      }
+    }
     return `ws://${window.location.hostname || 'localhost'}:8000/ws`;
   }
   const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
