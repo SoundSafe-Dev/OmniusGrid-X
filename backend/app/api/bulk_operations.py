@@ -17,7 +17,7 @@ Tenancy follows each domain's existing single-record endpoint (see
 authenticated user, never from client input.
 """
 
-from typing import Optional
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 import structlog
@@ -53,6 +53,16 @@ router = APIRouter()
 MAX_CSV_BYTES = 5 * 1024 * 1024  # 5 MB upload cap
 MAX_ITEMS = 5000  # rows / ids / items per bulk request
 KANBAN_OPERATIONS = {"move", "delete", "assign"}
+
+
+class BulkJobAccepted(BaseModel):
+    """`_job_accepted` — the 202 body telling the client where to poll."""
+
+    job_id: str
+    type: str
+    status: str
+    total: int
+    status_url: str
 
 
 def _job_accepted(job: dict) -> dict:
@@ -113,6 +123,7 @@ class RegistryItemsBulkRequest(BaseModel):
 # --- Endpoints ----------------------------------------------------------------
 @router.post(
     "/assets/import",
+    response_model=BulkJobAccepted,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Bulk create/update assets from a CSV upload",
     dependencies=[Depends(require_admin)],
@@ -159,6 +170,7 @@ async def bulk_import_assets(
 
 @router.post(
     "/kanban/tasks/{operation}",
+    response_model=BulkJobAccepted,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Bulk Kanban task operations (move / delete / assign)",
     dependencies=[Depends(require_operator_or_admin)],
@@ -209,6 +221,7 @@ async def bulk_kanban_tasks(
 
 @router.post(
     "/alarms/acknowledge",
+    response_model=BulkJobAccepted,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Bulk acknowledge alarms",
     dependencies=[Depends(require_operator_or_admin)],
@@ -242,6 +255,7 @@ async def bulk_acknowledge_alarms(
 
 @router.post(
     "/registries/{registry_id}/items",
+    response_model=BulkJobAccepted,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Bulk create registry items",
     dependencies=[Depends(require_admin)],
@@ -292,7 +306,8 @@ async def bulk_create_registry_items(
     return _job_accepted(job)
 
 
-@router.get("/jobs/{job_id}", summary="Get bulk job status and progress")
+@router.get("/jobs/{job_id}",
+    response_model=Dict[str, Any], summary="Get bulk job status and progress")
 async def get_bulk_job(
     job_id: str,
     current_user: User = Depends(get_current_active_user),
@@ -315,7 +330,8 @@ async def get_bulk_job(
     return job
 
 
-@router.post("/jobs/{job_id}/cancel", summary="Cancel a pending or running bulk job", dependencies=[Depends(require_admin)])
+@router.post("/jobs/{job_id}/cancel",
+    response_model=Dict[str, Any], summary="Cancel a pending or running bulk job", dependencies=[Depends(require_admin)])
 async def cancel_bulk_job(
     job_id: str,
     current_user: User = Depends(get_current_active_user),
