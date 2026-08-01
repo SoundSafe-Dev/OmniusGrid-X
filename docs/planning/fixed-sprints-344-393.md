@@ -703,15 +703,21 @@ present was visible only in the console log. **Read the console, not just the ne
 | `GET /api/v1/kanban/rules/premade` | 50 validation errors: premade rule ids are not UUIDs. **Not environmental** — this fails on Postgres too, the ids are static | ⚠ kanban owner |
 | `GET /api/v1/rag/documents`, `POST /api/v1/rag/query` | Storage/vector backends unreachable (`seaweedfs:8333`, DNS). Environmental **but returns 500 where every Redis-backed endpoint returns 503** — an unreachable dependency is not a server defect, and the status should say so | ⚠ htreinen |
 
-## Two notes, neither worth a sprint on its own
+## Two more, both since fixed — and one was filed too low
 
-- `getWsUrl()` honours `VITE_WS_URL` but its dev fallback hardcodes `:8000`, ignoring
-  `VITE_API_URL`. One backend, two env vars, and only one of them documented — a dev who
-  moves the API port gets a socket that retries forever against nothing. Production
-  derivation (same-origin, `wss:` on https) is correct and is not affected.
-- `StatCard` in `TransportationManagement.tsx` and `YardManagement.tsx` is handed a ref by a
-  Radix `asChild` trigger and is not a `forwardRef`, so the ref silently drops. React warns
-  on both pages.
+I first recorded these as "neither worth a sprint on its own". That was right about the
+second and **wrong about the first**, which is worth keeping as a note on how the triage
+went astray: I classified it from the React warning text rather than from the behaviour.
+
+| | |
+|---|---|
+| **FS-383** | `StatCard` in `TransportationManagement.tsx` (×9) and `YardManagement.tsx` (×8) is used under `<TooltipTrigger asChild>` and was not a `forwardRef`. Filed as "React warns on both pages" — a cosmetic reading. Radix's Slot clones the child to merge in a ref **and its own event handlers**, and a plain function component drops both. Measured by hovering "Total Shipments": `role="tooltip"` 0 → 1, Radix popper 0 → 1. **All seventeen tooltips were dead.** A repo-wide sweep now enforces the shape; no other offenders exist today |
+| **FS-384** | `getWsUrl()`'s dev branch hardcoded `:8000` and ignored `VITE_API_URL`, so moving the API port left the socket retrying forever while every HTTP call succeeded. `VITE_WS_URL` still wins; an unparseable value falls back rather than throwing at module load. Production (same-origin, `wss:` on https) was already correct and is untouched |
+
+**The lesson worth carrying:** a React console warning describes the symptom the framework
+can see, not the one the user gets. "Function components cannot be given refs" says nothing
+about the handlers going the same way, and the handlers were the whole feature. Hover the
+thing before deciding it is cosmetic.
 
 ## Not a defect, recorded so it is not re-investigated
 
