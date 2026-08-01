@@ -165,9 +165,28 @@ for placeholder secrets.
   the direction right for the default configuration.
 
 - **FS-349 · `model_version = "gemma-4-placeholder"` ships in analysis payloads** · S · ⚠ Harsh
-  `correlation_ai_engine.py:43`. There is no gemma-4. The `_simulate_analysis` path beside it
-  (197-198, 227-228) *is* correctly labelled with `simulated: True` and a `simulation_reason`,
-  which is the standard the version string does not meet.
+  ~~There is no gemma-4… the standard the version string does not meet.~~
+  **PREMISE CORRECTED 2026-08-01 — NOT A DEFECT. Closed without a code change.**
+
+  `_model_version` has exactly three sites: set in `__init__` (43), emitted once (239),
+  overwritten with the real `f"{CORRELATION_BASE_MODEL}+lora"` when a model loads (294). The
+  single emission is **inside `_simulate_analysis`**, whose payload already carries
+  `simulated: True`, a `simulation_reason` and a lowered confidence of 0.4 — deliberately not
+  the 0.85 the real inference path reports. That is precisely the standard FS-267 applied to
+  GeoTab, and this path already met it. The string also contains the word *placeholder*.
+
+  Checked the obvious escape route too: `engines.py:59` reports
+  `tactical_engine.model_version`, a different object, so the correlation placeholder does
+  not leak through the status endpoint.
+
+  **Residual, for the owner rather than for a sprint:** naming a model family that does not
+  exist is mildly confusing even inside a labelled payload — `"unloaded"` would say the same
+  thing without implying gemma-4 was ever the plan. One line in `correlation_ai_engine.py`,
+  which is Harsh's lane, and not worth a cross-lane change on its own.
+
+  **Fourth premise in this document to fail on its first day** (FS-344, FS-352, FS-350,
+  FS-349) — all four from evidence that was right about the line it read and silent about its
+  context.
 
 - **FS-350 · Demo recommendations are loaded into the live queue** · S
   ~~`strategic_engine.py:118-119` … masked only by the fact that nothing starts
