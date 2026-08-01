@@ -58,11 +58,25 @@ DATABASE_URL="postgresql+asyncpg://<user>:<pass>@localhost:5432/omnius_demo" \
   ALLOW_DEV_TOKEN=true uvicorn app.main:app --port 8000
 
 # frontend (separate shell)
-cd frontend && VITE_USE_MOCK=false npm run dev
+cd frontend && VITE_USE_MOCK=false VITE_DEV_MODE=true npm run dev
 ```
 
-Log in as `dev` / any password (the backend accepts the `dev-token` bypass when
-`ALLOW_DEV_TOKEN=true` — dev only; production rejects it).
+Log in as `dev` / any password.
+
+**The skip-login demo needs BOTH variables, and this page used to name only one.**
+They gate different halves and neither works alone:
+
+| | set on | what it does | without it |
+|---|---|---|---|
+| `ALLOW_DEV_TOKEN=true` | backend | accepts the `dev-token` bearer as an admin | every API call returns 401 |
+| `VITE_DEV_MODE=true` | frontend | offers the bypass at all — `Login.tsx` requires `import.meta.env.DEV && VITE_DEV_MODE === 'true'` | typing `dev` falls through to the real login form and returns **401** |
+
+The frontend gate is also why a production bundle cannot enable this: `import.meta.env.DEV`
+is false in a build, so the bypass is compiled out regardless of the variable.
+
+`make demo` + `make demo-ui` set both for you, and are the recommended path — the two
+commands were documented separately and drifted, so the pair now lives in the Makefile
+where `test_demo_mode_instructions_work.py` can check it against what the code requires.
 
 ## Notes & known offline gaps
 
