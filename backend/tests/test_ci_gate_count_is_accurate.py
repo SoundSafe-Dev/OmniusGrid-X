@@ -43,7 +43,19 @@ def _jobs(workflow: Path) -> tuple[list[str], list[str]]:
             rf"^  {re.escape(name)}:\s*$(.*?)(?=^  [a-z0-9][\w-]*:\s*$|\Z)", text, re.M | re.S
         )
         body = match.group(1) if match else ""
-        if re.search(r"^\s*continue-on-error:\s*true", body, re.M):
+        # EXACTLY FOUR SPACES — job level, not step level.
+        #
+        # `^\s*continue-on-error` matched at ANY depth, so a single fail-safe STEP marked
+        # its whole job advisory. A job is not advisory because one step of it may fail;
+        # every other step still fails the build. Two of the three occurrences in these
+        # workflows are step-level (`quality-gates.yml` starting a broker best-effort,
+        # `ci-cd.yml`), and both were being miscounted.
+        #
+        # THE README INHERITED THE ERROR. Its "30 blocking and 2 advisory" was read off
+        # this parser, so the guard was enforcing a number its own bug produced — the
+        # second instance of the confounded-detector problem this file's header describes,
+        # this time with the wrong number written down in between.
+        if re.search(r"^    continue-on-error:\s*true", body, re.M):
             advisory.append(name)
         else:
             blocking.append(name)
@@ -57,6 +69,45 @@ def _counts() -> tuple[int, int]:
         blocking += len(b)
         advisory += len(a)
     return blocking, advisory
+
+
+def test_a_fail_safe_step_does_not_make_its_job_advisory():
+    """The distinction the parser above exists to make, pinned directly.
+
+    Both shapes are legitimate and they mean opposite things: a job-level
+    `continue-on-error` is a gate that cannot fail the build, a step-level one is a single
+    optional step inside a gate that still can. Counting them together made the advisory
+    number — the one this file says is "the one worth watching" — unwatchable.
+    """
+    job_level = """
+  a-real-gate:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - run: echo hi
+  another-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: best effort
+        continue-on-error: true
+        run: echo hi
+      - run: echo this one still fails the build
+"""
+    names = re.findall(r"^  ([a-z0-9][\w-]*):\s*$", job_level, re.M)
+    assert names == ["a-real-gate", "another-gate"]
+
+    advisory = []
+    for name in names:
+        match = re.search(
+            rf"^  {re.escape(name)}:\s*$(.*?)(?=^  [a-z0-9][\w-]*:\s*$|\Z)",
+            job_level, re.M | re.S,
+        )
+        if re.search(r"^    continue-on-error:\s*true", match.group(1), re.M):
+            advisory.append(name)
+    assert advisory == ["a-real-gate"], (
+        "a step-level continue-on-error is being counted as an advisory JOB; the advisory "
+        "total then rises every time someone adds a legitimately optional step"
+    )
 
 
 def test_the_workflows_are_readable():
