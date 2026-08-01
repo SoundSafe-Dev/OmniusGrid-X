@@ -149,11 +149,44 @@ one sends a null body. Both underlying behaviours are deliberate:
 Neither is wrong. They encode a strictness policy this API has not adopted, and adopting it
 is a product decision with a compatibility cost — not a defect fix.
 
-**The 13 `UnsupportedMethodResponse`** are a routing shape. `GET /api/v1/alarms/acknowledge-all`
+**Re-audited 2026-07-31 and the characterisation holds**, which is worth recording because
+"proven clean" and "never checked" look identical afterwards. The count had moved 24 → 27, so
+the label was re-derived rather than trusted. Sampling the live failures shows the same two
+shapes and no third:
+
+    ?skip=0&x-schemathesis-unknown-property=42        -> ignored, as most clients rely on
+    {"channel": "webhook", "enabled": 0}              -> pydantic lax mode coerces 0 to False
+
+Of the 27, **25 are the same operations that were failing before this session began** — the
+`skip`/`offset` endpoints among them were already here in run 1, so bounding those parameters
+(above) neither caused nor cured this bucket. The other **2 are `POST /user/goals` and
+`POST /twin/optimize`, which arrived here by being FIXED**: an endpoint that 500s never
+reaches the negative-data check at all. Diffed operation-by-operation rather than inferred
+from the totals.
+
+**The 14 `UnsupportedMethodResponse`** are a routing shape. `GET /api/v1/alarms/acknowledge-all`
 returns **422 rather than 405**, because the literal path is shadowed by
 `GET /api/v1/alarms/{alarm_id}` and "acknowledge-all" is parsed as an alarm id. Getting a 405
 would mean typed path converters (`{alarm_id:uuid}`) so a non-UUID fails to match at routing
 time — a behaviour change across many routes.
+
+**Audited 2026-07-31, and the claim needed one correction.** All 14 really are the shadowing
+shape — checked mechanically, by resolving each probed method against the route table rather
+than by reading the one example above. But **13 return 422 and one returns 500**, and the
+difference says something the "not a defect" label would otherwise hide:
+
+> The 422 is *evidence the path parameter is typed*. `revoke_api_key(key_id: UUID)` rejects
+> the literal `"generate"` during validation, so the request **never reaches the handler**.
+> `delete_document(doc_id: str)` accepts `"link"` as a perfectly good string, so
+> `DELETE /api/v1/rag/documents/link` **does reach the deletion handler** and runs its path.
+
+In this harness that surfaces as a 500 only because the vector store is unreachable
+(`[Errno 8] nodename nor servname provided`), which is environmental like the 503s above. In
+an environment where Qdrant resolves, the request would execute the delete path with
+`doc_id="link"`. It deletes nothing, since no document has that id — but the operation is not
+"rejected at routing" the way the other 13 are, and it is the same handler **FS-266** flags
+for deleting vectors with no organisation filter. Left for that item's owner (`rag.py` is
+another dev's lane); recorded here so the category label does not invite dismissing it.
 
 ### Known limitation: this gate runs with RLS inert
 
