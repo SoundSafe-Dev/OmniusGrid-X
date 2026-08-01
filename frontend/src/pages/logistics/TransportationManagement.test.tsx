@@ -26,6 +26,48 @@ const getDeliveryEfficiency = vi.fn()
 const getComplianceSummary = vi.fn()
 const getFleetSummary = vi.fn()
 
+// STUB THE MAP, OR THIS FILE FAILS ~20% OF THE TIME — AND NOT ON ITS OWN TESTS (FS-390).
+//
+// TransportationManagement renders <FleetTrackerMap> and <GeofencingPanel>, both real
+// react-leaflet. Nothing here mocked them, so every test in this file mounted a live
+// Leaflet map in jsdom. On unmount a queued passive effect still calls `addLayer` against
+// a map that has already been torn down:
+//
+//     TypeError: Cannot use 'in' operator to search for '_leaflet_id' in null
+//       at stamp -> hasLayer -> getRenderer -> beforeAdd -> addLayer
+//       at commitPassiveMountOnFiber            (react-dom)
+//
+// That throw is asynchronous and outside any error boundary, so it surfaces as an
+// UNCAUGHT EXCEPTION and vitest attributes it to whichever test happens to be in flight.
+// The observed casualty was "clears the fleet when the drivers really do have hours left",
+// which failed at ~850ms against a 10s timeout — not a timeout, an abort — and which has
+// nothing to do with maps. Measured 3 failures in 14 full-suite runs before this stub, 0
+// after; it never reproduces when the file runs alone, because the race needs the timing
+// of a loaded suite. `frontend-unit` is a BLOCKING gate, so that was roughly one spurious
+// red build in five, pointing at an innocent test.
+//
+// Same stub GeoTabIntegration.test.tsx already uses. These tests are about HOS compliance
+// and shipment logic; the map has its own coverage and needs real layout to mean anything.
+vi.mock('react-leaflet', () => ({
+  MapContainer: ({ children }: { children?: React.ReactNode }) => (
+    <div data-testid="map">{children}</div>
+  ),
+  TileLayer: () => null,
+  Marker: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
+  Popup: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
+  Polyline: () => null,
+  Circle: () => null,
+  // Every method FleetTrackerMap calls on the map handle. Listed explicitly rather than
+  // returned as a Proxy: a missing one should fail loudly here, not be absorbed into a
+  // no-op that quietly changes what the component under test does.
+  useMap: () => ({
+    on: () => {},
+    off: () => {},
+    fitBounds: () => {},
+    closePopup: () => {},
+  }),
+}))
+
 vi.mock('../../api', () => ({
   transportationApi: {
     getShipments: (...a: unknown[]) => getShipments(...a),
