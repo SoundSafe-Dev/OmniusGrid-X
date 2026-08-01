@@ -116,7 +116,7 @@ class — any extension created by `conftest` and by no migration now fails the 
 
 ## Why a ratchet
 
-**369–370 of 452** operations conform (floor: 360). The remaining ~82 are dominated by
+**368–370 of 452** operations conform (floor: 360). The remaining ~82 are dominated by
 **one behaviour**: generated input reaching Postgres unvalidated and surfacing as a 500
 where the contract promises a 4xx (`DataError`, `ForeignKeyViolationError`,
 `CharacterNotInRepertoireError`). That is per-endpoint validation work spread across every
@@ -222,7 +222,7 @@ on different runs. Fixing the type removed variance as well as 500s. The margin 
 anyway — two identical runs are not yet evidence the spread is gone, and the row below them
 scored 360 and 359, so it is not.
 
-It sits 9 below the observed minimum of 369. Pinned at the best observed score it would fail roughly
+It sits 8 below the observed minimum of 368 (four runs of the same tree spanned 368-370; see below). Pinned at the best observed score it would fail roughly
 half of all builds, and *a gate that cries wolf is a gate somebody disables* — which is
 precisely how its predecessor ended up advisory and killed at six hours.
 
@@ -359,6 +359,55 @@ original handler. Writing it also caught a trap worth recording: the test module
 annotation the *string* `"model"`, FastAPI fell back to treating it as a query parameter,
 and the assertions failed against the wrong error — looking exactly like a broken fix
 rather than a broken harness.
+
+### Six real fixes moved the number by nothing, and the floor stayed at 360
+
+Recorded because the obvious reading of it is wrong, and because the next person to fix
+something here will see the same thing.
+
+After the raise to 360, six more defects from the list above were fixed and verified
+individually — including `POST /user/goals`, which had **never worked once since it was
+written**. Two runs on the settled tree scored **368 and 370**, against 369 and 370 before
+them. Conformance did not improve. A reader tracking only the headline number would
+conclude the six fixes were worthless.
+
+Diffing the runs operation-by-operation says otherwise. Every fix landed:
+
+| operation | before | after |
+|---|---|---|
+| `POST /bulk/assets/import` | ServerError | **pass** |
+| `POST /commands/submit` | ServerError | **pass** |
+| `POST /transportation/load-plans` | ServerError | **pass** |
+| `PUT /data-retention/policies/{metric_name}` | ServerError | **pass** |
+| `POST /rag/ingest` | ServerError | **pass** (the validation-handler fix, not its own) |
+| `POST /twin/optimize` | ServerError | AcceptedNegativeData |
+| `POST /user/goals` | ServerError | AcceptedNegativeData |
+
+**Two of them moved SIDEWAYS rather than to passing, and that is not a regression.** An
+endpoint that 500s never reaches the negative-data check; once it works, schemathesis
+mutates a valid body to violate the schema and gets a 2xx — landing in the
+`AcceptedNegativeData` bucket, which the section above explains is a strictness *policy*
+this API has not adopted (pydantic's lax mode coerces `0` to `False`; unknown query params
+are ignored, as most clients rely on). So `AcceptedNegativeData` rose 25 → 27 for exactly
+the reason `ServerError` fell.
+
+The rest of the difference is the documented flappers firing. The three
+`model-monitoring/*/history/{model_id}` operations read time-window queries whose window
+moves during the run, and they flip across the six runs measured so far:
+
+    runs 1,2,3,4,7,8   F P P P P F
+
+**Two lessons, and the second is the one to keep.** First, the 9-point margin is earning
+its keep: four runs of the same tree have now spanned 368–370, so the spread is not the 1
+that runs 3 and 4 suggested. Second, and more important:
+
+> **"Conformance went up" is not a sound proxy for "the code got better."** A feature that
+> had been dead since it was written now works, and the number did not move. Judge a fix by
+> reproducing it, not by the gate's headline.
+
+The floor therefore stays at **360**. Raising it on runs 3–4's minimum of 369 would have
+been the mistake this document warns about in the other direction — pinning to a lucky pair
+and failing builds on the next honest run.
 
 ### The ~20 `503`s are the harness, not the API
 
