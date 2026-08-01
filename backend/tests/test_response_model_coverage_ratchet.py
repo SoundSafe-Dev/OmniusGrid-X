@@ -39,7 +39,7 @@ from tests._route_tree import http_routes
 #: The measured number of routes serving an undeclared response, 2026-07-31.
 #: LOWER THIS as routes are declared. Raising it means a route landed without a
 #: response_model, which is the thing this file exists to prevent.
-MAX_UNDECLARED = 158
+MAX_UNDECLARED = 146
 
 #: Total routes when that number was measured. A large swing means something
 #: structural changed and the ratchet's denominator is no longer comparable.

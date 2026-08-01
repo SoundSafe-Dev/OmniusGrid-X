@@ -1,7 +1,7 @@
 """Data Residency Controls (USA) API Endpoints"""
 
 from datetime import datetime, timezone
-from typing import Optional, List
+from typing import Any, Dict, Optional, List
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy import select, and_
@@ -16,13 +16,59 @@ import structlog
 
 logger = structlog.get_logger()
 
+from pydantic import BaseModel  # noqa: E402
+
 router = APIRouter()
+
+# ---- Response schemas (pool #43 / FS-255). Documented, not reshaped.
+
+
+class MessageResponse(BaseModel):
+    """Tag and untag both acknowledge with a message alone."""
+
+    message: str
+
+
+class RecordResidency(BaseModel):
+    table_name: str
+    record_id: str
+    tagged: bool
+    region: Optional[str] = None
+    #: Absent on the untagged branch, which returns four keys rather than six.
+    #: Optional here rather than required, or every lookup of an untagged record
+    #: would 500 on a response that is a perfectly normal answer.
+    tagged_at: Optional[Any] = None
+    tagged_by: Optional[str] = None
+
+
+class ResidencyTagList(BaseModel):
+    items: List[Dict[str, Any]]
+    total: int
+
+
+class ResidencySummary(BaseModel):
+    total_tags: int
+    #: Counter maps keyed by region / table name — the keys are data, so they
+    #: cannot be a fixed model.
+    by_region: Dict[str, int]
+    by_table: Dict[str, int]
+
+
+class ResidencyValidation(BaseModel):
+    expected_region: str
+    tables: Dict[str, Any]
+    total_records: int
+    tagged_records: int
+    untagged_records: int
+    compliance_percentage: float
+
+
 
 # Default region for USA compliance
 DEFAULT_REGION = "USA"
 
 
-@router.post("/tag", summary="Tag record with residency", description="Tag a database record with its data residency region.", dependencies=[Depends(require_admin)])
+@router.post("/tag", response_model=MessageResponse, summary="Tag record with residency", description="Tag a database record with its data residency region.", dependencies=[Depends(require_admin)])
 @rate_limit("100/minute")
 async def tag_record_residency(
     request: Request,
@@ -88,7 +134,7 @@ async def tag_record_residency(
     return {"message": "Data residency tag created successfully"}
 
 
-@router.get("/tag/{table_name}/{record_id}", summary="Get record residency", description="Get the data residency tag for a specific record.")
+@router.get("/tag/{table_name}/{record_id}", response_model=RecordResidency, summary="Get record residency", description="Get the data residency tag for a specific record.")
 @rate_limit("100/minute")
 async def get_record_residency(
     request: Request,
@@ -126,7 +172,7 @@ async def get_record_residency(
     }
 
 
-@router.get("/tags", summary="List residency tags", description="List all data residency tags, optionally filtered by table or region.")
+@router.get("/tags", response_model=ResidencyTagList, summary="List residency tags", description="List all data residency tags, optionally filtered by table or region.")
 @rate_limit("100/minute")
 async def list_residency_tags(
     request: Request,
@@ -162,7 +208,7 @@ async def list_residency_tags(
     return {"items": tag_list, "total": len(tag_list)}
 
 
-@router.delete("/tag/{table_name}/{record_id}", summary="Remove residency tag", description="Remove a data residency tag from a record.", dependencies=[Depends(require_admin)])
+@router.delete("/tag/{table_name}/{record_id}", response_model=MessageResponse, summary="Remove residency tag", description="Remove a data residency tag from a record.", dependencies=[Depends(require_admin)])
 @rate_limit("10/minute")
 async def remove_residency_tag(
     request: Request,
@@ -200,7 +246,7 @@ async def remove_residency_tag(
     return {"message": "Data residency tag removed successfully"}
 
 
-@router.get("/summary", summary="Get residency summary", description="Get a summary of data residency across all tables.")
+@router.get("/summary", response_model=ResidencySummary, summary="Get residency summary", description="Get a summary of data residency across all tables.")
 @rate_limit("100/minute")
 async def get_residency_summary(
     request: Request,
@@ -227,7 +273,7 @@ async def get_residency_summary(
     return summary
 
 
-@router.post("/validate", summary="Validate data residency", description="Validate that all data in specified tables is tagged with correct residency.", dependencies=[Depends(require_admin)])
+@router.post("/validate", response_model=ResidencyValidation, summary="Validate data residency", description="Validate that all data in specified tables is tagged with correct residency.", dependencies=[Depends(require_admin)])
 @rate_limit("10/minute")
 async def validate_data_residency(
     request: Request,
