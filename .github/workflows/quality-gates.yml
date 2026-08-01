@@ -505,6 +505,20 @@ jobs:
           ./tests/k8s/check_placeholder_secrets.py
           ./tests/k8s/check_placeholder_secrets.py --staging
           ./tests/k8s/check_placeholder_secrets.py --dr
+      - name: Security-critical backend settings reach the container
+        run: |
+          pip install pyyaml
+          # The app defaults ALLOW_DEV_TOKEN and ALLOW_OPEN_REGISTRATION to TRUE so a
+          # laptop demo works offline, and nothing here overrode them — so every overlay
+          # deployed a backend accepting the string `dev-token` as an admin credential.
+          # validate_settings() exists to stop that and hard-fails at import, but only
+          # when ENVIRONMENT=production, and ENVIRONMENT appeared in no manifest at all.
+          # A real guard that nothing had ever armed.
+          #
+          # Checks the BUILT manifests, and resolves envFrom the way the kubelet does
+          # (explicit `env` beats it) — the sources each read correctly on their own and
+          # the defect is only visible in the combination.
+          ./tests/k8s/check_backend_security_config.py
       - name: Build + validate operator stacks (monitoring, database-ha, autoscaling)
         # These reference operator CRDs (Prometheus rules from outside the tree,
         # CloudNativePG Cluster/Pooler, KEDA ScaledObject) — build with the None

@@ -31,8 +31,17 @@ images:
     newTag: main
 
 configMapGenerator:
+  # `behavior: merge` — base owns this ConfigMap and the backend consumes it via envFrom.
+  # Until that reference existed none of these three reached the process, so staging was
+  # running with mTLS ON and log level INFO despite saying otherwise here.
   - name: backend-config
+    behavior: merge
     literals:
+      # Opting DOWN from base's `production` on purpose: staging is not production, and
+      # the strict validator would refuse to start without the full production secret
+      # set. The dev-token bypass and open registration are pinned off in the Deployment
+      # itself, so this relaxes logging and mTLS — not authentication.
+      - ENVIRONMENT=staging
       - LOG_LEVEL=debug
       - MTLS_ENABLED=false
       - DEBUG=true

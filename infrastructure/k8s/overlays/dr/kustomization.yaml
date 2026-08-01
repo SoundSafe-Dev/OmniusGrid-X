@@ -55,8 +55,13 @@ images:
     newTag: main
 
 configMapGenerator:
+  # `behavior: merge` — base owns this ConfigMap and the backend consumes it via envFrom.
+  # DEPLOYMENT_SITE below is the reason this matters most here: it existed to tell DR logs
+  # from primary logs during a failover, and it was never reaching the process at all.
   - name: backend-config
+    behavior: merge
     literals:
+      - ENVIRONMENT=production
       - LOG_LEVEL=info
       - MTLS_ENABLED=true
       - DEBUG=false
