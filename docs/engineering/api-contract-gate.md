@@ -451,11 +451,37 @@ endpoint whose dependency is Redis or the broker answers 503: feature flags, bul
 export jobs, the query-performance surface, `/health/kafka`, `/health/ready`.
 
 Those 503s are the endpoints reporting a missing dependency **correctly**. They are counted
-as failures because schemathesis treats any 5xx as a server error, and they will keep being
-counted until the job gains those services. Do not "fix" them in application code.
+as failures because schemathesis treats any 5xx as a server error. Do not "fix" them in
+application code.
 
-This also means a local run is comparable to CI's, which is why the numbers above were
-trusted: same two services missing in both.
+**Measured 2026-07-31, and the two halves are very different jobs.** Against a throwaway
+database:
+
+| services reachable | conforming |
+|---|---|
+| postgres only (what the job had) | 368–370 |
+| + Redis | **383** |
+| + Redis + broker | **387** |
+
+So Redis alone was costing ~14 operations that were never the API's fault, and it needs no
+`command:` — it is now a service block on the job. **The broker is the awkward half for a
+specific reason worth recording:** Redpanda must advertise an address the client can reach
+(`redpanda start --advertise-kafka-addr ...`), and GitHub service containers accept
+image/env/ports/options and **no command**. Point the app at a broker that advertises its
+internal hostname and the client connects to the bootstrap address, is redirected somewhere
+it cannot resolve, and hangs — the app then never serves `/openapi.json` inside the suite's
+120-second window and the run collects **1 operation instead of 452**.
+
+That is not a thought experiment; it happened on the first attempt here, and the ratchet
+caught it as a collapsed collection rather than reporting a pass. With a correctly-advertised
+broker the app starts in **3.3 seconds**. The remaining ~4 operations therefore need a
+`docker run` step rather than a service block — tracked as FS-259b.
+
+**The floor was deliberately NOT raised in the same change.** Even the no-services baseline
+(368) clears 360, so if Redis misbehaves on a runner the gate reports the old number and
+still passes; it cannot turn red for an infrastructure reason. Raise the floor once CI has
+shown the new number across a couple of runs — the raise wants CI's measurement, not a
+workstation's.
 
 ### The residual noise is 14 known operations
 

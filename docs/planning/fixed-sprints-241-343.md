@@ -127,6 +127,15 @@ The pipeline is complete and now has one consumer. These are the gaps that consu
   *Done when:* the floor is raised with a measured margin, and the raise is justified by fixes
   rather than by luck.
 
+- **FS-259b · Give the contract job a reachable broker** · S — split out 2026-07-31
+  Redis is now a service on the `api-contract` job and recovered ~14 operations (368-370 →
+  383) that were never API defects. The broker's remaining ~4 (383 → 387) cannot be had the
+  same way: Redpanda needs `--advertise-kafka-addr`, and a GitHub service container takes no
+  `command`. Pointed at a broker advertising its internal hostname, the client hangs on the
+  redirect and the suite collects 1 operation instead of 452 — observed, not predicted.
+  *Done when:* a `docker run` step starts Redpanda with an advertised address the runner can
+  reach, the suite still collects ~452, and the floor is raised from CI's measurement.
+
 - **FS-260 · Coverage thresholds** · S — pool #41
   ~~None exist, and `vitest.config.ts` narrows coverage `include` to three paths, so the reported
   number is decorative and cannot regress.~~

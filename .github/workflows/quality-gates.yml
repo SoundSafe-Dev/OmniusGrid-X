@@ -77,6 +77,21 @@ jobs:
           --health-cmd pg_isready --health-interval 10s
           --health-timeout 5s --health-retries 5
         ports: ['5432:5432']
+      # ADDED 2026-07-31. This job provisioned ONLY postgres, so every endpoint whose
+      # dependency is Redis answered 503 — feature flags, bulk jobs, export jobs, the
+      # query-performance surface. Those endpoints were reporting a missing dependency
+      # CORRECTLY; schemathesis counts any 5xx as a server error, so they were charged
+      # to the API. Measured against a throwaway database: 368-370 conforming without
+      # Redis, 383 with it. ~14 operations that were never the API's fault.
+      #
+      # No `command:` needed, which is why Redis lands and the broker does not — see
+      # the note on the run step below.
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 10s
+          --health-timeout 5s --health-retries 5
+        ports: ['6379:6379']
     steps:
       - uses: actions/checkout@v4
         with:
@@ -106,6 +121,22 @@ jobs:
           DATABASE_URL: postgresql+asyncpg://omniusgrid:omniusgrid_dev_password@localhost:5432/omniusgrid_test
           RUN_CONTRACT_TESTS: "1"
           JWT_SECRET_KEY: test-secret-key
+          # Points at the service above. Without it the app falls back to the compose
+          # hostname `redis:6379`, which resolves from neither a runner nor a laptop.
+          REDIS_URL: redis://localhost:6379/0
+        # THE BROKER IS DELIBERATELY NOT ADDED HERE, and it is not an oversight.
+        # Redpanda must advertise an address the client can reach, which needs
+        # `redpanda start --advertise-kafka-addr ...`. GitHub service containers accept
+        # image/env/ports/options and NO command, so a service block cannot configure
+        # it: the client connects to the bootstrap address, is redirected to the
+        # container's internal hostname, and hangs. Reproduced exactly that way on a
+        # workstation — the app then never served /openapi.json inside the suite's 120s
+        # window and the run collected 1 operation instead of 452.
+        #
+        # With a correctly-advertised broker the app starts in 3.3s and conformance
+        # reaches 387 (vs 383 with Redis alone), so the remaining ~4 operations are
+        # worth a `docker run` step rather than a service block. Tracked as FS-259b.
+        #
         # Individual failures do not fail the step; the ratchet below decides. The
         # junit report is the input, so a crashed or truncated run cannot be mistaken
         # for a clean one — contract_ratchet.py rejects a report whose operation count
