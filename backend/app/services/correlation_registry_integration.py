@@ -1044,21 +1044,86 @@ class CorrelationRegistryIntegration:
         db: AsyncSession,
         created_by: UUID
     ) -> Optional[str]:
-        """Create an alert notification"""
-        
-        # This would integrate with the notification/alerting system
-        # For now, log the alert
-        alert_data = {
-            "analysis": analysis,
-            "risk_score": risk_score,
-            "recommended_actions": recommended_actions,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "severity": "critical" if risk_score > 75 else "high"
+        """Dispatch a correlation alert through the notification service.
+
+        THIS LOGGED AND RETURNED AN INVENTED IDENTIFIER (FS-351). The body was
+        `# This would integrate with the notification/alerting system / # For now, log the
+        alert`, a `logger.warning`, and then
+
+            return f"alert-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
+
+        That id went into `result["alerts"]`, which `process_correlation_analysis` returns
+        — so a caller received a list of alert references for alerts that did not exist,
+        on a path that classifies `severity: "critical"` above a risk score of 75. Worse
+        than a silent no-op: it reported success with an identifier, which is the shape
+        `test_reporting_honesty.py` exists to catch.
+
+        The notification service was already there. `notification_service.dispatch` loads
+        the tenant's subscription rules, delivers to the configured channels, records the
+        deliveries, and reports failed ones into error-triage.
+
+        DELIVERY FAILURE MUST NOT LOSE THE CORRELATION. The analysis and its correlations
+        are already committed by the time this runs, so an exception here would discard
+        completed work over an undeliverable email. It is caught and surfaced the same way
+        `rul.py` handles its own dispatch failures — and, unlike before, the return value
+        then says no alert exists rather than inventing a reference to one.
+        """
+        event = {
+            "event_type": "correlation_alert",
+            "severity": "critical" if risk_score > 75 else "high",
+            "domain": "correlation",
+            "organization_id": str(organization_id),
+            "title": f"Correlation risk score {risk_score:.0f}",
+            "message": analysis,
+            "metadata": {
+                "risk_score": risk_score,
+                "recommended_actions": recommended_actions,
+            },
         }
-        
-        logger.warning("correlation_alert_notification", alert_data=alert_data)
-        
-        return f"alert-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
+
+        try:
+            from app.services.notifications import notification_service
+
+            deliveries = await notification_service.dispatch(
+                event, organization_id=str(organization_id)
+            )
+        except Exception as exc:  # the correlation is already committed; keep it
+            logger.warning(
+                "correlation_alert_dispatch_failed",
+                organization_id=str(organization_id),
+                risk_score=risk_score,
+                error=str(exc),
+            )
+            from app.services.error_tracker import error_tracker
+
+            await error_tracker.report_subsystem_error(
+                exc,
+                subsystem="correlation",
+                operation="alert.dispatch",
+                organization_id=str(organization_id),
+            )
+            return None
+
+        # `dispatch` returns [] when the tenant has no matching subscription — that is a
+        # legitimate outcome and NOT an alert. Returning an id for it would put the old
+        # lie back in a quieter form.
+        if not deliveries:
+            logger.info(
+                "correlation_alert_no_subscribers",
+                organization_id=str(organization_id),
+                risk_score=risk_score,
+            )
+            return None
+
+        delivered = [d for d in deliveries if d.get("delivered")]
+        logger.info(
+            "correlation_alert_dispatched",
+            organization_id=str(organization_id),
+            risk_score=risk_score,
+            channels=len(deliveries),
+            delivered=len(delivered),
+        )
+        return event["event_type"] if delivered else None
 
 
 # Global instance

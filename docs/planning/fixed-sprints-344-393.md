@@ -187,9 +187,25 @@ for placeholder secrets.
   silent about the guard one layer out. **Read the caller, not just the callee.**
 
 - **FS-351 · Critical-risk alerts are logged, never dispatched** · M
-  `correlation_registry_integration.py:1049-1050` — `# This would integrate with the
-  notification/alerting system` / `# For now, log the alert`, on a path that classifies
-  `severity: "critical"` when `risk_score > 75`. A name that claims a side effect.
+  `correlation_registry_integration.py:1049-1050`, on a path that classifies
+  `severity: "critical"` when `risk_score > 75`.
+  ✅ **DONE 2026-08-01.** Now dispatched through `notification_service.dispatch`, which
+  already existed and already loads the tenant's subscription rules, delivers, records the
+  deliveries and pushes failures into error-triage.
+
+  **The item understated it.** The function did not merely log — it returned
+  `f"alert-{now:%Y%m%d%H%M%S}"`, and that identifier went into `result["alerts"]`, which
+  `process_correlation_analysis` returns. Callers received alert *references* for alerts that
+  were never sent. That is the class `test_reporting_honesty.py` exists for, and its static
+  scan missed this one because the function claims no count and logs no `*_created` event —
+  it invents a **reference**, which is a different tell worth adding to that scan (see
+  FS-305's neighbourhood).
+
+  Three outcomes are pinned, because only the first is an alert: delivered → an identifier;
+  **no subscribers → `None`** (an empty delivery list is legitimate, and returning an id for
+  it would restore the lie in a quieter form); dispatch raised → `None`, error-triage, and
+  the already-committed correlation survives rather than being discarded over an
+  undeliverable email.
 
 - **FS-352 · `POST /admin/collectors/{id}/restart` restarts nothing** · S
   The whole handler is a `return` with `"status": "pending"` and a hardcoded
