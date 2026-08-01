@@ -407,6 +407,12 @@ jobs:
       - name: No placeholder credentials reachable in staging or production
         run: |
           pip install pyyaml
+          # The matcher first. It once reported OK for a `secretGenerator` placeholder,
+          # because that emits base64 `data` and the markers were compared against the
+          # encoded string — so the three OKs below meant nothing for the idiomatic way
+          # of writing the very thing this guards. If the self-test fails, they mean
+          # nothing again.
+          ./tests/k8s/check_placeholder_secrets.py --self-test
           ./tests/k8s/check_placeholder_secrets.py
           ./tests/k8s/check_placeholder_secrets.py --staging
           ./tests/k8s/check_placeholder_secrets.py --dr

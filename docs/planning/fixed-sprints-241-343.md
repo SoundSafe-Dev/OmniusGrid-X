@@ -157,9 +157,20 @@ The pipeline is complete and now has one consumer. These are the gaps that consu
   Four workers, otel and jaeger. Without probes a wedged worker is never restarted.
 
 - **FS-263 · Placeholder-secret gate** · M — pool #53
-  `base/object-store.yaml` and the two monitoring manifests ship DEV-ONLY credentials, honestly
-  labelled in comments. **A comment is not a control.**
-  *Done when:* a production build containing a known placeholder fails a CI gate.
+  ~~`base/object-store.yaml` and the two monitoring manifests ship DEV-ONLY credentials, honestly
+  labelled in comments. **A comment is not a control.**~~
+  **CORRECTED IN PLACE 2026-07-31 — already delivered by FS-200**, which builds each overlay,
+  checks the platform stacks post-strip, and asserts `ci-cd.yml` actually invokes the strip
+  filter (a filter nobody calls is not enforcement).
+
+  **But the gate had a blind spot, found by mutation-testing it rather than trusting it.**
+  Injecting a `secretGenerator` placeholder into the production overlay produced
+  *"OK: no placeholder credentials reachable"* — `secretGenerator` emits base64 `data` and the
+  plaintext markers were matched against the encoded string. That is the idiomatic kustomize
+  way to create a Secret, so the gate was blind to the most likely route a placeholder takes
+  into an overlay. Values are now decoded before matching, and a `--self-test` mode runs in CI
+  ahead of the three environment checks — if the matcher is broken, its OKs mean nothing.
+  *Done.*
 
 - **FS-264 · Contract-gate observability** · S
   The gate's score is in a JUnit file nobody reads between runs.

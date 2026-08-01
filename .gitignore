@@ -103,6 +103,10 @@ dataset_synthesis/**/__pycache__/
 .coverage.*
 htmlcov/
 coverage.xml
+# vitest --coverage writes here (3.9 MB of lcov + HTML). It was NOT ignored, so the
+# first run of FS-260's re-measurement put 3.9 MB of untracked noise in `git status`
+# — which is the exact failure this block's own comment describes.
+frontend/coverage/
 frontend/test-results/
 frontend/playwright-report/
 frontend/blob-report/

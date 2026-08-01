@@ -11,12 +11,16 @@ This reads whatever production would actually apply — the production overlay A
 the platform stacks that ci-cd.yml applies alongside it — and fails on any value
 that looks like a shipped placeholder.
 
-Usage:  ./check_placeholder_secrets.py            # checks production
-        ./check_placeholder_secrets.py --staging  # same for staging
+Usage:  ./check_placeholder_secrets.py             # checks production
+        ./check_placeholder_secrets.py --staging   # same for staging
+        ./check_placeholder_secrets.py --dr        # same for the DR site
+        ./check_placeholder_secrets.py --self-test # checks the matcher itself
 """
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import subprocess
 import sys
 
@@ -54,13 +58,39 @@ def build(path: str, restrictor_none: bool = False) -> list[dict]:
     return [d for d in yaml.safe_load_all(out.stdout) if d]
 
 
+def _decoded(value: object) -> str:
+    """A Secret value as plaintext, whichever field it arrived in.
+
+    `stringData` is plaintext; `data` is base64 — and the markers below are plaintext,
+    so matching them against an undecoded `data` value never hits. That gap mattered:
+    **`secretGenerator` in a kustomization emits `data`**, which is the idiomatic way to
+    create a Secret with kustomize and therefore the most likely way a placeholder
+    actually reaches an overlay. Verified by injecting
+    `secretGenerator: [{literals: [password=omniusgrid_dev_secret]}]` into the production
+    overlay: the gate reported OK.
+
+    Undecodable values are returned as-is rather than dropped — a value this cannot read
+    should still be matched on its raw form, not silently skipped.
+    """
+    raw = str(value)
+    try:
+        return base64.b64decode(raw, validate=True).decode("utf-8")
+    except (binascii.Error, UnicodeDecodeError, ValueError):
+        return raw
+
+
 def offenders(docs: list[dict], source: str) -> list[str]:
     found = []
     for d in docs:
         if d.get("kind") != "Secret":
             continue
         name = d["metadata"]["name"]
-        data = {**(d.get("stringData") or {}), **(d.get("data") or {})}
+        # Decoded, so a base64 `data:` value is checked on the same footing as a
+        # plaintext `stringData:` one.
+        data = {
+            **{k: str(v) for k, v in (d.get("stringData") or {}).items()},
+            **{k: _decoded(v) for k, v in (d.get("data") or {}).items()},
+        }
         for key, value in data.items():
             low = str(value).lower()
             hits = [m for m in PLACEHOLDER_MARKERS if m in low]
@@ -72,14 +102,68 @@ def offenders(docs: list[dict], source: str) -> list[str]:
     return found
 
 
+def self_test() -> int:
+    """Prove the matcher sees both encodings, without needing a cluster or kustomize.
+
+    THIS EXISTS BECAUSE THE GATE PASSED A PLACEHOLDER IT SHOULD HAVE CAUGHT. Injecting
+
+        secretGenerator:
+          - name: probe
+            literals: [password=omniusgrid_dev_secret]
+
+    into the production overlay produced "OK: no placeholder credentials reachable" —
+    `secretGenerator` emits base64 `data`, and the plaintext markers were compared against
+    the encoded string. A gate with a blind spot over the idiomatic way to write the thing
+    it guards is worse than none, because it is believed.
+
+    Run in CI ahead of the real checks: if this fails, the OKs below mean nothing.
+    """
+    b64 = base64.b64encode(b"omniusgrid_dev_secret").decode()
+    cases = [
+        ("stringData plaintext", {"kind": "Secret", "metadata": {"name": "s"},
+                                  "stringData": {"secret-key": "omniusgrid_dev_secret"}}, True),
+        ("data base64 (secretGenerator)", {"kind": "Secret", "metadata": {"name": "s"},
+                                           "data": {"secret-key": b64}}, True),
+        ("keyed placeholder", {"kind": "Secret", "metadata": {"name": "s"},
+                               "stringData": {"admin-password": "admin"}}, True),
+        ("keyed placeholder, base64", {"kind": "Secret", "metadata": {"name": "s"},
+                                       "data": {"admin-password":
+                                                base64.b64encode(b"admin").decode()}}, True),
+        ("a real credential", {"kind": "Secret", "metadata": {"name": "s"},
+                               "stringData": {"secret-key": "Zr8$k2Lq9xVn"}}, False),
+        ("non-base64 value is not dropped", {"kind": "Secret", "metadata": {"name": "s"},
+                                             "data": {"secret-key": "replace_me!!"}}, True),
+        ("not a Secret", {"kind": "ConfigMap", "metadata": {"name": "c"},
+                          "data": {"secret-key": "omniusgrid_dev_secret"}}, False),
+    ]
+    failures = []
+    for label, doc, should_flag in cases:
+        flagged = bool(offenders([doc], "self-test"))
+        if flagged != should_flag:
+            failures.append(
+                f"{label}: expected {'a hit' if should_flag else 'no hit'}, got the opposite"
+            )
+    if failures:
+        print("FAIL: the placeholder matcher does not do what it claims:", file=sys.stderr)
+        for f in failures:
+            print(f"  - {f}", file=sys.stderr)
+        return 1
+    print(f"OK: matcher self-test passed ({len(cases)} cases, both encodings)")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--self-test", action="store_true",
+                    help="check the matcher itself; needs no kustomize")
     ap.add_argument("--staging", action="store_true", help="check staging instead")
     # The DR site is a DEPLOYED environment — arguably the one where dev
     # credentials would go unnoticed longest, since it only serves traffic during
     # an incident. It was outside this gate until overlays/dr existed (FS-230).
     ap.add_argument("--dr", action="store_true", help="check the DR overlay instead")
     args = ap.parse_args()
+    if args.self_test:
+        return self_test()
     env = "staging" if args.staging else ("dr" if args.dr else "production")
 
     # The overlay must be clean on its own — nothing filters it at apply time.
