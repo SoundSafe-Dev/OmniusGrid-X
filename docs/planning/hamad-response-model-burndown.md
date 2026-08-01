@@ -101,11 +101,12 @@ absolute number rose while the ratio fell).
 | 2026-07-31 | 116 | `fleet_logistics` ×23 — the largest single file |
 | 2026-07-31 | 100 | `health` ×16 (17 routes, one already documented as `text/plain`) |
 | 2026-07-31 | 92 | `erp_integrations` ×8 |
-| 2026-07-31 | **68** | the tail: `alarms` ×4, `api_keys` ×3, `assets` ×3, `commands` ×3, `dashboard` ×3, `oee` ×3, `sso` ×3, `main` ×2 |
+| 2026-07-31 | 68 | the tail: `alarms` ×4, `api_keys` ×3, `assets` ×3, `commands` ×3, `dashboard` ×3, `oee` ×3, `sso` ×3, `main` ×2 |
+| 2026-07-31 | **62** | six that were never debt — five file downloads and `/metrics` |
 
-**145 routes off the list, of which 131 were declarations and 14 were miscounts.**
+**151 routes off the list, of which 131 were declarations and 20 were miscounts.**
 Both halves matter: the ratchet is only worth obeying if its number is honest, and
-14 routes that could never be declared would have made the target unreachable.
+20 routes that could never be declared would have made the target unreachable.
 
 ## What is deliberately NOT debt
 
@@ -114,10 +115,28 @@ exemption list, because neither is unfinished work:
 
 - **204 No Content** (6 routes). RFC 9110 §15.3.5 forbids a body. There is
   nothing to declare and never will be.
-- **A declared non-JSON media type** (8 routes). `response_model` describes a JSON
+- **A declared non-JSON media type** (14 routes). `response_model` describes a JSON
   schema; there is none for an xlsx or a PDF. The export routes state their real
   type through `responses={200: {"content": {...}}}`, which is what #38's fix
   used and what the contract gate reads.
+
+  **Six more joined this category on 2026-07-31, and five of them were a defect.**
+  `/compliance/reports/{job_id}/download`, its `/signed-download` twin,
+  `/exports/deliveries/{job_id}/download`, `/fleet/releases/{release_id}/bundle` and
+  `/models/{model_id}/download` all stream a file — `FileResponse` or
+  `StreamingResponse`, with a `Content-Disposition` — and every one of them declared
+  nothing, so **the OpenAPI schema promised JSON**. That is precisely what pool #38
+  fixed across nine export routes; these five were missed because two live past a
+  `public_router` boundary at the bottom of their files and three are in files #38
+  never opened. Anyone generating a client from this schema would have typed a
+  firmware bundle, a set of model weights and a signed PDF as parsed objects.
+
+  The sixth is `GET /metrics`, and it was never a defect — it has declared
+  `text/plain` since it was written. The ratchet's own `_NON_JSON` list simply did
+  not include `text/plain`, so a Prometheus exposition endpoint sat permanently in a
+  burn-down meant to reach zero. See the note on that constant: a guard that reads
+  declarations inherits their errors in both directions, and disbelieving a true one
+  is the quieter failure, because nobody investigates a number that is too high.
 
 ## Skipped, with reasons
 

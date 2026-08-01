@@ -1081,6 +1081,15 @@ async def list_export_deliveries(
 @public_router.get(
     "/deliveries/{job_id}/download",
     summary="Download a scheduled report via a time-limited signed link",
+    # The three the handler's own `media_types` map produces, plus the fallback it
+    # falls back to. Pool #38 fixed nine sibling routes in this file and this one was
+    # missed — it lives at the bottom, past the public_router boundary.
+    responses={200: {"content": {
+        "text/csv": {},
+        XLSX_MEDIA_TYPE: {},
+        "application/pdf": {},
+        "application/octet-stream": {},
+    }}},
 )
 @rate_limit("10/minute")
 async def download_scheduled_export(

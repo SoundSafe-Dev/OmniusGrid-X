@@ -642,6 +642,17 @@ async def get_compliance_report_job(
 @router.get(
     "/reports/{job_id}/download",
     summary="Download a completed compliance report",
+    # THE SCHEMA SAID JSON AND THIS HAS NEVER SERVED A JSON *RESPONSE*. It streams the
+    # generated artifact with a Content-Disposition, and `compliance_report_service`
+    # writes either a PDF or a JSON document depending on the requested format —
+    # `application/octet-stream` covers a job whose media type was never recorded.
+    # Same class as pool #38's nine export routes: a generated client typed a file
+    # download as a parsed object.
+    responses={200: {"content": {
+        "application/pdf": {},
+        "application/json": {},
+        "application/octet-stream": {},
+    }}},
     dependencies=[Depends(require_at_least(VIEWER))],
 )
 @rate_limit("100/minute")
@@ -707,6 +718,12 @@ async def download_compliance_report(
 @public_router.get(
     "/reports/{job_id}/signed-download",
     summary="Download a compliance report via a time-limited signed link",
+    # Same artifact as /download, reached with a signed token instead of a session.
+    responses={200: {"content": {
+        "application/pdf": {},
+        "application/json": {},
+        "application/octet-stream": {},
+    }}},
 )
 @rate_limit("10/minute")
 async def download_compliance_report_signed(

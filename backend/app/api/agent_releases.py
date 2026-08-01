@@ -236,7 +236,12 @@ async def yank_release(
     return _release_response(release)
 
 
-@public_router.get("/releases/{release_id}/bundle")
+@public_router.get(
+    "/releases/{release_id}/bundle",
+    # A FileResponse of the release artifact. The schema promised JSON, which is what an
+    # edge agent generating a client from it would have tried to parse a firmware bundle as.
+    responses={200: {"content": {"application/octet-stream": {}}}},
+)
 @rate_limit("30/minute")
 async def download_release_bundle(request: Request, release_id: UUID, token: str):
     try:

@@ -39,7 +39,7 @@ from tests._route_tree import http_routes
 #: The measured number of routes serving an undeclared response, 2026-07-31.
 #: LOWER THIS as routes are declared. Raising it means a route landed without a
 #: response_model, which is the thing this file exists to prevent.
-MAX_UNDECLARED = 68
+MAX_UNDECLARED = 62
 
 #: Total routes when that number was measured. A large swing means something
 #: structural changed and the ratchet's denominator is no longer comparable.
@@ -48,7 +48,25 @@ TOTAL_TOLERANCE = 0.15
 
 
 #: Media types that carry no JSON schema, so `response_model` cannot describe them.
-_NON_JSON = ("application/pdf", "text/csv", "application/vnd.openxmlformats", "application/octet-stream")
+#:
+#: `text/plain` was missing, and the route it cost is `GET /metrics` — the Prometheus
+#: exposition endpoint, whose media type is `CONTENT_TYPE_LATEST`
+#: ("text/plain; version=0.0.4; charset=utf-8"). It has DECLARED that since it was
+#: written. So the guard was reading a correct declaration and counting it as debt: a
+#: route that can never have a JSON schema, permanently in a burn-down that is supposed
+#: to reach zero.
+#:
+#: The inverse of the `/exports/jobs/{job_id}` finding, where `_serves_a_binary` believed
+#: a declaration that was wrong. A guard that reads declarations inherits their errors in
+#: both directions — this one disbelieved a true one, which is the quieter failure,
+#: because nobody investigates a number that is too high.
+_NON_JSON = (
+    "application/pdf",
+    "text/csv",
+    "text/plain",
+    "application/vnd.openxmlformats",
+    "application/octet-stream",
+)
 
 
 def _has_no_body(route) -> bool:
