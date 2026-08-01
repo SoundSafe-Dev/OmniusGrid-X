@@ -257,11 +257,27 @@ for placeholder secrets.
   perfectly good string and **reaches the deletion handler**.
 
 - **FS-353 · Every inbound ERP webhook 404s** · M
-  `tests/test_tenant_session_guard.py:113-121`, verified against a real database:
-  `integration_configurations` has FORCE RLS and the candidate lookup returns nothing, so the
-  webhook cannot find the integration it belongs to. The guard exempts `erp_webhooks.py`
-  rather than pretending it is fine. **Needs a design decision** — a privileged read path, or
-  the tenant in the URL — not a dependency swap.
+  ~~`integration_configurations` has FORCE RLS and the candidate lookup returns nothing…
+  **Needs a design decision**.~~
+  **PREMISE CORRECTED 2026-08-01 — ALREADY FIXED. Closed without a code change.**
+
+  The design decision was taken and implemented: **migration 052** adds
+  `webhook_tenant_resolution` — SELECT only, active ERP rows only, and only while
+  `app.erp_webhook_lookup = 'on'`, a GUC the handler sets transaction-locally immediately
+  before the candidate query and clears in a `finally`, so it is off for the event INSERT and
+  every other path. Guarded by `test_erp_webhook_tenant_resolution_realdb.py` — 12 tests,
+  including that the flag permits no writes, hides dormant and non-ERP rows, and that nothing
+  is visible without it.
+
+  **The stale claim was inside a guard's own comment**, `test_tenant_session_guard.py:113-121`,
+  which still read "It is nonetheless BROKEN" while citing
+  `defect-class-sweeps.md` — a document that already said "Fixed by migration 052". So the
+  guard contradicted the doc it pointed at, and a reader trusting the guard would re-plan
+  finished work. Corrected in place. **Guard prose is documentation and goes stale like any
+  other** — a lesson worth more than the item, because guard comments are exactly what I have
+  been treating as ground truth.
+
+  Fifth premise in this plan to fail on its first day.
 
 - **FS-354 · `kanban.py` and `nlp_correlation.py` on `get_db` over FORCE-RLS tables** · M · ⚠ Harsh
   17 sites (10 + 7), pinned in `KNOWN_GET_DB_ON_RLS` at `test_tenant_session_guard.py:60`. A

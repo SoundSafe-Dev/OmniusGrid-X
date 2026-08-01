@@ -114,12 +114,21 @@ KNOWN_GET_DB_ON_RLS: dict[str, int] = {
     # receiver is an unauthenticated vendor callback: there is no user, so
     # get_tenant_db (which depends on get_current_active_user) cannot apply, and the
     # tenant is resolved by which stored secret verifies the raw bytes — a lookup that
-    # must span organizations by construction. It is nonetheless BROKEN: verified
-    # against a real database, every inbound webhook is rejected 404 because
-    # integration_configurations has FORCE RLS and the candidate lookup returns
-    # nothing. Fixing it needs a design decision (a privileged read path, or the
-    # tenant in the URL), not a dependency swap. Recorded in
-    # docs/engineering/defect-class-sweeps.md.
+    # must span organizations by construction.
+    #
+    # THIS COMMENT WAS STALE AND SAID "it is nonetheless BROKEN" (corrected 2026-08-01).
+    # That was true when written: integration_configurations is FORCE RLS, the candidate
+    # lookup returned nothing, and every inbound webhook was rejected 404. It was FIXED by
+    # migration 052, which adds `webhook_tenant_resolution` — SELECT only, active ERP rows
+    # only, only while `app.erp_webhook_lookup = 'on'`, a GUC the handler sets
+    # transaction-locally and clears in a `finally`. Pinned by
+    # tests/test_erp_webhook_tenant_resolution_realdb.py (12 tests, including that the flag
+    # permits no writes and that nothing is visible without it).
+    #
+    # docs/engineering/defect-class-sweeps.md already said "Fixed by migration 052" — so
+    # this comment contradicted the document it cites, and a reader trusting the guard over
+    # the doc would have re-planned work that was done. Guard prose is documentation and
+    # goes stale like any other.
     # fleet_logistics.py is GONE from this list. All 23 handlers moved to
     # get_tenant_db, and the four tables that have no RLS to fall back on
     # (geofence_zones, geofence_alerts, maintenance_schedules, repair_orders) are
