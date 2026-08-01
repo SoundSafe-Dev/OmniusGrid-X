@@ -260,12 +260,15 @@ async def app(tenant_async_url):
     ``app.db.database`` created at import time pointing at a placeholder.
     """
     from fastapi import Depends
-    from sqlalchemy import text
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
     from app.db import database as db_module
     from app.main import app as fastapi_app
-    from app.middleware.tenant_isolation import get_tenant_db, get_tenant_org_id
+    from app.middleware.tenant_isolation import (
+        get_tenant_db,
+        get_tenant_org_id,
+        tenant_session,
+    )
     # These look unused but are load-bearing: they guarantee the modules are in
     # sys.modules before the AsyncSessionLocal sweep below runs. Importing
     # app.main pulls in the mounted routers, but these are reached lazily in
@@ -326,27 +329,10 @@ async def app(tenant_async_url):
     async def _override_get_tenant_db(
         org_id: UUID = Depends(get_tenant_org_id),
     ) -> AsyncIterator:
-        # Mirrors the production get_tenant_db: session-scoped GUC so it
-        # survives mid-request commits (create/update + refresh), reset at
-        # the end so context can't leak to a connection reused by a later
-        # request.
-        async with test_session_maker() as session:
-            try:
-                await session.execute(
-                    text("SELECT set_config('app.current_org_id', :org_id, false)"),
-                    {"org_id": str(org_id)},
-                )
-                yield session
-                await session.commit()
-            except Exception:
-                await session.rollback()
-                raise
-            finally:
-                await session.execute(
-                    text("SELECT set_config('app.current_org_id', '', false)")
-                )
-                await session.commit()
-                await session.close()
+        # Exercise the production transaction-boundary listener rather than a
+        # test-only copy of the old session-scoped GUC implementation.
+        async with tenant_session(org_id) as session:
+            yield session
 
     # FastAPI's dependency-override matches on the original callable.
     # Each override keeps its own ``Depends`` chain so ``get_tenant_org_id``

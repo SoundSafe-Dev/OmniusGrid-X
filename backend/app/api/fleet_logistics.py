@@ -13,14 +13,15 @@ file is untouched.
 """
 
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Annotated, Any, Dict, List, Optional
+from uuid import UUID
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.database import get_db
+from app.core.tenant import get_tenant_db, get_tenant_org_id
 from app.db.logistics_models import (
     GeofenceAlert,
     GeofenceZone,
@@ -74,7 +75,7 @@ def _zone_out(z: GeofenceZone) -> Dict[str, Any]:
 
 
 @geofencing_router.get("/zones")
-async def list_zones(db: AsyncSession = Depends(get_db)):
+async def list_zones(db: AsyncSession = Depends(get_tenant_db)):
     zones = (await db.execute(
         select(GeofenceZone).where(GeofenceZone.is_active == True)  # noqa: E712
     )).scalars().all()
@@ -82,7 +83,7 @@ async def list_zones(db: AsyncSession = Depends(get_db)):
 
 
 @geofencing_router.get("/zones/{zone_id}")
-async def get_zone(zone_id: str, db: AsyncSession = Depends(get_db)):
+async def get_zone(zone_id: str, db: AsyncSession = Depends(get_tenant_db)):
     _uuid_or_404(zone_id)
     zone = (await db.execute(select(GeofenceZone).where(GeofenceZone.id == zone_id))).scalar_one_or_none()
     if zone is None:
@@ -91,7 +92,7 @@ async def get_zone(zone_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @geofencing_router.post("/zones")
-async def create_zone(payload: Dict[str, Any], db: AsyncSession = Depends(get_db)):
+async def create_zone(payload: Dict[str, Any], db: AsyncSession = Depends(get_tenant_db)):
     if not payload.get("name"):
         raise HTTPException(status_code=400, detail="name is required")
     center = payload.get("center") or {}
@@ -113,7 +114,7 @@ async def create_zone(payload: Dict[str, Any], db: AsyncSession = Depends(get_db
 
 
 @geofencing_router.put("/zones/{zone_id}")
-async def update_zone(zone_id: str, payload: Dict[str, Any], db: AsyncSession = Depends(get_db)):
+async def update_zone(zone_id: str, payload: Dict[str, Any], db: AsyncSession = Depends(get_tenant_db)):
     _uuid_or_404(zone_id)
     zone = (await db.execute(select(GeofenceZone).where(GeofenceZone.id == zone_id))).scalar_one_or_none()
     if zone is None:
@@ -134,7 +135,7 @@ async def update_zone(zone_id: str, payload: Dict[str, Any], db: AsyncSession = 
 
 
 @geofencing_router.delete("/zones/{zone_id}")
-async def delete_zone(zone_id: str, db: AsyncSession = Depends(get_db)):
+async def delete_zone(zone_id: str, db: AsyncSession = Depends(get_tenant_db)):
     _uuid_or_404(zone_id)
     zone = (await db.execute(select(GeofenceZone).where(GeofenceZone.id == zone_id))).scalar_one_or_none()
     if zone is None:
@@ -150,7 +151,7 @@ async def list_alerts(
     severity: Optional[str] = Query(None),
     vehicle_id: Optional[str] = Query(None),
     limit: int = Query(100, ge=1, le=500),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     query = select(GeofenceAlert).order_by(GeofenceAlert.created_at.desc()).limit(limit)
     if acknowledged is not None:
@@ -169,7 +170,7 @@ async def list_alerts(
 
 
 @geofencing_router.post("/alerts/{alert_id}/acknowledge")
-async def acknowledge_alert(alert_id: str, db: AsyncSession = Depends(get_db)):
+async def acknowledge_alert(alert_id: str, db: AsyncSession = Depends(get_tenant_db)):
     _uuid_or_404(alert_id)
     alert = (await db.execute(select(GeofenceAlert).where(GeofenceAlert.id == alert_id))).scalar_one_or_none()
     if alert is None:
@@ -233,7 +234,7 @@ async def list_schedules(
     status: Optional[str] = Query(None),
     vehicle_id: Optional[str] = Query(None),
     upcoming: Optional[int] = Query(None, description="only schedules due within N days"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     query = select(MaintenanceSchedule)
     now = datetime.now(timezone.utc)
@@ -257,7 +258,7 @@ async def list_schedules(
 
 
 @maintenance_router.get("/schedules/{schedule_id}")
-async def get_schedule(schedule_id: str, db: AsyncSession = Depends(get_db)):
+async def get_schedule(schedule_id: str, db: AsyncSession = Depends(get_tenant_db)):
     _uuid_or_404(schedule_id)
     s = (await db.execute(select(MaintenanceSchedule).where(MaintenanceSchedule.id == schedule_id))).scalar_one_or_none()
     if s is None:
@@ -266,7 +267,7 @@ async def get_schedule(schedule_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @maintenance_router.patch("/schedules/{schedule_id}")
-async def update_schedule(schedule_id: str, payload: Dict[str, Any], db: AsyncSession = Depends(get_db)):
+async def update_schedule(schedule_id: str, payload: Dict[str, Any], db: AsyncSession = Depends(get_tenant_db)):
     _uuid_or_404(schedule_id)
     s = (await db.execute(select(MaintenanceSchedule).where(MaintenanceSchedule.id == schedule_id))).scalar_one_or_none()
     if s is None:
@@ -298,7 +299,7 @@ async def update_schedule(schedule_id: str, payload: Dict[str, Any], db: AsyncSe
 
 
 @maintenance_router.get("/vehicles/{vehicle_id}/schedules")
-async def list_vehicle_schedules(vehicle_id: str, db: AsyncSession = Depends(get_db)):
+async def list_vehicle_schedules(vehicle_id: str, db: AsyncSession = Depends(get_tenant_db)):
     schedules = (await db.execute(
         select(MaintenanceSchedule).where(MaintenanceSchedule.vehicle_id == vehicle_id)
         .order_by(MaintenanceSchedule.due_date.asc())
@@ -308,7 +309,7 @@ async def list_vehicle_schedules(vehicle_id: str, db: AsyncSession = Depends(get
 
 
 @maintenance_router.post("/schedules")
-async def create_schedule(payload: Dict[str, Any], db: AsyncSession = Depends(get_db)):
+async def create_schedule(payload: Dict[str, Any], db: AsyncSession = Depends(get_tenant_db)):
     if not payload.get("vehicleId") and not payload.get("vehicle_id"):
         raise HTTPException(status_code=400, detail="vehicleId is required")
     scheduled = payload.get("scheduledDate") or payload.get("dueDate")
@@ -330,7 +331,7 @@ async def create_schedule(payload: Dict[str, Any], db: AsyncSession = Depends(ge
 @maintenance_router.get("/repair-orders")
 async def list_repair_orders(
     status: Optional[str] = Query(None),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     query = select(RepairOrder)
     if status == "active":
@@ -342,7 +343,7 @@ async def list_repair_orders(
 
 
 @maintenance_router.get("/repair-orders/{order_id}")
-async def get_repair_order(order_id: str, db: AsyncSession = Depends(get_db)):
+async def get_repair_order(order_id: str, db: AsyncSession = Depends(get_tenant_db)):
     _uuid_or_404(order_id)
     o = (await db.execute(select(RepairOrder).where(RepairOrder.id == order_id))).scalar_one_or_none()
     if o is None:
@@ -351,7 +352,7 @@ async def get_repair_order(order_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @maintenance_router.patch("/repair-orders/{order_id}")
-async def update_repair_order(order_id: str, payload: Dict[str, Any], db: AsyncSession = Depends(get_db)):
+async def update_repair_order(order_id: str, payload: Dict[str, Any], db: AsyncSession = Depends(get_tenant_db)):
     o = (await db.execute(select(RepairOrder).where(RepairOrder.id == order_id))).scalar_one_or_none()
     if o is None:
         raise HTTPException(status_code=404, detail="repair order not found")
@@ -368,7 +369,7 @@ async def update_repair_order(order_id: str, payload: Dict[str, Any], db: AsyncS
 
 
 @maintenance_router.get("/vehicles/{vehicle_id}/repair-orders")
-async def list_vehicle_repair_orders(vehicle_id: str, db: AsyncSession = Depends(get_db)):
+async def list_vehicle_repair_orders(vehicle_id: str, db: AsyncSession = Depends(get_tenant_db)):
     orders = (await db.execute(
         select(RepairOrder).where(RepairOrder.vehicle_id == vehicle_id)
         .order_by(RepairOrder.opened_at.desc())
@@ -377,7 +378,7 @@ async def list_vehicle_repair_orders(vehicle_id: str, db: AsyncSession = Depends
 
 
 @maintenance_router.get("/vehicles/{vehicle_id}/history")
-async def vehicle_service_history(vehicle_id: str, db: AsyncSession = Depends(get_db)):
+async def vehicle_service_history(vehicle_id: str, db: AsyncSession = Depends(get_tenant_db)):
     """Service history = completed repair orders for the vehicle, newest first."""
     orders = (await db.execute(
         select(RepairOrder).where(
@@ -389,7 +390,7 @@ async def vehicle_service_history(vehicle_id: str, db: AsyncSession = Depends(ge
 
 
 @maintenance_router.post("/history")
-async def add_service_history(payload: Dict[str, Any], db: AsyncSession = Depends(get_db)):
+async def add_service_history(payload: Dict[str, Any], db: AsyncSession = Depends(get_tenant_db)):
     """Record a completed service as a completed repair order."""
     vehicle_id = payload.get("vehicleId") or payload.get("vehicle_id")
     if not vehicle_id:
@@ -412,7 +413,7 @@ async def add_service_history(payload: Dict[str, Any], db: AsyncSession = Depend
 
 
 @maintenance_router.post("/repair-orders")
-async def create_repair_order(payload: Dict[str, Any], db: AsyncSession = Depends(get_db)):
+async def create_repair_order(payload: Dict[str, Any], db: AsyncSession = Depends(get_tenant_db)):
     if not (payload.get("vehicleId") or payload.get("vehicle_id")) or not payload.get("title"):
         raise HTTPException(status_code=400, detail="vehicleId and title are required")
     order = RepairOrder(
@@ -461,14 +462,14 @@ def summarize_maintenance(schedules: List[Any], orders: List[Any], now: Optional
 
 
 @maintenance_router.get("/statistics")
-async def maintenance_statistics(db: AsyncSession = Depends(get_db)):
+async def maintenance_statistics(db: AsyncSession = Depends(get_tenant_db)):
     schedules = (await db.execute(select(MaintenanceSchedule))).scalars().all()
     orders = (await db.execute(select(RepairOrder))).scalars().all()
     return summarize_maintenance(schedules, orders)
 
 
 @maintenance_router.get("/costs")
-async def maintenance_costs(db: AsyncSession = Depends(get_db)):
+async def maintenance_costs(db: AsyncSession = Depends(get_tenant_db)):
     orders = (await db.execute(select(RepairOrder))).scalars().all()
     summary = summarize_maintenance([], orders)
     return {"ytdTotal": summary["ytdCosts"], "byCategory": summary["costsByCategory"]}
@@ -477,18 +478,32 @@ async def maintenance_costs(db: AsyncSession = Depends(get_db)):
 # ==================== Logistics aggregates ====================
 
 @logistics_router.get("/delivery-efficiency")
-async def delivery_efficiency(db: AsyncSession = Depends(get_db)):
+async def delivery_efficiency(
+    organization_id: Annotated[UUID, Depends(get_tenant_org_id)],
+    db: AsyncSession = Depends(get_tenant_db),
+):
     from app.api.transportation import compute_delivery_efficiency
 
-    shipments = (await db.execute(select(Shipment))).scalars().all()
+    shipments = (await db.execute(
+        select(Shipment).where(Shipment.organization_id == organization_id)
+    )).scalars().all()
     return compute_delivery_efficiency(shipments)
 
 
 @logistics_router.get("/compliance/summary")
-async def compliance_summary(db: AsyncSession = Depends(get_db)):
+async def compliance_summary(
+    organization_id: Annotated[UUID, Depends(get_tenant_org_id)],
+    db: AsyncSession = Depends(get_tenant_db),
+):
     """Org-wide carrier/driver compliance rollup for the Compliance tab."""
-    carriers = (await db.execute(select(Carrier).where(Carrier.is_active == True))).scalars().all()  # noqa: E712
-    drivers = (await db.execute(select(Driver).where(Driver.is_active == True))).scalars().all()  # noqa: E712
+    carriers = (await db.execute(select(Carrier).where(
+        Carrier.organization_id == organization_id,
+        Carrier.is_active == True,  # noqa: E712
+    ))).scalars().all()
+    drivers = (await db.execute(select(Driver).where(
+        Driver.organization_id == organization_id,
+        Driver.is_active == True,  # noqa: E712
+    ))).scalars().all()
     now = datetime.now(timezone.utc)
     hos_violations = sum(
         1 for d in drivers

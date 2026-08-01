@@ -13,7 +13,7 @@ from sqlalchemy import select, and_, or_, func
 from pydantic import BaseModel, Field
 import structlog
 
-from app.db.database import get_db
+from app.core.tenant import get_tenant_db
 from app.api.auth import get_current_active_user
 from app.db.models import User, AnalysisSession, SessionDataSource, SessionMessage, IntakeItem
 from app.api.nlp_correlation import _process_uploaded_file, build_source_descriptor, _run_scenarios
@@ -324,7 +324,7 @@ class SuggestedQuestionsResponse(BaseModel):
 @router.post("", response_model=SessionResponse)
 async def create_session(
     request: CreateSessionRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -386,7 +386,7 @@ async def list_sessions(
     limit: int = 50,
     offset: int = 0,
     status: Optional[str] = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -463,7 +463,7 @@ async def list_sessions(
 @router.get("/{session_id}", response_model=SessionResponse)
 async def get_session(
     session_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -508,7 +508,7 @@ async def get_session(
 async def update_session(
     session_id: UUID,
     request: UpdateSessionRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -572,7 +572,7 @@ async def update_session(
 @router.delete("/{session_id}", status_code=204)
 async def delete_session(
     session_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -610,7 +610,7 @@ async def delete_session(
 
 @router.post("/cleanup-orphaned")
 async def cleanup_orphaned_sessions(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -641,7 +641,7 @@ async def cleanup_orphaned_sessions(
 @router.post("/{session_id}/resume", response_model=SessionResponse)
 async def resume_session(
     session_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -704,7 +704,7 @@ async def resume_session(
 async def add_intake_data(
     session_id: UUID,
     intake_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -771,7 +771,7 @@ async def upload_data_to_session(
     session_id: UUID,
     file: UploadFile = File(...),
     data_type: str = "document",
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -829,7 +829,7 @@ async def upload_data_to_session(
 @router.get("/{session_id}/data", response_model=List[DataSourceResponse])
 async def list_session_data(
     session_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -864,7 +864,7 @@ async def list_session_data(
 async def get_session_suggested_questions(
     session_id: UUID,
     limit: int = Query(default=3, ge=1, le=6),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
@@ -906,7 +906,7 @@ class SessionCorrelationRequest(BaseModel):
 async def correlate_session(
     session_id: UUID,
     request: SessionCorrelationRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
@@ -999,7 +999,7 @@ async def correlate_session(
 async def remove_data_source(
     session_id: UUID,
     source_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -1049,7 +1049,7 @@ async def remove_data_source(
 async def session_chat(
     session_id: UUID,
     request: SessionChatRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -1266,7 +1266,7 @@ async def get_session_messages(
     session_id: UUID,
     limit: int = 100,
     offset: int = 0,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -1305,7 +1305,7 @@ async def get_session_messages(
 @router.post("/{session_id}/generate-title", response_model=SessionResponse)
 async def generate_session_title(
     session_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -1413,7 +1413,7 @@ async def get_chat_history(
     limit: int = 100,
     offset: int = 0,
     session_id: Optional[UUID] = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -1457,7 +1457,7 @@ async def search_chat_history(
     limit: int = 50,
     offset: int = 0,
     session_id: Optional[UUID] = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -1504,7 +1504,7 @@ async def search_chat_history(
 async def get_session_telemetry_context(
     session_id: UUID,
     limit: int = 50,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -1586,7 +1586,7 @@ async def get_session_telemetry_context(
 async def get_session_alarms_context(
     session_id: UUID,
     limit: int = 50,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -1670,7 +1670,7 @@ async def get_session_alarms_context(
 async def get_session_kanban_context(
     session_id: UUID,
     limit: int = 50,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -1748,7 +1748,7 @@ async def get_session_kanban_context(
 async def get_session_registries_context(
     session_id: UUID,
     limit: int = 50,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """

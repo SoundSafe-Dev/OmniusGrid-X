@@ -13,11 +13,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, Field
 import structlog
 
-from app.core.tenant import get_tenant_db
+from app.core.tenant import get_tenant_db, tenant_session
 # NOTE (FS-56, for HARSH's review): ERP routes now use get_tenant_db — 020's
 # RLS policies were rewritten onto the canonical app.current_org_id GUC, and a
 # session that never sets it would read zero rows under any non-owner DB role.
-from app.db.database import get_db  # noqa: F401 - kept for any non-tenant use
 from app.api.auth import get_current_active_user
 from app.db.models import User, IntegrationConfiguration, ERPDataMapping, ERPSyncStatus, ERPEntity
 from app.services.erp_connector_base import ERPType, AuthType, ERPConfig
@@ -538,88 +537,113 @@ def extract_entity_id(record: Dict[str, Any], index: int) -> str:
 
 async def run_erp_sync(integration_id: str, organization_id: str, entity_types: List[str]) -> Dict[str, Any]:
     """Fetch each entity type via the connector, upsert erp_entities, and record
-    per-entity sync status. Runs in its own DB session (background task)."""
-    from app.db.database import AsyncSessionLocal
+    per-entity sync status inside the caller's trusted tenant scope."""
     from sqlalchemy import select as _select
 
     summary: Dict[str, Any] = {}
-    async with AsyncSessionLocal() as db:
-        integration = (
-            await db.execute(
-                _select(IntegrationConfiguration).where(IntegrationConfiguration.id == integration_id)
-            )
-        ).scalar_one_or_none()
-        if integration is None:
-            return {"error": "integration not found"}
-
-        try:
-            connector = ERPConnectorFactory.create(integration)
-        except (UnsupportedERPType, ERPConnectorUnavailable) as exc:
-            logger.error("erp_sync_connector_error", integration_id=integration_id, error=str(exc))
-            return {"error": str(exc)}
-
-        source_system = str(integration.erp_type or "erp")
-        any_success = False
-        for etype in entity_types:
-            started = datetime.now(timezone.utc)
-            synced = failed = 0
-            status = "success"
-            try:
-                records = await connector.fetch_data(etype) or []
-                for i, record in enumerate(records):
-                    eid = extract_entity_id(record, i)
-                    existing = (
-                        await db.execute(
-                            _select(ERPEntity).where(
-                                ERPEntity.integration_id == integration_id,
-                                ERPEntity.entity_type == etype,
-                                ERPEntity.entity_id == eid,
-                            )
-                        )
-                    ).scalar_one_or_none()
-                    if existing is None:
-                        db.add(ERPEntity(
-                            organization_id=organization_id, integration_id=integration_id,
-                            entity_type=etype, entity_id=eid, entity_data=record,
-                            source_system=source_system,
-                        ))
-                    else:
-                        existing.entity_data = record
-                        existing.updated_at = datetime.now(timezone.utc)
-                    synced += 1
-                any_success = True
-            except Exception as exc:
-                status, failed = "failed", 1
-                logger.error("erp_sync_entity_failed", entity_type=etype, error=str(exc))
-
-            duration = (datetime.now(timezone.utc) - started).total_seconds()
-            sync_row = (
+    connector = None
+    try:
+        async with tenant_session(organization_id) as db:
+            integration = (
                 await db.execute(
-                    _select(ERPSyncStatus).where(
-                        ERPSyncStatus.integration_id == integration_id,
-                        ERPSyncStatus.entity_type == etype,
+                    _select(IntegrationConfiguration).where(
+                        IntegrationConfiguration.id == integration_id,
+                        IntegrationConfiguration.organization_id == organization_id,
                     )
                 )
             ).scalar_one_or_none()
-            if sync_row is None:
-                sync_row = ERPSyncStatus(
-                    organization_id=organization_id, integration_id=integration_id, entity_type=etype
-                )
-                db.add(sync_row)
-            sync_row.last_sync_at = started
-            sync_row.last_sync_status = status
-            sync_row.records_synced = synced
-            sync_row.records_failed = failed
-            sync_row.sync_duration_seconds = int(duration)
-            summary[etype] = {"status": status, "records_synced": synced, "records_failed": failed}
+            if integration is None:
+                return {"error": "integration not found"}
 
-        if any_success:
-            integration.last_successful_sync = datetime.now(timezone.utc)
-        await db.commit()
-        try:
-            await connector.close()
-        except Exception:
-            pass
+            try:
+                connector = ERPConnectorFactory.create(integration)
+            except (UnsupportedERPType, ERPConnectorUnavailable) as exc:
+                logger.error(
+                    "erp_sync_connector_error",
+                    integration_id=integration_id,
+                    error=str(exc),
+                )
+                return {"error": str(exc)}
+
+            source_system = str(integration.erp_type or "erp")
+            any_success = False
+            for etype in entity_types:
+                started = datetime.now(timezone.utc)
+                synced = failed = 0
+                status = "success"
+                try:
+                    records = await connector.fetch_data(etype) or []
+                    for i, record in enumerate(records):
+                        eid = extract_entity_id(record, i)
+                        existing = (
+                            await db.execute(
+                                _select(ERPEntity).where(
+                                    ERPEntity.integration_id == integration_id,
+                                    ERPEntity.organization_id == organization_id,
+                                    ERPEntity.entity_type == etype,
+                                    ERPEntity.entity_id == eid,
+                                )
+                            )
+                        ).scalar_one_or_none()
+                        if existing is None:
+                            db.add(ERPEntity(
+                                organization_id=organization_id,
+                                integration_id=integration_id,
+                                entity_type=etype,
+                                entity_id=eid,
+                                entity_data=record,
+                                source_system=source_system,
+                            ))
+                        else:
+                            existing.entity_data = record
+                            existing.updated_at = datetime.now(timezone.utc)
+                        synced += 1
+                    any_success = True
+                except Exception as exc:
+                    status, failed = "failed", 1
+                    logger.error(
+                        "erp_sync_entity_failed",
+                        entity_type=etype,
+                        error=str(exc),
+                    )
+
+                duration = (datetime.now(timezone.utc) - started).total_seconds()
+                sync_row = (
+                    await db.execute(
+                        _select(ERPSyncStatus).where(
+                            ERPSyncStatus.integration_id == integration_id,
+                            ERPSyncStatus.organization_id == organization_id,
+                            ERPSyncStatus.entity_type == etype,
+                        )
+                    )
+                ).scalar_one_or_none()
+                if sync_row is None:
+                    sync_row = ERPSyncStatus(
+                        organization_id=organization_id,
+                        integration_id=integration_id,
+                        entity_type=etype,
+                    )
+                    db.add(sync_row)
+                sync_row.last_sync_at = started
+                sync_row.last_sync_status = status
+                sync_row.records_synced = synced
+                sync_row.records_failed = failed
+                sync_row.sync_duration_seconds = int(duration)
+                summary[etype] = {
+                    "status": status,
+                    "records_synced": synced,
+                    "records_failed": failed,
+                }
+
+            if any_success:
+                integration.last_successful_sync = datetime.now(timezone.utc)
+            await db.commit()
+    finally:
+        if connector is not None:
+            try:
+                await connector.close()
+            except Exception:
+                pass
     return summary
 
 

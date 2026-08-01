@@ -131,12 +131,21 @@ def main() -> int:
 
         event = {"event_type": "invoice.created", "event_id": "evt-1", "entity_type": "Invoice", "amount": 12}
         sig = hmac.new(b"smoke-hmac", json.dumps(event, sort_keys=True).encode(), hashlib.sha256).hexdigest()
-        r = client.post("/api/v1/erp/webhooks/netsuite", json=event, headers={"X-Webhook-Signature": sig})
+        webhook_headers = {
+            "X-Webhook-Signature": sig,
+            "X-Integration-ID": erp_id,
+            "X-Organization-ID": DEV_ORG,
+        }
+        r = client.post("/api/v1/erp/webhooks/netsuite", json=event, headers=webhook_headers)
         check("ERP webhook accepted (HMAC verified)", r.status_code == 200
               and r.json().get("status") == "accepted", r.text[:200])
-        r = client.post("/api/v1/erp/webhooks/netsuite", json=event, headers={"X-Webhook-Signature": sig})
+        r = client.post("/api/v1/erp/webhooks/netsuite", json=event, headers=webhook_headers)
         check("ERP webhook dedupes replays", r.json().get("status") == "duplicate", r.text[:200])
-        r = client.post("/api/v1/erp/webhooks/netsuite", json=event, headers={"X-Webhook-Signature": "bad"})
+        r = client.post(
+            "/api/v1/erp/webhooks/netsuite",
+            json=event,
+            headers={**webhook_headers, "X-Webhook-Signature": "bad"},
+        )
         check("ERP webhook rejects bad signature", r.status_code == 401, r.text[:200])
 
         r = client.get(f"/api/v1/erp/integrations/{erp_id}/events", headers=AUTH)

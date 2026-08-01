@@ -4,14 +4,14 @@ Cross-domain data correlation between YMS/TMS and manufacturing
 """
 
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional
+from typing import Annotated, List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_active_user
-from app.db.database import get_db
+from app.core.tenant import get_tenant_db, get_tenant_org_id
 from app.models.schemas import (
     LogisticsCorrelationResponse,
     DockScheduleCorrelationResponse,
@@ -53,9 +53,9 @@ router = APIRouter(
 
 @router.get("/correlation-dashboard", response_model=LogisticsCorrelationResponse)
 async def get_correlation_dashboard(
-    organization_id: UUID,
+    organization_id: Annotated[UUID, Depends(get_tenant_org_id)],
     date: Optional[datetime] = Query(None),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get comprehensive logistics correlation dashboard"""
     dashboard = await logistics_correlation_engine.get_correlation_dashboard(
@@ -70,9 +70,9 @@ async def get_correlation_dashboard(
 
 @router.get("/dock-production-sync", response_model=dict)
 async def get_dock_production_sync(
-    organization_id: UUID,
+    organization_id: Annotated[UUID, Depends(get_tenant_org_id)],
     date: Optional[datetime] = Query(None),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get dock schedule aligned with production forecasts"""
     synchronizer = DockProductionSynchronizer()
@@ -87,7 +87,7 @@ async def get_dock_production_sync(
 @router.post("/dock-appointments/{appointment_id}/sync", dependencies=[Depends(require_operator_or_admin)])
 async def sync_dock_appointment(
     appointment_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Run dock-production sync analysis for specific appointment"""
     synchronizer = DockProductionSynchronizer()
@@ -105,9 +105,9 @@ async def sync_dock_appointment(
 
 @router.get("/truck-asset-readiness")
 async def get_truck_asset_readiness(
-    organization_id: UUID,
+    organization_id: Annotated[UUID, Depends(get_tenant_org_id)],
     shipment_id: Optional[UUID] = None,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get truck arrival vs asset readiness correlation"""
     if shipment_id:
@@ -138,12 +138,13 @@ async def get_truck_asset_readiness(
 @router.post("/load-quality", response_model=LoadQualityLogResponse, dependencies=[Depends(require_operator_or_admin)])
 async def log_load_quality_issue(
     data: LoadQualityLogCreate,
-    db: AsyncSession = Depends(get_db)
+    organization_id: Annotated[UUID, Depends(get_tenant_org_id)],
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Log shipping defect and correlate to manufacturing root cause"""
     correlator = LoadQualityCorrelator()
     log = await correlator.log_quality_issue(
-        organization_id=data.organization_id,
+        organization_id=organization_id,
         shipment_id=data.shipment_id,
         defect_type=data.defect_type or 'damaged',
         severity=data.severity or 'major',
@@ -158,10 +159,10 @@ async def log_load_quality_issue(
 
 @router.get("/load-quality-correlation")
 async def get_load_quality_correlation(
-    organization_id: UUID,
+    organization_id: Annotated[UUID, Depends(get_tenant_org_id)],
     start_date: datetime = Query(default_factory=lambda: datetime.now(timezone.utc) - timedelta(days=30)),
     end_date: Optional[datetime] = Query(None),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get load quality correlation analytics"""
     if not end_date:
@@ -181,9 +182,9 @@ async def get_load_quality_correlation(
 
 @router.get("/delivery-efficiency")
 async def get_delivery_efficiency(
-    organization_id: UUID,
+    organization_id: Annotated[UUID, Depends(get_tenant_org_id)],
     days: int = Query(30, ge=1, le=365),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get on-time delivery vs production efficiency metrics"""
     from sqlalchemy import case, func, select
@@ -230,7 +231,7 @@ async def get_delivery_efficiency(
 @router.post("/predict-detention", response_model=DetentionRiskPrediction, dependencies=[Depends(require_operator_or_admin)])
 async def predict_detention(
     appointment_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Predict detention risk for a dock appointment"""
     predictor = DetentionRiskPredictor()
@@ -246,9 +247,9 @@ async def predict_detention(
 
 @router.get("/detention-risk/upcoming")
 async def get_upcoming_detention_risks(
-    organization_id: UUID,
+    organization_id: Annotated[UUID, Depends(get_tenant_org_id)],
     hours_ahead: int = Query(24, ge=1, le=168),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get detention risk predictions for upcoming appointments"""
     from sqlalchemy import select
@@ -298,8 +299,8 @@ async def get_upcoming_detention_risks(
 
 @router.get("/compliance/summary")
 async def get_compliance_summary(
-    organization_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    organization_id: Annotated[UUID, Depends(get_tenant_org_id)],
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get logistics compliance summary (DOT, CTPAT, HOS)"""
     from sqlalchemy import case, func, select
@@ -378,9 +379,9 @@ async def get_compliance_summary(
 
 @router.post("/optimize-assignment", dependencies=[Depends(require_operator_or_admin)])
 async def optimize_assignment(
-    organization_id: UUID,
+    organization_id: Annotated[UUID, Depends(get_tenant_org_id)],
     shipment_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get optimal truck-asset assignment recommendations"""
     result = await logistics_correlation_engine.optimize_truck_asset_assignment(
@@ -395,9 +396,9 @@ async def optimize_assignment(
 
 @router.get("/liability/costs")
 async def get_liability_costs(
-    organization_id: UUID,
+    organization_id: Annotated[UUID, Depends(get_tenant_org_id)],
     days: int = Query(30, ge=1, le=365),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get detention, demurrage, and quality liability costs"""
     from sqlalchemy import case, func, select

@@ -1,162 +1,333 @@
-"""Guard: routers must not query RLS-protected tables through ``get_db`` (FS-201).
+"""Static guard against plain DB sessions on RLS-protected route handlers.
 
-``get_db`` yields a plain session and never sets the ``app.current_org_id`` GUC.
-Most tenant tables are ``FORCE ROW LEVEL SECURITY`` with a policy of
+``get_db`` never installs PostgreSQL's ``app.current_org_id`` setting. A route
+that uses it to query an RLS-protected table therefore gets an empty result (or
+writes nothing) without an error. Every such handler must instead use
+``get_tenant_db`` or open a trusted ``tenant_session`` for machine/background
+authentication.
 
-    USING (organization_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid)
-
-so with no GUC the predicate is NULL and **every row is filtered**. It does not
-raise — the endpoint just returns nothing. That is exactly how the dashboard
-shipped rendering zeros (FS-191) and how the audit trail was silently empty
-before it: a whole class of bugs that fails quiet.
-
-This test is static analysis, deliberately: it catches the shape before anyone
-has to notice missing data in a UI. It asserts in BOTH directions, like
-``KNOWN_LANE_FAILURES`` in test_realdb_endpoint_smoke:
-
-  * a router that starts using ``get_db`` on an RLS table and isn't listed FAILS
-    (no new debt);
-  * a router listed here that no longer has the problem also FAILS (the list
-    can't rot into a lie).
-
-To fix a router: swap ``Depends(get_db)`` for ``Depends(get_tenant_db)`` (and
-take the org from ``get_tenant_org_id``, never from client input), then delete
-its entry below.
+The guard works at handler level so mixed modules can keep plain sessions for
+genuinely global or pre-authentication routes. It also follows calls to local
+helpers and recognizes protected table names in ``text(...)`` SQL. There is no
+allowlist: newly introduced debt fails immediately.
 """
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
-import pytest
-
 BACKEND = Path(__file__).resolve().parents[1]
 API_DIR = BACKEND / "app" / "api"
-MODELS = BACKEND / "app" / "db" / "models.py"
+DB_DIR = BACKEND / "app" / "db"
 MIGRATIONS = BACKEND.parent / "database" / "migrations"
 
-# Routers with NO authenticated user by design — `get_tenant_db` depends on
-# `get_current_active_user`, so converting these would break them outright.
-# These are exempt, not debt.
-NO_USER_CONTEXT = {
-    # Agent client-certificate auth (require_agent); the identity is the cert,
-    # not a user. Tenancy comes from the verified agent record instead.
-    "edge_ingest.py",
+ROUTE_METHODS = {
+    "api_route",
+    "delete",
+    "get",
+    "head",
+    "options",
+    "patch",
+    "post",
+    "put",
+    "trace",
+    "websocket",
 }
-# NOTE: health.py was initially exempted as "infra probes", but it is a MIXED
-# file — /health/ready and /health/startup are unauthenticated probes while
-# /health/detailed is admin-gated and counts Assets/Alarms. A blanket exemption
-# would have hidden that second half, so it is listed as debt below instead.
 
-# Known debt: routers still reading RLS-protected tables through `get_db`.
-# The number is how many `Depends(get_db)` sites that router has — pinned so a
-# partial fix still moves, and so nothing silently grows.
-KNOWN_GET_DB_ON_RLS: dict[str, int] = {
-    "analysis_sessions.py": 22,
-    # Mixed: unauthenticated probes + an admin-gated view that reads Asset/Alarm.
-    # Splitting the two is a change to the probe contract, so it is left for a
-    # dedicated pass rather than bundled here.
-    "health.py": 5,
-    "audit.py": 5,
-    "commands.py": 1,
-    "erp_webhooks.py": 1,
-    "fleet_logistics.py": 23,
-    "gdpr.py": 9,
-    "kanban.py": 10,
-    "logistics_correlation.py": 12,
-    "nlp_correlation.py": 7,
-    "platform_correlation.py": 1,
-    "transportation.py": 25,
-}
+
+def _strip_sql_comments(source: str) -> str:
+    source = re.sub(r"/\*.*?\*/", " ", source, flags=re.S)
+    return re.sub(r"--[^\n]*", " ", source)
 
 
 def _rls_tables() -> set[str]:
     tables: set[str] = set()
     pattern = re.compile(
-        r"ALTER\s+TABLE\s+(\w+)\s+(?:FORCE\s+)?(?:ENABLE\s+)?ROW\s+LEVEL\s+SECURITY",
+        r"ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?"
+        r"(?:\w+\.)?[\"`]?([A-Za-z_][A-Za-z0-9_]*)[\"`]?\s+"
+        r"(?:FORCE\s+)?ENABLE\s+ROW\s+LEVEL\s+SECURITY",
         re.I,
     )
-    for sql in MIGRATIONS.glob("*.sql"):
-        tables.update(m.group(1) for m in pattern.finditer(sql.read_text()))
+    for migration in MIGRATIONS.glob("*.sql"):
+        sql = _strip_sql_comments(migration.read_text())
+        tables.update(match.group(1).lower() for match in pattern.finditer(sql))
     return tables
 
 
 def _model_to_table() -> dict[str, str]:
-    src = MODELS.read_text()
-    return {
-        m.group(1): m.group(2)
-        for m in re.finditer(
-            r'class (\w+)\(Base\):.*?__tablename__\s*=\s*[\'"](\w+)[\'"]', src, re.S
-        )
+    """Map every declarative model in app/db, not only models.py."""
+    mapping: dict[str, str] = {}
+    for model_file in DB_DIR.glob("*.py"):
+        tree = ast.parse(model_file.read_text(), filename=str(model_file))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            for statement in node.body:
+                if not isinstance(statement, (ast.Assign, ast.AnnAssign)):
+                    continue
+                targets = statement.targets if isinstance(statement, ast.Assign) else [statement.target]
+                if not any(isinstance(target, ast.Name) and target.id == "__tablename__" for target in targets):
+                    continue
+                value = statement.value
+                if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                    mapping[node.name] = value.value.lower()
+    return mapping
+
+
+def _leaf_name(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return None
+
+
+def _is_route_handler(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    for decorator in node.decorator_list:
+        target = decorator.func if isinstance(decorator, ast.Call) else decorator
+        if _leaf_name(target) in ROUTE_METHODS:
+            return True
+    return False
+
+
+def _plain_db_dependency_names(tree: ast.Module) -> set[str]:
+    names = {"get_db"}
+    for node in tree.body:
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        for imported in node.names:
+            if imported.name == "get_db":
+                names.add(imported.asname or imported.name)
+    return names
+
+
+def _local_model_mapping(
+    tree: ast.Module,
+    model_to_table: dict[str, str],
+) -> dict[str, str]:
+    """Include ``from ... import Asset as AssetRow`` aliases in the scan."""
+    mapping = dict(model_to_table)
+    for node in tree.body:
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        for imported in node.names:
+            table = model_to_table.get(imported.name)
+            if table is not None:
+                mapping[imported.asname or imported.name] = table
+    return mapping
+
+
+def _depends_on_plain_db(
+    function: ast.FunctionDef | ast.AsyncFunctionDef,
+    dependency_names: set[str],
+) -> bool:
+    expressions: list[ast.AST] = []
+    arguments = [
+        *function.args.posonlyargs,
+        *function.args.args,
+        *function.args.kwonlyargs,
+    ]
+    expressions.extend(argument.annotation for argument in arguments if argument.annotation)
+    expressions.extend(function.args.defaults)
+    expressions.extend(default for default in function.args.kw_defaults if default is not None)
+    for expression in expressions:
+        for node in ast.walk(expression):
+            if not isinstance(node, ast.Call) or _leaf_name(node.func) != "Depends":
+                continue
+            if any(_leaf_name(argument) in dependency_names for argument in node.args):
+                return True
+    return False
+
+
+class _FunctionFacts(ast.NodeVisitor):
+    """Collect protected models/SQL and local calls from one function body."""
+
+    def __init__(self, model_to_table: dict[str, str], rls_tables: set[str]) -> None:
+        self.model_to_table = model_to_table
+        self.rls_tables = rls_tables
+        self.tables: set[str] = set()
+        self.calls: set[str] = set()
+
+    def _record_model(self, name: str) -> None:
+        table = self.model_to_table.get(name)
+        if table in self.rls_tables:
+            self.tables.add(table)
+
+    def visit_Name(self, node: ast.Name) -> None:
+        self._record_model(node.id)
+
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        self._record_model(node.attr)
+        self.generic_visit(node)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        callee = _leaf_name(node.func)
+        if isinstance(node.func, ast.Name):
+            self.calls.add(node.func.id)
+        if callee == "text":
+            sql = " ".join(
+                value.value
+                for value in ast.walk(node)
+                if isinstance(value, ast.Constant) and isinstance(value.value, str)
+            ).lower()
+            self.tables.update(
+                table
+                for table in self.rls_tables
+                if re.search(rf"(?<![A-Za-z0-9_]){re.escape(table)}(?![A-Za-z0-9_])", sql)
+            )
+        self.generic_visit(node)
+
+    # A nested definition is not executed merely because its parent is called.
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        return
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        return
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        return
+
+
+def _function_facts(
+    function: ast.FunctionDef | ast.AsyncFunctionDef,
+    model_to_table: dict[str, str],
+    rls_tables: set[str],
+) -> tuple[set[str], set[str]]:
+    visitor = _FunctionFacts(model_to_table, rls_tables)
+    body = function.body
+    if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+        if isinstance(body[0].value.value, str):
+            body = body[1:]
+    for statement in body:
+        visitor.visit(statement)
+    return visitor.tables, visitor.calls
+
+
+def _find_offenders_in_source(
+    source: str,
+    model_to_table: dict[str, str],
+    rls_tables: set[str],
+    filename: str = "<source>",
+) -> list[tuple[str, str, tuple[str, ...]]]:
+    tree = ast.parse(source, filename=filename)
+    local_models = _local_model_mapping(tree, model_to_table)
+    functions = {
+        node.name: node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    facts = {
+        name: _function_facts(function, local_models, rls_tables)
+        for name, function in functions.items()
     }
 
+    def protected_tables(name: str, visiting: set[str] | None = None) -> set[str]:
+        visiting = set() if visiting is None else visiting
+        if name in visiting:
+            return set()
+        visiting.add(name)
+        direct_tables, calls = facts[name]
+        tables = set(direct_tables)
+        for called in calls & facts.keys():
+            tables.update(protected_tables(called, visiting))
+        visiting.remove(name)
+        return tables
 
-def _offenders() -> dict[str, int]:
-    """Routers using get_db that reference a model backed by an RLS table."""
-    rls = _rls_tables()
-    models = _model_to_table()
-    found: dict[str, int] = {}
+    dependency_names = _plain_db_dependency_names(tree)
+    findings: list[tuple[str, str, tuple[str, ...]]] = []
+    for name, function in functions.items():
+        if not _is_route_handler(function):
+            continue
+        if not _depends_on_plain_db(function, dependency_names):
+            continue
+        tables = protected_tables(name)
+        if tables:
+            findings.append((filename, name, tuple(sorted(tables))))
+    return findings
+
+
+def _offenders() -> list[tuple[str, str, tuple[str, ...]]]:
+    model_to_table = _model_to_table()
+    rls_tables = _rls_tables()
+    findings: list[tuple[str, str, tuple[str, ...]]] = []
     for path in sorted(API_DIR.glob("*.py")):
-        if path.name in NO_USER_CONTEXT:
-            continue
-        text = path.read_text()
-        count = text.count("Depends(get_db)")
-        if not count:
-            continue
-        touches_rls = any(
-            models[cls] in rls and re.search(rf"\b{cls}\b", text) for cls in models
+        findings.extend(
+            _find_offenders_in_source(
+                path.read_text(),
+                model_to_table,
+                rls_tables,
+                filename=path.name,
+            )
         )
-        if touches_rls:
-            found[path.name] = count
-    return found
+    return findings
 
 
-def test_rls_tables_are_actually_detected():
-    """Sanity: the guard is only meaningful if it finds the RLS tables."""
+def test_rls_metadata_is_detected_without_comment_false_positives():
     tables = _rls_tables()
-    assert "assets" in tables and "audit_logs" in tables, sorted(tables)[:10]
-    assert len(tables) > 20, f"suspiciously few RLS tables found: {len(tables)}"
+    models = _model_to_table()
+    assert {"assets", "audit_logs", "integration_configurations"} <= tables
+    assert "t" not in tables  # example SQL in a migration comment
+    assert len(tables) >= 50, f"suspiciously few RLS tables found: {len(tables)}"
+    assert models["Asset"] == "assets"
+    assert models["IntegrationConfiguration"] == "integration_configurations"
 
 
-def test_no_new_get_db_on_rls_tables():
-    """No router may newly read an RLS-protected table through get_db."""
-    offenders = _offenders()
-    new = {k: v for k, v in offenders.items() if k not in KNOWN_GET_DB_ON_RLS}
-    assert not new, (
-        "These routers query RLS-protected tables via get_db, which silently "
-        "returns ZERO rows (no error). Use get_tenant_db + get_tenant_org_id:\n  "
-        + "\n  ".join(f"{k} ({v} sites)" for k, v in sorted(new.items()))
+def test_guard_detects_only_plain_session_handlers_touching_rls_models():
+    source = '''
+from fastapi import Depends
+
+async def load_asset(db):
+    return await db.execute(select(Asset))
+
+@router.get("/bad")
+async def bad(db=Depends(get_db)):
+    return await load_asset(db)
+
+@router.get("/good")
+async def good(db=Depends(get_tenant_db)):
+    return await db.execute(select(Asset))
+
+@router.get("/global")
+async def global_route(db=Depends(get_db)):
+    return await db.execute(select(User))
+'''
+    findings = _find_offenders_in_source(
+        source,
+        {"Asset": "assets", "User": "users"},
+        {"assets"},
+        filename="fixture.py",
     )
+    assert findings == [("fixture.py", "bad", ("assets",))]
 
 
-def test_known_debt_list_is_not_stale():
-    """A router fixed (or shrunk) must be updated here, or the list becomes a lie."""
-    offenders = _offenders()
-    fixed = sorted(set(KNOWN_GET_DB_ON_RLS) - set(offenders))
-    assert not fixed, (
-        "These routers no longer use get_db on RLS tables — remove them from "
-        f"KNOWN_GET_DB_ON_RLS: {fixed}"
+def test_guard_detects_protected_raw_sql_and_aliased_get_db():
+    source = '''
+from app.db.database import get_db as plain_db
+from app.db.models import Asset as AssetRow
+
+@router.post("/bad")
+async def bad(db=Depends(plain_db)):
+    await db.execute(select(AssetRow))
+    return await db.execute(text("UPDATE audit_logs SET action = 'x'"))
+'''
+    assert _find_offenders_in_source(
+        source,
+        {"Asset": "assets"},
+        {"assets", "audit_logs"},
+    ) == [
+        ("<source>", "bad", ("assets", "audit_logs"))
+    ]
+
+
+def test_no_api_handler_uses_get_db_for_an_rls_protected_table():
+    findings = _offenders()
+    rendered = "\n".join(
+        f"  {filename}:{handler} -> {', '.join(tables)}"
+        for filename, handler, tables in findings
     )
-    shrunk = {
-        k: (KNOWN_GET_DB_ON_RLS[k], offenders[k])
-        for k in KNOWN_GET_DB_ON_RLS
-        if k in offenders and offenders[k] < KNOWN_GET_DB_ON_RLS[k]
-    }
-    assert not shrunk, (
-        "get_db sites were removed without updating the pinned counts "
-        f"(name: expected -> actual): {shrunk}"
-    )
-
-
-@pytest.mark.parametrize("router", sorted(NO_USER_CONTEXT))
-def test_exempt_routers_really_have_no_user_dependency(router: str):
-    """The exemptions must stay justified — not a place to hide new debt.
-
-    Each exempt router must authenticate by something other than a user
-    (agent certificate, or nothing at all for infra probes).
-    """
-    text = (API_DIR / router).read_text()
-    assert "get_current_active_user" not in text or "require_agent" in text, (
-        f"{router} is exempt from the tenant-session guard but depends on an "
-        "authenticated user — it should use get_tenant_db instead."
+    assert not findings, (
+        "These route handlers touch RLS-protected tables through get_db. "
+        "Use get_tenant_db for user-authenticated routes or tenant_session for "
+        f"trusted machine/background authentication:\n{rendered}"
     )

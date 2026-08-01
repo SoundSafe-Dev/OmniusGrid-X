@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 import math
 import structlog
 
-from app.db.database import get_db
+from app.core.tenant import get_tenant_db
 from app.api.auth import get_current_active_user
 from app.db.models import User
 from app.db.models import IntakeItem as IntakeItemModel
@@ -1105,7 +1105,7 @@ class IntakeListResponse(BaseModel):
 async def nlp_query(
     request: NLPQueryRequest,
     background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -1172,7 +1172,7 @@ async def nlp_query(
 async def nlp_chat(
     message: str,
     conversation_history: Optional[List[Dict[str, str]]] = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -1222,7 +1222,7 @@ async def upload_to_intake(
     description: str = "",
     data_type: str = "document",
     category: str = "general",
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -1308,7 +1308,7 @@ async def analyze_intake(
     query: Optional[str] = None,
     auto_integrate: bool = True,
     mode: str = "window",
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -1760,7 +1760,7 @@ class CrossCorrelationRequest(BaseModel):
 @router.post("/intake/cross-correlate")
 async def cross_correlate_intake(
     request: CrossCorrelationRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
@@ -1834,7 +1834,7 @@ async def list_intake_items(
     offset: int = 0,
     status: Optional[str] = None,
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """
     List items in Intake Inbox.
@@ -1889,7 +1889,7 @@ async def list_intake_items(
 async def get_intake_item(
     intake_id: UUID,
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """
     Get details of a specific Intake Inbox item.

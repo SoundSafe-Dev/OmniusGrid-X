@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.database import get_db
+from app.core.tenant import get_tenant_db
 from app.db.models import AuditLog, User
 from app.middleware.rbac import require_admin
 
@@ -28,20 +28,19 @@ async def list_audit_logs(
     end_time: Optional[datetime] = None,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """List audit logs with filtering"""
-    query = select(AuditLog)
-    
-    # Non-admin users can only see their organization's logs
-    if current_user.role != "admin" and current_user.organization_id:
-        query = query.where(AuditLog.organization_id == current_user.organization_id)
+    query = select(AuditLog).where(
+        AuditLog.organization_id == current_user.organization_id
+    )
     
     # Apply filters
     if user_id:
         query = query.where(AuditLog.user_id == str(user_id))
     if organization_id:
-        query = query.where(AuditLog.organization_id == str(organization_id))
+        if organization_id != current_user.organization_id:
+            raise HTTPException(status_code=403, detail="Cross-tenant access denied")
     if action:
         query = query.where(AuditLog.action == action)
     if resource_type:
@@ -87,20 +86,19 @@ async def list_audit_logs(
 async def get_audit_log(
     log_id: UUID,
     current_user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get a single audit log by ID"""
     result = await db.execute(
-        select(AuditLog).where(AuditLog.id == str(log_id))
+        select(AuditLog).where(
+            AuditLog.id == str(log_id),
+            AuditLog.organization_id == current_user.organization_id,
+        )
     )
     log = result.scalar_one_or_none()
     
     if not log:
         raise HTTPException(status_code=404, detail="Audit log not found")
-    
-    # Check organization access for non-admin users
-    if current_user.role != "admin" and log.organization_id != current_user.organization_id:
-        raise HTTPException(status_code=403, detail="Access denied")
     
     return {
         "id": str(log.id),
@@ -121,11 +119,13 @@ async def get_audit_log(
 @router.get("/verify", summary="Verify hash chain integrity", description="Verify the integrity of the audit log hash chain to detect tampering. Admin access required.")
 async def verify_hash_chain(
     current_user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Verify audit log hash chain integrity"""
     result = await db.execute(
-        select(AuditLog).order_by(AuditLog.timestamp.asc(), AuditLog.id.asc())
+        select(AuditLog)
+        .where(AuditLog.organization_id == current_user.organization_id)
+        .order_by(AuditLog.timestamp.asc(), AuditLog.id.asc())
     )
     logs = result.scalars().all()
     
@@ -182,11 +182,14 @@ async def verify_hash_chain(
 @router.get("/actions", summary="List available audit actions", description="Retrieve a list of all unique audit actions recorded in the system. Admin access required.")
 async def list_audit_actions(
     current_user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """List all unique audit actions"""
     result = await db.execute(
-        select(AuditLog.action).distinct().order_by(AuditLog.action)
+        select(AuditLog.action)
+        .where(AuditLog.organization_id == current_user.organization_id)
+        .distinct()
+        .order_by(AuditLog.action)
     )
     actions = result.scalars().all()
     
@@ -201,20 +204,18 @@ async def audit_log_summary(
     current_user: User = Depends(require_admin),
     start_time: Optional[datetime] = None,
     end_time: Optional[datetime] = None,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get audit log summary statistics"""
-    query = select(AuditLog)
+    query = select(AuditLog).where(
+        AuditLog.organization_id == current_user.organization_id
+    )
     
     # Apply time filters
     if start_time:
         query = query.where(AuditLog.timestamp >= start_time)
     if end_time:
         query = query.where(AuditLog.timestamp <= end_time)
-    
-    # Apply organization filter for non-admin users
-    if current_user.role != "admin" and current_user.organization_id:
-        query = query.where(AuditLog.organization_id == current_user.organization_id)
     
     result = await db.execute(query)
     logs = result.scalars().all()

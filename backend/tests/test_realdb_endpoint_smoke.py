@@ -35,19 +35,12 @@ SKIP_EXACT = {
 #
 # Do not add to this list to make your own change go green.
 KNOWN_LANE_FAILURES = {
-    "/api/v1/kanban/board": "HARSH — RLS violation writing default board on read",
-    "/api/v1/kanban/metrics": "HARSH — same default-board write path",
-    "/api/v1/kanban/workload": "HARSH — same default-board write path",
     "/api/v1/kanban/rules/premade": (
         "HARSH — premade template ids ('template-001') are not uuids and the "
         "payload omits org_id/is_active/target_board_id vs its response_model"
     ),
     "/api/v1/nlp/correlation/intake/{intake_id}": (
         "HARSH — select() given the IntakeItem class rather than a column"
-    ),
-    "/api/v1/rag/documents": (
-        "htreinen — reaches SeaweedFS at seaweedfs:8333; should degrade to 503 "
-        "when the object store is absent instead of surfacing a connection error"
     ),
 }
 

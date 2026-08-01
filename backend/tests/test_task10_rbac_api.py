@@ -439,11 +439,16 @@ async def test_maintenance_update_uses_bound_parameters():
             self.committed = True
 
     asset_id = uuid4()
+    organization_id = uuid4()
     session = FakeSession()
     response = await health_api.set_maintenance_mode(
         asset_id=asset_id,
         enabled=True,
-        current_user=SimpleNamespace(id=uuid4(), role="admin"),
+        current_user=SimpleNamespace(
+            id=uuid4(),
+            role="admin",
+            organization_id=organization_id,
+        ),
         db=session,
     )
 
@@ -453,6 +458,7 @@ async def test_maintenance_update_uses_bound_parameters():
     assert session.parameters == {
         "enabled": True,
         "asset_id": str(asset_id),
+        "organization_id": str(organization_id),
     }
     assert session.committed is True
     assert response["asset_id"] == str(asset_id)

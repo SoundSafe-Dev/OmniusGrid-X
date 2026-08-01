@@ -15,6 +15,7 @@ idempotent insert that treats a conflict as a duplicate.
 """
 
 import asyncio
+from contextlib import asynccontextmanager
 from uuid import uuid4
 
 import pytest
@@ -49,12 +50,14 @@ async def _factory():
 
 
 async def _seed_integration(session):
+    integration_id = uuid4()
     session.add(IntegrationConfiguration(
-        id=uuid4(), organization_id=ORG, integration_type="erp", erp_type="sap",
+        id=integration_id, organization_id=ORG, integration_type="erp", erp_type="sap",
         integration_name="SAP-test", configuration={"webhook_secret": SECRET},
         is_active=True,
     ))
     await session.commit()
+    return integration_id
 
 
 def test_model_declares_unique_event_constraint():
@@ -76,24 +79,44 @@ def test_model_declares_unique_event_constraint():
     run(scenario())
 
 
-def _call(session, event_id, event_data):
+def _call(integration_id, event_id, event_data):
     sig = erp_webhooks.compute_signature(SECRET, event_data)
     return erp_webhooks.receive_erp_webhook(
         erp_type="sap", event_data=event_data, request=None,
         x_webhook_signature=sig, x_event_type="po.created",
-        x_event_id=event_id, x_source_system="sap", db=session,
+        x_event_id=event_id, x_source_system="sap",
+        x_integration_id=str(integration_id), x_organization_id=str(ORG),
     )
 
 
-def test_webhook_is_idempotent_and_never_500s_on_duplicate():
+def test_webhook_is_idempotent_and_never_500s_on_duplicate(monkeypatch):
     async def scenario():
         engine, Session = await _factory()
+
+        @asynccontextmanager
+        async def sqlite_tenant_session(organization_id):
+            assert organization_id == ORG
+            async with Session() as session:
+                try:
+                    yield session
+                    await session.commit()
+                except Exception:
+                    await session.rollback()
+                    raise
+
+        monkeypatch.setattr(erp_webhooks, "tenant_session", sqlite_tenant_session)
         async with Session() as s:
-            await _seed_integration(s)
-        async with Session() as s:
-            first = await _call(s, "E1", {"entity_type": "PurchaseOrder", "entity_id": "1"})
-        async with Session() as s:
-            second = await _call(s, "E1", {"entity_type": "PurchaseOrder", "entity_id": "1"})
+            integration_id = await _seed_integration(s)
+        first = await _call(
+            integration_id,
+            "E1",
+            {"entity_type": "PurchaseOrder", "entity_id": "1"},
+        )
+        second = await _call(
+            integration_id,
+            "E1",
+            {"entity_type": "PurchaseOrder", "entity_id": "1"},
+        )
         async with Session() as s:
             from sqlalchemy import func, select
             count = (await s.execute(

@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.database import get_db, AsyncSessionLocal
+from app.core.tenant import get_tenant_db
 from app.db.models import Command, Asset, User
 from app.api.auth import get_current_active_user
 from app.middleware.rbac import require_admin, require_operator_or_admin
@@ -51,7 +51,8 @@ class CommandSubmitResponse(BaseModel):
 @router.post("/submit", response_model=CommandSubmitResponse, summary="Submit command to asset", description="Submit a new command for execution on an industrial asset. Commands are queued and executed asynchronously with automatic retries.\n\n**Common actions:**\n- `set_speed`: Adjust print/processing speed (params: speed_percent)\n- `pause_job`: Pause current operation\n- `resume_job`: Resume paused operation\n- `emergency_stop`: Immediate stop (safety critical, admin only)\n- `set_temperature`: Adjust nozzle/bed temp (params: target_temp, component)", dependencies=[Depends(require_operator_or_admin)])
 async def submit_command(
     request: CommandSubmitRequest,
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     """
     Submit a new command for execution on an asset.
@@ -77,18 +78,16 @@ async def submit_command(
         )
     
     # Verify asset exists and user has access
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            select(Asset).where(Asset.id == request.asset_id)
+    result = await db.execute(
+        select(Asset).where(
+            Asset.id == request.asset_id,
+            Asset.organization_id == current_user.organization_id,
         )
-        asset = result.scalar_one_or_none()
-        
-        if not asset:
-            raise HTTPException(status_code=404, detail="Asset not found")
-        
-        # Verify user has access to this asset (same organization)
-        if asset.organization_id != current_user.organization_id:
-            raise HTTPException(status_code=403, detail="Access denied: asset belongs to different organization")
+    )
+    asset = result.scalar_one_or_none()
+
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
     
     # Submit command
     command_id = await command_executor.submit_command(
@@ -152,12 +151,15 @@ async def get_asset_commands(
     status: Optional[str] = None,
     limit: int = 50,
     current_user = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get command history for an asset"""
     # Verify asset access
     result = await db.execute(
-        select(Asset).where(Asset.id == asset_id)
+        select(Asset).where(
+            Asset.id == asset_id,
+            Asset.organization_id == current_user.organization_id,
+        )
     )
     asset = result.scalar_one_or_none()
     
@@ -206,25 +208,24 @@ async def get_queue_status(
 @router.post("/asset/{asset_id}/emergency-stop", dependencies=[Depends(require_admin)])
 async def emergency_stop(
     asset_id: str,
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     """
     Emergency stop - immediately halt asset operation.
     High priority command that bypasses normal queue.
     Requires admin role.
     """
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            select(Asset).where(Asset.id == asset_id)
+    result = await db.execute(
+        select(Asset).where(
+            Asset.id == asset_id,
+            Asset.organization_id == current_user.organization_id,
         )
-        asset = result.scalar_one_or_none()
-        
-        if not asset:
-            raise HTTPException(status_code=404, detail="Asset not found")
-        
-        # Verify user has access to this asset (same organization)
-        if asset.organization_id != current_user.organization_id:
-            raise HTTPException(status_code=403, detail="Access denied: asset belongs to different organization")
+    )
+    asset = result.scalar_one_or_none()
+
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
     
     # Submit with high priority (short timeout)
     command_id = await command_executor.submit_command(

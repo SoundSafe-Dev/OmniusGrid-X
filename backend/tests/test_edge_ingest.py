@@ -158,3 +158,126 @@ def test_forwarder_mid_send_failure_drops_and_trips():
     sent = asyncio.run(fw.forward("org-1", [reading(seq=1), reading(seq=2)]))
     assert sent == 0
     assert fw.dropped >= 1  # tripped on first failure; batch abandoned to S&F retry
+
+
+# --- tenant-routed HTTP handler ----------------------------------------------
+
+@pytest.mark.asyncio
+async def test_handler_rejects_invalid_org_before_mutating_gateway(monkeypatch):
+    from fastapi import HTTPException
+
+    from app.api import edge_ingest as edge_api
+    from app.services.edge_ca import AgentPrincipal
+
+    class GatewayMustNotRun:
+        def ingest(self, *_args, **_kwargs):
+            raise AssertionError("gateway mutated before tenant hint validation")
+
+    monkeypatch.setattr(edge_api, "_gateway", GatewayMustNotRun())
+    principal = AgentPrincipal("agent-1", 1, NOW + timedelta(days=1))
+
+    with pytest.raises(HTTPException) as rejected:
+        await edge_api.ingest_batch(
+            edge_api.IngestBatch(readings=[reading(asset="owned")]),
+            principal,
+            "not-a-uuid",
+        )
+
+    assert rejected.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_handler_forwards_assets_owned_by_certificate_agent(monkeypatch):
+    import asyncio
+    from contextlib import asynccontextmanager
+    from uuid import uuid4
+
+    from app.api import edge_ingest as edge_api
+    from app.services.edge_ca import AgentPrincipal
+    from app.services.edge_ingest import IngestResult
+
+    organization_id = uuid4()
+    asset_id = uuid4()
+    accepted = [reading(asset=str(asset_id), seq=1)]
+
+    class StubGateway:
+        def ingest(self, agent_id, readings):
+            assert agent_id == "agent-1"
+            assert readings == accepted
+            return IngestResult(accepted=list(readings))
+
+    @asynccontextmanager
+    async def scoped_session(routed_org):
+        assert routed_org == organization_id
+        yield object()
+
+    ownership_checks = []
+
+    async def owned_assets(_db, asset_ids, routed_org, agent_id):
+        ownership_checks.append((asset_ids, routed_org, agent_id))
+        return {str(value) for value in asset_ids}
+
+    class StubForwarder:
+        def __init__(self):
+            self.calls = []
+
+        async def forward(self, org, readings):
+            self.calls.append((org, readings))
+            return len(readings)
+
+    forwarder = StubForwarder()
+    monkeypatch.setattr(edge_api, "_gateway", StubGateway())
+    monkeypatch.setattr(edge_api, "tenant_session", scoped_session)
+    monkeypatch.setattr(edge_api, "_owned_asset_ids", owned_assets)
+    monkeypatch.setattr(edge_api, "_forwarder", forwarder)
+
+    summary = await edge_api.ingest_batch(
+        edge_api.IngestBatch(readings=accepted),
+        AgentPrincipal("agent-1", 1, NOW + timedelta(days=1)),
+        str(organization_id),
+    )
+    await asyncio.sleep(0)
+
+    assert summary.accepted == 1
+    assert ownership_checks == [
+        ({asset_id}, organization_id, "agent-1"),
+    ]
+    assert forwarder.calls == [(str(organization_id), accepted)]
+
+
+@pytest.mark.asyncio
+async def test_handler_rejects_unowned_asset_before_mutating_gateway(monkeypatch):
+    from contextlib import asynccontextmanager
+    from uuid import uuid4
+
+    from fastapi import HTTPException
+
+    from app.api import edge_ingest as edge_api
+    from app.services.edge_ca import AgentPrincipal
+
+    organization_id = uuid4()
+    asset_id = uuid4()
+
+    class GatewayMustNotRun:
+        def ingest(self, *_args, **_kwargs):
+            raise AssertionError("gateway mutated before asset ownership validation")
+
+    @asynccontextmanager
+    async def scoped_session(_organization_id):
+        yield object()
+
+    async def owns_nothing(*_args):
+        return set()
+
+    monkeypatch.setattr(edge_api, "_gateway", GatewayMustNotRun())
+    monkeypatch.setattr(edge_api, "tenant_session", scoped_session)
+    monkeypatch.setattr(edge_api, "_owned_asset_ids", owns_nothing)
+
+    with pytest.raises(HTTPException) as rejected:
+        await edge_api.ingest_batch(
+            edge_api.IngestBatch(readings=[reading(asset=str(asset_id))]),
+            AgentPrincipal("agent-1", 1, NOW + timedelta(days=1)),
+            str(organization_id),
+        )
+
+    assert rejected.value.status_code == 403

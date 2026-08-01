@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy import select, and_, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.database import get_db
+from app.core.tenant import get_tenant_db
 from app.db.models import User, ConsentRecord, DataProcessingRecord
 from app.api.auth import get_current_active_user
 from app.middleware.rbac import require_admin
@@ -95,7 +95,7 @@ async def record_consent(
     consent_given: bool,
     consent_method: str = "checkbox",
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Record user consent"""
     # Validate consent type
@@ -134,7 +134,7 @@ async def record_consent(
 async def get_user_consents(
     request: Request,
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get user's consent records"""
     result = await db.execute(
@@ -163,7 +163,7 @@ async def withdraw_consent(
     request: Request,
     consent_id: str,
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Withdraw consent"""
     result = await db.execute(
@@ -201,7 +201,7 @@ async def withdraw_consent(
 async def export_user_data(
     request: Request,
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Export all user data for GDPR data portability"""
     user_data = await _build_user_export(current_user, db)
@@ -219,7 +219,7 @@ async def delete_user_data(
     request: Request,
     confirmation: str,  # Must be "DELETE" to confirm
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Delete all user data (right to be forgotten)"""
     if confirmation != "DELETE":
@@ -249,7 +249,7 @@ async def admin_export_user_data(
     request: Request,
     user_id: UUID,
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     target_user = await _get_tenant_user(user_id, current_user, db)
     user_data = await _build_user_export(target_user, db)
@@ -274,7 +274,7 @@ async def admin_delete_user_data(
     user_id: UUID,
     confirmation: str,
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     if confirmation != "DELETE":
         raise HTTPException(
@@ -299,7 +299,7 @@ async def admin_delete_user_data(
 async def get_processing_records(
     request: Request,
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get data processing records"""
     if not current_user.organization_id:
@@ -342,7 +342,7 @@ async def create_processing_record(
     security_measures: Optional[List[str]] = None,
     legal_basis: Optional[str] = None,
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Create data processing record"""
     if not current_user.organization_id:

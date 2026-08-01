@@ -38,11 +38,16 @@ provides defense in depth so that even a query that forgets
 Integration tests verify both layers.
 """
 
+from contextlib import asynccontextmanager
+from typing import AsyncIterator
 from uuid import UUID
 
 import structlog
 from fastapi import Depends, HTTPException, status
-from sqlalchemy import text
+from sqlalchemy import event, text
+from sqlalchemy.engine import Connection
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_active_user
 from app.db.database import AsyncSessionLocal
@@ -89,17 +94,12 @@ async def get_tenant_db(
 ):
     """Yield a DB session pre-bound to the caller's tenant via Postgres RLS.
 
-    Sets the session-scoped GUC ``app.current_org_id`` to the authenticated
-    user's organization before any query runs. The RLS policies in migration
-    ``011_tenant_isolation_rls.sql`` reference this GUC to filter rows.
-
-    ``set_config(..., false)`` keeps the value on the connection for the
-    duration of the request because some endpoints commit mid-request and
-    then issue further queries (for example ``create``/``update`` followed
-    by ``refresh``); a transaction-local ``SET LOCAL`` value would be cleared
-    by that commit. The GUC is reset to an empty string in the ``finally``
-    block before the connection returns to the pool; RLS policies treat the
-    empty value as NULL (fail-closed) via ``NULLIF``.
+    Installs the transaction-local GUC ``app.current_org_id`` for the
+    authenticated user's organization before every transaction. The RLS
+    policies in migration ``011_tenant_isolation_rls.sql`` reference this GUC
+    to filter rows. Reinstalling it at each transaction boundary supports
+    handlers that commit and continue querying without leaking tenant context
+    through a pooled connection.
 
     Use this in place of ``get_db`` on any endpoint that returns or mutates
     tenant-scoped data. ``get_db`` remains available for system-level tasks
@@ -108,40 +108,53 @@ async def get_tenant_db(
     Lives here rather than in ``app.db.database`` to avoid an import cycle
     (``database`` -> ``tenant`` -> ``api.auth`` -> ``database``).
     """
-    # DO NOT `await db.refresh(obj)` AFTER `await db.commit()` IN AN ENDPOINT
-    # THAT USES THIS DEPENDENCY.
-    #
-    # The GUC below is session-scoped (is_local=false) so it survives an
-    # endpoint's mid-request commits — but commit() also returns the connection
-    # to the pool, and the refresh's SELECT may then run on a *different*
-    # connection that never had the GUC set. RLS hides the row and refresh
-    # raises "Could not refresh instance". It is load-dependent, so it surfaces
-    # intermittently rather than deterministically.
-    #
-    # AsyncSessionLocal sets expire_on_commit=False, so the object is fully
-    # populated after commit and the refresh is redundant anyway. Twenty such
-    # calls were removed across the tenant-scoped routers; don't reintroduce
-    # them. If you need a DB-side default back, read it explicitly.
+    async with tenant_session(org_id) as session:
+        yield session
+
+
+@asynccontextmanager
+async def tenant_session(organization_id: UUID | str) -> AsyncIterator[AsyncSession]:
+    """Open a session whose every transaction is scoped to one trusted tenant.
+
+    This is the non-HTTP counterpart to :func:`get_tenant_db`. Background jobs
+    and machine-authenticated routes must call it only after deriving the
+    organization from a trusted credential or an already-authenticated user.
+
+    The tenant GUC is transaction-local and installed by ``after_begin``. That
+    distinction matters: endpoint and service code commits mid-session, and an
+    ``AsyncSession`` may acquire a different pooled connection for the next
+    transaction. Installing the GUC on every transaction keeps RLS active after
+    those commits, while PostgreSQL clears the value automatically on
+    commit/rollback so it cannot leak to the next pool borrower.
+    """
+    tenant_id = str(organization_id).strip()
+    if not tenant_id:
+        raise ValueError("organization_id is required for a tenant session")
+
     async with AsyncSessionLocal() as session:
-        # set_config/RLS are Postgres features; on other dialects (SQLite dev,
-        # smoke tests) tenant scoping falls back to the endpoints' explicit
-        # organization_id filters, so skip the GUC round-trips entirely.
-        is_postgres = session.bind.dialect.name == "postgresql"
-        try:
-            if is_postgres:
-                await session.execute(
-                    text("SELECT set_config('app.current_org_id', :org_id, false)"),
-                    {"org_id": str(org_id)},
+        def _set_tenant_guc(
+            _session: Session,
+            _transaction: object,
+            connection: Connection,
+        ) -> None:
+            # SQLite is used by focused unit tests and has no PostgreSQL GUCs.
+            # Those code paths still need explicit organization predicates.
+            if connection.dialect.name == "postgresql":
+                connection.execute(
+                    text(
+                        "SELECT set_config("
+                        "'app.current_org_id', :org_id, true)"
+                    ),
+                    {"org_id": tenant_id},
                 )
+
+        event.listen(session.sync_session, "after_begin", _set_tenant_guc)
+        try:
             yield session
             await session.commit()
         except Exception:
             await session.rollback()
             raise
         finally:
-            if is_postgres:
-                await session.execute(
-                    text("SELECT set_config('app.current_org_id', '', false)")
-                )
-                await session.commit()
+            event.remove(session.sync_session, "after_begin", _set_tenant_guc)
             await session.close()

@@ -16,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_active_user
-from app.db.database import get_db
+from app.core.tenant import get_tenant_db
 from app.db.models import AnalysisSession, SessionDataSource, User
 from app.services import platform_correlation as pc
 
@@ -54,12 +54,15 @@ async def list_platform_source_types(_user: User = Depends(get_current_active_us
 async def attach_platform_data(
     session_id: UUID,
     body: AttachPlatformDataRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """Pull data from a platform domain and attach it as a session data source."""
     session = (await db.execute(
-        select(AnalysisSession).where(AnalysisSession.id == str(session_id))
+        select(AnalysisSession).where(
+            AnalysisSession.id == str(session_id),
+            AnalysisSession.organization_id == current_user.organization_id,
+        )
     )).scalar_one_or_none()
     if session is None:
         raise HTTPException(status_code=404, detail="session not found")

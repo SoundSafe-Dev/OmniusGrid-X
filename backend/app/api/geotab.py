@@ -5,14 +5,14 @@ Fleet telematics, HOS compliance, vehicle diagnostics
 
 import hmac
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional
+from typing import Annotated, List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_active_user
 from app.core.config import settings
-from app.db.database import get_db
+from app.core.tenant import get_tenant_db, get_tenant_org_id, tenant_session
 from app.services.geotab_service import geotab_service
 
 # Read/query endpoints require an authenticated user.
@@ -23,7 +23,7 @@ router = APIRouter(prefix="/geotab", tags=["geotab"],
 async def verify_geotab_webhook(x_webhook_secret: Optional[str] = Header(None)):
     """Guard the external webhook with a shared secret (no user JWT available)."""
     expected = settings.GEOTAB_WEBHOOK_SECRET
-    if expected and not hmac.compare_digest(x_webhook_secret or "", expected):
+    if not expected or not hmac.compare_digest(x_webhook_secret or "", expected):
         raise HTTPException(status_code=401, detail="Invalid webhook secret")
 
 
@@ -34,8 +34,8 @@ webhook_router = APIRouter(prefix="/geotab", tags=["geotab"],
 
 @router.get("/devices")
 async def get_geotab_devices(
-    organization_id: Optional[UUID] = None,
-    db: AsyncSession = Depends(get_db)
+    organization_id: Annotated[UUID, Depends(get_tenant_org_id)],
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """List GeoTab devices (drivers' ELD assignments + device registry)"""
     return await geotab_service.get_devices(
@@ -47,8 +47,8 @@ async def get_geotab_devices(
 @router.get("/devices/{device_id}/location")
 async def get_device_location(
     device_id: str,
-    organization_id: Optional[UUID] = None,
-    db: AsyncSession = Depends(get_db)
+    organization_id: Annotated[UUID, Depends(get_tenant_org_id)],
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Latest known position for a GeoTab device"""
     try:
@@ -64,10 +64,10 @@ async def get_device_location(
 @router.get("/devices/{device_id}/trips")
 async def get_device_trips(
     device_id: str,
+    organization_id: Annotated[UUID, Depends(get_tenant_org_id)],
     from_time: Optional[datetime] = Query(None, alias="from"),
     to_time: Optional[datetime] = Query(None, alias="to"),
-    organization_id: Optional[UUID] = None,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Trips for a GeoTab device within a time window (default: last 24h)"""
     now = datetime.now(timezone.utc)
@@ -85,12 +85,12 @@ async def get_device_trips(
     dependencies=[Depends(get_current_active_user)],
 )
 async def get_geotab_exceptions(
-    organization_id: Optional[UUID] = None,
+    organization_id: Annotated[UUID, Depends(get_tenant_org_id)],
     driver_id: Optional[UUID] = None,
     device_id: Optional[str] = None,
     exception_type: Optional[str] = None,
     hours_back: int = Query(24, ge=1, le=168),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get GeoTab exceptions (harsh braking, speeding, HOS violations)"""
     try:
@@ -119,8 +119,8 @@ async def get_geotab_exceptions(
 )
 async def get_device_diagnostics(
     device_id: str,
-    organization_id: Optional[UUID] = None,
-    db: AsyncSession = Depends(get_db)
+    organization_id: Annotated[UUID, Depends(get_tenant_org_id)],
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get GeoTab device diagnostics (DTC codes, reefer status, etc.)"""
     try:
@@ -137,17 +137,26 @@ async def get_device_diagnostics(
 @webhook_router.post("/webhook")
 async def geotab_webhook(
     webhook_data: dict,
-    db: AsyncSession = Depends(get_db)
 ):
     """Webhook receiver for real-time GeoTab events"""
     try:
-        result = await geotab_service.handle_webhook(
-            webhook_data=webhook_data,
-            db=db
-        )
+        organization_id = UUID(str(webhook_data.get("organization_id")))
+    except (TypeError, ValueError, AttributeError):
+        raise HTTPException(status_code=400, detail="organization_id is required")
+
+    # The shared-secret dependency authenticates the provider. Treat the
+    # payload organization as a routing claim only after that check, normalize
+    # it, and let RLS reject any mismatched writes.
+    trusted_payload = {**webhook_data, "organization_id": str(organization_id)}
+    try:
+        async with tenant_session(organization_id) as db:
+            await geotab_service.handle_webhook(
+                webhook_data=trusted_payload,
+                db=db,
+            )
         return {
             "status": "processed",
-            "event_type": webhook_data.get("type"),
+            "event_type": trusted_payload.get("type"),
             "timestamp": datetime.now(timezone.utc).isoformat()
         }
     except Exception as e:
@@ -160,8 +169,8 @@ async def geotab_webhook(
 )
 async def get_driver_hos_geotab(
     driver_id: UUID,
-    organization_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    organization_id: Annotated[UUID, Depends(get_tenant_org_id)],
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get driver HOS status from GeoTab"""
     try:
@@ -180,8 +189,8 @@ async def get_driver_hos_geotab(
     dependencies=[Depends(get_current_active_user)],
 )
 async def get_fleet_summary(
-    organization_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    organization_id: Annotated[UUID, Depends(get_tenant_org_id)],
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get fleet-wide GeoTab summary"""
     try:

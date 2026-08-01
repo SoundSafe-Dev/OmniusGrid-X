@@ -11,7 +11,6 @@ from sqlalchemy import select, update, delete, func, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.db.database import get_db, AsyncSessionLocal
 from app.db.models import (
     TaskBoard, TaskColumn, Task, TaskComment, TaskTimer, 
     TaskRule, TaskEscalation, Asset, Alarm, User, Organization, Command
@@ -25,7 +24,7 @@ from app.models.schemas import (
     TaskEscalationResponse, TaskChecklistItem
 )
 from app.api.auth import get_current_active_user
-from app.middleware.tenant_isolation import get_tenant_db
+from app.middleware.tenant_isolation import get_tenant_db, tenant_session
 from app.services.websocket_manager import websocket_manager
 
 from app.middleware.rbac import require_admin, require_operator_or_admin
@@ -164,7 +163,7 @@ async def broadcast_task_update(
 @router.get("/board", response_model=KanbanBoardData)
 async def get_kanban_board(
     filters: KanbanViewFilter = Depends(),
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -250,7 +249,7 @@ async def get_kanban_board(
 @router.post("/board/view", response_model=KanbanBoardData)
 async def update_board_view(
     filters: KanbanViewFilter,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """Update board view with new filters"""
@@ -868,7 +867,7 @@ async def execute_completion_actions(task_id: str, actions: Dict[str, Any], orga
     """Execute actions when task is completed"""
     results = {}
     
-    async with AsyncSessionLocal() as session:
+    async with tenant_session(organization_id) as session:
         # Get task for related entities
         result = await session.execute(
             select(Task)
@@ -1108,7 +1107,7 @@ async def get_task_time_logs(
 
 @router.get("/metrics", response_model=KanbanMetrics)
 async def get_kanban_metrics(
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """Get kanban board metrics"""
@@ -1216,7 +1215,7 @@ async def get_kanban_metrics(
 
 @router.get("/workload", response_model=KanbanWorkloadResponse)
 async def get_workload_distribution(
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """Get workload distribution by assignee"""
@@ -1298,7 +1297,7 @@ async def get_workload_distribution(
 @router.get("/rules", response_model=List[TaskRuleResponse])
 async def list_task_rules(
     active_only: bool = False,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """List all task automation rules"""
@@ -1317,7 +1316,7 @@ async def list_task_rules(
 @router.post("/rules", response_model=TaskRuleResponse, dependencies=[Depends(require_admin)])
 async def create_task_rule(
     rule_data: TaskRuleCreate,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """Create a new automation rule"""
@@ -1352,7 +1351,7 @@ async def create_task_rule(
 async def update_task_rule(
     rule_id: str,
     rule_update: TaskRuleUpdate,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """Update an automation rule"""
@@ -1403,7 +1402,7 @@ async def update_task_rule(
 async def test_task_rule(
     rule_id: str,
     test_data: TaskRuleTestRequest,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """Test a rule against sample data"""
@@ -1453,7 +1452,7 @@ async def test_task_rule(
 
 @router.get("/rules/premade", response_model=List[TaskRuleResponse])
 async def get_premade_rules(
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """Get list of available premade system rules"""
@@ -1532,7 +1531,7 @@ async def get_premade_rules(
 @router.delete("/rules/{rule_id}", dependencies=[Depends(require_admin)])
 async def delete_task_rule(
     rule_id: str,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """Delete a custom rule (cannot delete system rules)"""

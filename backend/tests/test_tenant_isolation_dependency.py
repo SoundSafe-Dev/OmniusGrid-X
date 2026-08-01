@@ -12,6 +12,7 @@ class TestTenantIsolationFacade:
 
         assert tenant_isolation.get_tenant_org_id is core_tenant.get_tenant_org_id
         assert tenant_isolation.get_tenant_db is core_tenant.get_tenant_db
+        assert tenant_isolation.tenant_session is core_tenant.tenant_session
 
     async def test_user_without_organization_receives_403_on_assets(self, app):
         from types import SimpleNamespace

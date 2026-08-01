@@ -208,10 +208,14 @@ class GeoTabService:
         """Process status change webhook (e.g., HOS status)"""
         # Update driver HOS status if applicable
         driver_id = webhook_data.get("driver_id")
+        organization_id = webhook_data.get("organization_id")
         if driver_id and db:
             try:
                 result = await db.execute(
-                    select(Driver).where(Driver.id == driver_id)
+                    select(Driver).where(
+                        Driver.id == driver_id,
+                        Driver.organization_id == organization_id,
+                    )
                 )
                 driver = result.scalar_one_or_none()
                 if driver:
@@ -328,7 +332,10 @@ class GeoTabService:
         _require_simulated("driver HOS")
         # Get driver from database
         result = await db.execute(
-            select(Driver).where(Driver.id == driver_id)
+            select(Driver).where(
+                Driver.id == driver_id,
+                Driver.organization_id == organization_id,
+            )
         )
         driver = result.scalar_one_or_none()
         
@@ -431,6 +438,10 @@ class GeoTabService:
                 .order_by(GeoTabTrip.start_time.desc())
                 .limit(1)
             )
+            if organization_id:
+                trip_stmt = trip_stmt.where(
+                    GeoTabTrip.organization_id == organization_id
+                )
             trip = (await db.execute(trip_stmt)).scalar_one_or_none()
             if trip:
                 known_ids.add(device_id)
@@ -444,6 +455,10 @@ class GeoTabService:
                     .order_by(GeoTabException.timestamp.desc())
                     .limit(1)
                 )
+                if organization_id:
+                    exc_stmt = exc_stmt.where(
+                        GeoTabException.organization_id == organization_id
+                    )
                 exc = (await db.execute(exc_stmt)).scalar_one_or_none()
                 if exc and exc.location:
                     known_ids.add(device_id)
@@ -509,8 +524,7 @@ class GeoTabService:
         # could match; each trip then filters this list in Python with the exact
         # same predicate as before (timestamp >= start [and <= end]), preserving
         # the original semantics including overlap double-counting and the
-        # no-upper-bound case when a trip has no end_time. Not org-filtered —
-        # matching the original query, which keyed only on device_id + timestamp.
+        # no-upper-bound case when a trip has no end_time.
         device_exceptions: list = []
         if rows:
             earliest_start = min(t.start_time for t in rows)
@@ -522,6 +536,10 @@ class GeoTabService:
                 )
                 .order_by(GeoTabException.timestamp)
             )
+            if organization_id:
+                exc_stmt = exc_stmt.where(
+                    GeoTabException.organization_id == organization_id
+                )
             device_exceptions = list((await db.execute(exc_stmt)).scalars().all())
 
         for trip in rows:

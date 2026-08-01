@@ -19,6 +19,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.tenant import get_tenant_db
 from app.api.auth import get_current_active_user
 from app.db.database import engine, get_db
 from app.db.models import Alarm, Asset, User
@@ -98,19 +99,13 @@ async def _check_message_broker() -> tuple[str, dict[str, Any]]:
 async def _check_ingestion(db: AsyncSession) -> tuple[str, dict[str, Any]]:
     """Verify telemetry has been ingested recently (when data exists)."""
     try:
-        result = await db.execute(select(func.max(Asset.last_seen)))
-        latest_asset_seen = result.scalar()
-
         result = await db.execute(text("SELECT MAX(time) FROM telemetry"))
         latest_telemetry = result.scalar()
 
-        latest = latest_telemetry or latest_asset_seen
+        latest = latest_telemetry
         details: dict[str, Any] = {
             "latest_telemetry_at": (
                 latest_telemetry.isoformat() if latest_telemetry else None
-            ),
-            "latest_asset_seen_at": (
-                latest_asset_seen.isoformat() if latest_asset_seen else None
             ),
         }
 
@@ -324,7 +319,7 @@ async def startup_probe():
 
 @router.get("/health/detailed")
 async def detailed_health(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """Engineer-facing health report with per-component detail (not cached).
@@ -487,7 +482,7 @@ async def set_maintenance_mode(
     asset_id: UUID,
     enabled: bool = True,
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     """Manual override: Set asset to maintenance mode (blocks game-theoretic commands)"""
     await db.execute(
@@ -497,9 +492,14 @@ async def set_maintenance_mode(
             SET maintenance_mode = :enabled,
                 updated_at = NOW()
             WHERE id = :asset_id
+              AND organization_id = :organization_id
             """
         ),
-        {"enabled": enabled, "asset_id": str(asset_id)},
+        {
+            "enabled": enabled,
+            "asset_id": str(asset_id),
+            "organization_id": str(current_user.organization_id),
+        },
     )
     await db.commit()
 
@@ -528,21 +528,28 @@ async def trigger_database_vacuum(
 @router.get("/admin/system/status", dependencies=[Depends(require_admin)])
 async def get_system_status(
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     """Get comprehensive system status for engineers (live queries, not placeholders)."""
     health = await _run_health_checks(db)
 
     active_assets = (
         await db.execute(
-            select(func.count()).select_from(Asset).where(Asset.is_active.is_(True))
+            select(func.count()).select_from(Asset).where(
+                Asset.organization_id == current_user.organization_id,
+                Asset.is_active.is_(True),
+            )
         )
     ).scalar() or 0
 
     alarm_rows = (
         await db.execute(
             select(Alarm.severity, func.count())
-            .where(Alarm.is_active.is_(True))
+            .join(Asset, Alarm.asset_id == Asset.id)
+            .where(
+                Asset.organization_id == current_user.organization_id,
+                Alarm.is_active.is_(True),
+            )
             .group_by(Alarm.severity)
         )
     ).all()

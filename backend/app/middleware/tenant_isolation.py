@@ -5,6 +5,6 @@ global ASGI middleware. The canonical implementation remains in
 ``app.core.tenant``.
 """
 
-from app.core.tenant import get_tenant_db, get_tenant_org_id
+from app.core.tenant import get_tenant_db, get_tenant_org_id, tenant_session
 
-__all__ = ["get_tenant_org_id", "get_tenant_db"]
+__all__ = ["get_tenant_org_id", "get_tenant_db", "tenant_session"]
