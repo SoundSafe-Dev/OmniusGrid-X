@@ -667,3 +667,58 @@ dependent — five of its ten need FS-241 or another lane's owner.
 
 The honest count: **28 executable now, 12 soft-gated on an owner's agreement, 10 gated on a
 decision, a cluster, or a credential.**
+
+---
+
+# Appendix — QA sweep against a running stack, 2026-08-01
+
+Method: real backend (SQLite dev path, the one `make seed-demo` produces) + real Vite dev
+server with `VITE_USE_MOCK=false`. Three passes: 33 routed pages mounted; 253 GET operations
+called; every non-destructive control on every page clicked (one skipped by name —
+`STOP NOW` on `/assets/:id`; two pages capped at 14 of 15 controls).
+
+**A caveat about the first pass, because it matters for anyone repeating this.** The page
+sweep recorded failed requests from Playwright's `response` event and reported "no 4xx/5xx
+anywhere". That was not evidence: a response the browser rejects for CORS never fires that
+event, so FS-378 was hiding every unhandled 500 from the sweep that found it. The one 500
+present was visible only in the console log. **Read the console, not just the network tape.**
+
+## Fixed here
+
+| | |
+|---|---|
+| **FS-378** | Unhandled 500s reached the browser with no CORS header, so they surfaced as `Network Error` with no status and no trace id — the exact class error triage exists for |
+| **FS-380** | `_check_ingestion` assumed a `datetime`; aiosqlite returns a string, so the documented dev path reported a working database as a subsystem in error |
+| **FS-381** | `/admin/system/status` 500'd on SQLite — `pg_database_size` called with no dialect guard, taking the page down over one optional figure |
+| **FS-382** | The CI-gate counter read a fail-safe *step* as an advisory *job*; the README's 30/2 was read off that bug. Real: 31 blocking, 1 advisory |
+| **FS-379** | Approve/Reject on `/engines/strategic` sent `operator_id` in the body where the server declares a query param — 422 every time, never worked once |
+
+## Handed over — cross-lane, all reproduced against the running stack
+
+| Endpoint / page | Cause | Lane |
+|---|---|---|
+| `GET /api/v1/nlp/sessions/{id}/data` | `DataSourceResponse.source_id` is declared `UUID`; real data holds `'yard'`. The response model rejects its own handler's output — **FS-303's class exactly** | ⚠ Harsh |
+| `GET /api/v1/nlp/sessions/{id}/context/registries` | `'ActionableRegistryItem' object has no attribute 'title'` | ⚠ Harsh |
+| `GET /api/v1/nlp/correlation/intake/{id}` | SQLAlchemy misuse — the `IntakeItem` *class* passed where a column expression is expected | ⚠ Harsh |
+| `GET /api/v1/kanban/rules/premade` | 50 validation errors: premade rule ids are not UUIDs. **Not environmental** — this fails on Postgres too, the ids are static | ⚠ kanban owner |
+| `GET /api/v1/rag/documents`, `POST /api/v1/rag/query` | Storage/vector backends unreachable (`seaweedfs:8333`, DNS). Environmental **but returns 500 where every Redis-backed endpoint returns 503** — an unreachable dependency is not a server defect, and the status should say so | ⚠ htreinen |
+
+## Two notes, neither worth a sprint on its own
+
+- `getWsUrl()` honours `VITE_WS_URL` but its dev fallback hardcodes `:8000`, ignoring
+  `VITE_API_URL`. One backend, two env vars, and only one of them documented — a dev who
+  moves the API port gets a socket that retries forever against nothing. Production
+  derivation (same-origin, `wss:` on https) is correct and is not affected.
+- `StatCard` in `TransportationManagement.tsx` and `YardManagement.tsx` is handed a ref by a
+  Radix `asChild` trigger and is not a `forwardRef`, so the ref silently drops. React warns
+  on both pages.
+
+## Not a defect, recorded so it is not re-investigated
+
+- `model_registry_storage: "error: storage root missing and not creatable"` is accurate
+  reporting of an environment fact; the check behaved as designed.
+- `/health/ready` 503 follows correctly from stale ingestion.
+- The 15 other 503s are the known Redis and `pg_stat_statements` gaps (FS-259b).
+- A stale local `dev.db` fails `make seed-demo` with `no such column: maintenance_mode`
+  rather than "delete this file" — `create_all` does not alter existing tables. Deleting
+  `dev.db` fixes it. Gitignored artefact, not a repo defect, but a real trap.
