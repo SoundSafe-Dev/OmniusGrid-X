@@ -1,4 +1,4 @@
-import { FC, useState, useEffect } from 'react';
+import { FC, forwardRef, type HTMLAttributes, useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   Truck,
@@ -986,13 +986,18 @@ export const TransportationManagement: FC = () => {
 };
 
 // Components
-const StatCard: FC<{ label: string; value: string | number; icon: any; color?: string }> = ({ 
-  label, 
-  value, 
-  icon: Icon, 
-  color = 'text-opsgrid-text' 
-}) => (
-  <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-3">
+//
+// forwardRef AND `...rest`, because all nine of these sit inside `<TooltipTrigger asChild>`.
+// Radix's Slot clones the child to merge in a ref and its own event handlers; a plain
+// function component that destructures only its own props silently drops BOTH. The result
+// was not a cosmetic React warning — it was nine dead tooltips. Verified by hovering
+// "Total Shipments" against a running app: 0 elements with role="tooltip", 0 Radix poppers.
+// Same shape, same fix, in YardManagement.tsx.
+const StatCard = forwardRef<
+  HTMLDivElement,
+  { label: string; value: string | number; icon: any; color?: string } & HTMLAttributes<HTMLDivElement>
+>(({ label, value, icon: Icon, color = 'text-opsgrid-text', ...rest }, ref) => (
+  <div ref={ref} {...rest} className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-3">
     <div className="flex items-center justify-between">
       <div>
         <p className="text-xs text-opsgrid-text-secondary">{label}</p>
@@ -1001,7 +1006,8 @@ const StatCard: FC<{ label: string; value: string | number; icon: any; color?: s
       <Icon className={`w-5 h-5 ${color}`} />
     </div>
   </div>
-);
+));
+StatCard.displayName = 'StatCard';
 
 const ShipmentDetailModal: FC<{
   shipment: Shipment;

@@ -1,4 +1,4 @@
-import { FC, useState } from 'react';
+import { FC, forwardRef, type HTMLAttributes, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   Truck,
@@ -738,13 +738,15 @@ const CheckInModal: FC<{ onClose: () => void; onCheckedIn: () => void }> = ({ on
 };
 
 // Components
-const StatCard: FC<{ label: string; value: string | number; icon: any; color?: string }> = ({ 
-  label, 
-  value, 
-  icon: Icon, 
-  color = 'text-opsgrid-text' 
-}) => (
-  <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-3">
+// forwardRef AND `...rest` — see the note on the identical component in
+// TransportationManagement.tsx. These sit inside `<TooltipTrigger asChild>`, and a plain
+// function component drops the ref and the event handlers Radix's Slot merges in, leaving
+// the tooltips dead rather than merely warning.
+const StatCard = forwardRef<
+  HTMLDivElement,
+  { label: string; value: string | number; icon: any; color?: string } & HTMLAttributes<HTMLDivElement>
+>(({ label, value, icon: Icon, color = 'text-opsgrid-text', ...rest }, ref) => (
+  <div ref={ref} {...rest} className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-3">
     <div className="flex items-center justify-between">
       <div>
         <p className="text-xs text-opsgrid-text-secondary">{label}</p>
@@ -753,7 +755,8 @@ const StatCard: FC<{ label: string; value: string | number; icon: any; color?: s
       <Icon className={`w-5 h-5 ${color}`} />
     </div>
   </div>
-);
+));
+StatCard.displayName = 'StatCard';
 
 const TrailerDetailModal: FC<{
   trailer: YardTrailer;
