@@ -43,18 +43,30 @@ export default defineConfig({
         'src/api/mockApi.ts',
         'src/api/generated/**',
       ],
-      // Set from the MEASURED value at the time of writing (19.83% statements /
-      // 16.16% branches / 14.51% functions / 20.55% lines) with a small margin,
-      // so this is a ratchet rather than an aspiration. It cannot be met by
+      // RAISED 2026-07-31 (FS-260). Set from the MEASURED value, with ~1 point of
+      // margin, so this is a ratchet rather than an aspiration: it cannot be met by
       // deleting tests, and it fails if new untested code dilutes the total.
+      //
+      //   set by FS-240   19.83 / 16.16 / 14.51 / 20.55   -> 19 / 15 / 14 / 19
+      //   measured today  39.01 / 42.78 / 35.21 / 40.23   -> 38 / 41 / 34 / 39
+      //
+      // Coverage had roughly DOUBLED while the thresholds stood still, which made
+      // them decorative in the direction nobody checks: the gate would have sat
+      // through coverage falling by half and still passed. A ratchet that trails
+      // reality by 20 points is not a ratchet, it is a number in a config file.
+      //
+      // FS-260 was written up as "no thresholds exist, and the coverage `include` is
+      // narrowed to three paths". Neither reproduced — FS-240 had already widened the
+      // include and set these. The real defect was the opposite one, and the sprint
+      // entry has been corrected in place per that document's own instruction.
       //
       // Raise these as coverage improves. Do NOT lower them to make a build pass:
       // the point is that dropping below today's level is a regression.
       thresholds: {
-        statements: 19,
-        branches: 15,
-        functions: 14,
-        lines: 19,
+        statements: 38,
+        branches: 41,
+        functions: 34,
+        lines: 39,
       },
     },
   },

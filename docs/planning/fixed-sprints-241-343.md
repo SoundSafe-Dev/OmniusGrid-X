@@ -128,9 +128,23 @@ The pipeline is complete and now has one consumer. These are the gaps that consu
   rather than by luck.
 
 - **FS-260 · Coverage thresholds** · S — pool #41
-  None exist, and `vitest.config.ts` narrows coverage `include` to three paths, so the reported
-  number is decorative and cannot regress.
-  *Done when:* both suites have a threshold at today's real number.
+  ~~None exist, and `vitest.config.ts` narrows coverage `include` to three paths, so the reported
+  number is decorative and cannot regress.~~
+  **CORRECTED IN PLACE 2026-07-31, per this document's own header — neither half reproduced.**
+  FS-240 had already widened the `include` to five real paths and set thresholds from a
+  measured baseline. The defect was the *inverse* and worse in the direction nobody checks:
+  both gates had drifted far BELOW reality, so each would have sat through a large fall and
+  still reported green.
+
+  | gate | recorded | measured 2026-07-31 | now |
+  |---|---|---|---|
+  | frontend (vitest) | 19 / 15 / 14 / 19 | 39.01 / 42.78 / 35.21 / 40.23 | 38 / 41 / 34 / 39 |
+  | backend (`--cov-fail-under`) | 54 | 61, measured twice with CI's exact flags | 59 |
+
+  Frontend coverage had roughly doubled since FS-240; the backend rose mostly because
+  FS-284b unblocked 393 database-backed tests that could not run before. Both raises are
+  mutation-verified (each gate fails when the threshold is set above the real number).
+  *Done.*
 
 ### Infrastructure
 

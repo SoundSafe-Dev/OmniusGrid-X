@@ -121,11 +121,29 @@ jobs:
         # than a rewrite: the document mapper's table-content branch genuinely
         # disagrees with its test about what it should return.
         run: |
-          # --cov-fail-under=54 set from the MEASURED baseline (55% at the time of
-          # writing) with a 1-point margin, so this is a ratchet: it cannot be met
-          # by deleting tests, and it fails if new untested code dilutes the total.
-          # Raise it as coverage improves; do NOT lower it to make a build pass.
-          pytest --cov=app --cov-report=xml --cov-report=term --cov-fail-under=54 \
+          # RAISED 2026-07-31 to 59 (FS-260), from 54.
+          #
+          #   set originally   55% measured  -> 54 (1-point margin)
+          #   measured today   61%, TWICE, with these exact flags -> 59
+          #
+          # It had drifted 7 points below reality, which is the direction nobody
+          # checks: the gate would have sat through coverage falling from 61 to 54
+          # and still reported green. Most of the rise is FS-284b unblocking 393
+          # database-backed tests that could not run before.
+          #
+          # WHY A 2-POINT MARGIN AND NOT THE USUAL 1. This was measured locally; the
+          # number CI computes cannot be observed from a workstation, and this job
+          # differs from a local run (its own postgres/redpanda services, and the
+          # db-backed tests spin their own containers via testcontainers, which is
+          # pinned in requirements-dev.txt and installed above). Two runs here also
+          # differed by 2 statements out of 29147, so the measurement is not exactly
+          # reproducible either. One point of margin would be a guess; two is the
+          # smallest honest one.
+          #
+          # This is a ratchet: it cannot be met by deleting tests, and it fails if
+          # new untested code dilutes the total. Raise it as coverage improves; do
+          # NOT lower it to make a build pass.
+          pytest --cov=app --cov-report=xml --cov-report=term --cov-fail-under=59 \
             --deselect tests/test_document_domain_mapper.py::test_map_section_to_domain_table_content
 
       - name: Upload coverage
