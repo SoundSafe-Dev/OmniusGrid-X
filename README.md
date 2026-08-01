@@ -1230,6 +1230,61 @@ silently skipping the database half of a suite is a correctness risk, and this c
 already paid for that shape once — the audit trail passed for months against a `pgcrypto`
 extension `conftest` created and no migration installed.
 
+### Delivered since — the burn-down finished, and six real fixes that moved no number
+
+On `hamad/converged-pre-main`. Pools #43 and the contract gate's floor.
+
+**`response_model` coverage: 250 → 53 undeclared, and every route left belongs to another
+dev.** The last stretch was `fleet_logistics` (23 — the largest single file), `health` (16),
+`erp_integrations` (8), a 24-route tail, and nine stragglers. Two findings from it are worth
+more than the count:
+
+* **The AST sweep was blind to an entire file.** All 23 `fleet_logistics` handlers return
+  `[_shaper(x) for x in ...]`, so not one has a dict literal in its syntax — the sweep passed
+  the file while checking nothing in it. Six assertions against the shapers themselves close
+  it, and `_schedule_out` alone backs five routes.
+* **Five file downloads promised JSON in the schema.** `/compliance/reports/{id}/download`,
+  its signed twin, `/exports/deliveries/{id}/download`, `/fleet/releases/{id}/bundle` and
+  `/models/{id}/download` all stream a `FileResponse` and declared nothing. That is exactly
+  what pool #38 fixed across nine export routes; these five survived because two sit past a
+  `public_router` boundary and three are in files #38 never opened. A sixth, `/metrics`, was
+  the *guard's* error — `_NON_JSON` omitted `text/plain`, so a Prometheus endpoint sat
+  permanently in a burn-down meant to reach zero.
+
+**The contract floor rose 350 → 360, and then six more fixes moved it by nothing.** That
+second half is the part worth reading. Schemathesis found ONE of thirteen identical unbounded
+`skip` declarations — the only one it drew a value above 2⁶³ for — so the fix is a shared
+`MAX_OFFSET` across sixteen parameters plus a sweep, not the one endpoint that happened to
+fail. Then six further defects were fixed and verified individually, and conformance went
+369/370 → 368/370:
+
+> **"Conformance went up" is not a sound proxy for "the code got better."** Two of the six
+> moved *sideways* — an endpoint that 500s never reaches the negative-data check, so once it
+> works, schemathesis mutates the body and gets a 2xx instead. A feature that had been dead
+> since the day it was written now works, and the number did not move.
+
+That dead feature was **`POST /api/v1/user/goals`**, whose id was `str(UUID())` — a call that
+raises `TypeError` unconditionally. It answered 500 to every caller for every input since it
+was written; the UI calls it; and because nothing could be created, its PUT and DELETE could
+only ever 404. The input schemathesis sent was irrelevant — **any test that called it once
+with anything would have caught it, and there was none.** Fixing it exposed a silent one
+underneath: `.append()` on a plain `Column(JSON)` is never marked dirty, so the write was
+discarded behind a 200.
+
+**One 500 was in the error handler rather than in any endpoint.** A `@model_validator` raising
+`ValueError` puts the live exception in pydantic's `ctx`; `json.dumps` then raised and the
+generic handler returned 500. The validator worked perfectly and *reporting* it was what
+failed — one fix, every cross-field rule in the codebase.
+
+**Both coverage gates had drifted below reality** (FS-260): frontend 19/15/14/19 against a
+measured 39/43/35/40, backend `--cov-fail-under=54` against a measured 61. A threshold below
+reality never goes red, so nothing prompts anyone to look. Now 38/41/34/39 and 59, each
+mutation-verified.
+
+Three stale recorded numbers were corrected in place tonight rather than worked around — the
+gate doc's "floor 339", the ratchet's missing `text/plain`, and FS-260's premise. Each had
+drifted in the direction that flatters.
+
 ### Offline demo — `backend/scripts/seed_demo_data.py`
 
 The whole platform demos with **no live edge, cloud, or external services**.
