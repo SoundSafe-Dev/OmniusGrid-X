@@ -3,7 +3,7 @@
 import asyncio
 import time
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional
 from uuid import UUID
 
 from aiokafka import AIOKafkaConsumer
@@ -97,6 +97,36 @@ async def _check_message_broker() -> tuple[str, dict[str, Any]]:
         await consumer.stop()
 
 
+def _as_datetime(value: Any) -> Optional[datetime]:
+    """Normalise a driver's idea of a timestamp into a `datetime`.
+
+    `SELECT MAX(time)` is not typed by SQLAlchemy here — it comes back from a raw `text()`
+    query, so the value is whatever the DBAPI hands over. asyncpg builds a `datetime`;
+    aiosqlite returns the **raw string**, because SQLite has no timestamp type and the
+    column-type converters only fire for columns it can name.
+
+    The consequence was visible rather than theoretical: on the documented local dev path
+    (`DATABASE_URL=sqlite+aiosqlite:///dev.db`, which is what `make seed-demo` sets up) the
+    readiness report showed
+
+        "ingestion": "error: 'str' object has no attribute 'isoformat'"
+
+    so a developer's first look at System Health was a subsystem in error, for a database
+    that was working perfectly. Returning None for anything unparseable keeps the existing
+    "no_data_yet" branch as the fallback — the one outcome that is never a false alarm.
+    """
+    if value is None or isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        try:
+            # SQLite writes 'YYYY-MM-DD HH:MM:SS[.ffffff]'; fromisoformat accepts the
+            # space separator, and on 3.11+ the trailing 'Z' form too.
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    return None
+
+
 async def _check_ingestion(db: AsyncSession) -> tuple[str, dict[str, Any]]:
     """Verify telemetry has been ingested recently (when data exists).
 
@@ -117,7 +147,7 @@ async def _check_ingestion(db: AsyncSession) -> tuple[str, dict[str, Any]]:
     """
     try:
         result = await db.execute(text("SELECT MAX(time) FROM telemetry"))
-        latest_telemetry = result.scalar()
+        latest_telemetry = _as_datetime(result.scalar())
 
         latest = latest_telemetry
         details: dict[str, Any] = {
@@ -830,11 +860,23 @@ async def get_system_status(
     ).all()
     alerts = {severity: count for severity, count in alarm_rows}
 
-    db_size_row = (
-        await db.execute(
-            text("SELECT pg_database_size(current_database()) AS size_bytes")
-        )
-    ).mappings().first()
+    # POSTGRES-ONLY, AND GUARDED RATHER THAN ASSUMED. `pg_database_size` and
+    # `current_database` do not exist on SQLite, so on the documented local dev path
+    # (`make seed-demo` writes `dev.db`) this raised `no such function:
+    # current_database` and took the WHOLE endpoint down with it — the admin System
+    # Status page 500'd over one optional figure that the model already declares
+    # optional. Found by an endpoint sweep on 2026-08-01.
+    #
+    # `None` here means exactly what the field says it means: the size could not be
+    # read. That is the honest answer for a backend with no such function, and it is
+    # a strictly better one than reporting a number this database cannot produce.
+    db_size_row = None
+    if db.bind is not None and db.bind.dialect.name == "postgresql":
+        db_size_row = (
+            await db.execute(
+                text("SELECT pg_database_size(current_database()) AS size_bytes")
+            )
+        ).mappings().first()
 
     return {
         "services": {
