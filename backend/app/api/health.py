@@ -8,6 +8,7 @@ from uuid import UUID
 
 from aiokafka import AIOKafkaConsumer
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from pydantic import BaseModel, ConfigDict
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
     Counter,
@@ -327,13 +328,167 @@ def _raise_if_not_ready(report: dict[str, Any]) -> None:
         )
 
 
-@router.get("/health/live")
+# ==================== Response models ====================
+#
+# WHAT THE PROBES ACTUALLY READ, checked before declaring any of this.
+# `infrastructure/k8s/base/backend-deployment.yaml` wires all three probes as `httpGet`:
+# liveness and startup to `/health` (served outside this module), readiness to
+# `/health/ready`. An httpGet probe reads the STATUS CODE and nothing else — kubelet never
+# parses the body — so no field named here can break a rollout by being absent.
+#
+# The hazard runs the other way, and it is worse than the usual one. A response model that
+# REJECTS a payload turns a 200 into a 500, and on `/health/ready` a 500 is a failed
+# readiness probe: three of those and the pod is pulled out of the Service on a backend that
+# is perfectly healthy. So every field below is typed against what the checkers can actually
+# produce, and the two shapes that vary are left open rather than pinned:
+#
+#   * `/health/db|redis|kafka` return `{"status": ..., **details}`, and `details` belongs to
+#     the CHECKER — `{"reason": "rate_limit_disabled"}`, `{"url": ...}`,
+#     `{"source": ..., "broker": ...}`, or `{}`. Each model documents the keys its own
+#     checker emits today and sets `extra="allow"`, so a key added to a checker tomorrow
+#     reaches the caller instead of being silently filtered out of the response.
+#   * `/health/detailed`'s `details` and `/admin/system/status`'s `data_pipeline` are the
+#     per-component payloads, likewise checker-owned. Declared as open objects.
+#
+# The auth split is preserved as-is: these models describe what each route already sends,
+# and `_public_status` still collapses error text on the public ones. Nothing here widens
+# what an anonymous caller can see.
+
+
+class ProbeOut(BaseModel):
+    """`/health/live` and `/health/startup` — two fixed literals, no I/O behind either."""
+
+    status: str
+    service: str
+
+
+class ReadinessOut(BaseModel):
+    """The 200 path only. The not-ready path raises `HTTPException(503)`, whose body is the
+    handler's `detail` and is not filtered through this model."""
+
+    status: str
+    #: Component name -> status, already collapsed by `_public_status`. This response is
+    #: PUBLIC; the uncollapsed text stays on `/health/detailed`, which requires a user.
+    checks: dict[str, str]
+
+
+class DetailedHealthOut(BaseModel):
+    """Auth-gated, so this one carries the full per-component detail."""
+
+    status: str
+    checks: dict[str, str]
+    #: Per-component payloads, each owned by its checker. Left open on purpose — a fixed
+    #: model here would delete whatever a checker starts reporting.
+    details: dict[str, Any]
+    checked_at: str
+
+
+class SystemMetricsOut(BaseModel):
+    """`available: False` with three nulls is the real answer when psutil is not installed —
+    the page prints "—" for each, which is why they are nullable rather than zeroed."""
+
+    available: bool
+    cpu_percent: float | None = None
+    memory_percent: float | None = None
+    disk_percent: float | None = None
+
+
+class DatabaseHealthOut(BaseModel):
+    """`_check_database` returns no details today; `extra="allow"` so it may."""
+
+    model_config = ConfigDict(extra="allow")
+
+    status: str
+
+
+class RedisHealthOut(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    status: str
+    #: `rate_limit_disabled` — a skipped check, which is not a failing one.
+    reason: str | None = None
+    #: Host and port only; `_check_redis` splits the credentials off at the `@`.
+    url: str | None = None
+
+
+class KafkaHealthOut(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    status: str
+    #: `websocket_manager` (the live consumer) or `ephemeral_probe` (one opened to answer
+    #: this call). Which one answered changes what a failure means.
+    source: str | None = None
+    broker: str | None = None
+
+
+class CollectorRestartAck(BaseModel):
+    """NOTE THAT THIS ENDPOINT SENDS A FIXED STRING AND RESTARTS NOTHING — see the handler.
+    The model describes what is sent; it does not vouch for it."""
+
+    message: str
+    status: str
+    timestamp: str
+
+
+class MaintenanceModeOut(BaseModel):
+    asset_id: str
+    #: The word, not the boolean: `"enabled"` / `"disabled"`.
+    maintenance_mode: str
+    message: str
+
+
+class VacuumTriggered(BaseModel):
+    message: str
+    status: str
+    note: str
+
+
+class SystemStatusServices(BaseModel):
+    #: `"healthy"`, unconditionally — the process answering the request is by definition up.
+    backend: str
+    #: The RAW check statuses, error text and all. This route is admin-gated, which is what
+    #: makes that acceptable here and not on the public probes.
+    database: str
+    redis: str
+    message_broker: str
+    ingestion: str
+
+
+class SystemStatusStorage(BaseModel):
+    #: `pg_database_size(current_database())`. `None` if the row could not be read.
+    database_size_bytes: int | None = None
+    #: The CALLER'S organisation, not the platform — `assets` is FORCE ROW LEVEL SECURITY
+    #: and this handler runs on a tenant session.
+    active_assets: int
+
+
+class SystemStatusAlerts(BaseModel):
+    """Every severity present at 0 rather than omitted: the handler fills all four from a
+    GROUP BY that only returns the severities that occur."""
+
+    critical: int
+    high: int
+    medium: int
+    low: int
+
+
+class SystemStatusOut(BaseModel):
+    services: SystemStatusServices
+    #: `_check_ingestion`'s details verbatim — `latest_telemetry_at`, and `age_seconds` or
+    #: `note` depending on whether any telemetry exists. Checker-owned, left open.
+    data_pipeline: dict[str, Any]
+    storage: SystemStatusStorage
+    alerts: SystemStatusAlerts
+    checked_at: str
+
+
+@router.get("/health/live", response_model=ProbeOut)
 async def liveness_probe():
     """Kubernetes Liveness Probe - Is the process running?"""
     return {"status": "alive", "service": "opsgrid-backend"}
 
 
-@router.get("/health/ready")
+@router.get("/health/ready", response_model=ReadinessOut)
 async def readiness_probe(db: AsyncSession = Depends(get_db)):
     """Kubernetes Readiness Probe - Can the pod accept traffic?"""
     now = time.time()
@@ -367,13 +522,13 @@ async def readiness_probe(db: AsyncSession = Depends(get_db)):
     return {"status": report["status"], "checks": _public_checks(report["checks"])}
 
 
-@router.get("/health/startup")
+@router.get("/health/startup", response_model=ProbeOut)
 async def startup_probe():
     """Kubernetes Startup Probe - Is the application fully started?"""
     return {"status": "started", "service": "opsgrid-backend"}
 
 
-@router.get("/health/detailed")
+@router.get("/health/detailed", response_model=DetailedHealthOut)
 async def detailed_health(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -405,8 +560,8 @@ async def detailed_health(
 # the versioned one. Stacked decorators on one function make FastAPI derive the
 # same operationId for both, which collides in the generated SDK and warns at
 # import. The paths stay as they are; only the ids are disambiguated.
-@router.get("/health/system", operation_id="health_system_metrics_unversioned")
-@router.get("/api/v1/health/system", operation_id="health_system_metrics_v1")
+@router.get("/health/system", operation_id="health_system_metrics_unversioned", response_model=SystemMetricsOut)
+@router.get("/api/v1/health/system", operation_id="health_system_metrics_v1", response_model=SystemMetricsOut)
 async def system_metrics(current_user=Depends(get_current_active_user)):
     """Real host resource utilization (psutil) for the admin SystemHealth page.
 
@@ -428,8 +583,8 @@ async def system_metrics(current_user=Depends(get_current_active_user)):
     }
 
 
-@router.get("/health/db", operation_id="health_health_database_unversioned")
-@router.get("/api/v1/health/db", operation_id="health_health_database_v1")
+@router.get("/health/db", operation_id="health_health_database_unversioned", response_model=DatabaseHealthOut)
+@router.get("/api/v1/health/db", operation_id="health_health_database_v1", response_model=DatabaseHealthOut)
 async def health_database(db: AsyncSession = Depends(get_db)):
     """Database connectivity check."""
     status, details = await _check_database(db)
@@ -439,8 +594,8 @@ async def health_database(db: AsyncSession = Depends(get_db)):
     return {"status": _public_status(status), **details}
 
 
-@router.get("/health/redis", operation_id="health_health_redis_unversioned")
-@router.get("/api/v1/health/redis", operation_id="health_health_redis_v1")
+@router.get("/health/redis", operation_id="health_health_redis_unversioned", response_model=RedisHealthOut)
+@router.get("/api/v1/health/redis", operation_id="health_health_redis_v1", response_model=RedisHealthOut)
 async def health_redis():
     """Redis connectivity check (required when rate limiting is enabled)."""
     status, details = await _check_redis()
@@ -450,8 +605,8 @@ async def health_redis():
     return {"status": _public_status(status), **details}
 
 
-@router.get("/health/kafka", operation_id="health_health_kafka_unversioned")
-@router.get("/api/v1/health/kafka", operation_id="health_health_kafka_v1")
+@router.get("/health/kafka", operation_id="health_health_kafka_unversioned", response_model=KafkaHealthOut)
+@router.get("/api/v1/health/kafka", operation_id="health_health_kafka_v1", response_model=KafkaHealthOut)
 async def health_kafka():
     """Message broker (Redpanda/Kafka) connectivity check."""
     status, details = await _check_message_broker()
@@ -541,7 +696,8 @@ async def _vacuum_telemetry() -> None:
 
 
 # Manual override endpoints for on-site engineers
-@router.post("/admin/collectors/{collector_id}/restart", dependencies=[Depends(require_admin)])
+@router.post("/admin/collectors/{collector_id}/restart", dependencies=[Depends(require_admin)],
+             response_model=CollectorRestartAck)
 async def restart_collector(
     collector_id: str,
     current_user: User = Depends(get_current_active_user),
@@ -554,7 +710,8 @@ async def restart_collector(
     }
 
 
-@router.post("/admin/assets/{asset_id}/maintenance", dependencies=[Depends(require_admin)])
+@router.post("/admin/assets/{asset_id}/maintenance", dependencies=[Depends(require_admin)],
+             response_model=MaintenanceModeOut)
 async def set_maintenance_mode(
     asset_id: UUID,
     enabled: bool = True,
@@ -610,7 +767,8 @@ async def set_maintenance_mode(
     }
 
 
-@router.post("/admin/database/vacuum", dependencies=[Depends(require_admin)])
+@router.post("/admin/database/vacuum", dependencies=[Depends(require_admin)],
+             response_model=VacuumTriggered)
 async def trigger_database_vacuum(
     current_user: User = Depends(get_current_active_user),
 ):
@@ -624,7 +782,8 @@ async def trigger_database_vacuum(
     }
 
 
-@router.get("/admin/system/status", dependencies=[Depends(require_admin)])
+@router.get("/admin/system/status", dependencies=[Depends(require_admin)],
+            response_model=SystemStatusOut)
 async def get_system_status(
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_tenant_db),

@@ -98,9 +98,10 @@ absolute number rose while the ratio fell).
 | 2026-07-31 | 158 | `bulk_operations` ×6 |
 | 2026-07-31 | 146 | `data_residency` ×6, `feature_flags` ×6 |
 | 2026-07-31 | 139 | `geotab` ×7 |
-| 2026-07-31 | **116** | `fleet_logistics` ×23 — the largest single file |
+| 2026-07-31 | 116 | `fleet_logistics` ×23 — the largest single file |
+| 2026-07-31 | **100** | `health` ×16 (17 routes, one already documented as `text/plain`) |
 
-**97 routes off the list, of which 83 were declarations and 14 were miscounts.**
+**113 routes off the list, of which 99 were declarations and 14 were miscounts.**
 Both halves matter: the ratchet is only worth obeying if its number is honest, and
 14 routes that could never be declared would have made the target unreachable.
 
@@ -216,6 +217,51 @@ expensive part of each declaration was reading the handler carefully enough to b
 sure no key was missed, and that part is now mechanical. It paid immediately —
 `gdpr` (9) and `data_retention` (12) went in as one pass and the sweep, now
 covering 72 handlers, confirmed both clean without a hand-written test each.
+
+## What a clean schema makes look true
+
+Two endpoints in this burn-down now have tidy, documented response models over payloads that
+are not measurements. **A declaration makes a surface look more trustworthy without making it
+more true**, so both are named here rather than left for a reader to discover from the schema.
+
+1. **GeoTab's HOS endpoints.** `geotab_service` generates the DOT-regulated hours-of-service
+   figures with `random.uniform`. The schemas are clean and the numbers are invented. A
+   comment in `app/api/geotab.py` points at **FS-267**, where the real fix — label them
+   simulated, or gate them behind a flag — belongs.
+
+2. **`POST /admin/collectors/{collector_id}/restart` restarts nothing.** The whole handler is
+   a `return`. It answers `{"message": "Restart signal sent to collector …", "status":
+   "pending", "timestamp": "2026-01-15T10:30:00Z"}` — a hardcoded past timestamp, and a
+   message in the past tense about a signal no code sends. `assets.ts` calls it as
+   `restartCollector()` and returns `Promise<void>`, so an operator clicking Restart gets a
+   200 and no restart. `CollectorRestartAck` describes what is sent and its docstring says
+   outright that it does not vouch for it; making the endpoint do the thing, or removing it,
+   is a behaviour change and not this pool's to make.
+
+## The probes, and why the usual hazard runs backwards there
+
+`health.py` was the one file where the standing rule — *a model that omits a field deletes
+it* — was not the thing to be most careful about. Checked before declaring anything:
+`infrastructure/k8s/base/backend-deployment.yaml` wires all three probes as `httpGet`
+(liveness and startup to `/health`, readiness to `/health/ready`), and **an httpGet probe
+reads the status code and never parses the body**. No field named or omitted in those models
+can affect a rollout.
+
+The hazard is the inverse, and it is worse. A response model that *rejects* a payload turns
+a 200 into a 500, and on `/health/ready` a 500 is a failed readiness probe — three of them
+and kubelet pulls a perfectly healthy pod out of the Service. **A declaration on a probe is
+a new way for the probe to fail.** So every field is typed against what the checkers can
+actually emit, including the branches only a degraded or unconfigured deployment reaches:
+`available: False` with three nulls when psutil is absent, `checks: {}` before the cache has
+been filled once, `database_size_bytes: None` when the row could not be read.
+
+`/health/db`, `/health/redis` and `/health/kafka` return `{"status": ..., **details}` where
+`details` belongs to the checker (`{"reason": "rate_limit_disabled"}`, `{"url": ...}`,
+`{"source": ..., "broker": ...}`, or `{}`). Those three models document the keys their own
+checker emits today and set `extra="allow"`, so a key added to a checker tomorrow reaches
+the caller instead of being filtered out of a 200. The AST sweep skips a `**spread` return
+by design, so nothing else covered these — `TestHealthComponentModelsDoNotFilterTheCheckerDetail`
+asserts the extras really do survive rather than trusting that they should.
 
 ## One shape declared deliberately open
 

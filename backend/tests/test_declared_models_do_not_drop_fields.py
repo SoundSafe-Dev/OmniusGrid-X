@@ -368,3 +368,124 @@ class TestFleetLogisticsModelsAcceptTheEmptyPaths:
         from app.api.transportation import compute_delivery_efficiency
         from app.api import fleet_logistics as fl
         fl.DeliveryEfficiencyOut.model_validate(compute_delivery_efficiency([]))
+
+
+class TestHealthComponentModelsDoNotFilterTheCheckerDetail:
+    """`/health/db|redis|kafka` return `{"status": ..., **details}`, and `details` belongs to
+    the checker, not to the route.
+
+    The AST sweep skips a `**spread` return by design — the key set is not in the syntax —
+    so nothing else covers these three. A plain model would have deleted `url`, `source`,
+    `broker` and `reason` from the wire while still answering 200, which is the whole defect
+    class this pool exists to avoid. `extra="allow"` is what prevents it, and this asserts
+    that it really does rather than trusting that it should.
+    """
+
+    def test_a_redis_check_keeps_its_url(self):
+        from app.api import health as h
+        out = h.RedisHealthOut.model_validate(
+            {"status": "ok", "url": "redis-0.redis:6379/0"}
+        ).model_dump()
+        assert out["url"] == "redis-0.redis:6379/0"
+
+    def test_a_skipped_redis_check_keeps_its_reason(self):
+        """`skipped` is not `error` — rate limiting off is a configuration, not a fault, and
+        `reason` is the only thing that says which."""
+        from app.api import health as h
+        out = h.RedisHealthOut.model_validate(
+            {"status": "skipped", "reason": "rate_limit_disabled"}
+        ).model_dump()
+        assert out["reason"] == "rate_limit_disabled"
+
+    def test_a_kafka_check_keeps_source_and_broker(self):
+        from app.api import health as h
+        out = h.KafkaHealthOut.model_validate(
+            {"status": "ok", "source": "ephemeral_probe", "broker": "redpanda:29092"}
+        ).model_dump()
+        assert out["source"] == "ephemeral_probe"
+        assert out["broker"] == "redpanda:29092"
+
+    def test_a_key_no_model_declares_still_reaches_the_caller(self):
+        """The point of `extra="allow"`: a checker that starts reporting something new is not
+        silently filtered by a model written before it existed."""
+        from app.api import health as h
+        out = h.DatabaseHealthOut.model_validate(
+            {"status": "ok", "pool_in_use": 3}
+        ).model_dump()
+        assert out["pool_in_use"] == 3
+
+    def test_the_database_check_sends_status_alone_today(self):
+        from app.api import health as h
+        h.DatabaseHealthOut.model_validate({"status": "ok"})
+
+
+class TestTheProbeModelsCannotTurnAHealthyPodUnready:
+    """A readiness probe is an httpGet: kubelet reads the status code, not the body. So a
+    missing field cannot fail a rollout — but a REJECTED payload turns 200 into 500, and
+    three of those pull a healthy pod out of the Service.
+
+    These validate the shapes the handlers really build, including the ones only reachable
+    in a degraded or unconfigured deployment.
+    """
+
+    def test_the_liveness_and_startup_literals_validate(self):
+        from app.api import health as h
+        h.ProbeOut.model_validate({"status": "alive", "service": "opsgrid-backend"})
+        h.ProbeOut.model_validate({"status": "started", "service": "opsgrid-backend"})
+
+    def test_readiness_validates_with_collapsed_checks(self):
+        from app.api import health as h
+        h.ReadinessOut.model_validate({
+            "status": "ready",
+            "checks": {"database": "ok", "redis": "skipped",
+                       "message_broker": "ok", "ingestion": "ok"},
+        })
+
+    def test_readiness_validates_with_no_checks_at_all(self):
+        """The cache path reads `_health_cache.get("checks", {})`, which is `{}` before the
+        first full run."""
+        from app.api import health as h
+        h.ReadinessOut.model_validate({"status": "ready", "checks": {}})
+
+    def test_detailed_validates_with_the_extended_checks_merged_in(self):
+        from app.api import health as h
+        h.DetailedHealthOut.model_validate({
+            "status": "degraded",
+            "checks": {"database": "ok", "command_dispatch": "not_running"},
+            "details": {"database": {}, "command_dispatch": {"running": False},
+                        "ingestion": {"latest_telemetry_at": None, "note": "no_data_yet"}},
+            "checked_at": "2026-07-31T12:00:00+00:00",
+        })
+
+    def test_system_metrics_validate_without_psutil(self):
+        """The `available: False` branch is the honest answer when psutil is absent, and the
+        page prints "—" for each null. Zeroes here would draw an idle host."""
+        from app.api import health as h
+        out = h.SystemMetricsOut.model_validate({
+            "available": False, "cpu_percent": None,
+            "memory_percent": None, "disk_percent": None,
+        }).model_dump()
+        assert out["cpu_percent"] is None
+
+    def test_system_metrics_validate_with_fractional_percentages(self):
+        from app.api import health as h
+        h.SystemMetricsOut.model_validate({
+            "available": True, "cpu_percent": 12.7,
+            "memory_percent": 63.4, "disk_percent": 95.1,
+        })
+
+    def test_system_status_validates_with_raw_error_text_and_a_missing_size(self):
+        """`/admin/system/status` is admin-gated and reports the UNCOLLAPSED check strings;
+        `database_size_bytes` is None when the row could not be read."""
+        from app.api import health as h
+        h.SystemStatusOut.model_validate({
+            "services": {"backend": "healthy", "database": "ok",
+                         "redis": "skipped",
+                         "message_broker": "error: KafkaConnectionError: unreachable",
+                         "ingestion": "stale (1200s)"},
+            "data_pipeline": {"latest_telemetry_at": "2026-07-31T11:40:00+00:00",
+                              "age_seconds": 1200},
+            "storage": {"database_size_bytes": None, "active_assets": 0},
+            "alerts": {"critical": 0, "high": 2, "medium": 0, "low": 1},
+            "checked_at": "2026-07-31T12:00:00+00:00",
+        })
