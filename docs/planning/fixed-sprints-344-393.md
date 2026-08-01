@@ -719,6 +719,35 @@ can see, not the one the user gets. "Function components cannot be given refs" s
 about the handlers going the same way, and the handlers were the whole feature. Hover the
 thing before deciding it is cosmetic.
 
+## Then, following the same thread into the deployment (2026-08-01, later)
+
+| | |
+|---|---|
+| **FS-385** | **Every overlay shipped an admin-auth bypass.** `ALLOW_DEV_TOKEN` and `ALLOW_OPEN_REGISTRATION` default to **true** in `config.py` (so a laptop demo works offline) and no manifest overrode them — so a deployed backend accepted the literal string `dev-token` as an admin credential and took unauthenticated registrations, alongside `DEBUG=true`, wildcard CORS and `GEOTAB_SIMULATED=true`. `validate_settings()` hard-fails on exactly this, but every check sits inside `if ENVIRONMENT == "production"` and **ENVIRONMENT appeared in no manifest at all**: `kustomize build overlays/production \| grep -c ENVIRONMENT` → `0`. A real guard nothing had ever armed |
+| **FS-386** | All three overlays declared a `backend-config` ConfigMap and **nothing consumed it** — no `envFrom` existed anywhere. So `LOG_LEVEL=warn` (production), `MTLS_ENABLED=false` (staging) and `DEPLOYMENT_SITE=dr` were rendered and ignored: staging ran with mTLS **on**, and DR logs went unlabelled through the failover the label exists for |
+| **FS-376** | The k8s README's storage "known gap" described the state before the remedy it asks for was implemented. Verified against the manifests: all three workloads set `EXPORT_USE_S3=true` |
+| **FS-304 / FS-387** | A media-type sweep now exists. It found `/exports/telemetry/{asset_id}` declaring only `200: text/csv` while returning **`202 application/json`** above `SYNC_ROW_CAP` — the JSON arriving on exactly the large exports most likely to need job-polling, against a schema this repo generates an SDK from |
+
+**Arming a guard means satisfying it.** Setting `ENVIRONMENT=production` made `validate_settings()`
+demand five more things. Without wiring those, the commit would have traded a silent insecure
+deploy for a CrashLoopBackOff — so `CORS_ALLOW_ORIGINS` and `EDGE_REQUIRE_PROOF_OF_POSSESSION`
+joined the ConfigMap and three secrets moved to a new `app-secrets`. Verified by extracting the
+rendered production env and running the validator against it: zero problems.
+
+**Two traversal mistakes, both of which produced a confident "0 problems" from a sweep examining
+almost nothing** — worth recording because they are the same shape and neither was obvious:
+
+- `app.routes` yields **2** APIRoutes; the other 450 sit behind mounted routers and only
+  `tests/_route_tree.http_routes` walks them.
+- `return FileResponse(...)` appears almost nowhere — responses are helper-built and assigned to
+  a variable first, so an `ast.Return`-only walk sees none of them. (The same blind spot FS-305
+  records for the returned-keys sweep.)
+
+Earlier in the same session a `git cat-file --batch` pipeline reported **0** blobs containing a
+string when the answer was 3. Three times now the tool was broken and the clean result was
+believed. **A sweep that finds nothing must prove it can see its subject** — every guard written
+today carries a floor test that fails if the traversal stops working.
+
 ## Not a defect, recorded so it is not re-investigated
 
 - `model_registry_storage: "error: storage root missing and not creatable"` is accurate
