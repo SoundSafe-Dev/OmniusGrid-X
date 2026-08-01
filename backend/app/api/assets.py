@@ -7,7 +7,9 @@ organizations.
 """
 
 from types import SimpleNamespace
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, Field
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select, func
@@ -27,6 +29,45 @@ from app.models.schemas import (
 )
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
+
+
+class AssetDeactivated(BaseModel):
+    """A SOFT delete — the handler sets `is_active = False` and the message says
+    "deactivated" rather than "deleted", which is the honest word for it."""
+
+    message: str
+
+
+class AssetStatusOut(BaseModel):
+    asset_id: str
+    name: str
+    #: Nullable until the asset has reported a state.
+    current_packml_state: Optional[str] = None
+    is_active: Optional[bool] = None
+    last_seen: Optional[str] = None
+    #: `assets.connection_config` is a JSON column owned by whatever provisioned the
+    #: asset — protocol, host, port, credentials reference. Left open.
+    connection_config: Optional[Dict[str, Any]] = None
+
+
+class SensorFeedConsumers(BaseModel):
+    """Not data — the two call templates a downstream consumer needs to read these feeds.
+    Documented because they are part of what this discovery endpoint exists to hand out."""
+
+    correlation: str
+    history: str
+
+
+class SensorFeedsOut(BaseModel):
+    asset_id: str
+    name: str
+    #: Falls back to `"generic"` when neither the asset nor its type declares one.
+    sensor_class: str
+    media_config: Dict[str, Any] = Field(default_factory=dict)
+    #: The metric names this asset has actually emitted, from `telemetry` — not a
+    #: catalogue of what it could emit.
+    metrics: List[str] = Field(default_factory=list)
+    consumers: SensorFeedConsumers
 
 
 @router.get("/", response_model=PaginatedResponse[AssetResponse], summary="List all assets", description="Retrieve a paginated list of manufacturing assets in the authenticated user's organization, with optional filtering by workcell, asset type, and active status. Returns a {items, meta} envelope with the true total count.")
@@ -140,7 +181,7 @@ async def update_asset(
     return asset
 
 
-@router.delete("/{asset_id}", summary="Deactivate asset", description="Soft delete an asset by setting its active status to false. Returns 404 if the asset belongs to a different organization.", dependencies=[Depends(require_admin)])
+@router.delete("/{asset_id}", response_model=AssetDeactivated, summary="Deactivate asset", description="Soft delete an asset by setting its active status to false. Returns 404 if the asset belongs to a different organization.", dependencies=[Depends(require_admin)])
 @rate_limit("30/minute")
 async def delete_asset(
     request: Request,
@@ -185,7 +226,7 @@ async def list_asset_types(
     return result.scalars().all()
 
 
-@router.get("/{asset_id}/status", summary="Get asset status", description="Retrieve the current operational status of an asset including PackML state, active status, last seen timestamp, and connection configuration. Returns 404 if the asset belongs to a different organization.")
+@router.get("/{asset_id}/status", response_model=AssetStatusOut, summary="Get asset status", description="Retrieve the current operational status of an asset including PackML state, active status, last seen timestamp, and connection configuration. Returns 404 if the asset belongs to a different organization.")
 @rate_limit("100/minute")
 async def get_asset_status(
     request: Request,
@@ -217,6 +258,7 @@ async def get_asset_status(
 
 @router.get(
     "/{asset_id}/sensor-feeds",
+    response_model=SensorFeedsOut,
     summary="Get sensor feed summary",
     description="Discovery surface for downstream consumers (correlation, predictive "
                 "maintenance, simulation/growth planning): the asset's sensor class, "

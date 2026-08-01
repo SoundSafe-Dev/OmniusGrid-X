@@ -100,9 +100,10 @@ absolute number rose while the ratio fell).
 | 2026-07-31 | 139 | `geotab` ×7 |
 | 2026-07-31 | 116 | `fleet_logistics` ×23 — the largest single file |
 | 2026-07-31 | 100 | `health` ×16 (17 routes, one already documented as `text/plain`) |
-| 2026-07-31 | **92** | `erp_integrations` ×8 |
+| 2026-07-31 | 92 | `erp_integrations` ×8 |
+| 2026-07-31 | **68** | the tail: `alarms` ×4, `api_keys` ×3, `assets` ×3, `commands` ×3, `dashboard` ×3, `oee` ×3, `sso` ×3, `main` ×2 |
 
-**121 routes off the list, of which 107 were declarations and 14 were miscounts.**
+**145 routes off the list, of which 131 were declarations and 14 were miscounts.**
 Both halves matter: the ratchet is only worth obeying if its number is honest, and
 14 routes that could never be declared would have made the target unreachable.
 
@@ -238,6 +239,23 @@ more true**, so both are named here rather than left for a reader to discover fr
    200 and no restart. `CollectorRestartAck` describes what is sent and its docstring says
    outright that it does not vouch for it; making the endpoint do the thing, or removing it,
    is a behaviour change and not this pool's to make.
+
+## One payload got smaller, deliberately
+
+`GET /alarms/active` was the only alarm endpoint on that router serving **raw ORM rows**.
+The list and detail endpoints have always filtered through `AlarmResponse`; this one did
+not, so it alone put `organization_id` on the wire. Declaring `List[AlarmResponse]` makes
+the three consistent and removes that field.
+
+That is a real change to the payload, so it is recorded rather than buried: every field the
+client's `Alarm` type reads is in `AlarmResponse` already, and no consumer reads
+`organizationId` from an alarm. The direction is the safe one — a tenant id that three
+sibling endpoints agree not to send.
+
+While comparing the two, a pre-existing mismatch: the TypeScript `Alarm` declares
+`createdAt` and `updatedAt` as **required**, and the `alarms` table has neither column. No
+alarm endpoint has ever sent them. Not introduced here and not fixed here; it belongs to the
+declared-but-unsent sweep.
 
 ## The probes, and why the usual hazard runs backwards there
 

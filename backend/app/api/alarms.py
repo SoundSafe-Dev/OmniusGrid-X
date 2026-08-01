@@ -38,6 +38,37 @@ from app.db.models import Alarm, Asset, User
 from app.models.schemas import AlarmResponse, AlarmAcknowledge
 from app.core.tenant import get_tenant_db, get_tenant_org_id
 from app.middleware.rbac import require_operator_or_admin
+from pydantic import BaseModel
+
+
+class ActiveAlarmSeverityCounts(BaseModel):
+    """The five buckets `/active` counts. `info` is sent and the client's type omits it —
+    kept because the handler produces it, not because anything reads it."""
+
+    critical: int
+    high: int
+    medium: int
+    low: int
+    info: int
+
+
+class ActiveAlarmsResponse(BaseModel):
+    """`GET /active`.
+
+    `alarms` was the only alarm payload on this router serving RAW ORM rows — the list and
+    detail endpoints have always filtered through `AlarmResponse`. Declaring it here makes
+    the three consistent and stops `organization_id` going out on one of them; every field
+    the client's `Alarm` type reads is in `AlarmResponse` already.
+    """
+
+    count: int
+    by_severity: ActiveAlarmSeverityCounts
+    alarms: List[AlarmResponse]
+
+
+class AlarmsAcknowledged(BaseModel):
+    acknowledged_count: int
+    message: str
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
@@ -118,7 +149,7 @@ async def list_alarms(
     return paginate(result.scalars().all(), total, SimpleNamespace(skip=skip, limit=limit))
 
 
-@router.get("/active", summary="List active alarms", description="Retrieve all currently active (unacknowledged) alarms with severity-based ordering. Used for real-time monitoring dashboards.")
+@router.get("/active", response_model=ActiveAlarmsResponse, summary="List active alarms", description="Retrieve all currently active (unacknowledged) alarms with severity-based ordering. Used for real-time monitoring dashboards.")
 async def get_active_alarms(
     severity: Optional[str] = None,
     org_id: UUID = Depends(get_tenant_org_id),
@@ -168,7 +199,7 @@ async def get_alarm(
     return await _get_own_alarm(db, alarm_id, org_id)
 
 
-@router.post("/{alarm_id}/acknowledge", summary="Acknowledge alarm", description="Mark an alarm as acknowledged with optional notes. Acknowledged alarms remain active but are tracked as reviewed by an operator.", dependencies=[Depends(require_operator_or_admin)])
+@router.post("/{alarm_id}/acknowledge", response_model=AlarmResponse, summary="Acknowledge alarm", description="Mark an alarm as acknowledged with optional notes. Acknowledged alarms remain active but are tracked as reviewed by an operator.", dependencies=[Depends(require_operator_or_admin)])
 async def acknowledge_alarm(
     alarm_id: UUID,
     ack_data: AlarmAcknowledge,
@@ -207,7 +238,7 @@ async def acknowledge_alarm(
     return alarm
 
 
-@router.post("/{alarm_id}/clear", summary="Clear alarm", description="Mark an alarm as resolved/cleared. This should only be done when the underlying issue has been fixed.", dependencies=[Depends(require_operator_or_admin)])
+@router.post("/{alarm_id}/clear", response_model=AlarmResponse, summary="Clear alarm", description="Mark an alarm as resolved/cleared. This should only be done when the underlying issue has been fixed.", dependencies=[Depends(require_operator_or_admin)])
 async def clear_alarm(
     alarm_id: UUID,
     org_id: UUID = Depends(get_tenant_org_id),
@@ -233,7 +264,7 @@ async def clear_alarm(
     return alarm
 
 
-@router.post("/acknowledge-all", summary="Acknowledge all active alarms", description="Bulk acknowledge all currently active alarms, optionally filtered by asset and severity. Used during shift handover or after maintenance.", dependencies=[Depends(require_operator_or_admin)])
+@router.post("/acknowledge-all", response_model=AlarmsAcknowledged, summary="Acknowledge all active alarms", description="Bulk acknowledge all currently active alarms, optionally filtered by asset and severity. Used during shift handover or after maintenance.", dependencies=[Depends(require_operator_or_admin)])
 async def acknowledge_all_alarms(
     asset_id: Optional[UUID] = None,
     severity: Optional[str] = None,

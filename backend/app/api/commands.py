@@ -50,6 +50,39 @@ class CommandSubmitResponse(BaseModel):
     message: str
 
 
+class CommandCancelled(BaseModel):
+    """`command_id` is typed `UUID`, not `str`.
+
+    The handler returns the PATH PARAMETER, which FastAPI has already parsed into a
+    `uuid.UUID` — pydantic v2 does not coerce that to `str`, so a `str` field here would
+    have made every successful cancellation a 500. The identical mistake on
+    `DELETE /notifications/subscriptions/{id}` is the first defect this burn-down found.
+    `UUID` serialises to the same JSON string.
+    """
+
+    message: str
+    command_id: UUID
+
+
+class CommandQueueStatus(BaseModel):
+    """`pending_count` is the CALLER'S organisation; the other two are executor config."""
+
+    pending_count: int
+    max_retries: int
+    default_timeout: int
+
+
+class EmergencyStopAccepted(BaseModel):
+    """`command_id` is a `str` here and a `UUID` on cancel, because the sources differ:
+    `submit_command` returns `str(uuid4())`, while cancel echoes a parsed path param.
+    Naming them after their actual types rather than after each other."""
+
+    command_id: str
+    status: str
+    message: str
+    priority: str
+
+
 @router.post("/submit", response_model=CommandSubmitResponse, summary="Submit command to asset", description="Submit a new command for execution on an industrial asset. Commands are queued and executed asynchronously with automatic retries.\n\n**Common actions:**\n- `set_speed`: Adjust print/processing speed (params: speed_percent)\n- `pause_job`: Pause current operation\n- `resume_job`: Resume paused operation\n- `emergency_stop`: Immediate stop (safety critical, admin only)\n- `set_temperature`: Adjust nozzle/bed temp (params: target_temp, component)", dependencies=[Depends(require_operator_or_admin)])
 async def submit_command(
     request: CommandSubmitRequest,
@@ -125,7 +158,7 @@ async def get_command_status(
     return status
 
 
-@router.post("/cancel/{command_id}", dependencies=[Depends(require_operator_or_admin)])
+@router.post("/cancel/{command_id}", response_model=CommandCancelled, dependencies=[Depends(require_operator_or_admin)])
 async def cancel_command(
     command_id: UUID,
     current_user: User = Depends(get_current_active_user)
@@ -190,7 +223,7 @@ async def get_asset_commands(
     ]
 
 
-@router.get("/queue/status")
+@router.get("/queue/status", response_model=CommandQueueStatus)
 async def get_queue_status(
     current_user = Depends(get_current_active_user)
 ):
@@ -204,7 +237,7 @@ async def get_queue_status(
     }
 
 
-@router.post("/asset/{asset_id}/emergency-stop", dependencies=[Depends(require_admin)])
+@router.post("/asset/{asset_id}/emergency-stop", response_model=EmergencyStopAccepted, dependencies=[Depends(require_admin)])
 async def emergency_stop(
     asset_id: UUID,
     current_user: User = Depends(get_current_active_user),

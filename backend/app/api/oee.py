@@ -2,7 +2,7 @@
 
 from uuid import UUID
 from datetime import datetime, timedelta, timezone
-from typing import Optional, List
+from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -43,6 +43,96 @@ class OEEHistoricalRequest(BaseModel):
     end_time: Optional[datetime] = None
     hours: int = Field(default=24, ge=1, le=168)
     aggregation: str = Field(default="hourly", pattern="^(hourly|daily|shift)$")
+
+
+class HistoricalOEEOut(BaseModel):
+    """`data` is `oee_calculator.get_historical_oee()`'s output verbatim — one row per
+    time bucket, and the calculator owns the row shape. Envelope declared, rows open."""
+
+    asset_id: str
+    aggregation: str
+    start_time: str
+    end_time: str
+    data: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class OEEDashboardAsset(BaseModel):
+    """Every metric is nullable, and that is the point.
+
+    An asset whose calculation raised comes back as `status: "unavailable"` with five
+    nulls rather than five zeros. Zeros here used to enter the fleet mean and drag it
+    down, so one broken asset in twenty made the fleet look like a partial outage.
+    """
+
+    asset_id: str
+    asset_name: str
+    oee: Optional[float] = None
+    availability: Optional[float] = None
+    performance: Optional[float] = None
+    quality: Optional[float] = None
+    runtime_minutes: Optional[float] = None
+    status: str
+
+
+class OEEDashboardAggregate(BaseModel):
+    #: `None` when nothing was measured — the average of an empty set is not zero, and a
+    #: fleet-wide 0% OEE is an emergency.
+    avg_oee: Optional[float] = None
+    avg_availability: Optional[float] = None
+    avg_performance: Optional[float] = None
+    avg_quality: Optional[float] = None
+    asset_count: int
+    #: The two figures that let a reader tell a healthy fleet from an unread one.
+    assets_measured: int
+    assets_unavailable: int
+
+
+class OEEDashboardSummary(BaseModel):
+    organization_id: str
+    timestamp: str
+    aggregate: OEEDashboardAggregate
+    assets: List[OEEDashboardAsset]
+
+
+class AvailabilityLoss(BaseModel):
+    percentage: float
+    minutes: float
+    category: str
+
+
+class PerformanceLoss(BaseModel):
+    percentage: float
+    #: A rendered sentence, not a number — actual vs ideal cycle time in words.
+    impact: str
+    category: str
+
+
+class QualityLoss(BaseModel):
+    percentage: float
+    rejected_parts: Optional[int] = None
+    total_parts: Optional[int] = None
+    category: str
+
+
+class OEELosses(BaseModel):
+    """Three losses with three DIFFERENT shapes, kept apart rather than merged into one
+    model with everything optional: each factor is lost for a different reason and carries
+    the evidence for that reason — downtime minutes, a cycle-time comparison, part counts."""
+
+    availability: AvailabilityLoss
+    performance: PerformanceLoss
+    quality: QualityLoss
+
+
+class OEELossesOut(BaseModel):
+    asset_id: str
+    period_hours: int
+    oee: float
+    losses: OEELosses
+    #: The three losses summed. NOT a percentage of anything — three independent factors
+    #: added together, so it can exceed 100.
+    total_loss_percentage: float
+    potential_oee: float
 
 
 @router.get("/current/{asset_id}", response_model=OEEResponse)
@@ -89,7 +179,7 @@ async def get_current_oee(
     }
 
 
-@router.get("/historical/{asset_id}")
+@router.get("/historical/{asset_id}", response_model=HistoricalOEEOut)
 async def get_historical_oee(
     asset_id: UUID,
     hours: int = Query(default=24, ge=1, le=168),
@@ -134,7 +224,7 @@ async def get_historical_oee(
     }
 
 
-@router.get("/dashboard/summary")
+@router.get("/dashboard/summary", response_model=OEEDashboardSummary)
 async def get_oee_dashboard_summary(
     current_user = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_tenant_db)
@@ -218,7 +308,7 @@ async def get_oee_dashboard_summary(
     }
 
 
-@router.get("/losses/{asset_id}")
+@router.get("/losses/{asset_id}", response_model=OEELossesOut)
 async def get_oee_losses(
     asset_id: UUID,
     hours: int = Query(default=8, ge=1, le=72),

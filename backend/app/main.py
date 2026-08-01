@@ -2,6 +2,7 @@
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from contextlib import asynccontextmanager
 
 from app.api import assets, telemetry, alarms, operations, auth, dashboard, health, engines
@@ -392,7 +393,26 @@ app.include_router(model_monitoring.router, prefix="/api/v1/model-monitoring", t
 app.include_router(query_performance.router, prefix="/api/v1/admin/query-performance", tags=["Query Performance"], responses=unavailable_responses)
 
 
-@app.get("/")
+class RootInfo(BaseModel):
+    message: str
+    version: str
+    docs: str
+
+
+class BasicHealth(BaseModel):
+    """`/health` — WHAT THE LIVENESS AND STARTUP PROBES ACTUALLY HIT.
+
+    `infrastructure/k8s/base/backend-deployment.yaml` points both at this path, not at
+    `/health/live`. It is a static literal with no I/O behind it, which is the correct
+    shape for a liveness check: it answers "is this process serving requests", and it
+    cannot fail for a reason that restarting would not fix. Readiness — the one that
+    touches the database, Redis and the broker — is `/health/ready` in `app/api/health.py`.
+    """
+
+    status: str
+
+
+@app.get("/", response_model=RootInfo)
 async def root():
     return {
         "message": "OpsGrid API",
@@ -401,6 +421,6 @@ async def root():
     }
 
 
-@app.get("/health")
+@app.get("/health", response_model=BasicHealth)
 async def health_check():
     return {"status": "healthy"}

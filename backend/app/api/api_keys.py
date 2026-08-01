@@ -14,11 +14,53 @@ from app.db.models import User, APIKey
 from app.api.auth import get_current_active_user
 from app.middleware.rate_limit import rate_limit
 from app.middleware.rbac import require_admin
+from pydantic import BaseModel
 import structlog
 
 logger = structlog.get_logger()
 
 router = APIRouter()
+
+
+class GeneratedAPIKey(BaseModel):
+    """`POST /generate`.
+
+    `key` IS THE SECRET, and it is here because this is the only response that carries it —
+    only the hash is stored, so a model that dropped this field would make the endpoint
+    incapable of doing its job while still answering 200. `warning` is sent for the same
+    reason and is part of the contract, not decoration.
+    """
+
+    id: str
+    key: str
+    key_prefix: str
+    name: str
+    scopes: List[str]
+    expires_at: Optional[str] = None
+    warning: str
+
+
+class APIKeyListItem(BaseModel):
+    """The stored key, minus the secret — `key_hash` and `key_prefix` are all that survive
+    generation, and only the prefix is safe to show."""
+
+    id: str
+    key_prefix: Optional[str] = None
+    name: Optional[str] = None
+    #: `api_keys.scopes` is a JSON column; a row written before scopes existed holds NULL.
+    scopes: Optional[List[str]] = None
+    expires_at: Optional[str] = None
+    last_used_at: Optional[str] = None
+    created_at: Optional[str] = None
+
+
+class APIKeyList(BaseModel):
+    items: List[APIKeyListItem]
+    total: int
+
+
+class APIKeyRevoked(BaseModel):
+    message: str
 
 
 def generate_api_key() -> str:
@@ -68,7 +110,7 @@ async def verify_api_key(
     return api_key_obj
 
 
-@router.post("/generate", summary="Generate API key", description="Generate a new API key for external integrations. Returns the full key (only shown once).", dependencies=[Depends(require_admin)])
+@router.post("/generate", response_model=GeneratedAPIKey, summary="Generate API key", description="Generate a new API key for external integrations. Returns the full key (only shown once).", dependencies=[Depends(require_admin)])
 @rate_limit("10/hour")
 async def generate_api_key_endpoint(
     request: Request,
@@ -137,7 +179,7 @@ async def generate_api_key_endpoint(
     }
 
 
-@router.get("/", summary="List API keys", description="List all API keys for the current organization.")
+@router.get("/", response_model=APIKeyList, summary="List API keys", description="List all API keys for the current organization.")
 @rate_limit("100/minute")
 async def list_api_keys(
     request: Request,
@@ -174,7 +216,7 @@ async def list_api_keys(
     return {"items": key_list, "total": len(key_list)}
 
 
-@router.delete("/{key_id}", summary="Revoke API key", description="Revoke an API key by ID.", dependencies=[Depends(require_admin)])
+@router.delete("/{key_id}", response_model=APIKeyRevoked, summary="Revoke API key", description="Revoke an API key by ID.", dependencies=[Depends(require_admin)])
 @rate_limit("10/minute")
 async def revoke_api_key(
     request: Request,
