@@ -1,5 +1,12 @@
 # Fixed sprints FS-241 → FS-343
 
+> **Superseded in part by [`fixed-sprints-344-393.md`](fixed-sprints-344-393.md)
+> (2026-08-01).** That document carries the next 50, and its preamble records why this one
+> could not be used as an inventory: it was written from the task pools rather than from the
+> codebase, so **five of eight platform items examined described work already delivered** by
+> FS-200/214/230/240 — all of which predate it. Entries here have been corrected in place
+> with dates. Verify a premise before starting it.
+
 Written 2026-07-31 on `hamad/converged-pre-main`. Continues the FS series (highest prior: FS-240).
 
 **Every number here was measured today, not carried forward.** The previous pool drifted in one
@@ -25,8 +32,9 @@ it, audit the proof, then build again on ground that holds.
 
 **45 of 104 are build.** It was 100 before four items were added from a review of this
 session's own findings — FS-303/304/305 (the three defect *classes*, since the instances are
-fixed and the classes are not), FS-284b (393 tests that cannot run locally) and FS-317 (the
-planning docs' numbers drifting in one direction). Those five are the highest-leverage entries
+fixed and the classes are not), FS-284b (393 tests that cannot run locally) and ~~FS-317~~
+**FS-319** (the planning docs' numbers drifting in one direction; corrected 2026-08-01 — FS-317
+is the ERP → Kafka decision). Those five are the highest-leverage entries
 in the document, which is an argument for reviewing a plan before executing it. Sizes: **S** under half a day · **M** 1–2 days · **L** 3+ days.
 
 ## Lane discipline
@@ -148,8 +156,13 @@ The pipeline is complete and now has one consumer. These are the gaps that consu
   line. *Needs a decision, not implementation.*
 
 - **FS-253 … FS-258 · `response_model` burn-down, six batches** · M each
-  **184 undeclared remain** (from 250). Continue the method in
-  `docs/planning/hamad-response-model-burndown.md`; the AST sweep makes each batch safe.
+  ~~**184 undeclared remain** (from 250).~~ **DONE 2026-07-31/08-01. 250 → 53**, and all 53
+  remaining are in another dev's lane (`engines` 11, `model_monitoring` 9,
+  `logistics_correlation` 8, `analysis_sessions` 7, `nlp_correlation` 6, `auth` 4,
+  `correlation_integration` 3, `telemetry` 3, `kanban` 2). Nothing in-lane is left to declare.
+  The "184" was this document's own figure taken mid-session; the per-file batch list below is
+  fully superseded — every file it names is complete. Method and tally in
+  `docs/planning/hamad-response-model-burndown.md`.
   - FS-253 `compliance_reports` (9) + `compliance` (8)
   - FS-254 `audit` (5) + `feature_flags` (6)
   - FS-255 `bulk_operations` (6) + `data_residency` (6)
@@ -157,12 +170,15 @@ The pipeline is complete and now has one consumer. These are the gaps that consu
   - FS-257 `fleet_logistics` second half (23 total in that file — the largest single offender)
   - FS-258 `health` (17) — note these are probes; check what k8s reads before declaring.
 
-- **FS-259 · Contract-gate ratchet raise** · M
-  ~92 operations still non-conforming, mostly one behaviour: generated input reaching Postgres
-  unvalidated and surfacing as 500 where the contract promises 4xx (64 `DataError` + 32
-  `IntegrityError` at last count).
-  *Done when:* the floor is raised with a measured margin, and the raise is justified by fixes
-  rather than by luck.
+- **FS-259 · Contract-gate ratchet raise** · M — **DONE 2026-07-31.**
+  ~~~92 operations still non-conforming…~~ Floor **350 → 360**. Pre-fix 363/367, post-fix
+  369/370 — disjoint ranges, gain of 6 over a spread of 4, all of it in `ServerError` while the
+  other four checks stayed identical across all four runs. The fix was a **class**, not an
+  endpoint: schemathesis could only ever have found one of thirteen identical unbounded `skip`
+  declarations, so `MAX_OFFSET` bounds all sixteen and a sweep catches the fourteenth.
+  A follow-up fixed six more 500s and **conformance did not move** (368/370) — two moved
+  sideways into the `AcceptedNegativeData` policy bucket, which is why the per-check breakdown
+  of FS-264 exists. See `docs/engineering/api-contract-gate.md`.
 
 - **FS-259b · Give the contract job a reachable broker** · S — split out 2026-07-31
   Redis is now a service on the `api-contract` job and recovered ~14 operations (368-370 →
@@ -285,7 +301,18 @@ The pipeline is complete and now has one consumer. These are the gaps that consu
   it is deleted.
 
 - **FS-272 … FS-279 · Contract non-conformance, eight batches** · M each
-  The ~92 remaining operations, grouped by router. Each batch is per-endpoint input validation:
+  > **RESCOPED TO ONE SPRINT, 2026-08-01 — see FS-272 in `fixed-sprints-344-393.md`.**
+  > Measured against a throwaway database with the job's dependencies reachable: **65 failing
+  > operations, not ~92**. Of those, **42 are the documented policy disagreements**
+  > (`AcceptedNegativeData` 28 + `UnsupportedMethodResponse` 14 — re-audited that day, the
+  > characterisation holds), and only **9 `ServerError`s are in lane**. Six of the nine share
+  > one cause: `pg_stat_statements` needs `shared_preload_libraries`, which a GitHub service
+  > container cannot set because it accepts no `command` — the same blocker that stopped the
+  > broker in FS-259b. So this is one infrastructure sprint plus three endpoints, not eight
+  > batches of per-endpoint validation.
+
+  ~~The ~92 remaining operations, grouped by router. Each batch is per-endpoint input
+  validation:~~
   a generated value reaching Postgres unvalidated becomes a 500 where the contract promises 4xx.
   Each batch raises the ratchet by its own measured amount.
 
@@ -329,7 +356,9 @@ The pipeline is complete and now has one consumer. These are the gaps that consu
 
 ---
 
-# Wave C — Testing (FS-286 … FS-305)
+# Wave C — Testing (FS-286 … FS-307)
+
+*(range corrected 2026-08-01: the header said FS-305, but FS-306 and FS-307 are in this wave.)*
 
 - **FS-286 … FS-291 · Real-mode frontend tests, six batches** · M each — pool #46
   `test/setup.ts` stubs `VITE_USE_MOCK=true`, so **the branch that runs in production is the
@@ -556,13 +585,17 @@ produce.
 
 - **FS-336 · Frontend SDK adoption, second consumer** · M · needs FS-252.
 
-- **FS-337 · i18n first surface** · L · needs FS-313.
+- **FS-337 · i18n first surface** · L · needs ~~FS-313~~ **FS-315** (corrected 2026-08-01 — FS-313 is *Collapse the two quarantine registers*; the i18n scope decision is FS-315).
 
 - **FS-338 · Contract conformance to 400+** · L · needs FS-272…279
   The practical ceiling is ~412 of 451 without a policy change (Pydantic strict mode, typed path
   converters). Getting there is the endgame of #38 and #43 together.
 
-- **FS-339 · `response_model` coverage to zero undeclared** · L · needs FS-253…258
+- **FS-339 · `response_model` coverage to zero undeclared** · L · ~~needs FS-253…258~~
+  **RE-DERIVED 2026-08-01: 53 undeclared remain, not 184, and every one is in another dev's
+  lane.** This is no longer gated on effort — it is gated on `engines`, `model_monitoring`,
+  `logistics_correlation`, `analysis_sessions`, `nlp_correlation`, `auth`,
+  `correlation_integration`, `telemetry` and `kanban` owners. ⚠ coordinate, all lanes.
   184 remain. Zero is reachable because 204s and binary routes are already excluded from the
   count — the target is real, not aspirational.
 
@@ -608,17 +641,38 @@ before it was landing unverified against a real database, and two of them were
 broken. Any remaining batch (FS-253, 255–258) should now be run with the full
 suite, not the hermetic one.
 
+> **This section was dated 2026-07-31 and missed five closures. Corrected 2026-08-01.**
+> Also **done**, and absent from the table above: **FS-260** (both coverage gates had
+> drifted *below* reality — frontend 19/15/14/19 against a measured 39/43/35/40, backend
+> 54 against 61; now 38/41/34/39 and 59, mutation-verified), **FS-261** (already delivered
+> — `ci-cd.yml` applies all three operator stacks, CRD-gated), **FS-262** (already
+> delivered by FS-214; a new guard `tests/k8s/check_probe_ports.py` asserts 108 probes
+> resolve to declared ports), **FS-263** (already delivered by FS-200 — and its matcher was
+> blind to base64 `secretGenerator` Secrets, now fixed with a `--self-test`), **FS-264**
+> (`scripts/contract_summary.py`).
+>
+> **FS-259b is partially done**: Redis landed and recovered ~14 operations (368-370 → 383);
+> the broker and `pg_stat_statements` halves remain, both blocked on the same GitHub
+> limitation. **FS-252's premise was wrong in both directions** — the SDK is not committed
+> and the generator works; it is a live decision, not blocked work.
+
 **Not started.** Everything else. The realistic constraints, recorded so the next
 session does not rediscover them:
 
 - **Needs a second cluster** — FS-296, FS-297, FS-298, FS-324, FS-325. The DR
   overlay's own header says it: *"UNVERIFIED AGAINST A REAL CLUSTER. There is no
   second cluster to try it on."* No amount of local effort changes that.
-- **Needs disk** — FS-293. `rag-inference` wants ~5 GB of model weights; the Docker
-  VM is at 95% with 2.7 GB free. Reclaimable space exists but pruning deletes
-  someone's images.
+- ~~**Needs disk** — FS-293.~~ **UN-GATED 2026-08-01.** Re-measured: the VM is at 96%
+  with 2.5 GB free, so the headline still holds — but **13 GB of that is 23 stopped
+  containers at 99% reclaimable**, four of them `timescaledb` left by contract-gate
+  runs (Ryuk is disabled on this host, so nothing reaps them). `docker container
+  prune` recovers it **without touching a single image**, which is what the original
+  entry ruled out. Tracked as FS-371 in `fixed-sprints-344-393.md`.
 - **Needs external access** — FS-269, FS-270 (credential rotation), FS-300 (Intuit
-  sandbox consent), FS-322 (cross-region replication).
+  sandbox consent). ~~FS-322 (cross-region replication)~~ — **corrected 2026-08-01:
+  FS-322 is *Ownership-table rebalance*, a conversation, not an external-access item.
+  Cross-region replication is FS-325, already counted under "needs a second cluster"
+  above.**
 - **Needs another person's decision** — FS-308, FS-309, FS-311, FS-312, FS-315,
   FS-317, FS-320. The plan already called these *conversations, not sprints*.
 - **Needs a coordinated freeze window** — FS-326. The reformat touches every lane's
@@ -626,6 +680,10 @@ session does not rediscover them:
 
 Roughly 60 of the 104 are executable by one person without any of the above. The
 rest are gated on something a session cannot supply.
+
+> **Counting note, 2026-08-01.** This document has **105** numbered entries, not 104:
+> Wave A carries 26 against a claimed 25 because FS-259b was split out and never added
+> to the count, while Wave B's FS-284b was. The successor plan starts at FS-344.
 
 ---
 

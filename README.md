@@ -1311,10 +1311,24 @@ thing that still needs its model is the Correlation-AI **inference** (a ready
 | Edge platform, backend platform, frontend/UI, deploy/CI, schema, observability, docs | **Hamad** | `hamad/converged-pre-main` (integration → `main`). The convergence program + the FS fixed-sprints above. |
 | *(ramp-up)* — under Harsh's lane | **Alex** | New contributor (joining the correlation/MLOps area under Harsh); not yet assigned a branch or task. |
 
-> 📋 **The next 104 fixed sprints are planned in
-> [`docs/planning/fixed-sprints-241-343.md`](docs/planning/fixed-sprints-241-343.md)** — FS-241
-> through FS-343, weighted 45 build / 21 fix / 22 test / 16 review across five waves, with a
-> measured lane map so the work stays clear of other devs' active files.
+> 📋 **The next 50 fixed sprints are planned in
+> [`docs/planning/fixed-sprints-344-393.md`](docs/planning/fixed-sprints-344-393.md)** — FS-344
+> onward plus the survivors of the previous tranche, weighted 10 honesty / 10 correctness /
+> 12 verification / 10 product / 8 production-readiness, with a measured lane map.
+>
+> **It was derived from the codebase, and the one before it was not — which is why it needed
+> replacing.** Executing part of Wave A of
+> [`fixed-sprints-241-343.md`](docs/planning/fixed-sprints-241-343.md) found that **five of
+> eight platform items described work already delivered** by FS-200/214/230/240, all of which
+> predate that plan; it had been written from the task pools and inherited claims they had
+> outgrown. Its largest single block, FS-272…279 — eight sprints against "~92 non-conforming
+> operations" — measured out as **65 failing, 42 of them documented policy disagreements and
+> 9 in-lane server errors, six sharing one cause**. Eight sprints collapsed to one.
+>
+> The earlier document warns about numbers drifting in the *flattering* direction. These drift
+> the other way — inflating what is left — which is harder to notice, because nobody
+> investigates a backlog that looks too long. Every entry in the new tranche carries a file
+> path, a line number, or a measurement taken on the day.
 
 > 📋 **Next week's work is pooled in
 > [`docs/planning/next-week-task-pool.md`](docs/planning/next-week-task-pool.md)** — 56
