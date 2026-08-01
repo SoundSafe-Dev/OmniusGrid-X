@@ -347,7 +347,21 @@ for placeholder secrets.
   `test_write_endpoints_reject_cleanly_realdb.py:78` lists it in `SKIP_EXACT`: it takes no path
   parameter and erases the caller's data, so every walk skips it. That is the correct decision
   for a walk and the wrong outcome for coverage — a destructive, unprobed endpoint.
-  *Done when:* it has a dedicated test with a disposable tenant, and the skip cites that test.
+  ✅ **DONE 2026-08-01.** `test_gdpr_data_delete_realdb.py` mints a **disposable user per
+  case** and spends it — the arrangement a walk cannot have, since a walk authenticates once
+  and reuses the session. The skip now cites the file, so the reason and its remedy sit
+  together.
+
+  Six cases: the confirmation guard (absent, wrong case, anonymous caller), the erasure
+  itself, deactivation, and that erasing one user leaves another in the same organisation
+  intact — the endpoint takes no identifier, so the subject is entirely implicit, which is
+  the shape that erases the wrong person if a session is misread.
+
+  Worth recording: the handler **anonymises rather than hard-deletes**, and that is right
+  against a schema with foreign keys into `users` — a hard delete would cascade into audit
+  history or fail on a constraint. The tests assert the identity is gone, not the row.
+  Mutation-verified: relaxing the guard to `confirmation.upper()` fails the case-exactness
+  case.
 
 ---
 

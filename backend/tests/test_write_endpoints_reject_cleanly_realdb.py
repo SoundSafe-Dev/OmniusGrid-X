@@ -78,6 +78,11 @@ SKIP_EXACT = {
     # parameter and erases the caller's data on request — a probe that "passes" here has
     # deleted the organisation the rest of the walk is about. It is the one route where the
     # cost of finding out is higher than the finding.
+    #
+    # COVERED SEPARATELY SINCE FS-358: tests/test_gdpr_data_delete_realdb.py mints a
+    # DISPOSABLE user per case and spends it, which is the arrangement a walk cannot have —
+    # a walk authenticates once and reuses the session. The skip protects this walk; it was
+    # never an excuse for the route to go untested, and for a while it was one.
     "/api/v1/gdpr/data-delete",
     # AGENT-CERTIFICATE AUTH, not user auth. `require_agent` reads a forwarded client
     # certificate, so a 401 for a user's bearer token is the correct answer and not a lost
