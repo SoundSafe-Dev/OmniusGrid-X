@@ -143,10 +143,22 @@ for placeholder secrets.
 
 - **FS-352 · `POST /admin/collectors/{id}/restart` restarts nothing** · S
   The whole handler is a `return` with `"status": "pending"` and a hardcoded
-  `"2026-01-15T10:30:00Z"`. `assets.ts` calls it and discards the body, so an operator clicking
-  Restart gets a 200 and no restart. `CollectorRestartAck` describes what is sent and its
-  docstring says outright that it does not vouch for it.
-  *Done when:* the endpoint restarts a collector, or it is removed. Both are acceptable.
+  `"2026-01-15T10:30:00Z"`.
+  ✅ **DONE 2026-08-01 — removed**, along with the dead `assetsApi.restartCollector` client
+  function, its route-walk and RBAC test entries, and the `CollectorRestartAck` model.
+
+  **Two corrections this item needed.** First, it said "`assets.ts` calls it… so an operator
+  clicking Restart gets a 200 and no restart" — carried from the burn-down doc. Wrong: the
+  client function existed with **zero call sites**, and the Collectors page has no restart
+  control. The endpoint lied, but nobody was listening.
+
+  Second, "restarts a collector" was not an available closure. A restart must reach the
+  device, and the edge agent registers exactly two command handlers — `agent_update` and
+  `model_update`. Submitting a `restart_collector` command would queue something nothing
+  consumes: the same lie one layer down and harder to see. Adding the handler is Hridyansh's
+  lane. A 501 was rejected too — it is a 5xx, and the contract gate counts any 5xx as a
+  ServerError, so an honest "not implemented" would have scored *worse* than the dishonest
+  200. The route back is recorded in `health.py` where the handler used to be.
 
 ---
 

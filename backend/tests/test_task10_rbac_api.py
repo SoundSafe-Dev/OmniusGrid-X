@@ -382,7 +382,6 @@ async def test_admin_maintenance_routes_require_admin(
     )
     asset_id = uuid4()
     routes = [
-        ("POST", "/admin/collectors/collector-1/restart"),
         ("POST", f"/admin/assets/{asset_id}/maintenance"),
         ("POST", "/admin/database/vacuum"),
         ("GET", "/admin/system/status"),
@@ -402,7 +401,8 @@ async def test_admin_maintenance_routes_require_admin(
 
 @pytest.mark.asyncio
 async def test_admin_routes_preserve_public_health_endpoints(client_a, app):
-    restart = await client_a.post("/admin/collectors/collector-1/restart")
+    # `/admin/collectors/{id}/restart` was probed here too; removed with the endpoint in
+    # FS-352 (it restarted nothing and nothing called it).
     invalid_asset = await client_a.post(
         "/admin/assets/not-a-uuid/maintenance"
     )
@@ -413,7 +413,6 @@ async def test_admin_routes_preserve_public_health_endpoints(client_a, app):
         startup = await anonymous.get("/health/startup")
         metrics = await anonymous.get("/metrics")
 
-    assert restart.status_code == 200
     assert invalid_asset.status_code == 422
     assert live.status_code == 200
     assert startup.status_code == 200

@@ -260,9 +260,13 @@ the schema.
 2. **`POST /admin/collectors/{collector_id}/restart` restarts nothing.** The whole handler is
    a `return`. It answers `{"message": "Restart signal sent to collector …", "status":
    "pending", "timestamp": "2026-01-15T10:30:00Z"}` — a hardcoded past timestamp, and a
-   message in the past tense about a signal no code sends. `assets.ts` calls it as
-   `restartCollector()` and returns `Promise<void>`, so an operator clicking Restart gets a
-   200 and no restart. `CollectorRestartAck` describes what is sent and its docstring says
+   message in the past tense about a signal no code sends.
+
+   **Correction, 2026-08-01:** this entry said "`assets.ts` calls it as `restartCollector()`
+   … so an operator clicking Restart gets a 200 and no restart". Wrong — the *client
+   function* existed and **no component ever invoked it**; the Collectors page renders
+   `/api/v1/edge/fleet` and has no restart control. The endpoint lied, but nobody was
+   listening. Both the endpoint and the dead client function were removed under FS-352. `CollectorRestartAck` describes what is sent and its docstring says
    outright that it does not vouch for it; making the endpoint do the thing, or removing it,
    is a behaviour change and not this pool's to make.
 

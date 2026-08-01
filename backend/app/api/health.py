@@ -421,15 +421,6 @@ class KafkaHealthOut(BaseModel):
     broker: str | None = None
 
 
-class CollectorRestartAck(BaseModel):
-    """NOTE THAT THIS ENDPOINT SENDS A FIXED STRING AND RESTARTS NOTHING — see the handler.
-    The model describes what is sent; it does not vouch for it."""
-
-    message: str
-    status: str
-    timestamp: str
-
-
 class MaintenanceModeOut(BaseModel):
     asset_id: str
     #: The word, not the boolean: `"enabled"` / `"disabled"`.
@@ -695,19 +686,33 @@ async def _vacuum_telemetry() -> None:
         )
 
 
-# Manual override endpoints for on-site engineers
-@router.post("/admin/collectors/{collector_id}/restart", dependencies=[Depends(require_admin)],
-             response_model=CollectorRestartAck)
-async def restart_collector(
-    collector_id: str,
-    current_user: User = Depends(get_current_active_user),
-):
-    """Manual override: Restart a collector plugin"""
-    return {
-        "message": f"Restart signal sent to collector {collector_id}",
-        "status": "pending",
-        "timestamp": "2026-01-15T10:30:00Z",
-    }
+# REMOVED 2026-08-01 (FS-352): POST /admin/collectors/{collector_id}/restart.
+#
+# The whole handler was a `return`. It answered
+#   {"message": "Restart signal sent to collector …", "status": "pending",
+#    "timestamp": "2026-01-15T10:30:00Z"}
+# — past tense about a signal no code sent, with a hardcoded timestamp — and nothing
+# anywhere restarted anything.
+#
+# WHY REMOVED RATHER THAN IMPLEMENTED. A restart would have to reach the device, and the
+# edge agent registers exactly two command handlers: `agent_update` and `model_update`
+# (`edge-agent/opsgrid_agent/ota/{executor,model_executor}.py`). Submitting a
+# `restart_collector` command would queue something nothing consumes — the same lie moved
+# one layer down, and harder to see. Adding the handler is Hridyansh's lane.
+#
+# WHY REMOVED RATHER THAN 501. A 501 is a 5xx, and the contract gate counts any 5xx as a
+# ServerError, so an honest "not implemented" would have made conformance worse than the
+# dishonest 200 did.
+#
+# NOTHING CALLED IT. `assetsApi.restartCollector` existed in the frontend with zero call
+# sites and is removed with it; the Collectors page renders `/api/v1/edge/fleet` and has no
+# restart control. (Earlier notes in this repo — including the response_model burn-down doc
+# — said "the UI calls it and an operator gets a 200 and no restart". That was wrong: the
+# client function existed, no component invoked it. Corrected where it appears.)
+#
+# To bring it back: register a handler in the edge agent, then submit through
+# `command_executor.submit_command(command_type="system", action_id="restart_collector")`
+# exactly as `POST /commands/asset/{asset_id}/emergency-stop` does.
 
 
 @router.post("/admin/assets/{asset_id}/maintenance", dependencies=[Depends(require_admin)],

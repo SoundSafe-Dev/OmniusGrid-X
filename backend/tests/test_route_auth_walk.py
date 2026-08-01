@@ -141,7 +141,6 @@ ADMIN_ROUTE_INVENTORY = {
     ("GET", "/api/v1/registries/{registry_id}/score"),
     ("PATCH", "/api/v1/admin/errors/{fingerprint}"),
     ("POST", "/admin/assets/{asset_id}/maintenance"),
-    ("POST", "/admin/collectors/{collector_id}/restart"),
     ("POST", "/admin/database/vacuum"),
     ("POST", "/api/v1/api-keys/generate"),
     ("POST", "/api/v1/assets/"),

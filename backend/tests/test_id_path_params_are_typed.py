@@ -14,9 +14,11 @@ UUID — the convention existed and these had fallen out of it. Found by the API
 suite, which generates "0" for any unconstrained string parameter.
 
 NOT EVERY `*_id` IS A UUID, which is why this guard works from an explicit list rather
-than the name. `geotab.device_id` is an external GeoTab identifier, `health.collector_id`
-names an in-process collector, and `data_residency.record_id` is polymorphic — the row
-it points at lives in a table chosen at runtime. Converting any of those would break
+than the name. `geotab.device_id` is an external GeoTab identifier and
+`data_residency.record_id` is polymorphic — the row it points at lives in a table chosen at
+runtime. (`health.collector_id` was a third; its endpoint was removed in FS-352 because it
+restarted nothing, and `test_the_allowlist_has_no_dead_entries` caught the stale entry the
+moment it went.) Converting any of those would break
 them. The allowlist below records that judgement so the next person does not have to
 re-derive it, and so a NEW bare-string id fails this test instead of joining them
 silently.
@@ -36,7 +38,6 @@ API_DIR = Path(__file__).resolve().parents[1] / "app" / "api"
 #: aloud — "it was already like that" is not one.
 LEGITIMATE_STRING_IDS = {
     ("geotab.py", "device_id"): "GeoTab's own device identifier, not one of ours",
-    ("health.py", "collector_id"): "names an in-process collector, not a database row",
     ("data_residency.py", "record_id"): (
         "polymorphic — identifies a row in a table chosen at runtime, so it cannot be "
         "typed against one column"

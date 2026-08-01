@@ -109,10 +109,6 @@ export const assetsApi = {
     return response.data;
   },
 
-  restartCollector: async (assetId: string): Promise<void> => {
-    await api.post(`/admin/collectors/${assetId}/restart`);
-  },
-
   /**
    * THIS INVERTED THE CALLER'S INTENT. It posted `{ inMaintenance }` as a JSON BODY, and
    * the endpoint declares `enabled: bool = True` — a scalar, which FastAPI reads from the
