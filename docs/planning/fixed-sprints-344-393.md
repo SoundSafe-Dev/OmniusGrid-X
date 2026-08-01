@@ -373,6 +373,27 @@ for placeholder secrets.
     `/admin/query-performance/*` operations 503.
   *Done when:* both run as `docker run` steps, the suite still collects ~452, and the floor is
   raised **from CI's own measurement** rather than a workstation's.
+  ◑ **BROKER DONE 2026-08-01; `pg_stat_statements` deferred deliberately.**
+
+  The broker runs as a `docker run` step with `--advertise-kafka-addr PLAINTEXT://127.0.0.1`,
+  and the step is **fail-safe by design**, because an absent broker is harmless and a
+  half-working one is not: the app starts in ~2.6s with no broker at all (503s on the
+  broker-backed endpoints — this job's behaviour until today) and ~3.3s with a correct one,
+  and the dangerous state is in between. So the advertised address is verified from the
+  runner, and if anything is wrong the container is **removed**, leaving the job in its old
+  known-good shape rather than the hanging one.
+
+  Both paths were run verbatim on a workstation — the step extracted from the YAML with
+  `yaml.safe_load` and executed — because the workflow itself cannot be tested from here.
+  Success reports "usable"; substituting an image that can never advertise correctly prints
+  the explanation, removes the container and exits 0.
+
+  **`pg_stat_statements` is left**, and it is the six `/admin/query-performance/*` operations.
+  It needs the postgres *service* replaced by a `docker run` for exactly the same
+  no-`command` reason — but a postgres that fails to start **collapses the whole suite**,
+  where a broker that fails to start merely degrades it to 503s. That is a materially
+  different risk on a blocking job and wants a real run to watch. **The floor stays at 360**
+  regardless: it should move on CI's measurement, not a workstation's.
 
 - **FS-272 · The residual contract 500s** · M — *rescoped from eight batches to one*
   The previous plan allocated **FS-272…279, eight sprints**, to "~92 remaining operations…

@@ -108,6 +108,48 @@ jobs:
       - name: Install dev deps
         working-directory: ./backend
         run: pip install -r requirements-dev.txt
+      # A BROKER THAT ADVERTISES AN ADDRESS THE RUNNER CAN REACH (FS-259b).
+      #
+      # Not a service container, because Redpanda needs `redpanda start
+      # --advertise-kafka-addr` and a service block accepts image/env/ports/options and NO
+      # command. Point the app at a broker that advertises its own container hostname and
+      # the client connects to bootstrap, is redirected somewhere it cannot resolve, and
+      # HANGS — the app then never serves /openapi.json inside the suite's 120s window and
+      # the run collects 1 operation instead of 452. Observed on a workstation, not
+      # predicted.
+      #
+      # THE STEP IS DELIBERATELY FAIL-SAFE, because an absent broker is harmless and a
+      # half-working one is not. The app starts in ~2.6s with no broker at all (every
+      # broker-backed endpoint answers 503, which is what this job did before today) and in
+      # ~3.3s with a correctly-advertised one. The dangerous state is in between. So the
+      # advertised address is verified from the runner, and if anything is wrong the
+      # container is removed — leaving the job in its old, known-good shape rather than the
+      # hanging one. `|| true` on the whole block for the same reason.
+      - name: Start a broker the app can actually reach (best effort)
+        continue-on-error: true
+        run: |
+          docker run -d --name contract-redpanda -p 39092:39092 \
+            docker.redpanda.com/redpandadata/redpanda:v23.3.5 \
+            redpanda start --overprovisioned --smp 1 --memory 512M \
+              --reserve-memory 0M --node-id 0 --check=false \
+              --kafka-addr PLAINTEXT://0.0.0.0:39092 \
+              --advertise-kafka-addr PLAINTEXT://127.0.0.1:39092 || true
+
+          # The advertised address is the whole point: verify it from the runner rather
+          # than trusting the container started.
+          for _ in $(seq 1 30); do
+            if docker exec contract-redpanda \
+                 rpk cluster info --brokers 127.0.0.1:39092 2>/dev/null \
+                 | grep -q '127.0.0.1'; then
+              echo "broker advertises 127.0.0.1 - usable"
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "broker did not advertise a reachable address; removing it so the app sees"
+          echo "no broker at all rather than one it will hang on."
+          docker rm -f contract-redpanda || true
       - name: Migrate the schema
         working-directory: ./backend
         # Without this the contract suite runs against an empty database and every
@@ -124,18 +166,19 @@ jobs:
           # Points at the service above. Without it the app falls back to the compose
           # hostname `redis:6379`, which resolves from neither a runner nor a laptop.
           REDIS_URL: redis://localhost:6379/0
-        # THE BROKER IS DELIBERATELY NOT ADDED HERE, and it is not an oversight.
-        # Redpanda must advertise an address the client can reach, which needs
-        # `redpanda start --advertise-kafka-addr ...`. GitHub service containers accept
-        # image/env/ports/options and NO command, so a service block cannot configure
-        # it: the client connects to the bootstrap address, is redirected to the
-        # container's internal hostname, and hangs. Reproduced exactly that way on a
-        # workstation — the app then never served /openapi.json inside the suite's 120s
-        # window and the run collected 1 operation instead of 452.
-        #
-        # With a correctly-advertised broker the app starts in 3.3s and conformance
-        # reaches 387 (vs 383 with Redis alone), so the remaining ~4 operations are
-        # worth a `docker run` step rather than a service block. Tracked as FS-259b.
+          # Points at the docker-run broker above, which advertises 127.0.0.1 so the
+          # client is not redirected somewhere it cannot resolve. If that step removed
+          # the container (its own health check failed), this resolves to nothing and the
+          # broker-backed endpoints answer 503 — the job's behaviour before FS-259b, and
+          # a safe floor rather than a hang.
+          REDPANDA_URL: 127.0.0.1:39092
+        # STILL MISSING, and it is the six /admin/query-performance/* operations:
+        # pg_stat_statements needs `shared_preload_libraries` on the server command line,
+        # and postgres is a SERVICE container here, which takes no command for the same
+        # reason the broker could not be one. Fixing it means replacing the service with a
+        # `docker run` — a larger change to a blocking job than the broker was, because a
+        # postgres that fails to start collapses the whole suite rather than degrading it
+        # to 503s. Left until it can be watched on a real run.
         #
         # Individual failures do not fail the step; the ratchet below decides. The
         # junit report is the input, so a crashed or truncated run cannot be mistaken
