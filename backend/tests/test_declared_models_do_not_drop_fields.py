@@ -199,3 +199,172 @@ class TestTheModelAcceptsWhatTheHandlerProduces:
 
     def test_a_driver_with_no_events_validates(self):
         fh.DriverSafetyItem.model_validate(fh._driver_safety_out(_driver(), {}))
+
+
+def _fl_zone(**over):
+    """A circle zone as `geofence_zones` stores one."""
+    base = dict(
+        id=uuid4(), name="Depot", zone_type="circle", center_lat=51.5, center_lng=-0.1,
+        radius_meters=250.0, polygon=None, trigger_on="both", severity="warning",
+        is_active=True,
+    )
+    base.update(over)
+    return SimpleNamespace(**base)
+
+
+def _fl_schedule(**over):
+    base = dict(
+        id=uuid4(), vehicle_id="VH-1", maintenance_type="oil_change",
+        description="6-month service",
+        due_date=datetime(2026, 8, 15, tzinfo=timezone.utc),
+        due_odometer_miles=145000.0, status="scheduled", priority="urgent",
+        estimated_cost=420.5, completed_at=None,
+    )
+    base.update(over)
+    return SimpleNamespace(**base)
+
+
+def _fl_order(**over):
+    base = dict(
+        id=uuid4(), vehicle_id="VH-1", title="Brake pads", description="Front pads worn",
+        status="open", priority="medium", vendor="Acme Motors", cost=310.0,
+        category="brakes", opened_at=datetime(2026, 7, 1, tzinfo=timezone.utc),
+        completed_at=None,
+    )
+    base.update(over)
+    return SimpleNamespace(**base)
+
+
+class TestFleetLogisticsShapersMatchTheirModels:
+    """`fleet_logistics.py` is the largest single file in the burn-down — 23 routes — and it
+    reaches that size by serving four shapes from four helpers, each on several routes.
+
+    `_schedule_out` alone backs list, get, patch, create and the per-vehicle list. So one
+    field missing from `MaintenanceScheduleOut` is that field missing from five endpoints,
+    and the AST sweep next door cannot see any of it: these handlers return
+    `[_schedule_out(s) for s in ...]`, which has no dict literal in the syntax. This is
+    exactly the blind spot that file documents and this one covers.
+    """
+
+    def test_zone_out(self):
+        from app.api import fleet_logistics as fl
+        produced = set(fl._zone_out(_fl_zone()))
+        declared = set(fl.GeofenceZoneOut.model_fields)
+        assert produced == declared, (
+            f"dropped by the model: {sorted(produced - declared)} · "
+            f"declared but never produced: {sorted(declared - produced)}"
+        )
+
+    def test_schedule_out(self):
+        from app.api import fleet_logistics as fl
+        produced = set(fl._schedule_out(_fl_schedule()))
+        declared = set(fl.MaintenanceScheduleOut.model_fields)
+        assert produced == declared, (
+            f"dropped by the model: {sorted(produced - declared)} · "
+            f"declared but never produced: {sorted(declared - produced)}"
+        )
+
+    def test_order_out(self):
+        from app.api import fleet_logistics as fl
+        produced = set(fl._order_out(_fl_order()))
+        declared = set(fl.RepairOrderOut.model_fields)
+        assert produced == declared, (
+            f"dropped by the model: {sorted(produced - declared)} · "
+            f"declared but never produced: {sorted(declared - produced)}"
+        )
+
+    def test_history_out(self):
+        from app.api import fleet_logistics as fl
+        produced = set(fl._history_out(_fl_order()))
+        declared = set(fl.ServiceHistoryOut.model_fields)
+        assert produced == declared, (
+            f"dropped by the model: {sorted(produced - declared)} · "
+            f"declared but never produced: {sorted(declared - produced)}"
+        )
+
+    def test_summarize_maintenance(self):
+        """`summarize_maintenance` feeds `/statistics` directly AND supplies five of the six
+        keys `/costs` re-labels, so its key set is load-bearing twice over."""
+        from app.api import fleet_logistics as fl
+        produced = set(fl.summarize_maintenance([_fl_schedule()], [_fl_order()]))
+        declared = set(fl.MaintenanceStatisticsOut.model_fields)
+        assert produced == declared, (
+            f"dropped by the model: {sorted(produced - declared)} · "
+            f"declared but never produced: {sorted(declared - produced)}"
+        )
+
+    def test_delivery_efficiency(self):
+        """The aggregate lives in `transportation.py`; the route that declares a model for it
+        is in `fleet_logistics.py`. Nothing else pins those two together."""
+        from app.api.transportation import compute_delivery_efficiency
+        from app.api import fleet_logistics as fl
+        produced = set(compute_delivery_efficiency([]))
+        declared = set(fl.DeliveryEfficiencyOut.model_fields)
+        assert produced == declared, (
+            f"dropped by the model: {sorted(produced - declared)} · "
+            f"declared but never produced: {sorted(declared - produced)}"
+        )
+
+
+class TestFleetLogisticsModelsAcceptTheEmptyPaths:
+    """The populated row is the easy case. These are the ones a fixture-shaped test misses.
+
+    Every nullable column in the four tables is reachable: a POLYGON zone has no centre and
+    no radius, a schedule created without a due date has no `scheduledDate`, a repair order
+    that is still open has no `completedAt`, and a fleet with nothing outstanding produces
+    `upcomingEstimated: None` — which is not the same fact as an estimate of zero.
+    """
+
+    def test_a_polygon_zone_with_no_centre_or_radius_validates(self):
+        from app.api import fleet_logistics as fl
+        fl.GeofenceZoneOut.model_validate(fl._zone_out(_fl_zone(
+            zone_type="polygon", center_lat=None, center_lng=None, radius_meters=None,
+            polygon=[[51.5, -0.1], [51.6, -0.1], [51.6, -0.2]],
+        )))
+
+    def test_a_zone_with_a_float_radius_validates(self):
+        """`radius_meters` is a Float column. An `int` here is the `HealthBandItem.min/max`
+        bug — correct field name, wrong type, 500 on the first fractional row."""
+        from app.api import fleet_logistics as fl
+        fl.GeofenceZoneOut.model_validate(fl._zone_out(_fl_zone(radius_meters=249.75)))
+
+    def test_a_schedule_with_no_due_date_or_estimate_validates(self):
+        from app.api import fleet_logistics as fl
+        fl.MaintenanceScheduleOut.model_validate(fl._schedule_out(_fl_schedule(
+            due_date=None, due_odometer_miles=None, estimated_cost=None, description=None,
+        )))
+
+    def test_an_overdue_schedule_reports_overdue_and_validates(self):
+        from app.api import fleet_logistics as fl
+        row = fl._schedule_out(_fl_schedule(
+            due_date=datetime(2020, 1, 1, tzinfo=timezone.utc), status="scheduled"
+        ))
+        assert row["status"] == "overdue"
+        fl.MaintenanceScheduleOut.model_validate(row)
+
+    def test_an_open_repair_order_with_no_cost_validates(self):
+        from app.api import fleet_logistics as fl
+        fl.RepairOrderOut.model_validate(fl._order_out(_fl_order(
+            cost=None, vendor=None, category=None, description=None, completed_at=None,
+        )))
+
+    def test_a_history_entry_with_no_cost_or_notes_validates(self):
+        """`_history_out` coerces a missing cost to the integer `0` — a `float` field takes
+        it, an `int` field would then reject the real 310.0 next door."""
+        from app.api import fleet_logistics as fl
+        fl.ServiceHistoryOut.model_validate(fl._history_out(_fl_order(
+            cost=None, description=None, vendor=None, category=None,
+        )))
+
+    def test_an_empty_fleet_summarises_and_validates(self):
+        from app.api import fleet_logistics as fl
+        stats = fl.summarize_maintenance([], [])
+        assert stats["upcomingEstimated"] is None, (
+            "None means nobody has costed the outstanding work; 0 means it is free"
+        )
+        fl.MaintenanceStatisticsOut.model_validate(stats)
+
+    def test_an_empty_delivery_efficiency_validates(self):
+        from app.api.transportation import compute_delivery_efficiency
+        from app.api import fleet_logistics as fl
+        fl.DeliveryEfficiencyOut.model_validate(compute_delivery_efficiency([]))

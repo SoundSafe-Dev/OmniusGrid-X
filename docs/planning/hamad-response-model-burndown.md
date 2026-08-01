@@ -97,9 +97,10 @@ absolute number rose while the ratio fell).
 | 2026-07-31 | 164 | `compliance_reports` ×7, `compliance` ×8 |
 | 2026-07-31 | 158 | `bulk_operations` ×6 |
 | 2026-07-31 | 146 | `data_residency` ×6, `feature_flags` ×6 |
-| 2026-07-31 | **139** | `geotab` ×7 |
+| 2026-07-31 | 139 | `geotab` ×7 |
+| 2026-07-31 | **116** | `fleet_logistics` ×23 — the largest single file |
 
-**74 routes off the list, of which 60 were declarations and 14 were miscounts.**
+**97 routes off the list, of which 83 were declarations and 14 were miscounts.**
 Both halves matter: the ratchet is only worth obeying if its number is honest, and
 14 routes that could never be declared would have made the target unreachable.
 
@@ -152,7 +153,32 @@ inherits it.
    first version of their models declared only the items key — which would have
    deleted `count` from all seven at once.
 
-4. **Two 500s of my own making, found only when 393 unrunnable tests were
+4. **`/logistics/delivery-efficiency` is typed in the client under three names it
+   has never sent.** `transportation.ts` declares the call as
+   `{ onTimeRate, avgTransitTime, totalDeliveries, lateDeliveries }`.
+   `compute_delivery_efficiency` returns `onTimeRate`, `avgTransitHours`,
+   `deliveredToday` and `totalDelivered` — one name in common out of four, and
+   `lateDeliveries` is computed nowhere on the server. `onTimeRate` is the one
+   they share and they disagree about it too: the server sends a **ratio**
+   (`round(on_time / delivered, 4)`), the client's own mock path for the same
+   field computes a **percentage**, so the real backend renders a 92% on-time
+   fleet as "0.92".
+
+   The model here declares the **function's** names, not the client's. Declaring
+   the client's would have made the schema agree with the TypeScript and disagree
+   with the payload, which is the wrong of the two to fix from the server side —
+   and it would have deleted all four real fields on the way out. Left for a
+   frontend change, recorded rather than reconciled.
+
+5. **`_zone_out` sends `polygon`; the client reads `coordinates`.** Same class,
+   found in the same file. `adaptZone` maps `zoneType -> type` and
+   `radiusMeters -> radius` but takes `coordinates` straight through, so a polygon
+   zone's vertices arrive under a name nothing reads and the shape never draws.
+   Circles are unaffected, which is why it survived: the default zone type is
+   `circle`. Not fixed here — the fix is one line in the adapter, in a file this
+   pool does not touch.
+
+6. **Two 500s of my own making, found only when 393 unrunnable tests were
    unblocked.** `HealthBandItem.min/max` declared `int` against a band whose upper
    bound is `100.01`; `HistorianPolicyOut.ingestion_priority` declared `str`
    against a numeric column. Both keys were named correctly — the AST sweep
@@ -174,6 +200,16 @@ instead by `test_declared_models_do_not_drop_fields`, which calls the shaping
 helpers directly. A `**spread` in a returned dict is skipped rather than guessed
 at. **A partial check that names its gaps is worth more than a total one that is
 wrong** — and between the two files, both shapes are covered.
+
+`fleet_logistics` is the case that proves the split was worth drawing. All 23 of
+its routes build their payload through four helpers — `_zone_out`, `_schedule_out`,
+`_order_out`, `_history_out` — so **not one of them has a dict literal for the AST
+sweep to read**, and the sweep passes the whole file while checking nothing in it.
+The companion file now calls those four helpers directly, plus
+`summarize_maintenance` and `compute_delivery_efficiency`; `_schedule_out` alone
+backs five routes, so one field missing there is one field missing from five
+endpoints at once. Mutation-verified: removing `estimatedCost` from
+`MaintenanceScheduleOut` fails `test_schedule_out`.
 
 This is the leverage that makes the remaining routes safe to do at pace: the
 expensive part of each declaration was reading the handler carefully enough to be

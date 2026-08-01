@@ -18,6 +18,7 @@ from uuid import UUID
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -84,6 +85,82 @@ def _scope(query, model, org_id: UUID):
     """
     return query.where(model.organization_id == str(org_id))
 
+# ==================== Response models ====================
+#
+# Pool #43. Every field here is named after the key the serializer BELOW actually emits, and
+# typed from the COLUMN it comes from — `logistics_models` is the reference, not the frontend
+# type, because a response model that disagrees with the column 500s on the first real row.
+#
+# Two type choices in here are deliberate and were nearly got wrong:
+#
+#   * `radiusMeters` and `dueMileage` are `float`, not `int`. `geofence_zones.radius_meters`
+#     and `maintenance_schedules.due_odometer_miles` are both `Float`. Declaring the obvious
+#     `int` is how `HealthBandItem.min/max` shipped a 500 against a band whose bound is 100.01.
+#   * `polygon` and `location` are the raw JSON columns and stay open. `polygon` is
+#     `[[lat, lng], ...]` for a polygon zone and NULL for a circle; `location` is whatever the
+#     event writer put there. A fixed model over either would filter a producer's payload.
+#
+# Everything nullable in the table is `Optional` here, and nothing is given a non-None default
+# that the handler does not itself produce: a default is a value invented by the schema, and
+# this file's own history (`priority` defaulting to 'medium' client-side, `upcomingEstimated`
+# hardcoded to 0) is what that costs.
+
+
+class MessageResponse(BaseModel):
+    message: str
+
+
+class GeofenceCenter(BaseModel):
+    """`center_lat` / `center_lng` — both nullable, and genuinely NULL for a polygon zone.
+
+    The client filters on `typeof latitude === 'number'` to decide what it can draw as a
+    circle, so a coerced 0 here would put a zero-radius circle at 0°N 0°E on the fleet map.
+    """
+
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+
+
+class GeofenceZoneOut(BaseModel):
+    id: str
+    name: str
+    zoneType: Optional[str] = None
+    center: GeofenceCenter
+    radiusMeters: Optional[float] = None
+    #: The raw `polygon` JSON column, left open — see the block comment above.
+    polygon: Optional[Any] = None
+    triggerOn: Optional[str] = None
+    severity: Optional[str] = None
+    isActive: Optional[bool] = None
+
+
+class GeofenceAlertOut(BaseModel):
+    """The names the client reads, which are NOT the column names.
+
+    `zone_id` -> `geofenceId`, `event_type` -> `alertType`, `created_at` -> `timestamp`;
+    the panel's ternary on `alertType` is what made every routine entry read "Violation"
+    when the wire carried `eventType` instead.
+    """
+
+    id: str
+    geofenceId: Optional[str] = None
+    #: None, not "" — resolved by join, and the panel must be able to tell a zone it could
+    #: not resolve from one with an empty name.
+    geofenceName: Optional[str] = None
+    vehicleId: Optional[str] = None
+    vehicleNumber: Optional[str] = None
+    alertType: str
+    severity: Optional[str] = None
+    location: Dict[str, Any] = Field(default_factory=dict)
+    acknowledged: Optional[bool] = None
+    timestamp: Optional[str] = None
+
+
+class AlertAcknowledged(BaseModel):
+    message: str
+    id: str
+
+
 # ==================== Geofencing ====================
 
 def _zone_out(z: GeofenceZone) -> Dict[str, Any]:
@@ -95,7 +172,7 @@ def _zone_out(z: GeofenceZone) -> Dict[str, Any]:
     }
 
 
-@geofencing_router.get("/zones")
+@geofencing_router.get("/zones", response_model=List[GeofenceZoneOut])
 async def list_zones(org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
     zones = (await db.execute(
         _scope(select(GeofenceZone).where(GeofenceZone.is_active == True), GeofenceZone, org_id)  # noqa: E712
@@ -103,7 +180,7 @@ async def list_zones(org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession
     return [_zone_out(z) for z in zones]
 
 
-@geofencing_router.get("/zones/{zone_id}")
+@geofencing_router.get("/zones/{zone_id}", response_model=GeofenceZoneOut)
 async def get_zone(zone_id: str, org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
     _uuid_or_404(zone_id)
     zone = (await db.execute(
@@ -114,7 +191,7 @@ async def get_zone(zone_id: str, org_id: UUID = Depends(get_tenant_org_id), db: 
     return _zone_out(zone)
 
 
-@geofencing_router.post("/zones")
+@geofencing_router.post("/zones", response_model=GeofenceZoneOut)
 async def create_zone(
     payload: Dict[str, Any],
     org_id: UUID = Depends(get_tenant_org_id),
@@ -144,7 +221,7 @@ async def create_zone(
     return _zone_out(zone)
 
 
-@geofencing_router.put("/zones/{zone_id}")
+@geofencing_router.put("/zones/{zone_id}", response_model=GeofenceZoneOut)
 async def update_zone(zone_id: str, payload: Dict[str, Any], org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
     _uuid_or_404(zone_id)
     zone = (await db.execute(
@@ -167,7 +244,7 @@ async def update_zone(zone_id: str, payload: Dict[str, Any], org_id: UUID = Depe
     return _zone_out(zone)
 
 
-@geofencing_router.delete("/zones/{zone_id}")
+@geofencing_router.delete("/zones/{zone_id}", response_model=MessageResponse)
 async def delete_zone(zone_id: str, org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
     _uuid_or_404(zone_id)
     zone = (await db.execute(
@@ -180,7 +257,7 @@ async def delete_zone(zone_id: str, org_id: UUID = Depends(get_tenant_org_id), d
     return {"message": "zone deleted"}
 
 
-@geofencing_router.get("/alerts")
+@geofencing_router.get("/alerts", response_model=List[GeofenceAlertOut])
 async def list_alerts(
     acknowledged: Optional[bool] = Query(None),
     severity: Optional[str] = Query(None),
@@ -269,7 +346,7 @@ async def list_alerts(
     } for a in alerts]
 
 
-@geofencing_router.post("/alerts/{alert_id}/acknowledge")
+@geofencing_router.post("/alerts/{alert_id}/acknowledge", response_model=AlertAcknowledged)
 async def acknowledge_alert(alert_id: str, org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
     _uuid_or_404(alert_id)
     alert = (await db.execute(
@@ -284,6 +361,104 @@ async def acknowledge_alert(alert_id: str, org_id: UUID = Depends(get_tenant_org
 
 
 # ==================== Maintenance ====================
+
+
+class MaintenanceScheduleOut(BaseModel):
+    """`_schedule_out`. Ten keys, and the client adapter is now a bare spread — every one of
+    these reaches the panel under this name, so dropping any of them here blanks a card row."""
+
+    id: str
+    vehicleId: str
+    #: The same column as `vehicleId`. `maintenance_schedules` has no join to `vehicles`, and
+    #: the create form sends back what it was shown — which is why the handler accepts
+    #: `vehicleNumber` as an alias for `vehicleId` on the way in.
+    vehicleNumber: str
+    serviceType: str
+    description: Optional[str] = None
+    scheduledDate: Optional[str] = None
+    #: `due_odometer_miles` is a Float column — the odometer reading at which service falls
+    #: due, not the vehicle's present mileage.
+    dueMileage: Optional[float] = None
+    #: Not always the stored value: a scheduled row past its due date is reported `overdue`.
+    status: Optional[str] = None
+    #: A real column since migration 054. Absent from the wire before that, which is how the
+    #: client's `?? 'medium'` came to overwrite every operator's choice with a value that is
+    #: not even a member of its own union.
+    priority: str
+    estimatedCost: Optional[float] = None
+
+
+class RepairOrderOut(BaseModel):
+    id: str
+    vehicleId: str
+    title: str
+    #: Sent since the same fix that added it — `_history_out` on this table always read
+    #: `description` while `_order_out` did not send it, so one repair carried the
+    #: technician's detail in the completed-work view and lost it in the active list.
+    description: Optional[str] = None
+    status: Optional[str] = None
+    priority: Optional[str] = None
+    vendor: Optional[str] = None
+    cost: Optional[float] = None
+    category: Optional[str] = None
+    completedAt: Optional[str] = None
+    openedAt: Optional[str] = None
+
+
+class RepairOrderCreated(BaseModel):
+    """`POST /repair-orders` answers with two fields, unlike `POST /schedules` which answers
+    with the whole row. Declared as it is rather than widened: making the two consistent is a
+    behaviour change, and this pool declares what handlers do."""
+
+    id: str
+    status: Optional[str] = None
+
+
+class ServiceHistoryOut(BaseModel):
+    """A completed repair order projected onto the client's `ServiceHistoryEntry`."""
+
+    id: str
+    vehicleId: str
+    vehicleNumber: str
+    serviceType: str
+    description: str
+    serviceDate: Optional[str] = None
+    #: A literal 0. `repair_orders` records no odometer reading, and nothing else on this
+    #: path does either — the value is a placeholder the shape requires, not a measurement.
+    mileageAtService: int
+    cost: float
+    technician: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class MonthlyCost(BaseModel):
+    month: str
+    cost: float
+
+
+class MaintenanceStatisticsOut(BaseModel):
+    scheduledCount: int
+    overdueCount: int
+    activeRepairs: int
+    ytdCosts: float
+    costsByCategory: Dict[str, float] = Field(default_factory=dict)
+    monthlyBreakdown: List[MonthlyCost] = Field(default_factory=list)
+    monthlyAverage: float
+    #: `None` when NO outstanding schedule carries an estimate — a different fact from an
+    #: outstanding estimate of zero, which is what the panel used to display in a highlighted
+    #: box reading "Upcoming (Est.) $0" for a fleet whose upcoming work nobody had costed.
+    upcomingEstimated: Optional[float] = None
+
+
+class MaintenanceCostsOut(BaseModel):
+    ytdTotal: float
+    byCategory: Dict[str, float] = Field(default_factory=dict)
+    monthlyBreakdown: List[MonthlyCost] = Field(default_factory=list)
+    monthlyAverage: float
+    upcomingEstimated: Optional[float] = None
+    #: `None` for an empty fleet — not 0, and not a division by zero.
+    costPerVehicle: Optional[float] = None
+
 
 def _aware(d: Optional[datetime]) -> Optional[datetime]:
     """Coerce a datetime to aware-UTC so naive (sqlite) and aware (asyncpg
@@ -342,7 +517,7 @@ def _history_out(o: Any) -> Dict[str, Any]:
     }
 
 
-@maintenance_router.get("/schedules")
+@maintenance_router.get("/schedules", response_model=List[MaintenanceScheduleOut])
 async def list_schedules(
     status: Optional[str] = Query(None),
     vehicle_id: Optional[str] = Query(None),
@@ -371,7 +546,7 @@ async def list_schedules(
     return [_schedule_out(s, now) for s in schedules]
 
 
-@maintenance_router.get("/schedules/{schedule_id}")
+@maintenance_router.get("/schedules/{schedule_id}", response_model=MaintenanceScheduleOut)
 async def get_schedule(schedule_id: str, org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
     _uuid_or_404(schedule_id)
     s = (await db.execute(
@@ -383,7 +558,7 @@ async def get_schedule(schedule_id: str, org_id: UUID = Depends(get_tenant_org_i
     return _schedule_out(s)
 
 
-@maintenance_router.patch("/schedules/{schedule_id}")
+@maintenance_router.patch("/schedules/{schedule_id}", response_model=MaintenanceScheduleOut)
 async def update_schedule(schedule_id: str, payload: Dict[str, Any], org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
     _uuid_or_404(schedule_id)
     s = (await db.execute(
@@ -419,7 +594,7 @@ async def update_schedule(schedule_id: str, payload: Dict[str, Any], org_id: UUI
     return _schedule_out(s)
 
 
-@maintenance_router.get("/vehicles/{vehicle_id}/schedules")
+@maintenance_router.get("/vehicles/{vehicle_id}/schedules", response_model=List[MaintenanceScheduleOut])
 async def list_vehicle_schedules(vehicle_id: str, org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
     schedules = (await db.execute(
         _scope(select(MaintenanceSchedule).where(MaintenanceSchedule.vehicle_id == vehicle_id),
@@ -430,7 +605,7 @@ async def list_vehicle_schedules(vehicle_id: str, org_id: UUID = Depends(get_ten
     return [_schedule_out(s, now) for s in schedules]
 
 
-@maintenance_router.post("/schedules")
+@maintenance_router.post("/schedules", response_model=MaintenanceScheduleOut)
 async def create_schedule(
     payload: Dict[str, Any],
     org_id: UUID = Depends(get_tenant_org_id),
@@ -470,7 +645,7 @@ async def create_schedule(
     return _schedule_out(schedule)
 
 
-@maintenance_router.get("/repair-orders")
+@maintenance_router.get("/repair-orders", response_model=List[RepairOrderOut])
 async def list_repair_orders(
     status: Optional[str] = Query(None),
     org_id: UUID = Depends(get_tenant_org_id),
@@ -485,7 +660,7 @@ async def list_repair_orders(
     return [_order_out(o) for o in orders]
 
 
-@maintenance_router.get("/repair-orders/{order_id}")
+@maintenance_router.get("/repair-orders/{order_id}", response_model=RepairOrderOut)
 async def get_repair_order(order_id: str, org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
     _uuid_or_404(order_id)
     o = (await db.execute(
@@ -496,7 +671,7 @@ async def get_repair_order(order_id: str, org_id: UUID = Depends(get_tenant_org_
     return _order_out(o)
 
 
-@maintenance_router.patch("/repair-orders/{order_id}")
+@maintenance_router.patch("/repair-orders/{order_id}", response_model=RepairOrderOut)
 async def update_repair_order(order_id: str, payload: Dict[str, Any], org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
     o = (await db.execute(
         _scope(select(RepairOrder).where(RepairOrder.id == order_id), RepairOrder, org_id)
@@ -515,7 +690,7 @@ async def update_repair_order(order_id: str, payload: Dict[str, Any], org_id: UU
     return _order_out(o)
 
 
-@maintenance_router.get("/vehicles/{vehicle_id}/repair-orders")
+@maintenance_router.get("/vehicles/{vehicle_id}/repair-orders", response_model=List[RepairOrderOut])
 async def list_vehicle_repair_orders(vehicle_id: str, org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
     orders = (await db.execute(
         _scope(select(RepairOrder).where(RepairOrder.vehicle_id == vehicle_id), RepairOrder, org_id)
@@ -524,7 +699,7 @@ async def list_vehicle_repair_orders(vehicle_id: str, org_id: UUID = Depends(get
     return [_order_out(o) for o in orders]
 
 
-@maintenance_router.get("/vehicles/{vehicle_id}/history")
+@maintenance_router.get("/vehicles/{vehicle_id}/history", response_model=List[ServiceHistoryOut])
 async def vehicle_service_history(
     vehicle_id: str,
     org_id: UUID = Depends(get_tenant_org_id),
@@ -554,7 +729,7 @@ async def vehicle_service_history(
     return [_history_out(o) for o in orders]
 
 
-@maintenance_router.post("/history")
+@maintenance_router.post("/history", response_model=ServiceHistoryOut)
 async def add_service_history(
     payload: Dict[str, Any],
     org_id: UUID = Depends(get_tenant_org_id),
@@ -585,7 +760,7 @@ async def add_service_history(
     return _history_out(order)
 
 
-@maintenance_router.post("/repair-orders")
+@maintenance_router.post("/repair-orders", response_model=RepairOrderCreated)
 async def create_repair_order(
     payload: Dict[str, Any],
     org_id: UUID = Depends(get_tenant_org_id),
@@ -675,14 +850,14 @@ def summarize_maintenance(schedules: List[Any], orders: List[Any], now: Optional
     }
 
 
-@maintenance_router.get("/statistics")
+@maintenance_router.get("/statistics", response_model=MaintenanceStatisticsOut)
 async def maintenance_statistics(org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
     schedules = (await db.execute(_scope(select(MaintenanceSchedule), MaintenanceSchedule, org_id))).scalars().all()
     orders = (await db.execute(_scope(select(RepairOrder), RepairOrder, org_id))).scalars().all()
     return summarize_maintenance(schedules, orders)
 
 
-@maintenance_router.get("/costs")
+@maintenance_router.get("/costs", response_model=MaintenanceCostsOut)
 async def maintenance_costs(org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
     """The maintenance costs tab.
 
@@ -724,7 +899,40 @@ async def maintenance_costs(org_id: UUID = Depends(get_tenant_org_id), db: Async
 
 # ==================== Logistics aggregates ====================
 
-@logistics_router.get("/delivery-efficiency")
+
+class DeliveryEfficiencyOut(BaseModel):
+    """`compute_delivery_efficiency` in `transportation.py`, declared at the route that
+    serves it.
+
+    THE FIELD NAMES ARE THE FUNCTION'S, NOT THE CLIENT'S. `transportation.ts` types this call
+    as `{ onTimeRate, avgTransitTime, totalDeliveries, lateDeliveries }` and three of those
+    four names have never been on the wire — the aggregate sends `avgTransitHours`,
+    `deliveredToday` and `totalDelivered`. Declaring the client's names here would have made
+    the schema agree with the type and disagree with the payload, which is the wrong of the
+    two to fix from this side. Recorded in the burn-down doc rather than silently reconciled.
+    """
+
+    #: A RATIO, 0..1 — `round(on_time / delivered, 4)`, and 1.0 for an empty fleet. The
+    #: client's mock path computes a PERCENTAGE for the same field.
+    onTimeRate: float
+    avgTransitHours: float
+    deliveredToday: int
+    totalDelivered: int
+
+
+class LogisticsComplianceSummaryOut(BaseModel):
+    totalCarriers: int
+    ctpatCertified: int
+    activeViolations: int
+    safetyAlerts: int
+    #: So a zero can be read. `activeViolations: 0` means something different depending on
+    #: whether it was computed over the whole fleet or over nobody, and the tile paints zero
+    #: green either way.
+    driversAssessed: int
+    driversUnassessable: int
+
+
+@logistics_router.get("/delivery-efficiency", response_model=DeliveryEfficiencyOut)
 async def delivery_efficiency(db: AsyncSession = Depends(get_tenant_db)):
     from app.api.transportation import compute_delivery_efficiency
 
@@ -732,7 +940,7 @@ async def delivery_efficiency(db: AsyncSession = Depends(get_tenant_db)):
     return compute_delivery_efficiency(shipments)
 
 
-@logistics_router.get("/compliance/summary")
+@logistics_router.get("/compliance/summary", response_model=LogisticsComplianceSummaryOut)
 async def compliance_summary(db: AsyncSession = Depends(get_tenant_db)):
     """Org-wide carrier/driver compliance rollup for the Compliance tab."""
     carriers = (await db.execute(select(Carrier).where(Carrier.is_active == True))).scalars().all()  # noqa: E712

@@ -496,8 +496,9 @@ produce.
 | **FS-254** | `audit` ×5 declared. |
 | **FS-253** | `compliance_reports` ×7 + `compliance` ×8. Seven needed only pointing at models the code already returned. |
 | **FS-255** | `bulk_operations` ×6, `data_residency` ×6, `feature_flags` ×6. |
-| **FS-256** *(part)* | `geotab` ×7. `fleet_logistics` remains. |
-| *(pre-plan)* | The coverage ratchet, the shared route walker, the AST returned-keys sweep, and 105 routes declared across `fleet_health`, `notifications`, `dashboard_analytics`, `exports`, `query_performance`, `gdpr`, `data_retention`, `audit`, `compliance`, `compliance_reports`, `bulk_operations`. **250 → 139 undeclared.** |
+| **FS-256** | `geotab` ×7. |
+| **FS-257** | `fleet_logistics` ×23 — geofencing 7, maintenance 14, logistics 2. Every route in the file builds its payload through a helper, so none was visible to the AST sweep; six shaper-level assertions were added to `test_declared_models_do_not_drop_fields.py` to cover them. Found two client/server name mismatches on `/logistics/delivery-efficiency` and on polygon zones — recorded in the burn-down doc, not fixed here (both are frontend-side). |
+| *(pre-plan)* | The coverage ratchet, the shared route walker, the AST returned-keys sweep, and 105 routes declared across `fleet_health`, `notifications`, `dashboard_analytics`, `exports`, `query_performance`, `gdpr`, `data_retention`, `audit`, `compliance`, `compliance_reports`, `bulk_operations`. **250 → 116 undeclared.** |
 
 **FS-284b changed how the rest of this plan should be executed.** It was written as
 a testing item and it belongs first, ahead of Wave A: every `response_model` batch
