@@ -118,11 +118,27 @@ def parse_asset_csv(raw: bytes) -> list[dict]:
     except UnicodeDecodeError:
         raise BulkOperationError("CSV must be UTF-8 encoded")
 
+    # `csv.Error` IS a structural problem, which is what this function's contract above
+    # says it converts. It was not caught, so two ordinary malformed uploads escaped as
+    # 500s where the endpoint documents a 400:
+    #
+    #   * a field over csv's 131072-character limit -> "field larger than field limit"
+    #   * a bare CR inside an unquoted field        -> "new-line character seen in
+    #                                                   unquoted field"
+    #
+    # Neither is a server fault; both are a file the caller should be told to fix. Found
+    # by the contract gate (FS-259) driving generated multipart bodies at
+    # `POST /bulk/assets/import`. The decode above was already handled this way — this
+    # extends the same treatment to the parse itself.
     reader = csv.DictReader(io.StringIO(text_data))
-    if not reader.fieldnames:
+    try:
+        fieldnames = reader.fieldnames
+    except csv.Error as exc:
+        raise BulkOperationError(f"CSV could not be parsed: {exc}")
+    if not fieldnames:
         raise BulkOperationError("CSV is empty or missing a header row")
 
-    headers = {(h or "").strip() for h in reader.fieldnames}
+    headers = {(h or "").strip() for h in fieldnames}
     headers.discard("")
     unknown = headers - ASSET_CSV_COLUMNS
     if unknown:
@@ -134,14 +150,19 @@ def parse_asset_csv(raw: bytes) -> list[dict]:
         raise BulkOperationError("CSV must contain at least an 'id' or 'name' column")
 
     rows: list[dict] = []
-    for raw_row in reader:
-        row = {
-            (k or "").strip(): (v.strip() if isinstance(v, str) else v)
-            for k, v in raw_row.items()
-            if k
-        }
-        if any(row.values()):  # skip blank lines
-            rows.append(row)
+    try:
+        for raw_row in reader:
+            row = {
+                (k or "").strip(): (v.strip() if isinstance(v, str) else v)
+                for k, v in raw_row.items()
+                if k
+            }
+            if any(row.values()):  # skip blank lines
+                rows.append(row)
+    except csv.Error as exc:
+        # The body rows raise separately from the header: a file can have a clean header
+        # and a malformed row 900, and that is still the caller's file, not a 500.
+        raise BulkOperationError(f"CSV could not be parsed: {exc}")
 
     if not rows:
         raise BulkOperationError("CSV has a header but no data rows")

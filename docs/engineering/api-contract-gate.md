@@ -281,7 +281,7 @@ input reaching the database — and all are reproducible from the run artefacts:
 | `POST /api/v1/fleet/releases` | `{"config_bundle": "0", ...}`. **Not an application defect**: `OTA_SIGNING_PRIVATE_KEY_PATH` is unset, so `sign_bundle` cannot load a key. Environmental, like the 503s, and OTA is another dev's lane. |
 | ~~`POST /api/v1/transportation/load-plans`~~ | **Fixed.** `load_plans.planned_by` is `Column(String(36))`, not a `UUIDColumn`, so a UUID object was bound to a VARCHAR and asyncpg raised `expected str, got UUID`. |
 | ~~`POST /api/v1/twin/optimize`~~ | **Fixed by the handler below** — its three `model_validator`s all raise `ValueError`. |
-| `POST /api/v1/bulk/assets/import` | a generated multipart body. Not yet diagnosed. |
+| ~~`POST /api/v1/bulk/assets/import`~~ | **Fixed.** `parse_asset_csv` converted a bad *encoding* into `BulkOperationError` (→ 400) but let `csv.Error` through, so an oversized field or a bare CR escaped as a 500 — against its own docstring's contract. |
 | ~~`PUT /api/v1/data-retention/policies/{metric_name}`~~ | **Fixed by the handler below.** Not the endpoint at all. |
 
 Three more (`/api/v1/logistics/logistics/*`) are in `logistics_correlation.py`, which is

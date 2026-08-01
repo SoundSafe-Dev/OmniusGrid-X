@@ -62,6 +62,37 @@ def test_parse_csv_rejects_non_utf8():
         parse_asset_csv(b"name\n\xff\xfe\x00bad")
 
 
+# A MALFORMED CSV IS THE CALLER'S FILE, NOT A SERVER FAULT (FS-259).
+#
+# `parse_asset_csv` documents that it converts structural problems into
+# `BulkOperationError` so the endpoint can answer 400 — and it did that for a bad
+# encoding while letting `csv.Error` straight through. Two ordinary malformed uploads
+# therefore reached `POST /bulk/assets/import` as 500s. Found by the contract gate
+# driving generated multipart bodies at it.
+def test_parse_csv_rejects_an_oversized_field():
+    """csv caps a field at 131072 characters and raises `_csv.Error` past it."""
+    with pytest.raises(BulkOperationError):
+        parse_asset_csv(b"name\n" + b"a" * 200_000 + b"\n")
+
+
+def test_parse_csv_rejects_a_bare_carriage_return():
+    """"new-line character seen in unquoted field" — a Classic-Mac line ending."""
+    with pytest.raises(BulkOperationError):
+        parse_asset_csv(b"name\rPump\r")
+
+
+def test_a_malformed_row_after_a_clean_header_is_still_a_400():
+    """The header and the body rows raise from different places, so both are wrapped."""
+    with pytest.raises(BulkOperationError):
+        parse_asset_csv(b"name,vendor\nPump,Acme\n" + b"b" * 200_000 + b"\n")
+
+
+def test_a_valid_csv_still_parses_after_the_guards():
+    """The fix must not turn a good file into a rejection."""
+    rows = parse_asset_csv(b"name,vendor\nPress-1,Acme\nPress-2,Acme\n")
+    assert [r["name"] for r in rows] == ["Press-1", "Press-2"]
+
+
 def test_parse_csv_skips_blank_lines():
     rows = parse_asset_csv(b"name\nA\n\n\nB\n")
     assert [r["name"] for r in rows] == ["A", "B"]
