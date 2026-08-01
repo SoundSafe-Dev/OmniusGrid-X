@@ -748,6 +748,35 @@ string when the answer was 3. Three times now the tool was broken and the clean 
 believed. **A sweep that finds nothing must prove it can see its subject** — every guard written
 today carries a floor test that fails if the traversal stops working.
 
+## The demo and CI paths (2026-08-01, last batch)
+
+| | |
+|---|---|
+| **FS-388** | **The documented skip-login demo returned 401.** `make demo` and `docs/DEMO.md` both said `VITE_USE_MOCK=false npm run dev` + "login: dev / any password". The bypass has *two* gates — `ALLOW_DEV_TOKEN` (backend) and `VITE_DEV_MODE` (frontend, `Login.tsx` requires `import.meta.env.DEV && VITE_DEV_MODE === 'true'`) — and the instructions named one. Now `make demo-ui`, with a guard that reads the requirement off `Login.tsx` and checks DEMO.md **per line** |
+| **FS-389** | `alex` exists on origin and matches **no** `on.push.branches` pattern, so that branch runs **zero** push CI |
+| **FS-374** | **Recorded premise was partly wrong.** "ERP regressions land on main before anything vendor-facing runs" — but push covers `hamad/**`, `hridyansh/**`, `feature/**`, `htreinen`, `HARSH-CONTRIBUTION`, so most work *is* checked on branch push. The real hole only appears when combined with FS-389: `alex`'s PR is its only gate, and pull_request was the event the ERP jobs skipped |
+
+**FS-388 is the most instructive of the whole session.** The frontend gate was *tightened* at
+some point and that change was correct — `Login.test.tsx` asserts a production bundle cannot
+enable the bypass. Nothing connected it to the two places that tell a human how to start the
+demo. So a security improvement silently broke the demo, and **neither side could tell**: the
+frontend test passed, the backend test passed, and the only thing joining them was prose.
+Wherever a security boundary tightens, whatever documents crossing it legitimately has to move
+in the same commit or it becomes a lie on a delay.
+
+**An allowlist of personal branch names is the underlying FS-389 problem**, and it has now been
+wrong in both directions — the workflow's own comment records `develop` being listed while never
+existing; `alex` is the mirror. It fails *silently*: no job reports "this branch has no gates",
+the signal is an absence, and nobody reads a workflow file to see whether their branch is in it.
+
+### Still open
+
+- **The RAG-branch history rewrite is done and verified but NOT pushed.** 360/360 commits,
+  all author/date/subject metadata identical, tip tree byte-for-byte identical,
+  the three original blobs gone. The force-push to `backup` is blocked by the permission
+  classifier and needs a human. Pre-rewrite state is pinned at
+  `refs/qa-safety/rag-branch-pre-rewrite` → `ee19defb`, so nothing is at risk either way.
+
 ## Not a defect, recorded so it is not re-investigated
 
 - `model_registry_storage: "error: storage root missing and not creatable"` is accurate
