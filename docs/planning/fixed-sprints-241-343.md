@@ -494,7 +494,9 @@ produce.
 |---|---|
 | **FS-284b** | 393 tests unblocked. `make test` went 1975 → 2715. Found and fixed two 500s introduced by the FS-253… work — a float band bound typed `int`, a numeric priority typed `str`. |
 | **FS-254** | `audit` ×5 declared. |
-| *(pre-plan)* | The coverage ratchet, the shared route walker, the AST returned-keys sweep, and 65 routes declared across `fleet_health`, `notifications`, `dashboard_analytics`, `exports`, `query_performance`, `gdpr`, `data_retention`, `audit`. **250 → 179 undeclared.** |
+| **FS-253** | `compliance_reports` ×7 + `compliance` ×8. Seven needed only pointing at models the code already returned. |
+| **FS-255** *(part)* | `bulk_operations` ×6. `data_residency` and `feature_flags` remain. |
+| *(pre-plan)* | The coverage ratchet, the shared route walker, the AST returned-keys sweep, and 86 routes declared across `fleet_health`, `notifications`, `dashboard_analytics`, `exports`, `query_performance`, `gdpr`, `data_retention`, `audit`, `compliance`, `compliance_reports`, `bulk_operations`. **250 → 158 undeclared.** |
 
 **FS-284b changed how the rest of this plan should be executed.** It was written as
 a testing item and it belongs first, ahead of Wave A: every `response_model` batch
