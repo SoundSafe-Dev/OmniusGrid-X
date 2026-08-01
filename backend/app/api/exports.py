@@ -783,7 +783,36 @@ async def delete_scheduled_export(
 
 
 # --- Telemetry (CSV) ----------------------------------------------------------
-@router.get("/telemetry/{asset_id}", responses={200: {"content": {"text/csv": {}}}}, summary="Export telemetry as CSV (date-range filtered)")
+# THE 202 IS DECLARED BECAUSE IT HAPPENS (FS-387). This route serves CSV inline for a
+# normal range and switches to an ASYNC JOB above SYNC_ROW_CAP rows, returning
+# `202 application/json` with a status_url and a download_url. Only `200: text/csv` was
+# declared, so a generated client — or anyone reading the contract — saw a route that
+# could only ever return CSV, and met a JSON body it had no type for on exactly the large
+# exports most likely to need the job-polling path.
+#
+# Found by a media-type sweep on 2026-08-01 (tests/test_declared_media_types_are_honest.py).
+# THE 202 IS DECLARED BECAUSE IT HAPPENS (FS-387). This route serves CSV inline for a
+# normal range and switches to an ASYNC JOB above SYNC_ROW_CAP rows, returning
+# `202 application/json` with a status_url and a download_url. Only `200: text/csv` was
+# declared, so a generated client — or anyone reading the contract — saw a route that
+# could only ever return CSV, and met a JSON body it had no type for on exactly the large
+# exports most likely to need the job-polling path.
+#
+# Found by a media-type sweep on 2026-08-01 (tests/test_declared_media_types_are_honest.py).
+@router.get(
+    "/telemetry/{asset_id}",
+    responses={
+        200: {"content": {"text/csv": {}}},
+        202: {
+            "content": {"application/json": {}},
+            "description": (
+                "The range exceeds the synchronous row cap, so the export was queued. "
+                "Poll `status_url`, then fetch `download_url`."
+            ),
+        },
+    },
+    summary="Export telemetry as CSV (date-range filtered)",
+)
 async def export_telemetry_csv(
     asset_id: UUID,
     background_tasks: BackgroundTasks,
