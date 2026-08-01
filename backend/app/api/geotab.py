@@ -16,7 +16,7 @@ from app.api.auth import get_current_active_user
 from app.core.config import settings
 from app.db.database import get_db
 from app.middleware.tenant_isolation import get_tenant_db, get_tenant_org_id
-from app.services.geotab_service import geotab_service
+from app.services.geotab_service import geotab_service, simulated_provenance
 
 # Read/query endpoints require an authenticated user.
 router = APIRouter(prefix="/geotab", tags=["geotab"],
@@ -29,11 +29,19 @@ router = APIRouter(prefix="/geotab", tags=["geotab"],
 # declared and the records are not — the service owns that structure, and a fixed
 # model here would silently drop whatever it adds.
 #
-# ⚠ SEPARATELY: `geotab_service` has 16 `random.uniform` call sites, including the
-# hours-of-service figures below, which are DOT-regulated. Declaring a schema for
-# a generated number does not make it a measurement. See pool #44 / FS-267 — the
-# fix is to label the data as simulated or gate it behind a flag, and it is NOT
-# what this change does.
+# ⚠ RESOLVED 2026-08-01 (FS-267), and the warning is kept because it records why.
+# `geotab_service` fabricates with ~30 `random.*` call sites, including the
+# hours-of-service figures below, which are DOT-regulated. Declaring a schema for a
+# generated number does not make it a measurement — and for a while the schema work
+# made these surfaces read as MORE trustworthy while nothing about the data changed.
+#
+# There were two defences and they covered different sets. `_require_simulated` (FS-25)
+# stops fabricated telematics reaching a live deployment; `simulated_provenance` (FS-233)
+# tells a consumer of the demo data what it is holding. Four functions were gated and
+# only two were stamped, so `get_exceptions` (which can emit `hos_violation`) and
+# `get_device_diagnostics` (DTC codes, cold-chain reefer temperatures) shipped unlabelled.
+# Every gated function is now stamped, and
+# `tests/test_simulated_data_says_so.py` fails the build if a new one is not.
 
 
 class GeotabExceptionsResponse(BaseModel):
@@ -41,6 +49,13 @@ class GeotabExceptionsResponse(BaseModel):
     hours_back: int
     exception_count: int
     exceptions: List[Dict[str, Any]]
+    #: Stamped on the ENVELOPE as well as on each item, because the generator draws
+    #: `random.randint(0, 10)` records and an empty list would otherwise carry no
+    #: provenance at all — leaving a simulated "no exceptions today" indistinguishable
+    #: from a measured one. That is the reading an operator is most likely to trust.
+    simulated: bool = True
+    data_source: str = "geotab_simulator"
+    warning: Optional[str] = None
 
 
 class GeotabWebhookAck(BaseModel):
@@ -170,7 +185,11 @@ async def get_geotab_exceptions(
             "organization_id": str(organization_id) if organization_id else None,
             "hours_back": hours_back,
             "exception_count": len(exceptions),
-            "exceptions": exceptions
+            "exceptions": exceptions,
+            # The whole handler is unreachable unless GEOTAB_SIMULATED is set —
+            # `get_exceptions` calls `_require_simulated` and raises otherwise — so the
+            # envelope is simulated by construction, empty list or not.
+            **simulated_provenance(),
         }
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))

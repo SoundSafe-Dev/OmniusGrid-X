@@ -34,8 +34,12 @@ def _require_simulated(feature: str) -> None:
         )
 
 
-def _simulated_provenance() -> Dict[str, Any]:
-    """Provenance stamped into every simulated GeoTab payload (FS-233).
+def simulated_provenance() -> Dict[str, Any]:
+    """Provenance stamped into every simulated GeoTab payload (FS-233, widened FS-267).
+
+    PUBLIC, because the exceptions ENVELOPE is built in `app/api/geotab.py` rather than
+    here — see the note on `get_exceptions` below for why an envelope stamp is needed as
+    well as a per-item one.
 
     `_require_simulated` already stops fabricated telematics reaching a live
     deployment — that gate landed in FS-25. What was still missing is that the
@@ -115,9 +119,21 @@ class GeoTabService:
                     "longitude": round(random.uniform(-88.0, -86.0), 6)
                 },
                 "details": {
+                    # UNCORRELATED. `value` and the `threshold` it supposedly breached are
+                    # two independent draws, so a "speeding" record can read 12 against a
+                    # limit of 87. Left as-is deliberately: making the numbers agree would
+                    # make fabricated data look MORE plausible, which is the opposite of
+                    # what this endpoint needs.
                     "value": round(random.uniform(0, 100), 2),
                     "threshold": round(random.uniform(0, 100), 2)
-                }
+                },
+                # STAMPED PER ITEM, not just on the envelope. `exception_type` can be
+                # "hos_violation", and a single exception is extracted and rendered as a row
+                # on its own — a consumer holding one record must be able to tell. The
+                # envelope is stamped as well (app/api/geotab.py), because
+                # `random.randint(0, 10)` can return 0 and an empty simulated list would
+                # otherwise carry no provenance anywhere.
+                **simulated_provenance(),
             })
         
         return exceptions
@@ -153,7 +169,14 @@ class GeoTabService:
                 "temperature_actual": round(random.uniform(-15, 10), 1),
                 "status": random.choice(["normal", "warning", "critical"]),
                 "defrost_cycle": random.choice([True, False])
-            } if device_id in ["DEV-088", "DEV-0044"] else None
+            } if device_id in ["DEV-088", "DEV-0044"] else None,
+            # DTC codes and cold-chain temperatures are the same class of actionable figure
+            # as HOS: a reefer reading drives a decision about a load, and a check-engine
+            # code drives a decision about a vehicle. This function was gated by
+            # `_require_simulated` from FS-25 and never stamped by FS-233 — the gate stops
+            # it reaching a live deployment, the stamp is what lets a consumer of the demo
+            # data tell. Both are needed.
+            **simulated_provenance(),
         }
     
     async def handle_webhook(
@@ -391,7 +414,7 @@ class GeoTabService:
             "next_break_required": (
                 datetime.now(timezone.utc) + timedelta(hours=random.randint(0, 8))
             ).isoformat(),
-            **_simulated_provenance(),
+            **simulated_provenance(),
         }
     
     async def get_devices(
@@ -499,6 +522,13 @@ class GeoTabService:
         if device_id not in known_ids:
             raise ValueError(f"Device {device_id} not found")
 
+        # CONDITIONAL, unlike every other stamp in this file. This method PREFERS real
+        # data — the most recent trip endpoint, then the most recent exception fix — and
+        # only invents a position when neither exists. Stamping unconditionally would
+        # label a genuine GPS fix as simulated, which is a different falsehood in the
+        # other direction, and one that would teach a consumer to ignore the flag.
+        invented = False
+
         if location is None:
             if not settings.GEOTAB_SIMULATED:
                 # Live mode: no real fix on record -> 404, never an invented one.
@@ -508,6 +538,7 @@ class GeoTabService:
                 "longitude": round(random.uniform(-88.0, -86.0), 6),
             }
             timestamp = datetime.now(timezone.utc)
+            invented = True
 
         return {
             "latitude": location.get("latitude"),
@@ -516,6 +547,10 @@ class GeoTabService:
             "heading": location.get("heading"),
             "timestamp": (timestamp or datetime.now(timezone.utc)).isoformat(),
             "address": location.get("address"),
+            # A point inside a US Midwest bounding box, drawn fresh on every call. Without
+            # this a map cannot tell it from a fix, and the device appears to be parked in
+            # a field in Illinois.
+            **(simulated_provenance() if invented else {}),
         }
 
     async def get_device_trips(
@@ -642,7 +677,7 @@ class GeoTabService:
             "hos_violations_today": random.randint(0, 5),
             "average_fuel_efficiency": round(random.uniform(6, 12), 1),
             "total_miles_today": round(random.uniform(1000, 10000), 0),
-            **_simulated_provenance(),
+            **simulated_provenance(),
         }
 
 

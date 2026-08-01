@@ -203,10 +203,21 @@ class TestKnownInstancesStayFixed:
 
     def test_simulated_geotab_payloads_declare_themselves(self):
         """HOS figures are DOT-regulated. A response carrying invented
-        `drive_hours_today` must not be indistinguishable from a measured one."""
-        from app.services.geotab_service import _simulated_provenance
+        `drive_hours_today` must not be indistinguishable from a measured one.
 
-        provenance = _simulated_provenance()
+        Renamed from `_simulated_provenance` to `simulated_provenance` in FS-267, when the
+        exceptions ENVELOPE — built in `app/api/geotab.py`, not in the service — also
+        needed to stamp itself.
+
+        That sprint found the wider hole this assertion cannot see: the helper existed and
+        was correct, and two of the four functions that refuse to run outside simulated
+        mode never called it. Checking that the stamp is well-formed says nothing about
+        whether it is applied. The pairing sweep lives in
+        `tests/test_simulated_data_says_so.py`.
+        """
+        from app.services.geotab_service import simulated_provenance
+
+        provenance = simulated_provenance()
         assert provenance["simulated"] is True
         assert "compliance" in provenance["warning"].lower()
 

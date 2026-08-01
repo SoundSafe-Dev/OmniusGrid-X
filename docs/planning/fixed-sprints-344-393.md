@@ -70,18 +70,41 @@ for placeholder secrets.
   Cold-chain temperatures and DTC codes are the same class of actionable figure as HOS.
   *Done when:* every `_require_simulated` call site has a matching `_simulated_provenance`
   stamp, **and a test fails if a new one does not**.
+  ✅ **DONE 2026-08-01.** All four gated functions stamp; the exceptions envelope stamps too
+  (the generator can draw zero records, and an empty simulated list would otherwise carry no
+  provenance at all — the reading an operator is most likely to trust). `simulated_provenance`
+  is now public because the envelope is built in the API layer.
+  `tests/test_simulated_data_says_so.py` sweeps the pairing by AST — not by grep, because the
+  docstrings here quote both helper names while explaining the defect, and this repo has
+  already had a sweep flag the comment describing its own fix.
 
-- **FS-344 · `GEOTAB_SIMULATED` defaults to `True`** · S
-  `config.py:307`. A production validator at 386-387 raises if it is still true in production,
-  so the entire exposure rests on that one validator running. Unsafe-by-default with a single
-  guard is a different risk posture from safe-by-default.
-  *Done when:* the default is `False`, or the validator's coverage is proven by a test that
-  fails when it is removed.
+- **FS-344 · `GEOTAB_SIMULATED` defaults to `True`** · S — **ALREADY SATISFIED, corrected
+  in place 2026-08-01, on the first day of this plan's own life.**
+  `config.py:307`; a production validator at 386-387 raises if it is still true in production.
+  This entry offered two ways to close it — flip the default, or prove the validator's coverage
+  with a test that fails when it is removed. **The second was already true**:
+  `test_config_validation.py:28` asserts it, and mutation-checking confirmed the test fails
+  when the validator line is deleted.
+
+  Flipping the default is the wrong half to take: `GEOTAB_SIMULATED=True` is what makes the
+  documented offline demo work, and the README's claim that the whole platform demos with no
+  live services depends on it.
+
+  **Recorded rather than quietly ticked off, because this document was written the same
+  morning and made the same mistake it was created to prevent** — the item came from an
+  evidence report saying "the exposure rests entirely on one production validator", and I did
+  not check whether that validator was tested before writing the sprint. Verify the premise.
+  A second assertion was added to `tests/test_simulated_data_says_so.py` anyway, beside the
+  provenance sweep, because the default is what makes the validator load-bearing.
 
 - **FS-345 · A simulated position is indistinguishable from a fix** · S
   `geotab_service.py:502-519`. `get_device_location` invents a lat/lon inside a US Midwest
   bounding box when no real fix exists. Correctly gated at 503 — and the returned dict carries
   no provenance, so a consumer cannot tell.
+  ✅ **DONE 2026-08-01**, and the stamp here is **conditional**, unlike every other one in the
+  file. This method prefers a real trip endpoint or exception fix; stamping unconditionally
+  would label a genuine GPS fix as simulated — a falsehood in the other direction, and one
+  that would teach a consumer to ignore the flag. Both branches are asserted.
 
 - **FS-346 · The compliance report states three figures it does not compute** · M
   `compliance.py:406` — `"active_assets": total_assets  # Simplified for now`. The active
