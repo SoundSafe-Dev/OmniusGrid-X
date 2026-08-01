@@ -163,7 +163,20 @@ The pipeline is complete and now has one consumer. These are the gaps that consu
   operator-gated stacks in a documented step, with the four k8s gates still green.
 
 - **FS-262 · Probes, limits and `securityContext` for the seven workloads** · M — pool #54
-  Four workers, otel and jaeger. Without probes a wedged worker is never restarted.
+  ~~Four workers, otel and jaeger. Without probes a wedged worker is never restarted.~~
+  **CORRECTED IN PLACE 2026-08-01 — already delivered**, mostly by FS-214, which gave the
+  workers `/healthz` and `/readyz` through `app/workers/health_server.py`. All six
+  deployments plus the otel collector carry probes, resources and `securityContext`;
+  verified that every probe port resolves to a declared `containerPort`, not merely that
+  the stanzas exist.
+
+  **Added the guard that check implies:** `tests/k8s/check_probe_ports.py`, wired into the
+  `k8s-manifests` job. It asserts both halves against the BUILT overlays — every workload
+  has a probe, and every probe addresses a port its container declares. `kubeconform`
+  cannot catch the second: a probe naming a nonexistent port is schema-valid YAML, and the
+  kubelet then restart-loops a healthy workload, so a wrong probe is worse than no probe
+  because it reads like the fix. 108 probes across base and three overlays, all resolving;
+  mutation-verified against both failure modes. *Done.*
 
 - **FS-263 · Placeholder-secret gate** · M — pool #53
   ~~`base/object-store.yaml` and the two monitoring manifests ship DEV-ONLY credentials, honestly

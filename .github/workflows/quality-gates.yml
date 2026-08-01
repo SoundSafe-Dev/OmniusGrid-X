@@ -442,6 +442,14 @@ jobs:
                   -kubernetes-version 1.29.0
             echo "::endgroup::"
           done
+      - name: Probes exist and address a real port
+        run: |
+          pip install pyyaml
+          # kubeconform cannot catch this: a probe naming a port the container does not
+          # declare is schema-valid YAML. The kubelet gets connection refused and
+          # restart-loops the workload — so a wrong probe is worse than no probe, because
+          # it reads like the fix.
+          ./tests/k8s/check_probe_ports.py
       - name: No placeholder credentials reachable in staging or production
         run: |
           pip install pyyaml
