@@ -131,10 +131,21 @@ for placeholder secrets.
   which is the standard the version string does not meet.
 
 - **FS-350 · Demo recommendations are loaded into the live queue** · S
-  `strategic_engine.py:118-119` — `self.pending_recommendations.extend(demos)` with an
-  info-level log. Currently masked only by the fact that nothing starts `strategic_engine`
-  (see the service-lifecycle record in `defect-class-sweeps.md`), which means this becomes live
-  the moment that changes.
+  ~~`strategic_engine.py:118-119` … masked only by the fact that nothing starts
+  `strategic_engine`.~~ **PREMISE CORRECTED 2026-08-01 — the gate exists.** `main.py:87`
+  wraps the call in `if settings.ALLOW_DEV_TOKEN:`, the same flag as the dev-token auth
+  bypass, which `validate_settings` refuses in production. The evidence report that produced
+  this item read the service and not the caller.
+
+  ✅ **DONE**, because what was genuinely missing is that **nothing tested the gate**. The
+  exposure rested on one `if` that no assertion covered. `test_simulated_data_says_so.py` now
+  fails if the call is not lexically inside a test of `ALLOW_DEV_TOKEN` — mutation-verified by
+  replacing the condition with `if True`. Checked by AST rather than by running the lifespan
+  twice, which would start the broker, the schedulers and the error tracker to prove one `if`.
+
+  *Third premise in this document to need correcting on its first day* — after FS-344 and
+  FS-352. All three came from evidence reports that were right about the code they read and
+  silent about the guard one layer out. **Read the caller, not just the callee.**
 
 - **FS-351 · Critical-risk alerts are logged, never dispatched** · M
   `correlation_registry_integration.py:1049-1050` — `# This would integrate with the

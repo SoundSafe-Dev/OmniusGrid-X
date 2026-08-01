@@ -178,6 +178,59 @@ class TestTheGateItselfStillHolds:
                 device_id="DEV-001", organization_id=None
             )
 
+    def test_demo_recommendations_are_gated_on_the_dev_flag(self):
+        """`strategic_engine.load_demo_recommendations` seeds three invented strategic
+        recommendations into the engine's pending queue, so the approve/reject workflow is
+        demo-able offline.
+
+        It is gated in `main.py` by `if settings.ALLOW_DEV_TOKEN:` — the same flag as the
+        dev-token auth bypass, which `validate_settings` refuses in production. **Nothing
+        tested that gate**, so this asserts the guard rather than the intention: the call
+        must be lexically inside a test of that flag.
+
+        Checked by AST because the alternative — running the lifespan twice with the flag
+        flipped — starts the broker, the schedulers and the error tracker, which is a great
+        deal of machinery to prove one `if`.
+        """
+        import ast
+        import pathlib
+
+        main_py = pathlib.Path(__file__).resolve().parents[1] / "app" / "main.py"
+        tree = ast.parse(main_py.read_text())
+
+        guarded = False
+        seen_anywhere = False
+        for node in ast.walk(tree):
+            for inner in ast.walk(node):
+                if not isinstance(inner, ast.Call):
+                    continue
+                func = inner.func
+                if not (isinstance(func, ast.Attribute)
+                        and func.attr == "load_demo_recommendations"):
+                    continue
+                seen_anywhere = True
+                if isinstance(node, ast.If) and "ALLOW_DEV_TOKEN" in ast.unparse(node.test):
+                    guarded = True
+
+        assert seen_anywhere, (
+            "load_demo_recommendations is no longer called from main.py — if the demo seed "
+            "moved, move this assertion with it rather than deleting it"
+        )
+        assert guarded, (
+            "load_demo_recommendations is called without an `if settings.ALLOW_DEV_TOKEN` "
+            "guard around it. Three invented recommendations would enter the live pending "
+            "queue and render on the Strategic Engine page as real ones."
+        )
+
+    def test_production_config_refuses_the_dev_flag_that_gates_them(self):
+        """The gate above is only worth as much as the flag behind it."""
+        from app.core.config import Settings, validate_settings
+
+        problems = validate_settings(
+            Settings(ENVIRONMENT="production", ALLOW_DEV_TOKEN=True)
+        )
+        assert any("ALLOW_DEV_TOKEN" in p for p in problems)
+
     def test_production_config_refuses_simulated_telematics(self):
         """`GEOTAB_SIMULATED` defaults True so the offline demo works, so the whole
         exposure rests on this validator. Asserted here as well as in
