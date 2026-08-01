@@ -99,9 +99,10 @@ absolute number rose while the ratio fell).
 | 2026-07-31 | 146 | `data_residency` ×6, `feature_flags` ×6 |
 | 2026-07-31 | 139 | `geotab` ×7 |
 | 2026-07-31 | 116 | `fleet_logistics` ×23 — the largest single file |
-| 2026-07-31 | **100** | `health` ×16 (17 routes, one already documented as `text/plain`) |
+| 2026-07-31 | 100 | `health` ×16 (17 routes, one already documented as `text/plain`) |
+| 2026-07-31 | **92** | `erp_integrations` ×8 |
 
-**113 routes off the list, of which 99 were declarations and 14 were miscounts.**
+**121 routes off the list, of which 107 were declarations and 14 were miscounts.**
 Both halves matter: the ratchet is only worth obeying if its number is honest, and
 14 routes that could never be declared would have made the target unreachable.
 

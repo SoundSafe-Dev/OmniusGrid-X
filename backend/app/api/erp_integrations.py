@@ -10,7 +10,7 @@ from uuid import UUID
 from datetime import datetime, timezone
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 import structlog
 
 from sqlalchemy.exc import IntegrityError
@@ -160,6 +160,95 @@ class SyncStatusResponse(BaseModel):
     sync_duration_seconds: Optional[float] = None
     next_sync_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+
+
+class MessageResponse(BaseModel):
+    """The two deletes. Both answer with a sentence and nothing else."""
+
+    message: str
+
+
+class ConnectionTestResult(BaseModel):
+    """`POST /{id}/test`. `details` is the CONNECTOR'S `health_check()` payload verbatim
+    and stays open — every vendor connector reports something different there, which is
+    exactly why `interpret_health` exists to reduce it to a status."""
+
+    status: str
+    message: str
+    details: Dict[str, Any] = Field(default_factory=dict)
+    integration_id: str
+    tested_at: str
+
+
+class SyncTriggered(BaseModel):
+    """`POST /{id}/sync`. The sync itself runs as a background task, so this reports what
+    was QUEUED — `entity_types` is the resolved list, which is either the caller's single
+    `entity_type` or the distinct source entities of the field mappings."""
+
+    status: str
+    message: str
+    integration_id: str
+    entity_types: List[str]
+    triggered_at: str
+
+
+class WebhookConfig(BaseModel):
+    """`GET /{id}/webhook-config` — `describe_scheme()` plus three keys the handler adds.
+
+    `extra="allow"` because the first six belong to `app.services.erp_webhook_auth`, not
+    to this route. A field that service starts reporting must reach the operator: this
+    endpoint exists precisely because the webhook route answers a deliberately
+    uninformative 401, so a key silently filtered out here has nowhere else to surface.
+
+    Never carries the secret itself — `secret_configured` is a bool by design.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    erp_type: Optional[str] = None
+    auth_mode: str
+    signature_header: str
+    signature_encoding: str
+    secret_configured: bool
+    signs: str
+    endpoint_path: str
+    #: `secret_configured`, restated as the question an operator is actually asking.
+    ready: bool
+    next_step: str
+
+
+class ERPEntityOut(BaseModel):
+    id: str
+    entity_type: str
+    entity_id: str
+    source_system: str
+    #: The connector's record, stored verbatim in a JSON column. Open by definition —
+    #: its shape is the vendor's, and pinning it would filter whatever SAP sends next.
+    entity_data: Dict[str, Any] = Field(default_factory=dict)
+    updated_at: Optional[str] = None
+
+
+class ERPEventOut(BaseModel):
+    id: str
+    event_type: str
+    event_id: str
+    source_system: str
+    entity_type: str
+    entity_id: Optional[str] = None
+    processing_status: Optional[str] = None
+    created_at: Optional[str] = None
+
+
+class ERPCorrelationOut(BaseModel):
+    id: str
+    correlation_type: str
+    erp_event_id: Optional[str] = None
+    sensor_event_id: Optional[str] = None
+    #: `erp_correlations.correlation_score` is NUMERIC. The handler already casts it to
+    #: `float`, which is the reason this one is not the `HistorianPolicyOut.ingestion_priority`
+    #: bug over again — a Decimal reaching a `str` field is what that was.
+    correlation_score: Optional[float] = None
+    created_at: Optional[str] = None
 
 
 # ==================== Endpoints ====================
@@ -463,7 +552,7 @@ async def update_integration(
     )
 
 
-@router.delete("/{integration_id}")
+@router.delete("/{integration_id}", response_model=MessageResponse)
 async def delete_integration(
     integration_id: UUID,
     db: AsyncSession = Depends(get_tenant_db),
@@ -498,7 +587,7 @@ async def delete_integration(
     return {"message": "Integration deleted successfully"}
 
 
-@router.post("/{integration_id}/test")
+@router.post("/{integration_id}/test", response_model=ConnectionTestResult)
 async def test_connection(
     integration_id: UUID,
     db: AsyncSession = Depends(get_tenant_db),
@@ -555,7 +644,7 @@ async def test_connection(
     }
 
 
-@router.post("/{integration_id}/sync")
+@router.post("/{integration_id}/sync", response_model=SyncTriggered)
 async def trigger_sync(
     integration_id: UUID,
     background_tasks: BackgroundTasks,
@@ -780,7 +869,7 @@ async def run_erp_sync(integration_id: str, organization_id: str, entity_types: 
     return summary
 
 
-@router.get("/{integration_id}/webhook-config")
+@router.get("/{integration_id}/webhook-config", response_model=WebhookConfig)
 async def get_webhook_config(
     integration_id: UUID,
     db: AsyncSession = Depends(get_tenant_db),
@@ -1051,7 +1140,7 @@ async def update_field_mapping(
     )
 
 
-@router.delete("/{integration_id}/mappings/{mapping_id}")
+@router.delete("/{integration_id}/mappings/{mapping_id}", response_model=MessageResponse)
 async def delete_field_mapping(
     integration_id: UUID,
     mapping_id: UUID,
@@ -1118,7 +1207,7 @@ def _mark_truncated(response: Response, rows: list, limit: int) -> list:
     return mark_truncated(response, rows, limit)
 
 
-@router.get("/{integration_id}/entities")
+@router.get("/{integration_id}/entities", response_model=List[ERPEntityOut])
 async def list_erp_entities(
     integration_id: UUID,
     response: Response,
@@ -1155,7 +1244,7 @@ async def list_erp_entities(
     } for e in rows]
 
 
-@router.get("/{integration_id}/events")
+@router.get("/{integration_id}/events", response_model=List[ERPEventOut])
 async def list_erp_events(
     integration_id: UUID,
     response: Response,
@@ -1190,7 +1279,7 @@ async def list_erp_events(
     } for ev in rows]
 
 
-@router.get("/correlations/recent")
+@router.get("/correlations/recent", response_model=List[ERPCorrelationOut])
 async def list_erp_correlations(
     response: Response,
     limit: int = Query(100, ge=1, le=MAX_EVENTS_PAGE),
