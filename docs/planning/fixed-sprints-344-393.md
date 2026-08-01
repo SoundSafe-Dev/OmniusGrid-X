@@ -280,9 +280,27 @@ for placeholder secrets.
   Fifth premise in this plan to fail on its first day.
 
 - **FS-354 · `kanban.py` and `nlp_correlation.py` on `get_db` over FORCE-RLS tables** · M · ⚠ Harsh
-  17 sites (10 + 7), pinned in `KNOWN_GET_DB_ON_RLS` at `test_tenant_session_guard.py:60`. A
-  session that never sets `app.current_org_id` makes the policy predicate NULL, so **every row
-  is filtered without raising**. Four of the ten known 5xx allowlist entries trace to it.
+  17 sites (10 + 7), pinned in `KNOWN_GET_DB_ON_RLS`. **Premise verified 2026-08-01 — the
+  counts are exact and current** (health 3, kanban 10, nlp_correlation 7), unlike FS-353's.
+  **HANDED OVER, not attempted** — Harsh's lane.
+
+  The item said "four of the ten known 5xx entries trace to it". Measured: **five**, and they
+  share a much narrower shape than "17 `get_db` sites" —
+
+      GET  /kanban/board · /kanban/metrics · /kanban/workload
+      POST /kanban/board/view
+      POST /engines/correlation/integration/initialize-registries
+
+  all five are **write-on-read**: a GET that lazily creates a default row on a session with no
+  tenant GUC, so the policy's WITH CHECK rejects the INSERT and the read 500s. Under RLS a
+  read fails silently and a write fails loudly — which is why these are the ones that
+  surfaced, and a reminder that the quiet ones are still quiet.
+
+  The other five known failures would **survive a dependency swap**: `/kanban/rules/premade`
+  (non-UUID template ids), `/nlp/correlation/intake/{id}` (`select()` given a class),
+  `/engines/correlation/generate` (500 on an empty body), and two `/rag/documents` entries
+  (SeaweedFS). So the loud half is **two code paths, not seventeen**. Written into the guard
+  where its owner will look.
 
 - **FS-355 · `error_events` has a tenant column and no policy** · L
   `test_every_tenant_table_has_a_policy.py:59-73` marks it **"REAL GAP, AND BLOCKED ON A GRAIN
@@ -336,6 +354,10 @@ for placeholder secrets.
   **silently win**, changing the payload the frontend receives on the two paths it actually
   calls. A route walk confirms **zero collisions today** — which is the point: the doubling is
   what prevents them. Choosing a canonical implementation per path is a product decision.
+
+  **HANDED OVER 2026-08-01.** Three of these twelve also 500 under the contract gate with all
+  dependencies reachable — `truck-asset-readiness`, `load-quality`, `optimize-assignment` —
+  so the file has live defects independent of the prefix question. Both are Harsh's.
 
 - **FS-259b · Give the contract job real dependencies** · M
   Redis landed 2026-08-01 and recovered ~14 operations (368-370 → 383). Two dependencies remain,
