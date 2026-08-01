@@ -168,10 +168,17 @@ Workers expose no Service — nothing routes to them; edge ingest HTTP traffic
 (`/api/v1/edge/ingest`) is served by the backend API, and the ingestion worker
 only consumes from Redpanda.
 
-Known gap: export/compliance workers write generated files to an `emptyDir` at
-`EXPORT_STORAGE_PATH`. Files do not survive pod restarts and are not visible to
-the backend API pods (compose shares a volume). Production needs a shared RWX
-PVC or object storage on both the workers and the backend.
+Generated files go to SeaweedFS, not to a pod-local `emptyDir` — see **Object
+storage** above. `export-worker`, `compliance-reports-worker` and the backend all set
+`EXPORT_USE_S3=true` and share the `omniusgrid-exports` bucket, so a file written on a
+worker pod is served by whichever API pod takes the download.
+
+> This paragraph previously described the opposite, as a "known gap": workers writing to
+> an `emptyDir` that the backend could not see, with "production needs a shared RWX PVC
+> or object storage" as the remedy. That remedy had already been implemented — the
+> manifests have set `EXPORT_USE_S3=true` on all three workloads for some time — but the
+> stale text sat 110 lines below the paragraph that says so, and is the one an operator
+> hunting for storage requirements reaches first. Corrected 2026-08-01 (FS-376).
 
 ## Redpanda broker TLS (FS-66)
 
