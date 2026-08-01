@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.pagination import MAX_OFFSET
 from app.api.auth import get_current_active_user
 from app.db.database import get_db
 from app.db.models import User
@@ -128,7 +129,7 @@ async def list_errors(
     order: Literal["asc", "desc"] = "desc",
     range: Literal["24h", "7d", "30d", "all"] = "7d",
     limit: int = Query(25, ge=1, le=100),
-    offset: int = Query(0, ge=0),
+    offset: int = Query(0, ge=0, le=MAX_OFFSET),
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):

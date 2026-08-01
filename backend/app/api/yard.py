@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_active_user
-from app.core.pagination import PaginatedResponse, paginate
+from app.core.pagination import MAX_OFFSET, PaginatedResponse, paginate
 from app.db.database import get_db  # noqa: F401  (kept for any non-tenant reads)
 from app.middleware.tenant_isolation import get_tenant_db, get_tenant_org_id
 from app.db.models import (
@@ -163,7 +163,7 @@ async def get_yard_inventory(
     # call — none of which sent it — got a 422.
     organization_id: UUID = Depends(get_tenant_org_id),
     status: Optional[str] = Query(None, description="Filter by status: checked_in, docked, yard"),
-    skip: int = Query(0, ge=0),
+    skip: int = Query(0, ge=0, le=MAX_OFFSET),
     limit: int = Query(100, ge=1, le=1000),
     db: AsyncSession = Depends(get_tenant_db)
 ):

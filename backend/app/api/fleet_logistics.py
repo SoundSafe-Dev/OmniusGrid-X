@@ -521,7 +521,16 @@ def _history_out(o: Any) -> Dict[str, Any]:
 async def list_schedules(
     status: Optional[str] = Query(None),
     vehicle_id: Optional[str] = Query(None),
-    upcoming: Optional[int] = Query(None, description="only schedules due within N days"),
+    # BOUNDED, because the value is added to `now`. `upcoming=10508090` is not a large
+    # window — it is a date past year 9999, and `now + timedelta(days=...)` raises
+    # `OverflowError: date value out of range` before any query runs, so the endpoint
+    # 500s where the schema promises a 4xx. Found by the contract gate (FS-259).
+    #
+    # 36500 days is a century: far beyond any maintenance horizon anyone would schedule,
+    # and far below the overflow point, so nothing that works today starts failing.
+    upcoming: Optional[int] = Query(
+        None, ge=1, le=36500, description="only schedules due within N days"
+    ),
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),
 ):
@@ -673,6 +682,12 @@ async def get_repair_order(order_id: str, org_id: UUID = Depends(get_tenant_org_
 
 @maintenance_router.patch("/repair-orders/{order_id}", response_model=RepairOrderOut)
 async def update_repair_order(order_id: str, payload: Dict[str, Any], org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
+    # THE ONE HANDLER IN THIS FILE THAT DID NOT CALL IT. Every sibling — get, delete,
+    # acknowledge, the schedule routes — validates the path id first, for the reason
+    # `_uuid_or_404` documents: on Postgres, comparing a UUID column to a non-UUID string
+    # is an asyncpg type error, so `PATCH /repair-orders/0` answered 500 instead of 404.
+    # Found by the contract gate (FS-259); the guard existed and this one call was missing.
+    _uuid_or_404(order_id)
     o = (await db.execute(
         _scope(select(RepairOrder).where(RepairOrder.id == order_id), RepairOrder, org_id)
     )).scalar_one_or_none()

@@ -19,7 +19,7 @@ from app.middleware.tenant_isolation import get_tenant_org_id, get_tenant_db
 from app.db.database import get_db
 from app.db.models import Asset, AssetType, Workcell, Organization, User
 from app.api.auth import get_current_active_user
-from app.core.pagination import PaginatedResponse, paginate
+from app.core.pagination import MAX_OFFSET, PaginatedResponse, paginate
 from app.middleware.rbac import require_admin
 from app.middleware.rate_limit import rate_limit
 from app.core.tenant import get_tenant_db
@@ -77,7 +77,7 @@ async def list_assets(
     workcell_id: Optional[UUID] = None,
     asset_type_id: Optional[UUID] = None,
     is_active: Optional[bool] = None,
-    skip: int = Query(0, ge=0),
+    skip: int = Query(0, ge=0, le=MAX_OFFSET),
     limit: int = Query(100, ge=1, le=1000),
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),

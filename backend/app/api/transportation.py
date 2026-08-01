@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
 from app.api.auth import get_current_active_user
-from app.core.pagination import PaginatedResponse, paginate
+from app.core.pagination import MAX_OFFSET, PaginatedResponse, paginate
 from app.db.database import get_db
 from app.middleware.tenant_isolation import get_tenant_db, get_tenant_org_id
 from app.db.models import Carrier, Driver, Shipment, Route, LoadPlan, FreightCharge
@@ -568,7 +568,7 @@ async def get_shipments(
     organization_id: UUID = Depends(get_tenant_org_id),
     status: Optional[str] = Query(None),
     carrier_id: Optional[UUID] = None,
-    skip: int = Query(0, ge=0),
+    skip: int = Query(0, ge=0, le=MAX_OFFSET),
     limit: int = Query(100, ge=1, le=1000),
     db: AsyncSession = Depends(get_tenant_db)
 ):
@@ -877,7 +877,7 @@ async def get_shipment_charges(
 @router.get("/vehicles", response_model=PaginatedResponse[Dict[str, Any]])
 async def get_vehicles(
     carrier_id: Optional[UUID] = None,
-    skip: int = Query(0, ge=0),
+    skip: int = Query(0, ge=0, le=MAX_OFFSET),
     limit: int = Query(100, ge=1, le=1000),
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db)

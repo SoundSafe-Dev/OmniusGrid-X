@@ -35,7 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_active_user, get_password_hash
 from app.core import roles as role_vocab
-from app.core.pagination import PaginatedResponse, paginate
+from app.core.pagination import MAX_OFFSET, PaginatedResponse, paginate
 from app.core.tenant import get_tenant_db, get_tenant_org_id
 from app.db.models import User
 from app.middleware.rbac import require_admin
@@ -80,7 +80,7 @@ async def _own_org_user(db: AsyncSession, user_id: UUID, org_id: UUID) -> User:
 async def list_users(
     is_active: Optional[bool] = None,
     role: Optional[str] = None,
-    skip: int = Query(0, ge=0),
+    skip: int = Query(0, ge=0, le=MAX_OFFSET),
     limit: int = Query(50, ge=1, le=500),
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),

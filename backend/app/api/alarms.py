@@ -33,7 +33,7 @@ from sqlalchemy import Select, select, and_, case, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_active_user
-from app.core.pagination import PaginatedResponse, paginate
+from app.core.pagination import MAX_OFFSET, PaginatedResponse, paginate
 from app.db.models import Alarm, Asset, User
 from app.models.schemas import AlarmResponse, AlarmAcknowledge
 from app.core.tenant import get_tenant_db, get_tenant_org_id
@@ -116,7 +116,7 @@ async def list_alarms(
     acknowledged: Optional[bool] = None,
     start_time: Optional[datetime] = None,
     end_time: Optional[datetime] = None,
-    skip: int = Query(0, ge=0),
+    skip: int = Query(0, ge=0, le=MAX_OFFSET),
     limit: int = Query(100, ge=1, le=1000),
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),

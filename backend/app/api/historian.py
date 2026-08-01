@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.pagination import MAX_OFFSET
 from app.db.models import Asset
 from app.middleware.tenant_isolation import get_tenant_db, get_tenant_org_id
 
@@ -198,7 +199,7 @@ async def query_historian(
     start: datetime = Query(),
     end: datetime = Query(),
     granularity: HistorianGranularity = Query(HistorianGranularity.raw),
-    offset: int = Query(0, ge=0),
+    offset: int = Query(0, ge=0, le=MAX_OFFSET),
     limit: int = Query(1000, ge=1, le=5000),
     organization_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),

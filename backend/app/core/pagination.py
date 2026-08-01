@@ -22,13 +22,30 @@ from pydantic import BaseModel
 
 T = TypeVar("T")
 
+#: Upper bound for `skip`, and it is the DATABASE'S limit rather than a product one.
+#:
+#: `OFFSET :skip` binds to a Postgres **bigint**. A larger integer is not a big offset —
+#: it is a value asyncpg cannot encode, so the driver raises and the request 500s where
+#: the contract promises a 4xx. Every `skip` in this codebase was declared `ge=0` with no
+#: ceiling, which reads as "any non-negative offset" and is true of exactly none of them.
+#:
+#: Found by the contract gate (FS-259) on `GET /api/v1/transportation/vehicles`, which was
+#: the only one of THIRTEEN identical declarations that schemathesis happened to draw a
+#: large enough value for. Fixing just that one would have been a fix by luck; the bound
+#: is shared so the next endpoint to be drawn large is already covered.
+#:
+#: Deliberately the bigint ceiling and not a smaller "sensible" number: at this value no
+#: request that works today starts failing, and the only behaviour that changes is the
+#: 500 becoming the 422 the schema already documents.
+MAX_OFFSET = 2**63 - 1
+
 
 class PageParams:
     """Shared skip/limit query params (FastAPI dependency)."""
 
     def __init__(
         self,
-        skip: int = Query(0, ge=0, description="items to skip"),
+        skip: int = Query(0, ge=0, le=MAX_OFFSET, description="items to skip"),
         limit: int = Query(50, ge=1, le=500, description="max items to return"),
     ):
         self.skip = skip

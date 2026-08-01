@@ -6,7 +6,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
-from app.core.pagination import mark_truncated
+from app.core.pagination import MAX_OFFSET, mark_truncated
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -66,7 +66,7 @@ async def _verify_asset(
 async def list_rul_assessments(
     response: Response,
     hours: int = Query(default=24, ge=1, le=168),
-    offset: int = Query(default=0, ge=0),
+    offset: int = Query(default=0, ge=0, le=MAX_OFFSET),
     limit: int = Query(default=100, ge=1, le=500),
     organization_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),

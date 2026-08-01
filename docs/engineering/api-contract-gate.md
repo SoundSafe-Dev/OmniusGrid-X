@@ -116,7 +116,7 @@ class — any extension created by `conftest` and by no migration now fails the 
 
 ## Why a ratchet
 
-**359–360 of 451** operations conform (floor: 350). The remaining ~92 are dominated by
+**369–370 of 452** operations conform (floor: 360). The remaining ~82 are dominated by
 **one behaviour**: generated input reaching Postgres unvalidated and surfacing as a 500
 where the contract promises a 4xx (`DataError`, `ForeignKeyViolationError`,
 `CharacterNotInRepertoireError`). That is per-endpoint validation work spread across every
@@ -204,7 +204,7 @@ Ten runs with no code change between them scored **294, 296, 297, 297, 297, 298,
 302, 303**. `derandomize=True` did not remove the spread, and neither did a freshly migrated
 database (two controlled fresh-DB runs scored 299 and 297).
 
-The floor is **339**, raised from 290 in two steps on 2026-07-31, each time only after a fix
+The floor is **360**, raised from 290 in four steps on 2026-07-31, each time only after a fix
 cleared the noise — the standard for moving this number is a gain larger than the spread,
 measured twice:
 
@@ -214,15 +214,93 @@ measured twice:
 | status codes the envelope emits declared | 327, 331 | 318 |
 | 23 path params typed `UUID` not `str` | 348, 348 | 339 |
 | nine export/metrics content types + 5 more UUID params | 360, 359 | 350 |
+| 16 offset params bounded, `upcoming` bounded, 2 UUID path guards | 369, 370 | 360 |
 
-Those last two runs were **identical**, which is a result in itself: several of the 14
-flapping operations were flapping because malformed ids left different rows behind on
-different runs. Fixing the type removed variance as well as 500s. The margin is kept anyway —
-two identical runs are not yet evidence the spread is gone.
+The UUID row's two runs were **identical** (348, 348), which is a result in itself: several
+of the 14 flapping operations were flapping because malformed ids left different rows behind
+on different runs. Fixing the type removed variance as well as 500s. The margin is kept
+anyway — two identical runs are not yet evidence the spread is gone, and the row below them
+scored 360 and 359, so it is not.
 
-It sits 9 below the observed minimum of 348. Pinned at the best observed score it would fail roughly
+It sits 9 below the observed minimum of 369. Pinned at the best observed score it would fail roughly
 half of all builds, and *a gate that cries wolf is a gate somebody disables* — which is
 precisely how its predecessor ended up advisory and killed at six hours.
+
+### One endpoint failed; thirteen were equally broken (FS-259)
+
+The raise to 360 is worth reading as a method, not a number, because the obvious version of
+it would have been a raise by luck.
+
+Schemathesis reported exactly one unbounded-offset failure:
+`GET /api/v1/transportation/vehicles?skip=595044086785296213088411844608`. `OFFSET :skip`
+binds to a Postgres **bigint**, so a value above 2**63-1 is not a large offset — it is one
+asyncpg cannot encode, and the request 500s where the schema promises a 4xx.
+
+`skip: int = Query(0, ge=0)` was declared **thirteen times**, identically, across the API.
+The other twelve were equally broken and equally invisible: schemathesis draws five examples
+per operation, and this is the only endpoint it happened to draw a large enough integer for.
+**Fixing the one that failed would have raised the floor without fixing the defect** — the
+next release would have "regressed" the moment a different draw landed.
+
+So the bound is shared (`MAX_OFFSET` in `app/core/pagination.py`), applied to all sixteen
+offset parameters, and `tests/test_generated_input_cannot_five_hundred.py` fails if a
+fourteenth lands unbounded. Three of the sixteen were found by that sweep and not by grep,
+because `historian`, `rul` and `error_tracking` spell the parameter `offset` rather than
+`skip`.
+
+`MAX_OFFSET` is deliberately the bigint ceiling rather than a smaller "sensible" number:
+at 2**63-1 **no request that works today starts failing**, and the only behaviour that
+changes is the 500 becoming the 422 the schema already documented.
+
+Two smaller ones came from the same run, both the same shape — a declared type the code
+cannot actually accept:
+
+* `upcoming` on `/maintenance/schedules` is added to `now`, so `upcoming=10508090` is a date
+  past year 9999 and `timedelta` raises `OverflowError` before any query runs.
+* `PATCH /maintenance/repair-orders/{id}` was the only handler in `fleet_logistics.py` that
+  did not call the `_uuid_or_404` guard its siblings all use, and
+  `GET /fleet/safety/drivers/{id}` compared a free-form `str` to a UUID column. Both answered
+  500 where a malformed id is a 404.
+
+**What the four runs measured.** Pre-fix 363 and 367 (spread 4); post-fix 369 and 370
+(spread 1). The ranges are disjoint, and the gain over the pre-fix minimum is 6 — larger
+than the pre-fix spread, which is this document's standard. All of the movement is in
+`ServerError` (47/43 → 41/40); `AcceptedNegativeData`, `UnsupportedMethodResponse`,
+`RejectedPositiveData` and `UndefinedStatusCode` are **identical across all four runs**.
+That is what rules out a lucky draw: noise would have moved the other checks too.
+
+### Seven in-lane 500s remain, with the input that triggers each
+
+Recorded so the next raiser does not re-derive them. All are the same class — unvalidated
+input reaching the database — and all are reproducible from the run artefacts:
+
+| operation | input that 500s it |
+|---|---|
+| `POST /api/v1/commands/submit` | `{"action_id": "", "asset_id": ""}` |
+| `POST /api/v1/user/goals` | `{"title": ""}` |
+| `POST /api/v1/fleet/releases` | `{"config_bundle": "0", "image_tag": "0", "version": "0"}` |
+| `POST /api/v1/transportation/load-plans` | a `shipment_id` naming no row |
+| `POST /api/v1/twin/optimize` | `{"asset_ids": []}` |
+| `POST /api/v1/bulk/assets/import` | a generated multipart body |
+| `PUT /api/v1/data-retention/policies/{metric_name}` | not the shrunk body — that one 422s correctly when reproduced directly, so the failing draw is something else and is not guessed at here |
+
+Three more (`/api/v1/logistics/logistics/*`) are in `logistics_correlation.py`, which is
+another dev's lane.
+
+### The ~20 `503`s are the harness, not the API
+
+Worth knowing before anyone counts them as debt. The `api-contract` job provisions **only
+Postgres**, and `REDIS_URL` / `REDPANDA_URL` are `redis:6379` / `redpanda:29092` — docker
+network names that resolve from neither a CI runner nor a developer's host. So every
+endpoint whose dependency is Redis or the broker answers 503: feature flags, bulk jobs,
+export jobs, the query-performance surface, `/health/kafka`, `/health/ready`.
+
+Those 503s are the endpoints reporting a missing dependency **correctly**. They are counted
+as failures because schemathesis treats any 5xx as a server error, and they will keep being
+counted until the job gains those services. Do not "fix" them in application code.
+
+This also means a local run is comparable to CI's, which is why the numbers above were
+trusted: same two services missing in both.
 
 ### The residual noise is 14 known operations
 

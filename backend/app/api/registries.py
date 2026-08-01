@@ -10,6 +10,7 @@ from typing import List, Optional
 from datetime import datetime, timedelta, timezone
 import uuid
 
+from app.core.pagination import MAX_OFFSET
 from app.db.models import (
     ActionableRegistry,
     ActionableRegistryItem,
@@ -42,7 +43,7 @@ async def get_registries(
     registry_type: Optional[str] = None,
     is_compliance: Optional[bool] = None,
     is_active: Optional[bool] = None,
-    skip: int = Query(0, ge=0),
+    skip: int = Query(0, ge=0, le=MAX_OFFSET),
     limit: int = Query(100, ge=0, le=1000),
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_tenant_db)
@@ -170,7 +171,7 @@ async def delete_registry(
 async def get_registry_items(
     registry_id: uuid.UUID,
     is_active: Optional[bool] = None,
-    skip: int = Query(0, ge=0),
+    skip: int = Query(0, ge=0, le=MAX_OFFSET),
     limit: int = Query(100, ge=0, le=1000),
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_tenant_db)
@@ -301,7 +302,7 @@ async def get_correlations(
     source_type: Optional[str] = None,
     target_type: Optional[str] = None,
     is_active: Optional[bool] = None,
-    skip: int = Query(0, ge=0),
+    skip: int = Query(0, ge=0, le=MAX_OFFSET),
     limit: int = Query(100, ge=0, le=1000),
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_tenant_db)

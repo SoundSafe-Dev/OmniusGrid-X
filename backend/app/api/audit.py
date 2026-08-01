@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.pagination import MAX_OFFSET
 from app.db.database import get_db  # noqa: F401
 from app.middleware.tenant_isolation import get_tenant_db
 from app.db.models import AuditLog, User
@@ -80,7 +81,7 @@ async def list_audit_logs(
     resource_type: Optional[str] = None,
     start_time: Optional[datetime] = None,
     end_time: Optional[datetime] = None,
-    skip: int = Query(0, ge=0),
+    skip: int = Query(0, ge=0, le=MAX_OFFSET),
     limit: int = Query(100, ge=1, le=1000),
     db: AsyncSession = Depends(get_tenant_db)
 ):

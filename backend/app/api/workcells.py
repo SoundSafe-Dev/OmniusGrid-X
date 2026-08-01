@@ -16,7 +16,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_active_user
-from app.core.pagination import PaginatedResponse, paginate
+from app.core.pagination import MAX_OFFSET, PaginatedResponse, paginate
 from app.middleware.rbac import require_admin
 from app.middleware.tenant_isolation import get_tenant_org_id, get_tenant_db
 from app.db.models import Workcell, Organization
@@ -71,7 +71,7 @@ def _org_out(o: Organization) -> dict:
 
 @workcells_router.get("/", response_model=PaginatedResponse[WorkcellOut])
 async def list_workcells(
-    skip: int = Query(0, ge=0),
+    skip: int = Query(0, ge=0, le=MAX_OFFSET),
     limit: int = Query(100, ge=1, le=1000),
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),

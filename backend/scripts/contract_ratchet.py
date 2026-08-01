@@ -57,12 +57,40 @@ from pathlib import Path
 #: 359: wide enough to absorb the measured spread, tight enough that losing a handful
 #: of operations still fails the build.
 #:
+#: RAISED AGAIN 2026-07-31 to 360 (FS-259), after bounding the input that was reaching
+#: the database unvalidated:
+#:
+#:   pre-fix   363, 367   (spread 4)
+#:   post-fix  369, 370   (spread 1)
+#:
+#: The two ranges are DISJOINT — every post-fix run beat every pre-fix run — and the gain
+#: over the pre-fix minimum is 6, larger than the pre-fix spread of 4, which is this
+#: file's stated standard for moving the number. All of the movement is in `ServerError`
+#: (47/43 -> 41/40); `AcceptedNegativeData`, `UnsupportedMethodResponse`,
+#: `RejectedPositiveData` and `UndefinedStatusCode` are IDENTICAL across all four runs.
+#: That last fact is what rules out a lucky draw: a gain from noise would have moved the
+#: other checks too.
+#:
+#: What was fixed, and why it was fixed as a class. Schemathesis found ONE of thirteen
+#: identical unbounded `skip` declarations — the only one it happened to draw a value
+#: above 2**63-1 for. Fixing that endpoint alone would have raised this number by luck,
+#: so `MAX_OFFSET` bounds all sixteen offset parameters at the Postgres bigint ceiling
+#: (`app/core/pagination.py`), and `tests/test_generated_input_cannot_five_hundred.py`
+#: fails if a new one lands unbounded. Also: `upcoming` on `/maintenance/schedules`
+#: (added to `now`, so a large value was an `OverflowError` past year 9999), and two
+#: non-UUID path ids reaching UUID columns.
+#:
+#: The 9-point margin is KEPT even though the post-fix spread measured 1. Two runs are
+#: not evidence that a spread of 9 has become a spread of 1 — the same caution the
+#: previous raise recorded, for the same reason.
+#:
 #: Raise it when a fix clears the noise, as this one did. Never lower it.
-BASELINE_PASSING = 350
+BASELINE_PASSING = 360
 
 #: Total operations the schema documents, checked so a collapse in collection cannot
 #: pass the ratchet by making "passing" small and "total" equally small.
-EXPECTED_TOTAL = 451
+#: 452 measured 2026-07-31 across four runs; was recorded as 451.
+EXPECTED_TOTAL = 452
 
 #: How far total may drift before the run is treated as untrustworthy. Routes get
 #: added legitimately; a 10% swing means something structural changed.

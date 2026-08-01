@@ -414,6 +414,17 @@ def _driver_safety_out(d: Driver, counts: dict) -> dict:
 @router.get("/safety/drivers/{driver_id}", response_model=DriverSafetyItem)
 async def one_driver_safety(driver_id: str, org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
     from fastapi import HTTPException
+
+    # `drivers.id` is a UUID column and this parameter is a free-form `str`. On Postgres
+    # `WHERE uuid_col = '0'` is an asyncpg type error, not an empty result — so
+    # `GET /fleet/safety/drivers/0` answered 500 where the schema promises a 4xx. A
+    # malformed id matches no driver, which is a 404 and not a server fault. Found by the
+    # contract gate (FS-259); same class as `fleet_logistics._uuid_or_404`.
+    try:
+        UUID(driver_id)
+    except (ValueError, AttributeError, TypeError):
+        raise HTTPException(status_code=404, detail="driver not found")
+
     d = (await db.execute(select(Driver).where(Driver.id == driver_id, Driver.organization_id == org_id))).scalar_one_or_none()
     if d is None:
         raise HTTPException(status_code=404, detail="driver not found")

@@ -24,7 +24,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_active_user
-from app.core.pagination import PaginatedResponse, paginate
+from app.core.pagination import MAX_OFFSET, PaginatedResponse, paginate
 from app.core.tenant import get_tenant_db, get_tenant_org_id
 from app.db.models import AlarmRule, Asset, AssetType, User, Workcell
 from app.middleware.rbac import require_operator_or_admin
@@ -87,7 +87,7 @@ async def list_alarm_rules(
     metric_name: Optional[str] = None,
     severity: Optional[str] = None,
     is_enabled: Optional[bool] = None,
-    skip: int = Query(0, ge=0),
+    skip: int = Query(0, ge=0, le=MAX_OFFSET),
     limit: int = Query(100, ge=1, le=1000),
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),
