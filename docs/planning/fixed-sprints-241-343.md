@@ -106,6 +106,34 @@ The pipeline is complete and now has one consumer. These are the gaps that consu
 
 ### Platform
 
+> **READ THIS BEFORE STARTING ANY PLATFORM OR INFRASTRUCTURE ITEM BELOW.**
+>
+> Audited 2026-08-01. **Five of the eight items examined had premises that did not
+> reproduce**, and every one of them described work that was *already delivered*:
+>
+> | item | recorded as | actually |
+> |---|---|---|
+> | FS-252 | "generated, committed, free to drift" | not committed; nothing to drift; generator works |
+> | FS-260 | "no coverage thresholds exist" | they existed — the real defect was the inverse |
+> | FS-261 | "run nowhere but a kind cluster" | `ci-cd.yml` applies all three, CRD-gated |
+> | FS-262 | "without probes a wedged worker is never restarted" | probes shipped in FS-214 |
+> | FS-263 | "a comment is not a control" | the control shipped in FS-200 |
+>
+> **The cause is structural, not clerical.** This plan was written from the task pools
+> rather than from the codebase, so it inherited every claim the pools had already
+> outgrown — FS-200, FS-214, FS-230 and FS-240 had each closed one of these before this
+> document was authored. The header's instruction to re-derive was aimed at *numbers*
+> drifting in the flattering direction; these drift the other way, describing work that no
+> longer exists and inflating what is left.
+>
+> Neither is harmless. A plan that overstates remaining work gets the estimate wrong, and
+> worse, invites re-implementing something that already exists beside the original.
+>
+> **So: verify the premise before starting, and correct the entry in place with the date if
+> it does not hold.** Two of the five were still worth the visit — FS-260's thresholds were
+> 7 and 20 points below reality, and FS-263's gate was blind to base64 Secrets — so
+> "already done" is a reason to *check the delivered thing*, not to skip it.
+
 - **FS-252 · Adopt the generated SDK** · S — pool #42
   ~~Generated, committed, zero importers — so neither used nor verified, and free to drift.~~
   **PREMISE CORRECTED 2026-08-01.** It is *not* committed — `frontend/src/api/generated/`
