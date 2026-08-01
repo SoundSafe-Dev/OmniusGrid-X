@@ -15,6 +15,12 @@ on:
       - 'feature/**'
       - htreinen
       - HARSH-CONTRIBUTION
+      # `alex` matched none of the patterns above and was therefore running ZERO push CI —
+      # the same failure `develop` had, one branch later. An allowlist of personal branch
+      # names goes stale every time someone creates one, and it fails silently: nothing
+      # reports "this branch has no gates". `test_ci_covers_every_branch.py` now compares
+      # this list against the branches that actually exist on the remotes.
+      - alex
     # Docs/media-only pushes don't need the gates — skip them so a README or
     # demo-video commit doesn't run (and fail-email) the whole pipeline.
     paths-ignore:
@@ -776,7 +782,17 @@ jobs:
     # Worth having because the sandbox is a LIVE SAP OData service: it exercises
     # the $batch multipart parser against genuine SAP bytes rather than the
     # fixture we wrote, which is the one thing our own fixture cannot do.
-    if: ${{ github.event_name == 'push' }}
+    # NO EVENT GATE (FS-374). This was `if: github.event_name == 'push'`, which skipped
+    # the vendor-facing suites on every pull_request. That mattered less than it looks —
+    # `on.push.branches` covers hamad/**, hridyansh/**, feature/**, htreinen and
+    # HARSH-CONTRIBUTION, so most work is already checked on the branch push — but it left
+    # a real hole: a branch matching NONE of those patterns (`alex` on origin today) runs
+    # zero push CI, so its PR is the only gate, and this was the gate that skipped.
+    #
+    # Removing it is close to free. Every one of these suites is `pytest.mark.skipif` on
+    # its credentials, so with no secrets — the fork-PR case — the whole set is 55 skipped
+    # in 0.18s and green. Verified locally rather than assumed. With secrets present on a
+    # same-repo PR they do the real vendor call, which is the point.
     steps:
       - uses: actions/checkout@v4
         with:
@@ -820,7 +836,17 @@ jobs:
     # invalid_grant -- correctly, since that is exactly the failure being guarded
     # against. Re-run scripts/intuit_authorize.py and update the secret when it
     # happens; a red build here is real information, not flakiness.
-    if: ${{ github.event_name == 'push' }}
+    # NO EVENT GATE (FS-374). This was `if: github.event_name == 'push'`, which skipped
+    # the vendor-facing suites on every pull_request. That mattered less than it looks —
+    # `on.push.branches` covers hamad/**, hridyansh/**, feature/**, htreinen and
+    # HARSH-CONTRIBUTION, so most work is already checked on the branch push — but it left
+    # a real hole: a branch matching NONE of those patterns (`alex` on origin today) runs
+    # zero push CI, so its PR is the only gate, and this was the gate that skipped.
+    #
+    # Removing it is close to free. Every one of these suites is `pytest.mark.skipif` on
+    # its credentials, so with no secrets — the fork-PR case — the whole set is 55 skipped
+    # in 0.18s and green. Verified locally rather than assumed. With secrets present on a
+    # same-repo PR they do the real vendor call, which is the point.
     steps:
       - uses: actions/checkout@v4
         with:
@@ -863,7 +889,17 @@ jobs:
     # reporting an unreachable system as `degraded` instead of `unhealthy` --
     # visible only because Dynamics is the first connector whose auth host differs
     # from its data host.
-    if: ${{ github.event_name == 'push' }}
+    # NO EVENT GATE (FS-374). This was `if: github.event_name == 'push'`, which skipped
+    # the vendor-facing suites on every pull_request. That mattered less than it looks —
+    # `on.push.branches` covers hamad/**, hridyansh/**, feature/**, htreinen and
+    # HARSH-CONTRIBUTION, so most work is already checked on the branch push — but it left
+    # a real hole: a branch matching NONE of those patterns (`alex` on origin today) runs
+    # zero push CI, so its PR is the only gate, and this was the gate that skipped.
+    #
+    # Removing it is close to free. Every one of these suites is `pytest.mark.skipif` on
+    # its credentials, so with no secrets — the fork-PR case — the whole set is 55 skipped
+    # in 0.18s and green. Verified locally rather than assumed. With secrets present on a
+    # same-repo PR they do the real vendor call, which is the point.
     steps:
       - uses: actions/checkout@v4
         with:
@@ -906,7 +942,17 @@ jobs:
     # assertion here passes with the bug present -- verified by mutation: removing
     # the sync's tenant GUC makes it report {'error': 'integration not found'} for
     # an integration that plainly exists.
-    if: ${{ github.event_name == 'push' }}
+    # NO EVENT GATE (FS-374). This was `if: github.event_name == 'push'`, which skipped
+    # the vendor-facing suites on every pull_request. That mattered less than it looks —
+    # `on.push.branches` covers hamad/**, hridyansh/**, feature/**, htreinen and
+    # HARSH-CONTRIBUTION, so most work is already checked on the branch push — but it left
+    # a real hole: a branch matching NONE of those patterns (`alex` on origin today) runs
+    # zero push CI, so its PR is the only gate, and this was the gate that skipped.
+    #
+    # Removing it is close to free. Every one of these suites is `pytest.mark.skipif` on
+    # its credentials, so with no secrets — the fork-PR case — the whole set is 55 skipped
+    # in 0.18s and green. Verified locally rather than assumed. With secrets present on a
+    # same-repo PR they do the real vendor call, which is the point.
     steps:
       - uses: actions/checkout@v4
         with:
