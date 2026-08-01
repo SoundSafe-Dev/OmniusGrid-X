@@ -300,10 +300,29 @@ for placeholder secrets.
 
 - **FS-356 · Eleven capped lists still cannot say they were capped** · M
   `defect-class-sweeps.md:1435`. Twelve bare-array endpoints truncate with no signal; only
-  `/api/v1/rul` was fixed. The recorded reason is that a fix needs the frontend consumer wired
-  at the same time, and four are in other lanes. `mark_truncated`/`X-Result-Truncated` already
-  exists in `app/core/pagination.py` and `erp_integrations.py` uses it — this is applying an
-  existing utility, not designing one.
+  `/api/v1/rul` was fixed.
+  ✅ **DONE 2026-08-01 — as a ratchet, and the item's own framing was wrong.**
+
+  I wrote "this is applying an existing utility, not designing one". That misses the reason
+  the eleven were left, which the sweep states plainly: **a header no client reads is a
+  caveat sent and dropped** — a second instance of a different defect, not half a fix. Each
+  needs its consumer wired in the same change. Verified on the best candidate:
+  `/api/v1/health-index` is the analogue of `/rul` (and worse — it has no `order_by` at all,
+  so its cap takes an arbitrary 100 assets), and it has **no frontend consumer**, so a header
+  there today would be exactly that defect.
+
+  So the deliverable is `test_capped_lists_cannot_grow.py`, pinning the population at 12.
+  **It is already 12, not the 11 the sweep left** — one arrived in the interval, which is
+  what a recorded-not-fixed list does with nothing holding it in place.
+
+  Reproducing the count required getting the filter right: 45 GETs take a `limit`, but most
+  return an envelope with a `total`, and **a total is a truncation signal**. Only a bare array
+  leaves the caller with nothing. Split: 7 mine (commands, geofencing/alerts, health-index,
+  notifications/log, registries ×3), 5 other lanes (analysis_sessions ×3, kanban ×2).
+
+  Mutation-verified in both directions, and the first attempt was too weak to count:
+  neutralising `mark_truncated` alone left `X-Result-Truncated` in the same handler, so the
+  detector rightly still saw a signal. Removing both takes it to 13.
 
 - **FS-357 · Twelve paths served at `/api/v1/logistics/logistics/…`** · S · ⚠ Harsh
   `logistics_correlation.py:62` declares `prefix="/logistics"` and `main.py:326` mounts it at
