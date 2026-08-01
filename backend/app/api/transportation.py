@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
@@ -213,7 +213,115 @@ async def update_carrier(
     return carrier
 
 
-@router.get("/carriers/{carrier_id}/compliance")
+class CertificationStatus(BaseModel):
+    """Shared by C-TPAT and insurance: held, until when, and whether that is still true
+    today. `is_valid` is the AND of the other two against `now` — a certification on file
+    with a past expiry is on file and not valid, and the tile needs to say which."""
+
+    certified: Optional[bool] = None
+    on_file: Optional[bool] = None
+    expires_at: Optional[str] = None
+    is_valid: Optional[bool] = None
+
+
+class CarrierDriverCompliance(BaseModel):
+    total_drivers: int
+    hos_violations: int
+    expired_medical_certs: int
+    #: Drivers whose HOS could not be judged for want of data. A missing figure is NOT a
+    #: violation — counting it as one trades a false clearance for a false accusation.
+    unassessable_drivers: int
+    #: Judged AND passed. Subtracting only violations counted the unassessable as
+    #: compliant, which is the same error one level up.
+    compliant_drivers: int
+
+
+class CarrierComplianceOut(BaseModel):
+    """`transportation_management_service.get_carrier_compliance_summary`.
+
+    `drivers_assessed` is the field that makes the rest readable: `hos_violations == 0`
+    is trivially true for a carrier with no driver records, so `overall_compliant` used
+    to clear a carrier nobody had entered data for. Hours of Service is DOT-regulated,
+    and the frontend rendered a green tick for it.
+    """
+
+    carrier_id: str
+    carrier_name: Optional[str] = None
+    ctpat_status: CertificationStatus
+    insurance_status: CertificationStatus
+    safety_rating: Optional[str] = None
+    #: NUMERIC column, cast to float by the service. `None` means unscored — 0 is the
+    #: BEST possible CSA score, and a falsy check on it reported a spotless carrier as
+    #: having no score on file.
+    csa_score: Optional[float] = None
+    driver_compliance: CarrierDriverCompliance
+    drivers_assessed: bool
+    overall_compliant: bool
+
+
+class DriverHoursSummary(BaseModel):
+    drive_hours_today: Optional[float] = None
+    on_duty_hours_today: Optional[float] = None
+    cycle_hours: Optional[float] = None
+    drive_hours_remaining: Optional[float] = None
+    on_duty_hours_remaining: Optional[float] = None
+    cycle_hours_remaining: Optional[float] = None
+
+
+class DriverHOSOut(BaseModel):
+    """`HOSComplianceMonitor.check_compliance`. Three lists, kept separate on purpose.
+
+    `missing_data` is not `violations`. A driver with no medical certificate on file has
+    not broken a rule; nobody knows whether they have. `is_compliant` requires both an
+    empty violations list AND an empty missing-data list, and `assessable` reports the
+    second on its own so a consumer can render "unknown" rather than "clear".
+    """
+
+    driver_id: str
+    is_compliant: bool
+    assessable: bool
+    missing_data: List[str] = Field(default_factory=list)
+    violations: List[str] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list)
+    hours_summary: DriverHoursSummary
+
+
+class LinehaulCharge(BaseModel):
+    charge_type: str
+    rate_basis: str
+    distance_miles: Optional[float] = None
+    weight_lbs: Optional[float] = None
+    mileage_charge: float
+    weight_charge: float
+    amount: float
+
+
+class FuelSurchargeCharge(BaseModel):
+    """NOT ALWAYS A MEASUREMENT. Without a contract fuel-surcharge table the engine falls
+    back to hardcoded prices — `base_fuel_price=2.50`, `current_fuel_price=3.50` — and
+    those two defaults are what `amount` is derived from. They are declared here because
+    they are sent, and a consumer that wants to know whether the figure is real can
+    compare them to the defaults. Recorded in the burn-down doc; the honest fix is to
+    label a fallback surcharge as one."""
+
+    charge_type: str
+    rate_basis: str
+    distance_miles: Optional[float] = None
+    base_fuel_price: Optional[float] = None
+    current_fuel_price: Optional[float] = None
+    amount: float
+
+
+class ShipmentCostsOut(BaseModel):
+    shipment_id: str
+    linehaul: LinehaulCharge
+    fuel_surcharge: FuelSurchargeCharge
+    total_cost: float
+    distance_miles: Optional[float] = None
+    weight_lbs: Optional[float] = None
+
+
+@router.get("/carriers/{carrier_id}/compliance", response_model=CarrierComplianceOut)
 async def get_carrier_compliance(
     carrier_id: UUID,
     db: AsyncSession = Depends(get_tenant_db)
@@ -393,7 +501,7 @@ async def update_driver(
     return driver
 
 
-@router.get("/drivers/{driver_id}/hos")
+@router.get("/drivers/{driver_id}/hos", response_model=DriverHOSOut)
 async def get_driver_hos(
     driver_id: UUID,
     db: AsyncSession = Depends(get_tenant_db)
@@ -598,7 +706,7 @@ async def update_shipment_status(
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@router.get("/shipments/{shipment_id}/costs")
+@router.get("/shipments/{shipment_id}/costs", response_model=ShipmentCostsOut)
 async def get_shipment_costs(
     shipment_id: UUID,
     db: AsyncSession = Depends(get_tenant_db)

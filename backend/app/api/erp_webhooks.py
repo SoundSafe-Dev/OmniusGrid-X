@@ -21,6 +21,7 @@ from typing import Any, Dict, Optional
 
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from pydantic import BaseModel
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -126,7 +127,15 @@ def _verify_legacy_canonical(
     return hmac.compare_digest(expected, signature.strip())
 
 
-@router.post("/{erp_type}")
+class ERPWebhookAck(BaseModel):
+    """`accepted` or `duplicate` — the vendor needs to be able to tell a first delivery
+    from a redelivery it should stop retrying, and both are 200."""
+
+    status: str
+    event_id: str
+
+
+@router.post("/{erp_type}", response_model=ERPWebhookAck)
 async def receive_erp_webhook(
     erp_type: str,
     event_data: Dict[str, Any],

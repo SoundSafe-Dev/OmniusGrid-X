@@ -322,7 +322,17 @@ async def delete_historian_retention_policy(
         raise HTTPException(status_code=404, detail="Retention policy not found")
 
 
-@tenant_router.post("/enforce", dependencies=[Depends(require_admin)])
+class RetentionEnforced(BaseModel):
+    """`deleted_rows` is the return of `enforce_tenant_historian_retention()`, and it is
+    the whole point of the endpoint — an enforcement run that reports nothing is
+    indistinguishable from one that did nothing."""
+
+    organization_id: str
+    deleted_rows: int
+
+
+@tenant_router.post("/enforce", response_model=RetentionEnforced,
+                    dependencies=[Depends(require_admin)])
 async def enforce_historian_retention(
     current_user: User = Depends(get_current_active_user),
     organization_id: UUID = Depends(get_tenant_org_id),

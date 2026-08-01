@@ -1,5 +1,7 @@
 """Fleet agent visibility APIs."""
 
+from datetime import datetime
+from typing import List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
@@ -8,11 +10,30 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.tenant import get_tenant_db, get_tenant_org_id
 from app.db.models import Asset
+from pydantic import BaseModel
 
 router = APIRouter()
 
 
-@router.get("/agents/versions", summary="Get edge-agent version distribution")
+class AgentVersionRow(BaseModel):
+    #: `coalesce(agent_version, 'unknown')` — an asset that has never reported one is
+    #: bucketed under "unknown" rather than dropped, so the counts add up to the fleet.
+    agent_version: str
+    asset_count: int
+    agent_count: int
+    config_hash_count: int
+    #: `max(agent_last_heartbeat)` for the bucket — a datetime, not a string, unlike most
+    #: timestamps on this surface. `None` for a version nothing has checked in on.
+    latest_heartbeat: Optional[datetime] = None
+
+
+class AgentVersionDistribution(BaseModel):
+    items: List[AgentVersionRow]
+    total_assets: int
+
+
+@router.get("/agents/versions", response_model=AgentVersionDistribution,
+            summary="Get edge-agent version distribution")
 async def get_agent_version_distribution(
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),

@@ -211,7 +211,7 @@ async def get_device_diagnostics(
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@webhook_router.post("/webhook")
+@webhook_router.post("/webhook", response_model=GeotabWebhookAck)
 async def geotab_webhook(
     webhook_data: dict,
     db: AsyncSession = Depends(get_db)

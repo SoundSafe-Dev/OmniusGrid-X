@@ -1197,7 +1197,8 @@ literal dict its handler returns — 50 handlers checked, mutation-verified agai
 it was written for. It names its own blind spots (helper-built returns, `**spread`) rather than
 claiming totality, and the companion file covers those.
 
-**250 → 62**, of which 176 were declarations and 20 were miscounts. Lane map, method and the
+**250 → 53**, of which 185 were declarations and 20 were miscounts. Every route left is in
+another dev's lane. Lane map, method and the
 running tally are in
 [`docs/planning/hamad-response-model-burndown.md`](docs/planning/hamad-response-model-burndown.md);
 the clash map there was derived from each dev's **own commits**, since every stale branch

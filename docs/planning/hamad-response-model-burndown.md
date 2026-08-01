@@ -102,11 +102,17 @@ absolute number rose while the ratio fell).
 | 2026-07-31 | 100 | `health` ×16 (17 routes, one already documented as `text/plain`) |
 | 2026-07-31 | 92 | `erp_integrations` ×8 |
 | 2026-07-31 | 68 | the tail: `alarms` ×4, `api_keys` ×3, `assets` ×3, `commands` ×3, `dashboard` ×3, `oee` ×3, `sso` ×3, `main` ×2 |
-| 2026-07-31 | **62** | six that were never debt — five file downloads and `/metrics` |
+| 2026-07-31 | 62 | six that were never debt — five file downloads and `/metrics` |
+| 2026-07-31 | **53** | the last nine in lane: `transportation` ×3, `workcells` ×2, `fleet_agents`, `data_retention`, `erp_webhooks`, `geotab` |
 
-**151 routes off the list, of which 131 were declarations and 20 were miscounts.**
+**160 routes off the list, of which 140 were declarations and 20 were miscounts.**
 Both halves matter: the ratchet is only worth obeying if its number is honest, and
 20 routes that could never be declared would have made the target unreachable.
+
+**All 53 that remain are in another dev's lane** — `engines` 11, `model_monitoring` 9,
+`logistics_correlation` 8, `analysis_sessions` 7, `nlp_correlation` 6, `auth` 4,
+`correlation_integration` 3, `telemetry` 3, `kanban` 2. Nothing in-lane is left to declare.
+Those files need their owner, not this pass; the ratchet holds the line at 53 meanwhile.
 
 ## What is deliberately NOT debt
 
@@ -241,9 +247,10 @@ covering 72 handlers, confirmed both clean without a hand-written test each.
 
 ## What a clean schema makes look true
 
-Two endpoints in this burn-down now have tidy, documented response models over payloads that
-are not measurements. **A declaration makes a surface look more trustworthy without making it
-more true**, so both are named here rather than left for a reader to discover from the schema.
+Three endpoints in this burn-down now have tidy, documented response models over payloads
+that are not measurements. **A declaration makes a surface look more trustworthy without
+making it more true**, so each is named here rather than left for a reader to discover from
+the schema.
 
 1. **GeoTab's HOS endpoints.** `geotab_service` generates the DOT-regulated hours-of-service
    figures with `random.uniform`. The schemas are clean and the numbers are invented. A
@@ -258,6 +265,36 @@ more true**, so both are named here rather than left for a reader to discover fr
    200 and no restart. `CollectorRestartAck` describes what is sent and its docstring says
    outright that it does not vouch for it; making the endpoint do the thing, or removing it,
    is a behaviour change and not this pool's to make.
+
+3. **`/transportation/shipments/{id}/costs` derives its fuel surcharge from two hardcoded
+   prices.** Without a contract fuel-surcharge table, `calculate_fuel_surcharge` falls back
+   to `base_fuel_price=2.50` and `current_fuel_price=3.50` and computes `amount` from the
+   difference. `FuelSurchargeCharge` declares both, so a consumer that wants to know
+   whether the figure is real can compare them to the defaults — but the endpoint does not
+   say so itself, and the total cost it feeds reads like a quote. The honest fix is to
+   label a fallback surcharge as one; same shape as the two above.
+
+## The same defect class, running the other way: an INVENTED field
+
+`GET/PUT /organizations/settings/current` is the one route in this burn-down where the
+naive declaration would have broken the page by **adding** a field rather than removing one.
+
+Both handlers return only the keys actually stored in the org's settings blob. A plain
+`response_model` fills the absent ones with `null` — and the admin Settings page does
+
+```ts
+const current = { ...SETTING_DEFAULTS, ...settings, ...draft }
+```
+
+A spread, so an emitted `null` **overwrites** the default instead of falling back to it.
+Declaring these two naively would have blanked the Timezone field and flipped three
+notification toggles from `true` to null for every organization that had never saved a
+setting. Both routes carry `response_model_exclude_unset=True`, which preserves exactly
+what the handlers send today.
+
+Worth stating plainly because the burn-down's standing rule — *a model that omits a field
+deletes it* — trained the eye to look for absence. The consumer here cannot tell an
+invented `null` from a real one, and neither can the rule.
 
 ## One payload got smaller, deliberately
 
