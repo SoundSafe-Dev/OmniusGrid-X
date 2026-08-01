@@ -182,9 +182,18 @@ The pipeline is complete and now has one consumer. These are the gaps that consu
   *Done.*
 
 - **FS-264 · Contract-gate observability** · S
-  The gate's score is in a JUnit file nobody reads between runs.
-  *Done when:* conformance and the undeclared-route count are visible as a trend, so a drift is
-  noticed before the ratchet fails.
+  ~~The gate's score is in a JUnit file nobody reads between runs.~~
+  **Done 2026-08-01.** `scripts/contract_summary.py` writes conformance, the floor, the
+  **headroom** between them, a per-check breakdown (marked defect vs policy), the
+  undeclared-route count against its own ratchet, and the 5xx operation list to
+  `$GITHUB_STEP_SUMMARY` on every run. Runs before the ratchet and with `if: always()`, so the
+  numbers are present exactly when the build is red. Warns when headroom falls to ≤3 — the
+  early signal a floor 8–9 points down cannot give.
+
+  The per-check breakdown is the substance, not decoration: on 2026-07-31 six verified fixes
+  moved the total 369 → 368 while `ServerError` fell 41→38 and `AcceptedNegativeData` rose
+  25→27, because a fixed endpoint reaches the negative-data check for the first time. A trend
+  of the total alone reports real work as nothing happening.
 
 - **FS-265 · Compliance Assistant: ERP context admin view** · M
   The operational leg is invisible by design and traceable only in structlog. An admin-only view

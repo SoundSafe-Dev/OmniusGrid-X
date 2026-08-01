@@ -501,6 +501,40 @@ seven are the interesting ones: an endpoint whose response shape depends on live
 or on the current time cannot be contract-tested reproducibly, and that is worth knowing
 independently of this gate.
 
+### Reading the score between runs (FS-264)
+
+`contract_ratchet.py` answers one question — did conformance drop below the floor — and the
+floor sits 8–9 points below the observed minimum. **A regression of five operations is
+therefore invisible** until a sixth arrives and the build fails, by which point the change
+that caused it is several commits back.
+
+`scripts/contract_summary.py` runs alongside it and writes to `$GITHUB_STEP_SUMMARY`, so
+every run shows its own numbers in the Actions UI without anyone downloading a JUnit file.
+It never fails the build; the ratchet is still the gate. It reports:
+
+* conformance, the floor, and the **headroom** between them — with a warning when the
+  headroom drops to 3 or fewer, which is the early signal the floor cannot give;
+* a **per-check breakdown**, marked defect vs policy;
+* the **undeclared-route count** against its own ratchet;
+* the list of operations returning 5xx, folded away.
+
+**The per-check breakdown is the whole point, and 2026-07-31 is why.** Six defects were
+fixed and verified individually that day and the total went 369 → 368. The headline said the
+work was worthless. The categories said what actually happened:
+
+    ServerError            41/40 -> 40/38     the fixes landing
+    AcceptedNegativeData   25    -> 27        two of them moving SIDEWAYS
+
+An endpoint that 500s never reaches the negative-data check, so fixing it can move an
+operation from one failing bucket to another rather than to passing. A trend of the total
+alone reports that as nothing happening — and one of those six restored a feature that had
+never worked since the day it was written.
+
+The undeclared-route count sits next to conformance deliberately, not in its own job:
+schemathesis can only check what a route declares, so conformance is a statement about the
+declared surface only. Read alone it rises when routes are declared **and** when routes are
+deleted, and those are not the same news.
+
 ### What stops the ratchet being fooled
 
 It reads junit XML and rejects a report whose operation count has collapsed. Otherwise a

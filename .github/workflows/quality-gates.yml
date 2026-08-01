@@ -142,6 +142,13 @@ jobs:
         # for a clean one — contract_ratchet.py rejects a report whose operation count
         # collapsed.
         run: pytest tests/test_api_contract.py -q --junitxml=contract-report.xml || true
+      # BEFORE the ratchet, so the numbers are in the run summary even when the next
+      # step fails the build — the moment a reader most wants them. Never fails the
+      # build itself; the ratchet below is the gate.
+      - name: Summarise conformance
+        if: always()
+        working-directory: ./backend
+        run: python scripts/contract_summary.py contract-report.xml
       - name: Conformance must not regress
         working-directory: ./backend
         run: python scripts/contract_ratchet.py contract-report.xml
