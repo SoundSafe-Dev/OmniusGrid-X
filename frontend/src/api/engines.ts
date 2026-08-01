@@ -42,17 +42,26 @@ export const enginesApi = {
     return response.data;
   },
 
+  // QUERY PARAMS, NOT A BODY — and this pair has never once succeeded.
+  //
+  // `approve_recommendation(rec_id: str, operator_id: str, notes: Optional[str] = None)`
+  // in `app/api/engines.py` annotates both as bare `str`, which FastAPI reads as QUERY
+  // parameters. Sending them in the body left `operator_id` missing, so every click on
+  // Approve or Reject returned 422 with `loc: ["query", "operator_id"]`. Observed by
+  // clicking the buttons on /engines/strategic against a real backend on 2026-08-01;
+  // nothing had ever exercised them, because the mock path returns void without a request.
+  //
+  // Fixed on this side deliberately: `engines.py` belongs to another lane, and moving the
+  // client onto the contract the server already publishes needs no agreement to land.
   approveRecommendation: async (recId: string, operatorId: string, notes?: string): Promise<void> => {
-    await api.post(`/api/v1/engines/strategic/recommendations/${recId}/approve`, {
-      operator_id: operatorId,
-      notes,
+    await api.post(`/api/v1/engines/strategic/recommendations/${recId}/approve`, null, {
+      params: { operator_id: operatorId, ...(notes !== undefined ? { notes } : {}) },
     });
   },
 
   rejectRecommendation: async (recId: string, operatorId: string, reason: string): Promise<void> => {
-    await api.post(`/api/v1/engines/strategic/recommendations/${recId}/reject`, {
-      operator_id: operatorId,
-      reason,
+    await api.post(`/api/v1/engines/strategic/recommendations/${recId}/reject`, null, {
+      params: { operator_id: operatorId, reason },
     });
   },
 
