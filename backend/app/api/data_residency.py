@@ -55,12 +55,42 @@ class ResidencySummary(BaseModel):
 
 
 class ResidencyValidation(BaseModel):
+    """What this check CAN see, and an explicit statement of what it cannot (FS-347).
+
+    It previously reported `total_records = tagged_records`, so `untagged_records` was
+    always 0 and `compliance_percentage` was computed over the tagged rows alone. An
+    organisation with one tagged row and ten thousand untagged ones scored **100%** — on a
+    data-residency check, whose entire purpose is finding data that is not where it should
+    be. The untagged rows are the finding, and they were the ones it could not see.
+
+    `total_records` and `untagged_records` are now `None` rather than a number, because
+    counting the target table is not safely available here:
+
+      * `table_names` is caller-supplied, so a real count means interpolating a caller's
+        string into an identifier position;
+      * this endpoint runs on `get_db`, which binds no tenant GUC — counting an
+        RLS-protected table (`assets`, `alarms`, …) through it returns **0**, so the
+        "real" total would be a fresh wrong number rather than a fix;
+      * `data_residency_tags` has no `organization_id` at all, so its rows and a
+        per-tenant row count are not the same population.
+
+    A cross-tenant row count needs the platform-admin role that does not exist yet
+    (FS-311). Until then this reports the ratio it genuinely computes, names it after what
+    it is over, and says plainly that coverage is unknown.
+    """
+
     expected_region: str
     tables: Dict[str, Any]
-    total_records: int
     tagged_records: int
-    untagged_records: int
-    compliance_percentage: float
+    correct_region_records: int
+    incorrect_region_records: int
+    #: Of the rows that ARE TAGGED — not residency compliance for the table. The old field
+    #: was called `compliance_percentage`, which is the claim this cannot support.
+    tagged_region_percentage: float
+    #: `None`, deliberately. Zero would assert that nothing is untagged.
+    total_records: Optional[int] = None
+    untagged_records: Optional[int] = None
+    coverage_warning: str
 
 
 
@@ -282,14 +312,23 @@ async def validate_data_residency(
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Validate data residency for specified tables"""
-    validation_results = {
+    """Validate data residency for specified tables. See `ResidencyValidation` for what
+    this can and cannot see — the untagged rows are the finding, and they are invisible
+    here until FS-311 provides a cross-tenant read path."""
+    validation_results: Dict[str, Any] = {
         "expected_region": expected_region,
         "tables": {},
-        "total_records": 0,
         "tagged_records": 0,
-        "untagged_records": 0,
-        "compliance_percentage": 0.0
+        "correct_region_records": 0,
+        "incorrect_region_records": 0,
+        "tagged_region_percentage": 0.0,
+        "total_records": None,
+        "untagged_records": None,
+        "coverage_warning": (
+            "Counts tagged rows only. Rows with no residency tag are not visible to this "
+            "check, so it cannot report coverage — a high percentage here means the "
+            "tagged rows are in the expected region, NOT that the table is compliant."
+        ),
     }
     
     for table_name in table_names:
@@ -301,35 +340,36 @@ async def validate_data_residency(
         
         # Count tagged records with correct region
         correct_tags = [t for t in tags if t.region == expected_region]
-        
-        # Note: This is a simplified validation. In production, you would need to
-        # query the actual table to get the total record count and compare.
-        # For now, we just report what we have tagged.
-        
+
         validation_results["tables"][table_name] = {
             "tagged_count": len(tags),
             "correct_region_count": len(correct_tags),
-            "incorrect_region_count": len(tags) - len(correct_tags)
+            "incorrect_region_count": len(tags) - len(correct_tags),
         }
-        
+
         validation_results["tagged_records"] += len(tags)
-    
-    validation_results["total_records"] = validation_results["tagged_records"]
-    
-    # Calculate compliance percentage
-    if validation_results["total_records"] > 0:
-        correct_region_total = sum(
-            t["correct_region_count"] for t in validation_results["tables"].values()
-        )
-        validation_results["compliance_percentage"] = (
-            correct_region_total / validation_results["total_records"]
+        validation_results["correct_region_records"] += len(correct_tags)
+        validation_results["incorrect_region_records"] += len(tags) - len(correct_tags)
+
+    # OVER THE TAGGED ROWS, and named for it. This used to divide by `total_records`,
+    # which was itself set to `tagged_records` one line earlier — so the denominator was
+    # the tagged set while the field was called `compliance_percentage`, which reads as a
+    # statement about the table.
+    if validation_results["tagged_records"] > 0:
+        validation_results["tagged_region_percentage"] = (
+            validation_results["correct_region_records"]
+            / validation_results["tagged_records"]
         ) * 100
     
     logger.info(
         "data_residency_validation",
         table_names=table_names,
         expected_region=expected_region,
-        compliance_percentage=validation_results["compliance_percentage"]
+        # Renamed with the field. Logging it as `compliance_percentage` would put the
+        # claim this endpoint cannot support into the log line instead of the response,
+        # where a dashboard built on structlog would pick it up unchallenged.
+        tagged_region_percentage=validation_results["tagged_region_percentage"],
+        tagged_records=validation_results["tagged_records"],
     )
     
     return validation_results

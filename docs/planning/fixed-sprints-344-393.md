@@ -106,17 +106,41 @@ for placeholder secrets.
   would label a genuine GPS fix as simulated — a falsehood in the other direction, and one
   that would teach a consumer to ignore the flag. Both branches are asserted.
 
-- **FS-346 · The compliance report states three figures it does not compute** · M
+- **FS-346 · The compliance report states four figures it does not compute** · M
   `compliance.py:406` — `"active_assets": total_assets  # Simplified for now`. The active
   count is the total count, on an **ISO-27001** block. `:411` does the same on SOC-2
   (`pending_assessments = total_vendors`). `:414-415` hard-codes `consent_records: 0` and
   `data_processing_records: 0` on a **GDPR** block, with `# Will be populated from…`.
   A compliance report that reports zero consent records is not neutral; it is a finding.
+  ✅ **DONE 2026-08-01.** All four now counted — every column already existed
+  (`security_assets.status`, `vendor_risk_assessments.status`, and both GDPR tables), and
+  the three existing counts moved from `len(rows.all())` to `func.count()` while I was there.
+  `consent_records` is a JOIN through `users`, not a filter, because that table has **no
+  `organization_id`** — `gdpr.py` records `user_id` as the right grain for consent.
+
+  The tests seed rows in the **non-default** state deliberately: `status` defaults to
+  `"active"`/`"pending"`, so a test built on default rows would pass just as happily against
+  the bug. An AST assertion also fails on any hardcoded literal in the returned blocks, which
+  is what makes `consent_records: 0` fail even for an org whose true count is zero.
 
 - **FS-347 · The residency validator can only see its own tags** · M
-  `data_residency.py:305-307`: *"In production, you would need to query the actual table to get
-  the total record count and compare. For now, we just report what we have tagged."* Untagged
-  rows — the ones a residency check exists to find — are invisible to it.
+  `data_residency.py:305-307`. Untagged rows — the ones a residency check exists to find —
+  are invisible to it, and it scored **100%** on an org with one tagged row and ten thousand
+  untagged ones.
+  ✅ **DONE 2026-08-01 — as an admission, not a real count.** Counting the target table is not
+  safely available here: `table_names` is caller-supplied (identifier interpolation), the
+  handler runs on `get_db` so counting an RLS table returns 0 (a *fresh* wrong number), and
+  `data_residency_tags` has no `organization_id` at all. A cross-tenant count needs FS-311.
+
+  So `total_records` and `untagged_records` are now `None` rather than 0 — zero asserts that
+  nothing is untagged — `compliance_percentage` is renamed `tagged_region_percentage` after
+  what it is actually over, and a `coverage_warning` states the gap in the payload.
+
+  **The endpoint had no behavioural test, and that cost me one.** The rename left a stale
+  `validation_results["compliance_percentage"]` in the logger call, and a *full green suite*
+  ran past a `KeyError` on the response path, because only `test_route_auth_walk` touched
+  this route and it checks auth alone. A route that is only walked is a route whose body is
+  unexecuted.
 
 - **FS-348 · Route optimisation returns four hard-coded constants as results** · M
   `transportation_management.py:267-285`. Distance is estimated; duration is

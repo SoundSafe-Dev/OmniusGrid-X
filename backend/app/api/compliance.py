@@ -5,10 +5,12 @@ from typing import Any, Dict, Optional, List
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi import status as http_status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
+    ConsentRecord,
+    DataProcessingRecord,
     User,
     VendorRiskAssessment,
     SecurityAsset,
@@ -381,37 +383,107 @@ async def get_compliance_summary(
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),
 ):
-    """Get compliance summary"""
-    assets_result = await db.execute(
-        select(SecurityAsset).where(SecurityAsset.organization_id == org_id)
-    )
-    total_assets = len(assets_result.scalars().all())
+    """Get compliance summary.
 
-    vendors_result = await db.execute(
-        select(VendorRiskAssessment).where(VendorRiskAssessment.organization_id == org_id)
-    )
-    total_vendors = len(vendors_result.scalars().all())
+    FOUR OF THESE SIX FIGURES WERE NOT COMPUTED (FS-346). `active_assets` was
+    `total_assets`, `pending_assessments` was `total_vendor_assessments`, and both GDPR
+    counters were the literal `0` behind `# Will be populated from…`.
 
-    high_risk_result = await db.execute(
-        select(VendorRiskAssessment).where(
-            VendorRiskAssessment.organization_id == org_id,
-            VendorRiskAssessment.risk_level == "high",
+    That is a worse failure here than almost anywhere else in the codebase, because the
+    blocks are labelled **ISO 27001**, **SOC 2** and **GDPR**. A reader takes
+    `active_assets == total_assets` as "every asset is active" rather than "nobody computed
+    this", and `consent_records: 0` reads as a finding — an organisation that has recorded
+    no consent — rather than as an unimplemented counter. A compliance summary is read
+    precisely when someone needs to trust it.
+
+    Every column needed already existed: `security_assets.status`,
+    `vendor_risk_assessments.status`, and both GDPR tables.
+
+    `consent_records` is counted through `users` because that table has **no
+    `organization_id`** — it is scoped by `user_id`, which `gdpr.py` records as the right
+    grain for consent. So the org count is a join, not a filter, and it is the one figure
+    here whose scoping is not a policy predicate.
+    """
+    total_assets = (
+        await db.execute(
+            select(func.count())
+            .select_from(SecurityAsset)
+            .where(SecurityAsset.organization_id == org_id)
         )
-    )
-    high_risk_vendors = len(high_risk_result.scalars().all())
+    ).scalar_one()
+
+    # COUNTED, not assumed. `status` defaults to "active", so on a seeded database this
+    # will often equal `total_assets` — the point is that it now differs when it should.
+    active_assets = (
+        await db.execute(
+            select(func.count())
+            .select_from(SecurityAsset)
+            .where(
+                SecurityAsset.organization_id == org_id,
+                SecurityAsset.status == "active",
+            )
+        )
+    ).scalar_one()
+
+    total_vendors = (
+        await db.execute(
+            select(func.count())
+            .select_from(VendorRiskAssessment)
+            .where(VendorRiskAssessment.organization_id == org_id)
+        )
+    ).scalar_one()
+
+    high_risk_vendors = (
+        await db.execute(
+            select(func.count())
+            .select_from(VendorRiskAssessment)
+            .where(
+                VendorRiskAssessment.organization_id == org_id,
+                VendorRiskAssessment.risk_level == "high",
+            )
+        )
+    ).scalar_one()
+
+    pending_assessments = (
+        await db.execute(
+            select(func.count())
+            .select_from(VendorRiskAssessment)
+            .where(
+                VendorRiskAssessment.organization_id == org_id,
+                VendorRiskAssessment.status == "pending",
+            )
+        )
+    ).scalar_one()
+
+    consent_records = (
+        await db.execute(
+            select(func.count())
+            .select_from(ConsentRecord)
+            .join(User, User.id == ConsentRecord.user_id)
+            .where(User.organization_id == org_id)
+        )
+    ).scalar_one()
+
+    data_processing_records = (
+        await db.execute(
+            select(func.count())
+            .select_from(DataProcessingRecord)
+            .where(DataProcessingRecord.organization_id == org_id)
+        )
+    ).scalar_one()
 
     return {
         "iso_27001": {
             "total_assets": total_assets,
-            "active_assets": total_assets  # Simplified for now
+            "active_assets": active_assets,
         },
         "soc_2": {
             "total_vendor_assessments": total_vendors,
             "high_risk_vendors": high_risk_vendors,
-            "pending_assessments": total_vendors  # Simplified for now
+            "pending_assessments": pending_assessments,
         },
         "gdpr": {
-            "consent_records": 0,  # Will be populated from consent records
-            "data_processing_records": 0  # Will be populated from processing records
-        }
+            "consent_records": consent_records,
+            "data_processing_records": data_processing_records,
+        },
     }
