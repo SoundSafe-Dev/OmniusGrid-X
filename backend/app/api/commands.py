@@ -21,7 +21,14 @@ router = APIRouter()
 
 class CommandSubmitRequest(BaseModel):
     """Request to submit a new command"""
-    asset_id: str = Field(..., description="Target asset ID")
+
+    #: TYPED, not `str`. `assets.id` is a UUID column, so `WHERE id = ''` is an asyncpg
+    #: type error and this endpoint answered 500 to `{"asset_id": ""}` — a malformed id
+    #: is the caller's mistake and 422 is what the schema already promised. Found by the
+    #: contract gate (FS-259). `command_executor._uuid` already accepts a UUID object, so
+    #: nothing downstream changes, and pydantic still accepts the canonical string form
+    #: every existing client sends.
+    asset_id: UUID = Field(..., description="Target asset ID")
     command_type: str = Field(default="operator", description="Type: tactical, operator, system")
     action_id: str = Field(..., description="Action identifier: set_speed, pause_job, etc.")
     parameters: Dict[str, Any] = Field(default_factory=dict, description="Command parameters")

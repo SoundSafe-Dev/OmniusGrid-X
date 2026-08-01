@@ -276,9 +276,9 @@ input reaching the database — and all are reproducible from the run artefacts:
 
 | operation | input that 500s it |
 |---|---|
-| `POST /api/v1/commands/submit` | `{"action_id": "", "asset_id": ""}` |
-| `POST /api/v1/user/goals` | `{"title": ""}` |
-| `POST /api/v1/fleet/releases` | `{"config_bundle": "0", "image_tag": "0", "version": "0"}` |
+| ~~`POST /api/v1/commands/submit`~~ | `{"asset_id": ""}` reached a UUID column. **Fixed** — the body field is typed `UUID`, so it is the 422 the schema promised. |
+| ~~`POST /api/v1/user/goals`~~ | `{"title": ""}`. **Fixed, and the input was irrelevant** — see below. |
+| `POST /api/v1/fleet/releases` | `{"config_bundle": "0", ...}`. **Not an application defect**: `OTA_SIGNING_PRIVATE_KEY_PATH` is unset, so `sign_bundle` cannot load a key. Environmental, like the 503s, and OTA is another dev's lane. |
 | `POST /api/v1/transportation/load-plans` | a `shipment_id` naming no row |
 | `POST /api/v1/twin/optimize` | `{"asset_ids": []}` |
 | `POST /api/v1/bulk/assets/import` | a generated multipart body |
@@ -286,6 +286,47 @@ input reaching the database — and all are reproducible from the run artefacts:
 
 Three more (`/api/v1/logistics/logistics/*`) are in `logistics_correlation.py`, which is
 another dev's lane.
+
+### The find that justified the whole exercise: a feature that had never worked
+
+`POST /api/v1/user/goals` was in the list above because it 500'd on `{"title": ""}`. It
+500'd on **everything**, and always had:
+
+```python
+"id": str(UUID()),      # TypeError: one of the hex, bytes, bytes_le, fields, or int
+                        #            arguments must be given
+```
+
+`uuid.UUID` has no zero-argument form. The endpoint could not create a goal for any input,
+ever, since it was written; `userContext.ts:69` calls it from the UI; and because nothing
+could be created, the PUT and DELETE beside it could only ever answer 404. **The whole
+goals feature was dead behind an endpoint that looked wired.** It was the only `UUID()` in
+the codebase, and a sweep now fails the build if another lands — walking the AST rather
+than the source text, because the first version of that sweep flagged the comment
+explaining the fix.
+
+Worth being precise about what found it: the input schemathesis sent was irrelevant. **Any
+test that had called this endpoint once, with anything, would have caught it.** There was
+none. The gate's value here was not clever input generation — it was being the first thing
+ever to make the request.
+
+Fixing that exposed a second defect underneath, which is the more interesting one because
+it fails silently rather than loudly. `users.user_goals` is a plain `Column(JSON)` with no
+`MutableList`, and the handler did `user.user_goals.append(...)`. SQLAlchemy does not see
+an in-place mutation, so the attribute is never marked dirty, no UPDATE is emitted, and the
+`refresh()` that follows reloads the row without the goal — **200, and the write is gone**.
+`update_user_goal` had it too, and its symptom is worse: a 200 carrying the operator's
+previous values, which reads as an edit that accepted itself and then reverted.
+
+The handler guarded `if user.user_goals is None: user.user_goals = []` first, which reads
+like it rescues the case. It does not: the column is `default=[]`, so every user created
+through the ORM already holds `[]` and that branch never runs. Measured, not reasoned —
+reverting the fix loses the FIRST goal, not merely the second, and the test was corrected
+to say so. `delete_user_goal`, in the same file, reassigns the list and was right all along.
+
+Both are pinned by `tests/test_user_goals_roundtrip_realdb.py`, which reads every goal back
+through a **separate request**, because the silent half is invisible in the response that
+created it.
 
 ### The ~20 `503`s are the harness, not the API
 

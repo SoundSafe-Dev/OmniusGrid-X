@@ -5,7 +5,7 @@ API endpoints for managing user context, priorities, and goals.
 """
 
 from typing import List, Dict, Any, Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -154,20 +154,42 @@ async def add_user_goal(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
-    # Create new goal
+    # THIS ENDPOINT HAD NEVER ONCE CREATED A GOAL. The id was `str(UUID())`, and
+    # `uuid.UUID` takes no zero-argument form — it raises
+    #
+    #     TypeError: one of the hex, bytes, bytes_le, fields, or int arguments must be given
+    #
+    # on every call, whatever the request said. So `POST /api/v1/user/goals` answered 500
+    # to every caller since it was written, `userContext.ts:69` calls it from the UI, and
+    # because nothing could ever be created the PUT and DELETE below could only ever
+    # answer 404. The whole goals feature was dead, and the only `UUID()` in the codebase
+    # is what killed it. Found by the contract gate (FS-259).
     new_goal = {
-        "id": str(UUID()),
+        "id": str(uuid4()),
         "title": request.title,
         "progress": request.progress,
         "deadline": request.deadline,
         "created_at": datetime.now(timezone.utc).isoformat()
     }
-    
-    # Add to user goals
-    if user.user_goals is None:
-        user.user_goals = []
-    user.user_goals.append(new_goal)
-    
+
+    # REASSIGNED, NOT APPENDED TO, and that is load-bearing. `users.user_goals` is a plain
+    # `Column(JSON)` with no `MutableList`, so SQLAlchemy does not see an in-place
+    # `.append()` — the attribute is never marked dirty, no UPDATE is emitted, and the
+    # `refresh()` below then reloads the row without the goal. The caller gets a 200 and
+    # their goal is gone.
+    #
+    # The old code guarded `if user.user_goals is None: user.user_goals = []` first, which
+    # looks like it rescues the case — an assignment DOES flag the attribute, and the
+    # append then lands on that same list. But `users.user_goals` is
+    # `Column(JSON, default=[])`, so every user created through the ORM already holds `[]`
+    # rather than NULL and that branch never runs. Measured, not reasoned: reverting to
+    # `.append()` loses the FIRST goal too, not merely the second.
+    #
+    # `delete_user_goal` two functions down already builds a new list and assigns it. It
+    # was correct all along, in the same file, which is what makes these two readable as
+    # slips rather than as a misunderstanding.
+    user.user_goals = list(user.user_goals or []) + [new_goal]
+
     user.updated_at = datetime.now(timezone.utc)
     
     await db.commit()
@@ -209,19 +231,30 @@ async def update_user_goal(
     if user.user_goals is None:
         raise HTTPException(status_code=404, detail="Goal not found")
     
+    # A NEW LIST, for the same reason as the create above: `users.user_goals` is a plain
+    # `Column(JSON)`, so mutating `goal["title"]` in place leaves the attribute clean and
+    # `commit()` writes nothing. The old code then called `refresh()`, which reloaded the
+    # unmodified row — so the endpoint returned 200 carrying the operator's PREVIOUS
+    # values, which reads as an edit that was accepted and then reverted itself.
+    updated = []
     goal_found = False
     for goal in user.user_goals:
         if goal.get("id") == goal_id:
-            goal["title"] = request.title
-            goal["progress"] = request.progress
-            goal["deadline"] = request.deadline
-            goal["updated_at"] = datetime.now(timezone.utc).isoformat()
+            goal = {
+                **goal,
+                "title": request.title,
+                "progress": request.progress,
+                "deadline": request.deadline,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
             goal_found = True
-            break
-    
+        updated.append(goal)
+
     if not goal_found:
         raise HTTPException(status_code=404, detail="Goal not found")
-    
+
+    user.user_goals = updated
+
     user.updated_at = datetime.now(timezone.utc)
     
     await db.commit()
