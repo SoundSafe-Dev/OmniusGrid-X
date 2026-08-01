@@ -1,7 +1,7 @@
 """SOC 2 and ISO 27001 Compliance API Endpoints"""
 
 from datetime import datetime, date, timezone
-from typing import Optional, List
+from typing import Any, Dict, Optional, List
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi import status as http_status
@@ -21,13 +21,58 @@ import structlog
 
 logger = structlog.get_logger()
 
+from pydantic import BaseModel  # noqa: E402
+
 router = APIRouter()
+
+# ---- Response schemas (pool #43 / FS-253). Documented, not reshaped.
+
+
+class CreatedWithMessage(BaseModel):
+    """Both creates echo the new id, its display name, and a message. The two
+    name keys differ (`vendor_name` / `asset_name`), so each gets its own model
+    rather than a shared one with both optional — an optional key here would
+    start emitting a null the caller never had."""
+
+    id: str
+    message: str
+
+
+class VendorAssessmentCreated(CreatedWithMessage):
+    vendor_name: str
+
+
+class SecurityAssetCreated(CreatedWithMessage):
+    asset_name: str
+
+
+class MessageResponse(BaseModel):
+    """The two updates and the delete acknowledge with a message alone."""
+
+    message: str
+
+
+class SecurityAssetList(BaseModel):
+    items: List[Dict[str, Any]]
+    total: int
+
+
+class ComplianceSummary(BaseModel):
+    """One block per framework. The blocks are open objects: each is assembled
+    from a different set of counters and they do not share a shape."""
+
+    iso_27001: Dict[str, Any]
+    soc_2: Dict[str, Any]
+    gdpr: Dict[str, Any]
+
+
 
 
 # SOC 2 Compliance Endpoints
 
 @router.get(
     "/vendor-assessments",
+    response_model=SecurityAssetList,
     summary="List vendor risk assessments",
     description="List vendor risk assessments for the authenticated organization (SOC 2).",
 )
@@ -64,7 +109,7 @@ async def list_vendor_assessments(
     return {"items": assessment_list, "total": len(assessment_list)}
 
 
-@router.post("/vendor-assessments", summary="Create vendor risk assessment", description="Create a new vendor risk assessment for SOC 2 compliance.", dependencies=[Depends(require_admin)])
+@router.post("/vendor-assessments", response_model=VendorAssessmentCreated, summary="Create vendor risk assessment", description="Create a new vendor risk assessment for SOC 2 compliance.", dependencies=[Depends(require_admin)])
 @rate_limit("10/minute")
 async def create_vendor_assessment(
     request: Request,
@@ -110,7 +155,7 @@ async def create_vendor_assessment(
     }
 
 
-@router.put("/vendor-assessments/{assessment_id}", summary="Update vendor risk assessment", description="Update an existing vendor risk assessment.", dependencies=[Depends(require_admin)])
+@router.put("/vendor-assessments/{assessment_id}", response_model=MessageResponse, summary="Update vendor risk assessment", description="Update an existing vendor risk assessment.", dependencies=[Depends(require_admin)])
 @rate_limit("10/minute")
 async def update_vendor_assessment(
     request: Request,
@@ -166,6 +211,7 @@ async def update_vendor_assessment(
 
 @router.get(
     "/security-assets",
+    response_model=SecurityAssetList,
     summary="List security assets",
     description="List security assets for the authenticated organization (ISO 27001).",
 )
@@ -203,7 +249,7 @@ async def list_security_assets(
     return {"items": asset_list, "total": len(asset_list)}
 
 
-@router.post("/security-assets", summary="Create security asset", description="Create a new security asset for ISO 27001 compliance.", dependencies=[Depends(require_admin)])
+@router.post("/security-assets", response_model=SecurityAssetCreated, summary="Create security asset", description="Create a new security asset for ISO 27001 compliance.", dependencies=[Depends(require_admin)])
 @rate_limit("10/minute")
 async def create_security_asset(
     request: Request,
@@ -245,7 +291,7 @@ async def create_security_asset(
     }
 
 
-@router.put("/security-assets/{asset_id}", summary="Update security asset", description="Update an existing security asset.", dependencies=[Depends(require_admin)])
+@router.put("/security-assets/{asset_id}", response_model=MessageResponse, summary="Update security asset", description="Update an existing security asset.", dependencies=[Depends(require_admin)])
 @rate_limit("10/minute")
 async def update_security_asset(
     request: Request,
@@ -291,7 +337,7 @@ async def update_security_asset(
     return {"message": "Security asset updated successfully"}
 
 
-@router.delete("/security-assets/{asset_id}", summary="Delete security asset", description="Delete a security asset.", dependencies=[Depends(require_admin)])
+@router.delete("/security-assets/{asset_id}", response_model=MessageResponse, summary="Delete security asset", description="Delete a security asset.", dependencies=[Depends(require_admin)])
 @rate_limit("10/minute")
 async def delete_security_asset(
     request: Request,
@@ -327,7 +373,7 @@ async def delete_security_asset(
     return {"message": "Security asset deleted successfully"}
 
 
-@router.get("/compliance-summary", summary="Get compliance summary", description="Get a summary of compliance status across all frameworks.")
+@router.get("/compliance-summary", response_model=ComplianceSummary, summary="Get compliance summary", description="Get a summary of compliance status across all frameworks.")
 @rate_limit("100/minute")
 async def get_compliance_summary(
     request: Request,

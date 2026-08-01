@@ -93,7 +93,8 @@ absolute number rose while the ratio fell).
 | 2026-07-31 | 209 | `exports` ×13, minus 8 that were never debt (binary media types) |
 | 2026-07-31 | 197 | `query_performance` ×12 |
 | 2026-07-31 | 184 | `gdpr` ×9, `data_retention` ×12 (the pool counted 8) |
-| 2026-07-31 | **179** | `audit` ×5 |
+| 2026-07-31 | 179 | `audit` ×5 |
+| 2026-07-31 | **164** | `compliance_reports` ×7, `compliance` ×8 |
 
 **74 routes off the list, of which 60 were declarations and 14 were miscounts.**
 Both halves matter: the ratchet is only worth obeying if its number is honest, and

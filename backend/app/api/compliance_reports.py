@@ -4,7 +4,7 @@
 import json
 import uuid
 from datetime import datetime, timezone
-from typing import Literal
+from typing import List, Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -134,6 +134,16 @@ class ComplianceReportJobResponse(BaseModel):
     download_url: str
 
 
+class ScheduleListResponse(BaseModel):
+    """`GET /reports/schedules` wraps the typed schedule rows in `items`."""
+
+    items: List[ScheduledComplianceReportResponse]
+
+
+class ScheduleDeleted(BaseModel):
+    deleted: str
+
+
 def _job_response(job: ComplianceReportJob) -> ComplianceReportJobResponse:
     job_id = job.id
     return ComplianceReportJobResponse(
@@ -178,6 +188,7 @@ async def _get_owned_job(
 
 @router.post(
     "/reports",
+    response_model=ComplianceReportJobResponse,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Enqueue async compliance report generation",
     dependencies=[Depends(require_admin)],
@@ -396,6 +407,7 @@ async def _get_owned_schedule(
 
 @router.get(
     "/reports/schedules",
+    response_model=ScheduleListResponse,
     summary="List scheduled compliance report definitions",
     dependencies=[Depends(require_admin)],
 )
@@ -418,6 +430,7 @@ async def list_compliance_report_schedules(
 
 @router.post(
     "/reports/schedules",
+    response_model=ScheduledComplianceReportResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Create a scheduled compliance report definition",
     dependencies=[Depends(require_admin)],
@@ -479,6 +492,7 @@ async def create_compliance_report_schedule(
 
 @router.get(
     "/reports/schedules/{schedule_id}",
+    response_model=ScheduledComplianceReportResponse,
     summary="Get a scheduled compliance report definition",
     dependencies=[Depends(require_admin)],
 )
@@ -496,6 +510,7 @@ async def get_compliance_report_schedule(
 
 @router.put(
     "/reports/schedules/{schedule_id}",
+    response_model=ScheduledComplianceReportResponse,
     summary="Update a scheduled compliance report definition",
     dependencies=[Depends(require_admin)],
 )
@@ -566,6 +581,7 @@ async def update_compliance_report_schedule(
 
 @router.delete(
     "/reports/schedules/{schedule_id}",
+    response_model=ScheduleDeleted,
     summary="Delete a scheduled compliance report definition",
     dependencies=[Depends(require_admin)],
 )
@@ -607,6 +623,7 @@ async def delete_compliance_report_schedule(
 
 @router.get(
     "/reports/{job_id}",
+    response_model=ComplianceReportJobResponse,
     summary="Get compliance report job status",
     dependencies=[Depends(require_at_least(VIEWER))],
 )
