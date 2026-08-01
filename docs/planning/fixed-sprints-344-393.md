@@ -143,11 +143,26 @@ for placeholder secrets.
   unexecuted.
 
 - **FS-348 · Route optimisation returns four hard-coded constants as results** · M
-  `transportation_management.py:267-285`. Distance is estimated; duration is
-  `total_distance / 50`; fuel is `gallons * 3.50`; tolls are `distance * 0.05`. Arguably worse
-  than randomness, because deterministic output reads as computed. Same family as the fuel
-  surcharge already recorded in the burn-down doc (`base_fuel_price=2.50`,
-  `current_fuel_price=3.50` fallbacks).
+  `transportation_management.py:267-285`. Duration is `total_distance / 50`; fuel is
+  `gallons * 3.50`; tolls are `distance * 0.05`. Arguably worse than randomness, because
+  deterministic output reads as computed.
+  ✅ **DONE 2026-08-01.** The four literals are now settings
+  (`FLEET_AVERAGE_SPEED_MPH`, `FLEET_STOP_MINUTES`, `FLEET_AVERAGE_MPG`,
+  `FUEL_PRICE_USD_PER_GALLON`, `TOLL_COST_USD_PER_MILE`) and `optimize_route` returns the
+  `assumptions` it used beside the figures.
+
+  **The item's premise was half wrong, in the code's favour.** It said "distance is
+  estimated" — `_estimate_distance` in fact delegates to `app.services.routing`, which does
+  real haversine or OSRM road distance. Only the three *derived* figures were invented, and
+  the distance's provenance is now reported separately so the fix does not tar it with them.
+
+  Why it mattered more than it looked: `create_route` **persists** all three onto
+  `routes.estimated_duration_hours` / `.fuel_cost_estimate` / `.toll_cost_estimate`, which
+  `GET /transportation/routes` then serves — so a national fuel average from an unrecorded
+  date became a stored per-route cost. Two independent guards: behavioural (each figure must
+  move when its setting moves) and an AST sweep that fails if a numeric literal returns to
+  the costing arithmetic, since the behavioural ones assert *direction* and a literal keeps
+  the direction right for the default configuration.
 
 - **FS-349 · `model_version = "gemma-4-placeholder"` ships in analysis payloads** · S · ⚠ Harsh
   `correlation_ai_engine.py:43`. There is no gemma-4. The `_simulate_analysis` path beside it

@@ -314,6 +314,28 @@ class Settings(BaseSettings):
     ROUTING_PROVIDER: str = "haversine"
     ROUTING_OSRM_URL: str = ""   # e.g. http://osrm:5000
 
+    # FLEET COSTING ASSUMPTIONS (FS-348). These were four literals buried in
+    # `RouteOptimizer.optimize_route` — `total_distance / 50`, `/ 6`, `* 3.50`, `* 0.05` —
+    # whose outputs are PERSISTED onto `routes.fuel_cost_estimate` /
+    # `.toll_cost_estimate` / `.estimated_duration_hours` and served from
+    # `GET /transportation/routes`.
+    #
+    # The distance they multiply is real (haversine, or OSRM road distance when
+    # configured). These four are not measurements of anything: they are a national
+    # average from an unrecorded date, and a fleet of electric vans or a region with no
+    # toll roads gets a confidently wrong number. Deterministic output reads as computed,
+    # which makes this harder to spot than a random one.
+    #
+    # Named and configurable so an operator can set them to their own fleet, and so the
+    # values are visible in one place instead of inline in an arithmetic expression. The
+    # estimate still is not a quote — `optimize_route` returns the assumptions it used
+    # alongside the figures, so a consumer can see what the number rests on.
+    FLEET_AVERAGE_SPEED_MPH: float = 50.0
+    FLEET_STOP_MINUTES: float = 30.0
+    FLEET_AVERAGE_MPG: float = 6.0
+    FUEL_PRICE_USD_PER_GALLON: float = 3.50
+    TOLL_COST_USD_PER_MILE: float = 0.05
+
     # Require edge requests to carry a proof-of-possession signature
     # (X-Agent-Timestamp/X-Agent-Signature) in addition to the CA-verified
     # certificate header. The cert is public material — without the signature a

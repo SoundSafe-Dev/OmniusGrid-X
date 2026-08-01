@@ -10,6 +10,7 @@ import structlog
 from sqlalchemy import text, select, and_, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.db.database import AsyncSessionLocal
 from app.db.models import (
     Carrier, Driver, Shipment, Route, LoadPlan,
@@ -261,29 +262,44 @@ class RouteOptimizer:
         waypoints: Optional[List[Dict]] = None,
         optimization_criteria: str = 'balanced'
     ) -> Dict[str, Any]:
-        """
-        Optimize route based on criteria
-        
-        Note: This is a simplified implementation.
-        In production, integrate with Google Maps, HERE, or similar API.
+        """Distance from the routing provider; duration and costs from fleet assumptions.
+
+        THE DISTANCE IS MEASURED AND THE THREE FIGURES DERIVED FROM IT ARE NOT (FS-348).
+        `_estimate_distance` goes through `app.services.routing` — real haversine, or OSRM
+        road distance when `ROUTING_PROVIDER=osrm`. The duration and the two costs were
+        then computed from four literals written inline: `/ 50`, `/ 6`, `* 3.50`, `* 0.05`.
+
+        Those outputs are not transient. `create_route` persists them onto
+        `routes.estimated_duration_hours`, `.fuel_cost_estimate` and `.toll_cost_estimate`,
+        and `GET /transportation/routes` serves them — so a national fuel average from an
+        unrecorded date becomes a stored per-route cost. **Deterministic output reads as
+        computed**, which is why this is harder to notice than a random number would be.
+
+        The literals are now settings, so an operator can set them to their own fleet, and
+        the values they used are returned in `assumptions` beside the figures. That does
+        not make the estimate a quote — it makes what the estimate rests on visible to
+        whoever reads it.
         """
         waypoints = waypoints or []
-        
-        # Simplified distance calculation (would use actual routing API)
-        # This is placeholder logic
+
+        # Real: haversine, or OSRM road distance when configured.
         total_distance = self._estimate_distance(origin, destination, waypoints)
-        
-        # Calculate estimated duration (avg 50 mph + stops)
-        estimated_hours = total_distance / 50
-        estimated_hours += len(waypoints) * 0.5  # 30 min per stop
-        
-        # Fuel cost estimate (6 mpg, $3.50/gal)
-        fuel_gallons = total_distance / 6
-        fuel_cost = fuel_gallons * 3.50
-        
-        # Toll estimate (simplified)
-        toll_cost = total_distance * 0.05  # 5 cents per mile average
-        
+
+        speed_mph = settings.FLEET_AVERAGE_SPEED_MPH
+        stop_hours = settings.FLEET_STOP_MINUTES / 60.0
+        mpg = settings.FLEET_AVERAGE_MPG
+        fuel_price = settings.FUEL_PRICE_USD_PER_GALLON
+        toll_per_mile = settings.TOLL_COST_USD_PER_MILE
+
+        # Guarded: a misconfigured 0 would be a ZeroDivisionError on a request path, and
+        # the operator who set it would see a 500 rather than the reason.
+        estimated_hours = (total_distance / speed_mph) if speed_mph > 0 else 0.0
+        estimated_hours += len(waypoints) * stop_hours
+
+        fuel_gallons = (total_distance / mpg) if mpg > 0 else 0.0
+        fuel_cost = fuel_gallons * fuel_price
+        toll_cost = total_distance * toll_per_mile
+
         return {
             'origin': origin,
             'destination': destination,
@@ -292,7 +308,21 @@ class RouteOptimizer:
             'estimated_duration_hours': round(estimated_hours, 1),
             'fuel_cost_estimate': round(fuel_cost, 2),
             'toll_cost_estimate': round(toll_cost, 2),
-            'optimization_criteria': optimization_criteria
+            'optimization_criteria': optimization_criteria,
+            # What the three figures above rest on. Returned rather than logged so the
+            # caller that stores them can record them too if it chooses.
+            'assumptions': {
+                'distance_source': settings.ROUTING_PROVIDER,
+                'average_speed_mph': speed_mph,
+                'stop_minutes': settings.FLEET_STOP_MINUTES,
+                'average_mpg': mpg,
+                'fuel_price_usd_per_gallon': fuel_price,
+                'toll_usd_per_mile': toll_per_mile,
+                'note': (
+                    "Duration and costs are derived from configured fleet averages, not "
+                    "from a carrier quote or a live fuel index."
+                ),
+            },
         }
     
     def _estimate_distance(
