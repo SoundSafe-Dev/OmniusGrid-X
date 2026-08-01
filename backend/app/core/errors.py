@@ -242,6 +242,82 @@ def _jsonable_validation_errors(exc: RequestValidationError) -> Any:
     return jsonable_encoder(cleaned)
 
 
+def unhandled_exception_response(request: Request, exc: Exception) -> JSONResponse:
+    """The envelope for an exception nothing else claimed.
+
+    FACTORED OUT so it can be produced from two places that are at different DEPTHS in the
+    middleware stack. Starlette installs a catch-all ``@app.exception_handler(Exception)``
+    on ``ServerErrorMiddleware``, which is the OUTERMOST layer — outside ``CORSMiddleware``
+    — so the 500 it returns carries no ``Access-Control-Allow-Origin``. A browser then
+    reports the request as a CORS failure rather than as the 500 it is: the frontend sees
+    an opaque ``Network Error`` with no status and no trace id, and the app's own error
+    triage cannot record the one class of failure it exists for.
+
+    `UnhandledExceptionMiddleware` (app/middleware/unhandled.py) calls this from *inside*
+    the CORS layer so the headers get added; the registered handler below stays as the
+    backstop for anything that bypasses the middleware stack.
+    """
+    tid = _trace_id(request)
+
+    # A NUL byte in the request is a CLIENT error, and the only one of Postgres's
+    # data errors that can be attributed to the request with certainty.
+    #
+    # Postgres text columns cannot store 0x00 at all, so a string containing one can
+    # never be written however the endpoint is fixed — and nothing in this codebase
+    # generates a NUL, so it arrived in the payload. Returning 500 told the caller
+    # the server had broken and a retry might work, when the request was simply
+    # unstorable.
+    #
+    # DELIBERATELY NARROW. The tempting version of this maps every asyncpg DataError
+    # to 400, which would also relabel our own bad values — a wrong cast, a
+    # miscomputed id — as the caller's fault and hide real defects behind a 4xx.
+    # This matches one exception type whose cause is unambiguous. Everything else
+    # stays a 500.
+    if _is_nul_byte_error(exc):
+        logger.warning("request_contained_nul_byte", trace_id=tid, path=_instance(request))
+        return _envelope(
+            "Request contains a NUL byte (0x00), which cannot be stored.",
+            "bad_request", 400, {}, tid, _instance(request),
+        )
+
+    # A reference to a row that does not exist is the caller's mistake.
+    fk = _foreign_key_target(exc)
+    if fk is not None:
+        # STILL LOGGED AT ERROR. The status is now the caller's, but the cause might
+        # not be: our own code can insert a bad reference too, and a 4xx that goes
+        # unlogged would hide that class of bug completely. The status code answers
+        # the client; the log entry keeps the server honest.
+        logger.error(
+            "foreign_key_violation",
+            error=str(exc),
+            trace_id=tid,
+            path=_instance(request),
+            referenced_table=fk["table"] or None,
+            column=fk["column"] or None,
+        )
+        detail = (
+            f"Reference in '{fk['column']}' does not exist in '{fk['table']}'."
+            if fk["table"]
+            else "The request references a record that does not exist."
+        )
+        return _envelope(detail, "bad_request", 400, {}, tid, _instance(request))
+
+    # Never leak internals; log with the trace id for correlation.
+    #
+    # `exc_info` MATTERS HERE. Previously this response came from ServerErrorMiddleware,
+    # which re-raises after responding so uvicorn printed the traceback. Handling the
+    # exception lower down stops that re-raise, so the traceback has to be captured here
+    # or the fix above would trade a visible 500 for an unreadable one.
+    logger.error(
+        "unhandled_exception",
+        error=str(exc),
+        trace_id=tid,
+        path=_instance(request),
+        exc_info=exc,
+    )
+    return _envelope("internal server error", "internal_error", 500, {}, tid, _instance(request))
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     """Wire the envelope handlers onto a FastAPI app."""
 
@@ -277,53 +353,7 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(Exception)
     async def _unhandled(request: Request, exc: Exception) -> JSONResponse:
-        tid = _trace_id(request)
-
-        # A NUL byte in the request is a CLIENT error, and the only one of Postgres's
-        # data errors that can be attributed to the request with certainty.
-        #
-        # Postgres text columns cannot store 0x00 at all, so a string containing one can
-        # never be written however the endpoint is fixed — and nothing in this codebase
-        # generates a NUL, so it arrived in the payload. Returning 500 told the caller
-        # the server had broken and a retry might work, when the request was simply
-        # unstorable.
-        #
-        # DELIBERATELY NARROW. The tempting version of this maps every asyncpg DataError
-        # to 400, which would also relabel our own bad values — a wrong cast, a
-        # miscomputed id — as the caller's fault and hide real defects behind a 4xx.
-        # This matches one exception type whose cause is unambiguous. Everything else
-        # stays a 500.
-        if _is_nul_byte_error(exc):
-            logger.warning(
-                "request_contained_nul_byte", trace_id=tid, path=request.url.path
-            )
-            return _envelope(
-                "Request contains a NUL byte (0x00), which cannot be stored.",
-                "bad_request", 400, {}, tid, _instance(request),
-            )
-
-        # A reference to a row that does not exist is the caller's mistake.
-        fk = _foreign_key_target(exc)
-        if fk is not None:
-            # STILL LOGGED AT ERROR. The status is now the caller's, but the cause might
-            # not be: our own code can insert a bad reference too, and a 4xx that goes
-            # unlogged would hide that class of bug completely. The status code answers
-            # the client; the log entry keeps the server honest.
-            logger.error(
-                "foreign_key_violation",
-                error=str(exc),
-                trace_id=tid,
-                path=request.url.path,
-                referenced_table=fk["table"] or None,
-                column=fk["column"] or None,
-            )
-            detail = (
-                f"Reference in '{fk['column']}' does not exist in '{fk['table']}'."
-                if fk["table"]
-                else "The request references a record that does not exist."
-            )
-            return _envelope(detail, "bad_request", 400, {}, tid, _instance(request))
-
-        # Never leak internals; log with the trace id for correlation.
-        logger.error("unhandled_exception", error=str(exc), trace_id=tid, path=request.url.path)
-        return _envelope("internal server error", "internal_error", 500, {}, tid, _instance(request))
+        # BACKSTOP ONLY. `UnhandledExceptionMiddleware` normally answers first, from
+        # inside the CORS layer; this stays registered for anything that reaches
+        # ServerErrorMiddleware without passing through it.
+        return unhandled_exception_response(request, exc)

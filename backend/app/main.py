@@ -42,6 +42,7 @@ from app.services.oee_calculator import oee_calculator
 from app.core.errors import register_exception_handlers
 from app.core.openapi import custom_generate_unique_id
 from app.middleware.request_context import RequestContextMiddleware
+from app.middleware.unhandled import UnhandledExceptionMiddleware
 from app.middleware.idempotency import IdempotencyMiddleware, make_idempotency_store
 from app.middleware.audit import AuditLoggingMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
@@ -238,6 +239,15 @@ app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 # Application-wide middleware remains gated on settings.RATE_LIMIT_ENABLED.
 if settings.RATE_LIMIT_ENABLED:
     app.add_middleware(SlowAPIMiddleware)
+
+# Unhandled-exception envelope, registered FIRST and therefore INNERMOST — deliberately
+# inside CORS below. Starlette's catch-all exception handler lives on the outermost
+# ServerErrorMiddleware, so its 500 never passes back through CORSMiddleware and reaches a
+# browser with no Access-Control-Allow-Origin; the browser then reports a CORS failure
+# instead of the 500, and the client loses the status, the body and the trace id. See
+# app/middleware/unhandled.py. Moving this after add_middleware(CORSMiddleware) silently
+# restores the defect, which is why a test asserts the order.
+app.add_middleware(UnhandledExceptionMiddleware)
 
 # CORS middleware — explicit allowlist from config (settings.cors_origins parses
 # it once; empty or any-'*' list is treated as wildcard). Wildcard is incompatible
