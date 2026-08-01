@@ -496,7 +496,8 @@ produce.
 | **FS-254** | `audit` ×5 declared. |
 | **FS-253** | `compliance_reports` ×7 + `compliance` ×8. Seven needed only pointing at models the code already returned. |
 | **FS-255** | `bulk_operations` ×6, `data_residency` ×6, `feature_flags` ×6. |
-| *(pre-plan)* | The coverage ratchet, the shared route walker, the AST returned-keys sweep, and 98 routes declared across `fleet_health`, `notifications`, `dashboard_analytics`, `exports`, `query_performance`, `gdpr`, `data_retention`, `audit`, `compliance`, `compliance_reports`, `bulk_operations`. **250 → 146 undeclared.** |
+| **FS-256** *(part)* | `geotab` ×7. `fleet_logistics` remains. |
+| *(pre-plan)* | The coverage ratchet, the shared route walker, the AST returned-keys sweep, and 105 routes declared across `fleet_health`, `notifications`, `dashboard_analytics`, `exports`, `query_performance`, `gdpr`, `data_retention`, `audit`, `compliance`, `compliance_reports`, `bulk_operations`. **250 → 139 undeclared.** |
 
 **FS-284b changed how the rest of this plan should be executed.** It was written as
 a testing item and it belongs first, ahead of Wave A: every `response_model` batch

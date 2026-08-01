@@ -5,7 +5,9 @@ Fleet telematics, HOS compliance, vehicle diagnostics
 
 import hmac
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel
 from uuid import UUID
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +23,33 @@ router = APIRouter(prefix="/geotab", tags=["geotab"],
                    dependencies=[Depends(get_current_active_user)])
 
 
+# ---- Response schemas (pool #43 / FS-256).
+#
+# Most of these hand back whatever `geotab_service` returns, so the envelope is
+# declared and the records are not — the service owns that structure, and a fixed
+# model here would silently drop whatever it adds.
+#
+# ⚠ SEPARATELY: `geotab_service` has 16 `random.uniform` call sites, including the
+# hours-of-service figures below, which are DOT-regulated. Declaring a schema for
+# a generated number does not make it a measurement. See pool #44 / FS-267 — the
+# fix is to label the data as simulated or gate it behind a flag, and it is NOT
+# what this change does.
+
+
+class GeotabExceptionsResponse(BaseModel):
+    organization_id: str
+    hours_back: int
+    exception_count: int
+    exceptions: List[Dict[str, Any]]
+
+
+class GeotabWebhookAck(BaseModel):
+    status: str
+    event_type: Optional[str] = None
+    timestamp: str
+
+
+
 async def verify_geotab_webhook(x_webhook_secret: Optional[str] = Header(None)):
     """Guard the external webhook with a shared secret (no user JWT available)."""
     expected = settings.GEOTAB_WEBHOOK_SECRET
@@ -33,7 +62,7 @@ webhook_router = APIRouter(prefix="/geotab", tags=["geotab"],
                            dependencies=[Depends(verify_geotab_webhook)])
 
 
-@router.get("/devices")
+@router.get("/devices", response_model=List[Dict[str, Any]])
 async def get_geotab_devices(
     organization_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db)
@@ -53,7 +82,7 @@ async def get_geotab_devices(
     )
 
 
-@router.get("/devices/{device_id}/location")
+@router.get("/devices/{device_id}/location", response_model=Dict[str, Any])
 async def get_device_location(
     device_id: str,
     organization_id: UUID = Depends(get_tenant_org_id),
@@ -78,7 +107,7 @@ async def get_device_location(
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@router.get("/devices/{device_id}/trips")
+@router.get("/devices/{device_id}/trips", response_model=List[Dict[str, Any]])
 async def get_device_trips(
     device_id: str,
     from_time: Optional[datetime] = Query(None, alias="from"),
@@ -107,6 +136,7 @@ async def get_device_trips(
 
 @router.get(
     "/exceptions",
+    response_model=GeotabExceptionsResponse,
     dependencies=[Depends(get_current_active_user)],
 )
 async def get_geotab_exceptions(
@@ -148,6 +178,12 @@ async def get_geotab_exceptions(
 
 @router.get(
     "/devices/{device_id}/diagnostics",
+    #: An OBJECT, not a list. geotab_service.get_device_diagnostics is annotated
+    #: -> Dict[str, Any] and returns {device_id, …, diagnostics: {...}}. Declaring
+    #: List here was a guess from the plural route name, and
+    #: test_frontend_response_shapes_match caught it against the frontend's own
+    #: type: an envelope typed as an array throws `.map is not a function`.
+    response_model=Dict[str, Any],
     dependencies=[Depends(get_current_active_user)],
 )
 async def get_device_diagnostics(
@@ -197,6 +233,7 @@ async def geotab_webhook(
 
 @router.get(
     "/drivers/{driver_id}/hos",
+    response_model=Dict[str, Any],
     dependencies=[Depends(get_current_active_user)],
 )
 async def get_driver_hos_geotab(
@@ -226,6 +263,7 @@ async def get_driver_hos_geotab(
 
 @router.get(
     "/fleet/summary",
+    response_model=Dict[str, Any],
     dependencies=[Depends(get_current_active_user)],
 )
 async def get_fleet_summary(
