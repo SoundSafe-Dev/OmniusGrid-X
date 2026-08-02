@@ -27,8 +27,16 @@ interface DwellTimeRow {
   trailerId: string;
   trailerNumber: string;
   dwellHours: number;
-  isDetention: boolean;
-  detentionCharge: number | null;
+  // `isDetention` and `detentionCharge` are DELIBERATELY NOT DECLARED, and the omission is
+  // load-bearing. The endpoint sends `detention_charge: null` until a charge has been
+  // ASSESSED, and a sibling `detention_assessed` flag saying which — because
+  // `float(None or 0)` turns "not yet worked out" into "nothing owed" on billable time.
+  //
+  // `test_qualifiers_reach_the_frontend.py` exempts that flag only while nothing here reads
+  // the field it qualifies, and declaring the charge tripped it immediately. It was right
+  // to: this summary does not consume the charge, so claiming it would be the first half of
+  // rendering an unassessed trailer as owing nothing. Whoever wires the charge into the UI
+  // wires `detentionAssessed` with it, and that guard will say so again.
 }
 
 /** The page's stated target ("Target: 120 min"), named so the count and the label cannot
