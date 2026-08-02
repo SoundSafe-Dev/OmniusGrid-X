@@ -793,13 +793,68 @@ against *seeded demo data* found what a sweep against an *empty fixture* structu
 cannot. Neither harness is wrong; they see different failure classes, and the data-shaped
 ones only appear when there is data.
 
+## The yard service — FS-360, and three defects inside it (2026-08-02)
+
+`app/services/yard_management.py` is 749 lines behind a live API surface and had **zero
+tests**. Four yard test files existed and none imported it: `test_yard_detention.py` tests
+`build_detention_alert` in `app/api/yard.py`, a different function in a different module
+that happens to share a subject. That is how it looked covered.
+
+Each part of it had something wrong.
+
+| FS | Defect |
+|---|---|
+| **FS-391** | Both money calculators compared a stored timestamp against `datetime.now(timezone.utc)`. SQLite cannot preserve tzinfo, so on the documented dev path every value is naive and checking a trailer out raised `TypeError` — failing on the plain `total_wait_minutes` subtraction before the calculators were even reached |
+| **FS-392** | `schedule_appointment` accepted a booking whose end precedes its start. Not inert: `_check_conflicts` matches such a row through its "contained by" branch, so a 13:00→08:00 appointment **blocks a legitimate 09:00–10:00 booking** while protecting no real slot. Measured exactly that. Zero-length bookings were accepted too |
+| **FS-393** | `getDwellTimes` declared a summary object; the endpoint returns a **list**. So `dwellTimes.trailersExceedingTarget` was `undefined`, `undefined > 0` false, and **the dwell warning banner never rendered in real mode** — while the mock rendered it in development |
+
+**Two things worth carrying beyond this file.**
+
+*Assuming UTC needed an argument, not a default.* Everything writing those columns writes
+`datetime.now(timezone.utc)`, so a naive value has already lost a tzinfo that said UTC.
+Reading it as local time would shift every detention charge by the host's offset **and pass
+a test that only checked it stopped raising** — so there is a test asserting naive and aware
+produce the same number.
+
+*A conflict check fails in two directions and only one gets reported.* The overlap
+arithmetic was correct, including back-to-back bookings not conflicting. That case is now
+pinned, because a check that flags everything produces no bug report — the dock simply looks
+permanently full.
+
+**FS-393 is the third instance of one shape today**, after FS-366 and FS-367, and it is the
+variant the new phantom-field guard **cannot see**: that sweep reads interface *fields*, and
+this was a client function's inline *return type*, agreed with by a mock and nothing else.
+Extending it to client return types is the open follow-up.
+
+## README restructure (2026-08-02)
+
+3,428 lines → ~1,790. Two separate Quickstarts merged; the delivery log (1,048 lines), the
+ERP architecture reference (387) and the correlation dataset samples (261) moved into
+`docs/`; a contents table added.
+
+**The guards caught two real mistakes in the move**, which is the argument for having them:
+
+- `docs/DELIVERY-LOG.md` carried 14 links written relative to the repo root, which resolved
+  to `docs/docs/...` once the file lived in `docs/`.
+- The README is required to cite the current sweep-rule range, and that sentence left with
+  the moved block.
+
+And one that no guard would have caught, so it was handled deliberately:
+`test_documented_files_exist.py` is scoped to **top-level documents, not `docs/**`**, so
+moving 1,048 lines of file-citing prose into `docs/` would have dropped every one of those
+citations from the check **while the file count went up**. The guard's scope moved with the
+content. Moving prose out of a checked document moves it out of the check.
+
 ### Still open
 
-- **The RAG-branch history rewrite is done and verified but NOT pushed.** 360/360 commits,
-  all author/date/subject metadata identical, tip tree byte-for-byte identical,
-  the three original blobs gone. The force-push to `backup` is blocked by the permission
-  classifier and needs a human. Pre-rewrite state is pinned at
-  `refs/qa-safety/rag-branch-pre-rewrite` → `ee19defb`, so nothing is at risk either way.
+- The RAG branch is **verified and pushed** (2026-08-02):
+  `backup/feature/RAG-Compliance-Doc-Pipeline` at `ac86e811`, 360/360 commits, all
+  author/date/subject metadata identical, tip tree byte-for-byte identical.
+  Prior state remains pinned locally at `refs/qa-safety/rag-branch-prior` →
+  `ee19defb`. The blocker was the throwaway clone having no credentials for
+  the remote, and pushing from the main repo worked first try.
+- **Extend the phantom-field guard to client RETURN types** — the FS-393 gap above.
+- `correlation_registry_integration.py` (FS-359): 1,065 lines, four importers, zero tests.
 
 ## Not a defect, recorded so it is not re-investigated
 
