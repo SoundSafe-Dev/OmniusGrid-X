@@ -641,3 +641,104 @@ class TestTheTrapsForTheNextPage:
             assert gone not in engine_types, (
                 f"`{gone}` is back on an engine interface and no endpoint sends it"
             )
+
+
+# ---------------------------------------------------------------------------------------
+# The fourth quadrant: a client function's inline RETURN TYPE (FS-393 … FS-397).
+#
+# The two sweeps above read `export interface` blocks in `src/types/`. FS-393 was neither:
+# `getDwellTimes(): Promise<{avgDwellTime; maxDwellTime; trailersExceedingTarget}>` declared
+# its shape INLINE in `src/api/yard.ts`, and returned `response.data` — from an endpoint that
+# sends a list. Nothing here could see it.
+#
+# THE RULE IS NARROWER THAN "the fields must exist", and the narrowing is what makes it
+# usable. A client is entitled to DERIVE a value: `getDwellTimes` now summarises the rows
+# itself, and `avgDwellTime` having no backend producer is correct. What is never right is
+# declaring a shape and then handing back the payload unchanged — then the declaration is a
+# claim about the wire, and it can be checked.
+#
+# So: passthrough (`return response.data`) + a field with no producer = a defect. Four were
+# found and fixed the day this was written:
+#
+#   FS-394  delivery tiles      two blank, and on-time rate showing 0.3% for a real 33.3%
+#   FS-395  driver HOS          four names that resolve to undefined, and `assessable`
+#                               (whether the answer is knowable) dropped entirely
+#   FS-397  shipment costs      all five declared fields absent; the money is nested
+#
+# ---------------------------------------------------------------------------------------
+
+#: `name: async (...): Promise<{ ... }> => {`
+_INLINE_RETURN = re.compile(
+    r"(\w+)\s*:\s*async\s*\([^)]*\)\s*:\s*Promise<\{([^}]*)\}>\s*=>\s*\{", re.S
+)
+#: A body that hands back the payload untouched, with or without a cast.
+_PASSTHROUGH = re.compile(r"return\s+response\.data\s*(?:as\s+\w+\s*)?;")
+
+
+def _passthrough_returns() -> list[str]:
+    """`file: fn() -> [fields]` for every passthrough client whose type outruns the wire."""
+    vocab = _wire_vocabulary()
+    offenders = []
+    api_dir = FRONTEND / "api"
+    for path in sorted(api_dir.glob("*.ts")):
+        if ".test." in path.name:
+            continue
+        source = COMMENT.sub(" ", path.read_text())
+        for match in _INLINE_RETURN.finditer(source):
+            name, declared = match.group(1), match.group(2)
+            body = source[match.end():]
+            # The function ends at the next top-level `},` in the api-object literal.
+            end = body.find("\n  },")
+            body = body[:end] if end != -1 else body
+            if not _PASSTHROUGH.search(body):
+                continue  # derives its result; the fields are its own to invent
+            missing = [
+                f for f in re.findall(r"(\w+)\s*\??\s*:", declared) if f not in vocab
+            ]
+            if missing:
+                offenders.append(f"{path.name}: {name}() declares {missing}")
+    return offenders
+
+
+class TestAPassthroughClientDeclaresWhatTheWireSends:
+    def test_it_can_see_the_client_functions(self):
+        """Vacuity guard. This parses TypeScript with a regex, so a formatting change is
+        enough to make it match nothing and pass over an empty set."""
+        api_dir = FRONTEND / "api"
+        total = sum(
+            len(_INLINE_RETURN.findall(COMMENT.sub(" ", p.read_text())))
+            for p in api_dir.glob("*.ts")
+            if ".test." not in p.name
+        )
+        assert total >= 8, (
+            f"only {total} inline-typed client functions matched; the signature pattern has "
+            "drifted and this sweep is examining almost nothing"
+        )
+
+    def test_it_distinguishes_derived_from_passthrough(self):
+        """The discrimination the rule depends on, asserted on synthetic input rather than
+        on today's tree — otherwise a version that flagged everything, or nothing, would
+        pass while the codebase happened to be clean."""
+        derived = """
+  getThing: async (): Promise<{ computedField: number }> => {
+    const response = await api.get('/x');
+    return { computedField: response.data.length };
+  },
+"""
+        passthrough = """
+  getThing: async (): Promise<{ inventedField: number }> => {
+    const response = await api.get('/x');
+    return response.data;
+  },
+"""
+        assert not _PASSTHROUGH.search(derived), "a derived body was read as passthrough"
+        assert _PASSTHROUGH.search(passthrough), "a passthrough body was not recognised"
+
+    def test_no_passthrough_client_outruns_the_wire(self):
+        offenders = _passthrough_returns()
+        assert not offenders, (
+            "these client functions declare a shape and then return the payload unchanged, "
+            "so the declaration is a claim about the wire — and these fields have no "
+            "producer anywhere in the backend. Either map the response to the declared "
+            "shape, or declare what the endpoint sends:\n  " + "\n  ".join(offenders)
+        )
