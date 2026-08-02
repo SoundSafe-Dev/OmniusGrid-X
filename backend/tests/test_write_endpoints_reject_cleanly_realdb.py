@@ -29,6 +29,7 @@ import uuid
 
 import pytest
 
+from tests._lane_failures import WRITE_FAILURES
 from tests.route_walk import http_paths
 
 pytest.importorskip("testcontainers")
@@ -43,22 +44,7 @@ pytest.importorskip("testcontainers")
 #:
 #: Do not add to this list to make your own change go green.
 KNOWN_LANE_FAILURES: dict[tuple[str, str], str] = {
-    ("POST", "/api/v1/kanban/board/view"): (
-        "HARSH — writes a default board on read and the INSERT violates the task_boards "
-        "policy; the same root cause the GET walk records for /kanban/board"
-    ),
-    ("POST", "/api/v1/engines/correlation/integration/initialize-registries"): (
-        "HARSH — same write-on-read shape against actionable_registries: the INSERT runs on "
-        "a session whose tenant GUC is not bound, so the policy rejects it"
-    ),
-    ("POST", "/api/v1/engines/correlation/generate"): (
-        "HARSH — correlation_ai_engine; 500 on an empty scenario body rather than a 422"
-    ),
-    ("DELETE", "/api/v1/rag/documents/{doc_id}"): (
-        "htreinen — reaches SeaweedFS and surfaces the connection error; should degrade to "
-        "503 when the object store is absent. The GET walk records the same root cause for "
-        "/api/v1/rag/documents"
-    ),
+    key: entry.reason for key, entry in WRITE_FAILURES.items()
 }
 
 #: Paths the walk must not call on itself.
