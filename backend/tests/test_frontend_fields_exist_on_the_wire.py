@@ -528,3 +528,116 @@ class TestTheThreeFindingsStayFixed:
         assert "/ 12" not in source, (
             "monthlyAverage was ytd/12 regardless of how many months had elapsed"
         )
+
+
+# ---------------------------------------------------------------------------------------
+# The third quadrant: declared, no producer, AND NOT YET READ (FS-367).
+#
+# `_declared_but_unsent` requires `re.search(rf"\.{name}\b", source)` — the field must be
+# READ somewhere. That scoping is deliberate and right for that guard: a field nobody
+# renders is doing no visible harm today, and crediting every declaration would bury the
+# signal.
+#
+# But it is exactly why THREE separate sets of phantom fields survived this file:
+#
+#   * `CloudGatewayStatus` — eleven fields, removed with a comment saying the interface
+#     "described a different service".
+#   * `StrategicRecommendation` — seven, and this one WAS eventually read: the Decision
+#     History pane got built on them, and rendered `0 Approved` forever (FS-366).
+#   * `TacticalEngineStatus` + `MLOpsStatus` — six, plus the whole `ModelDeployment`
+#     interface, all supplied by `mockApi` including two populated deployment records
+#     with rollback timestamps (FS-367).
+#
+# The pattern is the same each time and the ORDER is the point: the field is declared, the
+# mock supplies it, and it sits harmless until somebody builds a pane on it. `VITE_USE_MOCK`
+# defaults to true, so that pane looks finished in development and is blank against the real
+# API. StrategicRecommendation is the completed cycle — the other two were caught mid-way.
+#
+# So this counts the fields still waiting for a first reader. It is a COUNT ratchet rather
+# than a name baseline because the population is large and mostly benign: value objects
+# (`GeoLocation.altitude`), request shapes, and fields a future endpoint will carry. Driving
+# it to zero is not the goal; noticing it GROW is.
+# ---------------------------------------------------------------------------------------
+
+#: Measured 2026-08-01, after removing the six engine fields in FS-367. LOWER THIS as
+#: phantom declarations are removed; never raise it. A rise means someone declared a field
+#: with no producer — the first half of the cycle above, and the cheapest moment to stop it.
+MAX_UNREAD_PHANTOM_FIELDS = 57
+
+#: Interfaces describing a REQUEST rather than a response. A field here is something the
+#: client sends, so "no backend producer" is the normal case and not a defect. `*Params` is
+#: already excluded from the sweep above for the same reason.
+_REQUEST_SUFFIXES = ("Params", "Request", "Create", "Update", "Filters", "Credentials")
+
+
+def _declared_unread_and_unsent() -> set[str]:
+    vocab = _wire_vocabulary()
+    source = _component_source()
+    found = set()
+    for path in (FRONTEND / "types").glob("*.ts"):
+        text = COMMENT.sub(" ", path.read_text())
+        for match in INTERFACE.finditer(text):
+            interface, body = match.group(1), match.group(2)
+            if interface.endswith(_REQUEST_SUFFIXES):
+                continue
+            for field in FIELD.finditer(body):
+                name = field.group(1)
+                if name in vocab:
+                    continue
+                if re.search(rf"\.{name}\b", source):
+                    continue  # read somewhere — that is `_declared_but_unsent`'s job
+                found.add(f"{interface}.{name}")
+    return found
+
+
+class TestTheTrapsForTheNextPage:
+    def test_the_two_quadrants_do_not_overlap(self):
+        """They partition the same population by whether anything reads the field. An
+        overlap would mean one of the two `re.search` conditions has drifted, and the pair
+        would be double-counting rather than dividing."""
+        assert not (_declared_but_unsent() & _declared_unread_and_unsent())
+
+    def test_it_finds_the_unread_ones_at_all(self):
+        """Vacuity guard. If the interface or field regex drifts this returns nothing and
+        the ratchet below passes at zero — the failure every sweep in this repo has a rule
+        about, and one this session hit three times in other tools."""
+        assert len(_declared_unread_and_unsent()) > 20, (
+            "the unread-phantom sweep found almost nothing; fix the parsing rather than "
+            "accepting the pass"
+        )
+
+    def test_the_count_does_not_grow(self):
+        current = _declared_unread_and_unsent()
+        assert len(current) <= MAX_UNREAD_PHANTOM_FIELDS, (
+            f"{len(current)} declared fields have no backend producer and no reader; the "
+            f"ratchet allows {MAX_UNREAD_PHANTOM_FIELDS}. Each is a field waiting for its "
+            "first pane, and mockApi will make that pane look finished in development. "
+            "Rename it to what the wire calls it, delete it, or make the server send "
+            "it.\n\nCurrent:\n  " + "\n  ".join(sorted(current))
+        )
+
+    def test_the_ratchet_has_no_slack_at_all(self):
+        """ZERO slack, not "a little". This was set one too high on the first attempt and a
+        deliberately-planted phantom field slipped through unnoticed — the single spare slot
+        absorbed exactly the regression the ratchet exists to catch. A count ratchet with
+        any headroom cannot detect a single addition, which is the only size these arrive
+        in."""
+        current = _declared_unread_and_unsent()
+        assert MAX_UNREAD_PHANTOM_FIELDS == len(current), (
+            f"the ratchet says {MAX_UNREAD_PHANTOM_FIELDS} and {len(current)} exist. Set it "
+            f"to {len(current)}: one spare slot is one free phantom field."
+        )
+
+    def test_the_engine_fields_really_are_gone(self):
+        """The three FS-367 removals, asserted by name. The count above would be satisfied
+        just as well by removing three unrelated fields elsewhere."""
+        # COMMENTS STRIPPED FIRST. The removal is explained in a doc comment that names
+        # every field it removed, so a raw substring check finds them all and fails —
+        # the detector-reads-the-prose-about-its-subject problem this file's header
+        # describes, and which caught the first version of this very test.
+        engine_types = COMMENT.sub(" ", (FRONTEND / "types" / "engine.ts").read_text())
+        for gone in ("deploymentHistory", "lastInferenceAt", "averageLatencyMs",
+                     "totalInferences", "lastPollAt", "lastDeploymentAt"):
+            assert gone not in engine_types, (
+                f"`{gone}` is back on an engine interface and no endpoint sends it"
+            )
