@@ -21,6 +21,7 @@ import {
   Package,
   Wrench
 } from 'lucide-react';
+import type { ShipmentCosts } from '../../api/transportation';
 import { transportationApi, geoTabApi } from '../../api';
 import {
   FleetTrackerMap,
@@ -1036,7 +1037,11 @@ const ShipmentDetailModal: FC<{
   onClose: () => void;
   onChanged: () => void;
 }> = ({ shipment, drivers, vehicles, onClose, onChanged }) => {
-  const [costs, setCosts] = useState<any>(null);
+  // TYPED, NOT `any` — and `any` is why this pane rendered five undefined values without
+  // tsc noticing (FS-397). The client's declared shape was wrong, and the one place that
+  // could have compared them opted out. A wrong type at least fails the build; `any`
+  // guarantees it never will.
+  const [costs, setCosts] = useState<ShipmentCosts | null>(null);
   const [dispatchDriverId, setDispatchDriverId] = useState('');
   const [dispatchVehicleId, setDispatchVehicleId] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
@@ -1151,25 +1156,35 @@ const ShipmentDetailModal: FC<{
             <div className="bg-opsgrid-bg rounded-lg p-4">
               <h4 className="font-medium mb-3">Cost Breakdown</h4>
               <div className="space-y-2 text-sm">
+                {/* The money is on nested charge objects — `linehaul.amount` and
+                    `fuelSurcharge.amount`. Every line here used to read a flat field the
+                    endpoint has never sent, so all five called .toFixed(2) on undefined
+                    (FS-397).
+
+                    Accessorials and Detention are GONE rather than shown as $0.00: this
+                    endpoint does not bill either, and a zero in a cost breakdown reads as
+                    "nothing was charged" rather than "not calculated here". The mock
+                    computed both, which is why the panel looked complete in development. */}
                 <div className="flex justify-between">
-                  <span className="text-opsgrid-text-secondary">Freight</span>
-                  <span>${costs.freight.toFixed(2)}</span>
+                  <span className="text-opsgrid-text-secondary">Linehaul</span>
+                  <span>${costs.linehaul.amount.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-opsgrid-text-secondary">Fuel Surcharge</span>
-                  <span>${costs.fuel.toFixed(2)}</span>
+                  <span className="text-opsgrid-text-secondary">
+                    Fuel Surcharge
+                    <span className="ml-1 text-xs">({costs.fuelSurcharge.rateBasis})</span>
+                  </span>
+                  <span>${costs.fuelSurcharge.amount.toFixed(2)}</span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-opsgrid-text-secondary">Accessorials</span>
-                  <span>${costs.accessorials.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-opsgrid-text-secondary">Detention</span>
-                  <span className={costs.detention > 0 ? 'text-red-500' : ''}>${costs.detention.toFixed(2)}</span>
-                </div>
+                {costs.distanceMiles !== null && (
+                  <div className="flex justify-between">
+                    <span className="text-opsgrid-text-secondary">Distance</span>
+                    <span>{costs.distanceMiles.toFixed(0)} mi</span>
+                  </div>
+                )}
                 <div className="pt-2 border-t border-opsgrid-border flex justify-between font-semibold">
                   <span>Total</span>
-                  <span>${costs.total.toFixed(2)}</span>
+                  <span>${costs.totalCost.toFixed(2)}</span>
                 </div>
               </div>
             </div>

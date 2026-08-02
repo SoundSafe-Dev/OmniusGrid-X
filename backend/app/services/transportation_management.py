@@ -799,8 +799,24 @@ class TransportationManagementService:
                 if carrier:
                     contract_rates = carrier.contract_rate or {}
             
-            distance = route.total_distance_miles if route else 500.0
-            weight = shipment.total_weight_lbs or 0
+            # float(), BECAUSE THESE COLUMNS ARE `Numeric` AND THIS ENDPOINT 500'd (FS-396).
+            #
+            # SQLAlchemy hands a `Numeric` column back as a `decimal.Decimal`, and the
+            # billing engine's rates are plain floats — so `distance_miles * rate_per_mile`
+            # raised
+            #
+            #     TypeError: unsupported operand type(s) for *: 'decimal.Decimal' and 'float'
+            #
+            # for any shipment whose route carries a distance, which is every real one. The
+            # 500.0 fallback is a float, so the endpoint only worked for shipments with NO
+            # route — the case with the least to bill.
+            #
+            # Converting here rather than making the engine Decimal-aware: `calculate_linehaul`
+            # declares `distance_miles: float` / `weight_lbs: float` and returns floats into a
+            # float schema, so this is the boundary where the storage type should end. These
+            # are rate-times-distance estimates, not ledger amounts.
+            distance = float(route.total_distance_miles) if route and route.total_distance_miles is not None else 500.0
+            weight = float(shipment.total_weight_lbs or 0)
             
             # Calculate linehaul
             linehaul = await self.billing_engine.calculate_linehaul(

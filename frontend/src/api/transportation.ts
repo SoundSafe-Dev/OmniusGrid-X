@@ -50,6 +50,31 @@ export interface DriverHOS {
   };
 }
 
+/** `ShipmentCostsOut` in `app/api/transportation.py`, after the casing seam (FS-397).
+ *
+ *  The money lives on NESTED charge objects, not on scalars: `linehaul.amount` and
+ *  `fuelSurcharge.amount`. The client used to declare five flat numbers, none of which the
+ *  endpoint sends. */
+export interface ShipmentCosts {
+  shipmentId: string;
+  linehaul: {
+    amount: number;
+    rateBasis: string;
+    mileageCharge: number;
+    weightCharge: number;
+  };
+  /** NOT ALWAYS A MEASUREMENT — `FuelSurchargeCharge` records that without a contract
+   *  surcharge table the engine falls back to a computed estimate, so `rateBasis` is
+   *  carried rather than flattened away. */
+  fuelSurcharge: {
+    amount: number;
+    rateBasis: string;
+  };
+  totalCost: number;
+  distanceMiles: number | null;
+  weightLbs: number | null;
+}
+
 const MOCK_DELAY = 500;
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -695,23 +720,37 @@ export const transportationApi = {
     return response.data;
   },
 
-  getShipmentCosts: async (id: string): Promise<{ freight: number; fuel: number; accessorials: number; detention: number; total: number }> => {
+  /** `GET /api/v1/transportation/shipments/{id}/costs` (FS-397).
+   *
+   *  NONE OF THE FIVE DECLARED FIELDS WERE ON THE WIRE. This said
+   *  `{freight, fuel, accessorials, detention, total}` and returned `response.data`
+   *  unchanged; `ShipmentCostsOut` sends `shipment_id`, `linehaul`, `fuel_surcharge`,
+   *  `total_cost`, `distance_miles` and `weight_lbs`. The two money figures are nested
+   *  objects, not scalars — `linehaul.amount` and `fuel_surcharge.amount` — so every line of
+   *  the modal's Cost Breakdown called `.toFixed(2)` on `undefined`.
+   *
+   *  `accessorials` and `detention` are not billed by this endpoint at all, and the mock
+   *  computed both, so the breakdown looked complete in development.
+   *
+   *  The fuel surcharge is NOT always a measurement — `FuelSurchargeCharge` says so — which
+   *  is why `rateBasis` and the two fuel prices are carried through rather than flattened to
+   *  a number. */
+  getShipmentCosts: async (id: string): Promise<ShipmentCosts> => {
     if (USE_MOCK) {
       await delay(MOCK_DELAY);
       const shipment = mockShipments.find(s => s.id === id);
       const freight = shipment?.freightCharge || 0;
       const fuel = freight * 0.15;
-      const accessorials = 0;
-      const detention = (shipment?.detentionHours || 0) * (shipment?.detentionRate || 0);
       return {
-        freight,
-        fuel,
-        accessorials,
-        detention,
-        total: freight + fuel + accessorials + detention,
+        shipmentId: id,
+        linehaul: { amount: freight, rateBasis: 'per_mile', mileageCharge: freight, weightCharge: 0 },
+        fuelSurcharge: { amount: fuel, rateBasis: 'per_mile' },
+        totalCost: freight + fuel,
+        distanceMiles: null,
+        weightLbs: null,
       };
     }
-    const response = await api.get(`/api/v1/transportation/shipments/${id}/costs`);
+    const response = await api.get<ShipmentCosts>(`/api/v1/transportation/shipments/${id}/costs`);
     return response.data;
   },
 
