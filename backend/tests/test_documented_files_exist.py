@@ -42,6 +42,12 @@ DOCS = [
     ROOT / "README.md",
     ROOT / "OMNIUSGRID_GLOSSARY.md",
     ROOT / "docs" / "engineering" / "defect-class-sweeps.md",
+    # ADDED WHEN THE DELIVERY LOG MOVED OUT OF THE README (2026-08-02). Those 1,048 lines
+    # cite source files heavily, and this list is scoped to top-level documents rather than
+    # `docs/**` — so relocating them would have quietly dropped every one of those citations
+    # from the check while the file count went UP. Moving prose out of a checked document
+    # moves it out of the check unless the scope moves with it.
+    ROOT / "docs" / "DELIVERY-LOG.md",
 ]
 
 #: `` `something.py` `` — a backticked filename with a source extension.
