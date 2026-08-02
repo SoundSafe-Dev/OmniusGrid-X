@@ -159,3 +159,84 @@ describe('the requests go where the backend serves them', () => {
     expect(config?.params ?? {}).not.toHaveProperty('organization_id')
   })
 })
+
+/**
+ * FS-393 — `getDwellTimes` declared a summary the endpoint does not send.
+ *
+ * `GET /api/v1/yard/dwell-times` is `response_model=List[DwellTimeAnalytics]`: one row per
+ * trailer with `dwell_hours`. This function declared, and in real mode returned,
+ * `{ avgDwellTime, maxDwellTime, trailersExceedingTarget }` — so `response.data` was an
+ * array and `YardManagement` read `dwellTimes.trailersExceedingTarget` on it. `undefined`,
+ * so `undefined > 0` is false, so THE DWELL WARNING BANNER NEVER RENDERED against the real
+ * API. The mock returned the summary shape, so it rendered in development and only there.
+ *
+ * Verified against a running backend before the fix: the endpoint returned a list whose
+ * first row was TRL-9017 at 23 dwell hours — eleven times past the 120-minute target, on
+ * the page whose banner exists to say exactly that.
+ *
+ * Third instance of this shape today, after StrategicRecommendation (FS-366) and the engine
+ * status types (FS-367). The mock agreeing with a declaration neither the server nor
+ * anything else can satisfy is the circularity `test_frontend_fields_exist_on_the_wire.py`
+ * exists to break, and it does not reach a client's RETURN type.
+ */
+describe('yardApi.getDwellTimes in real mode', () => {
+  const row = (trailerNumber: string, dwellHours: number) => ({
+    trailerId: `id-${trailerNumber}`,
+    trailerNumber,
+    dwellHours,
+    isDetention: dwellHours > 2,
+    detentionCharge: null,
+  })
+
+  it('summarises the LIST the endpoint actually returns', async () => {
+    get.mockResolvedValue({ data: [row('A', 1), row('B', 3), row('C', 5)] })
+    const api = await yard()
+    const result = await api.getDwellTimes()
+
+    expect(get).toHaveBeenCalledWith('/api/v1/yard/dwell-times')
+    // 60, 180, 300 minutes -> mean 180, max 300, two past the 120-minute target.
+    expect(result).toEqual({
+      avgDwellTime: 180,
+      maxDwellTime: 300,
+      trailersExceedingTarget: 2,
+    })
+  })
+
+  it('counts against the 120-minute target the page names', async () => {
+    // Exactly at target is not exceeding it — the banner says "Target: 120 min", and a
+    // trailer sitting at exactly 120 has not passed it.
+    get.mockResolvedValue({ data: [row('A', 2), row('B', 2.01)] })
+    const api = await yard()
+    expect((await api.getDwellTimes()).trailersExceedingTarget).toBe(1)
+  })
+
+  it('returns zeroes rather than NaN for an empty yard', async () => {
+    // `Math.max()` of nothing is -Infinity and a mean over zero rows is NaN; either would
+    // reach `formatDuration` and render as garbage in the banner.
+    get.mockResolvedValue({ data: [] })
+    const api = await yard()
+    expect(await api.getDwellTimes()).toEqual({
+      avgDwellTime: 0,
+      maxDwellTime: 0,
+      trailersExceedingTarget: 0,
+    })
+  })
+
+  it('survives a payload that is not a list', async () => {
+    // Defensive, and cheap: this function spent its life assuming the wrong shape, so it
+    // should not throw if it meets an unexpected one again.
+    get.mockResolvedValue({ data: { unexpected: true } })
+    const api = await yard()
+    expect((await api.getDwellTimes()).trailersExceedingTarget).toBe(0)
+  })
+
+  it('does not return the raw array', async () => {
+    // The defect stated directly: whatever this returns must be the summary its callers
+    // read, not the payload.
+    get.mockResolvedValue({ data: [row('A', 9)] })
+    const api = await yard()
+    const result = await api.getDwellTimes()
+    expect(Array.isArray(result)).toBe(false)
+    expect(result.trailersExceedingTarget).toBe(1)
+  })
+})

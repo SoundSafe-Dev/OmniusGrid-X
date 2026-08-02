@@ -19,6 +19,22 @@ import { USE_MOCK } from './mockMode';
 // (/api/v1/geotab is registered in transportation.ts alongside geoTabApi.)
 registerTransform('/api/v1/yard', { inAliases: YARD_ALIASES, outAliases: YARD_OUT_ALIASES });
 
+/** One row of `GET /api/v1/yard/dwell-times` (`DwellTimeAnalytics`), after the casing
+ *  seam. Declared locally because the shared types describe the SUMMARY this module
+ *  derives, and the wire shape had no type at all — which is how the mismatch in
+ *  `getDwellTimes` survived (FS-393). */
+interface DwellTimeRow {
+  trailerId: string;
+  trailerNumber: string;
+  dwellHours: number;
+  isDetention: boolean;
+  detentionCharge: number | null;
+}
+
+/** The page's stated target ("Target: 120 min"), named so the count and the label cannot
+ *  drift apart. */
+const DWELL_TARGET_MINUTES = 120;
+
 const MOCK_DELAY = 500;
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -414,8 +430,33 @@ export const yardApi = {
         trailersExceedingTarget: 2,
       };
     }
-    const response = await api.get('/api/v1/yard/dwell-times');
-    return response.data;
+    // THE ENDPOINT RETURNS A LIST, NOT THIS SUMMARY (FS-393).
+    //
+    // `GET /api/v1/yard/dwell-times` is `response_model=List[DwellTimeAnalytics]` — one row
+    // per trailer with `dwell_hours`. This function declared, and returned, a summary
+    // OBJECT. `response.data` was therefore an array, and `YardManagement` reads
+    // `dwellTimes.trailersExceedingTarget` on it: `undefined`, so `undefined > 0` is false
+    // and THE DWELL WARNING BANNER NEVER RENDERED IN REAL MODE. The mock returned the
+    // summary shape, so it rendered in development and only there.
+    //
+    // Verified against a running backend: the endpoint returned a list whose first row was
+    // TRL-9017 at 23 dwell hours — a trailer eleven times past the target, on a page whose
+    // banner exists to say so.
+    //
+    // Summarised here rather than adding a backend endpoint: every figure is derivable
+    // from the rows already sent, and the per-trailer detail is what the API is for.
+    const response = await api.get<DwellTimeRow[]>('/api/v1/yard/dwell-times');
+    const rows = Array.isArray(response.data) ? response.data : [];
+    // `dwell_hours` is hours; the page formats minutes and compares against a 120-minute
+    // target, so the conversion belongs here and not in the component.
+    const minutes = rows.map((r) => (r.dwellHours ?? 0) * 60);
+    return {
+      avgDwellTime: minutes.length
+        ? Math.round(minutes.reduce((a, b) => a + b, 0) / minutes.length)
+        : 0,
+      maxDwellTime: minutes.length ? Math.round(Math.max(...minutes)) : 0,
+      trailersExceedingTarget: minutes.filter((m) => m > DWELL_TARGET_MINUTES).length,
+    };
   },
 
   getDetentionAlerts: async (): Promise<DetentionAlert[]> => {
