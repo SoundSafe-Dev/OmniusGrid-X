@@ -356,20 +356,40 @@ export const TransportationManagement: FC = () => {
           <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-4">
             <p className="text-sm text-opsgrid-text-secondary">On-Time Delivery Rate</p>
             <div className="flex items-end gap-2">
-              <p className={`text-2xl font-bold ${deliveryEfficiency.onTimeRate >= 90 ? 'text-green-500' : 'text-yellow-500'}`}>
-                {deliveryEfficiency.onTimeRate.toFixed(1)}%
+              {/* `onTimeRatePct`, not `onTimeRate`: the wire sends a RATIO 0..1, so this
+                  tile printed 0.3% for a genuine 33.3% and the 90 threshold could never be
+                  reached. The client converts once and puts the unit in the name (FS-394). */}
+              {/* Null means the figure did not arrive, and an em dash says so. It must not
+                  fall back to a number: `?? 100` here would paint a green all-clear out of a
+                  malformed response. */}
+              <p className={`text-2xl font-bold ${
+                deliveryEfficiency.onTimeRatePct !== null && deliveryEfficiency.onTimeRatePct >= 90
+                  ? 'text-green-500' : 'text-yellow-500'}`}>
+                {deliveryEfficiency.onTimeRatePct === null
+                  ? '—'
+                  : `${deliveryEfficiency.onTimeRatePct.toFixed(1)}%`}
               </p>
             </div>
           </div>
           <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-4">
             <p className="text-sm text-opsgrid-text-secondary">Average Transit Time</p>
-            <p className="text-2xl font-bold">{deliveryEfficiency.avgTransitTime}h</p>
+            <p className="text-2xl font-bold">
+              {deliveryEfficiency.avgTransitHours === null ? '—' : `${deliveryEfficiency.avgTransitHours}h`}
+            </p>
           </div>
           <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-4">
             <p className="text-sm text-opsgrid-text-secondary">Deliveries Today</p>
-            <p className="text-2xl font-bold">{deliveryEfficiency.totalDeliveries}</p>
-            {deliveryEfficiency.lateDeliveries > 0 && (
-              <p className="text-sm text-red-500">{deliveryEfficiency.lateDeliveries} late</p>
+            <p className="text-2xl font-bold">
+              {deliveryEfficiency.deliveredToday === null ? '—' : deliveryEfficiency.deliveredToday}
+            </p>
+            {/* Was `{lateDeliveries} late`, a field the endpoint has never sent. The count
+                is not derivable from what it does send without rounding a percentage back
+                into a count, so this reports the figure that IS sent instead of inferring
+                one. */}
+            {deliveryEfficiency.totalDelivered !== null && (
+              <p className="text-sm text-opsgrid-text-secondary">
+                {deliveryEfficiency.totalDelivered} delivered in total
+              </p>
             )}
           </div>
         </div>

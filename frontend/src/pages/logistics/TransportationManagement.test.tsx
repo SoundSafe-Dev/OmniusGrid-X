@@ -154,11 +154,16 @@ beforeEach(() => {
   // formats several of these with `.toFixed()` unguarded, so a missing field throws
   // during render and returns an empty document — which reads as a component bug rather
   // than a bad fixture. That has now cost time on three separate page tests.
+  // WHAT THE CLIENT RETURNS, which is not what it used to claim (FS-394). The old fixture
+  // said `{onTimeRate, avgTransitTime, totalDeliveries, lateDeliveries}` — three names the
+  // endpoint has never sent, and a rate expressed as a percentage where the wire sends a
+  // ratio. It agreed with the declared type and with nothing else, so these tests passed
+  // while two tiles on the page rendered blank and a third was wrong by 100×.
   getDeliveryEfficiency.mockResolvedValue({
-    onTimeRate: 95,
-    avgTransitTime: 12.5,
-    totalDeliveries: 10,
-    lateDeliveries: 0,
+    onTimeRatePct: 95,
+    avgTransitHours: 12.5,
+    deliveredToday: 4,
+    totalDelivered: 10,
   })
   getComplianceSummary.mockResolvedValue({
     totalCarriers: 4,
