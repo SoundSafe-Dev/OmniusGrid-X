@@ -214,3 +214,93 @@ describe('StrategicEngine — the expected-impact grid', () => {
     expect(screen.queryByText('OEE Impact')).not.toBeInTheDocument()
   })
 })
+
+/**
+ * FS-366 — "0 approved" is a claim about the world, and it was false.
+ *
+ * `GET /engines/strategic/recommendations` calls `get_pending_recommendations()` and its
+ * response model declares nine fields: recommendation_id, asset_id, type, priority,
+ * description, expected_impact, confidence, valid_until, requires_approval. No `status`,
+ * no `approved_at`, no `rejected_at`. Verified against a running backend — those nine keys
+ * and no others.
+ *
+ * So `historyRecs` is empty BY CONSTRUCTION. The page rendered that as `0 Approved` and
+ * `0 Rejected` beside a History card containing an empty div. Approving a recommendation
+ * works — the endpoint returns 200 — so a user could approve three and watch the counter
+ * stay at zero, which reads as "nothing happened" rather than "this view cannot see what
+ * happened".
+ *
+ * `strategic_engine.get_recommendation_history()` exists in the service and no route
+ * exposes it, so the data is there and unreachable. That is the cross-lane half
+ * (`engines.py`); this half is refusing to state a number the page cannot know.
+ */
+describe('StrategicEngine — decision history it cannot see', () => {
+  const withoutStatus = () => {
+    // EXACTLY what the API sends: the fixture above carries `status` and `createdAt`,
+    // which the real endpoint does not, and that difference is the whole bug.
+    const { status, createdAt, assetName, ...wire } = rec()
+    return wire
+  }
+
+  it('shows — rather than 0 for approvals it cannot enumerate', async () => {
+    getStrategicRecommendations.mockResolvedValue([withoutStatus()])
+    wrap()
+    await waitFor(() => expect(getStrategicRecommendations).toHaveBeenCalled())
+
+    await waitFor(() => expect(tileValue('Approved')).toBe('—'))
+    expect(tileValue('Rejected')).toBe('—')
+  })
+
+  it('says why the history is empty instead of showing a blank card', async () => {
+    getStrategicRecommendations.mockResolvedValue([withoutStatus()])
+    wrap()
+    expect(
+      await screen.findByText(/Decision history is not available from the API/i),
+    ).toBeInTheDocument()
+  })
+
+  it('still counts normally once an endpoint sends status', async () => {
+    // The control, and the reason the flag is derived from the payload rather than
+    // hardcoded: the day a route exposes get_recommendation_history(), this page must
+    // light up with no further change. Without this test, "always show —" would pass
+    // every assertion above.
+    getStrategicRecommendations.mockResolvedValue([
+      rec({ recommendationId: 'r1', status: 'approved' }),
+      rec({ recommendationId: 'r2', status: 'approved' }),
+      rec({ recommendationId: 'r3', status: 'rejected' }),
+    ])
+    wrap()
+    await waitFor(() => expect(tileValue('Approved')).toBe('2'))
+    expect(tileValue('Rejected')).toBe('1')
+    expect(
+      screen.queryByText(/Decision history is not available from the API/i),
+    ).not.toBeInTheDocument()
+  })
+
+  it('does not blame the API contract when the request simply failed', async () => {
+    // THE HOLE `failureIsNotEmptiness` CAUGHT in the first draft of this fix. On a failed
+    // query `recommendations` is undefined, so `decisionHistoryAvailable` is false and the
+    // "not available from the API" message rendered — attributing a request that never
+    // completed to the endpoint's shape. Two different failures, one explanation.
+    getStrategicRecommendations.mockRejectedValue(new Error('network down'))
+    wrap()
+    expect(await screen.findByText(/History could not be loaded/i)).toBeInTheDocument()
+    expect(
+      screen.queryByText(/Decision history is not available from the API/i),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByText(/No recommendations have been approved or rejected yet/i),
+    ).not.toBeInTheDocument()
+  })
+
+  it('distinguishes "nothing decided yet" from "cannot see decisions"', async () => {
+    // Both render an empty list; they are not the same statement and must not read the
+    // same. This is the pair the original code collapsed into one blank div.
+    getStrategicRecommendations.mockResolvedValue([rec({ status: 'pending' })])
+    wrap()
+    expect(
+      await screen.findByText(/No recommendations have been approved or rejected yet/i),
+    ).toBeInTheDocument()
+    expect(tileValue('Approved')).toBe('0')
+  })
+})

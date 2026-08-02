@@ -54,6 +54,25 @@ export const StrategicEngine: FC = () => {
   const pendingRecs = recommendations?.filter((r) => !r.status || r.status === 'pending') || [];
   const historyRecs = recommendations?.filter((r) => r.status && r.status !== 'pending') || [];
 
+  // WHETHER DECISION HISTORY IS OBTAINABLE AT ALL (FS-366).
+  //
+  // `historyRecs` is empty BY CONSTRUCTION, not because nothing has been decided:
+  // `GET /engines/strategic/recommendations` calls `get_pending_recommendations()` and its
+  // response model declares nine fields, none of them `status`, `approved_at` or
+  // `rejected_at`. `strategic_engine.get_recommendation_history()` exists and no route
+  // exposes it.
+  //
+  // The distinction matters because rendering `0 approved` asserts something about the
+  // world, and it is false the moment anyone approves anything — the approve endpoint
+  // works and returns 200 (verified 2026-08-01, after the query-param fix in
+  // `api/engines.ts`). A user who approves three recommendations and watches the counter
+  // stay at zero has been told their action did nothing. `—` is the convention this page
+  // already uses for `isError`, and it says the true thing: not obtainable here.
+  //
+  // DERIVED FROM THE PAYLOAD, not hardcoded — so on the day a route starts sending
+  // `status`, the counters and the list populate with no further change to this file.
+  const decisionHistoryAvailable = (recommendations ?? []).some((r) => r.status !== undefined);
+
   return (
     <div className="space-y-6">
       {isError && (
@@ -97,7 +116,9 @@ export const StrategicEngine: FC = () => {
                 <CheckCircle className="w-8 h-8 text-status-running" />
                 <div>
                   <p className="text-2xl font-bold">
-                    {isError ? '—' : historyRecs.filter((r) => r.status === 'approved').length}
+                    {isError || !decisionHistoryAvailable
+                      ? '—'
+                      : historyRecs.filter((r) => r.status === 'approved').length}
                   </p>
                   <p className="text-sm text-opsgrid-text-secondary">Approved</p>
                 </div>
@@ -113,7 +134,9 @@ export const StrategicEngine: FC = () => {
                 <XCircle className="w-8 h-8 text-status-alarm" />
                 <div>
                   <p className="text-2xl font-bold">
-                    {isError ? '—' : historyRecs.filter((r) => r.status === 'rejected').length}
+                    {isError || !decisionHistoryAvailable
+                      ? '—'
+                      : historyRecs.filter((r) => r.status === 'rejected').length}
                   </p>
                   <p className="text-sm text-opsgrid-text-secondary">Rejected</p>
                 </div>
@@ -207,6 +230,33 @@ export const StrategicEngine: FC = () => {
       {/* History */}
       <Card title="History" subtitle="Past recommendations and outcomes">
         <div className="divide-y divide-opsgrid-border">
+          {/* ORDER MATTERS, and `failureIsNotEmptiness` caught the first draft of this.
+              On a failed query `recommendations` is undefined, so
+              `decisionHistoryAvailable` is false and the API-contract message below would
+              render — blaming the endpoint's shape for what was actually a request that
+              did not complete. Both statements are only true once the query succeeded. */}
+          {isError && (
+            <p className="py-3 text-sm text-opsgrid-text-secondary">
+              History could not be loaded — the recommendations request failed.
+            </p>
+          )}
+          {!isError && !decisionHistoryAvailable && (
+            // An untitled empty div under a card headed "History" reads as "nothing has
+            // happened yet". What is true is that this view cannot see what happened:
+            // the endpoint returns pending recommendations only and omits the decision
+            // fields, so approvals made here are real but invisible to this pane.
+            <p className="py-3 text-sm text-opsgrid-text-secondary">
+              Decision history is not available from the API — the recommendations
+              endpoint returns pending items only and omits approval status. Approvals and
+              rejections you make here are recorded by the engine, but cannot be listed
+              until an endpoint exposes them.
+            </p>
+          )}
+          {!isError && decisionHistoryAvailable && historyRecs.length === 0 && (
+            <p className="py-3 text-sm text-opsgrid-text-secondary">
+              No recommendations have been approved or rejected yet.
+            </p>
+          )}
           {historyRecs.slice(0, 10).map((rec) => (
             <div key={rec.recommendationId} className="py-3 flex items-center justify-between">
               <div className="flex items-center gap-3">
