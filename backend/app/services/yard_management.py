@@ -602,6 +602,26 @@ class DockScheduler:
         db: Optional[AsyncSession] = None
     ) -> DockAppointment:
         """Schedule a dock appointment"""
+        # AN APPOINTMENT MUST OCCUPY TIME, AND NOTHING CHECKED (FS-392).
+        #
+        # A reversed booking (end before start) was accepted and stored, and it does not
+        # merely sit there being wrong: `_check_conflicts` matches it through the
+        # "existing is contained by new" branch, so a 13:00->08:00 row BLOCKS a legitimate
+        # 09:00-10:00 booking on that door while protecting no real slot. Measured — the
+        # bogus row blocked 09:00-10:00 and left 14:00-15:00 and 06:00-07:00 free.
+        #
+        # Zero-length is rejected for the same reason: a dock reserved for no time is not
+        # a reservation, and it participates in overlap tests as though it were one.
+        #
+        # Validated in the SERVICE rather than on `DockAppointmentCreate`, because this is
+        # an invariant of the domain and not of one HTTP request — `logistics_correlation_
+        # engine` imports this service directly. The API maps ValueError to 400.
+        if scheduled_end <= scheduled_start:
+            raise ValueError(
+                f"scheduled_end ({scheduled_end.isoformat()}) must be after "
+                f"scheduled_start ({scheduled_start.isoformat()})"
+            )
+
         async with (db or AsyncSessionLocal()) as session:
             # Check for conflicts
             conflicts = await self._check_conflicts(
