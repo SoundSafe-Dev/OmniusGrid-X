@@ -769,6 +769,30 @@ wrong in both directions — the workflow's own comment records `develop` being 
 existing; `alex` is the mirror. It fails *silently*: no job reports "this branch has no gates",
 the signal is an absence, and nobody reads a workflow file to see whether their branch is in it.
 
+## Verification wave, and three more stale premises (2026-08-01)
+
+| FS | Outcome |
+|---|---|
+| **FS-366** | **Done.** `0 Approved` was a false claim, not an empty state — see the commit. Cross-lane remainder: `strategic_engine.get_recommendation_history()` exists and no route exposes it |
+| **FS-367** | **Done.** Six engine fields removed, plus `ModelDeployment`; `mockApi` had supplied all six |
+| **FS-305** | **Done.** Returned-keys sweep follows helper-built returns; 145 → 181 cases, no new mismatches |
+| **FS-304** | **Done.** Media-type guard; found the undeclared `202` on `/exports/telemetry/{asset_id}` |
+| **FS-363** | **Done.** The ten other-lane 5xx entries now carry owner + precise fix + expiry, in one shared registry read by both walks |
+| **FS-368** | **STALE — nothing to do.** Recorded as "`/ws/geofencing` and `/ws/fleet-tracking` do not exist; the live fleet map is not live". Both were already converted from those nonexistent routes to documented polling, and no user-facing text claims "live" for the fleet map — `ConnectionStatus` has distinct `Live` / `Polling` / `Reconnecting…` states and only says `Live` when the socket is up |
+| **FS-374** | **Corrected** (previous section): branch pushes already cover most work; the hole was `alex` |
+
+**Three of the five endpoints I "handed over" from the QA sweep were already recorded** in
+`KNOWN_LANE_FAILURES` with the same diagnosis — kanban premade ids, the `nlp` intake
+`select()`, and `rag/documents` on SeaweedFS. Two were genuinely new:
+`/nlp/sessions/{id}/data` and `/context/registries`.
+
+**Why the real-DB walk cannot see those two, and it is worth knowing:**
+`/nlp/sessions/{id}/data` 500s because a row carries `source_id='yard'` against a `UUID`
+field. The walk's fixture has no such row, so the endpoint answers cleanly there. A sweep
+against *seeded demo data* found what a sweep against an *empty fixture* structurally
+cannot. Neither harness is wrong; they see different failure classes, and the data-shaped
+ones only appear when there is data.
+
 ### Still open
 
 - **The RAG-branch history rewrite is done and verified but NOT pushed.** 360/360 commits,
