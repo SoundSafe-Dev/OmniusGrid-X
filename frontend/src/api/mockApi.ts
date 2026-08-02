@@ -667,10 +667,10 @@ export const mockApi = {
       modelLoaded: true,
       modelVersion: 'v2.1.0',
       maxLatencyTargetMs: 100,
+      // No lastInferenceAt / averageLatencyMs / totalInferences: the endpoint sends four
+      // keys and these were three the mock invented. A mock that returns more than the
+      // server does is a demo of a feature nobody has built (FS-367).
       safetyThresholds: { max_nozzle_temp_c: 280, max_spindle_load_pct: 95 },
-      lastInferenceAt: new Date().toISOString(),
-      averageLatencyMs: 45.2,
-      totalInferences: 154320,
     };
   },
   
@@ -713,19 +713,16 @@ export const mockApi = {
   getMLOpsStatus: async (): Promise<MLOpsStatus> => {
     await delay(MOCK_DELAY);
     return {
+      // Three keys, matching the endpoint. The two deployment records with rollback
+      // timestamps that used to live here were the most convincing thing in this file and
+      // described a feature the backend has no endpoint for (FS-367).
       currentModel: 'manufacturing-optimizer-v2.1.0.pt',
-      lastDeploymentAt: new Date(Date.now() - 86400000 * 2).toISOString(),
       cachedModels: [
         'manufacturing-optimizer-v2.1.0.pt',
         'manufacturing-optimizer-v2.0.5.pt',
         'manufacturing-optimizer-v1.9.0.pt',
       ],
-      deploymentHistory: [
-        { version: 'manufacturing-optimizer-v2.1.0.pt', deployedAt: new Date(Date.now() - 86400000 * 2).toISOString() },
-        { version: 'manufacturing-optimizer-v2.0.5.pt', deployedAt: new Date(Date.now() - 86400000 * 30).toISOString(), rolledBackAt: new Date(Date.now() - 86400000 * 2).toISOString() },
-      ],
       pollIntervalSeconds: 300,
-      lastPollAt: new Date().toISOString(),
     };
   },
   

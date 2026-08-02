@@ -9,14 +9,24 @@ export interface TacticalDecision {
   timestamp: string;
 }
 
+/** EXACTLY what `GET /api/v1/engines/tactical/status` sends, verified against a running
+ *  backend on 2026-08-01: `model_loaded`, `model_version`, `max_latency_target_ms`,
+ *  `safety_thresholds`.
+ *
+ *  It also declared `lastInferenceAt`, `averageLatencyMs` and `totalInferences`, which no
+ *  endpoint produces — and `mockApi` invented all three. Since the default dev experience
+ *  is `VITE_USE_MOCK=true`, a pane built against them would show live latency and an
+ *  inference count in development and render blank the moment it met the real API. That is
+ *  not a hypothetical: it is what happened to the Decision History pane (FS-366), which was
+ *  built on seven `StrategicRecommendation` fields the server never sends.
+ *
+ *  Removed rather than marked optional. An optional field that nothing can ever populate
+ *  still reads as an invitation. */
 export interface TacticalEngineStatus {
   modelLoaded: boolean;
   modelVersion: string;
   maxLatencyTargetMs: number;
   safetyThresholds: Record<string, number>;
-  lastInferenceAt?: string;
-  averageLatencyMs?: number;
-  totalInferences?: number;
 }
 
 export interface StrategicRecommendation {
@@ -54,20 +64,25 @@ export interface StrategicRecommendation {
   rejectionReason?: string;
 }
 
+/** EXACTLY what `GET /api/v1/engines/mlops/status` sends, verified against a running
+ *  backend on 2026-08-01: `current_model`, `cached_models`, `poll_interval_seconds`.
+ *
+ *  `lastPollAt`, `lastDeploymentAt` and `deploymentHistory` are gone, along with the whole
+ *  `ModelDeployment` interface they were the only use of. No endpoint produces any of them.
+ *
+ *  `deploymentHistory` was the dangerous one: declared **required**, so every consumer was
+ *  entitled to `status.deploymentHistory.map(...)` without a guard, and at runtime it is
+ *  `undefined`. TypeScript was actively vouching for a field the server has never sent.
+ *
+ *  `mockApi` supplied all three, including two fully-populated deployment records with
+ *  rollback timestamps. The default dev experience is `VITE_USE_MOCK=true`, so a deployment
+ *  history table would have looked complete in development and been empty — or thrown —
+ *  against the real API. Same shape as FS-366 and as the eleven fields removed from
+ *  `CloudGatewayStatus` below. */
 export interface MLOpsStatus {
   currentModel: string;
   cachedModels: string[];
   pollIntervalSeconds: number;
-  lastPollAt?: string;
-  lastDeploymentAt?: string;
-  deploymentHistory: ModelDeployment[];
-}
-
-export interface ModelDeployment {
-  version: string;
-  deployedAt: string;
-  rolledBackAt?: string;
-  performanceMetrics?: Record<string, number>;
 }
 
 /** What `/api/v1/engines/cloud/status` returns — `cloud_gateway.get_stats()`, four keys.

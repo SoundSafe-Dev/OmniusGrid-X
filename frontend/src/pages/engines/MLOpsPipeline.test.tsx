@@ -40,12 +40,14 @@ vi.mock('../../api', () => ({
 import { TooltipProvider } from '../../components/ui'
 import { MLOpsPipeline } from './MLOpsPipeline'
 
-// Shape from `MLOpsStatus`, not invented.
+// Shape from `MLOpsStatus`, not invented — and now the same three keys the endpoint
+// actually sends. `deploymentHistory: []` used to sit here too; it was removed with the
+// field (FS-367), because a fixture supplying a key the server never sends is how a test
+// keeps passing for a pane that would be empty in production.
 const status = (over: Record<string, unknown> = {}) => ({
   currentModel: 'tactical_v1.4.2',
   cachedModels: ['tactical_v1.4.2', 'tactical_v1.4.1'],
   pollIntervalSeconds: 60,
-  deploymentHistory: [],
   ...over,
 })
 
