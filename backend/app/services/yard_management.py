@@ -19,6 +19,37 @@ from app.db.models import (
 logger = structlog.get_logger()
 
 
+def _as_utc(value: Optional[datetime]) -> Optional[datetime]:
+    """Coerce a datetime to timezone-aware UTC; naive values are assumed UTC (FS-391).
+
+    THE CRASH THIS PREVENTS. Both calculators below compare a stored timestamp against
+    `datetime.now(timezone.utc)`, and mixing naive with aware raises
+
+        TypeError: can't subtract offset-naive and offset-aware datetimes
+
+    `DriverWaitTime.check_in_at` is `DateTime(timezone=True)`, so Postgres hands back an
+    aware value and the production path is fine. SQLite does not preserve tzinfo — there is
+    no timestamp type to preserve it in — so on the documented local dev path (`make demo`
+    against dev.db) every one of these is naive, and checking out a trailer raised straight
+    out of `_finalize_wait_time`. Reproduced directly, not inferred.
+
+    Same class as `_check_ingestion` in app/api/health.py, which reported a working database
+    as a subsystem in error for exactly this reason.
+
+    ASSUMING UTC IS THE RIGHT DEFAULT AND WORTH SAYING WHY: everything that writes these
+    columns writes `datetime.now(timezone.utc)`, so a naive value here has already lost a
+    tzinfo that said UTC. Guessing local time would silently shift every detention charge by
+    the host's offset — and this function's output is billed to a carrier.
+
+    A fourth copy of this helper in the tree (app/api/exports.py, app/utils/signed_urls.py,
+    app/api/analysis_sessions.py). Not consolidated here because one of those is another
+    lane's file and a shared move would touch it.
+    """
+    if value is None:
+        return None
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
 class DetentionCalculator:
     """Calculate detention and demurrage charges"""
     
@@ -42,8 +73,8 @@ class DetentionCalculator:
                 'is_detention': False
             }
         
-        end_time = check_out_at or datetime.now(timezone.utc)
-        total_minutes = (end_time - check_in_at).total_seconds() / 60
+        end_time = _as_utc(check_out_at) or datetime.now(timezone.utc)
+        total_minutes = (end_time - _as_utc(check_in_at)).total_seconds() / 60
         
         if total_minutes <= free_minutes:
             return {
@@ -79,7 +110,7 @@ class DetentionCalculator:
                 'is_demurrage': False
             }
         
-        total_minutes = (unloaded_at - docked_at).total_seconds() / 60
+        total_minutes = (_as_utc(unloaded_at) - _as_utc(docked_at)).total_seconds() / 60
         
         if total_minutes <= free_minutes:
             return {
@@ -374,8 +405,11 @@ class YardManagementService:
                 hourly_rate=wait_time.demurrage_rate or DetentionCalculator.DEFAULT_DEMURRAGE_RATE
             )
             
+            # Same naive/aware mix as the calculators: check_out_at was just set aware,
+            # check_in_at came from the driver. This line raised before the calculators
+            # were even reached on SQLite.
             wait_time.total_wait_minutes = (
-                wait_time.check_out_at - wait_time.check_in_at
+                _as_utc(wait_time.check_out_at) - _as_utc(wait_time.check_in_at)
             ).total_seconds() / 60
             wait_time.detention_minutes = detention['detention_minutes']
             wait_time.detention_charge = detention['detention_charge']
@@ -384,8 +418,8 @@ class YardManagementService:
     
     def _calculate_dwell_hours(self, trailer: YardTrailer) -> float:
         """Calculate total dwell time in hours"""
-        end_time = trailer.check_out_at or datetime.now(timezone.utc)
-        return round((end_time - trailer.check_in_at).total_seconds() / 3600, 2)
+        end_time = _as_utc(trailer.check_out_at) or datetime.now(timezone.utc)
+        return round((end_time - _as_utc(trailer.check_in_at)).total_seconds() / 3600, 2)
     
     async def get_yard_inventory(
         self,
