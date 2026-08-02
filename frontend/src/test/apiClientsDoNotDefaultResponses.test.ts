@@ -86,15 +86,14 @@ const ALLOWED: Record<string, string> = {
     'MOCK-ONLY. Inside the USE_MOCK branch of getLatest, shaping mock fixtures.',
   'telemetry.ts:value': 'MOCK-ONLY. Same branch as telemetry.ts:timestamp.',
   'transportation.ts:score': 'MOCK-ONLY. Inside the USE_MOCK branch of getCarrierCompliance.',
-  'transportation.ts:driveHoursRemaining':
-    'MOCK-ONLY, and getDriverHOS has no consumer. Note that `|| 0` here is the exact shape the '
-    + 'backend warns about: `hos_drive_hours_remaining` is NULL for a driver who has not '
-    + 'reported, and 0 means "out of hours". If this method is ever wired up, that has to go.',
-  'transportation.ts:dutyHoursRemaining': 'MOCK-ONLY. See transportation.ts:driveHoursRemaining.',
-  'transportation.ts:cycleHoursUsed': 'MOCK-ONLY. See transportation.ts:driveHoursRemaining.',
-  'transportation.ts:currentStatus':
-    'MOCK-ONLY. Reporting an unknown HOS status as off_duty is a claim; same caveat as the '
-    + 'hours above.',
+  // REMOVED WITH THE CODE THEY DESCRIBED (FS-395). Four entries exempted the `|| 0` and
+  // `|| 'off_duty'` defaults in getDriverHOS's mock branch, with the note: "If this method
+  // is ever wired up, that has to go." It was wired up — to the wrong shape — and the whole
+  // branch is rewritten: the hours are nullable now, so NULL (has not reported) and 0 (out
+  // of hours) stay distinct, which is what the note was protecting.
+  //
+  // Deleted rather than left in place. An exemption for a line that no longer exists is a
+  // standing permission nobody re-earned, and it reads as approval for the next one.
 }
 
 function apiFiles(): string[] {

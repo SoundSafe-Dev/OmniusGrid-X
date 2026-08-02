@@ -23,6 +23,33 @@ import { USE_MOCK } from './mockMode';
 registerTransform('/api/v1/transportation', { inAliases: TRANSPORT_ALIASES, outAliases: TRANSPORT_OUT_ALIASES });
 registerTransform('/api/v1/geotab');
 
+/** `DriverHOSOut` in `app/api/transportation.py`, after the casing seam (FS-395).
+ *
+ *  THE THREE LISTS ARE SEPARATE ON PURPOSE and the backend says why: "`missing_data` is not
+ *  `violations`. A driver with no medical certificate on file has not broken a rule; nobody
+ *  knows whether they have." `isCompliant` requires BOTH lists empty; `assessable` reports
+ *  the second alone, so a consumer can render "unknown" instead of "clear".
+ *
+ *  Every hour is nullable, and the distinction is the whole point: NULL means the driver has
+ *  not reported, 0 means out of hours. Collapsing them is the defect this codebase has found
+ *  on HOS three separate times. */
+export interface DriverHOS {
+  driverId: string;
+  isCompliant: boolean;
+  assessable: boolean;
+  missingData: string[];
+  violations: string[];
+  warnings: string[];
+  hoursSummary: {
+    driveHoursToday: number | null;
+    onDutyHoursToday: number | null;
+    cycleHours: number | null;
+    driveHoursRemaining: number | null;
+    onDutyHoursRemaining: number | null;
+    cycleHoursRemaining: number | null;
+  };
+}
+
 const MOCK_DELAY = 500;
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -477,25 +504,52 @@ export const transportationApi = {
     return response.data;
   },
 
-  getDriverHOS: async (id: string): Promise<{ 
-    driveHoursRemaining: number; 
-    dutyHoursRemaining: number; 
-    cycleHoursUsed: number;
-    currentStatus: string;
-    violations: string[];
-  }> => {
+  /** `GET /api/v1/transportation/drivers/{id}/hos` — hours of service (FS-395).
+   *
+   *  THE DECLARED SHAPE WAS NOT THE ENDPOINT'S. It said
+   *  `{driveHoursRemaining, dutyHoursRemaining, cycleHoursUsed, currentStatus, violations}`
+   *  and returned `response.data` unchanged; only `violations` is a top-level field on the
+   *  wire. `DriverHOSOut` sends `driver_id`, `is_compliant`, `assessable`, `missing_data`,
+   *  `violations`, `warnings` and a nested `hours_summary`, so four of those five names
+   *  resolved to `undefined` on the real path. Nothing consumes this method yet, which is
+   *  why it never showed — it is a trap for the first caller, the FS-367 shape.
+   *
+   *  THE FIELDS IT OMITTED ARE THE SAFETY-CRITICAL ONES. `assessable` and `missingData`
+   *  exist because "no violations" and "nobody could tell" are different facts, and the
+   *  backend is explicit about it: *"A driver with no medical certificate on file has not
+   *  broken a rule; nobody knows whether they have."* A type that declares only
+   *  `violations` makes the second unrenderable, so the first caller would paint an
+   *  unassessable driver as clear. Measured against the seeded fleet: `assessable: false`,
+   *  `missing_data: ["No medical certificate on file"]`.
+   *
+   *  The hours are nullable by design — NULL means the driver has not reported, and 0 means
+   *  out of hours. The previous mock used `|| 0`, collapsing those two into "out of hours",
+   *  which is the shape `apiClientsDoNotDefaultResponses` records a warning against. */
+  getDriverHOS: async (id: string): Promise<DriverHOS> => {
     if (USE_MOCK) {
       await delay(MOCK_DELAY);
       const driver = mockDrivers.find(d => d.id === id);
+      const reported = driver?.hosDriveHoursRemaining ?? null;
       return {
-        driveHoursRemaining: driver?.hosDriveHoursRemaining || 0,
-        dutyHoursRemaining: driver?.hosDutyHoursRemaining || 0,
-        cycleHoursUsed: driver?.hosCycleHoursUsed || 0,
-        currentStatus: driver?.currentHosStatus || 'off_duty',
-        violations: driver?.hosDriveHoursRemaining === 0 ? ['Drive limit exceeded'] : [],
+        driverId: id,
+        // Unassessable when the fixture has no driver, mirroring the server: it is not a
+        // clean bill, it is an absence of one.
+        assessable: driver !== undefined,
+        isCompliant: driver !== undefined && reported !== 0,
+        missingData: driver === undefined ? ['Driver not found'] : [],
+        violations: reported === 0 ? ['Drive limit exceeded'] : [],
+        warnings: [],
+        hoursSummary: {
+          driveHoursToday: null,
+          onDutyHoursToday: null,
+          cycleHours: driver?.hosCycleHoursUsed ?? null,
+          driveHoursRemaining: reported,
+          onDutyHoursRemaining: driver?.hosDutyHoursRemaining ?? null,
+          cycleHoursRemaining: null,
+        },
       };
     }
-    const response = await api.get(`/api/v1/transportation/drivers/${id}/hos`);
+    const response = await api.get<DriverHOS>(`/api/v1/transportation/drivers/${id}/hos`);
     return response.data;
   },
 

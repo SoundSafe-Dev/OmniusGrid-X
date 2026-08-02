@@ -209,3 +209,84 @@ describe('transportationApi.getDeliveryEfficiency in real mode', () => {
     expect(result.onTimeRatePct).toBe(0)
   })
 })
+
+/**
+ * FS-395 — the HOS client declared four names the wire does not have, and dropped the two
+ * that say whether the answer is trustworthy.
+ *
+ * `DriverHOSOut` sends `driver_id`, `is_compliant`, `assessable`, `missing_data`,
+ * `violations`, `warnings` and a nested `hours_summary`. The client declared
+ * `{driveHoursRemaining, dutyHoursRemaining, cycleHoursUsed, currentStatus, violations}` and
+ * returned `response.data` unchanged, so only `violations` resolved.
+ *
+ * WHAT WAS MISSING MATTERS MORE THAN WHAT WAS WRONG. `assessable` and `missingData` exist
+ * because "no violations" and "nobody could tell" are different facts — the backend's words:
+ * "A driver with no medical certificate on file has not broken a rule; nobody knows whether
+ * they have." A type carrying only `violations` makes the second unrenderable, so the first
+ * caller of this method would have painted an unassessable driver as clear. Measured against
+ * the seeded fleet: `assessable: false`, `missing_data: ["No medical certificate on file"]`.
+ *
+ * Nothing consumes this yet, which is exactly why it is worth fixing now — it is the FS-367
+ * shape, a trap waiting for its first caller.
+ */
+describe('transportationApi.getDriverHOS in real mode', () => {
+  const wire = {
+    driverId: 'drv-1',
+    isCompliant: false,
+    assessable: false,
+    missingData: ['No medical certificate on file'],
+    violations: [],
+    warnings: ['Drive time nearing limit: 10.6h'],
+    hoursSummary: {
+      driveHoursToday: 10.6,
+      onDutyHoursToday: 12.9,
+      cycleHours: 61.0,
+      driveHoursRemaining: 0.4,
+      onDutyHoursRemaining: 1.1,
+      cycleHoursRemaining: 9.0,
+    },
+  }
+
+  it('surfaces the assessability caveat, not just the violations', async () => {
+    get.mockResolvedValue({ data: wire })
+    const api = await transportApi()
+    const result = await api.getDriverHOS('drv-1')
+
+    expect(result.assessable).toBe(false)
+    expect(result.missingData).toEqual(['No medical certificate on file'])
+    // The trap it replaces: an empty violations list beside `assessable: false` is NOT a
+    // clean bill, and a consumer needs both to say so.
+    expect(result.violations).toEqual([])
+    expect(result.isCompliant).toBe(false)
+  })
+
+  it('reads the hours from where the endpoint puts them', async () => {
+    get.mockResolvedValue({ data: wire })
+    const api = await transportApi()
+    const result = await api.getDriverHOS('drv-1')
+    expect(result.hoursSummary.driveHoursRemaining).toBe(0.4)
+    expect(result.hoursSummary.cycleHours).toBe(61.0)
+  })
+
+  it('no longer offers the four top-level names that were never sent', async () => {
+    get.mockResolvedValue({ data: wire })
+    const api = await transportApi()
+    const result = await api.getDriverHOS('drv-1')
+    for (const dead of ['driveHoursRemaining', 'dutyHoursRemaining', 'cycleHoursUsed', 'currentStatus']) {
+      expect(result).not.toHaveProperty(dead)
+    }
+  })
+
+  it('keeps null distinct from zero on the hours', async () => {
+    // The distinction the old `|| 0` mock destroyed, and the reason this codebase has found
+    // the same HOS defect three times: NULL means the driver has not reported, 0 means out
+    // of hours. One is unknown, the other is a violation.
+    get.mockResolvedValue({
+      data: { ...wire, hoursSummary: { ...wire.hoursSummary, driveHoursRemaining: null, cycleHours: 0 } },
+    })
+    const api = await transportApi()
+    const result = await api.getDriverHOS('drv-1')
+    expect(result.hoursSummary.driveHoursRemaining).toBeNull()
+    expect(result.hoursSummary.cycleHours).toBe(0)
+  })
+})

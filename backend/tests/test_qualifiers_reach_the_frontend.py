@@ -157,7 +157,11 @@ COMMENT = re.compile(r"//[^\n]*|/\*.*?\*/", re.S)
 QUALIFIES_AN_UNREAD_FIELD: Dict[str, str] = {
     "graded": "efficiency_grade",
     "drivers_assessed": "overall_compliant",
-    "assessable": "is_compliant",
+    # "assessable": "is_compliant" — REMOVED 2026-08-02 (FS-395). The exemption claimed
+    # `is_compliant` was not rendered either; `getDriverHOS` now declares BOTH on `DriverHOS`,
+    # so the claim stopped being true and this guard said so. `assessable` is carried on the
+    # client type, which is what the exemption existed to defer — the caveat travels with the
+    # verdict now, and the main sweep below checks it stays that way.
     "detention_assessed": "detention_charge",
     "appointments_assessed": "sync_status_breakdown",
     # Intake lane's scenario builder; its output is not rendered by any page today.
