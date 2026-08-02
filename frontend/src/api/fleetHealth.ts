@@ -20,6 +20,18 @@ import {
 } from './mocks/fleetHealthMocks';
 import { USE_MOCK } from './mockMode';
 
+/** `FleetHealthStatsResponse` in `app/api/fleet_health.py`, after the casing seam.
+ *
+ *  THREE FIELDS, and `totalVehicles` is deliberately absent from this type: the endpoint
+ *  computes it as the size of the active-diagnostics set, so it equals `vehiclesWithIssues`
+ *  by construction and a healthy fleet would report zero total vehicles. Declaring it here
+ *  would make the client repeat the claim (FS-398). */
+export interface FleetHealthStatistics {
+  activeDtcs: number;
+  criticalDtcs: number;
+  vehiclesWithIssues: number;
+}
+
 const MOCK_DELAY = 300;
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -123,12 +135,25 @@ export const fleetHealthApi = {
     return response.data;
   },
 
-  getHealthStatistics: async () => {
+  /** `GET /api/v1/fleet/health/statistics` — the two DTC counts, and nothing else (FS-398).
+   *
+   *  HAD NO RETURN TYPE AT ALL, so `response.data` was `any` and every consumer was
+   *  unchecked. `HealthSecurityPanel` assigned it straight into a state object with eight
+   *  differently-named keys, and TypeScript had nothing to compare. All four tiles rendered
+   *  blank in real mode; the mock returned the eight-key shape, so development looked fine.
+   *
+   *  The mock is a different shape from the wire ON PURPOSE and that is the bug it hid: it
+   *  returns per-status counts and a safety score which this endpoint does not compute and
+   *  cannot — `GeoTabDiagnostic.vehicle_id` is a bare string with no foreign key to
+   *  `vehicles`, so the diagnostics table cannot even tell you the fleet size. The panel
+   *  derives those from the vehicle list it already fetches. */
+  getHealthStatistics: async (): Promise<FleetHealthStatistics> => {
     if (USE_MOCK) {
       await delay(MOCK_DELAY);
-      return getHealthStatistics();
+      const m = getHealthStatistics();
+      return { activeDtcs: m.totalActiveDTCs, criticalDtcs: m.criticalDTCs, vehiclesWithIssues: m.warning };
     }
-    const response = await api.get('/api/v1/fleet/health/statistics');
+    const response = await api.get<FleetHealthStatistics>('/api/v1/fleet/health/statistics');
     return response.data;
   },
 };

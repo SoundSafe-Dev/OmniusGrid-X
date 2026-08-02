@@ -67,7 +67,33 @@ export const HealthSecurityPanel: FC = () => {
       setDtcs(dtcsData);
       setSecurityEvents(securityData);
       setDriverMetrics(metricsData);
-      setStats(statsData);
+
+      // DERIVED, NOT ASSIGNED (FS-398). `setStats(statsData)` replaced this object
+      // wholesale with the endpoint's payload — `{totalVehicles, activeDtcs, criticalDtcs,
+      // vehiclesWithIssues}` — which shares NOT ONE of the eight keys the tiles read. So
+      // every figure in this panel rendered blank in real mode: Online, Warnings, Active
+      // DTCs and Avg Safety Score. The mock returned the eight-key shape, so it looked
+      // complete in development, and `avgSafetyScore >= 85` on `undefined` is false, which
+      // pinned the score to its red branch.
+      //
+      // The per-status counts and the safety score come from `vehiclesData`, which this
+      // component already fetched and already renders below — so nothing new is requested
+      // and nothing is invented. The DTC totals are the two figures the statistics endpoint
+      // genuinely computes.
+      const byStatus = (s: string) => vehiclesData.filter(v => v.status === s).length;
+      const scores = vehiclesData.map(v => v.safetyScore).filter(n => typeof n === 'number');
+      setStats({
+        total: vehiclesData.length,
+        online: byStatus('online'),
+        offline: byStatus('offline'),
+        maintenance: byStatus('maintenance'),
+        warning: byStatus('warning'),
+        avgSafetyScore: scores.length
+          ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)
+          : 0,
+        totalActiveDTCs: statsData.activeDtcs ?? dtcsData.length,
+        criticalDTCs: statsData.criticalDtcs ?? 0,
+      });
     } catch (err) {
       console.error('Failed to load fleet health data:', err);
       setError('Failed to load fleet health & security data. Please try again.');

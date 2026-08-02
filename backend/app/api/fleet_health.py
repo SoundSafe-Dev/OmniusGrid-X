@@ -35,7 +35,15 @@ router = APIRouter(dependencies=[Depends(get_current_active_user)])
 # Shapes are unchanged; these only document/type what the handlers already return.
 
 class FleetHealthStatsResponse(BaseModel):
-    totalVehicles: int
+    """What the active-diagnostics table can actually answer (FS-398).
+
+    `totalVehicles` was here and is gone. It was computed as the size of the
+    active-diagnostics set — identical to `vehiclesWithIssues` on every call — so the pair
+    could never disagree, and a fleet with nothing wrong reported zero vehicles in total.
+    The fleet size is not derivable here: `GeoTabDiagnostic.vehicle_id` is a bare
+    `String(100)` with no foreign key to `vehicles`.
+    """
+
     activeDtcs: int
     criticalDtcs: int
     vehiclesWithIssues: int
@@ -262,9 +270,19 @@ async def fleet_health(org_id: UUID = Depends(get_tenant_org_id), db: AsyncSessi
 @router.get("/health/statistics", response_model=FleetHealthStatsResponse)
 async def fleet_health_stats(org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
     diags = await _active_diagnostics(db, org_id)
+    # `vehicles` IS THE SET WITH ACTIVE DIAGNOSTICS — not the fleet (FS-398).
+    #
+    # `totalVehicles` was this same set, so the two figures were equal by construction and
+    # a client rendering "N of M vehicles have issues" would always show all of them. A
+    # healthy fleet would have reported `totalVehicles: 0`.
+    #
+    # It is REMOVED rather than corrected, because this endpoint cannot know the fleet size:
+    # `GeoTabDiagnostic.vehicle_id` is a bare `String(100)` with no foreign key to
+    # `vehicles`, so the two identifier spaces are not joinable here and counting rows in
+    # `vehicles` would be a guess dressed as a total. An endpoint should not publish a figure
+    # it cannot compute — the same call FS-346 made about the compliance report's four.
     vehicles = {d.vehicle_id for d in diags if d.vehicle_id}
     return {
-        "totalVehicles": len(vehicles),
         "activeDtcs": len(diags),
         "criticalDtcs": sum(1 for d in diags if d.severity == "critical"),
         "vehiclesWithIssues": len(vehicles),
