@@ -1291,8 +1291,16 @@ async def main(verify: bool = False) -> int:
             provider = {"erp": erp_provider, "asset_telemetry": asset_telemetry_provider,
                         "yard": yard_provider}[source_type]
             result = await provider(db, ORG, params)
+            # `source_id` is the id of the row this source came FROM, and a platform-wide
+            # source like the yard has no such row. Falling back to the source_type string
+            # put "yard" in a column every consumer reads as a uuid: `AddDataSourceRequest`
+            # and `DataSourceResponse` both declare `Optional[UUID]`, so the API itself
+            # cannot produce this — the seed was the only writer that did, and it made
+            # GET /nlp/sessions/{id}/data 500 on the documented demo session. The panel on
+            # the Correlation AI page failed to load every time it was opened.
+            source_row_id = params.get("asset_id") or params.get("integration_id")
             db.add(SessionDataSource(session_id=SESSION_ID, source_type=source_type,
-                                     source_id=str(params.get("asset_id") or params.get("integration_id") or source_type),
+                                     source_id=str(source_row_id) if source_row_id else None,
                                      file_name=result.file_name, data_type="spreadsheet",
                                      processed_data=result.to_processed_data(),
                                      meta_data={"platform_source": True, "source_type": source_type}))
@@ -1376,6 +1384,11 @@ def run_verify() -> int:
         r = client.get(f"/api/v1/assets/{A_AUDIO}/sensor-feeds", headers=AUTH)
         check("audio sensor feeds discoverable", r.status_code == 200 and
               "audio_band_high" in r.json().get("metrics", []), r.text[:150])
+
+        # Every panel the demo session opens must load. This one 500'd for as long as the
+        # seed existed, because it wrote a non-uuid into `source_id`.
+        r = client.get(f"/api/v1/nlp/sessions/{SESSION_ID}/data", headers=AUTH)
+        check("session data-sources panel loads", r.status_code == 200, r.text[:150])
 
         r = client.get("/api/v1/yard/detention-alerts", headers=AUTH)
         alerts = r.json() if r.status_code == 200 else []

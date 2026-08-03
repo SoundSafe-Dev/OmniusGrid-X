@@ -1328,3 +1328,58 @@ dataset.
 - The six models added by FS-405/406 were contributing to the ratchet; they now declare
   `organization = relationship(..., lazy="raise")` — present purely so the unit of work can
   order them, with lazy loading refused so it cannot become a MissingGreenlet at runtime.
+
+---
+
+## FS-409 — two defects that only a screenshot could find
+
+Running the stack against the now-working seed and driving the new surfaces in a browser
+found two things the whole verification stack had passed.
+
+### The Correlation AI data-sources panel 500'd on the documented demo session
+
+`GET /nlp/sessions/{id}/data` returned a 500 for the seeded session, so the panel listing the
+session's ERP / telemetry / yard sources failed to load every time it was opened.
+
+Cause: the seed set `source_id` from
+`params.get("asset_id") or params.get("integration_id") or source_type`. For a platform-wide
+source like the yard there is no source row, so the fallback wrote the literal string
+`"yard"` into a column every consumer reads as a uuid — `AddDataSourceRequest` and
+`DataSourceResponse` both declare `Optional[UUID]`.
+
+**The API itself cannot produce this**: its own request model rejects a non-uuid. The seed was
+the only writer that did. Fixed in the seed (a platform source has no row id, so it is now
+NULL, which the response model already allows), with a check added to `--verify` so the panel
+is asserted to load.
+
+### The Shop Floor page was unreadable in the app's own theme
+
+It was written against a light shell. The app renders dark by default, so `text-gray-900`
+put the h1 at almost exactly the page background colour, the input placeholders could not be
+read, and the cards sat as light rectangles in a dark frame.
+
+It passed `tsc`. It passed 518 unit tests. **It passed a DOM sweep that counted text length,
+visible controls and network failures** — and reported the page healthy, because the text was
+all there, at the wrong colour. Only opening a screenshot found it.
+
+Converted to the CSS-variable tokens the rest of the app uses (`opsgrid-bg`, `opsgrid-panel`,
+`opsgrid-border`, `opsgrid-text`, `opsgrid-text-secondary`, `status-*`), then verified in
+**both** themes by clicking the app's own toggle — the first attempt at switching theme by
+setting a class and a data attribute was a no-op, and the "light" screenshot it produced was
+still dark. Driving the real control moved the body background from `rgb(10,10,10)` to
+`rgb(250,250,250)` and both renders are legible.
+
+Button contrast was checked by reading `getComputedStyle`, not by eye: the three washed-out
+buttons in the first screenshot are genuinely `disabled` with `opacity: 0.5` and empty
+required fields, which is correct.
+
+`test/pagesUseThemeTokens.test.ts` now ratchets hardcoded light-theme utilities in
+`src/pages/`. Five files carry them today and the counts are pinned; a new page must not
+appear in that list at all. Scoped to pages deliberately — the correlation chat transcript is
+a white sheet on purpose, so a blanket ban would be wrong.
+
+**A measurement error worth recording**: the first version of that ratchet was written from a
+`src/pages/*.tsx` shell glob, which does not recurse — it reported one offending file when
+there are five. The test found it immediately by walking the tree. The guard was right and
+the hand measurement was wrong, which is the argument for putting the number in a test rather
+than in a comment.

@@ -36,37 +36,37 @@ const STATUS_LABEL: Record<string, string> = {
 const FanoutPanel: FC<{ fanout: Fanout | null; title: string }> = ({ fanout, title }) => {
   if (!fanout) return null
   return (
-    <div className="mt-3 rounded-md border border-gray-200 bg-white p-3">
+    <div className="mt-3 rounded-md border border-opsgrid-border bg-opsgrid-bg p-3">
       <div className="flex items-center gap-2">
         {fanout.fullyPosted ? (
           <CheckCircle2 className="h-4 w-4 text-green-600" />
         ) : (
           <Clock className="h-4 w-4 text-blue-600" />
         )}
-        <p className="text-sm font-medium text-gray-900">{title}</p>
+        <p className="text-sm font-medium text-opsgrid-text">{title}</p>
       </div>
       <ul className="mt-2 space-y-1 text-xs">
         {Object.entries(fanout.byStatus).map(([status, count]) => (
-          <li key={status} className="text-gray-700">
+          <li key={status} className="text-opsgrid-text-secondary">
             {count} {STATUS_LABEL[status] ?? status}
           </li>
         ))}
       </ul>
       {fanout.awaitingAPerson.length > 0 && (
-        <div className="mt-2 rounded border border-amber-300 bg-amber-50 p-2">
-          <p className="flex items-center gap-1.5 text-xs font-medium text-amber-900">
+        <div className="mt-2 rounded border border-status-warning/50 bg-status-warning/10 p-2">
+          <p className="flex items-center gap-1.5 text-xs font-medium text-status-warning">
             <Phone className="h-3.5 w-3.5" />
             Someone has to be told:
           </p>
           <ul className="mt-1 space-y-1.5">
             {fanout.awaitingAPerson.map((item) => (
-              <li key={item.target} className="text-xs text-amber-900">
+              <li key={item.target} className="text-xs text-opsgrid-text">
                 <span className="font-medium capitalize">{item.target}</span> —{' '}
                 {item.instruction}
               </li>
             ))}
           </ul>
-          <p className="mt-1.5 text-[11px] text-amber-800">
+          <p className="mt-1.5 text-[11px] text-opsgrid-text-secondary">
             Clear these on the ledger below once you have passed them on.
           </p>
         </div>
@@ -77,13 +77,14 @@ const FanoutPanel: FC<{ fanout: Fanout | null; title: string }> = ({ fanout, tit
 
 const Field: FC<{ label: string; children: React.ReactNode }> = ({ label, children }) => (
   <label className="block">
-    <span className="mb-1 block text-xs font-medium text-gray-700">{label}</span>
+    <span className="mb-1 block text-xs font-medium text-opsgrid-text-secondary">{label}</span>
     {children}
   </label>
 )
 
 const inputClass =
-  'w-full rounded border border-gray-300 px-2.5 py-1.5 text-sm focus:border-blue-500 focus:outline-none'
+  'w-full rounded border border-opsgrid-border bg-opsgrid-bg px-2.5 py-1.5 text-sm '  +
+  'text-opsgrid-text placeholder:text-opsgrid-text-secondary focus:border-opsgrid-primary focus:outline-none'
 
 const Card: FC<{ title: string; icon: React.ReactNode; routes: string; children: React.ReactNode }> = ({
   title,
@@ -91,14 +92,14 @@ const Card: FC<{ title: string; icon: React.ReactNode; routes: string; children:
   routes,
   children,
 }) => (
-  <section className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+  <section className="rounded-lg border border-opsgrid-border bg-opsgrid-panel p-4">
     <div className="mb-1 flex items-center gap-2">
       {icon}
-      <h2 className="text-sm font-semibold text-gray-900">{title}</h2>
+      <h2 className="text-sm font-semibold text-opsgrid-text">{title}</h2>
     </div>
     {/* The mandate, stated on the page. An operator should be able to see where their
         action goes without reading a document. */}
-    <p className="mb-3 text-[11px] text-gray-600">Goes to: {routes}</p>
+    <p className="mb-3 text-[11px] text-opsgrid-text-secondary">Goes to: {routes}</p>
     {children}
   </section>
 )
@@ -126,7 +127,7 @@ const IssuePart: FC = () => {
   return (
     <Card
       title="Issue a part"
-      icon={<Package className="h-4 w-4 text-gray-700" />}
+      icon={<Package className="h-4 w-4 text-opsgrid-text-secondary" />}
       routes="inventory, purchasing, accounting"
     >
       <div className="grid grid-cols-2 gap-2">
@@ -153,7 +154,7 @@ const IssuePart: FC = () => {
         Issue part
       </Button>
       {mutation.isError && (
-        <p className="mt-2 text-xs text-red-700" role="alert">
+        <p className="mt-2 text-xs text-status-alarm" role="alert">
           The part was NOT issued — nothing was recorded and no system was told.
         </p>
       )}
@@ -190,14 +191,14 @@ const ClockTime: FC = () => {
   return (
     <Card
       title="Clock time"
-      icon={<Clock className="h-4 w-4 text-gray-700" />}
+      icon={<Clock className="h-4 w-4 text-opsgrid-text-secondary" />}
       routes="production, accounting"
     >
       {isLoading ? (
-        <p className="text-xs text-gray-500">Checking for a running clock…</p>
+        <p className="text-xs text-opsgrid-text-secondary">Checking for a running clock…</p>
       ) : open ? (
         <div>
-          <p className="text-sm text-gray-900">
+          <p className="text-sm text-opsgrid-text">
             Clocked in since {new Date(open.clockInAt).toLocaleTimeString()}
             {open.workOrderRef ? ` on ${open.workOrderRef}` : ''}
           </p>
@@ -209,7 +210,7 @@ const ClockTime: FC = () => {
             Clock out
           </Button>
           {clockOut.isError && (
-            <p className="mt-2 text-xs text-red-700" role="alert">
+            <p className="mt-2 text-xs text-status-alarm" role="alert">
               Could not clock out — YOUR CLOCK IS STILL RUNNING and no hours were posted.
               Try again; do not leave the floor assuming this was recorded.
             </p>
@@ -225,7 +226,7 @@ const ClockTime: FC = () => {
             Clock in
           </Button>
           {clockIn.isError && (
-            <p className="mt-2 text-xs text-red-700" role="alert">
+            <p className="mt-2 text-xs text-status-alarm" role="alert">
               Could not clock in. If you already have a clock running, close that one first —
               two open clocks produce overlapping hours and payroll cannot tell which is real.
             </p>
@@ -259,7 +260,7 @@ const ReportProblem: FC = () => {
   return (
     <Card
       title="Report a problem"
-      icon={<AlertTriangle className="h-4 w-4 text-gray-700" />}
+      icon={<AlertTriangle className="h-4 w-4 text-opsgrid-text-secondary" />}
       routes="quality, inventory, production, accounting"
     >
       <Field label="What happened">
@@ -285,7 +286,7 @@ const ReportProblem: FC = () => {
         Report it
       </Button>
       {mutation.isError && (
-        <p className="mt-2 text-xs text-red-700" role="alert">
+        <p className="mt-2 text-xs text-status-alarm" role="alert">
           Not recorded — no quality record was raised and nobody was told.
         </p>
       )}
@@ -317,12 +318,12 @@ const MachineDown: FC = () => {
   return (
     <Card
       title="Machine down"
-      icon={<Wrench className="h-4 w-4 text-gray-700" />}
+      icon={<Wrench className="h-4 w-4 text-opsgrid-text-secondary" />}
       routes="scheduling, production, quality, accounting"
     >
       {openEventId ? (
         <div>
-          <p className="text-sm text-gray-900">
+          <p className="text-sm text-opsgrid-text">
             Downtime is running. Nothing has been posted yet —{' '}
             {/* Said explicitly: scheduling and accounting need a DURATION, which does not
                 exist until the machine is back up. Claiming a posting now would put an
@@ -334,7 +335,7 @@ const MachineDown: FC = () => {
             Machine is back up
           </Button>
           {end.isError && (
-            <p className="mt-2 text-xs text-red-700" role="alert">
+            <p className="mt-2 text-xs text-status-alarm" role="alert">
               Could not close this downtime — the machine is still recorded as down and
               scheduling has not been told it is back.
             </p>
@@ -362,7 +363,7 @@ const MachineDown: FC = () => {
             Start downtime
           </Button>
           {start.isError && (
-            <p className="mt-2 text-xs text-red-700" role="alert">
+            <p className="mt-2 text-xs text-status-alarm" role="alert">
               Downtime was NOT recorded — nothing is logged against this asset.
             </p>
           )}
@@ -384,13 +385,13 @@ const PostingRow: FC<{ posting: Posting }> = ({ posting }) => {
   const needsAPerson = posting.status === 'manual_required' && !posting.acknowledgedAt
 
   return (
-    <tr className="border-b border-gray-100 align-top">
-      <td className="py-2 pr-3 text-sm capitalize text-gray-900">{posting.targetSystem}</td>
-      <td className="py-2 pr-3 text-sm text-gray-700">{STATUS_LABEL[posting.status] ?? posting.status}</td>
-      <td className="py-2 pr-3 text-xs text-gray-700">
+    <tr className="border-b border-opsgrid-border align-top">
+      <td className="py-2 pr-3 text-sm capitalize text-opsgrid-text">{posting.targetSystem}</td>
+      <td className="py-2 pr-3 text-sm text-opsgrid-text-secondary">{STATUS_LABEL[posting.status] ?? posting.status}</td>
+      <td className="py-2 pr-3 text-xs text-opsgrid-text-secondary">
         {posting.instruction || posting.lastError || '—'}
       </td>
-      <td className="py-2 pr-3 font-mono text-xs text-gray-700">{posting.externalRef ?? '—'}</td>
+      <td className="py-2 pr-3 font-mono text-xs text-opsgrid-text-secondary">{posting.externalRef ?? '—'}</td>
       <td className="py-2">
         {needsAPerson ? (
           <div className="flex items-center gap-1.5">
@@ -398,16 +399,16 @@ const PostingRow: FC<{ posting: Posting }> = ({ posting }) => {
               value={ref}
               onChange={(e) => setRef(e.target.value)}
               placeholder="their reference"
-              className="w-32 rounded border border-gray-300 px-1.5 py-1 text-xs"
+              className="w-32 rounded border border-opsgrid-border bg-opsgrid-bg px-1.5 py-1 text-xs text-opsgrid-text placeholder:text-opsgrid-text-secondary"
             />
             <Button size="sm" variant="outline" onClick={() => mutation.mutate()} disabled={mutation.isPending}>
               I told them
             </Button>
           </div>
         ) : posting.acknowledgedAt ? (
-          <span className="text-xs text-gray-500">handed over</span>
+          <span className="text-xs text-opsgrid-text-secondary">handed over</span>
         ) : (
-          <span className="text-xs text-gray-400">—</span>
+          <span className="text-xs text-opsgrid-text-secondary">—</span>
         )}
       </td>
     </tr>
@@ -421,13 +422,13 @@ const Ledger: FC = () => {
     queryFn: () => shopFloorApi.listPostings({ outstandingOnly, limit: 100 }),
   })
 
-  if (isLoading) return <p className="text-sm text-gray-500">Loading the ledger…</p>
+  if (isLoading) return <p className="text-sm text-opsgrid-text-secondary">Loading the ledger…</p>
   if (isError) {
     // An empty table here would read as "nothing outstanding", which is the opposite of
     // what a failed load means.
     return (
       <div role="alert" className="flex items-center gap-3">
-        <p className="text-sm text-red-700">
+        <p className="text-sm text-status-alarm">
           Couldn’t load the ledger — this is a loading failure, not an empty backlog.
         </p>
         <Button size="sm" variant="outline" onClick={() => refetch()}>
@@ -440,7 +441,7 @@ const Ledger: FC = () => {
   return (
     <div>
       <div className="mb-2 flex items-center justify-between">
-        <label className="flex items-center gap-2 text-sm text-gray-700">
+        <label className="flex items-center gap-2 text-sm text-opsgrid-text-secondary">
           <input
             type="checkbox"
             checked={outstandingOnly}
@@ -448,19 +449,19 @@ const Ledger: FC = () => {
           />
           Only what still needs doing
         </label>
-        <p className="text-xs text-gray-600">
+        <p className="text-xs text-opsgrid-text-secondary">
           {data!.total} total
           {data!.truncated ? ` — showing the first ${data!.items.length}` : ''}
         </p>
       </div>
       {data!.items.length === 0 ? (
-        <p className="text-sm text-gray-600">
+        <p className="text-sm text-opsgrid-text-secondary">
           {outstandingOnly ? 'Nothing outstanding.' : 'No postings yet.'}
         </p>
       ) : (
         <table className="w-full">
           <thead>
-            <tr className="border-b border-gray-200 text-left text-xs font-medium text-gray-600">
+            <tr className="border-b border-opsgrid-border text-left text-xs font-medium text-opsgrid-text-secondary">
               <th className="pb-2">System</th>
               <th className="pb-2">Status</th>
               <th className="pb-2">What to do / what went wrong</th>
@@ -482,8 +483,8 @@ const Ledger: FC = () => {
 const ShopFloor: FC = () => (
   <div className="space-y-5 p-1">
     <header>
-      <h1 className="text-xl font-semibold text-gray-900">Shop Floor</h1>
-      <p className="mt-1 text-sm text-gray-600">
+      <h1 className="text-xl font-semibold text-opsgrid-text">Shop Floor</h1>
+      <p className="mt-1 text-sm text-opsgrid-text-secondary">
         Record what happened, and see exactly which systems heard about it. A target with no
         integration is handed to a person, with the words to use — not dropped.
       </p>
@@ -496,9 +497,9 @@ const ShopFloor: FC = () => (
       <MachineDown />
     </div>
 
-    <section className="rounded-lg border border-gray-200 bg-white p-4">
-      <h2 className="mb-1 text-sm font-semibold text-gray-900">Systems of record</h2>
-      <p className="mb-3 text-[11px] text-gray-600">
+    <section className="rounded-lg border border-opsgrid-border bg-opsgrid-panel p-4">
+      <h2 className="mb-1 text-sm font-semibold text-opsgrid-text">Systems of record</h2>
+      <p className="mb-3 text-[11px] text-opsgrid-text-secondary">
         One row per (event, system). A posting is only <span className="font-medium">posted</span>{' '}
         when the far system returned an identifier — that reference is the evidence.
       </p>
