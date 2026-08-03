@@ -95,6 +95,15 @@ class CircuitBreakerState:
     state: str = "closed"  # closed, open, half_open
 
 
+class ERPWriteNotSupported(Exception):
+    """This connector cannot write to its ERP, and says so rather than pretending.
+
+    Caught by the posting drainer, which turns the posting into a `manual_required` item
+    carrying an instruction — the analog path — instead of leaving it queued forever behind
+    an integration that will never take it.
+    """
+
+
 class ERPConnectorBase(ABC):
     """
     Abstract base class for ERP connectors.
@@ -217,6 +226,47 @@ class ERPConnectorBase(ABC):
         )
         return False
 
+
+    #: How this connector WRITES an event back into the ERP, when it can. Prose, aimed at
+    #: whoever has to set it up. `None` means the connector implements a verified write.
+    #:
+    #: Same discipline as EVENT_SUBSCRIPTION_MECHANISM directly above, and for the same
+    #: reason: the read path was one-directional for this connector's whole life, and the
+    #: tempting way to "add writes" is a copy-pasted POST to a plausible-looking URL. That is
+    #: precisely what produced a subscription that reported success against a 404.
+    WRITE_MECHANISM: Optional[str] = "no verified write path for this connector"
+
+    async def post_event(
+        self,
+        event_type: str,
+        payload: Dict[str, Any],
+    ) -> str:
+        """Write one platform event into the ERP and RETURN ITS IDENTIFIER.
+
+        The return value is not decorative. A posting in `system_of_record_postings` cannot
+        be marked `posted` without it — the database enforces that (migration 060) — because
+        the identifier the far system hands back is the only evidence the write landed. A
+        connector that "succeeds" without one has told us nothing checkable.
+
+        THE DEFAULT IS A REFUSAL, NOT A NO-OP. No connector in this repository has a
+        verified write path today; `fetch_data`, `subscribe_to_events` and `health_check`
+        were the entire interface. Raising here means the drainer converts the posting to
+        `manual_required` with an instruction for a person, which is true and actionable.
+        Returning a fabricated reference, or silently doing nothing and reporting success,
+        would put an unpostable obligation into a queue that looks drained.
+
+        A connector that gains a real write overrides this and sets WRITE_MECHANISM to None.
+        """
+        logger.warning(
+            "erp_write_not_available_via_api",
+            erp_type=self.config.erp_type.value,
+            integration_id=self.integration_id,
+            event_type=event_type,
+            mechanism=self.WRITE_MECHANISM,
+        )
+        raise ERPWriteNotSupported(
+            f"{self.config.erp_type.value} has {self.WRITE_MECHANISM}"
+        )
 
     @abstractmethod
     async def health_check(self) -> Dict[str, Any]:

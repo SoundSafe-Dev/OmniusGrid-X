@@ -9,7 +9,9 @@ from app.api import assets, telemetry, alarms, operations, auth, dashboard, heal
 from app.api import alarm_rules
 from app.api import user_management
 from app.api import dashboard_analytics
-from app.api import yard, transportation, logistics_correlation, websocket, commands, oee, kanban, registries, geotab, correlation_integration, nlp_correlation, analysis_sessions, user_context, audit, api_keys, gdpr, compliance, compliance_reports, data_residency, feature_flags, sso, bulk_operations, exports, error_tracking, erp_integrations
+from app.api import yard
+from app.api import insight_activation
+from app.api import shop_floor, transportation, logistics_correlation, websocket, commands, oee, kanban, registries, geotab, correlation_integration, nlp_correlation, analysis_sessions, user_context, audit, api_keys, gdpr, compliance, compliance_reports, data_residency, feature_flags, sso, bulk_operations, exports, error_tracking, erp_integrations
 from app.api import health_index, simulation, notifications
 from app.api import edge_enroll, edge_ingest, edge_fleet
 from app.api import erp_webhooks
@@ -332,6 +334,12 @@ app.include_router(dashboard_analytics.router, prefix="/api/v1/dashboard", tags=
 app.include_router(health.router, prefix="", tags=["Health"], responses=unavailable_responses)
 app.include_router(engines.router, prefix="/api/v1/engines", tags=["AI Engines"], responses=common_responses)
 app.include_router(yard.router, prefix="/api/v1/yard", tags=["Yard Management"], responses=common_responses)
+# Shop-floor events (FS-405): part issues, the labour clock, quality events and downtime,
+# each fanned out to the systems of record that need it, with an explicit posting ledger.
+app.include_router(shop_floor.router, prefix="/api/v1/shop-floor", tags=["Shop Floor"], responses=common_responses)
+# Insight activation (FS-406): a correlation-AI recommendation becomes a Kanban task plus
+# postings to every system of record its domain implies — issue, confirm, reject.
+app.include_router(insight_activation.router, prefix="/api/v1/insights", tags=["Insight Activation"], responses=common_responses)
 app.include_router(transportation.router, prefix="/api/v1/transportation", tags=["Transportation Management"], responses=common_responses)
 app.include_router(logistics_correlation.router, prefix="/api/v1/logistics", tags=["Logistics Correlation"], responses=common_responses)
 app.include_router(commands.router, prefix="/api/v1/commands", tags=["Commands"], responses=common_responses)

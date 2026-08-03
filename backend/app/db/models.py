@@ -864,7 +864,7 @@ class Task(Base):
 
     # Approval workflow
     approval_status = Column(String(50), default="pending")  # pending, approved, rejected
-    approved_by = UUIDForeignKey("users.id")
+    approved_by = UUIDForeignKey("users.id", nullable=True)  # see the audit block below
     approved_at = Column(DateTime(timezone=True))
     rejection_reason = Column(Text)
 
@@ -873,11 +873,18 @@ class Task(Base):
     completion_result = Column(JSON, default=dict)  # Log of what actions were taken
 
     # Audit
-    created_by = UUIDForeignKey("users.id")
+    #: nullable=True on all three of these matches the database. Migrations 003/004 create
+    #: `created_by`, `approved_by` and `completed_by` as plain `UUID REFERENCES users(id)`
+    #: with no NOT NULL, and they cannot be otherwise — a task is created before anyone
+    #: completes it. The ORM claimed NOT NULL, which Postgres never enforced (nullable is a
+    #: DDL property, not a client-side check), so the claim was invisible in production and
+    #: wrong everywhere the schema is built FROM the ORM: `create_all` then emits a stricter
+    #: table than the real one and rejects inserts that production accepts.
+    created_by = UUIDForeignKey("users.id", nullable=True)
     created_at = Column(DateTime(timezone=True), default=utcnow)
     updated_at = Column(DateTime(timezone=True), default=utcnow)
     completed_at = Column(DateTime(timezone=True))
-    completed_by = UUIDForeignKey("users.id")
+    completed_by = UUIDForeignKey("users.id", nullable=True)
 
 
 class TaskComment(Base):

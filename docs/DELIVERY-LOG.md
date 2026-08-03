@@ -1066,3 +1066,187 @@ Three stale recorded numbers were corrected in place tonight rather than worked 
 gate doc's "floor 339", the ratchet's missing `text/plain`, and FS-260's premise. Each had
 drifted in the direction that flatters.
 
+
+---
+
+## FS-405 / 406 / 407 — the floor, the insight, and the ledger between them
+
+Four workflows were asked for by name:
+
+    a part is issued        -> inventory, purchasing, accounting
+    time is clocked         -> production, accounting
+    a problem is found      -> quality, inventory, production, accounting
+    a machine goes down     -> scheduling, production, quality, accounting
+
+**None of the four events existed in the schema.** There was no part issue, no labour entry,
+no quality event and no downtime event anywhere in the model layer. The platform could READ
+an ERP — inbound sync, webhooks, correlation over the result — and `ERPConnectorBase` exposed
+`fetch_data`, `subscribe_to_events` and `health_check` and **no write method at all**. Every
+tie-in was one-directional.
+
+### The ledger is the deliverable, not the four tables
+
+"Issuing a part ties into inventory, purchasing and accounting" is three claims about three
+systems, and each can independently succeed, fail, queue, or have no integration. A `synced`
+boolean collapses those into one bit and the bit lies — which is the defect class this
+repository has spent its whole life finding, from an alert that was logged instead of
+dispatched *and returned an identifier anyway*, to a collector "restart" that was a bare
+`return` with a hardcoded timestamp, to a compliance report stating four figures it never
+computed.
+
+So `system_of_record_postings` carries **one row per (event, target system)**, and the
+database — not the service — enforces the part that matters:
+
+```sql
+CONSTRAINT ck_posted_has_evidence CHECK (
+    status <> 'posted' OR (external_ref IS NOT NULL AND posted_at IS NOT NULL)
+),
+CONSTRAINT ck_manual_has_instruction CHECK (
+    status <> 'manual_required' OR instruction IS NOT NULL
+)
+```
+
+A posting cannot claim success without the identifier the far system returned, and cannot
+sit in `manual_required` without the sentence to hand to a person. Constraints rather than
+service checks, because this is the exact lie the ledger exists to prevent and a CHECK holds
+against every writer, including the ones nobody has written yet.
+
+### `manual_required` is the analog path, and it is a feature
+
+Plenty of real shops run purchasing on a phone call. The correct behaviour is to tell
+somebody — so a posting with no integration carries the line to read out, and records whether
+it was read out. Against the running app with an ERP serving inventory and accounting but not
+purchasing:
+
+```json
+"by_status": {"pending": 2, "manual_required": 1},
+"fully_posted": false,
+"awaiting_a_person": [{
+  "target": "purchasing",
+  "instruction": "Issue 2.0 each of part BRG-6204 to WO-1188 — recorded at 2026-08-03 17:59
+                  and NOT yet entered in this system."
+}]
+```
+
+`fully_posted` is the only field meaning "it all landed", and it is computed from the
+postings rather than assumed from a 201. **The response never says "synced".**
+
+### FS-406 — activating a correlation insight
+
+An analysis session ends with a list under "Recommended Actions". In the UI each line carried
+a **green tick** and no control. The tick was the defect: it reads as *done* for work that had
+not been started and could not be started from that pane. The only affordance was an
+"Auto-integrate" checkbox firing a background job whose result never came back — it could
+create nothing and the screen looked identical.
+
+Activation now creates a Kanban task **and** postings to every system its correlation domain
+implies, reusing the same ledger a part issue uses — a dispatch to an ERP is the same class of
+claim whether a machinist or an analysis session started it, so it earns the same evidence.
+
+Three verbs, kept apart because they are three different facts:
+
+| | means |
+|---|---|
+| **issue** | a task exists and the obligations are recorded. **Nothing is done yet.** |
+| **confirm** | REFUSES, with named blockers, until the task is finished *and* every posting carries evidence. Writes the snapshot it was granted on. |
+| **reject** | declined, with a reason the database insists on — a recommendation that keeps being rejected is a bad recommendation, and that is only learnable if the reason is stored. |
+
+Confirmation is a snapshot, never a flag:
+
+```
+maintenance  posted  external_reference  WO-2291
+production   posted  external_reference  WO-2291
+scheduling   posted  external_reference  WO-2291
+```
+
+A human's acknowledgement and a far system's identifier are both acceptable evidence and are
+**not the same thing**, so the snapshot records which kind each was.
+
+Activation is idempotent on a fingerprint over (source, session, message, index, title).
+Without it a double click on a slow network in a noisy building issues two work orders and
+posts twice to purchasing, and the second is indistinguishable from a real requirement.
+
+### FS-407 — `pending` was a dead end
+
+`fan_out` queues a posting as `pending` when an integration claims the target. Nothing moved
+it. So an integrated target could never reach `posted`, an activation over one could never be
+confirmed, and the ledger showed a queue that never emptied — **strictly worse than having no
+integration**, because `manual_required` at least tells someone to pick up the phone.
+
+`post_event` was added to `ERPConnectorBase` following the `subscribe_to_events` precedent
+already in that file: **declare the truth rather than invent an endpoint.** The default raises
+`ERPWriteNotSupported`, and the drainer converts the posting to `manual_required` with the
+reason. That conversion is the point, not a consolation prize — it turns "queued behind an
+integration that will never take it" into "somebody has to enter this, and here is what to
+tell them". The alternatives are both lies: pending forever implies a write is coming, and
+`posted` would claim an ERP record that does not exist.
+
+### Two defects that only running it could find
+
+Both surfaced by driving the live stack against real Postgres, and neither was reachable from
+the tests as written:
+
+- **A sub-minute stop reported "ongoing".** `f"{d} min" if d else "ongoing"` — and `0.0` is
+  falsy. A scheduler told a machine is still down goes to look at a running machine. Same trap
+  in the labour path reported a closed entry to payroll as "an open shift". Fixed to
+  `is not None`; the tests all used non-zero durations, so none of them could have seen it.
+- **One malformed integration 500'd the entire drain.** The `try` wrapped `post_event` but not
+  the connector *construction*, so an integration row missing `erp_type` raised `KeyError` out
+  of `drain` and no posting in the batch was touched — breaking that module's own stated
+  contract that one bad ERP must not stop the queue. The fixtures all build valid configs.
+
+### Existing guards that rejected this work
+
+Seven, all legitimate, all fixed rather than suppressed:
+
+- `test_every_mutation_has_a_reviewed_role_policy` — 7 new mutations with no role. The
+  allowlist they would have fitted is explicitly for routes that *predate* the RBAC sweep, so
+  they got `require_operator_or_admin` instead.
+- `test_no_new_uuid_path_param_is_typed_as_a_string` — `event_id: str` lets `/downtime/0/end`
+  reach Postgres and 500 where 422 is right.
+- `test_no_new_undeclared_routes` — `/routing` had no `response_model`.
+- `test_no_new_unsignalled_capped_list` — two bare capped arrays. Fixed with envelopes
+  carrying a real `total`, per that file's own doctrine that a header no client reads is a
+  *second* defect rather than a partial fix.
+- `test_schema_parity` ×2 — ORM `String(36)` against a native `uuid` column.
+- `mutationFailureIsVisible` (frontend) — three mutations on the new page handled only
+  success, so a failed clock-out would have left the screen identical.
+- `test_frontend_response_shapes_match` — ×3, and this one was the guard's own gap rather
+  than mine. It resolves `Paginated<T>` and inline `{items, total}` literals but classified
+  every *bare identifier* as a plain object, so a named envelope interface read as a
+  mismatch. The tempting fix is to rename the type until the regex is happy, which improves
+  nothing. It now resolves a named interface to its declaration and applies the same
+  items-plus-pagination-sibling rule used for inline literals and for the OpenAPI schema —
+  mutation-verified to still catch a real array/envelope mismatch.
+
+### A casing-seam trap, caught before it shipped
+
+`by_status`, `posting_statuses` and `routing` are maps keyed by DATA — posting statuses, event
+types, correlation domains. The axios casing seam converts object keys recursively, which
+turns `manual_required` into `manualRequired`, misses every label lookup, and renders the raw
+key beside a count: a page that looks populated and reads wrong. `transform.ts` already has
+`OPAQUE_KEYS` for exactly this class; the three were added there and pinned by a test, because
+the failure is silent.
+
+### An ORM claim the database never made
+
+`Task.created_by`, `approved_by` and `completed_by` were declared `nullable=False`; migrations
+003/004 create all three as plain `UUID REFERENCES users(id)`. Postgres never enforced the
+ORM's claim — nullability is a DDL property, not a client-side check — so it was invisible in
+production and wrong everywhere the schema is built *from* the ORM, where `create_all` emits a
+stricter table than the real one and rejects inserts production accepts. A task is created
+before anyone completes it; the database was right.
+
+### Verified
+
+3,1xx backend / 514 frontend, `tsc` clean, and both surfaces driven against a real
+migration-built Postgres with FORCE RLS: all four floor workflows, the second-open-clock and
+second-concurrent-downtime refusals (409), a bad path id (422), the drain (12 pending → 12
+handed to a person with the exact reason), and the full activate → refuse → acknowledge →
+refuse → complete → confirm loop.
+
+**Noted, not fixed:** `scripts/seed_demo_data.py` aborts on a fresh database with a foreign
+key violation — `erp_data_mappings` is inserted while `integration_configurations` has no
+matching row, and no INSERT for the parent is emitted at all. `docs/DEMO.md` tells operators
+to run it. Not root-caused and not in this change's scope; recorded here so it is not
+rediscovered from scratch.

@@ -10,6 +10,7 @@ import { IntakeSelectorDialog } from './IntakeSelectorDialog';
 import { ChatHistoryModal } from './ChatHistoryModal';
 import { ContextPanel } from './ContextPanel';
 import { RealTimeDataPanel } from './RealTimeDataPanel';
+import { ActionableInsight } from './ActionableInsight';
 import { Send, Loader2, CheckCircle, History, Inbox, Plus, Upload } from 'lucide-react';
 
 interface CorrelationAIPaneProps {
@@ -616,7 +617,19 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
                   Auto-integrate
                 </label>
               </TooltipTrigger>
-              <TooltipContent>Automatically create Kanban tasks from AI recommendations</TooltipContent>
+              {/*
+                HONEST LABEL (FS-406). This used to read "Automatically create Kanban tasks
+                from AI recommendations", which claimed an outcome the UI never checked: the
+                background integration reports nothing back, so it can create nothing and
+                this screen looks identical either way. The wording now says what is actually
+                guaranteed, and points at the per-action Activate control, which does report
+                what it created and where each system of record stands.
+              */}
+              <TooltipContent>
+                Asks the analysis to hand its recommendations to the background Kanban
+                integration. It does not report back, so use Activate on an individual
+                recommendation when you need to see what was created.
+              </TooltipContent>
             </Tooltip>
           </div>
         </div>
@@ -726,12 +739,24 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
                     {message.actions && message.actions.length > 0 && (
                       <div className="mt-3 pt-3 border-t border-gray-200">
                         <p className="text-xs font-medium text-gray-700 mb-2">Recommended Actions:</p>
-                        <ul className="text-xs space-y-1">
+                        {/*
+                          Each line is activatable (FS-406). It used to be a bullet with a
+                          green tick — which read as "done" for work that had not been
+                          started and could not be started from here. Activating one creates
+                          the Kanban task and a posting to every system of record its domain
+                          implies, and the row then shows each of those individually,
+                          including the ones that need a person told.
+                        */}
+                        <ul className="text-xs space-y-1.5">
                           {message.actions.map((action, idx) => (
-                            <li key={idx} className="flex items-start gap-2">
-                              <CheckCircle className="w-3 h-3 mt-0.5 text-green-500" />
-                              <span>{action.description || JSON.stringify(action)}</span>
-                            </li>
+                            <ActionableInsight
+                              key={idx}
+                              action={action}
+                              index={idx}
+                              sessionId={message.session_id || currentSession?.id}
+                              messageId={message.id}
+                              domain={message.domains?.[0]}
+                            />
                           ))}
                         </ul>
                       </div>

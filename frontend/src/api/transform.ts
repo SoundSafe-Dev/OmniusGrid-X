@@ -20,6 +20,15 @@ const OPAQUE_KEYS = new Set([
   'settings', 'details', 'payload',
   'contactInfo', 'contact_info',
   'contractRate', 'contract_rate',
+  // FS-405/406: counts and descriptions KEYED BY POSTING STATUS — 'manual_required',
+  // 'not_applicable'. Camel-casing those keys turns them into 'manualRequired', which no
+  // status lookup matches, so the shop-floor and activation panels would silently render
+  // the raw key instead of the label. The values are counts and sentences, not fields.
+  'byStatus', 'by_status',
+  'postingStatuses', 'posting_statuses',
+  // Which target systems each event type / correlation domain reaches. Keyed by event type
+  // ('part_issue', 'labor_entry') and by domain ('QUALITY_CONTROL'); both are data.
+  'routing',
 ])
 
 export function toCamel<T = any>(value: any, aliases: Record<string, string> = {}): T {

@@ -912,7 +912,8 @@ of the truth. Mutation-verified in both directions.
 
 - The RAG branch is **verified and pushed** (2026-08-02):
   `backup/feature/RAG-Compliance-Doc-Pipeline` at `ac86e811`, 360/360 commits, all
-  author/date/subject metadata identical, tip tree byte-for-byte identical.
+  author/date/subject metadata identical and tip tree byte-for-byte identical.
+
   Prior state remains pinned locally at `refs/qa-safety/rag-branch-prior` →
   `ee19defb`. The blocker was the throwaway clone having no credentials for
   the remote, and pushing from the main repo worked first try.

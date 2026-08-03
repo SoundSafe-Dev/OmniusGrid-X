@@ -296,6 +296,8 @@ OmniusGrid is a resilient manufacturing operations platform designed for Industr
 | **Real-time Pipeline** | WebSocket broadcasting, subscription management, live telemetry/state/alarms |
 | **Command Executor** | Queued commands with retries, timeouts, cancellation, emergency stop, Redpanda integration |
 | **OEE Automation** | Automated OEE calculation from PackML states and telemetry part counting |
+| **Shop-floor events** | Part issues, the labour clock, quality events and downtime, each fanned out to the systems of record it affects (inventory / purchasing / accounting / production / quality / scheduling / maintenance). **One ledger row per (event, target system)**, so "reached inventory" and "still waiting on purchasing" stay separate facts. A posting cannot be `posted` without the identifier the far system returned — enforced by a CHECK, not by the service — and a target with no integration becomes `manual_required` carrying the sentence to read out to a person |
+| **Insight activation** | A correlation-AI recommendation can be activated directly from the analysis session: it becomes a Kanban task **and** postings to every system its domain implies. Confirmation is refused, with named blockers, until the task is finished and every posting carries evidence; confirming writes the snapshot it was granted on |
 | **Edge AI** | <100ms inference loops, TorchScript models, automated model lifecycle, graceful fallback |
 | **Observability** | Prometheus metrics, Loki logs, Grafana dashboards, TimescaleDB |
 | **Security** | Agent enrollment with CA pinning, mTLS + proof-of-possession request signing, Redpanda broker mTLS, route-walk auth enforcement test, tamper-evident audit trails |
@@ -1576,6 +1578,7 @@ and the instructions for doing so.
 | `/alarms` | Alarm Management |
 | `/oee` | OEE Analytics |
 | `/kanban` | **Kanban Board** - Task management with grouping, assignment, approval workflows |
+| `/shop-floor` | **Shop Floor** - Issue a part, clock time, report a problem, log downtime. Each is routed to the systems of record it affects, with a per-target ledger; a target with no integration is handed to a person, with the words to use |
 | `/logistics/yard` | **Yard Management (YMS)** - Trailer tracking, dock doors, appointments |
 | `/logistics/transportation` | **Transportation Management (TMS)** - Fleet, drivers, shipments, GeoTab |
 | `/registries` | **Actionable Registries** - Compliance (OSHA, ISO), operational registries, data correlation |

@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import pathlib
 import re
-from typing import Dict, List, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 
 import pytest
 
@@ -96,8 +96,37 @@ def _response_shapes() -> Dict[Tuple[str, str], str]:
     return table
 
 
-def ts_shape(type_argument: str) -> str:
-    """What the frontend's type argument asserts the payload looks like."""
+#: Finds `interface Name {...}` so a NAMED envelope type can be resolved to its body.
+_INTERFACE = r"(?:export\s+)?interface\s+{name}\s*(?:extends[^{{]+)?\{{(?P<body>[^}}]*)\}}"
+
+
+def _named_interface_body(name: str, sources: Iterable[str]) -> Optional[str]:
+    """The body of `interface <name>`, searched across the api directory.
+
+    Types are frequently declared in one client and used in another, so this does not
+    restrict itself to the calling file.
+    """
+    if not re.fullmatch(r"\w+", name):
+        return None
+    pattern = re.compile(_INTERFACE.format(name=re.escape(name)))
+    for source in sources:
+        match = pattern.search(source)
+        if match:
+            return match.group("body")
+    return None
+
+
+def ts_shape(type_argument: str, sources: Iterable[str] = ()) -> str:
+    """What the frontend's type argument asserts the payload looks like.
+
+    NAMED ENVELOPES ARE RESOLVED, not just `Paginated<T>` and inline literals. The first
+    version classified any bare identifier as "object", so `PostingPage` — an interface whose
+    body is literally `{items, total, limit, truncated}` — was reported as a mismatch against
+    an endpoint correctly returning an envelope. That is a false positive of the worst kind:
+    it pushes whoever hits it toward renaming the type to satisfy the regex, or toward
+    inlining a literal, neither of which makes the code more correct. The rule applied to the
+    resolved body is the same one used for inline literals and for the OpenAPI schema.
+    """
     t = type_argument.strip()
     if t.endswith("[]") or t.startswith("Array<"):
         return "array"
@@ -105,6 +134,13 @@ def ts_shape(type_argument: str) -> str:
         return "envelope"
     if t.startswith("{"):
         return "envelope" if "items" in t and any(s in t for s in PAGINATION_SIBLINGS) else "object"
+    body = _named_interface_body(t, sources)
+    if body is not None:
+        return (
+            "envelope"
+            if "items" in body and any(sib in body for sib in PAGINATION_SIBLINGS)
+            else "object"
+        )
     return "object"
 
 
@@ -122,6 +158,13 @@ def _typed_calls() -> List[tuple]:
             found.append((file.name, line, method, raw, type_arg.strip()))
     return found
 
+
+#: Every api client's text, so a named type declared in one file and used in another still
+#: resolves. Read once at import; these are small files and the parametrisation needs them
+#: before collection.
+_API_SOURCES = [
+    f.read_text() for f in sorted(FRONTEND_API.glob("*.ts")) if ".test." not in f.name
+]
 
 SHAPES = _response_shapes()
 CALLS = [c for c in _typed_calls() if (normalise(c[3]), c[2]) in SHAPES]
@@ -153,6 +196,28 @@ class TestTheDetector:
         assert ts_shape("SuggestedQuestionsResponse") == "object"
         assert ts_shape("{ items: Foo[]; total: number }") == "envelope"
 
+    def test_a_named_envelope_interface_is_resolved(self):
+        """The heuristic used to classify every bare identifier as "object", so a named
+        envelope was a false positive that pushed the reader toward renaming the type to
+        satisfy a regex instead of fixing anything."""
+        source = """
+        export interface PostingPage {
+          items: Posting[];
+          total: number;
+          limit: number;
+          truncated: boolean;
+        }
+        """
+        assert ts_shape("PostingPage", [source]) == "envelope"
+
+    def test_a_named_object_interface_is_still_an_object(self):
+        source = "export interface Fanout { eventType: string; items: string[] }"
+        # `items` with no pagination sibling is a payload that contains a list, not a page.
+        assert ts_shape("Fanout", [source]) == "object"
+
+    def test_an_unresolvable_name_stays_an_object(self):
+        assert ts_shape("SomethingDeclaredElsewhere", []) == "object"
+
 
 class TestTheSweepIsNotVacuous:
     def test_it_found_typed_calls(self):
@@ -174,7 +239,7 @@ class TestTheSweepIsNotVacuous:
 )
 def test_the_response_shape_matches_the_type(module, line, method, raw, type_arg):
     expected = SHAPES[(normalise(raw), method)]
-    actual = ts_shape(type_arg)
+    actual = ts_shape(type_arg, _API_SOURCES)
     assert actual == expected, (
         f"frontend/src/api/{module}:{line} types {method.upper()} {raw} as `{type_arg}` "
         f"({actual}), but the endpoint returns {expected}. An array typed as an envelope "
