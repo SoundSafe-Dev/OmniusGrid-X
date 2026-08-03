@@ -97,12 +97,13 @@ def test_the_models_without_a_relationship_are_counted_not_forgotten():
         if any(c.foreign_keys for c in mapper.class_.__table__.columns)
         and not list(inspect(mapper.class_).relationships)
     )
-    #: 62 measured 2026-08-03; 61 after IntegrationConfiguration gained its ordering
-    #: relationship, which is how this number is meant to move — one at a time, when a
-    #: missing edge actually bites something.
-    assert len(without) <= 61, (
+    #: 62 measured 2026-08-03. 61 after IntegrationConfiguration, then 58 after
+    #: AnalysisSession, SessionMessage and SessionDataSource — every one of them added
+    #: because a missing edge actually bit something, which is how this number is meant
+    #: to move. Lower it the same way; never raise it.
+    assert len(without) <= 58, (
         f"{len(without)} models carry an FK column with no relationship() for the unit of "
-        f"work to order by, up from 61. Each one is a parent that can be inserted after its "
+        f"work to order by, up from 58. Each one is a parent that can be inserted after its "
         f"child in a single flush — a foreign key violation on Postgres that SQLite cannot "
         f"see:\n  {without}"
     )

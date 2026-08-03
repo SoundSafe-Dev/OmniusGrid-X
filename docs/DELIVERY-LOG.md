@@ -1549,3 +1549,45 @@ router. Both directions mutation-verified.
 cost, and a rewritten offline-demo section that no longer claims the seed simply works. It
 says what was wrong with it, because `docs/DEMO.md` sent operators down that path and the
 naive-`utcnow()` failure is the kind that leaves data looking entirely plausible.
+
+---
+
+## FS-413 — provenance that survived a page reload
+
+Recorded under FS-411 as another lane's fix, then authorised and done.
+
+`SessionChatResponse` carries `simulated` / `simulation_reason`, and the chat handler sets
+them on all three of its paths — the heuristic substitute used when the correlation model or
+its adapter is not loaded (the deliberate state here), and the exception path whose reply is
+not an analysis at all. `SessionMessageResponse`, the model behind
+`GET /nlp/sessions/{id}/messages`, `/nlp/sessions/chat/history` and
+`/nlp/sessions/chat/search`, **declared neither field**, and none of the three builders read
+them.
+
+So the caveat was attached while the reply was live in the chat and vanished the moment the
+transcript was re-fetched. Reload the page and a heuristic answer came back looking like a
+real inference — in the transcript, in history, and in search.
+
+**The data was never lost.** The engine writes `simulated` into `analysis`, and `analysis`
+was being returned verbatim the whole time. Nobody read it back out. And the frontend's
+`SessionMessage` interface has declared both fields all along, with a comment explaining why
+they matter — so the client asked for them, received `undefined`, and rendered the unlabelled
+version. **The chain was intact at both ends and broken in the middle**, which is the hardest
+place to notice.
+
+Fixed with a `_provenance_of(msg)` helper so all three builders read the same thing, and
+tested on all three surfaces: a caveat that survives on some but not others is worse than
+none, because a reader learns the flag is unreliable. The reverse direction is asserted too —
+a genuine inference must not be labelled simulated, since marking real output as fabricated
+trains operators to ignore the flag.
+
+### And the FK enforcement kept earning its keep
+
+Writing the test tripped the ordering defect twice more, one level down each time:
+`analysis_sessions` before `users`, then `session_messages` before `analysis_sessions`.
+Neither model declared a `relationship()`, so the unit of work had no edge to order by. Both
+fixed at the source rather than in the fixture, along with `SessionDataSource`, which has the
+same shape and is written by the seed.
+
+**Ratchet 62 → 61 → 58.** Every step was paid for by a missing edge actually biting
+something, which is the only way that number should move.

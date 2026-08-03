@@ -1073,6 +1073,12 @@ class AnalysisSession(Base):
     id = UUIDColumn()
     user_id = UUIDForeignKey("users.id")
     organization_id = UUIDForeignKey("organizations.id")
+    #: Ordering only (FS-408/410) — see IntegrationConfiguration for the full reasoning.
+    #: Without these the unit of work can flush a session before the user and organisation
+    #: it belongs to, which real Postgres rejects and SQLite accepts. `lazy="raise"` so an
+    #: accidental traversal is a clear error rather than a MissingGreenlet in async code.
+    user = relationship("User", lazy="raise")
+    organization = relationship("Organization", lazy="raise")
     title = Column(String(500), nullable=False)
     description = Column(Text)
     status = Column(String(50), default="active")  # active, archived, deleted
@@ -1090,6 +1096,9 @@ class SessionDataSource(Base):
 
     id = UUIDColumn()
     session_id = UUIDForeignKey("analysis_sessions.id")
+    #: Ordering only (FS-408/410); see IntegrationConfiguration. Without it the unit
+    #: of work can flush a row before the session it belongs to.
+    session = relationship("AnalysisSession", lazy="raise")
     source_type = Column(String(50), nullable=False)  # intake, upload, system
     source_id = Column(String(36))  # ID from source table (intake_id, etc.)
     file_name = Column(String(255))
@@ -1105,6 +1114,9 @@ class SessionMessage(Base):
 
     id = UUIDColumn()
     session_id = UUIDForeignKey("analysis_sessions.id")
+    #: Ordering only (FS-408/410); see IntegrationConfiguration. Without it the unit
+    #: of work can flush a row before the session it belongs to.
+    session = relationship("AnalysisSession", lazy="raise")
     role = Column(String(20), nullable=False)  # user, assistant, system
     content = Column(Text, nullable=False)
     analysis = Column(JSON, default=dict)  # AI analysis result

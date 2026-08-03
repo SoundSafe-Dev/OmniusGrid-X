@@ -335,6 +335,36 @@ class SessionMessageResponse(BaseModel):
     domains: Optional[List[str]]
     actions: Optional[List[Dict[str, Any]]]
     timestamp: datetime
+    #: PROVENANCE, WHICH USED TO DIE AT THIS BOUNDARY (FS-413).
+    #:
+    #: `SessionChatResponse` carries these and the chat handler sets them on all three of
+    #: its paths — the heuristic substitute when the model or its LoRA adapter is not
+    #: loaded, and the exception path whose reply is not an analysis at all. This model
+    #: declared neither, and the three builders below did not read them, so a reply the
+    #: engine had carefully marked as NOT an inference was labelled while it was live in
+    #: the chat and lost the label the moment the transcript was re-fetched — on reload,
+    #: in chat history, and in search.
+    #:
+    #: The data was never missing. `simulated` is written into `analysis` by the engine;
+    #: it just was not read back out. The frontend's `SessionMessage` interface has
+    #: declared both fields all along, so the client was asking for something no producer
+    #: sent and quietly defaulting to "this is a real inference".
+    simulated: bool = False
+    simulation_reason: Optional[str] = None
+
+
+def _provenance_of(msg) -> Dict[str, Any]:
+    """`simulated` / `simulation_reason` for a stored message, from its `analysis` blob.
+
+    Returns a dict so the three response builders stay one line each. Defaults to not
+    simulated, which is correct: a message whose analysis never set the flag came from a
+    path that did not mark itself, and the engine marks every path that fabricates.
+    """
+    analysis = msg.analysis if isinstance(msg.analysis, dict) else {}
+    return {
+        "simulated": bool(analysis.get("simulated", False)),
+        "simulation_reason": analysis.get("simulation_reason"),
+    }
 
 
 class SuggestedQuestionItem(BaseModel):
@@ -1362,7 +1392,10 @@ async def get_session_messages(
             risk_score=msg.risk_score,
             domains=msg.domains,
             actions=msg.actions,
-            timestamp=_as_utc(msg.timestamp)
+            timestamp=_as_utc(msg.timestamp),
+            # Read from `analysis`, where the engine wrote it. `SessionMessage` has no
+            # dedicated column, so this is the only place the flag survives a round trip.
+            **_provenance_of(msg),
         )
         for msg in messages
     ]
@@ -1513,7 +1546,10 @@ async def get_chat_history(
             risk_score=msg.risk_score,
             domains=msg.domains,
             actions=msg.actions,
-            timestamp=_as_utc(msg.timestamp)
+            timestamp=_as_utc(msg.timestamp),
+            # Read from `analysis`, where the engine wrote it. `SessionMessage` has no
+            # dedicated column, so this is the only place the flag survives a round trip.
+            **_provenance_of(msg),
         )
         for msg in messages
     ]
@@ -1560,7 +1596,10 @@ async def search_chat_history(
             risk_score=msg.risk_score,
             domains=msg.domains,
             actions=msg.actions,
-            timestamp=_as_utc(msg.timestamp)
+            timestamp=_as_utc(msg.timestamp),
+            # Read from `analysis`, where the engine wrote it. `SessionMessage` has no
+            # dedicated column, so this is the only place the flag survives a round trip.
+            **_provenance_of(msg),
         )
         for msg in messages
     ]
