@@ -160,3 +160,96 @@ class TestTheHarnessIsHonest:
         """The other control: these overrides must not have disabled validation."""
         response = await api.post("/api/v1/assets/", json={})
         assert response.status_code == 422, response.text
+
+
+@pytest_asyncio.fixture
+async def alarm_api():
+    """Same arrangement, with the alarm tables. Separate fixture because the alarm path
+    needs an asset row and the asset path does not need alarms — a single fixture creating
+    everything would hide which tables each endpoint actually touches."""
+    from app.api.assets import get_current_active_user
+    from app.core.tenant import get_tenant_db, get_tenant_org_id
+    from app.db.database import get_db
+    from app.db.models import Alarm
+    from app.main import app as fastapi_app
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    tables = [
+        Organization.__table__, Workcell.__table__, AssetType.__table__,
+        Asset.__table__, Alarm.__table__,
+    ]
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all, tables=tables)
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+
+    asset_id = uuid.uuid4()
+    alarm_id = uuid.uuid4()
+    async with maker() as session:
+        wc, at = uuid.uuid4(), uuid.uuid4()
+        session.add(Organization(id=ORG_ID, name="QA Org", slug="qa-org"))
+        session.add(Workcell(id=wc, organization_id=ORG_ID, name="QA Cell"))
+        session.add(AssetType(id=at, name="QA Type", category="machine"))
+        session.add(Asset(id=asset_id, organization_id=ORG_ID, workcell_id=wc,
+                          asset_type_id=at, name="QA Asset"))
+        session.add(Alarm(
+            id=alarm_id, organization_id=ORG_ID, asset_id=asset_id,
+            alarm_code="QA-001", severity="critical", message="QA alarm",
+            occurred_at=__import__("datetime").datetime.now(__import__("datetime").timezone.utc),
+            is_active=True, is_acknowledged=False,
+        ))
+        await session.commit()
+
+    async def _session():
+        async with maker() as session:
+            yield session
+
+    class _User:
+        id = uuid.uuid4()
+        organization_id = ORG_ID
+        role = "admin"
+        email = "qa@test.local"
+        is_active = True
+
+    overrides = dict(fastapi_app.dependency_overrides)
+    fastapi_app.dependency_overrides[get_db] = _session
+    fastapi_app.dependency_overrides[get_tenant_db] = _session
+    fastapi_app.dependency_overrides[get_tenant_org_id] = lambda: ORG_ID
+    fastapi_app.dependency_overrides[get_current_active_user] = lambda: _User()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=fastapi_app), base_url="http://test"
+    ) as client:
+        client.alarm_id = str(alarm_id)  # type: ignore[attr-defined]
+        yield client
+
+    fastapi_app.dependency_overrides = overrides
+    await engine.dispose()
+
+
+class TestAcknowledgingAnAlarmSticks:
+    """The write that MATTERS most on this surface: an operator acknowledging an alarm is
+    saying "I have seen this". If it does not persist, the alarm reappears and the record of
+    who responded is gone — and the endpoint answering 200 looks identical either way."""
+
+    async def test_acknowledge_persists(self, alarm_api):
+        response = await alarm_api.post(f"/api/v1/alarms/{alarm_api.alarm_id}/acknowledge", json={})
+        assert response.status_code in (200, 204), response.text
+
+        reread = await alarm_api.get(f"/api/v1/alarms/{alarm_api.alarm_id}")
+        assert reread.status_code == 200, reread.text
+        assert reread.json()["is_acknowledged"] is True
+
+    async def test_acknowledging_twice_is_refused_not_silently_repeated(self, alarm_api):
+        """A second acknowledgement must not overwrite who acknowledged it first. The
+        endpoint answers 400 'Alarm already acknowledged', which is the behaviour that
+        keeps the first responder's name on the record."""
+        await alarm_api.post(f"/api/v1/alarms/{alarm_api.alarm_id}/acknowledge", json={})
+        second = await alarm_api.post(f"/api/v1/alarms/{alarm_api.alarm_id}/acknowledge", json={})
+        assert second.status_code == 400, second.text
+        assert "already acknowledged" in second.text.lower()
+
+    async def test_an_unacknowledged_alarm_starts_unacknowledged(self, alarm_api):
+        """Control: the fixture must not hand the test an already-acknowledged alarm, or
+        the assertions above would pass against an endpoint that does nothing."""
+        body = (await alarm_api.get(f"/api/v1/alarms/{alarm_api.alarm_id}")).json()
+        assert body["is_acknowledged"] is False
