@@ -62,10 +62,27 @@ def StringListColumn(nullable: bool = False, default=None):
 def UUIDColumn():
     return Column(UUIDString(), primary_key=True, default=lambda: str(uuid.uuid4()))
 
-def UUIDForeignKey(foreign_key, nullable=False, ondelete=None, index=False):
+def UUIDForeignKey(foreign_key, nullable=False, ondelete=None, index=False,
+                   use_alter=False):
+    """A uuid FK column.
+
+    `use_alter` breaks a MUTUAL reference. Two pairs here are genuinely circular — a trailer
+    knows its dock door and a door knows its current trailer; a trailer knows its shipment
+    and a shipment knows its trailer — and SQLAlchemy cannot topologically sort a cycle. It
+    warns "Foreign key constraints involving these tables will not be considered", DISCARDS
+    those constraints from the ordering, and says the warning "may raise an error in a future
+    release". Discarding them also drags the cycle members' other edges out of the sort, which
+    is why `dock_doors` sorted AHEAD of `organizations` — a table it references.
+
+    Marking one side of each pair `use_alter` emits that constraint as a separate ALTER after
+    both tables exist, which is the standard remedy and changes nothing about the resulting
+    schema. The real schema comes from the migration chain regardless; this only affects
+    metadata ordering and `create_all`, which the test suite uses everywhere.
+    """
     return Column(
         UUIDString(),
-        ForeignKey(foreign_key, ondelete=ondelete),
+        ForeignKey(foreign_key, ondelete=ondelete, use_alter=use_alter,
+                   name=None if not use_alter else f"fk_{foreign_key.replace('.', '_')}_alter"),
         nullable=nullable,
         index=index,
     )
@@ -367,7 +384,8 @@ class YardTrailer(Base):
     check_out_at = Column(DateTime(timezone=True))
     dock_door_id = UUIDForeignKey("dock_doors.id", nullable=True)
     driver_id = UUIDForeignKey("drivers.id", nullable=True)
-    shipment_id = UUIDForeignKey("shipments.id", nullable=True)
+    #: Cycle-breaker: shipments.trailer_id points back here. See UUIDForeignKey.
+    shipment_id = UUIDForeignKey("shipments.id", nullable=True, use_alter=True)
     temperature_setpoint = Column(Numeric)  # for reefers
     temperature_actual = Column(Numeric)
     meta_data = Column(JSON, default={})
@@ -385,7 +403,8 @@ class DockDoor(Base):
     door_type = Column(String(50))  # inbound, outbound, cross_dock
     status = Column(String(50), default="available")  # available, occupied, maintenance
     equipment_capabilities = Column(JSON, default={})  # forklift, pallet_jack, etc.
-    current_trailer_id = UUIDForeignKey("yard_trailers.id", nullable=True)
+    #: Cycle-breaker: yard_trailers.dock_door_id points back here. See UUIDForeignKey.
+    current_trailer_id = UUIDForeignKey("yard_trailers.id", nullable=True, use_alter=True)
     last_occupied_at = Column(DateTime(timezone=True))
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), default=utcnow)

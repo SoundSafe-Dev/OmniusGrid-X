@@ -11,7 +11,7 @@ import sys
 import os
 from pathlib import Path
 from typing import Dict, List, Any, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Add backend to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -757,7 +757,7 @@ class ScenarioGenerator:
                         payload_snapshot={
                             "status": random.choice(["normal", "warning", "critical"]),
                             "metric_value": round(random.uniform(0, 100), 2),
-                            "timestamp": datetime.utcnow().isoformat()
+                            "timestamp": datetime.now(timezone.utc).isoformat()
                         }
                     ))
         

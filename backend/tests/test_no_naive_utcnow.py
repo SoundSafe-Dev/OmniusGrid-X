@@ -23,19 +23,34 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-APP_ROOT = Path(__file__).resolve().parents[1] / "app"
+BACKEND = Path(__file__).resolve().parents[1]
+APP_ROOT = BACKEND / "app"
+#: Scanned too, from 2026-08-03. This guard covered `app/` only, and `scripts/` is where the
+#: path docs/DEMO.md tells operators to run lives. `seed_demo_data.py` anchored its whole
+#: dataset on a naive `datetime.utcnow()`, which Postgres shifted by the CLIENT's UTC offset:
+#: relative gaps between rows survived, so the data looked plausible, but the anchor moved.
+#: A trailer seeded at 6 hours of dwell arrived as 1, `/yard/detention-alerts` returned an
+#: empty list, and the seed's own verifier failed — invisible on a UTC developer machine.
+SCRIPTS_ROOT = BACKEND / "scripts"
 
 _NAIVE_CALL = re.compile(r"datetime\.utcnow\s*\(")
 
 
-def test_no_naive_utcnow_calls_in_app():
+def _offenders_under(root: Path) -> list[str]:
     offenders = []
-    for path in sorted(APP_ROOT.rglob("*.py")):
+    for path in sorted(root.rglob("*.py")):
         if "__pycache__" in path.parts:
             continue
         for lineno, line in enumerate(path.read_text().splitlines(), 1):
-            if _NAIVE_CALL.search(line):
-                offenders.append(f"{path.relative_to(APP_ROOT.parent)}:{lineno}")
+            # A mention inside a comment is how the fix documents itself; only calls count.
+            code = line.split("#", 1)[0]
+            if _NAIVE_CALL.search(code):
+                offenders.append(f"{path.relative_to(root.parent)}:{lineno}")
+    return offenders
+
+
+def test_no_naive_utcnow_calls_in_app():
+    offenders = _offenders_under(APP_ROOT)
     assert not offenders, (
         "naive datetime.utcnow() calls found — use datetime.now(timezone.utc) "
         "(aware); naive-vs-timestamptz arithmetic 500s on real Postgres:\n  "
@@ -88,4 +103,19 @@ def test_all_column_datetime_defaults_are_aware():
     assert not naive, (
         "column datetime defaults returning NAIVE values (write naive into "
         "TIMESTAMPTZ — wrong unless the DB session is UTC):\n  " + "\n  ".join(naive)
+    )
+
+
+def test_no_naive_utcnow_calls_in_scripts():
+    """The seed and the smoke driver write to a real Postgres, so they are app code.
+
+    They were outside this guard until 2026-08-03 and had drifted: 12 naive calls across four
+    scripts, one of them the anchor for the entire demo dataset.
+    """
+    offenders = _offenders_under(SCRIPTS_ROOT)
+    assert not offenders, (
+        "naive datetime.utcnow() in scripts/ — writing one into a TIMESTAMPTZ column shifts "
+        "it by the client's UTC offset, which moves every relative timestamp in the seeded "
+        "dataset while leaving the gaps between them intact, so the data looks right:\n  "
+        + "\n  ".join(offenders)
     )

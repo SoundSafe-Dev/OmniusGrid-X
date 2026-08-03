@@ -36,7 +36,7 @@ import os
 import uuid as _uuid
 import random
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -44,7 +44,17 @@ if not os.environ.get("DATABASE_URL"):
     default_db = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "dev.db")
     os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{default_db}"
 
-NOW = datetime.utcnow()
+# AWARE, not `datetime.utcnow()`. That returns a NAIVE datetime, and writing a naive value
+# into a `timestamptz` column shifts it by the CLIENT's UTC offset — measured here as +5h on
+# a UTC-5 machine against a database whose own timezone is UTC. The relative gaps between
+# seeded rows survive, so the data looks plausible; only the anchor moves. That silently broke
+# the demo's detention scenario — TRL-4482 is seeded at 6 hours of dwell to sit past the free
+# window, and it arrived as 1 hour, so `/yard/detention-alerts` returned an empty list and the
+# seed's own verifier failed. On a UTC developer machine the bug is invisible.
+#
+# Same family as FS-391 and FS-400, which were naive datetimes crashing detention and carrier
+# compliance. This one does not crash; it just makes every relative timestamp wrong.
+NOW = datetime.now(timezone.utc)
 RNG = random.Random(42)
 
 # ---- fixed ids (re-run replaces) ---------------------------------------------
@@ -200,7 +210,9 @@ def camera_at(t: datetime, appointment_hours) -> tuple:
 
 async def main(verify: bool = False) -> int:
     from sqlalchemy import delete, select
-    from app.db.database import AsyncSessionLocal, init_db
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+    from sqlalchemy.pool import NullPool
+    from app.db.database import AsyncSessionLocal, engine, get_async_db_url, init_db
     from app.db.models import (
         Alarm, AlarmRule, AnalysisSession, Asset, AssetType, Carrier, DockAppointment,
         DockDoor, Driver, DriverWaitTime, ERPCorrelation, ERPDataMapping,
@@ -226,22 +238,50 @@ async def main(verify: bool = False) -> int:
     await init_db()
     print(f"Seeding demo data into {os.environ['DATABASE_URL']}")
 
-    async with AsyncSessionLocal() as db:
-        # Best-effort: relax FK-trigger ordering for this bulk load. autoflush is
-        # off and several tables reference parents via a bare ForeignKey column
-        # with no ORM relationship() (so the unit-of-work can't order the
-        # inserts) — and yard's DockDoor<->YardTrailer is a genuine FK cycle.
-        # On the real (migration-built) schema this either isn't needed or the
-        # role can't set it; failure is harmless, so we swallow it.
+    # FK-TRIGGER RELAXATION FOR THE BULK LOAD, AND WHY IT NEEDS ITS OWN ENGINE.
+    #
+    # 62 of the 69 FK-carrying models declare a bare ForeignKey COLUMN and no
+    # relationship(), and SQLAlchemy's unit of work builds its insert ordering from
+    # relationships — so for most of this file it cannot order a parent before its child.
+    # `session_replication_role = replica` sidesteps that for the load.
+    #
+    # THE PREVIOUS VERSION SET IT AND THEN COMMITTED ON THE NEXT LINE, which returns the
+    # connection to the pool and resets the setting: measured `replica` immediately after
+    # the SET and `origin` immediately after the commit. So the protection was gone before
+    # a single row was written, and the seed died on a foreign key against a fresh
+    # database — the path docs/DEMO.md tells operators to run.
+    #
+    # Passing it as an asyncpg *startup parameter* fixes that properly: it becomes the
+    # session default, so it survives every commit and every connection recycle rather
+    # than lasting until the next one.
+    bulk_engine = None
+    session_factory = AsyncSessionLocal
+    if engine.dialect.name == "postgresql":
+        bulk_engine = create_async_engine(
+            get_async_db_url(),
+            connect_args={"server_settings": {"session_replication_role": "replica"}},
+            poolclass=NullPool,
+        )
+        session_factory = async_sessionmaker(
+            bulk_engine, class_=AsyncSession, expire_on_commit=False, autoflush=False
+        )
+
+    async with session_factory() as db:
         from sqlalchemy import text as _sql_text
         _pg = db.bind.dialect.name == "postgresql"
         if _pg:
-            try:
-                await db.execute(_sql_text("SET session_replication_role = replica"))
-                await db.commit()
-            except Exception:
-                await db.rollback()
-                _pg = False
+            # VERIFIED, NOT ASSUMED. The old code swallowed the failure as "harmless"; it
+            # was not — it turned an ordering problem into an unexplained FK violation far
+            # from its cause. A role that cannot set this gets told so here.
+            actual = (await db.execute(_sql_text("SHOW session_replication_role"))).scalar()
+            if actual != "replica":
+                raise SystemExit(
+                    "cannot seed: this database role could not set "
+                    "session_replication_role=replica (it reports "
+                    f"{actual!r}), and without it the load fails on a foreign key because "
+                    "most models carry FK columns with no ORM relationship for the unit of "
+                    "work to order by. Seed as a superuser, or grant the role that setting."
+                )
 
         # ---- wipe previous demo rows (surgical: fixed ids / org scope) -------
         asset_ids = [A_CNC, A_VIB, A_AUDIO, A_CAMERA, A_CONVEYOR]
@@ -968,7 +1008,10 @@ async def main(verify: bool = False) -> int:
             # ---- Done ----------------------------------------------------------
             (TASK_IDS[15], "Replace spindle bearing — CNC Mill #1 (WO-77105)",
              "maintenance_cm", "critical", "completed", "done", A_CNC,
-             {"work_order_id": "WO-77105", "progress_percent": 100,
+             # `work_order_id` is a native uuid column (migrations 003/004); "WO-77105" is a
+             # human work-order NUMBER and asyncpg rejects it outright. The number belongs in
+             # custom_fields, which is where a business reference with no typed home goes.
+             {"custom_fields": {"work_order_ref": "WO-77105"}, "progress_percent": 100,
               "approval_status": "approved", "approved_by": USER,
               "approved_at": days_ago(FIXED_D + 1),
               "completed_by": USER, "completed_at": days_ago(FIXED_D),
@@ -1274,13 +1317,12 @@ async def main(verify: bool = False) -> int:
         print("  seeded:", ", ".join(f"{k}={v}" for k, v in counts.items()))
         print(f"  analysis session ready: 'Demo: Spindle failure investigation' ({SESSION_ID})")
 
-        # restore normal FK-trigger enforcement on this connection
-        if _pg:
-            try:
-                await db.execute(_sql_text("SET session_replication_role = origin"))
-                await db.commit()
-            except Exception:
-                await db.rollback()
+    # The relaxation lived on a dedicated engine, so disposing it is what restores normal
+    # FK enforcement — and it must actually happen. Resetting the GUC on one connection, as
+    # this used to do, left every OTHER pooled connection carrying `replica` as its session
+    # default, because it is a startup parameter now rather than a runtime SET.
+    if bulk_engine is not None:
+        await bulk_engine.dispose()
 
     if not verify:
         print("\nDone. Run the API against this data:")

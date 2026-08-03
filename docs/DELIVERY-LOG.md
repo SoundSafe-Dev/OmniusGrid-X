@@ -1250,3 +1250,81 @@ key violation — `erp_data_mappings` is inserted while `integration_configurati
 matching row, and no INSERT for the parent is emitted at all. `docs/DEMO.md` tells operators
 to run it. Not root-caused and not in this change's scope; recorded here so it is not
 rediscovered from scratch.
+
+---
+
+## FS-408 — the seed had never run on a fresh database
+
+`docs/DEMO.md` tells an operator to run `scripts/seed_demo_data.py`. Against a fresh
+migration-built Postgres it died on a foreign key. **Three separate defects, in sequence** —
+each one only reachable after fixing the one before it, which is why they had all survived.
+
+### 1. The FK-ordering mitigation evaporated on the line after it was set
+
+SQLAlchemy builds its insert ordering from `relationship()`, not from ForeignKey columns, and
+**68 of the 69 FK-carrying models here declare only the column**. So for most of this schema
+the unit of work genuinely cannot order a parent before its child in one flush. The seed knew
+this — its own comment says so — and relaxed FK triggers for the load:
+
+```python
+await db.execute(text("SET session_replication_role = replica"))
+await db.commit()          # <- returns the connection to the pool, and resets it
+```
+
+Measured: `replica` immediately after the SET, `origin` immediately after the commit. The
+protection was gone before a single row was written, and the failure was swallowed as
+"harmless" — it was not; it turned an ordering problem into an unexplained FK violation forty
+lines away. It now travels as an asyncpg **startup parameter** on a dedicated bulk-load
+engine, so it survives every commit and every connection recycle, and a role that cannot set
+it is told so instead of discovering it later.
+
+### 2. A human work-order number in a `uuid` column
+
+`Task.work_order_id` is a native `uuid` (migrations 003/004). The seed wrote `"WO-77105"`
+into it and asyncpg rejected it outright. The number belongs in `custom_fields`, which is
+where a business reference with no typed home goes.
+
+### 3. Every timestamp in the demo dataset was shifted by the developer's UTC offset
+
+`NOW = datetime.utcnow()` is **naive**, and a naive value written to `timestamptz` is
+reinterpreted in the client's local zone — measured as +5h on a UTC-5 machine against a
+database whose own timezone is UTC.
+
+The relative gaps between rows survive, so the data looks entirely plausible; only the anchor
+moves. That silently broke the demo's flagship yard scenario: TRL-4482 is seeded at six hours
+of dwell so it sits past the free window, and it arrived as one hour, so
+`/yard/detention-alerts` returned `[]` and the seed's own verifier failed. **On a UTC
+developer machine none of this is visible.**
+
+Same family as FS-391 and FS-400, which were naive datetimes *crashing* detention and carrier
+compliance. This one does not crash. It just makes the data wrong.
+
+`--verify` now reports **PASS on all 25 checks** against a fresh database.
+
+### Why nothing caught any of it
+
+**SQLite does not enforce foreign keys by default.** Every in-memory test in this suite
+inserts in whatever order it likes and passes, so the ordering class is structurally
+invisible below a real Postgres. And the existing `test_no_naive_utcnow` guard — which
+already documents this exact trap, down to the phrase "correct only when the DB session
+happens to run in UTC" — scanned `backend/app/` only. `scripts/` was never in scope, and had
+drifted to **12 naive calls across four files**, one of them the anchor for the whole demo
+dataset.
+
+### What now holds it
+
+- `test_no_naive_utcnow` extended to `scripts/`. The seed and the smoke driver write to a
+  real Postgres; they are app code.
+- `test_insert_ordering_is_possible` — three guards: no unresolvable FK cycles, no table
+  sorting ahead of a table it references, and a **ratchet at 62** on models carrying an FK
+  column with no relationship. Fixing all 62 is a project rather than a sprint, but each new
+  one is another way to write this bug, so the number must not grow silently.
+- `dock_doors <-> yard_trailers` and `yard_trailers <-> shipments` were genuine FK cycles.
+  SQLAlchemy cannot topologically sort a cycle: it warns, **discards those constraints from
+  the ordering**, and says the warning may become an error in a future release. Discarding
+  them also drags the cycle members' other edges out of the sort — which is why `dock_doors`
+  sorted *ahead of* `organizations`, a table it references. One side of each pair is now
+  `use_alter=True`, the standard remedy, which changes nothing about the resulting schema.
+- The six models added by FS-405/406 were contributing to the ratchet; they now declare
+  `organization = relationship(..., lazy="raise")` — present purely so the unit of work can
+  order them, with lazy loading refused so it cannot become a MissingGreenlet at runtime.

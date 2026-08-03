@@ -33,6 +33,7 @@ from __future__ import annotations
 from sqlalchemy import (
     Column, DateTime, ForeignKey, Integer, JSON, Numeric, String, Text,
 )
+from sqlalchemy.orm import relationship
 
 from app.core.datetime_utils import utcnow
 from app.db.models import Base, UUIDColumn, UUIDForeignKey, UUIDString
@@ -99,6 +100,13 @@ class PartIssue(Base):
 
     id = UUIDColumn()
     organization_id = UUIDForeignKey("organizations.id", index=True)
+    #: Declared purely so the unit of work can ORDER inserts (FS-408). SQLAlchemy builds its
+    #: insert ordering from relationships, not from ForeignKey columns, so a model with only
+    #: the column can be flushed before its parent — a foreign key violation on Postgres that
+    #: SQLite cannot see, because it does not enforce FKs by default. That is what broke
+    #: seed_demo_data.py. `lazy="raise"` because nothing should traverse it: it exists for
+    #: ordering, and an accidental lazy load in async code is a MissingGreenlet at runtime.
+    organization = relationship("Organization", lazy="raise")
     part_number = Column(String(100), nullable=False, index=True)
     description = Column(Text)
     quantity = Column(Numeric, nullable=False)
@@ -143,6 +151,13 @@ class LaborEntry(Base):
 
     id = UUIDColumn()
     organization_id = UUIDForeignKey("organizations.id", index=True)
+    #: Declared purely so the unit of work can ORDER inserts (FS-408). SQLAlchemy builds its
+    #: insert ordering from relationships, not from ForeignKey columns, so a model with only
+    #: the column can be flushed before its parent — a foreign key violation on Postgres that
+    #: SQLite cannot see, because it does not enforce FKs by default. That is what broke
+    #: seed_demo_data.py. `lazy="raise"` because nothing should traverse it: it exists for
+    #: ordering, and an accidental lazy load in async code is a MissingGreenlet at runtime.
+    organization = relationship("Organization", lazy="raise")
 
     user_id = UUIDForeignKey("users.id", nullable=True, ondelete="SET NULL")
     #: A shop floor has staff without platform logins. Without this the time clock would
@@ -178,6 +193,13 @@ class QualityEvent(Base):
 
     id = UUIDColumn()
     organization_id = UUIDForeignKey("organizations.id", index=True)
+    #: Declared purely so the unit of work can ORDER inserts (FS-408). SQLAlchemy builds its
+    #: insert ordering from relationships, not from ForeignKey columns, so a model with only
+    #: the column can be flushed before its parent — a foreign key violation on Postgres that
+    #: SQLite cannot see, because it does not enforce FKs by default. That is what broke
+    #: seed_demo_data.py. `lazy="raise"` because nothing should traverse it: it exists for
+    #: ordering, and an accidental lazy load in async code is a MissingGreenlet at runtime.
+    organization = relationship("Organization", lazy="raise")
     asset_id = UUIDForeignKey("assets.id", nullable=True, ondelete="SET NULL")
     work_order_ref = Column(String(100), index=True)
     part_number = Column(String(100), index=True)
@@ -208,6 +230,13 @@ class DowntimeEvent(Base):
 
     id = UUIDColumn()
     organization_id = UUIDForeignKey("organizations.id", index=True)
+    #: Declared purely so the unit of work can ORDER inserts (FS-408). SQLAlchemy builds its
+    #: insert ordering from relationships, not from ForeignKey columns, so a model with only
+    #: the column can be flushed before its parent — a foreign key violation on Postgres that
+    #: SQLite cannot see, because it does not enforce FKs by default. That is what broke
+    #: seed_demo_data.py. `lazy="raise"` because nothing should traverse it: it exists for
+    #: ordering, and an accidental lazy load in async code is a MissingGreenlet at runtime.
+    organization = relationship("Organization", lazy="raise")
     asset_id = UUIDForeignKey("assets.id", ondelete="CASCADE")
 
     #: planned | unplanned | changeover | maintenance
@@ -245,6 +274,13 @@ class SystemOfRecordPosting(Base):
 
     id = UUIDColumn()
     organization_id = UUIDForeignKey("organizations.id", index=True)
+    #: Declared purely so the unit of work can ORDER inserts (FS-408). SQLAlchemy builds its
+    #: insert ordering from relationships, not from ForeignKey columns, so a model with only
+    #: the column can be flushed before its parent — a foreign key violation on Postgres that
+    #: SQLite cannot see, because it does not enforce FKs by default. That is what broke
+    #: seed_demo_data.py. `lazy="raise"` because nothing should traverse it: it exists for
+    #: ordering, and an accidental lazy load in async code is a MissingGreenlet at runtime.
+    organization = relationship("Organization", lazy="raise")
 
     event_type = Column(String(30), nullable=False, index=True)
     #: UUIDString, not String(36). Migration 060 makes this a native `uuid`, and a text

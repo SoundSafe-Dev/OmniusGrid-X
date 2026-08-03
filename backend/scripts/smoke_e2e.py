@@ -23,7 +23,7 @@ import json
 import os
 import sys
 import tempfile
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 # --- environment BEFORE importing the app (settings are read at import) -------
 _TMP = tempfile.mkdtemp(prefix="omnius-smoke-")
@@ -189,7 +189,7 @@ def main() -> int:
 
         async def seed_telemetry(session):
             from app.db.models import Telemetry
-            base = datetime.utcnow()
+            base = datetime.now(timezone.utc)
             for i, v in enumerate([0.21, 0.24, 0.55]):
                 session.add(Telemetry(
                     time=base - timedelta(seconds=30 * i), asset_id=str(asset_id),
@@ -264,7 +264,7 @@ def main() -> int:
             from sqlalchemy import update
             from app.db.models import YardTrailer
             await session.execute(update(YardTrailer).where(YardTrailer.id == str(trailer_id))
-                                  .values(check_in_at=datetime.utcnow() - timedelta(hours=4)))
+                                  .values(check_in_at=datetime.now(timezone.utc) - timedelta(hours=4)))
 
         if trailer_id:
             seed_db(backdate)
@@ -306,7 +306,7 @@ def main() -> int:
                         json={"organization_id": DEV_ORG, "carrier_id": carrier_id,
                               "shipment_number": "SHP-SMOKE-1", "origin": {"city": "Chicago"},
                               "destination": {"city": "Dallas"},
-                              "scheduled_delivery": (datetime.utcnow() + timedelta(days=1)).isoformat()})
+                              "scheduled_delivery": (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()})
         check("shipment create", r.status_code == 200, r.text[:300])
         shipment_id = (r.json() or {}).get("id")
 
@@ -342,7 +342,7 @@ def main() -> int:
 
         r = client.post("/api/v1/maintenance/schedules", headers=AUTH,
                         json={"vehicleId": "TRK-SMOKE-9", "maintenanceType": "oil_change",
-                              "dueDate": (datetime.utcnow() - timedelta(days=1)).isoformat()})
+                              "dueDate": (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()})
         check("maintenance schedule create", r.status_code == 200, r.text[:300])
         r = client.get("/api/v1/maintenance/statistics", headers=AUTH)
         check("maintenance statistics (overdue derived)", r.status_code == 200

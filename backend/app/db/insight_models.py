@@ -26,6 +26,7 @@ than take it on faith — which is the whole difference between this and a boole
 from __future__ import annotations
 
 from sqlalchemy import Column, DateTime, Integer, JSON, String, Text
+from sqlalchemy.orm import relationship
 
 from app.core.datetime_utils import utcnow
 from app.db.models import Base, UUIDColumn, UUIDForeignKey
@@ -73,6 +74,13 @@ class InsightActivation(Base):
 
     id = UUIDColumn()
     organization_id = UUIDForeignKey("organizations.id", index=True)
+    #: Declared purely so the unit of work can ORDER inserts (FS-408). SQLAlchemy builds its
+    #: insert ordering from relationships, not from ForeignKey columns, so a model with only
+    #: the column can be flushed before its parent — a foreign key violation on Postgres that
+    #: SQLite cannot see, because it does not enforce FKs by default. That is what broke
+    #: seed_demo_data.py. `lazy="raise"` because nothing should traverse it: it exists for
+    #: ordering, and an accidental lazy load in async code is a MissingGreenlet at runtime.
+    organization = relationship("Organization", lazy="raise")
 
     #: Nullable, and ON DELETE SET NULL in the migration: archiving a session must not erase
     #: the audit trail of work that really happened because of it.
