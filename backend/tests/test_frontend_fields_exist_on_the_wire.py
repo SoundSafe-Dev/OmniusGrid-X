@@ -559,10 +559,13 @@ class TestTheThreeFindingsStayFixed:
 # it to zero is not the goal; noticing it GROW is.
 # ---------------------------------------------------------------------------------------
 
-#: Measured 2026-08-01, after removing the six engine fields in FS-367. LOWER THIS as
-#: phantom declarations are removed; never raise it. A rise means someone declared a field
-#: with no producer — the first half of the cycle above, and the cheapest moment to stop it.
-MAX_UNREAD_PHANTOM_FIELDS = 57
+#: Measured 2026-08-01, after removing the six engine fields in FS-367; 56 from 2026-08-03,
+#: when `SessionMessage.simulation_reason` stopped being a phantom — the transcript endpoints
+#: now send it (FS-413), so a field the frontend had declared for weeks finally has a
+#: producer. LOWER THIS as phantom declarations are removed; never raise it. A rise means
+#: someone declared a field with no producer — the first half of the cycle above, and the
+#: cheapest moment to stop it.
+MAX_UNREAD_PHANTOM_FIELDS = 56
 
 #: Interfaces describing a REQUEST rather than a response. A field here is something the
 #: client sends, so "no backend producer" is the normal case and not a defect. `*Params` is

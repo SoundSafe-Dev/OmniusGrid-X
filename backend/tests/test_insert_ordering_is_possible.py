@@ -97,14 +97,15 @@ def test_the_models_without_a_relationship_are_counted_not_forgotten():
         if any(c.foreign_keys for c in mapper.class_.__table__.columns)
         and not list(inspect(mapper.class_).relationships)
     )
-    #: 62 measured 2026-08-03, then 61 / 58 / 54 as modules were converted to enforce
-    #: foreign keys and each conversion tripped a real ordering hazard: first
-    #: IntegrationConfiguration, then the three session tables, then Alarm and the three
-    #: GeoTab tables. Every step was paid for by a missing edge actually biting something,
-    #: which is how this number is meant to move. Lower it the same way; never raise it.
-    assert len(without) <= 54, (
+    #: 62 measured 2026-08-03, then 61 / 58 / 54 / 52 as modules were converted to enforce
+    #: foreign keys and each conversion tripped a real ordering hazard: IntegrationConfiguration,
+    #: the three session tables, Alarm and the three GeoTab tables, then Shipment,
+    #: ERPIntegrationEvent and the workcell edge Asset was missing while declaring its other
+    #: two. Every step was paid for by a missing edge actually biting something, which is how
+    #: this number is meant to move. Lower it the same way; never raise it.
+    assert len(without) <= 52, (
         f"{len(without)} models carry an FK column with no relationship() for the unit of "
-        f"work to order by, up from 54. Each one is a parent that can be inserted after its "
+        f"work to order by, up from 52. Each one is a parent that can be inserted after its "
         f"child in a single flush — a foreign key violation on Postgres that SQLite cannot "
         f"see:\n  {without}"
     )

@@ -1581,6 +1581,13 @@ none, because a reader learns the flag is unreliable. The reverse direction is a
 a genuine inference must not be labelled simulated, since marking real output as fabricated
 trains operators to ignore the flag.
 
+**A ratchet noticed the fix from the other side.** `MAX_UNREAD_PHANTOM_FIELDS` counts fields
+the frontend declares that nothing on the wire produces. It fell 57 → 56 the moment
+`simulation_reason` started being sent — a field the client had declared for weeks, asked for
+on every request, and never once received. The guard demands exact equality rather than a
+ceiling, so the number had to be tightened in the same commit: **one spare slot is one free
+phantom field.**
+
 ### And the FK enforcement kept earning its keep
 
 Writing the test tripped the ordering defect twice more, one level down each time:
@@ -1599,3 +1606,27 @@ Five modules now enforce foreign keys. The pattern has held every time: convert 
 watch it fail on an insert order that real Postgres would have rejected all along, add the
 missing edge, move on. Nothing found this way was a test bug — every one was a hazard the
 suite could not see.
+
+### Re-measured, and the remainder is now someone else's fixtures
+
+With those edges in place the cost of enforcing everywhere fell **76 → 39** — the eight
+model-level fixes halved it without touching a single test another lane owns. Three more
+followed (`Shipment`, `ERPIntegrationEvent`, and the `workcell` edge `Asset` was missing while
+declaring its other two), taking the ratchet to **52**.
+
+What is left splits cleanly:
+
+* **22 of the 39 are `test_dock_scheduling_conflicts.py`**, which is the file deliberately
+  exempted — it builds one table to test one `WHERE` clause and its appointments reference
+  doors and organisations it has no reason to create.
+* The rest are **incomplete fixtures** in other lanes — `no such table: users`,
+  `asset_types`, `drivers`, `routes`, `organizations` — which `backend/tests/_sqlite.py`'s
+  `create_all` fixes by construction, since it closes over referenced tables. Converting
+  those is a one-line change per module for whoever owns them.
+
+**A measurement that was wrong first.** The re-run initially reported **623** failures. The
+probe had lost its dialect check, so `PRAGMA foreign_keys=ON` was being executed against
+Postgres connections — where it raises, and the failed statement poisons the transaction.
+Nothing had regressed; the instrument had. The same lesson as the contrast checker two
+sections up: a measurement that moves by an order of magnitude is a claim about the
+instrument until proven otherwise.

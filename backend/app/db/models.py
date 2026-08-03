@@ -125,6 +125,9 @@ class Asset(Base):
     id = UUIDColumn()
     organization_id = UUIDForeignKey("organizations.id")
     workcell_id = UUIDForeignKey("workcells.id", nullable=False)  # NOT NULL since migration 013
+    #: The third edge. `organization` and `asset_type` were declared and this was not,
+    #: so an asset could still be flushed before its workcell (FS-408/410).
+    workcell = relationship("Workcell", lazy="raise")
     asset_type_id = UUIDForeignKey("asset_types.id")
     name = Column(String(255), nullable=False)
     serial_number = Column(String(255))
@@ -543,6 +546,10 @@ class Shipment(Base):
     
     id = UUIDColumn()
     organization_id = UUIDForeignKey("organizations.id")
+    #: Ordering only (FS-408/410). Deliberately NOT declaring `trailer`: that FK is one
+    #: side of the shipments <-> yard_trailers cycle broken with use_alter, and a mapper
+    #: relationship would reintroduce the cycle one layer up.
+    organization = relationship("Organization", lazy="raise")
     carrier_id = UUIDForeignKey("carriers.id", nullable=True)
     driver_id = UUIDForeignKey("drivers.id", nullable=True)
     trailer_id = UUIDForeignKey("yard_trailers.id", nullable=True)
@@ -1923,6 +1930,8 @@ class ERPIntegrationEvent(Base):
 
     id = UUIDColumn()
     organization_id = UUIDForeignKey("organizations.id", nullable=False)
+    #: Ordering only (FS-408/410); see IntegrationConfiguration.
+    organization = relationship("Organization", lazy="raise")
     integration_id = UUIDForeignKey("integration_configurations.id", nullable=False)
     event_type = Column(String(100), nullable=False)
     event_id = Column(String(255), nullable=False)
