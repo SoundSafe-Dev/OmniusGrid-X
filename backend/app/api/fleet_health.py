@@ -201,11 +201,39 @@ async def _active_diagnostics(db, org_id, vehicle_id=None):
     return (await db.execute(stmt)).scalars().all()
 
 
-async def _exceptions(db, org_id, device_id=None):
+async def _device_ids_for(db, org_id, identifier: str) -> list[str]:
+    """Every GeoTab device id belonging to `identifier`, whichever space it is in.
+
+    `geotab_diagnostics` is the only table carrying both `device_id` and `vehicle_id`, so it
+    is the bridge between them — `fleet_health()` already walks it the other way to build
+    `device_to_vehicle`. A vehicle can have more than one device over its life, so this
+    returns a list rather than the first match.
+
+    THE IDENTIFIER IS ALWAYS INCLUDED, not used only as a fallback. Exceptions in this
+    codebase are keyed both ways depending on where the row came from — the seeded fleet
+    keys them by `gt-device-001` while `test_fleet_health_query_shape`'s fixture keys them
+    by the vehicle id — and both are legitimate. Returning the union answers either without
+    having to know which, and costs one extra value in an `IN` clause (FS-404).
+    """
+    rows = (
+        await db.execute(
+            select(GeoTabDiagnostic.device_id).where(
+                GeoTabDiagnostic.organization_id == org_id,
+                GeoTabDiagnostic.vehicle_id == identifier,
+                GeoTabDiagnostic.device_id.isnot(None),
+            )
+        )
+    ).scalars().all()
+    return sorted({r for r in rows if r} | {identifier})
+
+
+async def _exceptions(db, org_id, device_id=None, device_ids=None):
     stmt = select(GeoTabException).where(GeoTabException.organization_id == org_id)
-    # Exceptions key on device_id (the single-vehicle security endpoint passes
-    # the path's vehicle_id here, matching the previous Python filter exactly).
-    if device_id is not None:
+    # `device_ids` is the resolved set from `_device_ids_for` — the vehicle's devices plus
+    # the caller's own identifier. Filtered in SQL so a per-vehicle read never loads the org.
+    if device_ids is not None:
+        stmt = stmt.where(GeoTabException.device_id.in_(device_ids))
+    elif device_id is not None:
         stmt = stmt.where(GeoTabException.device_id == device_id)
     return (await db.execute(stmt)).scalars().all()
 
@@ -399,8 +427,35 @@ async def acknowledge_security_event(
 
 @router.get("/vehicles/{vehicle_id}/security", response_model=List[SecurityEventItem])
 async def vehicle_security(vehicle_id: str, org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
-    excs = await _exceptions(db, org_id, device_id=vehicle_id)
-    return [_security_out(e) for e in excs]
+    """Security exceptions for one vehicle.
+
+    THE PATH SAYS VEHICLE AND THE FILTER MEANT DEVICE (FS-404). This passed the path's
+    `vehicle_id` straight to `_exceptions(device_id=...)`, and there are THREE identifier
+    spaces in this subsystem, none of them interchangeable:
+
+        vehicles.id                      3ca4146e-…  (UUID)
+        geotab_diagnostics.vehicle_id    TRK-114     (the vehicle number)
+        geotab_*.device_id               gt-device-001
+
+    `GET /fleet/health` — the list a UI renders and picks a row from — publishes
+    `vehicleId: TRK-114`. So the only identifier a caller HAS returned nothing, and the only
+    one that worked (`gt-device-001`) is not exposed by any endpoint. Measured: UUID -> 0
+    events, TRK-114 -> 0, gt-device-001 -> 2.
+
+    `geotab_diagnostics` carries both columns and is already used as exactly this bridge by
+    `fleet_health()` above, which builds a `device_to_vehicle` map from it. The same bridge
+    is walked in the other direction here.
+
+    A device id still works. That is deliberate rather than lazy: it is the identifier this
+    endpoint has always accepted, and silently rejecting it would break any caller that had
+    worked out the trick.
+    """
+    device_ids = await _device_ids_for(db, org_id, vehicle_id)
+    # ONE query with an IN clause, not one per device. `test_fleet_health_query_shape`
+    # asserts this filter is pushed into SQL rather than applied in Python, and it caught
+    # the first version of this fix, which looped and issued a query each time.
+    events = await _exceptions(db, org_id, device_ids=device_ids)
+    return [_security_out(e) for e in events]
 
 
 # --------------------------------------------------------------- driver safety

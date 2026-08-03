@@ -253,3 +253,104 @@ class TestAcknowledgingAnAlarmSticks:
         the assertions above would pass against an endpoint that does nothing."""
         body = (await alarm_api.get(f"/api/v1/alarms/{alarm_api.alarm_id}")).json()
         assert body["is_acknowledged"] is False
+
+
+# ---------------------------------------------------------------------------------------
+# FS-404: an endpoint whose path says "vehicle" and whose filter meant "device".
+#
+# Three identifier spaces live in the fleet subsystem and none is interchangeable:
+#
+#     vehicles.id                    3ca4146e-…    (UUID)
+#     geotab_diagnostics.vehicle_id  TRK-114       (the vehicle number)
+#     geotab_*.device_id             gt-device-001
+#
+# `GET /fleet/vehicles/{vehicle_id}/security` passed its path parameter straight through as
+# a device id. `GET /fleet/health` — the list a UI renders and picks a row from — publishes
+# `vehicleId: TRK-114`, so the only identifier a caller HAS returned nothing, and the only
+# one that worked is exposed by no endpoint at all. Measured before the fix: UUID -> 0,
+# TRK-114 -> 0, gt-device-001 -> 2.
+#
+# Kept in this file because it is the same question as the round trips above — does the
+# thing a caller can actually do produce the thing it promises — and it needs the same
+# no-Docker fixture.
+# ---------------------------------------------------------------------------------------
+
+
+@pytest_asyncio.fixture
+async def fleet_api():
+    from app.api.assets import get_current_active_user
+    from app.core.tenant import get_tenant_db, get_tenant_org_id
+    from app.db.database import get_db
+    from app.db.models import GeoTabDiagnostic, GeoTabException
+    from app.main import app as fastapi_app
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    tables = [
+        Organization.__table__, GeoTabDiagnostic.__table__, GeoTabException.__table__,
+    ]
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all, tables=tables)
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with maker() as session:
+        session.add(Organization(id=ORG_ID, name="QA Org", slug="qa-org"))
+        # The bridge row: this is the ONLY table carrying both identifiers.
+        session.add(GeoTabDiagnostic(
+            organization_id=ORG_ID, device_id="gt-device-001", vehicle_id="TRK-114",
+            dtc_code="P0300", severity="critical", status="active",
+        ))
+        session.add(GeoTabException(
+            organization_id=ORG_ID, device_id="gt-device-001",
+            exception_type="speeding", severity="high",
+            timestamp=__import__("datetime").datetime.now(__import__("datetime").timezone.utc),
+        ))
+        await session.commit()
+
+    async def _session():
+        async with maker() as session:
+            yield session
+
+    class _User:
+        id = uuid.uuid4()
+        organization_id = ORG_ID
+        role = "admin"
+        email = "qa@test.local"
+        is_active = True
+
+    overrides = dict(fastapi_app.dependency_overrides)
+    fastapi_app.dependency_overrides[get_db] = _session
+    fastapi_app.dependency_overrides[get_tenant_db] = _session
+    fastapi_app.dependency_overrides[get_tenant_org_id] = lambda: ORG_ID
+    fastapi_app.dependency_overrides[get_current_active_user] = lambda: _User()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=fastapi_app), base_url="http://test"
+    ) as client:
+        yield client
+
+    fastapi_app.dependency_overrides = overrides
+    await engine.dispose()
+
+
+class TestSecurityEventsAnswerTheIdentifierCallersHave:
+    async def test_the_vehicle_id_the_fleet_list_publishes_works(self, fleet_api):
+        """THE ASSERTION THIS EXISTS FOR. `TRK-114` is what `/fleet/health` hands a client;
+        before the fix this returned an empty list, which reads as 'this vehicle has no
+        security events' rather than 'you asked in the wrong vocabulary'."""
+        response = await fleet_api.get("/api/v1/fleet/vehicles/TRK-114/security")
+        assert response.status_code == 200, response.text
+        assert len(response.json()) == 1, response.json()
+
+    async def test_a_device_id_still_works(self, fleet_api):
+        """Backwards compatibility, deliberately. It is the identifier this endpoint has
+        always accepted, and rejecting it would break anyone who worked out the trick."""
+        response = await fleet_api.get("/api/v1/fleet/vehicles/gt-device-001/security")
+        assert response.status_code == 200, response.text
+        assert len(response.json()) == 1
+
+    async def test_an_unknown_identifier_returns_nothing_rather_than_everything(self, fleet_api):
+        """The control. Resolving "anything I cannot map" to "all devices" would make both
+        assertions above pass while turning a per-vehicle endpoint into a fleet-wide one."""
+        response = await fleet_api.get("/api/v1/fleet/vehicles/NOT-A-VEHICLE/security")
+        assert response.status_code == 200, response.text
+        assert response.json() == []
