@@ -18,7 +18,9 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from sqlalchemy import event
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from tests._sqlite import create_all, minimal_organization, sqlite_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.api import fleet_health as fh
@@ -39,14 +41,17 @@ NOW = datetime(2026, 7, 1, tzinfo=timezone.utc)
 
 
 async def _factory_and_seed():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(
-            Base.metadata.create_all,
-            tables=[GeoTabDiagnostic.__table__, GeoTabException.__table__],
-        )
+    engine = sqlite_engine()
+    # FK-enforcing engine, and a `create_all` that closes over the tables these
+    # reference (FS-410). `create_all(tables=[X])` builds X's foreign keys pointing at
+    # tables it does not create, so with enforcement on every insert into X is refused.
+    await create_all(engine, Base.metadata, [GeoTabDiagnostic.__table__, GeoTabException.__table__])
     Session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     async with Session() as s:
+        # The organisation these rows belong to. With foreign keys enforced a bare
+        # `organization_id = uuid4()` is refused, exactly as Postgres refuses it.
+        s.add(minimal_organization(ORG))
+        await s.flush()
         s.add_all([
             # VEH-1 on device DEV-1: two active DTCs (one critical) + one resolved
             GeoTabDiagnostic(id=uuid4(), organization_id=ORG, device_id="DEV-1",

@@ -20,7 +20,9 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from tests._sqlite import create_all, minimal_asset, minimal_organization, sqlite_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.db.models import Asset, Base, PackMLState
@@ -37,28 +39,27 @@ def run(coro):
 
 async def _session_factory():
     """In-memory SQLite with only the tables this path touches."""
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(
-            Base.metadata.create_all,
-            tables=[Asset.__table__, PackMLState.__table__],
-        )
+    engine = sqlite_engine()
+    # FK-enforcing engine, and a `create_all` that closes over the tables these
+    # reference (FS-410). `create_all(tables=[X])` builds X's foreign keys pointing at
+    # tables it does not create, so with enforcement on every insert into X is refused.
+    await create_all(engine, Base.metadata, [Asset.__table__, PackMLState.__table__])
     return engine, sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
 async def _seed_asset(session: AsyncSession, org_id, asset_id) -> None:
-    # workcell_id is NOT NULL since migration 013; the organizations/workcells
-    # tables aren't created here and SQLite doesn't enforce FKs by default, so a
-    # bare UUID is enough to exercise this path.
-    session.add(
-        Asset(
-            id=asset_id,
-            organization_id=org_id,
-            workcell_id=uuid4(),
-            asset_type_id=uuid4(),
-            name="Filler-01",
-        )
-    )
+    """The asset, and everything it points at.
+
+    This used to insert an Asset with `workcell_id=uuid4()` and `asset_type_id=uuid4()`,
+    and its own comment said why: "the organizations/workcells tables aren't created here
+    and SQLite doesn't enforce FKs by default, so a bare UUID is enough". That assumption
+    is no longer true — foreign keys are enforced (FS-410) because it was exactly this
+    class that let the demo seed ship broken. The comment was honest about a shortcut that
+    made the fixture laxer than production; the shortcut is gone rather than the honesty.
+    """
+    session.add(minimal_organization(org_id))
+    await session.flush()
+    session.add_all(minimal_asset(asset_id, org_id))
     await session.commit()
 
 

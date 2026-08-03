@@ -111,36 +111,56 @@ def test_the_models_without_a_relationship_are_counted_not_forgotten():
     )
 
 
-def test_the_modules_that_enforce_foreign_keys_still_do():
-    """Nobody quietly reverts an opted-in module to a lax engine (FS-410).
+def test_foreign_keys_are_enforced_for_sqlite():
+    """The enforcement is on, globally, and cannot be quietly switched off (FS-410).
 
-    SQLite runs with `PRAGMA foreign_keys=OFF`, so a test that swaps `sqlite_engine()` back
-    for a bare `create_async_engine` keeps passing while it stops checking anything. The
-    failure mode is invisible by construction, which is why it is pinned here rather than
-    left to review.
+    It began as a per-module opt-in, which protects the files that remembered to opt in —
+    the set least likely to need it. It is now a `connect` listener in conftest, so every
+    SQLite engine in the suite gets it, and this asserts the behaviour rather than the
+    presence of the code: a dangling foreign key must be REFUSED.
 
-    Measured cost of enforcing across the whole suite: 76 of 3,210 tests, in about fifteen
-    files across several lanes. That is a cross-lane cleanup, so adoption is per-module — add
-    a module here as it converts.
+    Cost of getting here: 76 tests at the first measurement, then 39 once eleven missing
+    `relationship()` edges were added at the model level, then zero. Nothing found along the
+    way was a test bug — every one was an insert order or an orphan row that real Postgres
+    would have rejected all along.
     """
-    from pathlib import Path
+    import asyncio
+    import uuid
 
-    enforcing = [
-        "test_shop_floor_events.py",
-        "test_insight_activation.py",
-        "test_posting_drainer.py",
-        "test_writes_round_trip.py",
-        "test_transcript_keeps_its_provenance.py",
-    ]
-    here = Path(__file__).parent
-    reverted = []
-    for name in enforcing:
-        source = (here / name).read_text()
-        if "sqlite_engine(" not in source:
-            reverted.append(f"{name}: no longer calls sqlite_engine()")
-        if 'create_async_engine("sqlite' in source:
-            reverted.append(f"{name}: went back to a bare create_async_engine")
-    assert not reverted, (
-        "these modules enforced foreign keys and no longer do — they will keep passing while "
-        "checking less:\n  " + "\n  ".join(reverted)
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from app.db.shop_floor_models import SystemOfRecordPosting
+    from tests._sqlite import create_all
+
+    async def _dangling_reference_is_refused() -> bool:
+        # A PLAIN engine, deliberately — NOT `tests._sqlite.sqlite_engine`, which sets the
+        # pragma itself. Using the helper here would prove only that the helper works, and
+        # the first version of this test did exactly that: flipping conftest's listener to
+        # OFF left it passing. The subject is the GLOBAL enforcement, so the engine has to be
+        # one that has done nothing to earn it.
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        await create_all(engine, Base.metadata, [SystemOfRecordPosting.__table__])
+        try:
+            async with async_sessionmaker(engine)() as session:
+                session.add(SystemOfRecordPosting(
+                    id=str(uuid.uuid4()),
+                    # An organisation that does not exist.
+                    organization_id=str(uuid.uuid4()),
+                    event_type="part_issue", event_id=str(uuid.uuid4()),
+                    target_system="inventory", status="pending", attempts=0,
+                ))
+                try:
+                    await session.commit()
+                    return False
+                except Exception:
+                    return True
+        finally:
+            await engine.dispose()
+
+    assert asyncio.get_event_loop_policy().new_event_loop().run_until_complete(
+        _dangling_reference_is_refused()
+    ), (
+        "SQLite accepted a row pointing at an organisation that does not exist, so foreign "
+        "keys are not being enforced. Every in-memory test in this suite is then free to "
+        "insert children before parents and pass, which is how the demo seed shipped broken."
     )

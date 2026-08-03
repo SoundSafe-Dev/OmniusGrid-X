@@ -36,7 +36,9 @@ from uuid import uuid4
 
 import pytest
 import pytest_asyncio
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker
+
+from tests._sqlite import create_all, minimal_organization, sqlite_engine
 
 from app.db.models import Base, DockAppointment
 from app.services.yard_management import DockScheduler
@@ -52,21 +54,18 @@ def hour(offset: float) -> datetime:
 
 @pytest_asyncio.fixture
 async def session():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        # ONLY the one table. A whole-metadata `create_all` fails here: under pytest the
-        # conftest imports the full app, which registers `data_processing_records` with a
-        # Postgres ARRAY column that SQLite cannot render. Narrow is also honest — this
-        # harness exists to execute one SQL predicate, not to stand in for the schema.
-        #
-        # AND SO IT DELIBERATELY DOES NOT USE `tests/_sqlite.sqlite_engine` (FS-410), which
-        # switches foreign keys on. Appointments here reference doors and organisations that
-        # this file has no reason to create; enforcing would mean building a fixture schema
-        # to test an overlap predicate. The trade is recorded rather than silent: this file
-        # is exempt because its subject is one WHERE clause, not referential integrity.
-        await conn.run_sync(
-            Base.metadata.create_all, tables=[DockAppointment.__table__]
-        )
+    # NOT the whole metadata: under pytest the conftest imports the full app, which
+    # registers `data_processing_records` with a Postgres ARRAY column SQLite cannot render.
+    # `create_all` takes the one table this file is about and closes over what it REFERENCES
+    # — organisations, dock doors and their parents — which is the smallest schema in which
+    # the appointment rows below are legal (FS-410).
+    #
+    # This file was briefly exempted from FK enforcement on the grounds that it exists to
+    # test one WHERE clause. That was true and still is, but the exemption was unnecessary:
+    # the closure is a dozen tables, not the whole schema, and it costs one seeded
+    # organisation and door.
+    engine = sqlite_engine()
+    await create_all(engine, Base.metadata, [DockAppointment.__table__])
     maker = async_sessionmaker(engine, expire_on_commit=False)
     async with maker() as active:
         yield active
@@ -74,13 +73,21 @@ async def session():
 
 
 @pytest.fixture
-def door():
-    return uuid4()
-
-
-@pytest.fixture
 def org():
     return uuid4()
+
+
+@pytest_asyncio.fixture
+async def door(session, org):
+    """A real organisation and a real dock door, because an appointment references both."""
+    from app.db.models import DockDoor
+
+    door_id = uuid4()
+    session.add(minimal_organization(org))
+    await session.flush()
+    session.add(DockDoor(id=str(door_id), organization_id=str(org), door_number="D1"))
+    await session.commit()
+    return door_id
 
 
 async def _book(session, org, door, start_h, end_h, status="scheduled"):

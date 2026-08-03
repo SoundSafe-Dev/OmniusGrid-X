@@ -1630,3 +1630,58 @@ Postgres connections — where it raises, and the failed statement poisons the t
 Nothing had regressed; the instrument had. The same lesson as the contrast checker two
 sections up: a measurement that moves by an order of magnitude is a claim about the
 instrument until proven otherwise.
+
+---
+
+## FS-414 — the class is closed: foreign keys enforced everywhere
+
+The per-module opt-in is gone. `PRAGMA foreign_keys=ON` is now a `connect` listener in
+`backend/tests/conftest.py`, so every SQLite engine in the suite gets it. **All 3,223 tests
+pass with it on.**
+
+An opt-in guard protects the files that remembered to opt in — the set least likely to need
+it. That was always the wrong shape; it was a staging post, not a design.
+
+### The cost, measured three times
+
+| | failing |
+|---|---|
+| first measurement | 76 |
+| after eleven model-level `relationship()` edges | 39 |
+| after converting the remaining eight fixtures | **0** |
+
+The middle row is the important one: **halving it required no changes to any test another
+lane owns.** Adding the missing ordering edge to a model fixes every fixture that trips over
+it, plus the seed, plus the API, plus any future flush that creates a parent and child
+together.
+
+### What the last eight conversions found
+
+Every one was a fixture inserting rows against parents that did not exist — an organisation
+invented as `uuid4()`, an integration nobody created, an asset pointing at a workcell and an
+asset type that were bare UUIDs. All of them passed for as long as they had existed.
+
+Two are worth quoting:
+
+- `test_ingestion_packml_state.py` said it in its own comment: *"the organizations/workcells
+  tables aren't created here and SQLite doesn't enforce FKs by default, so a bare UUID is
+  enough to exercise this path."* An honest note about a shortcut that made the fixture laxer
+  than production. The shortcut is gone; the honesty is kept, in a docstring explaining why
+  the assumption no longer holds.
+- `test_erp_webhook_idempotency.py` never seeded the organisation **or** the integration its
+  events point at. It passed because the constraint under test is on the event itself, so the
+  assertion held over rows that were orphans. On Postgres the first insert would have been
+  refused.
+
+`test_dock_scheduling_conflicts.py` needed no exemption after all. The exemption reasoning —
+"it exists to test one `WHERE` clause, not referential integrity" — was true and still is,
+but `create_all` closes over only the *referenced* tables, so the closure is a dozen tables
+rather than the whole schema. It cost one seeded organisation and one dock door.
+
+### A guard that proved the wrong thing first
+
+The first version of `test_foreign_keys_are_enforced_for_sqlite` built its engine with
+`sqlite_engine()` — the helper, which sets the pragma itself. Flipping conftest's listener to
+`OFF` left the test passing: it was asserting that the helper worked, not that the global
+enforcement did. It now uses a plain `create_async_engine`, which has done nothing to earn
+the pragma, and the mutation fails it.

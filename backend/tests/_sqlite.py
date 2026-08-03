@@ -72,3 +72,44 @@ async def create_all(engine: AsyncEngine, metadata, tables: Optional[Iterable] =
     ordered = [t for t in metadata.sorted_tables if t.name in seen]
     async with engine.begin() as conn:
         await conn.run_sync(metadata.create_all, tables=ordered)
+
+
+# ------------------------------------------------------------------ minimal parent rows
+#
+# With foreign keys enforced, a fixture that invents `organization_id = uuid4()` and never
+# creates the organisation is refused — correctly, because Postgres refuses it too. These
+# build the smallest valid parent so a test can keep saying what it is actually about.
+#
+# Deliberately minimal. A fixture asserting a SQL pushdown does not care what the
+# organisation is called, and a helper that invented rich demo data would put facts in front
+# of assertions that never asked for them.
+
+def minimal_organization(organization_id):
+    from app.db.models import Organization
+
+    return Organization(id=str(organization_id), name="fixture org",
+                        slug=f"fixture-{str(organization_id)[:8]}")
+
+
+def minimal_user(user_id, organization_id):
+    from app.db.models import User
+
+    return User(id=str(user_id), organization_id=str(organization_id),
+                email=f"{str(user_id)[:8]}@fixture.local",
+                hashed_password="x" * 60, role="admin", is_active=True)
+
+
+def minimal_asset(asset_id, organization_id, *, workcell_id=None, asset_type_id=None):
+    """An asset plus the workcell and asset type it requires, as a list in insert order."""
+    import uuid as _uuid
+
+    from app.db.models import Asset, AssetType, Workcell
+
+    workcell_id = workcell_id or str(_uuid.uuid4())
+    asset_type_id = asset_type_id or str(_uuid.uuid4())
+    return [
+        Workcell(id=workcell_id, organization_id=str(organization_id), name="fixture cell"),
+        AssetType(id=asset_type_id, name="fixture type", category="machine"),
+        Asset(id=str(asset_id), organization_id=str(organization_id),
+              workcell_id=workcell_id, asset_type_id=asset_type_id, name="fixture asset"),
+    ]

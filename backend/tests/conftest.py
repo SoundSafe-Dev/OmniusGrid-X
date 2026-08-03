@@ -34,6 +34,35 @@ from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
+from sqlalchemy import event
+from sqlalchemy.engine import Engine
+
+
+# --------------------------------------------------------------------------------------
+# SQLITE ENFORCES FOREIGN KEYS HERE (FS-410).
+#
+# SQLite ships with `PRAGMA foreign_keys=OFF`, so an in-memory test can insert a child
+# before its parent, or against a parent nobody created, and pass. Real Postgres rejects
+# both. That gap is not theoretical: `scripts/seed_demo_data.py` — the path docs/DEMO.md
+# tells operators to run — died on a foreign key the first time it met a fresh database,
+# and none of 3,200 tests could see why, because SQLAlchemy's unit of work orders inserts
+# from `relationship()` and most models here declared only the FK column.
+#
+# Switched on globally rather than per-module: an opt-in guard protects the files that
+# remembered to opt in, which is the set least likely to need it.
+#
+# DIALECT-GUARDED, and the guard is load-bearing. A first measurement ran this against
+# Postgres connections too, where PRAGMA raises and the failed statement poisons the
+# transaction — it reported 623 failures where there were 39. The instrument was wrong,
+# not the code.
+@event.listens_for(Engine, "connect")
+def _sqlite_enforces_foreign_keys(dbapi_connection, _connection_record):
+    module = type(dbapi_connection).__module__.lower()
+    if "sqlite" not in module and "sqlite" not in str(type(dbapi_connection)).lower():
+        return
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.close()
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
