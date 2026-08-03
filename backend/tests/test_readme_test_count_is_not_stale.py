@@ -33,8 +33,14 @@ REPO = pathlib.Path(__file__).resolve().parents[2]
 README = REPO / "README.md"
 BACKEND = REPO / "backend"
 
-#: `**3,100+ tests**` in the CI-safety table.
+#: `**3,200+ tests**` in the CI-safety table.
 CLAIM = re.compile(r"\*\*([\d,]+)\+ tests\*\*")
+
+#: `all 470 documented operations`, written in three places. Added 2026-08-03 after the
+#: figure was found reading 451 in two of them and 452 in the third against a real 470 —
+#: rotted by nineteen operations AND self-inconsistent, which is the state a number reaches
+#: when nothing checks it. Same argument as the test count above; different denominator.
+OPERATIONS_CLAIM = re.compile(r"all ([\d,]+) documented operations")
 
 
 def _claimed() -> int:
@@ -82,4 +88,56 @@ class TestTheFloorIsTrue:
             f"the README claims {claimed:,}+ while {actual:,} are collected — a "
             f"{actual - claimed:,}-test gap. Raise the figure: a floor nobody can fall "
             "through is not a claim about anything."
+        )
+
+
+def _documented_operations() -> int:
+    """How many HTTP operations the OpenAPI schema actually declares.
+
+    Read from the schema rather than from `app.routes`, because that attribute yields 2 of
+    them — the routers are mounted, so the tree has to be walked. The contract gate drives
+    this same schema, so this is the number the README is talking about.
+    """
+    from app.main import app
+
+    spec = app.openapi()
+    return sum(
+        1
+        for _path, item in spec["paths"].items()
+        for method in item
+        if method in ("get", "post", "put", "patch", "delete", "head", "options")
+    )
+
+
+class TestTheOperationCountIsNotStale:
+    """The same rot, one table down.
+
+    A test count changes several times a day, so it is claimed as a floor. An operation count
+    changes when someone adds a router — rarely, and always deliberately — so it is claimed
+    exactly, and an exact claim can be checked exactly.
+    """
+
+    def test_the_readme_states_the_operation_count(self):
+        claims = OPERATIONS_CLAIM.findall(README.read_text())
+        assert claims, (
+            "no 'all N documented operations' claim found in the README; if the wording "
+            "changed, update this pattern rather than deleting the guard"
+        )
+
+    def test_every_place_it_is_stated_agrees(self):
+        """It was 451 in two places and 452 in a third. A reader cannot tell which is
+        current, and both were wrong."""
+        claims = {c.replace(",", "") for c in OPERATIONS_CLAIM.findall(README.read_text())}
+        assert len(claims) == 1, (
+            f"the README states the operation count as {sorted(claims)} in different places. "
+            "One number, stated once per place, all agreeing."
+        )
+
+    def test_it_matches_the_schema(self):
+        claimed = int(OPERATIONS_CLAIM.findall(README.read_text())[0].replace(",", ""))
+        actual = _documented_operations()
+        assert claimed == actual, (
+            f"the README says the contract gate drives {claimed:,} documented operations; "
+            f"the OpenAPI schema declares {actual:,}. This is the figure quoted to describe "
+            f"how much of the API is covered, so it has to be the real one."
         )

@@ -1520,3 +1520,32 @@ activated insight fell to the analog path — seven targets all reading "needs a
 deployment the seed describes as fully synced. It now serves six of the seven, leaving
 purchasing manual on purpose: a shop whose purchasing runs on a phone call is the realistic
 case, and it is the half of the ledger worth showing.
+
+---
+
+## FS-412 — the README's own numbers had rotted, and one of them was unguarded
+
+Bringing the README current for FS-405…411 meant checking its figures rather than adding to
+them. Two were wrong.
+
+**The test floor had drifted 200 below reality** — `**3,100+ tests**` against 3,303 collected.
+Still technically true, which is the problem: `test_readme_test_count_is_not_stale.py` claims
+a floor *and* asserts the floor is not meaninglessly low, precisely so a figure cannot
+survive by being unfalsifiable. Raised to 3,200+, and the two prose figures (`~3,100 pass`,
+`~500 frontend across 70 files`) with it.
+
+**The operation count was wrong in every place it appeared, and disagreed with itself.** The
+README said the contract gate drives "all 451 documented operations" in two places and "452"
+in a third. The OpenAPI schema declares **470**. Nothing guarded it — the test-count guard
+exists because a stale number in the most-read file is worse than no number, and that
+argument was never extended to the figure that describes *how much of the API is covered*.
+
+So the count is now guarded three ways: that the claim exists at all, that every place
+stating it agrees, and that it equals what the schema declares. Exactly, not as a floor — a
+test count changes several times a day, an operation count changes when someone adds a
+router. Both directions mutation-verified.
+
+**Content added**: the systems-of-record drain, the FK-enforcement helper and its measured
+cost, and a rewritten offline-demo section that no longer claims the seed simply works. It
+says what was wrong with it, because `docs/DEMO.md` sent operators down that path and the
+naive-`utcnow()` failure is the kind that leaves data looking entirely plausible.

@@ -212,9 +212,9 @@ python scripts/seed_demo_kanban.py
 ## Running the suites
 
 ```bash
-cd backend && pytest          # ~3,100 pass, ~92 skip. Docker is OPTIONAL: the real-DB
+cd backend && pytest          # ~3,200 pass, ~92 skip. Docker is OPTIONAL: the real-DB
                               # tests skip without it, the rest run anyway
-cd frontend && npx vitest run  # ~500 across 70 files
+cd frontend && npx vitest run  # ~525 across 73 files
 cd frontend && npx tsc --noEmit
 ```
 
@@ -252,7 +252,7 @@ working tree, and `make unlean` puts it back. See
 [docs/engineering/large-assets.md](docs/engineering/large-assets.md).
 
 The **API contract gate** is separate and opt-in, because it stands the app up under
-uvicorn and drives all 451 documented operations with generated input (~8 min):
+uvicorn and drives all 470 documented operations with generated input (~8 min):
 
 ```bash
 cd backend
@@ -298,10 +298,11 @@ OmniusGrid is a resilient manufacturing operations platform designed for Industr
 | **OEE Automation** | Automated OEE calculation from PackML states and telemetry part counting |
 | **Shop-floor events** | Part issues, the labour clock, quality events and downtime, each fanned out to the systems of record it affects (inventory / purchasing / accounting / production / quality / scheduling / maintenance). **One ledger row per (event, target system)**, so "reached inventory" and "still waiting on purchasing" stay separate facts. A posting cannot be `posted` without the identifier the far system returned — enforced by a CHECK, not by the service — and a target with no integration becomes `manual_required` carrying the sentence to read out to a person |
 | **Insight activation** | A correlation-AI recommendation can be activated directly from the analysis session: it becomes a Kanban task **and** postings to every system its domain implies. Confirmation is refused, with named blockers, until the task is finished and every posting carries evidence; confirming writes the snapshot it was granted on |
+| **Systems-of-record drain** | `POST /shop-floor/postings/drain` attempts every queued posting against its ERP. `ERPConnectorBase.post_event` follows the `subscribe_to_events` precedent in that file — **declare the truth rather than invent an endpoint** — so a connector with no verified write path refuses, and the posting becomes `manual_required` carrying the reason. That conversion is the point: it turns "queued behind an integration that will never take it" into "somebody has to enter this, and here is what to tell them". Without it, `pending` was a dead end and an integrated target could never be confirmed |
 | **Edge AI** | <100ms inference loops, TorchScript models, automated model lifecycle, graceful fallback |
 | **Observability** | Prometheus metrics, Loki logs, Grafana dashboards, TimescaleDB |
 | **Security** | Agent enrollment with CA pinning, mTLS + proof-of-possession request signing, Redpanda broker mTLS, route-walk auth enforcement test, tamper-evident audit trails |
-| **DevOps** | GitHub Actions CI/CD with **31 blocking jobs and 1 advisory** across `quality-gates.yml` and `ci-cd.yml`, counted by `test_ci_gate_count_is_accurate.py` so this number cannot go stale (tsc/eslint/vitest/Playwright, the full backend suite against a real TimescaleDB, migration-chain hygiene, an API contract ratchet over all 451 documented operations, a k6 smoke load test against a real running app, supply-chain: pip-audit/npm-audit/Trivy, and four Kubernetes gates: manifest validation, NetworkPolicy simulation, kind smoke test, Calico policy-enforcement test), kustomize deploys with operator-gated platform stacks, Kubernetes base incl. workers + Redis + db-migrate Job, checksum-tracked SQL migration runner |
+| **DevOps** | GitHub Actions CI/CD with **31 blocking jobs and 1 advisory** across `quality-gates.yml` and `ci-cd.yml`, counted by `test_ci_gate_count_is_accurate.py` so this number cannot go stale (tsc/eslint/vitest/Playwright, the full backend suite against a real TimescaleDB, migration-chain hygiene, an API contract ratchet over all 470 documented operations, a k6 smoke load test against a real running app, supply-chain: pip-audit/npm-audit/Trivy, and four Kubernetes gates: manifest validation, NetworkPolicy simulation, kind smoke test, Calico policy-enforcement test), kustomize deploys with operator-gated platform stacks, Kubernetes base incl. workers + Redis + db-migrate Job, checksum-tracked SQL migration runner |
 | **Operations** | K3s-orchestrated, CloudNativePG HA (auto-failover + PITR), KEDA lag-based worker autoscaling, automatic disaster recovery. The deploy applies the monitoring/autoscaling/HA-DB stacks itself, each gated on its operator's CRDs being present |
 | **Logistics** | YMS/TMS with GeoTab telematics, detention billing, HOS compliance, dock-production sync, webhook processing |
 | **Task Management** | Kanban board with task grouping, assignment, approval workflows |
@@ -439,8 +440,21 @@ The whole platform demos with **no live edge, cloud, or external services**.
 alarms, OEE, a fully-synced ERP integration, yard, transportation, geofencing,
 kanban, operations, fleet OTA, MLOps model registry, compliance/registries,
 notifications, error-triage, exports, and historian — idempotently. The only
-thing that still needs its model is the Correlation-AI **inference** (a ready
-`AnalysisSession` is seeded). See [`docs/DEMO.md`](docs/DEMO.md).
+thing that still needs its model is the Correlation-AI **inference**: the seeded
+`AnalysisSession` now carries a short transcript so the recommended-action and
+activation controls are on screen, and it is labelled in the message text as a
+recorded example rather than an inference. See [`docs/DEMO.md`](docs/DEMO.md).
+
+It had **never run on a fresh database**. Three defects in sequence, each only
+reachable after fixing the one before: an FK-ordering mitigation that reset on the
+commit immediately after it was set, a human work-order number written into a `uuid`
+column, and — the one worth remembering — `datetime.utcnow()` anchoring every
+timestamp. That returns a NAIVE datetime, and writing one to `timestamptz`
+reinterprets it in the client's zone. The gaps between rows survive, so the data
+looks entirely plausible; only the anchor moves. A trailer seeded at six hours of
+dwell arrived as one, `/yard/detention-alerts` returned `[]`, and the seed's own
+verifier failed. On a UTC developer machine none of it is visible.
+`python scripts/seed_demo_data.py --verify` now passes all 26 checks.
 
 ### Subsystem ownership — check here before starting work
 
@@ -714,7 +728,8 @@ reliability layers (each with its own README):
 | **Cache / job store** | Redis — rate limiting, cross-worker idempotency, async export job store. It previously appeared only as a NetworkPolicy destination with no Service behind it, so the always-on auth limiter 500'd every login when it was unreachable | [`base/redis-statefulset.yaml`](infrastructure/k8s/base/redis-statefulset.yaml) |
 | **Object storage** | Generated exports & compliance reports go to SeaweedFS (S3) so a worker on one pod and the API on another share one bucket — fixes cross-pod download | [`base/object-store.yaml`](infrastructure/k8s/base/object-store.yaml) |
 | **Secrets** | Sealed Secrets (encrypted, safe-in-git) **or** External Secrets Operator (Vault / AWS SM / GCP SM). Placeholder dev credentials are **enforced** out of both deployed environments — a blocking gate fails if one becomes reachable, or if the deploy stops filtering them | [`secrets/`](infrastructure/k8s/secrets/) |
-| **CI safety** | **14 blocking gates** on every branch push. Backend: `backend-realdb` (schema parity, tenant isolation + RLS, timestamp defaults — against an ephemeral TimescaleDB, because RLS and server defaults are both no-ops on SQLite), `backend-full` (**3,100+ tests** — the whole suite bar the Kafka e2e, which runs in its own job; the figure is a FLOOR asserted by `test_readme_test_count_is_not_stale.py`, because the exact number was written down once as 2,149 and was a thousand short within weeks), `backend-kafka-e2e` (container e2e in its own process), `migration-hygiene`. Kubernetes: `k8s-manifests` (build + kubeconform + placeholder-credential check), `netpol-simulate`, `k8s-smoke` (kind: real operator webhooks), `k8s-netpol` (kind + **Calico**: policies genuinely enforced, 19 allow/deny cases), `netpol-coverage` (every workload in a default-deny namespace has a policy in both directions — the gap that killed tracing). Plus `prometheus-rules` (lints `alerts.yml` + `slo_rules.yml`, checks **both** Prometheus configs, and runs the alert unit tests), `frontend-e2e-authenticated` (stands up Postgres + migrations + demo data + uvicorn and asserts the dashboard shows **non-zero** data — an element-visibility check would have passed against the FS-191 tenancy bug), `supply-chain`, `repo-hygiene`, frontend unit + e2e | `.github/workflows/quality-gates.yml` |
+| **Referential integrity in tests** | SQLite ships with `PRAGMA foreign_keys=OFF`, so an in-memory test can insert a child before its parent, or against a parent nobody created, and pass — which is why none of 3,200 tests could see the ordering defect that killed the demo seed. `backend/tests/_sqlite.py` gives an opt-in FK-enforcing engine (plus a `create_all` that closes over referenced tables, since `create_all(tables=[…])` does not). Measured cost of enforcing everywhere: **76 of 3,210 tests**, so adoption is per-module and a guard pins the modules that have converted — reverting one keeps it passing while it stops checking anything |
+| **CI safety** | **14 blocking gates** on every branch push. Backend: `backend-realdb` (schema parity, tenant isolation + RLS, timestamp defaults — against an ephemeral TimescaleDB, because RLS and server defaults are both no-ops on SQLite), `backend-full` (**3,200+ tests** — the whole suite bar the Kafka e2e, which runs in its own job; the figure is a FLOOR asserted by `test_readme_test_count_is_not_stale.py`, because the exact number was written down once as 2,149 and was a thousand short within weeks), `backend-kafka-e2e` (container e2e in its own process), `migration-hygiene`. Kubernetes: `k8s-manifests` (build + kubeconform + placeholder-credential check), `netpol-simulate`, `k8s-smoke` (kind: real operator webhooks), `k8s-netpol` (kind + **Calico**: policies genuinely enforced, 19 allow/deny cases), `netpol-coverage` (every workload in a default-deny namespace has a policy in both directions — the gap that killed tracing). Plus `prometheus-rules` (lints `alerts.yml` + `slo_rules.yml`, checks **both** Prometheus configs, and runs the alert unit tests), `frontend-e2e-authenticated` (stands up Postgres + migrations + demo data + uvicorn and asserts the dashboard shows **non-zero** data — an element-visibility check would have passed against the FS-191 tenancy bug), `supply-chain`, `repo-hygiene`, frontend unit + e2e | `.github/workflows/quality-gates.yml` |
 | **Load / failover testing** | Kafka ingestion load generator (drives KEDA scaling + DB writes) + a runbook for driving throughput and DB-failover-under-load | [`tests/load/`](tests/load/) |
 
 ### 5. Page → API wiring
@@ -1752,7 +1767,7 @@ today, start at [`docs/erp/README.md`](docs/erp/README.md) instead.
 
 ## Documentation
 
-- [Delivery log](docs/DELIVERY-LOG.md) - Every slice delivered, verbatim, with the reasoning recorded against each: what was believed before, what turned out to be true, and what the difference cost. Moved out of this file on 2026-08-02, where it had grown to a third of the document
+- [Delivery log](docs/DELIVERY-LOG.md) - Every slice delivered, verbatim, with the reasoning recorded against each: what was believed before, what turned out to be true, and what the difference cost. Moved out of this file on 2026-08-02, where it had grown to a third of the document. Most recently: the three defects that made `scripts/seed_demo_data.py` fail on every fresh database it had ever met, why none of 3,200 tests could see them (**SQLite does not enforce foreign keys by default**), and the four found only by *looking at* a running page — a heading rendered at its own background colour, an Activate control measured at 1.04:1, a float artifact beside a dollar figure, and a raw uuid in the column an operator reads to go and find a trailer
 - [ERP integration architecture](docs/erp/ARCHITECTURE.md) - The eight vendors and their protocols, the middleware, the endpoint list, and ERP-to-operational correlation. To *work on* a connector, start at [docs/erp/README.md](docs/erp/README.md) instead
 - [Correlation-AI training dataset](docs/CORRELATION-DATASET.md) - Statistics and worked single- and multi-domain scenarios, and how they feed Kanban and alerting
 - [OmniusGrid Glossary](OMNIUSGRID_GLOSSARY.md) - Backend & Frontend combined terminology reference (540+ terms)
@@ -1765,7 +1780,7 @@ today, start at [`docs/erp/README.md`](docs/erp/README.md) instead.
 **Engineering practice**
 - [Defect-class sweeps](docs/engineering/defect-class-sweeps.md) - The sixty classes of "code that looks wired and cannot work" found so far, what each sweep found (including the ones that came back clean), which mutation-tested guard keeps each closed, and sixty-seven rules for writing a sweep worth trusting — including the one class no test could have caught, because contrast is not a dimension a suite has an opinion about — most of them paid for by a detector that was wrong first, including one that reported zero offenders while three pages were broken and one that compared a baseline against itself
 - [Large assets](docs/engineering/large-assets.md) - Why `backend/dataset` is 1.5 GB on disk but only 41 MB packed, why it must not be deleted (the generator sets no seed, so it is generated but NOT reproducible), and the `make lean` / sparse-checkout recipes that keep it off your disk and out of all 28 CI checkouts
-- [The API contract gate](docs/engineering/api-contract-gate.md) - The schemathesis job that drives all 452 documented operations, why it could never finish (every component fast, the whole impossible — a per-example event loop plus a retry path with no backoff), the four independent faults that each alone would have stopped it, why it blocks as a *ratchet* on a measured floor rather than demanding a green suite, and what it has found since — including an audit trail that had never recorded a single row, and thirteen identical unbounded `skip` declarations of which it could only ever have reported one, which is why the fix is a shared bound and a sweep rather than the one endpoint that happened to fail — and `POST /api/v1/user/goals`, which raised `TypeError` on every call since it was written because `str(UUID())` has no zero-argument form, so the whole goals feature was dead behind an endpoint that looked wired and any test that called it once with anything would have caught it
+- [The API contract gate](docs/engineering/api-contract-gate.md) - The schemathesis job that drives all 470 documented operations, why it could never finish (every component fast, the whole impossible — a per-example event loop plus a retry path with no backoff), the four independent faults that each alone would have stopped it, why it blocks as a *ratchet* on a measured floor rather than demanding a green suite, and what it has found since — including an audit trail that had never recorded a single row, and thirteen identical unbounded `skip` declarations of which it could only ever have reported one, which is why the fix is a shared bound and a sweep rather than the one endpoint that happened to fail — and `POST /api/v1/user/goals`, which raised `TypeError` on every call since it was written because `str(UUID())` has no zero-argument form, so the whole goals feature was dead behind an endpoint that looked wired and any test that called it once with anything would have caught it
 - [The test quarantine](docs/engineering/test-quarantine.md) - What CI is allowed not to run, and the register that gives every exclusion an owner, a diagnosis and an expiry — including the staleness half that fails when a quarantined test starts passing. Records the 2026-07-30 release of four entries, and the rule it earned: before accepting that a quarantined test is another lane's problem, check whether the code under it is *running* — "the test is broken" and "the feature is unbuilt" look identical from the list and have opposite consequences
 
 **Infrastructure & operations**
