@@ -212,11 +212,38 @@ python scripts/seed_demo_kanban.py
 ## Running the suites
 
 ```bash
-cd backend && pytest          # 2,513 pass, 87 skip. Needs Docker: the real-DB
-                              # tests start a TimescaleDB via testcontainers
-cd frontend && npx vitest run  # 445 across 65 files
+cd backend && pytest          # ~3,100 pass, ~92 skip. Docker is OPTIONAL: the real-DB
+                              # tests skip without it, the rest run anyway
+cd frontend && npx vitest run  # ~500 across 70 files
 cd frontend && npx tsc --noEmit
 ```
+
+Counts are approximate on purpose — the exact figures were written down once and were a
+thousand short within weeks. `test_readme_test_count_is_not_stale.py` asserts the floor
+stated further down is still true, and that it has not drifted so far below reality that it
+stops meaning anything.
+
+### What the suites actually verify
+
+Worth knowing before you trust a green run, because each of these was a gap that shipped a
+defect before it was closed:
+
+| Question | Where it is answered |
+|---|---|
+| Does an endpoint 5xx against a production-shaped database? | `test_realdb_endpoint_smoke.py` (Docker) |
+| Does a write **survive the round trip** — created, read back, and not blanked by a partial update? | `test_writes_round_trip.py` (no Docker; in-memory SQLite) |
+| Does a POST with rubbish answer 422 rather than 5xx? | `test_write_endpoints_reject_cleanly_realdb.py` |
+| Does the frontend declare a field no backend source produces? | `test_frontend_fields_exist_on_the_wire.py` — five quadrants: read, unread, passthrough return types, interfaces beside their client, and the reverse direction in `test_qualifiers_reach_the_frontend.py` |
+| Does a declared `response_model` drop a key the handler returns? | `test_response_models_match_their_returns.py` (follows helper-built returns) |
+| Does a declared media type match what the handler sends? | `test_declared_media_types_are_honest.py` |
+| Does a naive timestamp crash a verdict it decides? | `test_naive_timestamps_do_not_crash_verdicts.py` |
+| Is a failure being rendered as an empty state? | `failureIsNotEmptiness.test.ts` (frontend) |
+
+**The distinction that keeps recurring**: a route that answers 200 is not a feature that
+works. Validation is not function — an endpoint can reject rubbish correctly and silently
+drop a good write. A 200 with an empty body is not a working feature. A rendered page is not
+a rendered *value*: React renders `undefined` as nothing, so a dead figure looks like a
+deliberate empty state. Each of those sentences is a defect this repository shipped.
 
 Most of the backend suite runs against a **real TimescaleDB**, not a mock, so Docker has to be
 up. If containers fail to start with `input/output error` from containerd, the VM is out of
@@ -685,7 +712,7 @@ reliability layers (each with its own README):
 | **Cache / job store** | Redis — rate limiting, cross-worker idempotency, async export job store. It previously appeared only as a NetworkPolicy destination with no Service behind it, so the always-on auth limiter 500'd every login when it was unreachable | [`base/redis-statefulset.yaml`](infrastructure/k8s/base/redis-statefulset.yaml) |
 | **Object storage** | Generated exports & compliance reports go to SeaweedFS (S3) so a worker on one pod and the API on another share one bucket — fixes cross-pod download | [`base/object-store.yaml`](infrastructure/k8s/base/object-store.yaml) |
 | **Secrets** | Sealed Secrets (encrypted, safe-in-git) **or** External Secrets Operator (Vault / AWS SM / GCP SM). Placeholder dev credentials are **enforced** out of both deployed environments — a blocking gate fails if one becomes reachable, or if the deploy stops filtering them | [`secrets/`](infrastructure/k8s/secrets/) |
-| **CI safety** | **14 blocking gates** on every branch push. Backend: `backend-realdb` (schema parity, tenant isolation + RLS, timestamp defaults — against an ephemeral TimescaleDB, because RLS and server defaults are both no-ops on SQLite), `backend-full` (2,149 tests — the whole suite bar the intake lane's three collection-failing files and the Kafka e2e, which run in their own job), `backend-kafka-e2e` (container e2e in its own process), `migration-hygiene`. Kubernetes: `k8s-manifests` (build + kubeconform + placeholder-credential check), `netpol-simulate`, `k8s-smoke` (kind: real operator webhooks), `k8s-netpol` (kind + **Calico**: policies genuinely enforced, 19 allow/deny cases), `netpol-coverage` (every workload in a default-deny namespace has a policy in both directions — the gap that killed tracing). Plus `prometheus-rules` (lints `alerts.yml` + `slo_rules.yml`, checks **both** Prometheus configs, and runs the alert unit tests), `frontend-e2e-authenticated` (stands up Postgres + migrations + demo data + uvicorn and asserts the dashboard shows **non-zero** data — an element-visibility check would have passed against the FS-191 tenancy bug), `supply-chain`, `repo-hygiene`, frontend unit + e2e | `.github/workflows/quality-gates.yml` |
+| **CI safety** | **14 blocking gates** on every branch push. Backend: `backend-realdb` (schema parity, tenant isolation + RLS, timestamp defaults — against an ephemeral TimescaleDB, because RLS and server defaults are both no-ops on SQLite), `backend-full` (**3,100+ tests** — the whole suite bar the Kafka e2e, which runs in its own job; the figure is a FLOOR asserted by `test_readme_test_count_is_not_stale.py`, because the exact number was written down once as 2,149 and was a thousand short within weeks), `backend-kafka-e2e` (container e2e in its own process), `migration-hygiene`. Kubernetes: `k8s-manifests` (build + kubeconform + placeholder-credential check), `netpol-simulate`, `k8s-smoke` (kind: real operator webhooks), `k8s-netpol` (kind + **Calico**: policies genuinely enforced, 19 allow/deny cases), `netpol-coverage` (every workload in a default-deny namespace has a policy in both directions — the gap that killed tracing). Plus `prometheus-rules` (lints `alerts.yml` + `slo_rules.yml`, checks **both** Prometheus configs, and runs the alert unit tests), `frontend-e2e-authenticated` (stands up Postgres + migrations + demo data + uvicorn and asserts the dashboard shows **non-zero** data — an element-visibility check would have passed against the FS-191 tenancy bug), `supply-chain`, `repo-hygiene`, frontend unit + e2e | `.github/workflows/quality-gates.yml` |
 | **Load / failover testing** | Kafka ingestion load generator (drives KEDA scaling + DB writes) + a runbook for driving throughput and DB-failover-under-load | [`tests/load/`](tests/load/) |
 
 ### 5. Page → API wiring
