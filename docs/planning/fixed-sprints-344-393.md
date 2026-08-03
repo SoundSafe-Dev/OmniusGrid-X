@@ -878,6 +878,36 @@ honest, explanatory empty state (`/admin/collectors`: *"Agents appear here once 
 and send a heartbeat."*). A count of table rows is not a measure of function — three of the
 six render cards, not tables.
 
+## Write paths, and the guards that now cover them (2026-08-02)
+
+Reads had been swept exhaustively; **writes had barely been touched**. A live sweep against
+the running stack verified 11 write paths — assets create/read-back/update, alarm
+acknowledge, yard check-in, carrier, subscription, schedule. **All 11 work.** The UI's write
+actions work too: acknowledge, Approve, Reject and notification-test all return 200 through
+the browser.
+
+**None of them had a test that would notice if they stopped.**
+
+| FS | What |
+|---|---|
+| **FS-401** | `test_writes_round_trip.py`. The existing write walk asserts a POST with an empty body answers 422 — VALIDATION, not function. A handler that answers 200 and commits nothing passed it. The new test asserts the value goes in, comes back, appears in the LIST query a page actually uses, and survives an update. Mutation-verified: removing `await db.commit()` fails 5 of 7, and the 2 survivors are the controls, which do not depend on a commit |
+| **FS-402** | `test_readme_test_count_is_not_stale.py`. The README said 2,149 tests; collection reports 3,191. True when written, and a thousand short within weeks — in the flattering direction, which is the one that gets quoted |
+| — | Fifth quadrant added to the wire sweep: interfaces declared in `src/api/` beside their client. `DriverHOS`, `ShipmentCosts` and `FleetHealthStatistics` were outside every check on that page — the FS-393 gap, one level up |
+
+**Two design notes worth keeping.**
+
+*The round-trip test runs on in-memory SQLite, not the real-DB fixture.* Those are gated on
+`importorskip("testcontainers")` and skip wherever Docker is absent — true for this entire
+session. A test that only runs in CI does not stop you shipping a broken write at 2am.
+Tenant isolation is explicitly **not** claimed there; SQLite has no RLS and that stays with
+the real-DB suite.
+
+*The README count is a FLOOR, not an exact figure, and the floor is guarded from both
+sides.* An exact assertion fails on every commit that adds a test, which trains people to
+edit the number without reading it — the same reflex that let 2,149 survive. A floor set far
+below reality passes forever and asserts nothing, so a second assertion keeps it within 600
+of the truth. Mutation-verified in both directions.
+
 ### Still open
 
 - The RAG branch is **verified and pushed** (2026-08-02):
