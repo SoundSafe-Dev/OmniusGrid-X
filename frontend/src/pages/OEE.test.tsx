@@ -146,7 +146,14 @@ describe('OEE page — an unmeasured factor is not shown as 100%', () => {
     await expandDetail({})
     expect(tileValue('OEE')).toBe('85.5%')
     expect(tileValue('Quality')).toBe('95.0%')
-    expect(screen.queryByText('—')).not.toBeInTheDocument()
+    // SCOPED TO THE DETAIL TILES, which is what this test is about. It used to assert no
+    // `—` existed ANYWHERE in the document, and that became wrong for a legitimate reason:
+    // the fleet table's own OEE column is now a permanent em dash, because
+    // `/dashboard/fleet/oee` reports availability only and never sent an `oee` field
+    // (FS-399). It used to render `NaN%` there, which is why nothing caught it.
+    expect(tileValue('OEE')).not.toBe('—')
+    expect(tileValue('Quality')).not.toBe('—')
+    expect(tileValue('Performance')).not.toBe('—')
   })
 })
 

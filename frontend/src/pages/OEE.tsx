@@ -185,7 +185,10 @@ const OEE: FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-opsgrid-border">
-              {fleetOEE?.assets?.map((asset: any) => {
+              {/* NOT `(asset: any)`. The `FleetOEE` type already described these rows
+                  correctly — four fields, no `oee` — and the `any` is the only reason
+                  `asset.oee` compiled at all. Typed, the compiler rejects it. */}
+              {fleetOEE?.assets?.map((asset) => {
                 const isExpanded = expandedId === asset.assetId
                 const toggle = () => setExpandedId(isExpanded ? null : asset.assetId)
                 return (
@@ -237,34 +240,38 @@ const OEE: FC = () => {
                     </TooltipTrigger>
                     <TooltipContent>Availability: {(asset.availability * 100).toFixed(1)}%</TooltipContent>
                   </Tooltip>
+                  {/* THIS ENDPOINT DOES NOT COMPUTE OEE (FS-399). `/dashboard/fleet/oee`
+                      returns `{assetId, assetName, availability, availabilityOnly}` and
+                      sets `availabilityOnly: true` to say so explicitly. `asset.oee` was
+                      never on the wire, so this rendered `NaN%` — and the ternaries below
+                      it, comparing `undefined > 0.8`, fell through to their last branch.
+                      Three-factor OEE comes from `/dashboard/assets/{id}/oee`, as the
+                      `FleetOEE` type's own docstring says. */}
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <td className="p-4 text-center">
-                        <span
-                          className={`font-semibold ${
-                            asset.oee > 0.8
-                              ? 'text-status-running'
-                              : asset.oee > 0.5
-                              ? 'text-packml-held'
-                              : 'text-status-alarm'
-                          }`}
-                        >
-                          {(asset.oee * 100).toFixed(1)}%
-                        </span>
+                        <span className="font-semibold text-opsgrid-text-secondary">—</span>
                       </td>
                     </TooltipTrigger>
                     <TooltipContent>
-                      {asset.oee > 0.8 ? 'Excellent performance' : asset.oee > 0.5 ? 'Good performance' : 'Needs improvement'}
+                      Not computed by the fleet endpoint — it reports availability only.
+                      Expand the row for this asset&apos;s three-factor OEE.
                     </TooltipContent>
                   </Tooltip>
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <td className="p-4 text-right">
+                        {/* DRIVEN BY AVAILABILITY, WHICH IS WHAT THIS ENDPOINT MEASURES.
+                            It read `asset.oee`, so every comparison was against `undefined`
+                            and every asset in the fleet got the red alarm dot and the word
+                            "Critical" — a fleet-wide fault verdict manufactured from a
+                            field nobody sends. Same shape as the geofence-alert ternary
+                            that made every alert read "Violation". */}
                         <span
                           className={`inline-block w-3 h-3 rounded-full ${
-                            asset.oee > 0.8
+                            asset.availability > 0.8
                               ? 'bg-status-running'
-                              : asset.oee > 0.5
+                              : asset.availability > 0.5
                               ? 'bg-packml-held'
                               : 'bg-status-alarm'
                           }`}
@@ -272,7 +279,12 @@ const OEE: FC = () => {
                       </td>
                     </TooltipTrigger>
                     <TooltipContent>
-                      {asset.oee > 0.8 ? 'Running well' : asset.oee > 0.5 ? 'Needs attention' : 'Critical'}
+                      {asset.availability > 0.8
+                        ? 'Available'
+                        : asset.availability > 0.5
+                        ? 'Reduced availability'
+                        : 'Little or no run time'}
+                      {' '}(availability only — this endpoint does not compute OEE)
                     </TooltipContent>
                   </Tooltip>
                 </tr>
