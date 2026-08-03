@@ -78,6 +78,23 @@ is false in a build, so the bypass is compiled out regardless of the variable.
 commands were documented separately and drifted, so the pair now lives in the Makefile
 where `test_demo_mode_instructions_work.py` can check it against what the code requires.
 
+## The seed ages — re-run it if a page looks empty
+
+**`seed_demo_data.py` writes timestamps relative to the moment it runs**, so a database
+seeded yesterday is a day out of date and several endpoints legitimately return nothing.
+Re-run `make seed-demo` (it is idempotent) before deciding a page is broken.
+
+The sharpest case is **Alarms**. `GET /api/v1/alarms/` defaults to the last 24 hours when no
+range is given — documented behaviour — and the seeder places its nine alarms across the
+previous four days. Right after seeding, four fall inside the window and the page is
+populated. About a day later, none do, and the Alarms page is empty with no error anywhere.
+`/yard/dock/appointments` behaves the same way.
+
+Recorded because a full functional sweep on 2026-08-02 flagged both as "200 but empty with
+rows in the table" and they looked exactly like tenancy filter bugs. They were not: a fresh
+seed returns 4 alarms and 2 appointments. **An empty page on stale demo data is
+indistinguishable from a broken filter until you check the seed's age.**
+
 ## Notes & known offline gaps
 
 - **OEE availability reads "no signal"** for live-state metrics that come from

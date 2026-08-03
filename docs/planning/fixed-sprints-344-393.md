@@ -845,6 +845,39 @@ moving 1,048 lines of file-citing prose into `docs/` would have dropped every on
 citations from the check **while the file count went up**. The guard's scope moved with the
 content. Moving prose out of a checked document moves it out of the check.
 
+## Full-system functional sweep (2026-08-02)
+
+Run against a real stack after a fresh seed: all 253 GET endpoints, and all 33 routes with
+every tab on each.
+
+| | Result |
+|---|---|
+| GET endpoints | **192 × 200**, 14 × 503 (Redis / `pg_stat_statements` absent, expected), 42 × 4xx (unresolved ids, auth-gated), **5 × 500** |
+| Remaining 500s | `kanban/rules/premade`, `nlp/correlation/intake/{id}`, `nlp/sessions/{id}/data`, `nlp/.../context/registries`, `rag/documents` — **all cross-lane, all in `tests/_lane_failures.py` with an owner, a fix and an expiry** |
+| Frontend | **1 problem across 33 routes and their tabs** — the `/nlp` 500 above surfacing in the UI |
+| Blanks / NaN / undefined | **zero** |
+
+**FS-399** (every asset flagged Critical on `/oee`) and **FS-400** (carrier compliance 500)
+were found and fixed by this sweep; both are in the commits above.
+
+### Two false leads, and why they mattered
+
+The sweep flagged `/alarms/` and `/yard/dock/appointments` as "200 but empty **while rows
+exist for this org**" — which is the exact signature of a broken tenancy filter, and I was
+one step from filing two defects against my own lane.
+
+They were stale demo data. `seed_demo_data.py` writes timestamps relative to when it runs,
+`GET /alarms/` defaults to the last 24 hours, and the seed was a day old. A fresh seed
+returns 4 alarms and 2 appointments. **An empty page on aged demo data is indistinguishable
+from a broken filter until you check the seed's age** — now recorded in `docs/DEMO.md`,
+because the next person to hit it will reason exactly as I did.
+
+Six pages render thin, and all six are correct: real data (`/analytics/maintenance` shows a
+live DOT inspection due in 13 days; `/fleet/organization` shows the real hierarchy) or an
+honest, explanatory empty state (`/admin/collectors`: *"Agents appear here once they enroll
+and send a heartbeat."*). A count of table rows is not a measure of function — three of the
+six render cards, not tables.
+
 ### Still open
 
 - The RAG branch is **verified and pushed** (2026-08-02):
