@@ -20,6 +20,30 @@ from app.db.models import (
 logger = structlog.get_logger()
 
 
+def _as_utc(value):
+    """Coerce a stored timestamp to timezone-aware UTC; naive is assumed UTC (FS-400).
+
+    THE CRASH THIS PREVENTS, and it is the third instance of this class found today —
+    after `_check_ingestion` in health.py and the yard detention calculators:
+
+        TypeError: can't compare offset-naive and offset-aware datetimes
+
+    `carriers.ctpat_expires_at`, `carriers.insurance_expires_at` and
+    `drivers.medical_cert_expires` are compared against `datetime.now(timezone.utc)` to
+    decide C-TPAT validity, insurance validity, and whether a medical certificate has
+    expired. Postgres returns those columns aware; SQLite cannot preserve tzinfo, so on the
+    documented local dev path every one of them is naive and
+    `GET /transportation/carriers/{id}/compliance` returned 500.
+
+    UTC is assumed rather than local, and on a compliance verdict the choice matters: a
+    host offset would move an expiry across midnight and flip `is_valid` for a carrier whose
+    certificate expires today. Everything writing these columns writes UTC.
+    """
+    if value is None or value.tzinfo is not None:
+        return value
+    return value.replace(tzinfo=timezone.utc)
+
+
 class HOSComplianceMonitor:
     """Monitor driver Hours of Service compliance"""
     
@@ -80,9 +104,9 @@ class HOSComplianceMonitor:
         # rather than the lack of one.
         if driver.medical_cert_expires is None:
             missing_data.append("No medical certificate on file")
-        elif driver.medical_cert_expires < datetime.now(timezone.utc):
+        elif _as_utc(driver.medical_cert_expires) < datetime.now(timezone.utc):
             violations.append("Medical certificate expired")
-        elif driver.medical_cert_expires < datetime.now(timezone.utc) + timedelta(days=30):
+        elif _as_utc(driver.medical_cert_expires) < datetime.now(timezone.utc) + timedelta(days=30):
             warnings.append("Medical certificate expiring soon")
 
         return {
@@ -707,7 +731,7 @@ class TransportationManagementService:
                     hos_violations += 1
                 if not compliance['assessable']:
                     unassessable_drivers += 1
-                if driver.medical_cert_expires and driver.medical_cert_expires < datetime.now(timezone.utc):
+                if driver.medical_cert_expires and _as_utc(driver.medical_cert_expires) < datetime.now(timezone.utc):
                     expired_medical_certs += 1
             
             return {
@@ -719,7 +743,7 @@ class TransportationManagementService:
                     'is_valid': (
                         carrier.ctpat_certified and 
                         carrier.ctpat_expires_at and 
-                        carrier.ctpat_expires_at > datetime.now(timezone.utc)
+                        _as_utc(carrier.ctpat_expires_at) > datetime.now(timezone.utc)
                     )
                 },
                 'insurance_status': {
@@ -728,7 +752,7 @@ class TransportationManagementService:
                     'is_valid': (
                         carrier.insurance_on_file and
                         carrier.insurance_expires_at and
-                        carrier.insurance_expires_at > datetime.now(timezone.utc)
+                        _as_utc(carrier.insurance_expires_at) > datetime.now(timezone.utc)
                     )
                 },
                 'safety_rating': carrier.safety_rating,
