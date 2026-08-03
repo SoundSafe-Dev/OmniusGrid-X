@@ -243,7 +243,15 @@ class TestActivatingAnInsight:
                 "the analog path is a feature: a target with no integration must arrive with "
                 "the sentence a supervisor reads out, not just a status"
             )
-            assert "not yet entered" in item["instruction"].lower() or item["instruction"]
+            # NOT `x in s or s` — that is true for any non-empty string, and it is how a
+            # generic "see the event record" survived twenty-two green tests until someone
+            # clicked the button.
+            assert ACTION["title"] in item["instruction"], (
+                "the instruction must name the recommendation; a supervisor cannot act on "
+                "a sentence that points at a table"
+            )
+            assert "not yet entered in this system" in item["instruction"].lower()
+            assert "see the event record" not in item["instruction"].lower()
 
     async def test_an_integrated_target_is_queued_not_handed_to_a_person(
         self, integrated_stack

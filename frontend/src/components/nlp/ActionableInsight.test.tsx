@@ -292,3 +292,38 @@ describe('declining', () => {
     expect(await screen.findByText(/Declined: the bearing was replaced last week/)).toBeInTheDocument()
   })
 })
+
+
+describe('the controls are visible on the sheet they sit on', () => {
+  // MEASURED 1.04:1 IN THE RUNNING APP. The transcript is a hardcoded white sheet regardless
+  // of theme; the shared `Button` uses the app's theme tokens, so in dark mode the Activate
+  // control rendered rgb(250,250,250) on rgb(255,255,255). It was present, clickable, and had
+  // the right accessible name — every test above passed against an invisible button.
+  //
+  // jsdom does not resolve Tailwind, so this asserts the CLASSES rather than computed colour:
+  // that these controls do not carry the theme-token variants, and do carry an explicit dark
+  // foreground. The measured check lives in the browser sweep; this is the cheap regression
+  // net that runs on every commit.
+  const THEME_TOKEN_CLASSES = /\b(?:bg-opsgrid-|text-opsgrid-)/
+
+  it('the Activate control is not styled with theme tokens', () => {
+    renderInsight()
+    const button = screen.getByRole('button', { name: /activate/i })
+    expect(button.className).not.toMatch(THEME_TOKEN_CLASSES)
+    expect(button.className).toMatch(/text-gray-900/)
+  })
+
+  it('every control in an activated row is legible on white', async () => {
+    renderInsight()
+    fireEvent.click(screen.getByRole('button', { name: /activate/i }))
+    await screen.findByText('maintenance')
+
+    const buttons = screen.getAllByRole('button')
+    expect(buttons.length).toBeGreaterThan(2)
+    for (const button of buttons) {
+      expect(button.className).not.toMatch(THEME_TOKEN_CLASSES)
+      // Either a solid dark label or the quiet grey one; never a light-on-light default.
+      expect(button.className).toMatch(/text-gray-(?:600|900)/)
+    }
+  })
+})

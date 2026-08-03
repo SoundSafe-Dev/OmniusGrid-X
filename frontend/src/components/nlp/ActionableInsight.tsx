@@ -2,7 +2,20 @@ import { useState } from 'react';
 import {
   AlertTriangle, Check, CheckCircle2, Circle, Clock, Loader2, Phone, Send, X,
 } from 'lucide-react';
-import { Button } from '../ui/Button';
+// NOT the shared `Button` (FS-411). This component renders inside the correlation chat
+// transcript, which is a HARDCODED WHITE SHEET regardless of theme, while the shared button's
+// variants use the app's theme tokens. In dark mode that put rgb(250,250,250) text on
+// rgb(255,255,255) — a measured 1.04:1, i.e. an invisible Activate control on the product's
+// flagship surface. It rendered, it was clickable, it had the right accessible name, and every
+// test passed. The controls below are styled for the sheet they actually sit on.
+const SHEET_BUTTON =
+  'inline-flex items-center justify-center rounded-md border border-gray-300 bg-white ' +
+  'px-2 py-1 text-[11px] font-medium text-gray-900 transition-colors hover:bg-gray-100 ' +
+  'disabled:cursor-not-allowed disabled:opacity-50';
+const SHEET_BUTTON_QUIET =
+  'inline-flex items-center justify-center rounded-md px-2 py-1 text-[11px] font-medium ' +
+  'text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900 ' +
+  'disabled:cursor-not-allowed disabled:opacity-50';
 import {
   ActivationBlocker,
   ActivationPosting,
@@ -128,9 +141,9 @@ function PostingRow({
               placeholder="reference they gave you (optional)"
               className="min-w-0 flex-1 rounded border border-gray-300 px-2 py-1 text-[11px]"
             />
-            <Button size="sm" variant="outline" onClick={acknowledge} disabled={busy}>
+            <button type="button" className={SHEET_BUTTON} onClick={acknowledge} disabled={busy}>
               {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : 'I told them'}
-            </Button>
+            </button>
           </div>
           {/* Said plainly, because the two outcomes are genuinely different and the operator
               is the one choosing between them. */}
@@ -233,16 +246,15 @@ export function ActionableInsight({
       <li className="flex items-start gap-2">
         <Circle className="mt-0.5 h-3 w-3 shrink-0 text-gray-400" />
         <span className="min-w-0 flex-1">{title}</span>
-        <Button
-          size="sm"
-          variant="outline"
-          className="h-6 shrink-0 px-2 text-[11px]"
+        <button
+          type="button"
+          className={`${SHEET_BUTTON} shrink-0`}
           onClick={activate}
           disabled={busy}
         >
           {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="mr-1 h-3 w-3" />}
           Activate
-        </Button>
+        </button>
         {error && <span className="w-full text-[10px] text-red-700">{error}</span>}
       </li>
     );
@@ -328,19 +340,18 @@ export function ActionableInsight({
                 placeholder="why not?"
                 className="min-w-0 flex-1 rounded border border-gray-300 px-2 py-1 text-[11px]"
               />
-              <Button size="sm" variant="outline" onClick={reject} disabled={busy || !reason.trim()}>
+              <button type="button" className={SHEET_BUTTON} onClick={reject} disabled={busy || !reason.trim()}>
                 Decline
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => setRejecting(false)}>
+              </button>
+              <button type="button" className={SHEET_BUTTON_QUIET} onClick={() => setRejecting(false)}>
                 Cancel
-              </Button>
+              </button>
             </div>
           ) : (
             <div className="flex items-center gap-1.5">
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-6 px-2 text-[11px]"
+              <button
+                type="button"
+                className={SHEET_BUTTON}
                 onClick={confirm}
                 disabled={busy}
                 // NOT disabled on `readyToConfirm`. The server is the authority, and a button
@@ -353,15 +364,14 @@ export function ActionableInsight({
                   <Check className="mr-1 h-3 w-3" />
                 )}
                 Confirm done
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-6 px-2 text-[11px]"
+              </button>
+              <button
+                type="button"
+                className={SHEET_BUTTON_QUIET}
                 onClick={() => setRejecting(true)}
               >
                 Decline
-              </Button>
+              </button>
               {!activation.readyToConfirm && (
                 <span className="text-[10px] text-gray-500">
                   {activation.blockers.length} thing

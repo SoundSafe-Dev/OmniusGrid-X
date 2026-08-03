@@ -163,6 +163,19 @@ def _describe(event: Any, event_type: str) -> str:
             f"{', ' + event.reason_code if event.reason_code else ''}) — not yet entered in "
             f"this system."
         )
+    if event_type == EventType.INSIGHT_ACTIVATION:
+        # WITHOUT THIS BRANCH an activation fell through to the generic sentence below, and
+        # every manual posting told a supervisor "see the event record" — which names nothing,
+        # points at a table they cannot open, and is exactly the useless handover the ledger
+        # exists to replace. Found by clicking Activate in the running UI; the tests did not
+        # catch it because one of them asserted `"..." in instruction or instruction`, which
+        # is true for any non-empty string.
+        domain = f" ({event.domain})" if getattr(event, "domain", None) else ""
+        detail = f" — {event.description}" if getattr(event, "description", None) else ""
+        return (
+            f"{event.title}{domain}{detail} — activated at "
+            f"{event.issued_at:%Y-%m-%d %H:%M} and NOT yet entered in this system."
+        )
     return "A shop-floor event needs entering by hand; see the event record."
 
 

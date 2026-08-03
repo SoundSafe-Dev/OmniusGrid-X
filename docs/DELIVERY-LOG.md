@@ -1460,3 +1460,63 @@ the file rather than left silent.
 A guard pins the three converted modules, because reverting to a bare `create_async_engine`
 keeps them passing while they stop checking anything — a failure mode that is invisible by
 construction.
+
+---
+
+## FS-411 — clicking the button found what nothing else could
+
+The flagship claim is that an actionable insight in a correlation session becomes dispatched
+work. It had never been clicked. Driving it end to end in a browser found four things.
+
+### The demo session had no conversation in it
+
+Three data sources, zero messages. So the Correlation AI page opened on its empty state and
+the activation controls — the entire FS-406 surface — never appeared on the documented demo.
+A demo of an analysis session with no analysis in it.
+
+The seed now writes a short transcript whose recommended actions carry the domains the
+fan-out routes on. **It is labelled in the message text, not only in a field**: the
+correlation model is not loaded, so nothing there is an inference, and
+`SessionMessageResponse` carries no provenance field at all — see the finding below. A caveat
+that lives only in a field the transcript endpoint does not send is not a caveat.
+
+### Provenance dies when the page reloads *(other lane — reported, not touched)*
+
+`SessionChatResponse` carries `simulated` / `simulation_reason`, and the chat handler sets
+them on all three paths. `SessionMessageResponse` — the transcript model, used by
+`GET /nlp/sessions/{id}/messages`, `/chat/history` and `/chat/search` — **does not declare
+them at all**, and the builder does not read them from `msg.analysis`, where the data is.
+
+So a reply the engine marked as a heuristic is labelled while it is live in the chat and
+loses the label the moment the transcript is re-fetched. The frontend's `SessionMessage`
+interface declares both fields, so the client is asking for something no producer sends.
+`app/api/analysis_sessions.py` is Harsh's lane; the fix is to declare the two fields and read
+them from `msg.analysis`.
+
+### An activated insight told a supervisor "see the event record"
+
+`_describe()` in the fan-out had branches for the four floor events and no branch for
+`insight_activation`, so every manual posting fell through to a generic sentence that names
+nothing and points at a table an operator cannot open. The whole purpose of the analog path
+is the sentence somebody reads out.
+
+**Twenty-two tests did not catch it because one of them asserted
+`"not yet entered" in instruction.lower() or instruction`** — true for any non-empty string.
+A tautology in an assertion is worse than a missing test: it occupies the space where the
+real check would go.
+
+### The Activate button was invisible
+
+Measured **1.04:1** — `rgb(250,250,250)` on `rgb(255,255,255)`. The correlation transcript is
+a hardcoded white sheet regardless of theme; the shared `Button` styles from the app's theme
+tokens, which are near-white in dark mode. The control rendered, was clickable, had the right
+accessible name, and passed thirteen tests. Now 17.74:1, with the controls styled for the
+sheet they actually sit on and a class-level guard so it cannot regress.
+
+### And the demo understated itself
+
+The seeded SAP integration declared no `serves_systems`, so every shop-floor event and every
+activated insight fell to the analog path — seven targets all reading "needs a person" on a
+deployment the seed describes as fully synced. It now serves six of the seven, leaving
+purchasing manual on purpose: a shop whose purchasing runs on a phone call is the realistic
+case, and it is the half of the ledger worth showing.

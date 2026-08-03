@@ -218,7 +218,7 @@ async def main(verify: bool = False) -> int:
         DockDoor, Driver, DriverWaitTime, ERPCorrelation, ERPDataMapping,
         ERPEntity, ERPIntegrationEvent, ERPSyncStatus, GeoTabDiagnostic,
         GeoTabException, GeoTabTrip, IntegrationConfiguration,
-        Organization, Route, SessionDataSource, Shipment, Telemetry, User,
+        Organization, Route, SessionDataSource, SessionMessage, Shipment, Telemetry, User,
         Workcell, YardTrailer,
     )
     from app.db.logistics_models import (
@@ -287,6 +287,7 @@ async def main(verify: bool = False) -> int:
         asset_ids = [A_CNC, A_VIB, A_AUDIO, A_CAMERA, A_CONVEYOR]
         await db.execute(delete(Telemetry).where(Telemetry.asset_id.in_(asset_ids)))
         await db.execute(delete(Alarm).where(Alarm.asset_id.in_(asset_ids)))
+        await db.execute(delete(SessionMessage).where(SessionMessage.session_id == SESSION_ID))
         await db.execute(delete(SessionDataSource).where(SessionDataSource.session_id == SESSION_ID))
         await db.execute(delete(AnalysisSession).where(AnalysisSession.id == SESSION_ID))
         for model, col in [
@@ -502,6 +503,15 @@ async def main(verify: bool = False) -> int:
             id=ERP_INT, organization_id=ORG, integration_type="erp",
             integration_name="SAP S/4HANA — Plant CHI-01",
             configuration={"erp_type": "sap", "auth_type": "oauth2",
+                           # Which systems of record this ERP actually serves (FS-405). Without
+                           # it every shop-floor event and every activated insight falls to the
+                           # analog path, so the demo showed "needs a person" for all seven
+                           # targets and never once showed an integrated one — understating a
+                           # deployment the seed describes as fully synced. Purchasing is left
+                           # out ON PURPOSE: a shop whose purchasing runs on a phone call is
+                           # the realistic case, and it is the half of the ledger worth seeing.
+                           "serves_systems": ["inventory", "accounting", "production",
+                                              "quality", "scheduling", "maintenance"],
                            "base_url": "https://sap.demo.omniusgrid.local",
                            "auth_config": {"client_id": "omnius-demo"},
                            "rate_limit": {"requests_per_minute": 60, "burst_limit": 10},
@@ -1304,6 +1314,62 @@ async def main(verify: bool = False) -> int:
                                      file_name=result.file_name, data_type="spreadsheet",
                                      processed_data=result.to_processed_data(),
                                      meta_data={"platform_source": True, "source_type": source_type}))
+
+        # ---- a transcript, so the session demonstrates the thing it is named after -----
+        #
+        # The session had THREE DATA SOURCES AND NO CONVERSATION. So the Correlation AI page
+        # opened on its empty state ("Ask anything about your data") and the actionable-insight
+        # controls — the whole activation path, FS-406 — never appeared on the documented demo.
+        # A demo of an analysis session with no analysis in it.
+        #
+        # THESE ARE RECORDED, NOT INFERRED, AND SAY SO IN THE TEXT. The correlation model is
+        # not plugged in, so nothing here came from one. The label is in the message content
+        # rather than only in a field because `SessionMessageResponse` carries no provenance
+        # field at all — the live chat reply has `simulated`, and re-reading the transcript
+        # loses it (see the delivery log; analysis_sessions.py is another lane). A caveat that
+        # only exists in a field the transcript endpoint does not send is not a caveat.
+        _RECORDED = "[Recorded example — not a live model inference.] "
+        db.add(SessionMessage(
+            session_id=SESSION_ID, role="user",
+            content="Spindle vibration on CNC Mill #1 has been climbing for two weeks and "
+                    "WO-77105 is still open. What should we do before Friday's run?",
+            timestamp=NOW - timedelta(minutes=42),
+        ))
+        db.add(SessionMessage(
+            session_id=SESSION_ID, role="assistant",
+            content=(
+                _RECORDED
+                + "Vibration RMS on the CNC spindle has risen from 1.1 to 7.4 mm/s over 14 "
+                  "days, and the trend crosses the alarm threshold in about 6 days. WO-77105 "
+                  "(bearing replacement) is open against the same asset, and TRL-4482 is "
+                  "holding the replacement billet in Zone A-04 accruing detention.\n\n"
+                  "The three are the same problem: the bearing has not been changed because "
+                  "the part is still on a trailer nobody has unloaded."
+            ),
+            risk_score=78,
+            domains=["MAINTENANCE", "PRODUCTION_OEE", "LOGISTICS_FLEET"],
+            # The shape `CorrelationAIPane` renders, and the shape `ActionableInsight` posts
+            # to /api/v1/insights/activations: a title it can activate, plus the domain that
+            # decides which systems of record the activation has to reach.
+            actions=[
+                {"title": "Schedule preventive maintenance on the spindle bearing",
+                 "description": "WO-77105 is open; book the window before Friday's run.",
+                 "domain": "MAINTENANCE", "priority": "high"},
+                {"title": "Unload TRL-4482 and release the aluminium billet",
+                 "description": "Trailer is past free time and accruing detention.",
+                 "domain": "WAREHOUSE_MANAGEMENT", "priority": "high"},
+                {"title": "Adjust the production schedule around the maintenance window",
+                 "description": "Friday's run needs re-sequencing if the mill is down.",
+                 "domain": "PRODUCTION_OEE", "priority": "medium"},
+            ],
+            analysis={
+                "simulated": True,
+                "simulation_reason": "seeded demo transcript; the correlation model is not "
+                                     "loaded in this deployment",
+                "predicted_root_cause": "Bearing degradation blocked by an undelivered part",
+            },
+            timestamp=NOW - timedelta(minutes=41),
+        ))
         await db.commit()
 
         # ---- summary -----------------------------------------------------------
