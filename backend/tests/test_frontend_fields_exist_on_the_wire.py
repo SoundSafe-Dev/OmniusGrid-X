@@ -742,3 +742,76 @@ class TestAPassthroughClientDeclaresWhatTheWireSends:
             "producer anywhere in the backend. Either map the response to the declared "
             "shape, or declare what the endpoint sends:\n  " + "\n  ".join(offenders)
         )
+
+
+# ---------------------------------------------------------------------------------------
+# The fifth quadrant: interfaces declared in `src/api/` rather than `src/types/`.
+#
+# The sweeps above glob `src/types/*.ts`. Three interfaces written during the FS-393…FS-398
+# work — `DriverHOS`, `ShipmentCosts`, `FleetHealthStatistics` — live beside the clients that
+# use them, because they describe ONE endpoint's payload and belong next to it. That put
+# them outside every check on this page, one level up from the gap FS-393 came through.
+#
+# Small enough to hold to a stricter rule than the ratchets above: no allowance, an explicit
+# list of the two fields a client legitimately invents, and each says why.
+# ---------------------------------------------------------------------------------------
+
+#: Fields on `src/api/` interfaces that the CLIENT produces, not the server. Two, and both
+#: are real: one is a rename performed in code, one is connection state the browser owns.
+CLIENT_DERIVED: dict[str, str] = {
+    "FleetSummary.dataSourceWarning":
+        "a rename done in the client body — `dataSourceWarning: d.warning ?? null`. The "
+        "wire sends `warning`; this is not a phantom, it is the same value under a clearer "
+        "name, and the rename happens in code rather than in the inAliases map.",
+    "ConnectionStatus.pollingFallback":
+        "the browser's own state. The socket layer sets it when it gives up and falls back "
+        "to REST polling; no server could know it.",
+}
+
+
+def _api_interface_fields_without_producers() -> set[str]:
+    vocab = _wire_vocabulary()
+    found = set()
+    for path in sorted((FRONTEND / "api").glob("*.ts")):
+        if ".test." in path.name:
+            continue
+        text = COMMENT.sub(" ", path.read_text())
+        for match in INTERFACE.finditer(text):
+            interface, body = match.group(1), match.group(2)
+            for field in FIELD.finditer(body):
+                name = field.group(1)
+                if name not in vocab:
+                    found.add(f"{interface}.{name}")
+    return found
+
+
+class TestInterfacesBesideTheirClient:
+    def test_it_finds_them(self):
+        """Vacuity guard: these interfaces exist and are parsed. If the glob or the regex
+        drifts, the assertion below passes over an empty set."""
+        count = sum(
+            len(INTERFACE.findall(COMMENT.sub(" ", p.read_text())))
+            for p in (FRONTEND / "api").glob("*.ts")
+            if ".test." not in p.name
+        )
+        assert count >= 3, (
+            f"only {count} interfaces found in src/api/; DriverHOS, ShipmentCosts and "
+            "FleetHealthStatistics live there and this sweep should see all three"
+        )
+
+    def test_every_field_has_a_producer_or_a_reason(self):
+        unexplained = sorted(_api_interface_fields_without_producers() - set(CLIENT_DERIVED))
+        assert not unexplained, (
+            "these fields are declared on an interface in `src/api/` and no backend source "
+            "produces them. An interface written beside its client is still a claim about "
+            "the wire. Either the name is wrong, or the field belongs in CLIENT_DERIVED "
+            "with a reason:\n  " + "\n  ".join(unexplained)
+        )
+
+    def test_the_reasons_are_still_needed(self):
+        """An entry here for a field that has since gained a producer is dead weight, and
+        reads as permission for the next one."""
+        stale = sorted(set(CLIENT_DERIVED) - _api_interface_fields_without_producers())
+        assert not stale, (
+            f"CLIENT_DERIVED explains fields that no longer need explaining: {stale}"
+        )
