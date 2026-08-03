@@ -24,9 +24,20 @@ import { join } from 'node:path'
 
 const PAGES = join(__dirname, '..', 'pages')
 
-//: Hardcoded light-theme colour utilities. Deliberately not matching `text-white`, which is
-//: legitimate on a coloured status chip in either theme.
-const HARDCODED = /\b(?:text-gray-(?:[5-9]\d{2})|bg-gray-(?:\d{2,3})|bg-white|border-gray-\d{3})\b/g
+//: Only what actually breaks on the other theme, refined 2026-08-04 after the first version
+//: flagged correct code.
+//:
+//:   light SURFACES  bg-white, bg-gray-50/100/200      — a pale card in a dark shell
+//:   dark TEXT       text-gray-700/800/900             — invisible on a dark background
+//:   light BORDERS   border-gray-100/200/300           — a pale rule in a dark shell
+//:
+//: NOT flagged, because they are correct in both themes and flagging them would send someone
+//: to "fix" working code — which costs the same as missing a real defect and is harder to
+//: notice: mid greys used as STATUS SWATCHES (`bg-gray-400`, `bg-gray-500` returned from a
+//: getStatusColor), muted body text (`text-gray-500/600`), and anything carrying an opacity
+//: modifier (`bg-gray-500/20`), which composites over whatever background it sits on.
+const HARDCODED =
+  /\b(?:text-gray-(?:700|800|900)|bg-gray-(?:50|100|200)|bg-white|border-gray-(?:100|200|300))\b(?!\/)/g
 
 function tsxFiles(dir: string, acc: string[] = []): string[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -40,36 +51,57 @@ function tsxFiles(dir: string, acc: string[] = []): string[] {
 function offenders(): Record<string, number> {
   const out: Record<string, number> = {}
   for (const file of tsxFiles(PAGES)) {
-    const hits = (readFileSync(file, 'utf8').match(HARDCODED) || []).length
+    const source = readFileSync(file, 'utf8')
+    let hits = 0
+    // Per className string, so a light utility can be checked against the `dark:` variants
+    // sitting beside it.
+    for (const [, attr] of source.matchAll(/className=(?:\{`|["'`])([^"'`]*)/g)) {
+      for (const [match] of attr.matchAll(HARDCODED)) {
+        // PAIRED IS FINE. `bg-white dark:bg-gray-800` is complete theming — Tailwind is
+        // configured `darkMode: 'class'` and uiStore toggles `dark` on <html>, so both
+        // halves are live. Flagging it would send someone to "fix" a page that works, and a
+        // guard that cries wolf gets ignored, which costs more than the defect it missed.
+        const property = match.startsWith('bg-')
+          ? 'bg-'
+          : match.startsWith('text-')
+            ? 'text-'
+            : 'border-'
+        if (attr.includes(`dark:${property}`)) continue
+        hits += 1
+      }
+    }
     if (hits) out[file.slice(file.indexOf('src/'))] = hits
   }
   return out
 }
 
 describe('routed pages use the theme tokens', () => {
-  // Measured 2026-08-03 by walking src/pages RECURSIVELY. A first pass at this number used
-  // a non-recursive shell glob and reported one file; there are five. LOWER these as pages
-  // are converted, never raise them, and a new page must not appear here at all.
-  const KNOWN: Record<string, number> = {
-    'src/pages/Kanban.tsx': 23,
-    'src/pages/logistics/TransportationManagement.tsx': 8,
-    'src/pages/logistics/YardManagement.tsx': 6,
-    'src/pages/intake/IntakeInbox.tsx': 1,
+  //: Deliberate, not debt. Measured 2026-08-04 with the pair-aware detector below.
+  //:
+  //: Login's single `bg-white` is a fixed white tile behind the product logo, so the logo
+  //: reads in either theme — the tile is the artwork's background, not the page's.
+  //:
+  //: THE FIRST VERSION OF THIS FILE LISTED FIVE PAGES AND 39 OCCURRENCES. Almost all of it
+  //: was the detector's fault: mid greys returned from a `getStatusColor` as status dots,
+  //: translucent chips like `bg-gray-500/20`, and — the biggest group — Kanban's complete
+  //: `bg-white dark:bg-gray-800` pairs, which are correct theming by Tailwind's own
+  //: mechanism (`darkMode: 'class'`, and uiStore toggles `dark` on <html>). Acting on that
+  //: list would have meant rewriting about forty working usages.
+  const ALLOWED: Record<string, number> = {
     'src/pages/auth/Login.tsx': 1,
   }
 
-  it('does not add a new page that hardcodes light-theme colours', () => {
+  it('no page hardcodes a light-theme colour without a dark pair', () => {
     const found = offenders()
-    const unexpected = Object.keys(found).filter((f) => !(f in KNOWN)).sort()
+    const unexpected = Object.keys(found).filter((f) => !(f in ALLOWED)).sort()
     expect(unexpected).toEqual([])
   })
 
-  it('does not let a known page get worse', () => {
+  it('the allowances are exact, with no spare slots', () => {
+    // A ceiling with room in it is a free pass for the next one. Same rule the phantom-field
+    // ratchet enforces: one spare slot is one free defect.
     const found = offenders()
-    const worse = Object.entries(KNOWN)
-      .filter(([file, cap]) => (found[file] ?? 0) > cap)
-      .map(([file, cap]) => `${file}: ${found[file]} > ${cap}`)
-    expect(worse).toEqual([])
+    expect(found).toEqual(ALLOWED)
   })
 
   it('the tokens it wants actually exist in the tailwind config', () => {
@@ -78,6 +110,24 @@ describe('routed pages use the theme tokens', () => {
     const config = readFileSync(join(__dirname, '..', '..', 'tailwind.config.js'), 'utf8')
     for (const token of ['bg', 'panel', 'border', 'text', 'text-secondary']) {
       expect(config).toContain(`'${token}':`)
+    }
+  })
+
+  it('does not flag a light utility that carries a dark pair', () => {
+    // Pins the correction itself: Kanban's approach must stay valid.
+    const paired = 'className="bg-white dark:bg-gray-800 text-gray-900 dark:text-white"'
+    expect([...paired.matchAll(HARDCODED)].length).toBeGreaterThan(0)
+    const unpaired = [...paired.matchAll(HARDCODED)].filter(([m]) => {
+      const prop = m.startsWith('bg-') ? 'bg-' : m.startsWith('text-') ? 'text-' : 'border-'
+      return !paired.includes(`dark:${prop}`)
+    })
+    expect(unpaired).toEqual([])
+  })
+
+  it('does not flag a translucent chip or a status swatch', () => {
+    for (const attr of ['className="bg-gray-500/20 text-gray-500"',
+                        "className={'bg-gray-400'}"]) {
+      expect([...attr.matchAll(HARDCODED)]).toEqual([])
     }
   })
 })

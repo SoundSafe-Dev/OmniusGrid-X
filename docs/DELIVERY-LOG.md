@@ -1734,3 +1734,41 @@ guards proved they work in the process: the run before the release failed *three
 checks, because a quarantined test had started passing.
 
 **3,223 passed, 0 failed**, with foreign keys enforced across the whole suite.
+
+---
+
+## FS-416 — the theme guard was mostly wrong, and checking cost less than acting
+
+`pagesUseThemeTokens` was written in FS-409 to stop another page shipping unreadable, and it
+recorded **five pages carrying 39 hardcoded light-theme utilities** as debt to be converted.
+
+Before converting them, I looked at what it had actually flagged. **Almost all of it was the
+detector's fault:**
+
+- **Mid greys returned from `getStatusColor`** — `bg-gray-400` for a "planned" dot,
+  `bg-gray-500` for "maintenance". A swatch colour, not a surface, and correct in both
+  themes.
+- **Translucent chips** — `bg-gray-500/20 text-gray-500`, which composites over whatever it
+  sits on. The same alpha blind spot that made the contrast checker report a heading at
+  1.0:1.
+- **The biggest group: Kanban's complete `dark:` pairs.** `bg-white dark:bg-gray-800`,
+  `text-gray-900 dark:text-white`. That is correct theming by Tailwind's own mechanism —
+  `darkMode: 'class'` in the config, and `uiStore` toggles `dark` on `<html>`. A different
+  approach from the CSS-variable tokens, and a complete one.
+
+**Genuine offenders across every routed page: one.** Login's single `bg-white`, a fixed white
+tile behind the product logo so the artwork reads in either theme — the tile is the logo's
+background, not the page's.
+
+Acting on the original list would have meant rewriting about forty working usages, in three
+files across two other lanes, to fix nothing.
+
+The detector is now pair-aware and scoped to what actually breaks — light surfaces, dark
+text, light borders, none of them with an opacity modifier — and the allowance list is exact
+rather than a ceiling, because a ceiling with room in it is a free pass for the next one.
+Both properties are pinned: a page with an unpaired `bg-white text-gray-900` fails it, and a
+`dark:`-paired one does not.
+
+**Third instrument error in this sweep**, after the contrast checker and the FK probe. The
+pattern is consistent enough to state plainly: *when a new guard reports a large number,
+the first hypothesis is the guard.*
