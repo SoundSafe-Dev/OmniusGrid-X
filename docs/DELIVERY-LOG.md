@@ -1685,3 +1685,52 @@ The first version of `test_foreign_keys_are_enforced_for_sqlite` built its engin
 `OFF` left the test passing: it was asserting that the helper worked, not that the global
 enforcement did. It now uses a plain `create_async_engine`, which has done nothing to earn
 the pragma, and the mutation fails it.
+
+---
+
+## FS-415 — the last quarantined test, and what it was hiding
+
+`test_map_section_to_domain_table_content` had been red all session and was recorded as
+another lane's problem. The quarantine register stated the choice honestly:
+
+> either table-content mapping has a gap, or the expectation was never right. Deciding needs
+> the lane that owns the keyword sets.
+
+**It was the gap**, and `git log` settled the rest: the test was added on 2026-06-08 in the
+same commit as the mapper, against a byte-identical keyword map. **It had never passed.** Not
+a regression anyone introduced — a reasonable expectation written against an incomplete
+vocabulary.
+
+`COLUMN_KEYWORD_DOMAIN_MAP` contained **no asset word and no failure word anywhere in it**,
+in a platform whose central noun is an asset.
+
+### The red test was not the cost
+
+`document_scenario_builder` does `if domain is None: continue`. So a document table keyed on
+`asset_id` with a `failed` status produced **no correlation scenario at all**, while the page
+still reported as processed. A silent omission sitting behind a quarantined test that read as
+a taxonomy argument — which is exactly why the register's own rule exists:
+
+> before accepting that a quarantined test is another lane's problem, check whether the code
+> under it is *running*.
+
+It was running. On every intake.
+
+### Widening a keyword list can misroute, so it is pinned from both sides
+
+Adding `asset_id` to maintenance could have pulled quality, production and energy sheets in
+with it — trading a silent omission for a silent misroute, which is worse, because it
+produces a confident wrong answer instead of nothing. `_match_keywords` takes the
+**highest-scoring** domain rather than the first hit, so a table carrying `defect` and
+`inspection` still resolves to quality even with an `asset_id` column. That property now has
+a test, as does the other end: a table with no operational vocabulary still resolves to
+nothing.
+
+### The register is empty
+
+CI runs every test with no `--ignore` and no `--deselect`. Releasing it meant removing the
+entry from `test_quarantine.py`, `test_ci_quarantine_expires.py` and `ci-cd.yml` — and the
+guards proved they work in the process: the run before the release failed *three* staleness
+checks, because a quarantined test had started passing.
+
+**3,223 passed, 0 failed**, with foreign keys enforced across the whole suite.

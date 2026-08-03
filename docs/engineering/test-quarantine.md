@@ -36,19 +36,41 @@ work than fixing most things.
 
 ## Currently quarantined
 
-One entry, expiring **2026-09-23**.
+**Nothing.** The register is empty as of 2026-08-04, and CI runs every test with no
+deselects.
 
-**`tests/test_document_domain_mapper.py::test_map_section_to_domain_table_content`**
-— owner: HARSH (intake/parsing).
+### The last entry, and why it took two months
 
-`map_section_to_domain` returns `None` for a table whose header row is
-`["asset_id", "status"]` with a `"failed"` cell, where the test expects `MNT`. This is a
-disagreement about what the mapper *should* do, not about what it is called: either
-table-content mapping has a gap, or the expectation was never right. Deciding needs the lane
-that owns the keyword sets.
+`tests/test_document_domain_mapper.py::test_map_section_to_domain_table_content` was the
+only survivor of the original five, and the only one that ever needed a judgement rather
+than a rewrite. This register stated the choice correctly:
 
-It is the only survivor of the original five, and the only one that ever needed a judgement
-call rather than a rewrite.
+> either table-content mapping has a gap, or the expectation was never right. Deciding needs
+> the lane that owns the keyword sets.
+
+**It was the gap.** `COLUMN_KEYWORD_DOMAIN_MAP` contained no asset word and no failure word
+anywhere in it — in a platform whose central noun is an asset. `git log` settled the rest:
+the test was added in the same commit as the mapper, against a byte-identical keyword map,
+so it had **never passed**. It was not a regression anyone introduced; it was a reasonable
+expectation written against an incomplete vocabulary.
+
+The red test was not the cost. `document_scenario_builder` does `if domain is None:
+continue`, so a document table keyed on `asset_id` produced **no correlation scenario at
+all** while the page still reported as processed. Silent omission behind a quarantined test
+that read as a taxonomy argument.
+
+Widening a keyword list can misroute, so the fix is pinned from both sides: a table carrying
+`defect` and `inspection` still resolves to quality even with an `asset_id` column (scoring
+takes the highest-scoring domain, not the first hit), and a table with no operational
+vocabulary still resolves to nothing.
+
+**This is the entry that justifies the register's own rule** — recorded here after the
+2026-07-30 release and proved again now:
+
+> before accepting that a quarantined test is another lane's problem, check whether the code
+> under it is *running*.
+
+It was running. On every intake.
 
 ---
 

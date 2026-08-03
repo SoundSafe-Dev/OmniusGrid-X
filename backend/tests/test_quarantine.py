@@ -65,25 +65,20 @@ _EXPIRY = date(2026, 9, 23)
 #: analysis_sessions.py call them on every intake — so CI was skipping coverage
 #: of production code, not of an unbuilt feature. The rewrites assert the
 #: contract each module's own docstring states.
-REGISTER: tuple[Quarantined, ...] = (
-    Quarantined(
-        target="tests/test_document_domain_mapper.py::test_map_section_to_domain_table_content",
-        owner="HARSH (intake/parsing)",
-        # The one entry that is NOT a stale-API mismatch, and the reason it stays.
-        # map_section_to_domain returns None for a table whose header row is
-        # ["asset_id", "status"] with a "failed" cell, where the test expects MNT.
-        # That is a disagreement about what the mapper should do, not about what
-        # it is called: either table-content mapping has a gap, or the test's
-        # expectation was never right. Deciding needs the lane that owns the
-        # keyword sets — the other four did not need anyone's judgement.
-        diagnosis=(
-            "map_section_to_domain returns None where the test expects MNT for "
-            "table content; collects fine. NOT an API mismatch — a genuine "
-            "disagreement about mapping behaviour."
-        ),
-        expires=_EXPIRY,
-    ),
-)
+#: EMPTY as of 2026-08-04 (FS-415). The last entry — the domain mapper's table-content
+#: branch — was the only one that ever needed a judgement rather than a rewrite, and the
+#: register framed the choice correctly: "either table-content mapping has a gap, or the
+#: expectation was never right."
+#:
+#: It was the gap. The keyword map contained no asset or failure word anywhere, and the
+#: test had never passed since the day it was written alongside the mapper. The cost was not
+#: the red test: `document_scenario_builder` does `if domain is None: continue`, so a table
+#: keyed on asset_id produced no correlation scenario while the page still reported as
+#: processed.
+#:
+#: An empty register is the goal, not a reason to delete this file. The guards below still
+#: run, and the moment someone adds an entry they inherit an owner, a diagnosis and an expiry.
+REGISTER: tuple[Quarantined, ...] = ()
 
 
 def _run(target: str) -> subprocess.CompletedProcess:

@@ -267,18 +267,26 @@ green, and the remaining ~82 are enumerated in
 [docs/engineering/api-contract-gate.md](docs/engineering/api-contract-gate.md) — including
 the ~20 `503`s that are the job's own missing Redis and broker rather than API defects.
 
-**CI excludes exactly one test, and it is written down.** Every `--ignore`/`--deselect` flag in
+**CI excludes nothing, and the register that would hold an exclusion is empty.** Every
+`--ignore`/`--deselect` flag in
 `ci-cd.yml` must have an entry in [`backend/tests/test_quarantine.py`](backend/tests/test_quarantine.py)
 carrying an owner, a real diagnosis and an expiry date. That suite fails when a window lapses,
 when a quarantined test starts *passing* (CI skipping working coverage is worse than a known
 failure), and when the register and the workflow drift apart in either direction — so an
 exclusion cannot become permanent by nobody noticing.
 
-Currently quarantined: `test_map_section_to_domain_table_content` — the document mapper's
-table-content branch and its test disagree about what `["asset_id", "status"]` with a
-`"failed"` cell should map to. Owner HARSH, expires 2026-09-23. Four other entries were
-released on 2026-07-30; the story of why they sat there for two weeks, and the rule it earned,
-is in [docs/engineering/test-quarantine.md](docs/engineering/test-quarantine.md).
+Currently quarantined: **nothing**, since 2026-08-04. The last entry —
+`test_map_section_to_domain_table_content` — was the only one that ever needed a judgement
+rather than a rewrite, and the register stated the choice honestly: *either table-content
+mapping has a gap, or the expectation was never right.* It was the gap. `git log` showed the
+test was added in the same commit as the mapper against a byte-identical keyword map, so it
+had **never passed**, and the keyword map contained no asset word and no failure word
+anywhere — in a platform whose central noun is an asset. The red test was not the cost:
+`document_scenario_builder` does `if domain is None: continue`, so a table keyed on
+`asset_id` produced no correlation scenario while the page still reported as processed. Four
+other entries were released on 2026-07-30; both stories, and the rule they earned — *check
+whether the code under a quarantined test is actually running* — are in
+[docs/engineering/test-quarantine.md](docs/engineering/test-quarantine.md).
 
 ---
 

@@ -143,8 +143,9 @@ jobs:
           # This is a ratchet: it cannot be met by deleting tests, and it fails if
           # new untested code dilutes the total. Raise it as coverage improves; do
           # NOT lower it to make a build pass.
-          pytest --cov=app --cov-report=xml --cov-report=term --cov-fail-under=59 \
-            --deselect tests/test_document_domain_mapper.py::test_map_section_to_domain_table_content
+          # No deselects. The last quarantine entry was released 2026-08-04 (FS-415):
+          # the mapper's vocabulary was genuinely incomplete, not the test's expectation.
+          pytest --cov=app --cov-report=xml --cov-report=term --cov-fail-under=59
 
       - name: Upload coverage
         uses: codecov/codecov-action@v3

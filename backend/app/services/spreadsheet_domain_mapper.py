@@ -89,8 +89,19 @@ TAB_NAME_DOMAIN_MAP: Dict[str, DomainType] = {
 COLUMN_KEYWORD_DOMAIN_MAP: Dict[DomainType, List[str]] = {
     DomainType.LOG: ["trailer", "truck", "dock", "yard", "detention", "carrier",
                      "driver", "shipment", "tracking_number", "freight", "transit"],
+    # `asset_id` and the failure words were absent from THE ENTIRE MAP, not just from this
+    # row — conspicuous in a platform whose central noun is an asset (FS-415). The
+    # consequence was silent: `document_scenario_builder` does `if domain is None: continue`,
+    # so a table keyed on asset_id with a `failed` status produced no correlation scenario at
+    # all, and the page still reported as processed.
+    #
+    # Safe to widen because `_match_keywords` takes the HIGHEST-SCORING domain, not the first
+    # hit: a sheet carrying `defect` and `inspection` still resolves to QUA even with an
+    # asset_id column. These only decide cases that previously resolved to nothing.
     DomainType.MNT: ["maintenance", "vibration", "work_order", "technician",
-                     "downtime", "runtime_hours", "failure_probability", "pm_schedule"],
+                     "downtime", "runtime_hours", "failure_probability", "pm_schedule",
+                     "asset_id", "asset_tag", "equipment_id", "mtbf", "mttr",
+                     "failure", "failed", "breakdown", "repair"],
     DomainType.PROD: ["oee", "throughput", "cycle_time", "planned_units",
                       "actual_units", "production_order", "changeover"],
     DomainType.QUA: ["defect", "inspection", "first_pass_yield", "scrap",

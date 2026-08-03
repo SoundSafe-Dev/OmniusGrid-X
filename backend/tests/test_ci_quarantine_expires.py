@@ -72,21 +72,9 @@ IGNORED_FILES: dict[str, Quarantined] = {}
 #: it was the same stale-API defect as the files above (it subscripted the mapping
 #: object and passed its text under the wrong key), not the taxonomy disagreement
 #: this entry guessed at.
-DESELECTED: dict[str, Quarantined] = {
-    "tests/test_document_domain_mapper.py::test_map_section_to_domain_table_content": (
-        Quarantined(
-            reason="fails on assertion, not collection; the domain mapper's table-content "
-                   "branch does not return what the test expects.",
-            owner="intake lane (domain mappers)",
-            expires="2026-09-30",
-            fix="map_section_to_domain returns None for a table whose header row is "
-                "['asset_id', 'status'] with a 'failed' cell, where the test expects MNT. "
-                "One of the two is wrong and the assertion does not say which — decide "
-                "which is the intended taxonomy first. This is the only one of the "
-                "original five that needs that decision rather than a rewrite.",
-        )
-    ),
-}
+#: EMPTY as of 2026-08-04 (FS-415) — see the note on REGISTER in test_quarantine.py.
+#: CI now runs every test with no deselects.
+DESELECTED: dict[str, Quarantined] = {}
 
 
 def _workflow_text() -> str:
