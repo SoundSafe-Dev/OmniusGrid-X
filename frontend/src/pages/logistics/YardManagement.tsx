@@ -25,6 +25,19 @@ import {
 import { Button, Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
 import { YardMapPanel } from '../../components/yard/YardMapPanel';
 
+// A DOCKED TRAILER HAS NO `yardLocation`, so the Location column fell through to
+// `assignedDoorId` and printed a raw uuid — "88888888-0000-4000-8000-000000000003" — in a
+// column an operator reads to find where a trailer physically is. Resolve through the door
+// list, which the page already loads for the Dock Doors tab.
+//
+// Never falls back to the id: an unresolvable door is a data problem, and printing the uuid
+// tells the operator nothing they can act on.
+const doorLabel = (doorId: string | null | undefined, doors: DockDoor[]) => {
+  if (!doorId) return null;
+  const door = doors.find((d) => d.id === doorId);
+  return door ? `Door ${door.doorNumber}` : 'Door (unknown)';
+};
+
 const YARD_QUERY_KEY = 'yard';
 
 export const YardManagement: FC = () => {
@@ -139,7 +152,12 @@ export const YardManagement: FC = () => {
   const formatDuration = (minutes?: number) => {
     if (!minutes) return 'N/A';
     const hours = Math.floor(minutes / 60);
-    const mins = minutes % 60;
+    // ROUNDED. `minutes % 60` on a float from the detention calculator rendered
+    // "4h 11.300000000000011m excess" on the detention banner — a floating-point artifact
+    // shown to an operator next to a dollar figure they are expected to act on. Nothing
+    // automated caught it: the text was present, the page had no errors, and the number was
+    // even approximately right.
+    const mins = Math.round(minutes % 60);
     return hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
   };
 
@@ -427,7 +445,7 @@ export const YardManagement: FC = () => {
                       </td>
                       <td className="px-4 py-3 text-sm">{trailer.carrierName}</td>
                       <td className="px-4 py-3 text-sm">
-                        {trailer.yardLocation || trailer.assignedDoorId || '-'}
+                        {trailer.yardLocation || doorLabel(trailer.assignedDoorId, doors) || '-'}
                       </td>
                       <td className="px-4 py-3 text-sm">
                         {trailer.checkedInAt && (
@@ -813,7 +831,9 @@ const TrailerDetailModal: FC<{
             </div>
             <div>
               <p className="text-sm text-opsgrid-text-secondary">Current Location</p>
-              <p className="font-medium">{trailer.yardLocation || trailer.assignedDoorId || 'In Transit'}</p>
+              <p className="font-medium">
+                {trailer.yardLocation || doorLabel(trailer.assignedDoorId, doors) || 'In Transit'}
+              </p>
             </div>
           </div>
 

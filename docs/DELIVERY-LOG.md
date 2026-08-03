@@ -1383,3 +1383,36 @@ a white sheet on purpose, so a blanket ban would be wrong.
 there are five. The test found it immediately by walking the tree. The guard was right and
 the hand measurement was wrong, which is the argument for putting the number in a test rather
 than in a comment.
+
+### The 31-route browser sweep, and two things it could not have found
+
+Every routed page driven against the freshly seeded database: **31/31 clean** — no blank
+panes, no console errors, no 4xx/5xx. That is the whole surface, not a sample.
+
+Two real defects came from *looking at* one of those pages, not from the sweep:
+
+- **`4h 11.300000000000011m excess`** on the detention banner. `minutes % 60` on a float from
+  the detention calculator, rendered next to a dollar figure an operator is expected to act
+  on. The text was present, the page had no errors, and the number was even approximately
+  right.
+- **A raw uuid in the Location column.** A docked trailer has no `yardLocation`, so the cell
+  fell through to `assignedDoorId` and printed
+  `88888888-0000-4000-8000-000000000003` in the column an operator reads to go and find the
+  trailer. It now resolves through the door list the page already loads — `Door D3` — and an
+  unresolvable door says `Door (unknown)` rather than falling back to the id, because
+  printing the uuid tells nobody anything.
+
+Both are covered by tests, both mutation-verified.
+
+**The sweep's own contrast check was wrong twice before it was right.** It first reported
+"Detention Alerts" at 1.0:1 — apparently invisible — because it read `rgba(239,68,68,0.1)` as
+a solid colour, which is exactly the text colour. Compositing the alpha over the page
+background gives a perfectly legible ratio. Two flagged routes became zero. A guard that
+cries wolf on translucent backgrounds would have sent someone to "fix" correct code, which is
+the same cost as missing a real defect and harder to notice.
+
+The fixture for the float test was also wrong first: it invented `detentionCharge` when the
+type declares `currentCharge`, the banner called `.toLocaleString()` on undefined, the
+component threw, and the page rendered empty — which reads as a component bug rather than a
+bad fixture. That test file's own header warns about precisely this. **Read the type; do not
+guess the shape.**

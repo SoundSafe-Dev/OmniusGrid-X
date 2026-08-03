@@ -183,3 +183,64 @@ describe('YardManagement — search', () => {
     expect(await screen.findByText('TR-1001')).toBeInTheDocument()
   })
 })
+
+
+describe('what the operator actually reads', () => {
+  // Both of these were found by LOOKING at a screenshot of the running page against seeded
+  // data. Every structural check passed: the text was present, there were no console errors,
+  // no failed requests, and the page was not blank. It was just wrong.
+
+  it('does not print a raw uuid where a trailer physically is', async () => {
+    // A docked trailer has no `yardLocation`, so the Location column fell through to
+    // `assignedDoorId` and rendered "88888888-0000-4000-8000-000000000003" in a column an
+    // operator reads to go and find the trailer.
+    getTrailers.mockResolvedValue({
+      items: [trailer({ trailerId: 'TR-2002', status: 'docked', yardLocation: null,
+                        assignedDoorId: 'door-uuid-1' })],
+      total: 1, skip: 0, limit: 50, hasMore: false,
+    })
+    getDockDoors.mockResolvedValue([
+      { id: 'door-uuid-1', doorNumber: '12', status: 'occupied', doorType: 'inbound' },
+    ])
+    wrap()
+
+    expect(await screen.findByText('TR-2002')).toBeInTheDocument()
+    expect(await screen.findByText('Door 12')).toBeInTheDocument()
+    expect(screen.queryByText('door-uuid-1')).not.toBeInTheDocument()
+  })
+
+  it('says so rather than showing the id when the door cannot be resolved', async () => {
+    getTrailers.mockResolvedValue({
+      items: [trailer({ trailerId: 'TR-2003', status: 'docked', yardLocation: null,
+                        assignedDoorId: 'missing-door' })],
+      total: 1, skip: 0, limit: 50, hasMore: false,
+    })
+    getDockDoors.mockResolvedValue([])
+    wrap()
+
+    expect(await screen.findByText('TR-2003')).toBeInTheDocument()
+    expect(await screen.findByText('Door (unknown)')).toBeInTheDocument()
+    expect(screen.queryByText('missing-door')).not.toBeInTheDocument()
+  })
+
+  it('does not render a floating-point artifact in a detention figure', async () => {
+    // The banner read "4h 11.300000000000011m excess" next to a dollar amount the operator
+    // is expected to act on. `minutes % 60` on a float from the detention calculator.
+    // Shape read off `DetentionAlert` in types/logistics.ts, not invented: the charge field
+    // is `currentCharge`, and the banner calls `.toLocaleString()` on it, so a fixture
+    // missing it throws and renders an empty document — which reads as a component bug
+    // rather than a bad fixture. This test file's own header warns about exactly that.
+    getDetentionAlerts.mockResolvedValue([{
+      trailerId: 'TR-4482', trailerNumber: 'TR-4482', status: 'detention',
+      licensePlate: 'IL TRL4482', carrierName: 'Great Lakes Freight',
+      yardLocation: 'Zone A-04', checkInAt: '2026-08-03T12:00:00Z',
+      elapsedMinutes: 371.3, freeMinutes: 120,
+      detentionMinutes: 251.30000000000001, currentCharge: 209.46,
+    }])
+    wrap()
+
+    const excess = await screen.findByText(/excess/)
+    expect(excess.textContent).toMatch(/^4h 11m excess$/)
+    expect(excess.textContent).not.toMatch(/\d\.\d{3,}/)
+  })
+})
