@@ -1589,5 +1589,13 @@ Neither model declared a `relationship()`, so the unit of work had no edge to or
 fixed at the source rather than in the fixture, along with `SessionDataSource`, which has the
 same shape and is written by the seed.
 
-**Ratchet 62 → 61 → 58.** Every step was paid for by a missing edge actually biting
-something, which is the only way that number should move.
+**Ratchet 62 → 61 → 58 → 54.** Converting `test_writes_round_trip.py` next tripped three
+more — `alarms`, `geotab_diagnostics`, `geotab_exceptions` — and each was fixed at the model
+rather than in the fixture, so the ordering is correct everywhere including the seed and the
+API. Every step was paid for by a missing edge actually biting something, which is the only
+way that number should move.
+
+Five modules now enforce foreign keys. The pattern has held every time: convert a module,
+watch it fail on an insert order that real Postgres would have rejected all along, add the
+missing edge, move on. Nothing found this way was a test bug — every one was a hazard the
+suite could not see.

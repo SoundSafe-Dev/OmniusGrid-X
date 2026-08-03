@@ -256,6 +256,11 @@ class Alarm(Base):
     # so RLS could not protect it and tenancy depended entirely on every query
     # joining `assets` — five of six endpoints did not. Now RLS-enforced.
     organization_id = UUIDForeignKey("organizations.id")
+    #: Ordering only (FS-408/410); see IntegrationConfiguration. Without it the unit of
+    #: work can flush this row before the parent it references — a foreign key
+    #: violation on Postgres that SQLite accepts silently.
+    asset = relationship("Asset", lazy="raise")
+    organization = relationship("Organization", lazy="raise")
     alarm_code = Column(String(100), nullable=False)
     severity = Column(String(20), nullable=False)
     message = Column(Text, nullable=False)
@@ -1164,6 +1169,8 @@ class GeoTabTrip(Base):
     driver_id = UUIDForeignKey("drivers.id", nullable=True)
     vehicle_id = Column(String(100))  # VIN or internal vehicle ID
     organization_id = UUIDForeignKey("organizations.id", nullable=True)
+    #: Ordering only (FS-408/410); see IntegrationConfiguration.
+    organization = relationship("Organization", lazy="raise")
     
     # Trip timing
     start_time = Column(DateTime(timezone=True), nullable=False)
@@ -1195,6 +1202,10 @@ class GeoTabDiagnostic(Base):
     device_id = Column(String(100), nullable=False, index=True)
     vehicle_id = Column(String(100))
     organization_id = UUIDForeignKey("organizations.id", nullable=True)
+    #: Ordering only (FS-408/410); see IntegrationConfiguration. Without it the unit of
+    #: work can flush this row before the parent it references — a foreign key
+    #: violation on Postgres that SQLite accepts silently.
+    organization = relationship("Organization", lazy="raise")
     
     # Diagnostic data
     dtc_code = Column(String(20), nullable=False)  # e.g., "P0115"
@@ -1226,6 +1237,8 @@ class GeoTabException(Base):
     device_id = Column(String(100), nullable=False, index=True)
     driver_id = UUIDForeignKey("drivers.id", nullable=True)
     organization_id = UUIDForeignKey("organizations.id", nullable=True)
+    #: Ordering only (FS-408/410); see IntegrationConfiguration.
+    organization = relationship("Organization", lazy="raise")
     
     # Exception details
     exception_type = Column(String(50), nullable=False)  # harsh_braking, speeding, hos_violation, idle_time, seat_belt

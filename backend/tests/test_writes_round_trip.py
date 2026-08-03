@@ -31,7 +31,9 @@ import uuid
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker
+
+from tests._sqlite import create_all, sqlite_engine
 
 from app.db.models import Asset, AssetType, Base, Organization, Workcell
 
@@ -48,13 +50,13 @@ async def api():
     from app.db.database import get_db
     from app.main import app as fastapi_app
 
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    # FK-enforcing; see tests/_sqlite.py.
+    engine = sqlite_engine()
     tables = [
         Organization.__table__, Workcell.__table__,
         AssetType.__table__, Asset.__table__,
     ]
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all, tables=tables)
+    await create_all(engine, Base.metadata, tables)
     maker = async_sessionmaker(engine, expire_on_commit=False)
 
     # Seed the rows the create path's foreign keys need.
@@ -173,13 +175,13 @@ async def alarm_api():
     from app.db.models import Alarm
     from app.main import app as fastapi_app
 
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    # FK-enforcing; see tests/_sqlite.py.
+    engine = sqlite_engine()
     tables = [
         Organization.__table__, Workcell.__table__, AssetType.__table__,
         Asset.__table__, Alarm.__table__,
     ]
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all, tables=tables)
+    await create_all(engine, Base.metadata, tables)
     maker = async_sessionmaker(engine, expire_on_commit=False)
 
     asset_id = uuid.uuid4()
@@ -284,12 +286,12 @@ async def fleet_api():
     from app.db.models import GeoTabDiagnostic, GeoTabException
     from app.main import app as fastapi_app
 
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    # FK-enforcing; see tests/_sqlite.py.
+    engine = sqlite_engine()
     tables = [
         Organization.__table__, GeoTabDiagnostic.__table__, GeoTabException.__table__,
     ]
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all, tables=tables)
+    await create_all(engine, Base.metadata, tables)
     maker = async_sessionmaker(engine, expire_on_commit=False)
 
     async with maker() as session:
