@@ -26,7 +26,9 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker
+
+from tests._sqlite import create_all, sqlite_engine
 
 from app.db.models import (
     Asset, AssetType, Base, IntegrationConfiguration, Organization, User, Workcell,
@@ -54,9 +56,9 @@ def _tables():
 
 async def _build(serves: dict[str, list[str]] | None = None):
     """A stack with `serves` describing which integrations claim which target systems."""
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all, tables=_tables())
+    # FK-enforcing; see tests/_sqlite.py.
+    engine = sqlite_engine()
+    await create_all(engine, Base.metadata, _tables())
     maker = async_sessionmaker(engine, expire_on_commit=False)
 
     asset_id = str(uuid.uuid4())

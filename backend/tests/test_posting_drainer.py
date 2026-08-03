@@ -24,8 +24,10 @@ import uuid
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import async_sessionmaker
+
+from tests._sqlite import create_all, sqlite_engine
 
 from app.db.models import Base, IntegrationConfiguration, Organization
 from app.db.shop_floor_models import (
@@ -41,16 +43,13 @@ ORG_ID = "00000000-0000-0000-0000-000000000003"
 
 @pytest_asyncio.fixture
 async def session():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(
-            Base.metadata.create_all,
-            tables=[
-                Organization.__table__,
-                IntegrationConfiguration.__table__,
-                SystemOfRecordPosting.__table__,
-            ],
-        )
+    # FK-enforcing; see tests/_sqlite.py.
+    engine = sqlite_engine()
+    await create_all(engine, Base.metadata, [
+        Organization.__table__,
+        IntegrationConfiguration.__table__,
+        SystemOfRecordPosting.__table__,
+    ])
     maker = async_sessionmaker(engine, expire_on_commit=False)
     async with maker() as s:
         s.add(Organization(id=ORG_ID, name="QA", slug="qa-drain"))
@@ -222,8 +221,32 @@ class TestFailuresAndBadConfiguration:
             assert "not usable" in posting.instruction
             assert posting.last_error, "the operator needs to know WHY it could not be built"
 
-    async def test_a_posting_whose_integration_vanished_is_handed_over(self, session):
-        posting = await _pending(session, str(uuid.uuid4()))  # id points at nothing
+    async def test_a_posting_whose_integration_was_deleted_is_handed_over(self, session):
+        """The integration is DELETED, not faked with a dangling id.
+
+        The first version of this test wrote a random uuid into `integration_id` and asserted
+        the drainer coped. Switching foreign keys on for this file rejected the insert — and
+        rightly: migration 060 declares `integration_id ... ON DELETE SET NULL`, so Postgres
+        can never hold a dangling reference. The test was asserting an unreachable state, and
+        passing only because SQLite does not enforce FKs by default.
+
+        The reachable state is the one below: the integration goes away, the cascade nulls
+        the column, and the posting is left queued for nobody.
+        """
+        integration = await _integration(session, erp_type="sap")
+        posting = await _pending(session, integration)
+
+        await session.execute(
+            delete(IntegrationConfiguration).where(
+                IntegrationConfiguration.id == integration
+            )
+        )
+        await session.commit()
+        await session.refresh(posting)
+        assert posting.integration_id is None, (
+            "ON DELETE SET NULL should have cleared the reference; if it did not, this test "
+            "is no longer exercising what it claims to"
+        )
 
         result = await drain(session, ORG_ID)
         await session.refresh(posting)

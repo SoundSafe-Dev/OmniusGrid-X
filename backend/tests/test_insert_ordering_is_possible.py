@@ -97,10 +97,45 @@ def test_the_models_without_a_relationship_are_counted_not_forgotten():
         if any(c.foreign_keys for c in mapper.class_.__table__.columns)
         and not list(inspect(mapper.class_).relationships)
     )
-    #: Measured 2026-08-03.
-    assert len(without) <= 62, (
+    #: 62 measured 2026-08-03; 61 after IntegrationConfiguration gained its ordering
+    #: relationship, which is how this number is meant to move — one at a time, when a
+    #: missing edge actually bites something.
+    assert len(without) <= 61, (
         f"{len(without)} models carry an FK column with no relationship() for the unit of "
-        f"work to order by, up from 62. Each one is a parent that can be inserted after its "
+        f"work to order by, up from 61. Each one is a parent that can be inserted after its "
         f"child in a single flush — a foreign key violation on Postgres that SQLite cannot "
         f"see:\n  {without}"
+    )
+
+
+def test_the_modules_that_enforce_foreign_keys_still_do():
+    """Nobody quietly reverts an opted-in module to a lax engine (FS-410).
+
+    SQLite runs with `PRAGMA foreign_keys=OFF`, so a test that swaps `sqlite_engine()` back
+    for a bare `create_async_engine` keeps passing while it stops checking anything. The
+    failure mode is invisible by construction, which is why it is pinned here rather than
+    left to review.
+
+    Measured cost of enforcing across the whole suite: 76 of 3,210 tests, in about fifteen
+    files across several lanes. That is a cross-lane cleanup, so adoption is per-module — add
+    a module here as it converts.
+    """
+    from pathlib import Path
+
+    enforcing = [
+        "test_shop_floor_events.py",
+        "test_insight_activation.py",
+        "test_posting_drainer.py",
+    ]
+    here = Path(__file__).parent
+    reverted = []
+    for name in enforcing:
+        source = (here / name).read_text()
+        if "sqlite_engine(" not in source:
+            reverted.append(f"{name}: no longer calls sqlite_engine()")
+        if 'create_async_engine("sqlite' in source:
+            reverted.append(f"{name}: went back to a bare create_async_engine")
+    assert not reverted, (
+        "these modules enforced foreign keys and no longer do — they will keep passing while "
+        "checking less:\n  " + "\n  ".join(reverted)
     )

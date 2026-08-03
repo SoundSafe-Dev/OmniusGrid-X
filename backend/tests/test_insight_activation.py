@@ -28,7 +28,9 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker
+
+from tests._sqlite import create_all, sqlite_engine
 
 from app.db.insight_models import ActivationStatus, InsightActivation
 from app.db.models import (
@@ -54,9 +56,11 @@ def _tables():
 
 
 async def _build(serves: dict[str, list[str]] | None = None, *, with_board: bool = True):
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all, tables=_tables())
+    # FK-ENFORCING (tests/_sqlite.py). The table list below names what this file cares
+    # about; `create_all` closes over the tables those reference, because a child built
+    # without its parent has FKs pointing at nothing and SQLite then refuses every insert.
+    engine = sqlite_engine()
+    await create_all(engine, Base.metadata, _tables())
     maker = async_sessionmaker(engine, expire_on_commit=False)
 
     asset_id, user_id = str(uuid.uuid4()), str(uuid.uuid4())

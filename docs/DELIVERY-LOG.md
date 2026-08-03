@@ -1416,3 +1416,47 @@ type declares `currentCharge`, the banner called `.toLocaleString()` on undefine
 component threw, and the page rendered empty — which reads as a component bug rather than a
 bad fixture. That test file's own header warns about precisely this. **Read the type; do not
 guess the shape.**
+
+---
+
+## FS-410 — making the invisible class visible
+
+FS-408 established that **SQLite does not enforce foreign keys by default**, so every
+in-memory test in this suite inserts in whatever order it likes, against whatever parent rows
+it did not bother to create, and passes. That is why 3,200 tests could not see the defect
+that killed the demo seed.
+
+**Measured cost of turning it on everywhere: 76 of 3,210 tests (2.4%)**, across about fifteen
+files. Not a sprint — but the distribution was the interesting part: **53 of the 76 were my
+own new test modules.** The change is worth doing and the first person who should pay for it
+is whoever wrote the code being converted.
+
+`backend/tests/_sqlite.py` provides an opt-in FK-enforcing engine plus a `create_all` that closes
+over referenced tables — because `create_all(tables=[...])` does *not* pull in what those
+tables reference, so a subset naming a child without its parent produces a schema whose FKs
+point at nothing.
+
+### What it caught immediately, in code that was already committed and green
+
+- **The seed's defect, reproduced inside my own fixture.** `integration_configurations`
+  inserted before `organizations`, because `IntegrationConfiguration` declares the FK column
+  and no `relationship()`. Fixed at the source rather than in the fixture: the model now
+  carries the ordering relationship, which fixes it everywhere including the seed. The
+  ratchet moved 62 → 61 — one at a time, when a missing edge actually bites something.
+- **A test asserting a state the database cannot produce.** `test_a_posting_whose_
+  integration_vanished_is_handed_over` wrote a random uuid into `integration_id` and checked
+  the drainer coped. Migration 060 declares that column `ON DELETE SET NULL`, so Postgres can
+  never hold a dangling reference — the scenario was unreachable, and the test passed only
+  because SQLite let it exist. It now deletes the integration and asserts the cascade nulled
+  the column first, so it is exercising the state that can actually occur.
+
+### One file is deliberately exempt, and says so
+
+`test_dock_scheduling_conflicts.py` builds a single table to execute one overlap predicate.
+Its appointments reference doors and organisations it has no reason to create; enforcing
+would mean standing up a fixture schema to test a `WHERE` clause. The trade is recorded in
+the file rather than left silent.
+
+A guard pins the three converted modules, because reverting to a bare `create_async_engine`
+keeps them passing while they stop checking anything — a failure mode that is invisible by
+construction.

@@ -58,6 +58,12 @@ async def session():
         # conftest imports the full app, which registers `data_processing_records` with a
         # Postgres ARRAY column that SQLite cannot render. Narrow is also honest — this
         # harness exists to execute one SQL predicate, not to stand in for the schema.
+        #
+        # AND SO IT DELIBERATELY DOES NOT USE `tests/_sqlite.sqlite_engine` (FS-410), which
+        # switches foreign keys on. Appointments here reference doors and organisations that
+        # this file has no reason to create; enforcing would mean building a fixture schema
+        # to test an overlap predicate. The trade is recorded rather than silent: this file
+        # is exempt because its subject is one WHERE clause, not referential integrity.
         await conn.run_sync(
             Base.metadata.create_all, tables=[DockAppointment.__table__]
         )

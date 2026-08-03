@@ -1845,6 +1845,12 @@ class IntegrationConfiguration(Base):
     integration_type = Column(String(50), nullable=False)
     integration_name = Column(String(255), nullable=False)
     organization_id = UUIDForeignKey("organizations.id", nullable=True)
+    #: Ordering only (FS-408/410). Without it the unit of work has no edge from this mapper
+    #: to Organization and can flush an integration BEFORE the org it belongs to — the exact
+    #: failure that killed seed_demo_data.py on a fresh database, and the first thing that
+    #: broke when foreign keys were switched on for this file's tests. `lazy="raise"` so an
+    #: accidental traversal is a clear error rather than a MissingGreenlet in async code.
+    organization = relationship("Organization", lazy="raise")
     configuration = Column(JSON, nullable=False)
     authentication = Column(JSON, nullable=True)
     is_active = Column(Boolean, nullable=False, default=True)
