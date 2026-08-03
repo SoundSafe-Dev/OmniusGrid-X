@@ -163,3 +163,122 @@ class TestTheExceptionsStayHonest:
     def test_every_exception_names_who_fills_it(self):
         for entry, reason in RESOLVED_ELSEWHERE.items():
             assert len(reason) > 40, f"{entry}'s reason is too thin to verify"
+
+
+# ---------------------------------------------------------------------------------------
+# The same pairing, asked about TYPES rather than names (FS-303).
+#
+# A field can be a real column and still be declared as something the column cannot hold.
+# The failure is loud and late: FastAPI validates the RESPONSE, so the handler runs, the
+# query succeeds, and the request dies with a 500 on the way out.
+#
+# It has happened twice, both found by walking a real stack rather than by a test:
+#
+#   `/nlp/sessions/{id}/data`   `DataSourceResponse.source_id` is declared UUID and the
+#                               rows carry 'yard'
+#   `/kanban/rules/premade`     the premade template ids are 'template-001'
+#
+# Neither is reachable from here — `DataSource` and the premade templates have no paired
+# table — so this does NOT claim to cover them; they are registered in
+# `tests/_lane_failures.py` with owners and expiries. What it covers is the 122 UUID-typed
+# fields that ARE paired, where the same mistake would be silent until a row broke it.
+#
+# THE CONVENTION IS THE WHOLE CHECK. This codebase stores UUIDs as `String(36)` for
+# Postgres compatibility (the README's FAQ says so), so "UUID over VARCHAR" is normal and
+# tells you nothing — the first version of this probe reported three false positives on
+# exactly that basis. What is NOT normal is a UUID declared over a free-form string:
+# `GeoTabDiagnostic.vehicle_id` is a `String(100)` holding 'TRK-114', and a response model
+# declaring that as a UUID would 500 on every row.
+# ---------------------------------------------------------------------------------------
+
+import typing
+import uuid as _uuid
+
+import sqlalchemy as _sa
+
+#: The width this codebase uses for a stringified UUID.
+_UUID_STRING_LENGTH = 36
+
+
+def _column_types() -> dict[str, dict[str, object]]:
+    found: dict[str, dict[str, object]] = {}
+    for module in (models, logistics_models):
+        for name in dir(module):
+            table = getattr(getattr(module, name), "__table__", None)
+            if table is not None:
+                found[name] = {c.name: c.type for c in table.columns}
+    return found
+
+
+def _declared(annotation) -> list:
+    args = typing.get_args(annotation)
+    return [a for a in (args or [annotation]) if a is not type(None)]
+
+
+def _uuid_fields_over_free_form_strings() -> list[str]:
+    types = _column_types()
+    offenders = []
+    for name, model in _response_models().items():
+        columns = types.get(name[: -len("Response")])
+        if not columns:
+            continue
+        for field_name, field in model.model_fields.items():
+            column = columns.get(field_name)
+            if column is None or _uuid.UUID not in _declared(field.annotation):
+                continue
+            if isinstance(column, _sa.String) and getattr(column, "length", None) != _UUID_STRING_LENGTH:
+                offenders.append(
+                    f"{name}.{field_name}: declared UUID over {column} — the column is not "
+                    "the 36-char UUID convention, so it may hold anything"
+                )
+    return offenders
+
+
+class TestADeclaredTypeCanHoldWhatTheColumnStores:
+    def test_the_pairing_reaches_uuid_fields_at_all(self):
+        """Vacuity guard. A version of this that paired nothing would pass in silence, and
+        the count is the evidence that it is looking at the real surface."""
+        types = _column_types()
+        seen = 0
+        for name, model in _response_models().items():
+            columns = types.get(name[: -len("Response")])
+            if not columns:
+                continue
+            seen += sum(
+                1 for f, field in model.model_fields.items()
+                if f in columns and _uuid.UUID in _declared(field.annotation)
+            )
+        assert seen >= 80, (
+            f"only {seen} paired UUID fields found; the pairing or the annotation "
+            "unwrapping has drifted and this check is examining almost nothing"
+        )
+
+    def test_no_uuid_field_sits_over_a_free_form_string(self):
+        offenders = _uuid_fields_over_free_form_strings()
+        assert not offenders, (
+            "these response models declare a UUID over a column that need not hold one. "
+            "FastAPI validates the RESPONSE, so the handler runs, the query succeeds, and "
+            "the request dies with a 500 on the way out — for whichever row happens to "
+            "carry a non-UUID value:\n  " + "\n  ".join(offenders)
+        )
+
+    def test_the_convention_is_not_flagged(self):
+        """The control that stops this becoming noise. 122 UUID fields sit over VARCHAR(36)
+        and every one is correct; a check that reported them would be abandoned in a day,
+        and the first version of this probe did exactly that."""
+        types = _column_types()
+        conventional = 0
+        for name, model in _response_models().items():
+            columns = types.get(name[: -len("Response")])
+            if not columns:
+                continue
+            for field_name, field in model.model_fields.items():
+                column = columns.get(field_name)
+                if column is None or _uuid.UUID not in _declared(field.annotation):
+                    continue
+                if getattr(column, "length", None) == _UUID_STRING_LENGTH:
+                    conventional += 1
+        assert conventional >= 80, (
+            f"only {conventional} UUID-over-VARCHAR(36) pairs seen; if the storage "
+            "convention changed, the free-form test above is now measuring the wrong thing"
+        )
