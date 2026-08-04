@@ -2173,3 +2173,51 @@ client type carries it.
 A first attempt used a plain `@property`, which Pydantic v2 does not serialise — the field
 was absent from the schema and the guard would have passed on a promise nothing kept. Checked
 against the generated OpenAPI rather than assumed, which is the only reason that was caught.
+
+---
+
+## FS-427 — a ledger that drains itself
+
+FS-407 built the drainer and left it behind a button on one page. So an obligation raised by
+a part issue at 03:00 sat untouched until somebody opened the Shop Floor screen and pressed
+*Drain*. That moved the problem rather than fixing it: from "nothing tries" to "nothing tries
+unless asked", and a queue nobody drains is precisely what the drainer was written to remove.
+
+`PostingDrainScheduler` runs it on a timer, per organisation, following the
+`rollout_orchestrator` idiom — one session per tenant with `app.current_org_id` set. Five
+minutes rather than the rollout dispatcher's thirty seconds, deliberately: a posting is an
+obligation to a far system, not a device waiting on a command, and asking an ERP every 30
+seconds to confirm again that it has no write path helps nobody.
+
+`drain()` still owns every outcome; this owns only the schedule.
+
+### The two ways it could have quietly done nothing, both closed
+
+- **A clean drain over rows it cannot see.** `system_of_record_postings` has FORCE RLS, so a
+  session without the GUC reads zero rows and every summary comes back zeroed — absence
+  arriving as a good result, the shape this repository keeps finding. A test asserts the GUC
+  is set before each drain, and removing it fails.
+- **One tenant stopping the rest.** An unreachable ERP for org A must not leave org B's
+  ledger untouched. A test asserts B still drains when A raises; making the exception escape
+  fails it.
+
+Verified against a live stack rather than argued: six `pending` postings, one automatic pass
+five seconds after startup, all six moved to `manual_required` with an instruction —
+
+```
+posting_drain_pass_complete considered=6 handed_to_a_person=5 orphaned=1 posted=0 organizations=2
+accounting -> Enter this into accounting by hand — sap has no verified write path…
+```
+
+Nobody pressed anything, and **zero postings were left in `manual_required` without an
+instruction** — which is the whole point of the state.
+
+*(A process note: the second mutation test produced a `SyntaxError` rather than the intended
+change, so it proved nothing until it was re-applied properly. Rule 4 — a mutation that lands
+on the wrong line proves nothing, so check it applied where you meant.)*
+
+**And a guard I had not met caught the new service.** `test_service_lifecycle_is_declared`
+keeps a record of every `start()`-bearing singleton and whether the app actually starts it,
+so a service can neither be added without being declared nor quietly stop being started. It
+failed on the commit that added the scheduler, which is the point: the record is not
+documentation about the lifecycle, it is part of it.

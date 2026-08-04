@@ -36,6 +36,10 @@ EXPECTED_STARTED: Set[str] = {
     "error_tracker",
     "export_scheduler",
     "oee_calculator",
+    #: FS-427. Drains the systems-of-record ledger per organisation on a timer, so a posting
+    #: raised at 03:00 is attempted without anyone opening the Shop Floor page and pressing
+    #: the button — which was the only thing that moved one.
+    "posting_drain_scheduler",
     "report_scheduler",
     "rollout_orchestrator",
 }

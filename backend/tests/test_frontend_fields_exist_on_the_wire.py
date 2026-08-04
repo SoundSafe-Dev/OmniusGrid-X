@@ -333,7 +333,12 @@ BASELINE = {
     #     figure never appeared on a card whose whole purpose is justifying an approval, and
     #     `timeSavings` is produced by nothing. The dict is free-form by design, so the card
     #     renders what arrives and labels it, rather than naming slots in advance.
-    "LogisticsOverview.todayAppointments",
+    # `LogisticsOverview.todayAppointments` was HERE. The whole type is gone (FS-424):
+    # sixteen fields describing a dashboard no endpoint served and no component imported.
+    # This entry was the one field of the sixteen that a component still read, which is why
+    # it sat in this baseline rather than in the phantom list — a single live reference
+    # keeping an otherwise-fictional type alive. Re-pinned rather than left: a baseline that
+    # still lists a fixed entry quietly loses its edge, which is the note two blocks above.
     # `LogisticsOverview.vehiclesIdle` was HERE, and is the seventh finding. The fleet
     # card promised totalVehicles/vehiclesMoving/vehiclesIdle/avgSpeed/
     # totalDistanceToday/fuelConsumedToday; /geotab/fleet/summary sends total_devices/

@@ -31,6 +31,17 @@ class Settings(BaseSettings):
     OTA_SIGNING_PUBLIC_KEY: str = ""
     OTA_ROLLOUT_DISPATCH_ENABLED: bool = True
     OTA_ROLLOUT_DISPATCH_INTERVAL_SECONDS: int = 30
+
+    # Draining the systems-of-record ledger (FS-427). Slower than the rollout dispatcher on
+    # purpose: a posting is an obligation to a far system, not a device waiting on a
+    # command, and hammering an ERP every 30s to be told again that it has no write path
+    # helps nobody. Five minutes is well inside any operator's patience for "did purchasing
+    # hear about this" and well outside a third party's rate limit.
+    POSTING_DRAIN_ENABLED: bool = True
+    POSTING_DRAIN_INTERVAL_SECONDS: int = 300
+    #: Per organisation, per pass. Bounded so one tenant with a large backlog cannot hold
+    #: the loop while every other tenant waits.
+    POSTING_DRAIN_BATCH_SIZE: int = 50
     OTA_ROLLOUT_DEFAULT_COMMAND_TIMEOUT_SECONDS: int = 120
     OTA_ROLLOUT_DEFAULT_HEALTH_TIMEOUT_SECONDS: int = 300
     OTA_ROLLOUT_DEFAULT_MIN_SUCCESS_RATIO: float = 1.0

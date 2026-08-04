@@ -81,6 +81,10 @@ async def lifespan(app: FastAPI):
         await export_scheduler.start()
         await compliance_report_dispatcher.start()
         await rollout_orchestrator.start()
+        # FS-427: attempt queued systems-of-record postings without waiting for
+        # somebody to open the Shop Floor page and press the button.
+        from app.services.posting_drain_scheduler import posting_drain_scheduler
+        await posting_drain_scheduler.start()
     await report_scheduler.start()
     await error_tracker.start()
     # Offline demo: the cloud strategic listener never connects, so seed a few
@@ -106,6 +110,8 @@ async def lifespan(app: FastAPI):
     await error_tracker.stop()
     await report_scheduler.stop()
     if settings.SCHEDULERS_IN_API:
+        from app.services.posting_drain_scheduler import posting_drain_scheduler
+        await posting_drain_scheduler.stop()
         await rollout_orchestrator.stop()
         await compliance_report_dispatcher.stop()
         await export_scheduler.stop()
