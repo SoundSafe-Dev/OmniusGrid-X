@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Annotated, Optional, Dict, Any, List, Literal
 from uuid import UUID
-from pydantic import BeforeValidator, ConfigDict, AliasChoices, BaseModel, Field
+from pydantic import computed_field, BeforeValidator, ConfigDict, AliasChoices, BaseModel, Field
 
 
 def _none_is_empty(value: Any) -> Any:
@@ -370,6 +370,21 @@ class DriverWaitTimeResponse(DriverWaitTimeBase):
     trailer_id: Optional[UUID]
     updated_at: datetime
     created_at: datetime
+
+    #: THE CAVEAT TRAVELS WITH THE CHARGE (FS-426). `detention_charge` is nullable, and null
+    #: means "nobody has assessed this" — a different fact from "assessed at zero". The
+    #: dwell-times path already publishes exactly this flag, computed the same way, because
+    #: it coerces the charge to a float and would otherwise report an unassessed trailer as
+    #: owing nothing. This endpoint sent the charge and not the flag, so the two disagreed
+    #: about the same concept, and a reader had to know that null carries meaning here.
+    #:
+    #: `test_qualifiers_reach_the_frontend` had `detention_assessed` exempted on the
+    #: grounds that `detention_charge` was not rendered. It is now, and the guard said so on
+    #: the commit that made it true.
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def detention_assessed(self) -> bool:
+        return self.detention_charge is not None
 
     model_config = ConfigDict(from_attributes=True)
 

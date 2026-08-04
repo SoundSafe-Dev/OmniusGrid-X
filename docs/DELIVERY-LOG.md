@@ -2069,3 +2069,107 @@ interface body has `NOTE:` in it, which reads as a field name. Rule 37 — prose
 defect gathers around the defect, so strip comments in every source — earned again, two
 sweeps after it was written. Comments are now blanked (preserving offsets, so every brace
 walk in the file keeps working) before any key is read.
+
+---
+
+## FS-424 — the read side of the same class, and 22 phantom fields on two types
+
+FS-423 fixed the WRITE direction: types naming fields an endpoint cannot apply. The mirror
+is `MAX_UNREAD_PHANTOM_FIELDS` — fields the frontend declares that nothing on the wire
+sends — which had been ratcheting at 56 with the note *"driving it to zero is not the goal;
+noticing it GROW is"*.
+
+That is right for a ratchet and wrong as a reason not to look. **22 of the 56 sat on two
+types**, and neither could ever be retired by the mechanism the ratchet describes:
+
+**`LogisticsOverview` — 16 fields, and it is fiction.** No endpoint serves it and no
+component imports it. A dashboard specification that reads, to anyone grepping, exactly like
+a contract. Deleted, the same call FS-367 made for `ModelDeployment`. When the overview
+endpoint is built its type gets written against what the endpoint sends, which is the order
+that produces a type worth trusting.
+
+**`DriverWaitTime` — 6 fields, and it is a mismatch.** Not dead: `POST /yard/driver-wait-
+times` serves it. The type named `checkInTime`, `dockTime`, `departureTime`,
+`waitDurationMinutes`, `dockDurationMinutes`, `totalDurationMinutes`; the wire — after the
+yard casing seam and its aliases — delivers `checkedInAt`, `dockedAt`, `checkedOutAt` and
+`totalWaitMinutes`. Every one of the six would have been `undefined` at render, which is the
+FS-394/FS-398 shape exactly.
+
+Rule 35 again: **name the field after the wire, not after the nicer word.** `departureTime`
+reads better than `checkedOutAt` and is worth nothing, because it does not arrive. The
+replacement was computed by running the server's schema through the actual alias map rather
+than reasoning about it — the seam has an alias layer on top of the casing, and guessing
+would have produced six new phantoms in place of six old ones.
+
+Also dropped: `driverName`, `carrierName`, `carrierId`, `appointmentId`, `isDetention`,
+`detentionCost` and `reason` — none of which the response carries. The endpoint reports
+detention and demurrage as separate minutes/rate/charge triples; the type collapsed both
+into one boolean and one number.
+
+**Ratchet 56 → 34.**
+
+---
+
+## FS-425 — the activation worklist
+
+`GET /insights/activations` and `/activations/{id}` were served by **no screen at all**. An
+operator who activated a recommendation could see it only inline, in the message that
+created it, in that session. "What did we commit to, and what is still outstanding?" had no
+answer anywhere in the product, while the API had held the answer since FS-406.
+
+`/activations` is that answer, and it is built as a **worklist rather than a log**: it opens
+on `issued`, leads with the two things that need a person — an unfinished Kanban task and a
+posting no system has acknowledged — and keeps confirmed and declined a filter away, because
+a list where the finished outnumber the outstanding stops being read.
+
+Driven live against a seeded stack: the row renders its task status, one posting per target
+system with its own state, the analog instruction on screen with the reference field beside
+it, and Confirm returning all three reasons it refused —
+
+```
+the Kanban task is ready, not completed
+the posting to inventory has not been sent yet
+purchasing has no integration and nobody has confirmed the manual step yet
+```
+
+Confirm is deliberately left **enabled** when `readyToConfirm` is false. A greyed-out button
+explains nothing; a press that answers with three specific reasons is the more useful
+control, and the server is the authority either way.
+
+---
+
+## FS-426 — a guard that fired on the commit that made its exemption false
+
+`test_qualifiers_reach_the_frontend` keeps an allowlist of qualifiers that need not reach the
+client, and **each entry is a claim**: *"the field this qualifies is not rendered either, so
+there is no caveat to lose because there is no claim being made."* One entry read
+`"detention_assessed": "detention_charge"`.
+
+Adding `detentionCharge` to `DriverWaitTime` in FS-424 made that claim false, and the guard
+failed **in the same commit**:
+
+```
+these qualifiers were exempted because the field they qualify was not rendered;
+it is now, so the caveat has to be wired too:
+    detention_assessed (qualifies detention_charge, which the frontend now reads)
+```
+
+That is the allowlist working exactly as designed — its own comment says *"an allowlist that
+cannot expire is how a real finding gets parked forever"* — and it is the second time it has
+fired this way (FS-395 released `assessable` on the day `is_compliant` started rendering).
+
+### The fix, and why it is not "add a boolean"
+
+`detention_charge` is nullable and **null means nobody has assessed this trailer** — a
+different fact from "assessed at zero". The dwell-times path already publishes exactly that
+flag, computed as `detention_charge is not None`, because it coerces the charge to a float
+and would otherwise report an unassessed trailer as owing nothing.
+
+`DriverWaitTimeResponse` sent the charge and not the flag. So **two endpoints disagreed about
+the same concept**, and reading the second one correctly required knowing that null carries
+meaning. It now publishes the flag as a `computed_field`, derived the same way, and the
+client type carries it.
+
+A first attempt used a plain `@property`, which Pydantic v2 does not serialise — the field
+was absent from the schema and the guard would have passed on a promise nothing kept. Checked
+against the generated OpenAPI rather than assumed, which is the only reason that was caught.

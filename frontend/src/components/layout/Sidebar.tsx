@@ -18,6 +18,7 @@ import {
   Sun,
   Moon,
   Kanban as KanbanIcon,
+  ListChecks,
   Hammer,
   MessageSquare,
   Inbox,
@@ -51,6 +52,7 @@ const navItems: NavItem[] = [
   { path: '/kanban', label: 'Kanban Board', icon: KanbanIcon, description: 'Task management and workflow tracking' },
   { path: '/shop-floor', label: 'Shop Floor', icon: Hammer, description: 'Issue a part, clock time, report a problem, log downtime — each routed to the systems of record that need it' },
   { path: '/nlp', label: 'Correlation AI', icon: MessageSquare, description: 'AI-powered cross-domain analysis' },
+  { path: '/activations', label: 'Activated Insights', icon: ListChecks, description: 'Recommendations someone acted on, and what each still needs — the Kanban task, and every system of record it has to reach' },
   { path: '/compliance', label: 'Compliance Assistant', icon: ShieldCheck, description: 'Ask about policy, OSHA, and union agreements — answered from your document library, with sources' },
   { path: '/intake', label: 'Intake Inbox', icon: Inbox, description: 'Upload operational data for AI analysis' },
   {

@@ -20,6 +20,7 @@ const AlarmRules = lazy(() => import('./pages/AlarmRules'))
 const OEE = lazy(() => import('./pages/OEE'))
 const Kanban = lazy(() => import('./pages/Kanban'))
 const ShopFloor = lazy(() => import('./pages/ShopFloor'))
+const Activations = lazy(() => import('./pages/Activations'))
 
 const named = <M, K extends keyof M>(loader: () => Promise<M>, key: K) =>
   lazy(() => loader().then((m) => ({ default: m[key] as any })))
@@ -106,6 +107,9 @@ const App: FC = () => {
 
                 {/* Shop Floor (FS-405): the four floor events and their posting ledger */}
                 <Route path="/shop-floor" element={<ShopFloor />} />
+
+                {/* Activated insights (FS-425): the cross-system worklist */}
+                <Route path="/activations" element={<Activations />} />
 
                 {/* AI Engines */}
                 <Route path="/engines/tactical" element={<TacticalEngine />} />

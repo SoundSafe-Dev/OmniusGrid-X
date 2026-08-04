@@ -162,7 +162,13 @@ QUALIFIES_AN_UNREAD_FIELD: Dict[str, str] = {
     # so the claim stopped being true and this guard said so. `assessable` is carried on the
     # client type, which is what the exemption existed to defer — the caveat travels with the
     # verdict now, and the main sweep below checks it stays that way.
-    "detention_assessed": "detention_charge",
+    # "detention_assessed": "detention_charge" — REMOVED 2026-08-04 (FS-426). The exemption
+    # claimed `detention_charge` was not rendered; `DriverWaitTime` now declares it, so the
+    # claim stopped being true and this guard failed on the commit that made it so. The
+    # server publishes the flag from `DriverWaitTimeResponse` too, computed exactly as the
+    # dwell-times path computes it, and the client carries it — so the caveat travels with
+    # the number on both endpoints that report it. Same shape as the `assessable` release
+    # above, two days later.
     "appointments_assessed": "sync_status_breakdown",
     # Intake lane's scenario builder; its output is not rendered by any page today.
     "degraded": "scenario_confidence",

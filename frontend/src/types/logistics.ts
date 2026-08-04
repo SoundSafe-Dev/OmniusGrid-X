@@ -121,24 +121,50 @@ export interface YardMove {
   createdAt: string;
 }
 
+/**
+ * One driver's wait, as `POST /api/v1/yard/driver-wait-times` actually returns it (FS-424).
+ *
+ * SIX FIELDS HERE NAMED THINGS THE WIRE NEVER SENDS: `checkInTime`, `dockTime`,
+ * `departureTime`, `waitDurationMinutes`, `dockDurationMinutes`, `totalDurationMinutes`.
+ * The server sends `check_in_at`, `docked_at`, `check_out_at` and `total_wait_minutes`, and
+ * the yard casing seam turns those into `checkedInAt`, `dockedAt`, `checkedOutAt` and
+ * `totalWaitMinutes`. Every one of the six would have been `undefined` at render — the
+ * FS-394/FS-398 shape, where a panel is blank because the type described a payload nobody
+ * sends.
+ *
+ * Rule 35: name the field after the wire, not after the nicer word. `departureTime` reads
+ * better than `checkedOutAt` and is worth nothing, because it does not arrive.
+ *
+ * Also gone: `driverName`, `carrierName`, `carrierId`, `appointmentId`, `isDetention`,
+ * `detentionCost` and `reason`, none of which the response carries either. Detention is
+ * reported as `detentionMinutes` / `detentionCharge` / `detentionRate`, and demurrage
+ * likewise — the endpoint distinguishes the two and this type collapsed them into one
+ * boolean and one number.
+ */
 export interface DriverWaitTime {
   id: string;
+  organizationId: string;
   driverId: string;
-  driverName: string;
-  carrierId: string;
-  carrierName: string;
   trailerId?: string;
-  appointmentId?: string;
-  checkInTime: string;
-  dockTime?: string;
-  departureTime?: string;
-  waitDurationMinutes?: number;
-  dockDurationMinutes?: number;
-  totalDurationMinutes?: number;
-  isDetention: boolean;
-  detentionCost?: number;
-  reason?: string;
+  checkedInAt: string;
+  dockedAt?: string;
+  unloadedAt?: string;
+  checkedOutAt?: string;
+  totalWaitMinutes?: number;
+  detentionMinutes?: number;
+  detentionRate?: number;
+  detentionCharge?: number;
+  /** Whether detention has been ASSESSED at all. `detentionCharge` is nullable and null
+   *  means nobody has judged this trailer — a different fact from "assessed at zero", and
+   *  the reason the caveat travels with the number rather than being inferred from it. */
+  detentionAssessed: boolean;
+  demurrageMinutes?: number;
+  demurrageRate?: number;
+  demurrageCharge?: number;
+  isBilled: boolean;
+  metadata?: Record<string, unknown>;
   createdAt: string;
+  updatedAt: string;
 }
 
 // Transportation Management System (TMS) Types
@@ -440,30 +466,15 @@ export interface RestStop {
 
 // Dashboard Types
 
-export interface LogisticsOverview {
-  // Yard Stats
-  trailersInYard: number;
-  trailersDocked: number;
-  dockDoorsAvailable: number;
-  dockDoorsOccupied: number;
-  todayAppointments: number;
-  appointmentsOnTime: number;
-  detentionRiskCount: number;
-  detentionCostToday: number;
-  
-  // Fleet Stats
-  vehiclesActive: number;
-  vehiclesIdle: number;
-  shipmentsInTransit: number;
-  shipmentsDeliveredToday: number;
-  onTimeDeliveryRate: number;
-  averageTransitTime: number;
-  
-  // Compliance
-  driversHosViolations: number;
-  vehiclesInspectionDue: number;
-  carrierComplianceIssues: number;
-}
+// REMOVED 2026-08-04 (FS-424): `LogisticsOverview`, sixteen fields describing a logistics
+// dashboard that no endpoint serves and no component imports. It was a specification, not a
+// contract — and indistinguishable from a real type to anyone grepping, which is what makes
+// it a trap rather than a note. It also supplied sixteen of the fifty-six entries in the
+// phantom-field ratchet, none of which that ratchet could ever have retired.
+//
+// Same call as FS-367, which deleted `ModelDeployment` and six engine fields for the same
+// reason. When the overview endpoint is built, its type gets written against what the
+// endpoint sends — which is the order that produces a type worth trusting.
 
 /** Live detention exposure, named after `/api/v1/yard/detention-alerts`.
  *
