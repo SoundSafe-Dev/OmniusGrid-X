@@ -2466,3 +2466,62 @@ been right about the only question it asked.
 
 Proving a tenant cannot see what is not theirs is worth nothing without also proving they
 can see what is. This repository has a lot of the first kind.
+
+## FS-432 — sweeping for that class, and the two instruments that could not find it
+
+The kanban finding generalises to a question: **how many tenancy tests assert only that
+the other tenant sees nothing?** Such a test passes perfectly while the system shows
+nothing to anyone.
+
+### Two source-reading heuristics, both noise
+
+A regex for "asserts absence, never presence" returned **25 files**. Checking the first —
+`test_kanban_tenant_scope.py:69` — it asserts
+`[item["id"] for item in own_list.json()] == [str(task_id)]`, which is a positive
+visibility assertion written as list equality rather than `assert any(...)`.
+
+Tightened, the regex returned **30 files**, now including
+`test_inline_session_tenant_scoping_realdb.py` — a file whose entire purpose is asserting
+that an owner can see their own asset. The new pattern required "id" in the variable name
+and the variable is called `owned_asset`.
+
+Two attempts, both confidently wrong, in opposite directions. **Reading source for the
+absence of an idea does not work when the idea has many spellings.**
+
+### One mutation, decisive
+
+Bind the wrong tenant in `tenant_session` — one line, globally — and run every test file
+that mentions a second organisation. A test that still passes cannot detect broken tenancy.
+
+    61 files, 244 failed, 377 passed
+    55 files had at least one failure
+     6 files had NOT ONE
+
+**Five of the six are correct by design**, which the mutation cannot know and a person can:
+
+| file | why it is unaffected |
+|---|---|
+| `test_tenant_isolation_rls.py` | raw psycopg2 as `tenant_user`, no FastAPI — tests the DB policies themselves, and says so |
+| `test_websocket_tenant_binding.py` | the WS handler takes no HTTP DB session |
+| `test_qualifiers_reach_the_frontend.py` | static source analysis, no database |
+| `test_error_tracking_api.py` | the endpoint is deliberately platform-level; the test name says `not_tenant_filtered` |
+| `test_export_jobs.py` | monkeypatches the job store — scoping is enforced in Python, not the session |
+
+**The sixth was real.** `TestTheFlagDoesNotLeak::test_an_ordinary_tenant_session_still_
+sees_only_its_own` asserted that org B's integration was absent from org A's list, and an
+empty list satisfies that perfectly. The file *does* assert positive visibility — on the
+raw `flagged` session, never through the API. So nothing checked that an ordinary
+authenticated caller can see their own integration, which is what the endpoint is for.
+
+One added assertion. It passes on correct code and fails with the tenant binding broken.
+
+### What this measured
+
+**The tenancy suite is overwhelmingly load-bearing** — 55 of 61 files detect a broken
+tenant binding, and every one of the six exceptions has an explanation. That is a good
+result, and it is the opposite of what both heuristics predicted.
+
+The lesson is about instruments, not tenancy: **perturbing the system found one real defect
+and five explainable exceptions; reading the source produced 25 findings and then 30, none
+of them real.** A guard that reads code can only recognise the spellings its author thought
+of. A mutation asks the system, and the system has no opinion about naming.

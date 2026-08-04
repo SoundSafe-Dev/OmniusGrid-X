@@ -311,12 +311,28 @@ class TestTheFlagDoesNotLeak:
         self, client_a, two_sap_integrations
     ):
         """The flag is transaction-local and cleared in a `finally`. If it leaked onto a
-        pooled connection, the authenticated ERP list would show other tenants."""
+        pooled connection, the authenticated ERP list would show other tenants.
+
+        BOTH DIRECTIONS (FS-431). This asserted only that org B's row was absent, and an
+        EMPTY LIST satisfies that perfectly. Found by breaking `tenant_session`'s GUC bind
+        globally and looking for tenancy tests that still passed: with every scoped read
+        returning nothing, this one was still green.
+
+        `test_the_flag_reveals_active_erp_rows` does assert positive visibility — but on
+        the raw `flagged` session, not through the API. Nothing checked that an ordinary
+        authenticated caller can see their own integration, which is the thing the endpoint
+        exists to do.
+        """
         response = await client_a.get("/api/v1/erp/integrations")
         assert response.status_code == 200, response.text
         payload = response.json()
         rows = payload["items"] if isinstance(payload, dict) and "items" in payload else payload
         ids = {row.get("id") for row in rows}
+        assert str(two_sap_integrations["a"]) in ids, (
+            "org A cannot see its OWN integration through the authenticated list. Without "
+            "this, the absence assertion below is satisfied by the list being empty — "
+            "which is what a broken tenant binding produces"
+        )
         assert str(two_sap_integrations["b"]) not in ids, (
             "another tenant's integration is visible through the authenticated list — "
             "the webhook lookup flag leaked"
