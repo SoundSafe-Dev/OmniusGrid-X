@@ -2443,3 +2443,26 @@ without Docker** — on a laptop, gutted and worked-down look identical.
 28 tests, no database, no server, no network. Seven mutations verified, including the
 premise of each guard (that `IntakeItem` really is still the Pydantic name, that `available`
 really is still only a config check) so a guard cannot outlive the condition it guards.
+
+### The assertion that would have caught all of it, and the one that never could
+
+`test_kanban_and_intake_see_their_rows_realdb.py` seeds one automation rule and one intake
+item for org A and demands they come back. Putting the defect back:
+
+| | reverted to `get_db` |
+|---|---|
+| `/kanban/rules` | 200, **0 rows**, with the rule sitting in the table |
+| `/nlp/correlation/intake/list` | 200, **0 rows** |
+| `/nlp/correlation/intake/{id}` | **404** for an item the caller owns |
+| `/kanban/board`, `/metrics`, `/workload`, `POST /board/view` | **500** |
+| `/kanban/rules/premade` | passes — takes no session |
+| org B cannot see org A's rule | **passes** |
+| org B cannot read org A's item | **passes** |
+
+**The last two are the warning.** Both tenant-isolation assertions pass while the system is
+comprehensively broken, because *"org B cannot see org A's rule"* is satisfied perfectly by
+nobody seeing anything at all. An isolation suite alone would have called this healthy and
+been right about the only question it asked.
+
+Proving a tenant cannot see what is not theirs is worth nothing without also proving they
+can see what is. This repository has a lot of the first kind.
