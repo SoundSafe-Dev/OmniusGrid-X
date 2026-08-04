@@ -672,33 +672,38 @@ export const transportationApi = {
     return response.data;
   },
 
-  dispatchShipment: async (id: string, driverId: string, vehicleId: string): Promise<Shipment> => {
+  /**
+   * Dispatch a shipment to a driver and a TRAILER (FS-420).
+   *
+   * It used to take a `vehicleId` and post `{ driver_id, vehicle_id }`. Two things were
+   * wrong and each alone was fatal: the server declared its two ids as bare parameters,
+   * which FastAPI reads as QUERY parameters, so every call returned 422 — the feature had
+   * never worked once in real mode. And `Shipment.trailer_id` is a foreign key to
+   * `yard_trailers`; there is no vehicle column on a shipment, so a vehicle id could not
+   * have been stored even if the call had been well-formed.
+   */
+  dispatchShipment: async (id: string, driverId: string, trailerId: string): Promise<Shipment> => {
     if (USE_MOCK) {
       await delay(MOCK_DELAY);
       const shipment = mockShipments.find(s => s.id === id);
       const driver = mockDrivers.find(d => d.id === driverId);
-      const vehicle = mockVehicles.find(v => v.id === vehicleId);
       if (!shipment) throw new Error('Shipment not found');
       shipment.status = 'dispatched';
       shipment.driverId = driverId;
       shipment.driverName = driver ? `${driver.firstName} ${driver.lastName}` : undefined;
-      shipment.vehicleId = vehicleId;
+      // TRAILER, matching the column the real endpoint writes. This used to set
+      // `shipment.vehicleId` and mutate the vehicle and driver besides — associations the
+      // real dispatch does not make. That is what let a feature which returned 422 on every
+      // real call look implemented: the mock was modelling a different operation.
+      shipment.trailerId = trailerId;
       shipment.updatedAt = new Date().toISOString();
       if (driver) {
         driver.currentShipmentId = id;
-        driver.currentVehicleId = vehicleId;
         driver.updatedAt = new Date().toISOString();
-      }
-      if (vehicle) {
-        // `vehicle.currentShipmentId = id` was set here too. `vehicles` has no shipment link
-        // — a shipment names its DRIVER — so the mock recorded an association the real
-        // dispatch endpoint cannot, and only the mock path could ever read it back.
-        vehicle.currentDriverId = driverId;
-        vehicle.updatedAt = new Date().toISOString();
       }
       return shipment;
     }
-    const response = await api.post<Shipment>(`/api/v1/transportation/shipments/${id}/dispatch`, { driver_id: driverId, vehicle_id: vehicleId });
+    const response = await api.post<Shipment>(`/api/v1/transportation/shipments/${id}/dispatch`, { driver_id: driverId, trailer_id: trailerId });
     return response.data;
   },
 

@@ -22,7 +22,7 @@ import {
   Wrench
 } from 'lucide-react';
 import type { ShipmentCosts } from '../../api/transportation';
-import { transportationApi, geoTabApi } from '../../api';
+import { transportationApi, geoTabApi, yardApi } from '../../api';
 import {
   FleetTrackerMap,
   GeofencingPanel,
@@ -34,6 +34,7 @@ import type {
   Driver,
   Shipment,
   Vehicle,
+  YardTrailer,
   ShipmentFilters,
   GeoLocation,
   MapFilterType
@@ -107,6 +108,13 @@ export const TransportationManagement: FC = () => {
     queryFn: () => transportationApi.getDrivers(),
   });
 
+  // Yard trailers, for the dispatch picker (FS-420). From the yard API because that is
+  // where trailers live — `Shipment.trailer_id` is a foreign key to `yard_trailers`.
+  const { data: trailersData } = useQuery({
+    queryKey: [TRANSPORT_QUERY_KEY, 'trailers'],
+    queryFn: () => yardApi.getTrailers(),
+  });
+
   const { data: vehiclesData, isLoading: vehiclesLoading, isError: vehiclesError } =
     useQuery({
     queryKey: [TRANSPORT_QUERY_KEY, 'vehicles'],
@@ -139,6 +147,10 @@ export const TransportationManagement: FC = () => {
   const carriers = carriersData?.items || [];
   const drivers = driversData?.items || [];
   const vehicles = vehiclesData?.items || [];
+  // Trailers, for the dispatch picker. A shipment records `trailer_id` — a foreign key to
+  // yard_trailers — and has no vehicle column at all, so the vehicle picker this modal used
+  // to offer could never have produced a storable value (FS-420).
+  const trailers = trailersData?.items || [];
 
   const stats = {
     totalShipments: shipments.length,
@@ -978,7 +990,7 @@ export const TransportationManagement: FC = () => {
         <ShipmentDetailModal
           shipment={selectedShipment}
           drivers={drivers}
-          vehicles={vehicles}
+          trailers={trailers}
           onClose={() => setSelectedShipment(null)}
           onChanged={() => {
             setSelectedShipment(null);
@@ -1033,17 +1045,19 @@ StatCard.displayName = 'StatCard';
 const ShipmentDetailModal: FC<{
   shipment: Shipment;
   drivers: Driver[];
-  vehicles: Vehicle[];
+  //: Trailers, not vehicles. The modal used to take `vehicles` for the dispatch picker;
+  //: a shipment has no vehicle column, so nothing it offered could be stored (FS-420).
+  trailers: YardTrailer[];
   onClose: () => void;
   onChanged: () => void;
-}> = ({ shipment, drivers, vehicles, onClose, onChanged }) => {
+}> = ({ shipment, drivers, trailers, onClose, onChanged }) => {
   // TYPED, NOT `any` — and `any` is why this pane rendered five undefined values without
   // tsc noticing (FS-397). The client's declared shape was wrong, and the one place that
   // could have compared them opted out. A wrong type at least fails the build; `any`
   // guarantees it never will.
   const [costs, setCosts] = useState<ShipmentCosts | null>(null);
   const [dispatchDriverId, setDispatchDriverId] = useState('');
-  const [dispatchVehicleId, setDispatchVehicleId] = useState('');
+  const [dispatchTrailerId, setDispatchTrailerId] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -1207,21 +1221,21 @@ const ShipmentDetailModal: FC<{
                   ))}
                 </select>
                 <select
-                  aria-label="Dispatch vehicle"
+                  aria-label="Dispatch trailer"
                   className="px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
-                  value={dispatchVehicleId}
-                  onChange={(e) => setDispatchVehicleId(e.target.value)}
+                  value={dispatchTrailerId}
+                  onChange={(e) => setDispatchTrailerId(e.target.value)}
                 >
-                  <option value="">Select vehicle…</option>
-                  {vehicles.map((v) => (
-                    <option key={v.id} value={v.id}>{v.vehicleNumber}</option>
+                  <option value="">Select trailer…</option>
+                  {trailers.map((t) => (
+                    <option key={t.id} value={t.id}>{t.trailerId}</option>
                   ))}
                 </select>
                 <button
-                  disabled={!dispatchDriverId || !dispatchVehicleId || busy !== null}
+                  disabled={!dispatchDriverId || !dispatchTrailerId || busy !== null}
                   onClick={() =>
                     runAction('Dispatch', () =>
-                      transportationApi.dispatchShipment(shipment.id, dispatchDriverId, dispatchVehicleId)
+                      transportationApi.dispatchShipment(shipment.id, dispatchDriverId, dispatchTrailerId)
                     )
                   }
                   className="px-4 py-2 bg-opsgrid-primary text-opsgrid-bg rounded-lg text-sm disabled:opacity-50"

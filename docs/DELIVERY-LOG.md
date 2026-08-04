@@ -1898,3 +1898,75 @@ The live verification initially showed the 500 still happening after the fix. Th
 correct; `kill` had not taken, so the old server still held the port and the "restart" bound
 nothing. Confirming the port was free before starting — and checking the process start
 time — is the difference between verifying a fix and verifying nothing.
+
+---
+
+## FS-419/420/421 — the third side of the frontend seam, and what it found immediately
+
+Two guards already watched the frontend/backend seam: `test_frontend_calls_real_endpoints`
+(the path and method exist) and `test_frontend_query_params_are_declared` (the query keys are
+declared). **Nothing watched request bodies** — the quietest of the three, because
+**Pydantic drops unknown body fields silently.** A client posting a field the model does not
+declare gets a 200, the field never lands, and the defect surfaces months later as "why is
+that column always null".
+
+### What it found on its first honest run
+
+`POST /transportation/shipments/{id}/dispatch` sent `driver_id` and `vehicle_id` in the body.
+The endpoint declared `driver_id: UUID, trailer_id: UUID` as **bare parameters**, which
+FastAPI reads as QUERY parameters for a POST.
+
+**422 on every call. The feature had never worked once.** Confirmed live: the client's shape
+returns 422, the server's own shape reaches business logic. Exactly FS-379, found the same
+way.
+
+And underneath it, a second defect that would have outlived the first: the client sent a
+**vehicle** id, and `Shipment.trailer_id` is a foreign key to `yard_trailers` — a shipment
+has no vehicle column at all. The Transportation page's dispatch modal offered a vehicle
+picker. So even a well-formed call would have written a vehicle id into a trailer FK:
+accepted silently by SQLite, and refused by Postgres now that foreign keys are enforced.
+
+Fixed on all three layers — a request body on the server, a body on the client, and a
+trailer picker on the page, fed from the yard API where trailers actually live.
+
+### And a third, found only by fixing the first two
+
+With the transport working, the call reached the HOS check and was refused with:
+
+```
+Driver not compliant:
+```
+
+Nothing after the colon. `check_compliance` is careful to separate a **violation** (the
+driver has driven too long) from **missing data** (nobody can tell) — that distinction was
+built deliberately in FS-395 — and the dispatch path read only `violations`. A driver blocked
+for missing data got a refusal naming no reason and leaving a dispatcher nowhere to go. It
+now reads both, and says `cannot be assessed — no medical certificate on file`.
+
+### The guard was wrong three times before it was right
+
+1. **Too narrow.** It read only inline object literals: 9 of 70 bodied writes. Borrowing the
+   sibling's variable resolver took it to 31 resolved, 26 matched to a schema.
+2. **False positives from nesting.** The borrowed resolver reads every `key:` in a type,
+   because a query string is flat. A body is not: `erp.ts` declares
+   `rate_limit?: { requests_per_minute; burst_limit }` and the server declares `rate_limit`
+   as a dict. It reported the two nested keys as undeclared fields. The key reader is now
+   depth-aware — which is precisely why it could not simply call the sibling.
+3. **A hole where a comment claimed a check.** The branch handling "operation declares no
+   JSON body" said `continue`, with a comment stating the case was "reported separately
+   below". It was not. A planted `{ operatorId, clearedBecause }` on such an endpoint passed
+   the guard silently. **The comment described a check nobody had written** — and that branch
+   is where the real defect turned out to live.
+
+Two floors were also guessed before being measured — 20, then 45, against a real 31. A floor
+pulled from the air is a claim about nothing, so the number is now the measured one with the
+coverage stated out loud: **31 of 70 bodies resolved, all 31 matched to a schema**.
+
+A fourth correction followed the first three: URLs written as `${BASE}/subscriptions` could
+not be normalised at all, so four calls were reported as "the endpoint declares no JSON
+body" — a defect in the reader, blamed on the code it was reading. Resolving module-level
+string constants fixed those, and passing the RESOLVED path to the casing check (rather than
+the raw URL, which matches no registered prefix) fixed three more that were correctly
+camelCased all along.
+
+**Sixth and seventh instrument errors in this sweep.** The rule holds.

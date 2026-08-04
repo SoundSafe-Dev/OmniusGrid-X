@@ -100,6 +100,25 @@ async def _resolve_driver_assignments(driver_ids, db: AsyncSession) -> Dict[str,
 # ---- Small response schemas for stable dict-shaped endpoints (FS-100). ----
 # Shapes are unchanged; these only document/type what the handlers already return.
 
+class ShipmentDispatchRequest(BaseModel):
+    """Who and what a shipment is dispatched with (FS-420).
+
+    A BODY, not two bare parameters. Declared as bare `driver_id: UUID, trailer_id: UUID`,
+    FastAPI reads them as QUERY parameters — and the client sent them in the body, so every
+    dispatch returned 422 and the feature had never worked once. Same shape as FS-379, where
+    Strategic approve/reject sent `operator_id` in a body the server declared as a query
+    parameter.
+
+    `trailer_id`, not `vehicle_id`: `Shipment.trailer_id` is a foreign key to
+    `yard_trailers`, and there is no vehicle column on a shipment. The picker on the
+    Transportation page offered vehicles, so even a well-formed call would have written a
+    vehicle id into a trailer FK — accepted silently by SQLite and refused by Postgres.
+    """
+
+    driver_id: UUID
+    trailer_id: UUID
+
+
 class ShipmentDispatchResponse(BaseModel):
     message: str
     shipment_id: str
@@ -658,16 +677,15 @@ async def update_shipment(
 @router.post("/shipments/{shipment_id}/dispatch", response_model=ShipmentDispatchResponse, dependencies=[Depends(require_operator_or_admin)])
 async def dispatch_shipment(
     shipment_id: UUID,
-    driver_id: UUID,
-    trailer_id: UUID,
+    request: ShipmentDispatchRequest,
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """Dispatch shipment to driver"""
     try:
         shipment = await transportation_management_service.dispatch_shipment(
             shipment_id=shipment_id,
-            driver_id=driver_id,
-            trailer_id=trailer_id,
+            driver_id=request.driver_id,
+            trailer_id=request.trailer_id,
             db=db
         )
         return {

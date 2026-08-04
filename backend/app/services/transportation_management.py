@@ -533,8 +533,23 @@ class TransportationManagementService:
             if driver:
                 hos_check = self.hos_monitor.check_compliance(driver)
                 if not hos_check['is_compliant']:
+                    # BOTH REASONS, because `is_compliant` is false for two different
+                    # things and they need different actions (FS-421). `check_compliance`
+                    # is careful to separate them — a VIOLATION means the driver has
+                    # driven too long, and MISSING DATA means nobody can tell. This read
+                    # only `violations`, so a driver blocked for missing data produced
+                    # "Driver not compliant: " with nothing after the colon: a refusal
+                    # that names no reason and leaves a dispatcher with nowhere to go.
+                    reasons = list(hos_check['violations'])
+                    if hos_check.get('missing_data'):
+                        reasons += [
+                            f"cannot be assessed — {item.lower()}"
+                            for item in hos_check['missing_data']
+                        ]
                     raise ValueError(
-                        f"Driver not compliant: {', '.join(hos_check['violations'])}"
+                        "Driver not compliant: " + (
+                            "; ".join(reasons) or "no reason reported by the HOS check"
+                        )
                     )
             
             shipment.status = 'dispatched'
