@@ -36,6 +36,58 @@ logger = structlog.get_logger()
 router = APIRouter()
 
 
+#: An unreachable object store is a 503, not a 500 (FS-431).
+#:
+#: `DocumentStore.available` is `aioboto3 is not None` — a check that the PACKAGE is
+#: installed. It is True on every deployment, so the `if not docs.available: raise 503`
+#: guards in this file could never fire for the condition anyone actually hits: the store
+#: is configured and simply not answering. `GET /documents` and `DELETE /documents/{id}`
+#: both surfaced `EndpointConnectionError: Could not connect to seaweedfs:8333` as a 500,
+#: which tells a caller "this API is broken" about a dependency being down.
+#:
+#: 503 is the decision, matching what this file already does when the store is absent and
+#: what every Redis-backed endpoint here does. It is retryable, it does not page anyone for
+#: a bug in this service, and it is honest: we could not reach storage.
+#:
+#: `ClientError` is deliberately NOT in here. A 404 on a bucket or a signature rejection is
+#: a configuration defect in this service, and turning it into "try again later" would hide
+#: a broken deployment behind a status code that says nothing is wrong.
+#: BOTH stores, because the delete path touches both. The register named SeaweedFS; the
+#: DELETE actually failed on QDRANT first — `vectors.delete_by_doc` runs before any blob is
+#: touched — so a fix covering only the object store would have left the endpoint 500ing and
+#: the walk would have said so. `VectorStore.available` is `client installed and a URL set`:
+#: the same configured-not-reachable check as `DocumentStore.available`, in a second file.
+#:
+#: `UnexpectedResponse` is excluded for the reason `ClientError` is: it means the store
+#: ANSWERED and refused. That is a defect here, not an outage there.
+_TRANSPORT: tuple[type[BaseException], ...] = (OSError,)
+try:  # pragma: no cover - import shape mirrors the services' optional dependencies
+    from botocore.exceptions import BotoCoreError
+
+    _TRANSPORT += (BotoCoreError,)
+except ImportError:  # pragma: no cover
+    pass
+try:  # pragma: no cover
+    from qdrant_client.http.exceptions import ResponseHandlingException
+
+    _TRANSPORT += (ResponseHandlingException,)
+except ImportError:  # pragma: no cover
+    pass
+
+#: Kept as a name because the guards and the `except` clauses read better for it.
+_StoreTransportError = _TRANSPORT
+
+
+class _StoreUnreachable(HTTPException):
+    def __init__(self, exc: Exception) -> None:
+        logger.warning("rag.document_store_unreachable", error=str(exc)[:200])
+        super().__init__(
+            status_code=503,
+            detail="Document store unreachable. This is a dependency outage, not a "
+                   "rejection of your request; retry shortly.",
+        )
+
+
 def _org_id(user: User) -> str:
     if not getattr(user, "organization_id", None):
         raise HTTPException(status_code=403, detail="User has no organization.")
@@ -140,7 +192,10 @@ async def list_documents(
     docs = get_document_store()
     if not docs.available:
         raise HTTPException(status_code=503, detail="Document store unavailable.")
-    keys = await docs.list_documents(prefix=f"{_org_id(current_user)}/")
+    try:
+        keys = await docs.list_documents(prefix=f"{_org_id(current_user)}/")
+    except _StoreTransportError as exc:
+        raise _StoreUnreachable(exc) from exc
     return {"count": len(keys), "keys": keys}
 
 
@@ -196,9 +251,18 @@ async def delete_document(
     doc_id: str,
     current_user: User = Depends(get_current_active_user),
 ) -> Dict[str, Any]:
-    return await get_ingestion_pipeline().delete_document(
-        doc_id=doc_id, org_id=_org_id(current_user)
-    )
+    """Remove a document's vectors and blobs.
+
+    The delete is org-scoped inside the pipeline — blobs live under `{org_id}/{doc_id}/`
+    and the prefix comes from the token, never the path — so an id belonging to another
+    tenant deletes nothing rather than deleting theirs.
+    """
+    try:
+        return await get_ingestion_pipeline().delete_document(
+            doc_id=doc_id, org_id=_org_id(current_user)
+        )
+    except _StoreTransportError as exc:
+        raise _StoreUnreachable(exc) from exc
 
 
 @router.get("/health", summary="RAG services health")
@@ -207,5 +271,10 @@ async def health(
 ) -> Dict[str, Any]:
     retriever = get_retriever()
     status = await retriever.health_check()
-    status["document_store"] = await get_document_store().health_check()
+    # A health check that raises when a dependency is down reports nothing about the rest
+    # of the system — the one request where the answer matters most.
+    try:
+        status["document_store"] = await get_document_store().health_check()
+    except _StoreTransportError as exc:
+        status["document_store"] = {"status": "unreachable", "error": str(exc)[:200]}
     return status

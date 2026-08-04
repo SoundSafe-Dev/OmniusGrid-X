@@ -3569,8 +3569,13 @@ class CorrelationAIEngine:
         
         from generate_dataset import StateSpaceLoader, ScenarioGenerator
         
-        # Load state space
-        state_space = StateSpaceLoader("state_space")
+        # Anchored to the backend package, NOT the working directory (FS-431). This read
+        # `StateSpaceLoader("state_space")`, so it resolved against wherever the process
+        # happened to be started; under a server launched from the repo root it loaded
+        # nothing and the endpoint 500'd with "Cannot choose from an empty sequence".
+        state_space = StateSpaceLoader(
+            str(Path(__file__).parent.parent.parent / "state_space")
+        )
         generator = ScenarioGenerator(state_space)
         
         # Generate scenarios

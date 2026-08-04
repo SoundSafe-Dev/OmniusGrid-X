@@ -15,7 +15,10 @@ from pydantic import BaseModel, Field
 import math
 import structlog
 
-from app.db.database import get_db
+# `get_tenant_db` binds `app.current_org_id` on the session; `intake_items` is under
+# FORCE ROW LEVEL SECURITY (migration 033), so the unscoped session read zero rows
+# and refused every write here (FS-431).
+from app.middleware.tenant_isolation import get_tenant_db
 from app.api.auth import get_current_active_user
 from app.db.models import User
 from app.db.models import IntakeItem as IntakeItemModel
@@ -1105,7 +1108,7 @@ class IntakeListResponse(BaseModel):
 async def nlp_query(
     request: NLPQueryRequest,
     background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -1172,7 +1175,7 @@ async def nlp_query(
 async def nlp_chat(
     message: str,
     conversation_history: Optional[List[Dict[str, str]]] = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -1222,7 +1225,7 @@ async def upload_to_intake(
     description: str = "",
     data_type: str = "document",
     category: str = "general",
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -1308,7 +1311,7 @@ async def analyze_intake(
     query: Optional[str] = None,
     auto_integrate: bool = True,
     mode: str = "window",
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -1760,7 +1763,7 @@ class CrossCorrelationRequest(BaseModel):
 @router.post("/intake/cross-correlate")
 async def cross_correlate_intake(
     request: CrossCorrelationRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
@@ -1834,7 +1837,7 @@ async def list_intake_items(
     offset: int = Query(0, ge=0, description="Rows to skip."),
     status: Optional[str] = None,
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """
     List items in Intake Inbox.
@@ -1889,18 +1892,23 @@ async def list_intake_items(
 async def get_intake_item(
     intake_id: UUID,
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """
     Get details of a specific Intake Inbox item.
     """
     logger.info("intake_get_item", user_id=str(current_user.id), intake_id=str(intake_id))
     
-    # Retrieve from database
+    # `IntakeItemModel`, NOT `IntakeItem` (FS-431). This module defines a Pydantic
+    # `IntakeItem` at module scope for the response body, and imports the ORM class as
+    # `IntakeItemModel`; passing the Pydantic class to `select()` raises, so this endpoint
+    # returned 500 to every caller. The sibling read at ~line 1334 has always used the right
+    # one, which is what makes the shadowing so easy to miss: both names exist, both look
+    # plausible at the call site, and only one is a mapped class.
     from sqlalchemy import select
-    query = select(IntakeItem).where(
-        IntakeItem.id == intake_id,
-        IntakeItem.user_id == current_user.id
+    query = select(IntakeItemModel).where(
+        IntakeItemModel.id == intake_id,
+        IntakeItemModel.user_id == current_user.id
     )
     result = await db.execute(query)
     item = result.scalar_one_or_none()

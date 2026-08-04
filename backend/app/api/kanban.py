@@ -7,11 +7,14 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
-from sqlalchemy import select, update, delete, func, and_, or_
+from sqlalchemy import select, update, delete, func, and_, or_, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.db.database import get_db, AsyncSessionLocal
+# `get_db` is deliberately NOT imported (FS-431). Every handler here touches a table
+# under FORCE ROW LEVEL SECURITY, so the unscoped session is never the right one and
+# leaving the name out of scope means a new handler cannot reach for it by habit.
+from app.db.database import AsyncSessionLocal
 from app.db.models import (
     TaskBoard, TaskColumn, Task, TaskComment, TaskTimer, 
     TaskRule, TaskEscalation, Asset, Alarm, User, Organization, Command
@@ -20,7 +23,8 @@ from app.models.schemas import (
     TaskBoardCreate, TaskBoardResponse, TaskColumnCreate, TaskColumnResponse,
     TaskCreate, TaskUpdate, TaskResponse, TaskMoveRequest, TaskApprovalRequest,
     TaskCommentBase, TaskCommentCreate, TaskCommentResponse, TaskTimerStart, TaskTimerStop, TaskTimerResponse,
-    TaskRuleCreate, TaskRuleUpdate, TaskRuleResponse, TaskRuleTestRequest, TaskRuleTestResponse,
+    TaskRuleCreate, TaskRuleUpdate, TaskRuleResponse, TaskRuleTemplateResponse,
+    TaskRuleTestRequest, TaskRuleTestResponse,
     KanbanViewFilter, KanbanBoardData, KanbanMetrics, KanbanWorkloadResponse,
     TaskEscalationResponse, TaskChecklistItem
 )
@@ -164,7 +168,12 @@ async def broadcast_task_update(
 @router.get("/board", response_model=KanbanBoardData)
 async def get_kanban_board(
     filters: KanbanViewFilter = Depends(),
-    session: AsyncSession = Depends(get_db),
+    # TENANT-BOUND (FS-431). This path calls `get_organization_board`, which INSERTs a
+    # default board when none exists — and `task_boards` is FORCE RLS, so on the
+    # unscoped `get_db` session the INSERT was refused and the endpoint returned 500 to
+    # every caller whose organisation had no board yet. Recorded in _lane_failures.py
+    # for four endpoints; it is one session dependency, shared by all four.
+    session: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -250,7 +259,12 @@ async def get_kanban_board(
 @router.post("/board/view", response_model=KanbanBoardData)
 async def update_board_view(
     filters: KanbanViewFilter,
-    session: AsyncSession = Depends(get_db),
+    # TENANT-BOUND (FS-431). This path calls `get_organization_board`, which INSERTs a
+    # default board when none exists — and `task_boards` is FORCE RLS, so on the
+    # unscoped `get_db` session the INSERT was refused and the endpoint returned 500 to
+    # every caller whose organisation had no board yet. Recorded in _lane_failures.py
+    # for four endpoints; it is one session dependency, shared by all four.
+    session: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """Update board view with new filters"""
@@ -865,10 +879,24 @@ async def complete_task(
 
 
 async def execute_completion_actions(task_id: str, actions: Dict[str, Any], organization_id: str):
-    """Execute actions when task is completed"""
+    """Execute actions when task is completed.
+
+    TENANT-BOUND (FS-431). This runs outside a request, so it opens its own session and no
+    dependency binds `app.current_org_id` for it. `tasks`, `task_boards`, `alarms` and
+    `assets` are all under FORCE ROW LEVEL SECURITY, so without the GUC the task lookup
+    below returned nothing and every completion action silently did not happen — the
+    absence-as-success shape, on a path whose whole purpose is a side effect.
+
+    The `organization_id` argument was already here and already filtered on; it just never
+    reached the session. Same pattern as `posting_drain_scheduler`.
+    """
     results = {}
-    
+
     async with AsyncSessionLocal() as session:
+        await session.execute(
+            text("SELECT set_config('app.current_org_id', :org_id, true)"),
+            {"org_id": str(organization_id)},
+        )
         # Get task for related entities
         result = await session.execute(
             select(Task)
@@ -1120,7 +1148,12 @@ async def get_task_time_logs(
 
 @router.get("/metrics", response_model=KanbanMetrics)
 async def get_kanban_metrics(
-    session: AsyncSession = Depends(get_db),
+    # TENANT-BOUND (FS-431). This path calls `get_organization_board`, which INSERTs a
+    # default board when none exists — and `task_boards` is FORCE RLS, so on the
+    # unscoped `get_db` session the INSERT was refused and the endpoint returned 500 to
+    # every caller whose organisation had no board yet. Recorded in _lane_failures.py
+    # for four endpoints; it is one session dependency, shared by all four.
+    session: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """Get kanban board metrics"""
@@ -1228,7 +1261,12 @@ async def get_kanban_metrics(
 
 @router.get("/workload", response_model=KanbanWorkloadResponse)
 async def get_workload_distribution(
-    session: AsyncSession = Depends(get_db),
+    # TENANT-BOUND (FS-431). This path calls `get_organization_board`, which INSERTs a
+    # default board when none exists — and `task_boards` is FORCE RLS, so on the
+    # unscoped `get_db` session the INSERT was refused and the endpoint returned 500 to
+    # every caller whose organisation had no board yet. Recorded in _lane_failures.py
+    # for four endpoints; it is one session dependency, shared by all four.
+    session: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """Get workload distribution by assignee"""
@@ -1310,7 +1348,11 @@ async def get_workload_distribution(
 @router.get("/rules", response_model=List[TaskRuleResponse])
 async def list_task_rules(
     active_only: bool = False,
-    session: AsyncSession = Depends(get_db),
+    # TENANT-BOUND (FS-431). `task_rules` is FORCE RLS (migration 033), so on the
+    # unscoped session a read returned zero rows regardless of the explicit
+    # organization_id filter below — RLS removes the row before the filter sees it —
+    # and a write was refused outright. No walk probed these, so nothing recorded it.
+    session: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """List all task automation rules"""
@@ -1329,7 +1371,11 @@ async def list_task_rules(
 @router.post("/rules", response_model=TaskRuleResponse, dependencies=[Depends(require_admin)])
 async def create_task_rule(
     rule_data: TaskRuleCreate,
-    session: AsyncSession = Depends(get_db),
+    # TENANT-BOUND (FS-431). `task_rules` is FORCE RLS (migration 033), so on the
+    # unscoped session a read returned zero rows regardless of the explicit
+    # organization_id filter below — RLS removes the row before the filter sees it —
+    # and a write was refused outright. No walk probed these, so nothing recorded it.
+    session: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """Create a new automation rule"""
@@ -1364,7 +1410,11 @@ async def create_task_rule(
 async def update_task_rule(
     rule_id: UUID,
     rule_update: TaskRuleUpdate,
-    session: AsyncSession = Depends(get_db),
+    # TENANT-BOUND (FS-431). `task_rules` is FORCE RLS (migration 033), so on the
+    # unscoped session a read returned zero rows regardless of the explicit
+    # organization_id filter below — RLS removes the row before the filter sees it —
+    # and a write was refused outright. No walk probed these, so nothing recorded it.
+    session: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """Update an automation rule"""
@@ -1415,7 +1465,11 @@ async def update_task_rule(
 async def test_task_rule(
     rule_id: UUID,
     test_data: TaskRuleTestRequest,
-    session: AsyncSession = Depends(get_db),
+    # TENANT-BOUND (FS-431). `task_rules` is FORCE RLS (migration 033), so on the
+    # unscoped session a read returned zero rows regardless of the explicit
+    # organization_id filter below — RLS removes the row before the filter sees it —
+    # and a write was refused outright. No walk probed these, so nothing recorded it.
+    session: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """Test a rule against sample data"""
@@ -1463,16 +1517,23 @@ async def test_task_rule(
     }
 
 
-@router.get("/rules/premade", response_model=List[TaskRuleResponse])
+@router.get("/rules/premade", response_model=List[TaskRuleTemplateResponse])
 async def get_premade_rules(
-    session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    """Get list of available premade system rules"""
+    """The premade rules a user can activate (FS-431).
+
+    Static constants, so no session: this took `Depends(get_db)` and never used it.
+
+    It declared `List[TaskRuleResponse]` — a model requiring a UUID id, an organization_id
+    and timestamps that a template does not have and cannot have before it is created — so
+    response validation raised and every caller got a 500. `TaskRuleTemplateResponse` is
+    the shape these actually are.
+    """
     # Return system rule templates that can be activated
     premade_templates = [
         {
-            "id": "template-001",
+            "template_id": "template-001",
             "rule_name": "Critical Alarm Response",
             "description": "Auto-create high-priority task when critical alarms fire",
             "trigger_type": "alarm_created",
@@ -1485,7 +1546,7 @@ async def get_premade_rules(
             "is_system_rule": True
         },
         {
-            "id": "template-002",
+            "template_id": "template-002",
             "rule_name": "OEE Degradation Alert",
             "description": "Create investigation task when OEE drops below threshold",
             "trigger_type": "oee_threshold",
@@ -1498,7 +1559,7 @@ async def get_premade_rules(
             "is_system_rule": True
         },
         {
-            "id": "template-003",
+            "template_id": "template-003",
             "rule_name": "Command Failure Follow-up",
             "description": "Create troubleshooting task when commands fail",
             "trigger_type": "command_failed",
@@ -1511,7 +1572,7 @@ async def get_premade_rules(
             "is_system_rule": True
         },
         {
-            "id": "template-004",
+            "template_id": "template-004",
             "rule_name": "PackML Abort Investigation",
             "description": "Create fault investigation task on PackML Aborted state",
             "trigger_type": "packml_state_change",
@@ -1524,7 +1585,7 @@ async def get_premade_rules(
             "is_system_rule": True
         },
         {
-            "id": "template-005",
+            "template_id": "template-005",
             "rule_name": "Preventive Maintenance Due",
             "description": "Schedule PM tasks based on maintenance calendar",
             "trigger_type": "maintenance_due",
@@ -1544,7 +1605,11 @@ async def get_premade_rules(
 @router.delete("/rules/{rule_id}", dependencies=[Depends(require_admin)])
 async def delete_task_rule(
     rule_id: UUID,
-    session: AsyncSession = Depends(get_db),
+    # TENANT-BOUND (FS-431). `task_rules` is FORCE RLS (migration 033), so on the
+    # unscoped session a read returned zero rows regardless of the explicit
+    # organization_id filter below — RLS removes the row before the filter sees it —
+    # and a write was refused outright. No walk probed these, so nothing recorded it.
+    session: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """Delete a custom rule (cannot delete system rules)"""

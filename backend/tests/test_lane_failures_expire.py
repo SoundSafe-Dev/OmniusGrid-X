@@ -46,14 +46,25 @@ MAX_HORIZON_DAYS = 120
 
 
 class TestTheRegistryIsIntact:
-    def test_it_has_entries(self):
-        """Vacuity guard. If the registry empties because someone deleted it rather than
-        fixing the endpoints, every assertion below passes over nothing."""
-        assert len(ALL_ENTRIES) >= 8, (
-            f"only {len(ALL_ENTRIES)} lane-failure entries found; the two walks record "
-            "ten between them, so the registry has probably been gutted rather than "
-            "worked down"
-        )
+    def test_the_registers_still_exist(self):
+        """Vacuity guard, rewritten when the registry reached zero (FS-431).
+
+        It asserted `len(ALL_ENTRIES) >= 8` — right while entries existed, because an
+        emptied file would have made every assertion below pass over nothing. That number
+        cannot survive the entries being fixed, and re-asserting a smaller one is the same
+        guard waiting to fail again for the same good reason.
+
+        WHAT REPLACED IT IS NOT THIS TEST. An empty register proves nothing by itself, and
+        the two walks that would prove it are real-database tests that SKIP without Docker —
+        so "gutted" and "worked down" look identical on a laptop. The evidence lives in
+        `test_lane_failure_root_causes_stay_fixed.py`, which asserts the structural facts
+        that closed these entries and needs no database to do it.
+
+        This keeps the shape: both names exist and both are dicts, so a walk importing them
+        cannot fail into a permissive state.
+        """
+        assert isinstance(GET_FAILURES, dict)
+        assert isinstance(WRITE_FAILURES, dict)
 
     @pytest.mark.parametrize("key,entry", ALL_ENTRIES, ids=[k for k, _ in ALL_ENTRIES])
     def test_every_entry_names_an_owner_a_reason_and_a_fix(self, key, entry):
@@ -110,14 +121,21 @@ class TestTheRegistryMatchesTheWalks:
             "the write walk's allowlist no longer matches the registry"
         )
 
-    def test_the_shared_root_cause_is_recorded_once(self):
-        """Four of the ten are one defect: a read endpoint INSERTing a default row on an
-        unbound tenant session. Recorded once in the registry and referenced, so fixing it
-        does not mean finding four separately-worded copies."""
+    def test_the_shared_root_cause_is_traceable_while_it_has_entries(self):
+        """Four of the ten were one defect: a read endpoint INSERTing a default row on an
+        unbound tenant session. Recorded once and referenced, so fixing it did not mean
+        finding four separately-worded copies — it was one dependency swap, exactly as the
+        shared wording predicted.
+
+        Now conditional (FS-431): with the registry empty there is nothing to trace, and
+        asserting `>= 4` unconditionally would require the defect to come back.
+        """
         write_on_read = [
             key for key, entry in ALL_ENTRIES
             if "GUC is not bound" in entry.reason
         ]
+        if not write_on_read:
+            return
         assert len(write_on_read) >= 4, (
             "the shared write-on-read root cause is no longer traceable across its "
             f"entries (found {len(write_on_read)}); it is one fix, not four"

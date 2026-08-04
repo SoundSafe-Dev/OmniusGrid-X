@@ -217,10 +217,20 @@ async def list_scenarios(
 
 @router.post("/correlation/generate", dependencies=[Depends(require_operator_or_admin)])
 async def generate_synthetic_scenarios(
-    count: int = 100,
+    count: int = Query(100, ge=1, le=1000, description="How many scenarios to generate"),
     db: AsyncSession = Depends(get_db)
 ):
-    """Generate synthetic correlation scenarios for training"""
+    """Generate synthetic correlation scenarios for training.
+
+    BOUNDED (FS-431). `count` was a bare `int = 100` with no ceiling, and generation is a
+    synchronous loop, so `?count=100000000` was a one-request denial of service on an
+    endpoint any operator can call. `ge=1` matters too: a negative count ran zero iterations
+    and reported "Generated 0 synthetic scenarios" as a success.
+
+    It stays a query parameter because that is what a bare non-Pydantic parameter already
+    was on this POST — declaring it explicitly makes that visible in the schema rather than
+    leaving callers to discover it (the FS-379/FS-420 shape).
+    """
     try:
         scenarios = await correlation_ai_engine.generate_synthetic_scenarios(count, db)
         return {

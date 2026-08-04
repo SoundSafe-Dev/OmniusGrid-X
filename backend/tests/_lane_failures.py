@@ -58,93 +58,43 @@ class LaneFailure:
         return datetime.date.fromisoformat(self.expires)
 
 
-#: A root cause shared by four entries across both walks, recorded once.
-_WRITE_ON_READ = (
-    "a read endpoint INSERTs a default row, and the INSERT runs on a session whose tenant "
-    "GUC is not bound, so the FORCE ROW LEVEL SECURITY policy rejects it"
-)
+#: BOTH REGISTERS ARE EMPTY as of 2026-08-04 (FS-431). Every entry was fixed rather than
+#: re-dated, and what the entries got wrong is worth more than the fact that they closed:
+#:
+#:   * `/nlp/correlation/intake/{intake_id}` — recorded as "select() is given the class
+#:     rather than a column expression". `select(SomeModel)` is correct SQLAlchemy 2.0, so
+#:     the recorded reason described valid code. The actual cause was NAME SHADOWING: the
+#:     module defines a Pydantic `IntakeItem` for the response body and imports the ORM
+#:     class as `IntakeItemModel`, and this one call site reached for the Pydantic one. A
+#:     sibling read forty lines away had always used the right name.
+#:   * `/kanban/rules/premade` — recorded as omitting "org_id/is_active/target_board_id".
+#:     It omits TEN required fields, because a template is not a rule and cannot have an
+#:     id, an owner or timestamps before someone creates one. The fix was a response model,
+#:     not three added fields.
+#:   * `POST /engines/correlation/generate` — recorded as "500 on an empty scenario body
+#:     rather than 422". There is no body; `count` defaults. It 500'd because
+#:     `StateSpaceLoader("state_space")` resolves against the WORKING DIRECTORY, loaded
+#:     nothing when the server was not started from `backend/`, and reported success —
+#:     `random.choice` then failed several frames later on an empty sequence. Running the
+#:     endpoint by hand from `backend/` "passed", which is how it stayed misdiagnosed.
+#:   * the two RAG entries — recorded as needing "a decision on whether an absent store is
+#:     degraded or fatal". The decision was already made and already written in that file:
+#:     `document_link` twenty lines up raises 503. What defeated it is that
+#:     `DocumentStore.available` is `aioboto3 is not None` — a PACKAGE-INSTALLED check that
+#:     is True on every deployment and can never observe an unreachable store.
+#:
+#: FOUR OF FIVE RECORDED CAUSES WERE WRONG, and each was wrong in the same direction: it
+#: described something plausible that could be believed without running anything. An
+#: allowlist entry is a hypothesis with a date on it, not a diagnosis. The expiry is what
+#: made someone check, and checking is what found the real ones — so the mechanism worked
+#: exactly as intended, including in its failure to be accurate.
+#:
+#: KEEP THE DICTS. Both walks read them, both assert in both directions, and an empty
+#: register that a new 5xx must be added to deliberately is the point.
 
 #: GET endpoints permitted to 5xx. Keyed by path, mirroring the GET walk.
-GET_FAILURES: dict[str, LaneFailure] = {
-    "/api/v1/kanban/board": LaneFailure(
-        owner="HARSH",
-        reason=f"RLS violation writing the default board on read — {_WRITE_ON_READ}",
-        fix="bind the tenant session (get_tenant_db) before the default-board INSERT, or "
-            "stop writing on a read path",
-        expires="2026-09-15",
-    ),
-    "/api/v1/kanban/metrics": LaneFailure(
-        owner="HARSH",
-        reason=f"same default-board write path as /kanban/board — {_WRITE_ON_READ}",
-        fix="one fix with /kanban/board; these three go together",
-        expires="2026-09-15",
-    ),
-    "/api/v1/kanban/workload": LaneFailure(
-        owner="HARSH",
-        reason=f"same default-board write path as /kanban/board — {_WRITE_ON_READ}",
-        fix="one fix with /kanban/board; these three go together",
-        expires="2026-09-15",
-    ),
-    "/api/v1/kanban/rules/premade": LaneFailure(
-        owner="HARSH",
-        reason="premade template ids ('template-001') are not UUIDs and the payload omits "
-               "org_id/is_active/target_board_id vs its response_model. NOT environmental: "
-               "the ids are static, so this fails on any database",
-        fix="either widen the response model's id to str, or give the premade templates "
-            "real UUIDs. Independently re-found by a page-by-page QA sweep on 2026-08-01",
-        expires="2026-09-15",
-    ),
-    "/api/v1/nlp/correlation/intake/{intake_id}": LaneFailure(
-        owner="HARSH",
-        reason="select() is given the IntakeItem CLASS rather than a column expression",
-        fix="one line — pass the column, or select(IntakeItem) if the whole row is wanted",
-        expires="2026-09-15",
-    ),
-    "/api/v1/rag/documents": LaneFailure(
-        owner="htreinen",
-        reason="reaches SeaweedFS at seaweedfs:8333 and surfaces the connection error as a "
-               "500",
-        fix="degrade to 503 when the object store is absent, as every Redis-backed endpoint "
-            "already does. Needs a decision on whether an absent store is degraded or fatal",
-        expires="2026-09-30",
-    ),
-}
+GET_FAILURES: dict[str, LaneFailure] = {}
 
 #: Write endpoints permitted to 5xx. Keyed by (method, path) — the write walk records why
 #: the method is part of the key, and it is not optional.
-WRITE_FAILURES: dict[tuple[str, str], LaneFailure] = {
-    ("POST", "/api/v1/kanban/board/view"): LaneFailure(
-        owner="HARSH",
-        reason=f"writes a default board on read — {_WRITE_ON_READ}. Same root cause the "
-               "GET walk records for /kanban/board",
-        fix="one fix with the three GET entries above",
-        expires="2026-09-15",
-    ),
-    # RELEASED 2026-08-04 (FS-430). The recorded fix — "bind the tenant session before the
-    # INSERT" — was exactly right: `correlation_integration.py` took `Depends(get_db)`, the
-    # unscoped session, and `actionable_registries` is FORCE RLS, so every INSERT was refused.
-    #
-    # THE ENTRY UNDERSTATED IT. All THREE write-bearing endpoints in that module had it —
-    # /analyze and /test-integration as well — and only this one was probed, so the other two
-    # failed the same way with nothing recording them. A single allowlist line can be the
-    # visible corner of a module-wide defect.
-    #
-    # Proven under the conditions that apply: as a NON-superuser the old code returns 500 and
-    # writes zero rows, the fix returns 200 and writes 46. As a superuser both "pass", which
-    # is why the first attempt at verifying this proved nothing — FORCE RLS does not apply to
-    # a superuser, and a throwaway container's default role is one.
-    ("POST", "/api/v1/engines/correlation/generate"): LaneFailure(
-        owner="HARSH",
-        reason="correlation_ai_engine returns 500 on an empty scenario body rather than 422",
-        fix="validate the scenario body; an empty POST is the caller's mistake",
-        expires="2026-09-30",
-    ),
-    ("DELETE", "/api/v1/rag/documents/{doc_id}"): LaneFailure(
-        owner="htreinen",
-        reason="reaches SeaweedFS and surfaces the connection error; same root cause as the "
-               "GET walk's /api/v1/rag/documents",
-        fix="degrade to 503 with the GET entry. Note this route also takes `doc_id: str`, "
-            "so a literal path segment reaches it (recorded separately as FS-266)",
-        expires="2026-09-30",
-    ),
-}
+WRITE_FAILURES: dict[tuple[str, str], LaneFailure] = {}

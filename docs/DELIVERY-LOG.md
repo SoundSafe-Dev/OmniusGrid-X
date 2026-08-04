@@ -2358,3 +2358,88 @@ already made about itself.
 **Tenth instrument error of the sweep, and the most consequential**: it did not report a
 false defect, it reported a real fix as unnecessary. An instrument that cannot produce the
 failure condition will call anything healthy.
+
+---
+
+## FS-431 — the allowlist reaches zero, and four of its five diagnoses were wrong
+
+`tests/_lane_failures.py` is empty. Nine endpoints closed in one pass: four kanban, the
+intake read, `/kanban/rules/premade`, `/engines/correlation/generate`, and both RAG entries.
+
+The register did its job. **What it recorded about the causes mostly did not survive
+contact with the code.**
+
+| endpoint | recorded cause | actual cause |
+|---|---|---|
+| `/nlp/correlation/intake/{id}` | "`select()` is given the class rather than a column expression" | **name shadowing** — the module defines a Pydantic `IntakeItem` and imports the ORM class as `IntakeItemModel`; this call site reached for the Pydantic one |
+| `/kanban/rules/premade` | "omits org_id/is_active/target_board_id" | **ten** required fields; a template is not a rule and has no identity until created |
+| `POST /engines/correlation/generate` | "500 on an empty scenario body rather than 422" | there is no body — `StateSpaceLoader("state_space")` resolves against the **working directory**, and separately `random.choice` on a dict |
+| `/rag/documents` ×2 | "needs a decision on whether an absent store is degraded or fatal" | the decision was already made twenty lines up; `DocumentStore.available` is `aioboto3 is not None` and **cannot observe an unreachable store** |
+| kanban ×4 | write-on-read on an unbound tenant session | **correct**, and correct about all four |
+
+Every wrong one was wrong in the same direction: plausible enough to believe without
+running anything. `select(SomeModel)` is valid SQLAlchemy 2.0, so the first entry described
+working code and would have sent its owner looking for a bug that wasn't there.
+
+**An allowlist entry is a hypothesis with a date on it, not a diagnosis.** The expiry is
+what made someone check, and checking is what found the real causes — so the mechanism
+worked exactly as designed, including in its inaccuracy.
+
+### The four that nobody probed
+
+`kanban.py` had ten unscoped handlers and `nlp_correlation.py` seven. Four of the ten
+allowlisted 5xxs traced here, as recorded. **The other thirteen handlers were never probed
+by any walk**, so nothing recorded them — they were reading zero rows and answering 200.
+
+`list_task_rules` filters on `organization_id` itself, which changes nothing: RLS removes
+the row before the filter sees it. So the automation-rules screen showed an empty list to
+every tenant that had rules, and creating one was refused. `execute_completion_actions`
+came with them — it runs outside a request, so no dependency bound the GUC and every
+completion action on every task silently did not happen, on a code path that exists only
+for its side effects.
+
+### A defect that gets likelier with volume
+
+`POST /engines/correlation/generate` kept 500ing after the path fix. `random.choice`
+indexes with an integer, so on a **dict** it raises `KeyError: 2` — and 26 of the state
+space's 487 top-level keys map to a dict of grouped lists rather than a flat list.
+
+~5% per draw. At the endpoint's default `count=100` that is a near-certainty; by hand with
+three it passes. **From underneath it looks like flakiness and from the endpoint it looks
+like a hard failure**, which is why running it once by hand confirmed nothing.
+
+The same shape sat in `get_random_asset`: `assets.extend(items)` where `items` is a dict
+extends with its **keys**, so 'driver' and 'carrier' were returned as asset names. No
+exception, no type error, just occasional nonsense in generated training data.
+
+### Configured is not reachable, in two files
+
+`DocumentStore.available` is `aioboto3 is not None`. `VectorStore.available` is `client
+installed and a URL set`. Both are **package-and-config checks**, both are True on every
+deployment, and both sat in front of `raise HTTPException(503, "unavailable")` guards that
+therefore could never fire for the condition anyone actually hits.
+
+The register named SeaweedFS. The DELETE failed on **Qdrant** first — `delete_by_doc` runs
+before any blob is touched — so a fix covering only the object store left the endpoint
+500ing, and the write walk said so on the re-run. Connection failures from both clients now
+become 503; `ClientError` and `UnexpectedResponse` deliberately do not, because a refusal
+from a store that answered is a defect here, not an outage there.
+
+### Instrument error 11
+
+`test_tenant_session_guard` counts `Depends(get_db)` in **raw source**. The comment written
+above each fix explaining that the handler no longer takes the unscoped session was counted
+as a handler that does, so `kanban.py` reported one remaining offender after all ten were
+fixed — and the offender was a sentence saying so.
+
+Fourth time in this directory. It fools the guard toward keeping a file on the debt list
+forever, which is the safe direction and therefore the one nobody notices.
+
+### What replaced the register
+
+An empty allowlist proves nothing on its own, and the two walks that would prove it **skip
+without Docker** — on a laptop, gutted and worked-down look identical.
+`tests/test_lane_failure_root_causes_stay_fixed.py` asserts the structural facts instead:
+28 tests, no database, no server, no network. Seven mutations verified, including the
+premise of each guard (that `IntakeItem` really is still the Pydantic name, that `available`
+really is still only a config check) so a guard cannot outlive the condition it guards.

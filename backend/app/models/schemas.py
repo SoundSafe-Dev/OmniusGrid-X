@@ -1136,6 +1136,27 @@ class TaskRuleResponse(TaskRuleBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+class TaskRuleTemplateResponse(TaskRuleBase):
+    """A premade rule a user can activate — NOT an activated rule (FS-431).
+
+    `/kanban/rules/premade` declared `List[TaskRuleResponse]` and returned five static
+    dicts. `TaskRuleResponse` requires `id: UUID`, `organization_id: UUID`, `is_active`,
+    `created_at` and `updated_at`; a template has none of those, and its ids are literals
+    like 'template-001'. So response validation raised on every call and the endpoint has
+    answered 500 since it was written — on any database, with no data involved.
+
+    The declaration was a category error, not a missing field: a template is a thing you
+    could create, so it has no identity, no owner and no history until you do. Modelling it
+    as a rule forces five values to be invented before anyone has asked for one.
+
+    `template_id` is deliberately a `str`. Widening `TaskRuleResponse.id` to accept both
+    would have made every real rule's id un-typed to spare these five constants.
+    """
+
+    template_id: str
+    is_system_rule: bool = True
+
+
 class TaskRuleTestRequest(BaseModel):
     sample_data: Dict[str, Any]  # Simulated trigger data to test against
 

@@ -137,7 +137,20 @@ KNOWN_GET_DB_ON_RLS: dict[str, int] = {
     # a full IDOR — both confirmed against a real database. Its four create paths
     # also took organization_id from the client payload and now take it from the
     # token. Pinned by tests/test_fleet_logistics_tenant_isolation_realdb.py.
-    "kanban.py": 10,
+    # kanban.py and nlp_correlation.py are GONE from this list (FS-431). Seventeen handlers
+    # between them, on tables that all have FORCE ROW LEVEL SECURITY.
+    #
+    # WHAT THE DEBT ENTRY UNDERSTATED. Four of the ten allowlisted 5xx endpoints traced here
+    # and were fixed by the swap, as recorded. The other THIRTEEN handlers were never probed
+    # by any walk, so nothing recorded what they were doing: reading zero rows and answering
+    # 200. `list_task_rules` filters on organization_id itself, which changes nothing —
+    # RLS removes the row before the filter sees it — so the automation-rules screen showed
+    # an empty list to every tenant that had rules, and creating one was refused.
+    #
+    # `execute_completion_actions` came with them. It runs outside a request, so no
+    # dependency binds the GUC; it now sets `app.current_org_id` itself from the
+    # organization_id it was already being passed. Until then every completion action on
+    # every task silently did not happen, on a code path that exists only for side effects.
     # logistics_correlation.py and platform_correlation.py are GONE from this list.
     # Both queried RLS-protected tables (dock_appointments, analysis_sessions) through
     # get_db, so every endpoint returned an empty result — logistics_correlation even
@@ -153,7 +166,6 @@ KNOWN_GET_DB_ON_RLS: dict[str, int] = {
     # on /delivery-efficiency and /compliance/summary, which are the two paths the
     # frontend actually calls. Choosing which implementation is canonical is a product
     # decision, not a routing edit.
-    "nlp_correlation.py": 7,
     # transportation.py is GONE from this list, and so is geotab.py.
     #
     # `get_vehicles` leaked outright: no organization filter, on a table with no RLS
@@ -221,6 +233,23 @@ def _model_to_table() -> dict[str, str]:
     }
 
 
+#: PROSE IS NOT CODE (FS-431). This counted `Depends(get_db)` in the RAW source, so a
+#: comment or docstring EXPLAINING that a handler no longer takes the unscoped session was
+#: counted as a handler that does. kanban.py reported one remaining offender after all ten
+#: were fixed, and the offender was a sentence saying so.
+#:
+#: It fools the guard in the direction that keeps a file on the debt list forever, which is
+#: the safe direction and therefore the one nobody would notice. `test_capped_lists_cannot_
+#: grow`, `test_capped_lists_are_ordered` and `test_frontend_body_fields_are_declared` each
+#: learned this separately; it is the fourth time in this directory.
+_DOCSTRING = re.compile(r'("""|\'\'\')(?:.|\n)*?\1')
+_COMMENT = re.compile(r"#[^\n]*")
+
+
+def _code_only(source: str) -> str:
+    return _COMMENT.sub("", _DOCSTRING.sub("", source))
+
+
 def _offenders() -> dict[str, int]:
     """Routers using get_db that reference a model backed by an RLS table."""
     rls = _rls_tables()
@@ -229,7 +258,7 @@ def _offenders() -> dict[str, int]:
     for path in sorted(API_DIR.glob("*.py")):
         if path.name in NO_USER_CONTEXT:
             continue
-        text = path.read_text()
+        text = _code_only(path.read_text())
         count = text.count("Depends(get_db)")
         if not count:
             continue
@@ -313,16 +342,11 @@ def test_exempt_routers_really_have_no_user_dependency(router: str):
 #: asset, plus `/health-index` and `/simulation/fleet-summary` reporting an empty fleet.
 #: Pinned by `test_inline_session_tenant_scoping_realdb.py`.
 INLINE_SESSION_ALLOWED: dict[str, str] = {
-    # NOT exempt on merit — another lane's open ticket, recorded so the number cannot
-    # grow while it waits. `execute_completion_actions` opens AsyncSessionLocal and
-    # touches Alarm, Asset and TaskBoard, all RLS-protected. The kanban RLS defect is
-    # HARSH's task-pool item (it also 500s /kanban/board, /metrics and /workload from
-    # one root cause), so fixing it here would collide with work in progress. Remove
-    # this entry when that lands; the assertion below will then hold it closed.
-    "kanban.py": (
-        "kanban RLS is an open ticket in another lane; one root cause also 500s "
-        "/kanban/board, /metrics and /workload"
-    ),
+    # EMPTY as of 2026-08-04 (FS-431). Its one entry was kanban.py's
+    # `execute_completion_actions`, held because "kanban RLS is an open ticket in another
+    # lane". The ticket described four 5xx endpoints; the same root cause reached this
+    # function too, and it took one `set_config` on the session it already opens using the
+    # organization_id it was already given.
 }
 
 
