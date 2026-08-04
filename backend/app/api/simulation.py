@@ -63,7 +63,10 @@ async def fleet_summary(
     # the application-layer check looks right, so nothing in review points at the
     # session. Same shape as gdpr.py in `test_tenant_session_guard.py`.
     org_id = getattr(current_user, "organization_id", None)
-    stmt = select(Asset)
+    # ORDERED so the cap and the offset mean something (FS-429). Without an ORDER BY,
+    # Postgres may return any rows it likes and different ones next time, so a paged
+    # list can repeat rows on page 2 and skip others entirely.
+    stmt = select(Asset).order_by(Asset.name)
     if org_id is not None:
         stmt = stmt.where(Asset.organization_id == org_id)
     assets = (await db.execute(stmt.limit(limit))).scalars().all()

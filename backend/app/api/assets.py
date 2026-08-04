@@ -83,7 +83,10 @@ async def list_assets(
     db: AsyncSession = Depends(get_tenant_db),
 ):
     """List assets within the authenticated user's organization."""
-    query = select(Asset).where(Asset.organization_id == org_id)
+    # ORDERED so the cap and the offset mean something (FS-429). Without an ORDER BY,
+    # Postgres may return any rows it likes and different ones next time, so a paged
+    # list can repeat rows on page 2 and skip others entirely.
+    query = select(Asset).order_by(Asset.name).where(Asset.organization_id == org_id)
 
     if workcell_id:
         query = query.where(Asset.workcell_id == workcell_id)

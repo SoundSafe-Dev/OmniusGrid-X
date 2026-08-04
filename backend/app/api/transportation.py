@@ -913,7 +913,9 @@ async def get_vehicles(
     """
     from app.db.logistics_models import Vehicle
 
-    query = select(Vehicle).where(
+    # ORDERED so the cap and the offset mean something (FS-429): an unordered paged
+    # list can repeat rows on one page and skip them on the next.
+    query = select(Vehicle).order_by(Vehicle.vehicle_number).where(
         Vehicle.organization_id == str(org_id),
         Vehicle.is_active == True,  # noqa: E712
     )

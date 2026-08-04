@@ -2268,3 +2268,47 @@ And the client contract change was caught by the suite immediately: six assertio
 `geofencing.realmode.test.ts` destructured the array `getAlerts` used to return. Updating
 them to read `.items` is the whole cost, and having them fail is the point — a return type
 that changes shape without anything noticing is how a caller ends up rendering `undefined`.
+
+---
+
+## FS-429 — six capped lists returning an arbitrary subset, including the one every asset screen uses
+
+FS-428 recorded `/health-index` as having "a sharper problem anyway: `select(Asset).limit(n)`
+with no ORDER BY". Taking that seriously and sweeping for the shape found **six**, and the
+worst of them was not the one noticed.
+
+**Postgres makes no promise about row order without an ORDER BY.** It may return any rows it
+likes for a `LIMIT` and different ones next call — the planner is free to switch between a
+sequential scan and an index scan, and a row updated in between moves. So an unordered
+`LIMIT` is two defects at once:
+
+| | |
+|---|---|
+| `/api/v1/health-index` | a fleet of 340 assets got 100 of them, chosen by nobody, and a **different** 100 on refresh |
+| **`/api/v1/assets/`** | takes `skip` **and** `limit`, and is the list every asset screen in the product is built on. **Page 2 of an unordered query can repeat rows page 1 showed and omit rows nobody ever sees.** Scrolling a fleet is the most ordinary thing an operator does here |
+| `/api/v1/transportation/vehicles` | same `skip`/`limit` shape |
+| `/api/v1/registries`, `/registries/correlations`, `/registries/{id}/items` | capped, unordered |
+| `/api/v1/simulation/fleet-summary` | capped, unordered |
+
+All six now order by a stable key — asset name, vehicle number, registry name, item name,
+correlation recency — matching `/rul`, whose ordering exists for exactly this reason.
+
+### Why the sibling guard did not catch it
+
+`test_capped_lists_cannot_grow` asks whether a capped list can **say** it was capped. That is
+a different question from whether the cap is **deterministic**, and an endpoint passes it
+happily while returning a different arbitrary subset every call. `/health-index` had been
+sitting in that file's recorded list for a truncation signal it does not have, with the
+sharper problem unnoticed underneath it — for as long as the list has existed.
+
+`test_capped_lists_are_ordered` closes the second question. Both mutations verified: removing
+the ORDER BY from `/assets/` fails it, and so does replacing one with a **comment** that
+merely says `order_by` — prose is not code, which is now built into the detector from the
+start rather than after being caught by it.
+
+### And I reverted my own fix mid-verification
+
+`git checkout backend/app/api/health_index.py`, used to undo a mutation, discarded the
+uncommitted FS-429 fix in the same file along with it. Caught by re-grepping for the change
+rather than assuming the restore was surgical — the same class as the `kill` that did not
+take in FS-418. **An undo is a claim about state; check it.**

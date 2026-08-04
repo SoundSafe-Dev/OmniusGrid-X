@@ -49,7 +49,9 @@ async def get_registries(
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get all actionable registries for the organization"""
-    query = select(ActionableRegistry).where(
+    # ORDERED so the cap and the offset mean something (FS-429): an unordered paged
+    # list can repeat rows on one page and skip them on the next.
+    query = select(ActionableRegistry).order_by(ActionableRegistry.registry_name).where(
         ActionableRegistry.organization_id == current_user.organization_id
     )
     
@@ -191,7 +193,9 @@ async def get_registry_items(
     if not registry:
         raise HTTPException(status_code=404, detail="Registry not found")
     
-    query = select(ActionableRegistryItem).where(
+    # ORDERED so the cap and the offset mean something (FS-429): an unordered paged
+    # list can repeat rows on one page and skip them on the next.
+    query = select(ActionableRegistryItem).order_by(ActionableRegistryItem.item_name).where(
         ActionableRegistryItem.registry_id == registry_id
     )
     
@@ -308,7 +312,9 @@ async def get_correlations(
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get data correlations for the organization"""
-    query = select(DataCorrelation).where(
+    # ORDERED so the cap and the offset mean something (FS-429): an unordered paged
+    # list can repeat rows on one page and skip them on the next.
+    query = select(DataCorrelation).order_by(DataCorrelation.created_at.desc()).where(
         DataCorrelation.organization_id == current_user.organization_id
     )
     

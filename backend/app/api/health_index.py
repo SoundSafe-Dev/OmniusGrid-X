@@ -52,7 +52,21 @@ async def list_asset_health(
     # the application-layer check looks right, so nothing in review points at the
     # session. Same shape as gdpr.py in `test_tenant_session_guard.py`.
     org_id = getattr(current_user, "organization_id", None)
-    stmt = select(Asset)
+    # ORDERED, so the cap keeps a STABLE subset (FS-429). This was `select(Asset).limit(n)`
+    # with no ORDER BY at all: Postgres is free to return any n rows it likes, and different
+    # ones on the next call, so a fleet larger than the cap gave a health view whose contents
+    # changed between refreshes.
+    #
+    # By name, matching `/api/v1/rul` — the health index is computed per asset in Python from
+    # OEE and alarms over the window, so there is no health column to order by and the only
+    # stable key is the one the fleet is listed under everywhere else.
+    #
+    # THAT MAKES THE CAP A NAMED TRADE rather than an accident: with more assets than `limit`,
+    # the ones whose names sort late are absent. The truncation signal that would say so is
+    # deliberately not added yet — nothing consumes this endpoint, and a caveat sent to nobody
+    # is the defect `test_capped_lists_cannot_grow` exists to prevent. The first consumer
+    # wires both.
+    stmt = select(Asset).order_by(Asset.name)
     if org_id is not None:
         stmt = stmt.where(Asset.organization_id == org_id)
     rows = (await db.execute(stmt.limit(limit))).scalars().all()
