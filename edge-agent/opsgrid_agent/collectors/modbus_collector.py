@@ -23,11 +23,12 @@ class ModbusCollector:
     Supports both Modbus TCP and Modbus RTU.
 
     Reconnect behaviour:
-        Connection attempts are guarded by an :class:`ExponentialBackoff`
-        (1s -> 60s) and a :class:`CircuitBreaker` (opens after 5
-        consecutive failures, 30s initial cooldown up to 5 min). This
-        replaces the previous fixed 5-second retry, which could overload
-        a recovering controller after a brief network blip.
+        Connection attempts are guarded by an equal-jittered
+        :class:`ExponentialBackoff` (1s -> 60s base curve) and a
+        :class:`CircuitBreaker` (opens after 5 consecutive failures, 30s
+        initial cooldown up to 5 min). This replaces the previous fixed
+        5-second retry, which could overload a recovering controller after
+        a brief network blip.
     """
     
     def __init__(
@@ -137,6 +138,7 @@ class ModbusCollector:
                 logger.info(
                     "modbus_reconnect_backoff",
                     asset_id=self.asset_id,
+                    base_delay_seconds=self._backoff.last_base_delay,
                     delay_seconds=delay,
                 )
                 await asyncio.sleep(delay)

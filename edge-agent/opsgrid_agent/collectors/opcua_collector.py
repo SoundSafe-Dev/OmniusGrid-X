@@ -23,11 +23,12 @@ class OPCUACollector:
     Supports subscription-based data collection for real-time updates.
 
     Reconnect behaviour:
-        Connection attempts are guarded by an :class:`ExponentialBackoff`
-        (1s -> 60s) and a :class:`CircuitBreaker` (opens after 5
-        consecutive failures, 30s initial cooldown up to 5 min). This
-        avoids the previous fixed 5-second retry that could overload a
-        recovering PLC after a network blip.
+        Connection attempts are guarded by an equal-jittered
+        :class:`ExponentialBackoff` (1s -> 60s base curve) and a
+        :class:`CircuitBreaker` (opens after 5 consecutive failures, 30s
+        initial cooldown up to 5 min). This avoids the previous fixed
+        5-second retry that could overload a recovering PLC after a network
+        blip.
     """
     
     def __init__(
@@ -141,6 +142,7 @@ class OPCUACollector:
                 logger.info(
                     "opcua_reconnect_backoff",
                     asset_id=self.asset_id,
+                    base_delay_seconds=self._backoff.last_base_delay,
                     delay_seconds=delay,
                 )
                 await asyncio.sleep(delay)

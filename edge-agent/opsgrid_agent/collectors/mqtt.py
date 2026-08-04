@@ -19,7 +19,7 @@ class MQTTCollector:
     MQTT collector for Bambu Labs printers and other MQTT-enabled equipment.
     
     Features:
-    - Automatic reconnection with exponential backoff
+    - Automatic reconnection with equal-jittered exponential backoff
     - Circuit breaker that suspends reconnect attempts after repeated failures,
       preventing the agent from hammering a broker that's down for maintenance
     - PackML state normalization
@@ -64,10 +64,10 @@ class MQTTCollector:
         self._connected = False
         self._stop_event = asyncio.Event()
 
-        # Reconnect resilience. Defaults preserve the previous MQTT behaviour
-        # (1s initial, 60s cap, x2) and add a circuit breaker that opens after
-        # 5 consecutive failures so a broker outage no longer triggers an
-        # endless reconnect storm.
+        # Reconnect resilience. Defaults preserve the previous MQTT base curve
+        # (1s initial, 60s cap, x2), apply equal jitter to each actual wait, and
+        # add a circuit breaker that opens after 5 consecutive failures so a
+        # broker outage no longer triggers an endless reconnect storm.
         #
         # TODO(tune): These defaults are a first-pass conservative guess.
         # Adjust the values below once we have production telemetry on real
@@ -247,7 +247,7 @@ class MQTTCollector:
                         logger.warning("mqtt_connection_timeout")
                         self.client.loop_stop()
                         self._breaker.record_failure()
-                        await self._sleep_or_stop(self._backoff.next_delay())
+                        await self._sleep_before_reconnect()
                         continue
                 
                 # Keep running until stopped
@@ -256,7 +256,7 @@ class MQTTCollector:
             except Exception as e:
                 logger.error("mqtt_collector_error", error=str(e))
                 self._breaker.record_failure()
-                await self._sleep_or_stop(self._backoff.next_delay())
+                await self._sleep_before_reconnect()
         
         self.client.loop_stop()
         logger.info("mqtt_collector_stopped")
@@ -266,15 +266,21 @@ class MQTTCollector:
         while not self._connected and not self._stop_event.is_set():
             await asyncio.sleep(0.1)
 
+    async def _sleep_before_reconnect(self) -> None:
+        """Wait for the next jittered reconnect deadline or a stop request."""
+        delay = self._backoff.next_delay()
+        logger.info(
+            "mqtt_reconnect_backoff",
+            asset_id=self.asset_id,
+            base_delay_seconds=self._backoff.last_base_delay,
+            delay_seconds=delay,
+        )
+        await self._sleep_or_stop(delay)
+
     async def _sleep_or_stop(self, seconds: float) -> None:
         """Sleep for ``seconds`` but wake immediately if stop is requested."""
         if seconds <= 0:
             return
-        logger.info(
-            "mqtt_reconnect_backoff",
-            asset_id=self.asset_id,
-            delay_seconds=seconds,
-        )
         try:
             await asyncio.wait_for(
                 self._stop_event.wait(),

@@ -3,8 +3,9 @@
 Two composable building blocks used by the MQTT, OPC-UA and Modbus
 collectors to handle real-world production failures gracefully:
 
-* :class:`ExponentialBackoff` — increases the delay between retries so
-  the collector stops hammering a struggling service. Resets on success.
+* :class:`ExponentialBackoff` — increases the delay between retries and
+  applies equal jitter so a fleet does not retry in lockstep. Resets on
+  success.
 * :class:`CircuitBreaker` — stops attempting an operation entirely after
   repeated failures, giving the downstream service a window to recover.
 
@@ -41,6 +42,7 @@ a self-contained behavioural demo of both primitives.
 
 from __future__ import annotations
 
+import random
 import time
 from enum import Enum
 from typing import Callable, Optional
@@ -56,11 +58,15 @@ logger = structlog.get_logger()
 
 
 class ExponentialBackoff:
-    """Compute exponentially increasing delays between retry attempts.
+    """Compute jittered, exponentially increasing retry delays.
 
-    The first call to :meth:`next_delay` returns ``initial`` seconds, the
-    second returns ``initial * multiplier``, and so on, capped at ``cap``.
-    Calling :meth:`reset` returns the next delay to ``initial`` — use
+    The exponential base starts at ``initial``, is multiplied after each
+    call, and is capped at ``cap``. :meth:`next_delay` applies equal jitter
+    and returns a value between half of that base and the full base. This
+    keeps a useful minimum recovery window while spreading otherwise
+    identical agents across different reconnect deadlines.
+
+    Calling :meth:`reset` returns the next base delay to ``initial`` — use
     this after a successful operation.
 
     This class only computes the delay value; the caller is responsible
@@ -71,6 +77,8 @@ class ExponentialBackoff:
         cap: Maximum delay in seconds. Must be >= initial.
         multiplier: Factor applied to the current delay after each call
             to :meth:`next_delay`. Must be > 1.
+        random_source: Callable returning a random fraction in ``[0, 1]``.
+            Injectable so fleet timing tests remain deterministic.
 
     Raises:
         ValueError: If any argument violates its constraint.
@@ -81,6 +89,7 @@ class ExponentialBackoff:
         initial: float = 1.0,
         cap: float = 60.0,
         multiplier: float = 2.0,
+        random_source: Callable[[], float] = random.random,
     ):
         if initial <= 0:
             raise ValueError(f"initial must be > 0, got {initial}")
@@ -92,22 +101,37 @@ class ExponentialBackoff:
         self.initial = initial
         self.cap = cap
         self.multiplier = multiplier
+        self._random = random_source
         self._current = initial
+        self._last_base: Optional[float] = None
 
     def next_delay(self) -> float:
-        """Return the current delay (seconds) and advance for the next call."""
-        delay = self._current
+        """Return an equal-jittered delay and advance the exponential base."""
+        fraction = self._random()
+        if not 0.0 <= fraction <= 1.0:
+            raise ValueError(
+                f"random_source must return a value in [0, 1], got {fraction}"
+            )
+
+        base_delay = self._current
+        self._last_base = base_delay
         self._current = min(self._current * self.multiplier, self.cap)
-        return delay
+        return base_delay / 2.0 + fraction * (base_delay / 2.0)
 
     def reset(self) -> None:
         """Reset the delay to ``initial``. Call after a successful operation."""
         self._current = self.initial
+        self._last_base = None
 
     @property
     def current_delay(self) -> float:
-        """The delay that the next call to :meth:`next_delay` will return."""
+        """The exponential base used by the next :meth:`next_delay` call."""
         return self._current
+
+    @property
+    def last_base_delay(self) -> Optional[float]:
+        """The exponential base used by the latest :meth:`next_delay` call."""
+        return self._last_base
 
 
 # --------------------------------------------------------------------------- #
@@ -328,12 +352,17 @@ def _demo() -> None:
     print("Demo 1: ExponentialBackoff(initial=0.5, cap=4.0, multiplier=2)")
     print("=" * 60)
     backoff = ExponentialBackoff(initial=0.5, cap=4.0, multiplier=2.0)
-    print("Sequence of next_delay() calls:")
+    print("Sequence of equal-jittered next_delay() calls:")
     for i in range(8):
-        print(f"  attempt {i + 1}: {backoff.next_delay()}s")
+        delay = backoff.next_delay()
+        print(
+            f"  attempt {i + 1}: base={backoff.last_base_delay}s, "
+            f"actual={delay:.3f}s"
+        )
     backoff.reset()
     print("After reset():")
-    print(f"  attempt 1: {backoff.next_delay()}s")
+    delay = backoff.next_delay()
+    print(f"  attempt 1: base={backoff.last_base_delay}s, actual={delay:.3f}s")
     print()
 
     print("=" * 60)
