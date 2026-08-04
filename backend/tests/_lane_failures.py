@@ -120,12 +120,19 @@ WRITE_FAILURES: dict[tuple[str, str], LaneFailure] = {
         fix="one fix with the three GET entries above",
         expires="2026-09-15",
     ),
-    ("POST", "/api/v1/engines/correlation/integration/initialize-registries"): LaneFailure(
-        owner="HARSH",
-        reason=f"same write-on-read shape against actionable_registries — {_WRITE_ON_READ}",
-        fix="bind the tenant session before the INSERT",
-        expires="2026-09-15",
-    ),
+    # RELEASED 2026-08-04 (FS-430). The recorded fix — "bind the tenant session before the
+    # INSERT" — was exactly right: `correlation_integration.py` took `Depends(get_db)`, the
+    # unscoped session, and `actionable_registries` is FORCE RLS, so every INSERT was refused.
+    #
+    # THE ENTRY UNDERSTATED IT. All THREE write-bearing endpoints in that module had it —
+    # /analyze and /test-integration as well — and only this one was probed, so the other two
+    # failed the same way with nothing recording them. A single allowlist line can be the
+    # visible corner of a module-wide defect.
+    #
+    # Proven under the conditions that apply: as a NON-superuser the old code returns 500 and
+    # writes zero rows, the fix returns 200 and writes 46. As a superuser both "pass", which
+    # is why the first attempt at verifying this proved nothing — FORCE RLS does not apply to
+    # a superuser, and a throwaway container's default role is one.
     ("POST", "/api/v1/engines/correlation/generate"): LaneFailure(
         owner="HARSH",
         reason="correlation_ai_engine returns 500 on an empty scenario body rather than 422",

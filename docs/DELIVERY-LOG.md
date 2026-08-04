@@ -2312,3 +2312,49 @@ start rather than after being caught by it.
 uncommitted FS-429 fix in the same file along with it. Caught by re-grepping for the change
 rather than assuming the restore was surgical — the same class as the `kill` that did not
 take in FS-418. **An undo is a claim about state; check it.**
+
+---
+
+## FS-430 — an allowlist entry that was the visible corner of a module-wide defect
+
+Ten endpoints are permitted to 5xx in `tests/_lane_failures.py`, each with an owner, a
+diagnosis and an expiry. One was in my lane:
+`POST /engines/correlation/integration/initialize-registries`, recorded as *"same
+write-on-read shape against actionable_registries"* with the fix *"bind the tenant session
+before the INSERT"*.
+
+**The diagnosis was exactly right and the entry understated the problem.**
+`correlation_integration.py` took `Depends(get_db)` — the unscoped session — and
+`actionable_registries` is FORCE RLS, so every INSERT was refused. But **all three**
+write-bearing endpoints in that module had it: `/analyze` and `/test-integration` too. Only
+one was probed by the write walk, so the other two failed identically with nothing recording
+them.
+
+A single allowlist line can be the visible corner of a module-wide defect. Same shape as
+FS-429, where one recorded note about `/health-index` turned out to cover six endpoints and
+the worst of them was the asset list.
+
+### The verification that proved nothing
+
+The first live check was: old code → 200, fixed code → 200, registries created both times.
+Which would have meant the fix was pointless — or that something was wrong with the test.
+
+**Something was wrong with the test.** The throwaway container's default role is a
+**superuser**, and `FORCE ROW LEVEL SECURITY` does not apply to superusers. So the condition
+the defect depends on could not occur, and both versions "passed".
+
+Re-run against a `NOSUPERUSER` role:
+
+| | old (`get_db`) | fixed (`get_tenant_db`) |
+|---|---|---|
+| HTTP | **500** | 200 |
+| registries written | **0** | 46 |
+
+This is the same trap FS-307 records against the contract gate — *"it currently runs as
+superuser, which bypasses FORCE RLS, so the gate cannot see a tenant-isolation contract
+failure"*. Knowing about a trap is not the same as remembering it, which is a note class 25
+already made about itself.
+
+**Tenth instrument error of the sweep, and the most consequential**: it did not report a
+false defect, it reported a real fix as unnecessary. An instrument that cannot produce the
+failure condition will call anything healthy.

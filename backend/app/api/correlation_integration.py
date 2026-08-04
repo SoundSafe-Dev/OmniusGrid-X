@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, Field
 
-from app.db.database import get_db
+from app.core.tenant import get_tenant_db
 from app.api.auth import get_current_active_user
 from app.db.models import User
 from app.services.correlation_registry_integration import correlation_registry_integration
@@ -66,7 +66,7 @@ class RegistryInitializationResponse(BaseModel):
 async def analyze_and_integrate(
     request: CorrelationAnalysisRequest,
     background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -181,7 +181,7 @@ async def process_integration_background(
 @router.post("/initialize-registries", response_model=RegistryInitializationResponse, dependencies=[Depends(require_admin)])
 async def initialize_registries(
     request: RegistryInitializationRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -262,7 +262,7 @@ async def get_task_type_mapping(
 
 @router.post("/test-integration", dependencies=[Depends(require_admin)])
 async def test_integration(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
