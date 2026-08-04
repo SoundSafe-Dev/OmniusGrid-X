@@ -31,9 +31,15 @@ _install_legacy_shims()
 _fake_mqtt = types.ModuleType("opsgrid_agent.collectors.mqtt")
 _fake_mqtt.BambuCollector = type("BambuCollector", (), {})
 _fake_mqtt.MQTTCollector = type("MQTTCollector", (), {})
-sys.modules["opsgrid_agent.collectors.mqtt"] = _fake_mqtt
-
-import opsgrid_agent.main as agent_main  # noqa: E402
+_mqtt_module = sys.modules.get("opsgrid_agent.collectors.mqtt")
+try:
+    sys.modules["opsgrid_agent.collectors.mqtt"] = _fake_mqtt
+    import opsgrid_agent.main as agent_main  # noqa: E402
+finally:
+    if _mqtt_module is None:
+        sys.modules.pop("opsgrid_agent.collectors.mqtt", None)
+    else:
+        sys.modules["opsgrid_agent.collectors.mqtt"] = _mqtt_module
 
 
 def run(coro):
