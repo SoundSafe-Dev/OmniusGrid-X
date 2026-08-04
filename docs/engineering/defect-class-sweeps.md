@@ -4,9 +4,21 @@ A record of defect *classes* found in one subsystem and then checked across the 
 platform, with what each sweep found and which guard keeps it closed.
 
 **Why this document exists.** "Proven clean" and "never checked" look identical
-afterwards, and only one of them justifies not looking again. Two of these sweeps found
+afterwards, and only one of them justifies not looking again. Several of these sweeps found
 nothing; without a record, someone would eventually redo the work — or, worse, assume the
 class had been handled when it had not.
+
+**And a "clean" result is a claim that can be wrong.** Class 25 was swept, reported clean,
+and recorded as deliberately unguarded. It was not clean: the reader covered a seventh of
+its subject, and the class contained a feature that had returned 422 on every call since the
+day it was written. The correction is kept in place rather than tidied away, because the
+route to a wrong "clean" — a detector corrected twice, then trusted *because* it had been
+corrected — is the most reusable thing in this document.
+
+**Counting.** The heading counts rows in the table below. Not every row has a numbered
+section: the sections are the ones whose reasoning was worth writing out. The heading said
+"sixty" while the table held forty-two and the sections stopped at twenty-nine — a number
+nobody had recounted since it was written.
 
 The method throughout: find a class of bug where **code looks wired and cannot work**,
 fix the instance, then ask whether the same shape exists elsewhere. Every guard listed is
@@ -14,7 +26,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The sixty classes
+## The forty-seven classes
 
 The first five were all originally found in ERP. The sixth came out of the fifth, the
 seventh out of two failing tests that turned out to share a cause, and the eighth out of
@@ -55,7 +67,7 @@ to ask where else it could live.
 | A capped list that cannot say it was capped | every `limit`-bearing GET | **12 bare arrays; `/rul` fixed, the rest recorded** | `test_rul_truncation_is_reported_realdb.py` |
 | An audit write with no tenant bound | every `audit_logs` writer | **4 of 8 — exports, bulk jobs and flag changes recorded nothing** | `test_audit_writers_bind_a_tenant_realdb.py` |
 | A handler that builds its own unbound session | every inline `AsyncSessionLocal` in `app/api` | **5 live: 3 endpoints 404ing on your own asset, 2 reporting an empty fleet** | `test_tenant_session_guard.py` (second idiom) |
-| A request body the endpoint's schema rejects | every frontend POST/PUT/PATCH | **clean — 7 of 15 checkable, recorded not enforced** | none; see class 25 |
+| A request body field the endpoint does not declare | every frontend POST/PUT/PATCH | **the 2026-08-02 sweep called this clean and was wrong — 1 live, and the feature had never worked** | `test_frontend_body_fields_are_declared.py` |
 | An endpoint the README documents but the app never served | all 124 API-Reference rows | **22 wrong — 404 for anyone who followed them** | `test_documented_endpoints_exist.py` |
 | A source file the docs point at that is not in the repo | every filename cited in three docs | **1 fiction, 5 omissions** | `test_documented_files_exist.py` |
 | A frontend catch that swallows a failure | every `catch` in `src` | **clean — all 10 report or recover** | none; see class 28 |
@@ -69,6 +81,11 @@ to ask where else it could live.
 | A tenant taken as a client-supplied PARAMETER | same, second variant | **8 live: 6 geotab + operations + yard detention, all Optional so a bare request filtered by nothing** | same guard, parameter check |
 | A tenant filter applied CONDITIONALLY | `if org is not None: … where(…)` | **4 live in one router: an unscoped DELETE, two leaking reads, a latent dispatch fan-out** | `test_notification_tenant_isolation_realdb.py` |
 | A tenant table with no policy | every table carrying `organization_id` | **6 with no RLS, 5 with RLS but no FORCE; `vehicles` closed by migration 055, 9 recorded** | `test_every_tenant_table_has_a_policy.py` |
+| An insert order no test can see | every model with an FK column | **62 models unorderable; the demo seed died on it and 3,200 tests could not** | `test_insert_ordering_is_possible.py` + FK enforcement in `conftest.py` |
+| A naive `utcnow()` written to `timestamptz` | `app/` and `scripts/` | **12 in `scripts/`, one anchoring the entire demo dataset** | `test_no_naive_utcnow.py` (extended to `scripts/`) |
+| A caveat that dies at a response boundary | the three transcript endpoints | **1 live: `simulated` set on every chat path, declared on none of the readers** | `test_transcript_keeps_its_provenance.py` |
+| A field the client cannot store | write bodies vs. the column's FK target | **1 live: a vehicle id posted into a trailer foreign key** | `test_dispatch_is_callable_and_says_why.py` |
+| Text rendered at its own background colour | every routed page | **1 live, and the detector was wrong about 38 more** | `pagesUseThemeTokens.test.ts` |
 | A response model declaring a field its table lacks | 34 `*Response` models | **clean after the DockDoor audit — 5 fields deleted there** | `test_response_models_match_their_tables.py` |
 | A TS field the wire never carries | every `types/*.ts` field a component reads | **3 live: a relabelled odometer, a UUID slice shown as a work-order number, 3 of 5 cost figures** | `test_frontend_fields_exist_on_the_wire.py` |
 | A field the compliance check reads that nothing writes | `hos_drive_hours_remaining` and its neighbours | **1 live, and the worst of the session: every fleet cleared of HOS violations** | `test_hos_remaining_is_derived.py` |
@@ -1573,40 +1590,61 @@ another lane's open ticket, and one root cause behind it also 500s `/kanban/boar
 the file stops offending, so a paid debt cannot sit on the allowlist pretending to be
 owed.
 
-## 25. A request body the endpoint's schema rejects — **clean, and deliberately not guarded**
+## 25. A request body field the endpoint does not declare — **called clean on 2026-08-02; wrong, and guarded on 2026-08-04**
 
 The third leg of the frontend/backend contract. Class 8 checks the path exists, class 9
-checks the query parameters are declared; `test_frontend_calls_real_endpoints.py` says in
-its own docstring that it "deliberately does NOT check request bodies". Rule 17 says a
+checks the query parameters are declared, and `test_frontend_calls_real_endpoints.py` says
+in its own docstring that it "deliberately does NOT check request bodies". Rule 17 says a
 limitation written into a comment is a finding waiting to be re-found, so it was swept.
 
-**Result: clean, and it stays a written record rather than a guard.**
+**The sweep reported clean and recorded the class as deliberately unguarded. It was not
+clean.** The correction is kept here in full, because how a wrong "clean" gets reached is
+more useful than the finding it missed.
 
-**15 request bodies; 7 statically resolvable; 0 mismatches** — after the detector was
-wrong twice, both times in the way that manufactures defects:
+### What the original sweep concluded, and why each part was wrong
 
-* `twinOptimizer` appeared to send `assetIds`, `emitRecommendations` and three more
-  fields "not in the schema". `/api/v1/twin` is registered with the casing seam, so they
-  arrive as `asset_ids` and friends. The same correction class 9 needed, for the same
-  reason, one sweep later — worth noting that knowing about a trap is not the same as
-  remembering it.
-* `erpApi.createIntegration` appeared to send `requests_per_minute` and `burst_limit`,
-  neither in `ERPIntegrationCreate`. They are NESTED inside `rate_limit`, which is. The
-  field-extractor flattened one object into two phantom fields.
+**"15 request bodies; 7 statically resolvable."** There are **70** bodied writes. The
+resolver only read inline object literals, and 61% of the writes in this codebase pass a
+variable — a typed parameter, a named interface, a local object. The query-param sibling
+already traced all four of those shapes; borrowing that machinery takes the count to 31
+resolved, all 31 matched to a schema. A sweep that reads a seventh of its subject and
+reports "clean" is reporting on the seventh.
 
-**The other 8 are all `Partial<T>`** — `createZone(zone: Partial<GeofenceZoneExtended>)`
-and seven like it. `Partial` makes every field optional, so the type permits `{}` and a
-static comparison cannot say whether a required server field will be present. Extending
-the resolver would report all 8 as "optional in TypeScript, required on the server", which
-is true of every `Partial<T>` by construction and tells a reader nothing.
+**"The failure mode is loud — a body missing a required field is a 422 on the first
+call."** True, and it answers a different question. The class is not *missing* fields; it
+is fields the endpoint **does not declare**, which Pydantic drops in silence. And the
+defect actually present was neither: `POST /transportation/shipments/{id}/dispatch`
+declared **no body at all**, having named its two ids as bare parameters — which FastAPI
+reads as query parameters. The client sent a body. **422 on every call since the day it was
+written**, in a feature with a button on the Transportation page.
 
-**And the failure mode is loud.** A body missing a required field is a 422 on the first
-call, unlike an unknown query parameter, which FastAPI drops in silence and which is why
-class 9 found four live defects. The quiet cousin is worth a guard; this one is worth
-knowing about.
+**"After the detector was wrong twice."** It was wrong twice — `twinOptimizer`'s casing and
+`erpApi.createIntegration`'s nested `rate_limit`. The new detector hit **the same two**, in
+the same order, and needed the same two corrections. That is the part worth sitting with:
+the corrections were real, and the conclusion drawn *from* them — that the class was clean —
+was not. **Fixing a detector's false positives tells you nothing about whether it has found
+everything.** Both sweeps arrived at an empty result set for the same reason: a reader too
+narrow to see the case that mattered.
 
-Recorded per the rule that a guard you cannot make precise is worse than a written-down
-result — the same call made for class 14.
+### What the guard actually found
+
+Underneath the transport defect, a second one that would have outlived it: the client sent
+a **vehicle** id, and `Shipment.trailer_id` is a foreign key to `yard_trailers` — a shipment
+has no vehicle column. The dispatch modal offered a vehicle picker for a value the schema
+cannot hold; accepted silently by SQLite, refused by Postgres now that foreign keys are
+enforced — see *An insert order no test can see* in the table above.
+
+And a third, visible only once the first two were fixed: the call reached the HOS check and
+was refused with `Driver not compliant:` — nothing after the colon. `check_compliance`
+separates a violation from missing data; the dispatch path read only `violations`.
+
+### The `Partial<T>` argument still stands
+
+Eight bodies are `createZone(zone: Partial<GeofenceZoneExtended>)` and the like. `Partial`
+makes every field optional, so the type permits `{}` and a static comparison cannot say
+whether a required server field will be present. Reporting those would be true of every
+`Partial<T>` by construction. They are outside the guard's reach and its coverage numbers
+say so out loud — 31 of 70 resolved — rather than letting an empty result imply a full one.
 
 ## 26. An endpoint the README documents but the app never served — **22 of 124**
 
@@ -2357,6 +2395,45 @@ one of its findings. The habit that catches it:
    was in the DOM and correct. Nothing here compares a foreground colour to its background,
    so contrast is not a dimension the suite can fail in. Render it and look at it; that is a
    distinct method, not a weaker substitute. *(Fuller account: § Rule 67.)*
+
+68. **When a new detector reports a surprising number, the detector is the first suspect.**
+   Eight instrument errors in one sweep, and every one arrived looking like a finding: a
+   contrast checker reporting a heading at 1.0:1 because it read `rgba(…, 0.1)` as solid; an
+   FK probe reporting 623 failures because it ran `PRAGMA` against Postgres and poisoned the
+   transaction; a theme guard reporting 39 hardcoded colours of which 38 were status swatches
+   and complete `dark:` pairs; a click-sweep calling working risk filters dead because two
+   filters that both empty a table produce identical DOM. Each cost minutes to disprove and
+   would have cost hours to "fix". **The ratio matters more than any one case:** once a
+   detector has been wrong twice, its next empty result is not evidence of anything.
+
+69. **Fixing a detector's false positives says nothing about its false negatives.**
+   The 2026-08-02 sweep of class 25 corrected two false positives — a casing seam and a
+   nested object — and concluded from the corrected run that the class was clean. The
+   2026-08-04 sweep hit **the same two**, corrected them the same way, and then found a
+   feature that had returned 422 on every call since it was written. Both readers covered a
+   seventh of the subject. A detector that has stopped lying to you has not thereby started
+   telling you everything.
+
+70. **A floor pulled from the air is a claim about nothing.**
+   Three coverage floors were guessed for one guard — 20, then 45, then 35 — against a real
+   31. A floor above reality fails on arrival and gets lowered until it passes, which is the
+   same as having none; a floor below reality passes forever. Measure it, assert the measured
+   number, and state the fraction of the subject it represents so an empty result cannot be
+   read as a full one.
+
+71. **A comment describing a check is not a check.**
+   A branch in a new guard read `continue`, with a comment saying the case was "reported
+   separately below". Nothing below reported it, and that branch was where the live defect
+   turned out to be. Rule 17 says a limitation written into a comment is a finding waiting to
+   be re-found; this is its sharper cousin — a comment describing behaviour the code does not
+   have, written by the same person in the same sitting.
+
+72. **Restarting a service is a claim; verify the port and the process.**
+   A fix was reported as still broken because `kill` had not taken, the old server still held
+   the port, and the "restart" bound nothing. Checking the process start time turned a wrong
+   conclusion into a correct one in ten seconds. The general form: when a verification
+   contradicts a change you are confident in, check the verification's premises before the
+   change's.
 
 ---
 
@@ -4730,3 +4807,90 @@ went 299 → 360 along the way, and the sequence is the argument for repairing a
 gate rather than routing around it: a job that could not finish, made to finish; which
 then could not explain its own failures, made to explain them; and only then did a
 documented security feature turn out never to have worked.
+
+## Rule 68 — when a new detector reports a surprising number, the detector is the first suspect
+
+**Eight instrument errors in one sweep**, and every one arrived looking exactly like a
+finding:
+
+| Reported | Actually |
+|---|---|
+| a heading at **1.0:1** contrast, i.e. invisible | `rgba(239,68,68,0.1)` read as solid, which *is* the text colour; composited, it is fine |
+| **623** test failures after enabling FK enforcement | `PRAGMA` run against Postgres, where it raises and poisons the transaction. Real number: 39 |
+| **39** hardcoded light-theme colours across five pages | 38 were status swatches, translucent chips, and complete `dark:` pairs. Real number: 1 |
+| the RUL risk filters **dead** | `Critical (0)` and `High (0)` both empty the table, so the DOM is identical and only the pressed chip differs |
+| a click-sweep with **0 problems** | it had not been instrumented; nobody knew whether it had clicked anything (it had: 81 controls) |
+| a **2×** suite slowdown from 121 new relationships | machine noise; minimum-of-five put it at 2% |
+| **two** undeclared body fields in the ERP client | nested inside `rate_limit`, which is declared |
+| **four** endpoints "declaring no JSON body" | URLs written `${BASE}/x`, which the reader could not resolve at all |
+
+Each cost minutes to disprove and would have cost hours to "fix" — and two of them
+(the theme guard, the click sweep) would have meant rewriting working code across other
+people's lanes.
+
+**The ratio is the lesson, not any single case.** Once a detector has been wrong twice, its
+next *empty* result is not evidence either. That is rule 69.
+
+## Rule 69 — fixing a detector's false positives says nothing about its false negatives
+
+Class 25 was swept on 2026-08-02. The detector reported two mismatches, both were shown to
+be false positives — a casing seam and a nested object — and the sweep concluded from the
+corrected run that **the class was clean and deserved no guard**.
+
+On 2026-08-04 the same class was swept with a new reader. It hit **the same two false
+positives, in the same order**, and needed the same two corrections. Then it found
+`POST /transportation/shipments/{id}/dispatch`, which had returned **422 on every call since
+the day it was written**.
+
+Both readers covered a seventh of the subject: they resolved inline object literals and
+stopped, while 61% of the writes in this codebase pass a variable. Both produced an empty
+result set. The first mistook that for absence of defects.
+
+The corrections were real work and they were *not* progress toward completeness. A detector
+that has stopped lying to you has not thereby started telling you everything, and the moment
+it feels trustworthy — just after you have fixed its errors — is the moment its silence is
+most persuasive and least earned.
+
+## Rule 70 — a floor pulled from the air is a claim about nothing
+
+Three vacuity floors were guessed for one guard before one was measured: **20, then 45, then
+35**, against a real 31.
+
+A floor above reality fails on arrival and gets lowered until it passes, which is the same as
+not having one — and worse, it trains the next person to edit the number without reading it,
+the exact reflex that let the README claim 2,149 tests while 3,191 ran. A floor below reality
+passes forever.
+
+So: measure it, assert the measured number, and **state the fraction of the subject it
+represents**. This guard says "31 of 70 bodies resolved, all 31 matched" in its own docstring,
+because an empty result over a third of the surface must not read like an empty result over
+all of it.
+
+## Rule 71 — a comment describing a check is not a check
+
+Rule 17 says a limitation written into a comment is a finding waiting to be re-found. This is
+its sharper cousin: a comment describing behaviour **the code does not have**, written by the
+same person in the same sitting.
+
+The branch handling "this operation declares no JSON body" read `continue`, with a comment
+saying the case was *"reported separately below"*. Nothing below reported it. A planted
+`{ operatorId, clearedBecause }` on such an endpoint passed the guard in silence — and that
+branch is precisely where the live defect turned out to be.
+
+The comment was not a lie; it was an intention that never became code, and it read as
+completeness to everyone afterwards, including its author twenty minutes later. Mutation-test
+every branch, not just the one the defect you are fixing goes down.
+
+## Rule 72 — restarting a service is a claim; verify the port and the process
+
+A fix was verified against a live stack and appeared **not to work**. The fix was correct:
+`kill` had not taken, the old server still held the port, and the "restart" bound nothing, so
+the verification was running the pre-fix code.
+
+Ten seconds of `lsof -ti:PORT | wc -l` and `ps -o lstart` turned a wrong conclusion into a
+right one. Without them the next step would have been to unpick a correct change.
+
+The general form, and it is the same shape as rule 68: **when a verification contradicts a
+change you have good reason to believe in, check the verification's premises before the
+change's.** A stale process, a cached bundle, a browser holding an old service worker, and a
+test run against the wrong database all present as "your fix does not work".

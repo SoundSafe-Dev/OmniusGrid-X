@@ -1970,3 +1970,59 @@ the raw URL, which matches no registered prefix) fixed three more that were corr
 camelCased all along.
 
 **Sixth and seventh instrument errors in this sweep.** The rule holds.
+
+---
+
+## FS-422 — documentation, and a "clean" result that was not
+
+Updating the docs for FS-405…421 meant checking what those changes had made false, not
+appending to the end. Four things were stale, and one of them was a wrong conclusion rather
+than a drifted number.
+
+### The important one: class 25 was swept, called clean, and guarded by nothing
+
+`docs/engineering/defect-class-sweeps.md` recorded *"A request body the endpoint's schema
+rejects — **clean, and deliberately not guarded**"*, on 2026-08-02, with reasoning. Both
+halves of that reasoning were wrong:
+
+- **"15 request bodies; 7 statically resolvable."** There are **70** bodied writes. The
+  reader only handled inline object literals, and 61% of the writes here pass a variable.
+- **"The failure mode is loud — a missing required field is a 422 on the first call."** True,
+  and about a different question. The class is fields the endpoint does not *declare*, which
+  Pydantic drops in silence — and the defect actually present was neither: dispatch declared
+  no body at all and had returned 422 on every call since it was written.
+
+**And the route to the wrong answer is the reusable part.** That sweep's detector was wrong
+twice — a casing seam and a nested `rate_limit` — and it concluded the class was clean from
+the corrected run. The new detector hit **the same two, in the same order**, and needed the
+same two corrections. Correcting a detector's false positives says nothing about its false
+negatives; both readers covered a seventh of the subject and reported an empty set.
+
+The section is rewritten in place with the correction, rather than replaced. Five new classes
+from this sweep were added to the table, and the header count fixed: it said "sixty" while
+the table held forty-two and the numbered sections stopped at twenty-nine — a figure nobody
+had recounted since it was written. It now says forty-seven, with a note on what is counted.
+
+### A guard caught the documentation being written badly
+
+`test_method_rules_are_indexed.py` — which exists because the rules list and its sections
+had drifted apart three separate times — failed the moment the five new rules were added as
+list entries with no `## Rule N` sections behind them, and again on the README's stale
+"Rules 21–67". Exactly the drift it was written to stop, caught on the first commit that
+would have caused it.
+
+### Five rules added, all one shape
+
+68–72, and they are the session in miniature: *the detector is the first suspect* (eight
+instrument errors, every one arriving disguised as a finding); *fixing false positives says
+nothing about false negatives*; *a floor pulled from the air is a claim about nothing* (three
+guessed, against a real 31); *a comment describing a check is not a check* (the branch where
+the live defect turned out to be); and *restarting a service is a claim — verify the port and
+the process*.
+
+### And my own README row was stale within a day
+
+The referential-integrity row I added described the FK enforcement as opt-in and per-module,
+costing "76 of 3,210 tests". By the time anyone read it, enforcement was global, the whole
+suite passed with it on, and the ratchet was zero. Corrected, along with the seam
+description, which now names all three guards and what each one exists to catch.
