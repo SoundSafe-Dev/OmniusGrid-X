@@ -83,13 +83,21 @@ def test_a_parent_table_sorts_before_a_table_that_references_it():
     )
 
 
-def test_the_models_without_a_relationship_are_counted_not_forgotten():
-    """A ratchet on the real underlying weakness.
+def test_every_model_can_be_ordered_against_its_parents():
+    """ZERO models carry an FK column with no `relationship()` for the unit of work.
 
-    Every model here with an FK column and no `relationship()` is a parent/child pair the
-    unit of work cannot order. That is a large number and fixing it is a project, not a
-    sprint — but it must not GROW silently, because each new one is another way to write the
-    seed bug. Lower this as relationships are added; never raise it.
+    This was a ratchet at 62, lowered one edge at a time as each missing one actually bit
+    something, and finally closed in a sweep once foreign keys were enforced everywhere and
+    the remaining ones could be added with the suite as proof.
+
+    It is an equality, not a ceiling. A single model without an edge is a parent that can be
+    flushed after its child, which real Postgres refuses and SQLite accepts — the defect that
+    made `scripts/seed_demo_data.py` fail on every fresh database it had ever met.
+
+    TWO CATEGORIES ARE LEGITIMATELY EXEMPT and are asserted below rather than allowed here:
+    self-references, and the two mutually dependent pairs whose DDL is already broken with
+    `use_alter`. A mapper relationship on both sides of a mutual pair is a unit-of-work cycle,
+    which is a flush-time error rather than a sort warning.
     """
     without = sorted(
         mapper.class_.__name__
@@ -97,18 +105,34 @@ def test_the_models_without_a_relationship_are_counted_not_forgotten():
         if any(c.foreign_keys for c in mapper.class_.__table__.columns)
         and not list(inspect(mapper.class_).relationships)
     )
-    #: 62 measured 2026-08-03, then 61 / 58 / 54 / 52 as modules were converted to enforce
-    #: foreign keys and each conversion tripped a real ordering hazard: IntegrationConfiguration,
-    #: the three session tables, Alarm and the three GeoTab tables, then Shipment,
-    #: ERPIntegrationEvent and the workcell edge Asset was missing while declaring its other
-    #: two. Every step was paid for by a missing edge actually biting something, which is how
-    #: this number is meant to move. Lower it the same way; never raise it.
-    assert len(without) <= 52, (
+    assert without == [], (
         f"{len(without)} models carry an FK column with no relationship() for the unit of "
-        f"work to order by, up from 52. Each one is a parent that can be inserted after its "
-        f"child in a single flush — a foreign key violation on Postgres that SQLite cannot "
-        f"see:\n  {without}"
+        f"work to order by. Each is a parent that can be inserted after its child in a "
+        f"single flush — a foreign key violation on Postgres:\n  {without}"
     )
+
+
+def test_the_mutually_dependent_pairs_are_not_given_mapper_relationships():
+    """The exemption, pinned so nobody closes it by "finishing the job".
+
+    `dock_doors <-> yard_trailers` and `yard_trailers <-> shipments` are genuine mutual
+    references — a trailer knows its door and a door knows its current trailer. Their DDL is
+    ordered with `use_alter`. Adding relationships on both sides would put the cycle back at
+    the mapper layer, where it is a CircularDependencyError at flush rather than a warning at
+    sort.
+    """
+    from sqlalchemy.orm import configure_mappers
+
+    configure_mappers()
+    for child, parent in (("DockDoor", "YardTrailer"), ("Shipment", "YardTrailer")):
+        cls = next(m.class_ for m in Base.registry.mappers if m.class_.__name__ == child)
+        targets = {r.mapper.class_.__name__ for r in inspect(cls).relationships}
+        assert parent not in targets, (
+            f"{child} now has a mapper relationship to {parent}, which is one half of a "
+            f"mutual pair. The other half exists, so this is a unit-of-work cycle."
+        )
+
+
 
 
 def test_foreign_keys_are_enforced_for_sqlite():

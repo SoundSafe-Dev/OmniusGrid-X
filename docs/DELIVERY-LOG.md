@@ -1772,3 +1772,72 @@ Both properties are pinned: a page with an unpaired `bg-white text-gray-900` fai
 **Third instrument error in this sweep**, after the contrast checker and the FK probe. The
 pattern is consistent enough to state plainly: *when a new guard reports a large number,
 the first hypothesis is the guard.*
+
+---
+
+## FS-417 — the ordering debt, closed
+
+The ratchet started at 62 models carrying a ForeignKey column with no `relationship()` for
+the unit of work to order by. It came down one edge at a time — 62 → 61 → 58 → 54 → 52 —
+each step paid for by a missing edge actually biting something.
+
+**It is now zero.** 121 relationships across the remaining 52 models, added in one sweep
+because foreign keys are enforced everywhere and the whole suite is the proof.
+
+Every one is `lazy="raise"`. They exist to order inserts and nothing should traverse them: an
+accidental lazy load in async code is a `MissingGreenlet` at runtime rather than a slow query,
+so the failure is loud and immediate instead of subtle.
+
+### Two categories are exempt, and the exemption is now itself a test
+
+- **Self-references.** A model pointing at its own table is always a cycle and always fine.
+- **The two mutually dependent pairs.** `dock_doors ↔ yard_trailers` and
+  `shipments ↔ yard_trailers` — a trailer knows its door, a door knows its current trailer.
+  Their DDL is already ordered with `use_alter`. Putting relationships on *both* sides would
+  move the cycle to the mapper layer, where it is a `CircularDependencyError` at flush rather
+  than a warning at sort. A test now pins that those two stay one-sided, so nobody closes the
+  gap by "finishing the job".
+
+### Cost, measured properly on the third attempt
+
+Adding 121 relationships to the unit of work's dependency graph sounds expensive, and a
+full-suite run immediately afterwards came in at **7m26s against a usual ~3m20s**. That is
+exactly the shape of a real regression.
+
+It was not one, and getting to that answer took three tries:
+
+1. **Collection time** — where mapper configuration happens — was 12.5s with the
+   relationships against 12.9s without. So it was concluded to be machine noise.
+2. A second full run on an apparently quiet machine came in at **6m26s**, which contradicted
+   that and made the regression look real.
+3. A single-shot A/B on a 100-test, flush-heavy subset then produced **6.9s, 17.3s and 11.6s
+   for identical code** — a 2.5× spread. At that point the honest conclusion was that no
+   single-run comparison on this machine could settle anything.
+
+Minimum-of-five, which is the standard estimator under noise, settles it:
+
+| | runs | minimum |
+|---|---|---|
+| with the 121 relationships | 5.77 / 5.25 / 5.17 / 5.20 / 5.11 | **5.11s** |
+| without | 5.06 / 5.03 / 5.02 / 5.02 / 5.05 | **5.02s** |
+
+**About 2%**, on the workload most exposed to it. The first conclusion was right, the second
+guess was wrong, and neither was worth anything until the measurement was designed to survive
+the noise. A timing regression attributed to the wrong change is how a correct fix gets
+reverted.
+
+### The generator was wrong twice before it was right
+
+Inserting 121 lines into a 4,000-line models file by hand is not sensible, so it was
+generated — and the insertion point was wrong twice:
+
+1. Anchoring after the *line* containing `ForeignKey(` put the block **inside** a multi-line
+   `Column(...)` call, splitting the statement.
+2. Walking forward to balance parentheses started counting from the middle of the statement,
+   so a `ForeignKey("users.id", ondelete="SET NULL"),` line balanced to zero on its own and
+   terminated immediately — same wrong answer, different route.
+
+The third attempt parsed the file with `ast` and used each statement's own `end_lineno`, which
+is exact and knows nothing about brackets. Both failures were caught by the file refusing to
+import, which is the cheapest possible feedback — but the lesson is the same one this sweep
+keeps producing: **the tool doing the measuring is the first thing to doubt.**
