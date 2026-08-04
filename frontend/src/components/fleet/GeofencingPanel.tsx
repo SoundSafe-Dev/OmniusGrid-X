@@ -85,6 +85,9 @@ export const GeofencingPanel: FC<GeofencingPanelProps> = ({ onAlert }) => {
   // eslint-disable-next-line react-hooks/exhaustive-deps -- pre-existing; adding deps changes retrigger behavior (FS-54)
   }, [soundEnabled]);
 
+  // True when the server had more alerts than it returned. See loadData.
+  const [alertsTruncated, setAlertsTruncated] = useState(false);
+
   const loadData = async () => {
     setIsLoading(true);
     setError(null);
@@ -94,7 +97,11 @@ export const GeofencingPanel: FC<GeofencingPanelProps> = ({ onAlert }) => {
         geofencingApi.getAlerts(),
       ]);
       setZones(zonesData);
-      setAlerts(alertsData);
+      setAlerts(alertsData.items);
+      // FS-428: the server caps this list and says so in a header. Carried into state so
+      // the panel can say it too — a truncation flag that arrives and is dropped is the
+      // same defect as one that was never sent.
+      setAlertsTruncated(alertsData.truncated);
     } catch (err) {
       console.error('Failed to load geofencing data:', err);
       setError('Failed to load geofence zones and alerts. Please try again.');
@@ -340,6 +347,12 @@ export const GeofencingPanel: FC<GeofencingPanelProps> = ({ onAlert }) => {
             )}
             {!isLoading && !error && alerts.length === 0 && (
               <p className="p-4 text-sm text-gray-500 text-center">No geofence alerts.</p>
+            )}
+            {alertsTruncated && (
+              <p className="border-b border-status-warning/50 bg-status-warning/10 p-3 text-xs text-opsgrid-text" role="status">
+                Showing the most recent {alerts.length} alerts — there are more. Anything
+                older than these is not on this list, including unacknowledged ones.
+              </p>
             )}
             {alerts.slice(0, 20).map(alert => (
               <div 

@@ -31,6 +31,7 @@ presence of a cap.
 from __future__ import annotations
 
 import inspect
+import re
 import typing
 
 import pytest
@@ -39,10 +40,24 @@ from fastapi import routing
 from app.main import app
 from tests._route_tree import http_routes
 
-#: Measured 2026-08-01. LOWER THIS as endpoints are fixed WITH their consumers; never raise
-#: it. A new capped bare-array endpoint must either signal truncation or return an envelope
-#: carrying a total.
-MAX_UNSIGNALLED = 12
+#: Measured 2026-08-01 at 12; **11 from 2026-08-04**, when `/api/v1/geofencing/alerts` was
+#: fixed WITH its consumer (FS-428) — endpoint, client type and the notice on
+#: `GeofencingPanel`, which is the whole condition this file sets for calling one closed.
+#:
+#: Ordered newest-first and capped at 100, it is the right default for a recent-activity
+#: list and the wrong answer for the unacknowledged view: 150 outstanding alerts rendered as
+#: 100 with nothing saying so, and an unacknowledged alert that never appears is one nobody
+#: will action.
+#:
+#: THREE OF THE REMAINING ELEVEN HAVE NO FRONTEND CONSUMER AT ALL — `/health-index`,
+#: `/commands/asset/{id}` and `/notifications/log`. Adding a header to those would be the
+#: second defect this file's header describes, not a partial fix. `/health-index` has a
+#: sharper problem anyway: `select(Asset).limit(n)` with no ORDER BY, so *which* assets come
+#: back is undefined. Recorded rather than papered over.
+#:
+#: LOWER THIS as endpoints are fixed WITH their consumers; never raise it. A new capped
+#: bare-array endpoint must either signal truncation or return an envelope carrying a total.
+MAX_UNSIGNALLED = 11
 
 #: Files another dev owns. Counted, because the number is about the API's surface rather
 #: than about who fixes it — but named so a failure says whose lane it is in.
@@ -54,6 +69,23 @@ OTHER_LANES = {
 #: How an endpoint declares it was capped. `mark_truncated` (app/core/pagination.py) sets
 #: `X-Result-Truncated` from a `limit + 1` probe.
 _SIGNALS = ("mark_truncated", "X-Result-Truncated")
+
+
+def _code_only(source: str) -> str:
+    """The handler's source with its docstring and comments removed.
+
+    PROSE COUNTED AS A SIGNAL. This matched `mark_truncated` anywhere in the function
+    source, docstring included — so a handler whose docstring merely *mentions* the helper
+    was credited with calling it, and a handler documenting "this deliberately does not
+    signal truncation, see X" would have been credited too.
+    
+    Found by mutation-testing a real fix: removing the `mark_truncated` call from
+    `/geofencing/alerts` left the count unchanged, because the docstring added alongside the
+    fix explained what the call did. Rule 37 — prose about a defect gathers around the
+    defect, so strip comments in every source — earned for the third time.
+    """
+    body = re.sub(r'("""|\'\'\')(?:.|\n)*?\1', "", source)
+    return re.sub(r"#[^\n]*", "", body)
 
 
 def _unsignalled() -> list[tuple[str, str]]:
@@ -68,7 +100,7 @@ def _unsignalled() -> list[tuple[str, str]]:
             source = inspect.getsource(route.endpoint)
         except (OSError, TypeError):  # pragma: no cover - defensive
             continue
-        if any(signal in source for signal in _SIGNALS):
+        if any(signal in _code_only(source) for signal in _SIGNALS):
             continue
 
         model = route.response_model

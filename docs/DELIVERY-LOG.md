@@ -2221,3 +2221,50 @@ keeps a record of every `start()`-bearing singleton and whether the app actually
 so a service can neither be added without being declared nor quietly stop being started. It
 failed on the commit that added the scheduler, which is the point: the record is not
 documentation about the lifecycle, it is part of it.
+
+---
+
+## FS-428 — one capped list closed, and the guard that was crediting prose
+
+`test_capped_lists_cannot_grow` had sat at 12 with a deliberate policy: *"adding a header no
+client reads would create exactly the defect that class exists to catch — the caveat sent and
+dropped. Each needs its consumer wired at the same time."* Right, and it makes the list
+addressable one endpoint at a time rather than never.
+
+**`/api/v1/geofencing/alerts` was the one worth taking.** Ordered newest-first and capped at
+100 — the right default for a recent-activity list, and the wrong answer for the
+unacknowledged view: 150 outstanding alerts render as 100 with nothing saying so, and **an
+unacknowledged alert that never appears is one nobody will action.**
+
+Fixed on all three layers, which is this file's whole condition for calling one closed: the
+endpoint selects `limit + 1` and calls `mark_truncated`; `getAlerts` returns a `ListResult`
+instead of a bare array; and `GeofencingPanel` renders a notice saying what is missing.
+Changing the client's return type made `tsc` point straight at the consumer, which is the
+cheapest possible way to be told you have only done half the job. **Ratchet 12 → 11.**
+
+**Three of the remaining eleven have no frontend consumer at all** — `/health-index`,
+`/commands/asset/{id}`, `/notifications/log`. Adding a header to those would be the second
+defect, not a partial fix. `/health-index` has a sharper problem anyway:
+`select(Asset).limit(n)` with **no ORDER BY**, so which assets come back is undefined — worse
+than `/rul`, whose cap at least keeps a stable alphabetical prefix. Recorded, not papered
+over.
+
+### The guard was crediting its own documentation
+
+Mutation-testing the fix — remove the `mark_truncated` call, expect the count to rise —
+**left the count unchanged.** The detector matches `mark_truncated` anywhere in the handler's
+source, and the docstring added alongside the fix explains what the call does. So the
+endpoint was credited for *prose about* signalling truncation.
+
+The general form is worse than the instance: a handler documenting *"this deliberately does
+not signal truncation, see X"* would have been counted as signalling. The detector now strips
+docstrings and comments before matching, and the mutation fails as it should.
+
+**Rule 37 for the third time** — prose about a defect gathers around the defect, so strip
+comments in every source. Twice this week it has been the thing standing between a guard and
+the truth: `NOTE:` read as a field name, and now a docstring read as an implementation.
+
+And the client contract change was caught by the suite immediately: six assertions in
+`geofencing.realmode.test.ts` destructured the array `getAlerts` used to return. Updating
+them to read `.items` is the whole cost, and having them fail is the point — a return type
+that changes shape without anything noticing is how a caller ends up rendering `undefined`.

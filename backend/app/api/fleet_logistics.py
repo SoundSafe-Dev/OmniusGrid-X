@@ -17,7 +17,9 @@ from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query
+
+from app.core.pagination import mark_truncated
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -259,6 +261,7 @@ async def delete_zone(zone_id: str, org_id: UUID = Depends(get_tenant_org_id), d
 
 @geofencing_router.get("/alerts", response_model=List[GeofenceAlertOut])
 async def list_alerts(
+    response: Response,
     acknowledged: Optional[bool] = Query(None),
     severity: Optional[str] = Query(None),
     vehicle_id: Optional[str] = Query(None),
@@ -266,8 +269,19 @@ async def list_alerts(
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),
 ):
+    """Geofence alerts, newest first.
+
+    TRUNCATION IS SIGNALLED (FS-428). Newest-first plus a cap is the right default for a
+    recent-activity list and the wrong answer for `acknowledged=false`: an operator asking
+    what still needs acting on, with 150 outstanding, saw 100 and had no way to tell. An
+    unacknowledged alert that never appears is one nobody will action.
+
+    `limit + 1` is selected and trimmed by `mark_truncated`, which costs one row rather than
+    a COUNT over the table, and the signal is a header so the bare-array body every existing
+    caller consumes is unchanged.
+    """
     query = _scope(
-        select(GeofenceAlert).order_by(GeofenceAlert.created_at.desc()).limit(limit),
+        select(GeofenceAlert).order_by(GeofenceAlert.created_at.desc()).limit(limit + 1),
         GeofenceAlert, org_id,
     )
     if acknowledged is not None:
@@ -276,7 +290,7 @@ async def list_alerts(
         query = query.where(GeofenceAlert.severity == severity)
     if vehicle_id:
         query = query.where(GeofenceAlert.vehicle_id == vehicle_id)
-    alerts = (await db.execute(query)).scalars().all()
+    alerts = mark_truncated(response, (await db.execute(query)).scalars().all(), limit)
 
     # THE NAMES THE CLIENT ACTUALLY READS. This emitted `zoneId`, `eventType` and
     # `createdAt`; `GeofenceAlert` in TypeScript declares `geofenceId`, `alertType` and

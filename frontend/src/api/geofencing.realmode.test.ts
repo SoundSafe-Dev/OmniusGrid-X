@@ -105,7 +105,7 @@ describe('the alert adapter preserves what the server chose to say was missing',
     get.mockResolvedValue({ data: [WIRE_UNRESOLVED_ALERT] })
     const api = await geofencing()
 
-    const [alert] = await api.getAlerts()
+    const [alert] = (await api.getAlerts()).items
 
     expect(alert.geofenceName ?? null).toBeNull()
     expect(alert.geofenceName).not.toBe('')
@@ -116,7 +116,7 @@ describe('the alert adapter preserves what the server chose to say was missing',
     get.mockResolvedValue({ data: [WIRE_UNRESOLVED_ALERT] })
     const api = await geofencing()
 
-    const [alert] = await api.getAlerts()
+    const [alert] = (await api.getAlerts()).items
 
     expect(alert.vehicleNumber ?? null).toBeNull()
     expect(alert.vehicleNumber).not.toBe('veh-gone')
@@ -129,7 +129,7 @@ describe('the alert adapter preserves what the server chose to say was missing',
     get.mockResolvedValue({ data: [withoutType] })
     const api = await geofencing()
 
-    const [alert] = await api.getAlerts()
+    const [alert] = (await api.getAlerts()).items
 
     expect(alert.alertType ?? null).toBeNull()
   })
@@ -139,7 +139,7 @@ describe('the alert adapter preserves what the server chose to say was missing',
     get.mockResolvedValue({ data: [withoutSeverity] })
     const api = await geofencing()
 
-    const [alert] = await api.getAlerts()
+    const [alert] = (await api.getAlerts()).items
 
     expect(alert.severity ?? null).toBeNull()
   })
@@ -151,7 +151,7 @@ describe('the alert adapter preserves what the server chose to say was missing',
     })
     const api = await geofencing()
 
-    const [alert] = await api.getAlerts()
+    const [alert] = (await api.getAlerts()).items
 
     expect(alert.geofenceName).toBe('Depot')
     expect(alert.vehicleNumber).toBe('TRK-1')
@@ -167,7 +167,7 @@ describe('the alert adapter preserves what the server chose to say was missing',
     })
     const api = await geofencing()
 
-    const [alert] = await api.getAlerts()
+    const [alert] = (await api.getAlerts()).items
 
     expect(alert.geofenceId).toBe('z-1')
     expect(alert.alertType).toBe('exit')

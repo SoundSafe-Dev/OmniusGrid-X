@@ -1,4 +1,5 @@
 import { api } from './client';
+import { ListResult, toListResult } from './listResult';
 import type {
   GeofenceZoneExtended,
   GeofenceAlertExtended
@@ -151,13 +152,22 @@ export const geofencingApi = {
     await api.delete(`/api/v1/geofencing/zones/${id}`);
   },
 
-  getAlerts: async (): Promise<GeofenceAlertExtended[]> => {
+  /**
+   * Geofence alerts, newest first, with the truncation flag the server sends (FS-428).
+   *
+   * A `ListResult` rather than a bare array: the endpoint caps at 100 and orders by
+   * recency, which is right for a recent-activity list and wrong for the unacknowledged
+   * view — 150 outstanding alerts rendered as 100 with nothing saying so, and an
+   * unacknowledged alert that never appears is one nobody will action.
+   */
+  getAlerts: async (): Promise<ListResult<GeofenceAlertExtended>> => {
     if (USE_MOCK) {
       await delay(MOCK_DELAY);
-      return mockGeofenceAlerts;
+      return { items: mockGeofenceAlerts, truncated: false, limit: mockGeofenceAlerts.length };
     }
     const response = await api.get<any[]>('/api/v1/geofencing/alerts');
-    return (response.data ?? []).map(adaptAlert);
+    const result = toListResult<any>(response);
+    return { ...result, items: result.items.map(adaptAlert) };
   },
 
   getAlertsByVehicle: async (vehicleId: string): Promise<GeofenceAlertExtended[]> => {
