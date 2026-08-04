@@ -1841,3 +1841,60 @@ The third attempt parsed the file with `ast` and used each statement's own `end_
 is exact and knows nothing about brackets. Both failures were caught by the file refusing to
 import, which is the cheapest possible feedback — but the lesson is the same one this sweep
 keeps producing: **the tool doing the measuring is the first thing to doubt.**
+
+---
+
+## FS-418 — one click broke a session permanently, and the earlier fix had removed the evidence
+
+A second-level browser sweep — clicking controls rather than reading first paint — found a
+500 on `GET /nlp/sessions/{id}/data` for a session created during the sweep. The same
+endpoint, the same message, and the same column as FS-409.
+
+**FS-409's conclusion was wrong.** It read: *"the API itself cannot produce this — its own
+request model rejects a non-uuid, so the seed was the only writer that did."* That was true
+of `AddDataSourceRequest`, and false of the application:
+`POST /nlp/sessions/{id}/platform-data` does not go through that model. It builds the row
+directly, and carried the identical fallback:
+
+```python
+source_id=str(params.get("asset_id") or params.get("id") or body.source_type)
+```
+
+A platform-wide source — the ERP, the yard — has neither id, so it stored the literal
+`"erp"` or `"yard"` in a column every consumer reads as a uuid. From that click onward,
+`GET /nlp/sessions/{id}/data` returned **500 for that session permanently**, and the
+data-sources panel never loaded again.
+
+**One click, no error at the point of the click.** The POST returns 200 happily; the damage
+only appears the next time the panel is opened — a different action, often in a different
+visit.
+
+Fixing the seed removed the *evidence* without removing the *cause*, and the wrong conclusion
+was written down alongside it. It took clicking through a live session to find the rest.
+
+### The sweep that found it was wrong twice first
+
+An inert-control detector is worth having here — this project has shipped 17 tooltips that
+never opened and Approve/Reject buttons that 422'd on every click since they were written.
+But the first two versions were not trustworthy:
+
+1. **It clicked nothing measurable.** "0 problems" across 31 routes, with no count of what it
+   had actually clicked. Instrumenting it showed 81 controls — the result was real, but it
+   had been unfalsifiable until then.
+2. **It called working filters dead.** Clicking `Critical (0)` then `High (0)` on the RUL page
+   both empty the table, so the DOM text is identical and only the pressed chip differs.
+   Driving those filters directly proved they work: 5 rows → 0 → 0 → 5 → 0 across the four
+   levels. The detector now reads the control's own state as well as the page's.
+
+Of the four remaining "inert" verdicts, all four are correct behaviour: two are native file
+pickers Playwright cannot observe, and two are chips clicked while already active.
+
+**Fifth instrument error in this sweep.** The rule has earned its place: *when a detector
+reports something surprising, the detector is the first suspect.*
+
+### And a process note
+
+The live verification initially showed the 500 still happening after the fix. The fix was
+correct; `kill` had not taken, so the old server still held the port and the "restart" bound
+nothing. Confirming the port was free before starting — and checking the process start
+time — is the difference between verifying a fix and verifying nothing.

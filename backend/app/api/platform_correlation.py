@@ -55,6 +55,16 @@ async def list_platform_source_types(_user: User = Depends(get_current_active_us
     return pc.available_source_types()
 
 
+def _source_row_id(params: dict) -> Optional[str]:
+    """The id of the row a platform source came from, or None when there is not one.
+
+    None rather than a stand-in: "this source is the whole ERP" and "this source is asset
+    X" are different facts, and the column is read as a uuid by every consumer.
+    """
+    row_id = (params or {}).get("asset_id") or (params or {}).get("id")
+    return str(row_id) if row_id else None
+
+
 @router.post("/sessions/{session_id}/platform-data", response_model=AttachedSource)
 async def attach_platform_data(
     session_id: UUID,
@@ -84,7 +94,15 @@ async def attach_platform_data(
     ds = SessionDataSource(
         session_id=str(session_id),
         source_type=body.source_type,
-        source_id=str(body.params.get("asset_id") or body.params.get("id") or body.source_type),
+        # `source_id` is the id of the ROW this source came from, and a platform-wide source
+        # — the ERP as a whole, the yard as a whole — has no such row (FS-418). Falling back
+        # to the source_type string wrote "erp" or "yard" into a column every consumer reads
+        # as a uuid: both `AddDataSourceRequest` and `DataSourceResponse` declare
+        # `Optional[UUID]`, so `GET /nlp/sessions/{id}/data` then 500s for that session
+        # FOREVER and the data-sources panel on the Correlation AI page never loads again.
+        #
+        # One click to break a session, permanently, with no error at the point of the click.
+        source_id=_source_row_id(body.params),
         file_name=result.file_name,
         data_type="spreadsheet",  # engine's tabular path -> domain + key detection
         processed_data=result.to_processed_data(),
