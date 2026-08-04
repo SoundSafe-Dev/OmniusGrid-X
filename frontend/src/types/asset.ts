@@ -87,7 +87,11 @@ export interface AssetCreate {
   organizationId?: string;
   workcellId?: string;
   connectionConfig?: Record<string, any>;
-  metadata?: Record<string, any>;
+  // `metadata` was declared here and `POST /assets/` does not accept it, so it was
+  // discarded in silence — Pydantic ignores unknown body fields (FS-423). The column is
+  // `meta_data` and nothing on the create path sets it. Removed rather than aliased: a
+  // write type that names a field the endpoint cannot apply is a promise the API does not
+  // keep, and the next person to write an asset form would have believed it.
 }
 
 export interface AssetUpdate {
@@ -95,15 +99,23 @@ export interface AssetUpdate {
   vendor?: string;
   model?: string;
   serialNumber?: string;
-  workcellId?: string;
   connectionConfig?: Record<string, any>;
-  metadata?: Record<string, any>;
   isActive?: boolean;
-  /** Renamed with the read side. NOTE: `PATCH /assets/{id}` does not accept this — the
-   *  only writer is `POST /admin/assets/{id}/maintenance`, which is admin-gated for a
-   *  reason (it suppresses engine control commands). Declared here so the shape matches
-   *  `Asset`, not because sending it does anything. */
-  maintenanceMode?: boolean;
+  // THREE FIELDS REMOVED HERE (FS-423): `workcellId`, `metadata` and `maintenanceMode`.
+  //
+  // `PUT /assets/{id}` declares none of them, and Pydantic drops unknown body fields
+  // silently — so setting any of them returned 200 with nothing changed. `maintenanceMode`
+  // even carried a comment saying so: "PATCH /assets/{id} does not accept this ... declared
+  // here so the shape matches `Asset`, not because sending it does anything." That is rule
+  // 17 exactly — a limitation written into a comment is a finding waiting to be re-found.
+  //
+  // `AssetUpdate` is not `Asset`; it is the set of things an update can change. Matching
+  // the read shape at the cost of naming three writes that do not happen is the wrong
+  // trade, and no component constructed this type, so the traps were purely for whoever
+  // came next.
+  //
+  // Maintenance mode has its own writer, admin-gated because it suppresses engine control
+  // commands: `POST /api/v1/admin/assets/{id}/maintenance`.
 }
 
 export interface AssetStatus {

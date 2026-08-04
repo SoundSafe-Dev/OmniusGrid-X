@@ -38,6 +38,7 @@ import pytest
 from app.main import app
 
 FRONTEND_API = Path(__file__).resolve().parents[2] / "frontend" / "src" / "api"
+FRONTEND_TYPES = Path(__file__).resolve().parents[2] / "frontend" / "src" / "types"
 CAMEL_BOUNDARY = re.compile(r"([a-z0-9])([A-Z])")
 
 #: `api.post('/path', body)` / `.put` / `.patch`. The type argument is optional and may
@@ -115,6 +116,7 @@ def _balanced(source: str, start: int) -> str:
 def _literal_keys(block: str) -> Set[str]:
     """Top-level keys of an object literal. Nested objects are skipped: their keys belong
     to a nested model this guard does not resolve, and reporting them would be noise."""
+    block = _strip_comments(block)
     keys: Set[str] = set()
     depth = 0
     for match in re.finditer(r"[{}]|([A-Za-z_$][\w$]*)\s*:|\.\.\.([A-Za-z_$][\w$]*)", block):
@@ -132,6 +134,35 @@ def _balanced_from(source: str, open_bracket: int) -> str:
     return "{" + _balanced(source, open_bracket) + "}"
 
 
+def _strip_comments(source: str) -> str:
+    """Blank out `//` and `/* */` comments, preserving offsets.
+
+    Rule 37: prose about a defect gathers around the defect. A `// NOTE: …` inside an
+    interface body has `NOTE:` in it, which reads as a field name — and did, reporting a
+    comment word as an undeclared body field. Offsets are preserved rather than removed so
+    every `.index()` and brace walk in this file keeps working against the same positions.
+    """
+    out = list(source)
+    i, n = 0, len(source)
+    while i < n:
+        if source.startswith("//", i):
+            j = source.find("\n", i)
+            j = n if j < 0 else j
+            for k in range(i, j):
+                out[k] = " "
+            i = j
+        elif source.startswith("/*", i):
+            j = source.find("*/", i + 2)
+            j = n if j < 0 else j + 2
+            for k in range(i, j):
+                if out[k] != "\n":
+                    out[k] = " "
+            i = j
+        else:
+            i += 1
+    return "".join(out)
+
+
 def _top_level_type_keys(block: str) -> Set[str]:
     """Keys at depth 0 of a TypeScript type literal or interface body.
 
@@ -146,6 +177,7 @@ def _top_level_type_keys(block: str) -> Set[str]:
     did exactly that. A nested object's keys belong to a nested model, and this guard does
     not resolve those, so it must not claim to.
     """
+    block = _strip_comments(block)
     keys: Set[str] = set()
     depth = 0
     for match in re.finditer(r"[{}]|([A-Za-z_$][\w$]*)\s*\??\s*:", block):
@@ -157,6 +189,74 @@ def _top_level_type_keys(block: str) -> Set[str]:
         elif depth == 1 and match.group(1):
             keys.add(match.group(1))
     return keys
+
+
+def _type_sources() -> str:
+    """Every file a body's type might be declared in, concatenated once.
+
+    THE TYPES ARE NOT IN THE API FILES. `alarmRules.create(payload: AlarmRuleCreate)` is
+    declared in `src/types/alarm.ts`, and a resolver that searches only the calling module
+    finds nothing — which is why 29 of 70 bodies were unresolved and the guard covered 44%
+    of its subject while reporting an empty result. An empty result over half a surface must
+    not read like an empty result over all of it (rule 70).
+    """
+    parts = []
+    for directory in (FRONTEND_TYPES, FRONTEND_API):
+        if not directory.exists():
+            continue
+        for file in sorted(directory.glob("*.ts")):
+            if ".test." not in file.name:
+                parts.append(_readable(file))
+    return "\n".join(parts)
+
+
+TYPE_SOURCES = _type_sources()
+
+
+def _named_type_keys(name: str, seen: Set[str] | None = None) -> Set[str]:
+    """Top-level keys of a named TS type, following the derivations this codebase uses.
+
+    Handles `interface X {…}`, `interface X extends Y {…}`, `type X = {…}` and
+    `type X = Omit<Y, 'a' | 'b'>` / `Pick<Y, …>`.
+
+    DELIBERATELY NOT `Partial<X>`: it makes every field optional, so the type permits `{}`
+    and a static comparison cannot say what will actually be sent. Reporting those would be
+    true of every `Partial<T>` by construction and tells a reader nothing — the same call
+    the 2026-08-02 sweep made, and the one part of it that still stands.
+    """
+    seen = seen or set()
+    if name in seen or not re.fullmatch(r"\w+", name):
+        return set()
+    seen = seen | {name}
+
+    interface = re.search(rf"interface\s+{re.escape(name)}\b([^{{]*)\{{", TYPE_SOURCES)
+    if interface:
+        keys = _top_level_type_keys(_balanced_from(TYPE_SOURCES, interface.end() - 1))
+        for parent in re.findall(r"extends\s+([\w,\s]+)", interface.group(1)):
+            for base in parent.split(","):
+                keys |= _named_type_keys(base.strip(), seen)
+        return keys
+
+    alias = re.search(rf"type\s+{re.escape(name)}\s*=\s*([^;\n]+)", TYPE_SOURCES)
+    if not alias:
+        return set()
+    body = alias.group(1).strip()
+
+    if body.startswith("{"):
+        start = TYPE_SOURCES.index("{", alias.start(1))
+        return _top_level_type_keys(_balanced_from(TYPE_SOURCES, start))
+
+    omit = re.match(r"Omit<\s*(\w+)\s*,(.+)>", body, re.S)
+    if omit:
+        removed = set(re.findall(r"'([^']+)'", omit.group(2)))
+        return _named_type_keys(omit.group(1), seen) - removed
+
+    pick = re.match(r"Pick<\s*(\w+)\s*,(.+)>", body, re.S)
+    if pick:
+        kept = set(re.findall(r"'([^']+)'", pick.group(2)))
+        return _named_type_keys(pick.group(1), seen) & kept
+
+    return set()
 
 
 def _resolve_body_variable(source: str, pos: int, name: str) -> Set[str]:
@@ -181,9 +281,8 @@ def _resolve_body_variable(source: str, pos: int, name: str) -> Set[str]:
     # 2. a parameter typed by a named interface: `(payload: CreateAlarmRule)`
     named = re.search(rf"\b{escaped}\s*\??\s*:\s*([A-Z][\w]*)", signature)
     if named:
-        declaration = re.search(rf"(?:interface|type)\s+{named.group(1)}\b[^{{]*\{{", source)
-        if declaration:
-            keys |= _top_level_type_keys(_balanced_from(source, declaration.end() - 1))
+        # Across `src/types/` too, not just the calling module. See `_type_sources`.
+        keys |= _named_type_keys(named.group(1))
 
     # 3. a local object literal: `const payload = { ... }`
     local = re.search(rf"(?:const|let|var)\s+{escaped}\s*(?::[^=]+?)?=\s*\{{", body)
@@ -334,17 +433,18 @@ class TestTheScanIsNotVacuous:
     def test_it_resolves_the_bodies_it_claims_to(self):
         """MEASURED, NOT ASSUMED — and the assumption was wrong twice.
 
-        70 write calls carry a body. This resolves the keys of 31 of them and matches all 31 to
+        70 write calls carry a body. This resolves the keys of 36 of them and matches all 36 to
         a declared schema; the rest are shapes the resolver does not reach (a body spread
         from a function argument, a variable declared outside the enclosing function, a
         conditional expression). Those are NOT silently ignored — the number is asserted
         here, so coverage that shrinks is a failure rather than a quieter pass.
 
-        Three floors were guessed before this one was measured: 20, then 45, then 35. All
-        three were made up. A floor pulled from the air is a claim about nothing.
+        Three floors were guessed before any was measured: 20, then 45, then 35. All three were
+        made up (rule 70). This one is the measured figure and moves only when the reader
+        does — it went 31 -> 36 when the resolver learned to read .
         """
-        assert len(CALLS) >= 31, (
-            f"only {len(CALLS)} write bodies resolved across {FRONTEND_API}, down from 31; "
+        assert len(CALLS) >= 36, (
+            f"only {len(CALLS)} write bodies resolved across {FRONTEND_API}, down from 36; "
             f"the call pattern probably changed and this file would pass while checking less"
         )
 

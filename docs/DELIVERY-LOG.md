@@ -2026,3 +2026,46 @@ The referential-integrity row I added described the FK enforcement as opt-in and
 costing "76 of 3,210 tests". By the time anyone read it, enforcement was global, the whole
 suite passed with it on, and the ratchet was zero. Corrected, along with the seam
 description, which now names all three guards and what each one exists to catch.
+
+---
+
+## FS-423 — the guard's own coverage was the next defect
+
+FS-419 shipped the body-field guard reading 31 of 70 bodied writes and **saying so**. That
+number was the finding: 29 bodies were passed as variables whose types live in
+`src/types/`, and the resolver only searched the calling module.
+
+Teaching it to read `src/types/`, follow `extends`, and resolve `Omit<Base, 'a' | 'b'>` and
+`Pick<>` took it to **36 resolved, all 36 matched** — and immediately surfaced four fields
+the endpoints cannot apply, all on `Asset`:
+
+| Type | Field | What happened |
+|---|---|---|
+| `AssetCreate` | `metadata` | `POST /assets/` declares no such field; dropped silently |
+| `AssetUpdate` | `workcellId` | `PUT /assets/{id}` cannot move an asset between workcells |
+| `AssetUpdate` | `metadata` | same as create |
+| `AssetUpdate` | `maintenanceMode` | **the type's own comment already said so** |
+
+That last one is rule 17 in its purest form. The field carried:
+
+> *"`PATCH /assets/{id}` does not accept this — the only writer is
+> `POST /admin/assets/{id}/maintenance`, which is admin-gated for a reason. Declared here so
+> the shape matches `Asset`, not because sending it does anything."*
+
+Someone found this, understood it exactly, wrote it down, and left the trap in place. **A
+limitation written into a comment is a finding waiting to be re-found** — and the person it
+was waiting for was whoever next wrote an asset-edit form, read `AssetUpdate`, and believed
+its field list.
+
+No component constructs either type, so nothing broke: the traps were purely for the next
+person. `AssetUpdate` is not `Asset` — it is the set of things an update can change, and
+matching the read shape at the cost of naming three writes that never happen is the wrong
+trade.
+
+### And one more instrument correction
+
+The extended resolver reported `NOTE` as an undeclared field: `// NOTE: …` inside an
+interface body has `NOTE:` in it, which reads as a field name. Rule 37 — prose about a
+defect gathers around the defect, so strip comments in every source — earned again, two
+sweeps after it was written. Comments are now blanked (preserving offsets, so every brace
+walk in the file keeps working) before any key is read.
