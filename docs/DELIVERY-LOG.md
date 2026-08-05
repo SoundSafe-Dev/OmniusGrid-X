@@ -3537,3 +3537,50 @@ the clean result mean anything, and without it the other assertion is decoration
 An earlier attempt failed differently and is worth recording too: 32 routes × 12 controls with
 waits between each **timed out at ten minutes** before printing its findings. Too slow to run
 is the same outcome as too blind to see — neither tells you anything.
+
+## FS-451 — the first e2e that writes
+
+All 44 existing e2e tests **read**. Every create, edit and dispatch path was covered only by
+backend tests calling the API directly — which never exercises the payload **the UI
+assembles**, and that is exactly where the failures have been:
+
+* **FS-420** `dispatchShipment` returned 422 on *every call since the day it was written*,
+  because the client sent a field the endpoint read as a query parameter
+* **FS-418** one click on "add platform data" broke a correlation session permanently
+* **FS-379** a bare non-Pydantic parameter on a POST is a query parameter, and the client
+  sent it in the body
+
+Each is a mismatch between what the form collects and what the endpoint accepts. A backend
+test constructs a correct payload by hand and passes; a component test mocks the client and
+passes. **Only a browser filling the real form finds them.**
+
+Four tests on the shop floor — the write-heaviest surface, eight mutations, every one fanning
+out to a system of record. Each asserts the **artefact through a separate API client**, not a
+success toast: the FS-420 form rendered no error at all while every submission 422'd. The
+quantity is checked as well as the row, because a write that lands with the wrong values and
+one that never lands both present as "it worked". One test asserts the **posting ledger** got
+an entry — a `part_issues` row with an empty ledger is a write that landed and did nothing,
+and an empty ledger looks exactly like a quiet day.
+
+### Five failures, all mine, all instructive
+
+* **The endpoints were guesses.** `/shop-floor/events` does not exist; the real ones are
+  `/part-issues`, `/labor/open`, `/postings`. Reading the router took one command.
+* **A premise that was wrong.** A test asserted a rejected write shows the operator an error.
+  The submit button is **disabled** without a part number, so the server never sees it —
+  better design than the one I assumed, now pinned as its own assertion.
+* **Three locator rewrites for a field that was never the problem.** Container-by-heading,
+  container-by-contained-button, preceding-sibling XPath — all resolved to a real element and
+  none could see the input. The original `.last()` was right. **Reading the DOM took thirty
+  seconds and would have saved all three attempts.**
+* **State read before it existed.** `isVisible()` immediately after `goto` answers about a
+  card whose query is still in flight: neither button exists, so "already clocked in?"
+  answered *no*, and the clocked-in card then rendered with no Clock in button to press.
+  **Asking a question before the answer exists returns "no", which is a different thing from
+  the answer being no.**
+* **429.** Five logins per run against `10/minute` — the file passed once and then aborted
+  three tests on the second run. The sibling spec had this fixed a day earlier and **the fix
+  did not generalise, because it lived in that file.** A rate limiter is a shared resource;
+  a per-file remedy is a per-file remedy.
+
+Verified by running the file three times consecutively rather than once. **48 e2e passed.**

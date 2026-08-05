@@ -1134,7 +1134,8 @@ jobs:
           npx playwright test \
             e2e/authenticated.spec.ts \
             e2e/data-reaches-the-screen.spec.ts \
-            e2e/controls-do-not-break.spec.ts
+            e2e/controls-do-not-break.spec.ts \
+            e2e/writes-actually-persist.spec.ts
 
   # --- task 19: pre-commit hooks as a CI gate ------------------------------
   pre-commit:
