@@ -3584,3 +3584,46 @@ and an empty ledger looks exactly like a quiet day.
   a per-file remedy is a per-file remedy.
 
 Verified by running the file three times consecutively rather than once. **48 e2e passed.**
+
+## FS-452 — one login for the whole suite, because the last two fixes did not travel
+
+The e2e suite hit `AUTH_LOGIN_RATE_LIMIT = 10/minute` **twice, three days apart, in two
+different files** — twelve logins in one, five in the other. Both were fixed the same way,
+in the same shape, inside the file that hit it.
+
+**The second file could not benefit from the first file's fix, and a third would have hit it
+again.** A rate limiter is a shared resource; a remedy that lives inside one consumer of a
+shared resource has to be rediscovered by the next one.
+
+The fix that generalises is a Playwright **setup project**: one login before anything else,
+written to disk, inherited by every spec through `storageState`. The suite now spends exactly
+one login however many files or tests it grows to — 49 today.
+
+Three things fell out of doing it properly:
+
+* **`smoke.spec.ts` had to opt OUT.** Its three tests assert what an *unauthenticated*
+  visitor sees, and inheriting a session would make "protected route redirects to login"
+  assert the opposite of its name while passing.
+* **`rejects a wrong password without logging in` clears storage first.** It would still
+  distinguish — a successful login navigates, a rejected one does not — but a test named
+  "without logging in" that runs while logged in is one whose meaning a reader has to
+  reconstruct.
+* **The setup project runs even when CI names individual spec files.** Verified by deleting
+  the state directory and running one spec by name: the dependency fired and recreated it.
+  That was worth checking rather than assuming, because CI names four files explicitly and
+  the state file is gitignored, so CI is always the cold-start case.
+
+`test_every_e2e_spec_is_run.py` now also asserts the wiring — the setup project registered,
+the dependency declared, the `storageState` loaded. Without it, removing any of the three
+would fail every authenticated spec on a login redirect and explain nothing.
+Mutation-verified.
+
+### And the count in the sweeps document was wrong again
+
+Adding classes 66–67 and rules 76–78, the heading edit was lost when the script that made it
+aborted on a later assertion — so the README said 78 rules beside a document with 75.
+`test_method_rules_are_indexed` caught both halves. That guard was written yesterday for
+exactly this, after the same heading sat wrong by thirteen for weeks.
+
+**Two documents that must agree are a pair, and a pair needs a guard.** This is the second
+time in two days that one has earned its place within a day of being written.

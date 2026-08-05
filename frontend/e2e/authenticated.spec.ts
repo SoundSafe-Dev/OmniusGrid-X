@@ -28,20 +28,23 @@ const PASSWORD = process.env.E2E_USER_PASSWORD ?? 'e2e-playwright-password'
 test.describe('authenticated journey', () => {
   test.skip(!LIVE, 'needs a live backend; set E2E_LIVE_BACKEND=1')
 
+  /** No login here (FS-452) — the suite authenticates once in a setup project. */
   async function login(page: Page) {
-    await page.goto('/login')
-    // The form labels its fields Username and Password. The backend treats the
-    // username as the email (OAuth2PasswordRequestForm.username).
-    await page.getByLabel(/username/i).fill(EMAIL)
-    await page.getByLabel(/password/i).fill(PASSWORD)
-    await page.getByRole('button', { name: /sign in|log ?in/i }).click()
-    // Landing anywhere other than /login means the token round-trip worked.
-    await expect(page).not.toHaveURL(/\/login/, { timeout: 15_000 })
+    await page.goto('/')
+    await expect(page).not.toHaveURL(/\/login/, { timeout: 20_000 })
   }
 
   test('rejects a wrong password without logging in', async ({ page }) => {
     // Asserted first so a later success cannot be explained by the form simply
     // navigating regardless of what the server said.
+    //
+    // EXPLICITLY LOGGED OUT (FS-452). The suite now inherits an authenticated session from
+    // the setup project, and this test is about what happens to someone who is NOT signed
+    // in. It would still distinguish — a successful login navigates, a rejected one does
+    // not — but a test named "without logging in" that runs while logged in is one whose
+    // meaning a reader has to reconstruct.
+    await page.goto('/login')
+    await page.evaluate(() => window.localStorage.clear())
     await page.goto('/login')
     await page.getByLabel(/username/i).fill(EMAIL)
     await page.getByLabel(/password/i).fill('definitely-not-the-password')

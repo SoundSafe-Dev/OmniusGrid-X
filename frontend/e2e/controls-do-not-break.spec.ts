@@ -52,10 +52,8 @@ test.describe('controls do not break', () => {
       }
     })
 
-    await page.goto('/login')
-    await page.getByLabel(/username/i).fill(EMAIL)
-    await page.getByLabel(/password/i).fill(PASSWORD)
-    await page.getByRole('button', { name: /sign in|log ?in/i }).click()
+    // No login (FS-452) — the suite authenticates once in a setup project.
+    await page.goto('/')
     await expect(page).not.toHaveURL(/\/login/, { timeout: 20_000 })
 
     let clicked = 0

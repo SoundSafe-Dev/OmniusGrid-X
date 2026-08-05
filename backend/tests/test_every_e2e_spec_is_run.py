@@ -37,6 +37,10 @@ _LIVE_GATE = "E2E_LIVE_BACKEND"
 
 
 def _spec_files() -> list[Path]:
+    # `auth.setup.ts` is not matched by `*.spec.ts` and needs no entry: Playwright runs it
+    # as a project DEPENDENCY, so it fires even when the job names individual files. Noted
+    # because the naming is the only thing keeping it out of this sweep, and a future
+    # `auth.setup.spec.ts` would be reported as an unrun spec while running every time.
     return sorted(p for p in E2E_DIR.glob("*.spec.ts"))
 
 
@@ -84,4 +88,30 @@ def test_a_non_gated_spec_is_covered_by_the_smoke_job():
     assert re.search(r"run:\s*npm run e2e|playwright test\s*$", WORKFLOW_TEXT, re.M), (
         f"no workflow runs the whole e2e suite, so the ungated specs {ungated} may not run "
         f"anywhere. Either restore `npm run e2e` or name them explicitly."
+    )
+
+
+def test_the_setup_project_is_wired_as_a_dependency():
+    """The one login the whole suite shares (FS-452).
+
+    `auth.setup.ts` authenticates once and writes the state every spec inherits. It is not a
+    `*.spec.ts`, so the sweep above cannot see it — and if the `dependencies: ['setup']`
+    wiring were removed, every authenticated spec would fail with a login redirect rather
+    than with anything explaining why.
+
+    Asserted here rather than in the frontend suite because this file already owns the
+    question "does the e2e configuration actually run what it claims to".
+    """
+    config = (ROOT / "frontend" / "playwright.config.ts").read_text()
+    assert "auth\\.setup\\.ts" in config or "auth.setup.ts" in config, (
+        "playwright.config.ts no longer registers the setup project, so nothing writes the "
+        "shared authentication state"
+    )
+    assert "dependencies: ['setup']" in config, (
+        "the chromium project no longer depends on 'setup', so the shared state is never "
+        "created and every authenticated spec fails on a login redirect"
+    )
+    assert "storageState: 'e2e/.auth/user.json'" in config, (
+        "the chromium project no longer loads the shared state; each spec would have to log "
+        "in again, and the suite hit AUTH_LOGIN_RATE_LIMIT twice doing exactly that"
     )

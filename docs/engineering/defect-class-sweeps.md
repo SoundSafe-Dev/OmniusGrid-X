@@ -26,7 +26,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The sixty-five numbered classes
+## The sixty-seven numbered classes
 
 **The count is the numbering, and it was already stale before this line was corrected.**
 This heading read "forty-seven" while the document's own highest class was 60 — the summary
@@ -2459,6 +2459,22 @@ one of its findings. The habit that catches it:
    set was a subset of the larger, not disjoint. The test caught it before it shipped.
    Corollary: three notes that turned out to be wrong this week were *accurate when
    written*. A note records what someone believed; only a test records what is true now.
+
+76. **Read the DOM before rewriting the locator.**
+   Three selector rewrites for a field that was never the problem — all resolved to a real
+   element, none could see the input, and the original was correct. Dumping 700 characters
+   of `innerHTML` took thirty seconds. When a selector fails, look at what it is selecting
+   against; the same applies to a SQL predicate or a regex that matches nothing.
+
+77. **Asking a question before the answer exists returns "no".**
+   `isVisible()` right after `goto` answered "not clocked in" about a card whose query was
+   still in flight, and the clocked-in card then rendered with no button to press. "Not
+   present yet" and "not true" are the same boolean and different facts.
+
+78. **A per-file remedy for a shared resource is a per-file remedy.**
+   The suite hit a 10/minute login limit twice, three days apart, in two files — each fixed
+   inside itself, so the second could not benefit from the first. A rate limiter, a pool, a
+   disk quota and a port are shared; the fix belongs where the sharing is.
 
 ---
 
@@ -5065,3 +5081,79 @@ the client's `Alarm` type reads is in `AlarmResponse` already", `validate_data_r
 "`data_residency_tags` has no `organization_id` at all", and a `DockDoor` deferral listing
 five fields that had already been fixed in the same interface. **A note records what someone
 believed; only a test records what is true now.**
+
+## Class 66 — a skip guard in front of a locator that cannot match
+
+Two e2e assertions aimed at freshly-fixed defects were **skipping, not passing**. Both had
+the shape:
+
+    const rows = page.locator('table tbody tr')
+    test.skip(await rows.count() === 0, 'nothing to assert about')
+
+The pages render div lists, so the locator matched nothing, and the guard converted that into
+a silent skip. **A red test gets fixed; this sat green and inert for as long as it existed,
+and nothing was ever going to say so.**
+
+The guard is not the mistake — a test that needs data it may not have should skip rather than
+fail spuriously. The mistake is skipping on a condition that is *also* what a broken selector
+produces. Where the two are indistinguishable, assert the precondition instead: this now
+asserts the seeded trailer `TRL-4482` is present, so a seed change fails loudly rather than
+making the test about nothing.
+
+Chasing the first one found a real defect underneath: `Alarms.tsx` rendered
+`{alarmCode} • {occurredAt}` and **named no machine at all**, on the dedicated alarms screen,
+while `/api/v1/alarms/` had been sending `asset_name` for two days.
+
+## Class 67 — a sweep that reports no problems because it did no work
+
+`controls-do-not-break.spec.ts` clicks controls and watches for uncaught errors and 5xx
+responses. Its first version had no wait after `goto`, counted buttons before the page
+rendered, clicked **zero**, and **passed in 4.7 seconds**.
+
+An earlier attempt failed the opposite way — 32 routes × 12 controls with waits **timed out at
+ten minutes** before printing its findings. **Too slow to run is the same outcome as too blind
+to see.**
+
+`expect(clicked).toBeGreaterThan(15)` is now the first assertion in the file. Every sweep in
+this document has a vacuity check for this reason; this one was written by someone who had
+just added three rules about it.
+
+## Rule 76 — read the DOM before rewriting the locator
+
+A field would not fill. Three rewrites followed — container by heading text, container by
+contained button, preceding-sibling XPath — and **all three resolved to a real element and
+none could see the input**. `filter({ hasText })` matches every ancestor and `.last()`
+returns the deepest, which is the title; `filter({ has: button })` also matches every
+ancestor and `.last()` returns a div *inside* the button component.
+
+The original locator had been correct all along. Dumping 700 characters of `innerHTML` took
+thirty seconds and would have saved all three attempts.
+
+The general form: **when a selector fails, the cheapest next step is to look at what it is
+selecting against**, not to write a cleverer selector. This applies equally to a SQL predicate
+returning nothing and a regex matching nothing.
+
+## Rule 77 — asking a question before the answer exists returns "no"
+
+A write test read `isVisible()` immediately after `goto` to decide whether the operator was
+already clocked in. The card's query was still in flight, so neither button existed, so the
+answer was "not clocked in" — and the clocked-in card then rendered with no Clock in button
+to press.
+
+**"Not present yet" and "not true" are the same boolean and different facts.** Where a check
+drives a branch, wait for the thing that settles it first: here, for *either* button to be
+visible before asking which one it is.
+
+## Rule 78 — a per-file remedy for a shared resource is a per-file remedy
+
+The e2e suite hit `AUTH_LOGIN_RATE_LIMIT = 10/minute` twice, three days apart, in two
+different files. Both were fixed the same way — authenticate once, replay the state — inside
+the file that hit it. **The second file could not benefit from the first file's fix, and a
+third would have hit it again.**
+
+The fix that generalises is a Playwright setup project: one login for the entire suite,
+written to disk, inherited by every spec, however many files it grows to.
+
+The tell is in the diagnosis, not the fix. A rate limiter, a connection pool, a disk quota
+and a port are all *shared*; a remedy that lives inside one consumer of a shared resource is
+a remedy that has to be rediscovered by the next one.

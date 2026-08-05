@@ -56,38 +56,11 @@ test.describe('writes actually persist', () => {
   })
 
   /**
-   * ONE BROWSER LOGIN FOR THE FILE. Four tests logging in separately, plus the API login
-   * above, is five per run against `AUTH_LOGIN_RATE_LIMIT = 10/minute` — so the file passed
-   * once and then returned **429** on the second run in a minute, aborting three tests
-   * before they started.
-   *
-   * The sibling spec had this fixed a day earlier and the fix did not generalise, because
-   * it lived in that file. A rate limiter is a shared resource; a per-file remedy is a
-   * per-file remedy.
+   * NO BROWSER LOGIN HERE (FS-452). Four tests logging in separately, plus the API login
+   * above, was five per run against 10/minute — the file passed once and then 429'd,
+   * aborting three tests. The suite now authenticates once in a setup project.
    */
-  let storage: { origins: unknown[]; cookies: unknown[] } | null = null
-
-  test.beforeAll(async ({ browser }) => {
-    const page = await browser.newPage()
-    await page.goto('/login')
-    await page.getByLabel(/username/i).fill(EMAIL)
-    await page.getByLabel(/password/i).fill(PASSWORD)
-    await page.getByRole('button', { name: /sign in|log ?in/i }).click()
-    await expect(page).not.toHaveURL(/\/login/, { timeout: 20_000 })
-    storage = (await page.context().storageState()) as typeof storage
-    await page.close()
-  })
-
   async function login(page: Page) {
-    if (!storage) throw new Error('the shared login never completed')
-    await page.goto('/login')
-    await page.evaluate((state) => {
-      for (const origin of (state as any).origins ?? []) {
-        for (const item of origin.localStorage ?? []) {
-          window.localStorage.setItem(item.name, item.value)
-        }
-      }
-    }, storage)
     await page.goto('/')
     await expect(page).not.toHaveURL(/\/login/, { timeout: 20_000 })
   }

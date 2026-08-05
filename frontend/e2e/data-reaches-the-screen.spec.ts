@@ -55,42 +55,15 @@ test.describe('data reaches the screen', () => {
   test.skip(!LIVE, 'needs a live backend; set E2E_LIVE_BACKEND=1')
 
   /**
-   * ONE LOGIN FOR THE WHOLE FILE (FS-447). Every test logging in separately meant twelve
-   * logins here plus five next door, against `AUTH_LOGIN_RATE_LIMIT = 10/minute` — which
-   * compose turns ON by default. Two tests failed on a login TIMEOUT rather than on
-   * anything they assert, and which two depended on worker scheduling.
+   * NO LOGIN HERE ANY MORE (FS-452). This file used to authenticate once in a `beforeAll`
+   * and replay the state into each test — a fix for the 10/minute rate limit that worked
+   * and did not travel: `writes-actually-persist.spec.ts` hit the same ceiling three days
+   * later and had to solve it again.
    *
-   * A rate limiter is not a flake: it is the server correctly refusing the seventeenth
-   * login in a minute. Retrying would have hidden it and made the suite slower.
-   *
-   * The token is captured once and replayed into localStorage before each test, which is
-   * the standard Playwright storage-state pattern and removes eleven round trips.
+   * The suite now authenticates once in a setup project and every spec inherits the state,
+   * so this is a navigation, not a login.
    */
-  let storage: { origins: unknown[]; cookies: unknown[] } | null = null
-
-  test.beforeAll(async ({ browser }) => {
-    const page = await browser.newPage()
-    await page.goto('/login')
-    await page.getByLabel(/username/i).fill(EMAIL)
-    await page.getByLabel(/password/i).fill(PASSWORD)
-    await page.getByRole('button', { name: /sign in|log ?in/i }).click()
-    await expect(page).not.toHaveURL(/\/login/, { timeout: 20_000 })
-    storage = (await page.context().storageState()) as typeof storage
-    await page.close()
-  })
-
   async function login(page: Page) {
-    if (!storage) throw new Error('the shared login never completed')
-    await page.context().addCookies((storage.cookies ?? []) as never)
-    // The SPA keeps its token in localStorage, so the origin state is what matters.
-    await page.goto('/login')
-    await page.evaluate((state) => {
-      for (const origin of (state as any).origins ?? []) {
-        for (const item of origin.localStorage ?? []) {
-          window.localStorage.setItem(item.name, item.value)
-        }
-      }
-    }, storage)
     await page.goto('/')
     await expect(page).not.toHaveURL(/\/login/, { timeout: 20_000 })
   }

@@ -9,6 +9,12 @@ import { test, expect } from '@playwright/test'
 // redirect, neither of which needs one. The authenticated journey that does need
 // a backend lives in authenticated.spec.ts.
 
+// LOGGED OUT, deliberately (FS-452). The suite now authenticates once in a setup project
+// and every spec inherits that state — but these three assert what an UNAUTHENTICATED
+// visitor sees, so inheriting a session would make the redirect test assert the opposite of
+// its name and pass for the wrong reason.
+test.use({ storageState: { cookies: [], origins: [] } })
+
 test('login page renders', async ({ page }) => {
   await page.goto('/login')
   await expect(page).toHaveTitle(/Omnius|OpsGrid|Grid/i)
