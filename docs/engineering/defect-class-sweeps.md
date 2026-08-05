@@ -2476,6 +2476,18 @@ one of its findings. The habit that catches it:
    inside itself, so the second could not benefit from the first. A rate limiter, a pool, a
    disk quota and a port are shared; the fix belongs where the sharing is.
 
+79. **A script that writes at the end discards everything if it fails in the middle.**
+   Several replacements, then a failing `assert`, so `write_text` never ran and the correct
+   earlier edits were lost silently. Same shape as a `kill` that did not take and a build
+   piped to `tail`: a step that is not asked whether it succeeded will not volunteer that it
+   failed. One edit per script, and assert agreement rather than maintaining it.
+
+80. **A register nobody can trust is worse than no register.**
+   One wrong figure and a reader discounts the whole page, including the entries that were
+   right. Every number in `open-decisions.md` was correct when audited and every one was
+   unasserted — "correct today with nothing keeping it correct" is what every ratchet here
+   exists to prevent, applied to prose.
+
 ---
 
 ## Open observations, not yet tickets
@@ -5157,3 +5169,37 @@ written to disk, inherited by every spec, however many files it grows to.
 The tell is in the diagnosis, not the fix. A rate limiter, a connection pool, a disk quota
 and a port are all *shared*; a remedy that lives inside one consumer of a shared resource is
 a remedy that has to be rediscovered by the next one.
+
+## Rule 79 — a script that writes at the end discards everything if it fails in the middle
+
+A documentation edit vanished. One script made several replacements into a string and then
+hit an `assert` that failed, so `write_text` never ran — and the earlier, **correct**
+replacements were discarded with it. The shell reported nothing, because the failure was the
+last thing to happen and nobody asked.
+
+The result was a README claiming 78 rules beside a document indexing 75, which a guard caught.
+Without that guard it would have joined the heading that read "the forty-seven classes" for
+weeks.
+
+Same shape as rule 72 (a `kill` that did not take, so the "restart" bound nothing) and as a
+`docker compose build` that appeared to succeed because it was piped to `tail` and the shell
+reported `tail`'s exit code. **A step that is not asked whether it succeeded will not
+volunteer that it failed.**
+
+Two habits, both cheap: make one edit per script so a failure cannot roll back a success, and
+where a document must agree with code, assert the agreement rather than maintaining it.
+
+## Rule 80 — a register nobody can trust is worse than no register
+
+`open-decisions.md` collects the findings that are understood and deliberately not fixed. Its
+value is entirely in being believed: a reader consults it to decide something, and if one
+figure is wrong they discount the whole page — **including the entries that were right**.
+
+Every number in it was correct when audited, and every one was unasserted. "Correct today
+with nothing keeping it correct" is the state every ratchet in this document exists to
+prevent, applied to prose instead of code.
+
+`test_open_decisions_numbers_are_true.py` asserts the numbers and nothing else — not the
+prose, not the reasoning, not whether an entry still deserves to be open. It also requires
+every entry to name the test that pins it, because **an entry with no pin is a note, and
+notes are what that document replaced.**

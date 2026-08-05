@@ -12,6 +12,17 @@ them together.
 to change. When one is closed, delete its entry here and the test class that pins it — a
 register that outlives its items is the thing this repository keeps finding.
 
+**And the numbers below are asserted, not maintained.**
+`backend/tests/test_open_decisions_numbers_are_true.py` compares every figure on this page
+against the thing it describes, so a ratchet that moves without this page moving fails a
+test. That guard exists because four figures in this repository's documentation were wrong in
+a single week — one of them an unfillable-registry count on this very page, written as 41
+when it is 38.
+
+The reason to care is not tidiness. A reader consults a register like this to decide
+something, and **one wrong figure makes them discount the whole page — including the entries
+that were right.**
+
 ---
 
 ## 1. A PDF page's text is truncated at 20,000 characters, silently

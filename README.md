@@ -37,9 +37,23 @@
 | [Documentation](#documentation) | The rest of `docs/` |
 
 **Engineering method.** The sweeps and guards in this repository follow a set of numbered
-rules, each written after a defect that a weaker check had missed. Rules 21–78 are recorded in
+rules, each written after a defect that a weaker check had missed. Rules 21–80 are recorded in
 `docs/engineering/defect-class-sweeps.md`, with the reasoning for each; the short list at the
 top of that file is what most people read.
+
+**A number in this repository is a claim, and claims here are asserted.** Four figures in the
+documentation were wrong in a single week — an unfillable-registry count of 41 that was 38, a
+heading reading "the forty-seven classes" while the document numbered to 60, a class count in
+this README derived from the highest heading rather than the numbering, and a rule range of
+21–78 beside an index that stopped at 75. Three were caught by a test; the one that was not
+sat wrong for weeks in the first heading a reader meets.
+
+So the counts you see here are checked against the thing they describe:
+`test_method_rules_are_indexed.py` pairs this file with the sweeps document, and
+`test_open_decisions_numbers_are_true.py` pairs the open-decisions register with the ratchets
+it cites. **Two documents that must agree are a pair, and a pair needs a guard** — otherwise
+a register gets read once, found wrong, and then discounted, including the entries that were
+right.
 
 **Longer material lives in `docs/` rather than here:**
 [delivery log](docs/DELIVERY-LOG.md) ·
@@ -47,7 +61,7 @@ top of that file is what most people read.
 [correlation dataset](docs/CORRELATION-DATASET.md) ·
 [demo walkthrough](docs/DEMO.md) ·
 [defect-class sweeps](docs/engineering/defect-class-sweeps.md) ·
-[open decisions](docs/engineering/open-decisions.md) ·
+[open decisions](docs/engineering/open-decisions.md) — **seven items awaiting a decision, not more investigation** ·
 [sprint plans](docs/planning/)
 
 ---
@@ -1799,7 +1813,7 @@ today, start at [`docs/erp/README.md`](docs/erp/README.md) instead.
 
 **Engineering practice**
 - [Open decisions](docs/engineering/open-decisions.md) - Six findings that are understood, reproduced and deliberately NOT fixed, because closing each is a product or contract decision rather than a bug fix: a PDF page truncated at 20,000 characters with no flag, 38 registries created that nothing can populate, eleven capped lists that cannot say they were capped, and three more. Every entry is pinned by a test and names what would have to change; they lived in test docstrings, which is the right place for the reasoning and the wrong place for the decision, because a docstring is read by whoever next edits that file and none of these will be closed by that person
-- [Defect-class sweeps](docs/engineering/defect-class-sweeps.md) - The sixty-seven numbered classes of "code that looks wired and cannot work" found so far, what each sweep found (including the ones that came back clean), which mutation-tested guard keeps each closed, and seventy-eight rules for writing a sweep worth trusting — including the one class no test could have caught, because contrast is not a dimension a suite has an opinion about — most of them paid for by a detector that was wrong first, including one that reported zero offenders while three pages were broken, one that compared a baseline against itself, and **one that reported a class clean while it contained a feature returning 422 on every call since the day it was written**
+- [Defect-class sweeps](docs/engineering/defect-class-sweeps.md) - The sixty-seven numbered classes of "code that looks wired and cannot work" found so far, what each sweep found (including the ones that came back clean), which mutation-tested guard keeps each closed, and eighty rules for writing a sweep worth trusting — including the one class no test could have caught, because contrast is not a dimension a suite has an opinion about — most of them paid for by a detector that was wrong first, including one that reported zero offenders while three pages were broken, one that compared a baseline against itself, and **one that reported a class clean while it contained a feature returning 422 on every call since the day it was written**
 - [Large assets](docs/engineering/large-assets.md) - Why `backend/dataset` is 1.5 GB on disk but only 41 MB packed, why it must not be deleted (the generator sets no seed, so it is generated but NOT reproducible), and the `make lean` / sparse-checkout recipes that keep it off your disk and out of all 28 CI checkouts
 - [The API contract gate](docs/engineering/api-contract-gate.md) - The schemathesis job that drives all 470 documented operations, why it could never finish (every component fast, the whole impossible — a per-example event loop plus a retry path with no backoff), the four independent faults that each alone would have stopped it, why it blocks as a *ratchet* on a measured floor rather than demanding a green suite, and what it has found since — including an audit trail that had never recorded a single row, and thirteen identical unbounded `skip` declarations of which it could only ever have reported one, which is why the fix is a shared bound and a sweep rather than the one endpoint that happened to fail — and `POST /api/v1/user/goals`, which raised `TypeError` on every call since it was written because `str(UUID())` has no zero-argument form, so the whole goals feature was dead behind an endpoint that looked wired and any test that called it once with anything would have caught it
 - [The test quarantine](docs/engineering/test-quarantine.md) - What CI is allowed not to run, and the register that gives every exclusion an owner, a diagnosis and an expiry — including the staleness half that fails when a quarantined test starts passing. Records the 2026-07-30 release of four entries, and the rule it earned: before accepting that a quarantined test is another lane's problem, check whether the code under it is *running* — "the test is broken" and "the feature is unbuilt" look identical from the list and have opposite consequences
