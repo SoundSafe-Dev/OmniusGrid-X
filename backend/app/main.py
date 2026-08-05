@@ -60,12 +60,20 @@ from app.services.error_tracker import error_tracker
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
+from app.core.startup_checks import verify_installed_dependencies
+
 install_sensitive_query_access_log_filter()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan events"""
     # Startup
+    # FIRST, before anything that needs a package to be present (FS-446). compose mounts
+    # ./backend over /app, so the CODE is current while the PACKAGES are as old as the last
+    # image build — and the symptom is whichever import happens to come first, eight frames
+    # deep. A two-month-old image died on `import jwt` three weeks after PyJWT replaced
+    # python-jose, restart-looping with nothing saying "rebuild the image".
+    verify_installed_dependencies()
     await init_db()
     # Converged: integration branch enables the realtime/worker services that
     # fixed-sprints had commented out (the audit's "wire the machinery" item).

@@ -114,6 +114,30 @@ switch the verb.
 
 ---
 
+## 7. The backend image cannot be rebuilt — the Docker VM is full
+
+**Pinned by** `backend/tests/test_the_container_image_is_not_stale.py` (the guard that makes
+the failure readable, not the disk itself) · FS-446
+
+`docker compose build backend` fails with `OSError: [Errno 28] No space left on device`, so
+the image stays two months old. Because compose mounts `./backend:/app`, the container runs
+**current code against two-month-old packages** and crashloops on `import jwt` — `PyJWT`
+replaced `python-jose` three weeks ago.
+
+13 GB is reclaimable from 26 stopped containers. Most is test detritus (randomly-named
+`timescaledb` containers from testcontainers runs). **It also includes `overpeak-*`
+containers from a different project and two unnamed images of 7.9 GB and 4.1 GB.**
+
+**Why not done:** pruning would fix the build and might delete someone's work. This is the
+same gate `docs/planning/` already records against FS-293 — *"pruning deletes someone's
+images"*.
+
+**To close:** identify the two large unnamed containers, prune what is genuinely disposable,
+rebuild. A `make` target that removes only *testcontainers-labelled* containers would make
+this self-maintaining and is recorded as FS-371.
+
+---
+
 ## Not on this page
 
 Three registers already govern their own items and expire on their own terms:

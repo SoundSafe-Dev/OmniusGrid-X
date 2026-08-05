@@ -3307,3 +3307,58 @@ because classes 30–51 have no sections of their own — counting headings give
 equally defensible number, which is exactly how I got it wrong.
 
 Mutation-verified by restoring the stale heading.
+
+## FS-446 — the container could not be rebuilt, so it ran two-month-old packages
+
+`docker compose up` gave a backend that never answered. The log, eight frames deep in a
+restart loop:
+
+    File "/app/app/api/auth.py", line 10, in <module>
+        import jwt
+    ModuleNotFoundError: No module named 'jwt'
+
+`PyJWT` **is** in `requirements.txt` — added 2026-07-16 when it replaced `python-jose`
+(FS-76). The image is from two months ago.
+
+### Why that is not "somebody forgot to rebuild"
+
+`docker-compose.yml` mounts `./backend:/app`, which splits the container in two: **the code
+comes from the working tree and is always current; the packages come from the image and are
+as old as the last build.** So every dependency change breaks every container built before
+it, and the symptom is whichever import happens to come first — nothing in that trace says
+"your image predates a dependency change".
+
+**And the rebuild fails.** `pip install -r requirements.txt` exits 1 with
+`OSError: [Errno 28] No space left on device`. The image is not stale because someone forgot;
+it is stale because it **cannot be built**. The first attempt appeared to succeed only
+because the command was piped to `tail`, so the shell reported `tail`'s exit code — rule 72's
+shape exactly: a step that claims success without being asked whether it succeeded.
+
+### The guard
+
+`backend/app/core/startup_checks.py` compares `requirements.txt` against installed distributions and
+refuses to start with a message naming every missing package and the remedy. It runs first in
+the lifespan, before anything that needs a package to be present.
+
+It covers the same failure in its other clothes: a laptop venv behind `requirements.txt`
+after a pull, and a CI cache that survived a dependency bump. Names, not versions —
+a version check fires constantly on harmless drift, and a check that cries wolf on a correct
+environment is one people learn to skip, which would make it worse than the crashloop it
+replaces.
+
+**It reported a false positive first.** `prometheus-client` is installed and importable, and
+`requirements.txt` spells it with a hyphen while `packages_distributions()` reports an
+underscore. PEP 503 treats `-`, `_` and `.` as the same character; comparing raw strings does
+not. Caught by the test asserting that a *satisfied* environment passes quietly — which is
+the assertion a checker like this most needs and most easily omits.
+
+### Not fixed, and not mine to fix
+
+13 GB of the Docker VM is reclaimable from 26 stopped containers. Most is test detritus —
+randomly-named `timescaledb` containers from testcontainers runs, a `seedprobe-db` from
+yesterday's RLS verification. But it also includes `overpeak-*` containers **from a different
+project** and two unnamed images of 7.9 GB and 4.1 GB that I cannot identify.
+
+Pruning would fix the build and might delete someone's work. `docs/planning/` already gates
+FS-293 on exactly this — *"pruning deletes someone's images"* — and that gate is still the
+right one. Recorded in `docs/engineering/open-decisions.md`.
