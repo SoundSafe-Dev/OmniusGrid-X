@@ -3627,3 +3627,48 @@ exactly this, after the same heading sat wrong by thirteen for weeks.
 
 **Two documents that must agree are a pair, and a pair needs a guard.** This is the second
 time in two days that one has earned its place within a day of being written.
+
+## FS-453 — accounting for the numbers, and guarding the register
+
+Four wrong figures in one week, all mine:
+
+| claim | truth | caught by |
+|---|---|---|
+| 41 unfillable registries | **38** — the five with defaults are a *subset* of the eight extractable, not a separate group | a test I had just written |
+| "The forty-seven classes" | the document numbered to **60** at the time | nothing, for weeks |
+| "sixty-five classes" in the README | the numbering is not a count; classes 30–51 have no sections | myself, immediately after writing it |
+| "Rules 21–78" beside an index of 75 | the heading edit was lost when the script making it aborted on a later assertion | `test_method_rules_are_indexed` |
+
+Three of four were caught. The one that was not sat wrong in the first heading a reader
+meets, and only surfaced because I counted instead of trusting the number already written
+down.
+
+### Audited, and all six current figures are right
+
+Every number in `docs/engineering/open-decisions.md` checked against the thing it describes:
+eleven capped lists, five phantom fields, forty-six mapped domains, thirty-eight unfillable,
+and two ratchets at zero. All correct.
+
+**They were also entirely unasserted** — right today, with nothing keeping them right. A
+register nobody can trust is worse than no register: it is read once, found wrong, and then
+discounted, including the entries that were right.
+
+`test_open_decisions_numbers_are_true.py` closes that. It asserts only the **numbers**, not
+the prose or the reasoning — when a ratchet moves, the register gets updated in the same
+commit. It also checks that every entry names the test that pins it, because an entry with no
+pin is a note, and notes are what this document replaced.
+
+Mutation-verified both ways: moving a ratchet without updating the register fails, and
+restoring the wrong `41` fails with the explanation of why it is 38.
+
+### The scripting habit that lost an edit
+
+The heading edit vanished because one script did several replacements and then hit an
+`assert` that failed — so `write_text` never ran and the earlier, *correct* replacements were
+discarded silently. The shell reported nothing because the failure was the last thing to
+happen.
+
+Same shape as rule 72 (a `kill` that did not take) and as the `docker compose build` that
+"succeeded" because it was piped to `tail`: **a step that is not asked whether it succeeded
+will not volunteer that it failed.** Edits now go one at a time, and the guard above means a
+lost one fails a test rather than sitting in a document.
