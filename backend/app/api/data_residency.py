@@ -7,7 +7,10 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.database import get_db
+# `get_tenant_db`, not `get_db` (FS-433). Migration 062 puts data_residency_tags under
+# FORCE ROW LEVEL SECURITY; the unscoped session binds no tenant GUC, so every read here
+# would return zero rows and every write would be refused.
+from app.core.tenant import get_tenant_db
 from app.db.models import User, DataResidencyTag
 from app.api.auth import get_current_active_user
 from app.middleware.rbac import require_admin
@@ -68,11 +71,13 @@ class ResidencyValidation(BaseModel):
 
       * `table_names` is caller-supplied, so a real count means interpolating a caller's
         string into an identifier position;
-      * this endpoint runs on `get_db`, which binds no tenant GUC — counting an
-        RLS-protected table (`assets`, `alarms`, …) through it returns **0**, so the
-        "real" total would be a fresh wrong number rather than a fix;
-      * `data_residency_tags` has no `organization_id` at all, so its rows and a
-        per-tenant row count are not the same population.
+      * counting an arbitrary caller-named table needs a session that can read it, and
+        the target may be any RLS-protected table (`assets`, `alarms`, …).
+
+    `data_residency_tags` DOES now carry an `organization_id` (FS-433, migration 062) and
+    is under FORCE RLS, so the tag counts here are the caller's own — which is a change of
+    meaning, not just of scope. They previously spanned every tenant. The unknown that
+    remains is the denominator: how many rows exist in the target table at all.
 
     A cross-tenant row count needs the platform-admin role that does not exist yet
     (FS-311). Until then this reports the ratio it genuinely computes, names it after what
@@ -106,7 +111,7 @@ async def tag_record_residency(
     record_id: str,
     region: str = DEFAULT_REGION,
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Tag a record with data residency information"""
     # Validate region (only USA allowed for now)
@@ -120,6 +125,10 @@ async def tag_record_residency(
     result = await db.execute(
         select(DataResidencyTag).where(
             and_(
+                # Explicit as well as by policy. RLS is the enforcement; this is what a
+                # reader of the handler can see, and it keeps the query honest if the
+                # table is ever read through a privileged session.
+                DataResidencyTag.organization_id == str(current_user.organization_id),
                 DataResidencyTag.table_name == table_name,
                 DataResidencyTag.record_id == record_id
             )
@@ -145,6 +154,9 @@ async def tag_record_residency(
     
     # Create new tag
     tag = DataResidencyTag(
+        # FROM THE TOKEN, never the body. Same rule the fleet_logistics and
+        # logistics_correlation create paths were fixed to follow.
+        organization_id=str(current_user.organization_id),
         table_name=table_name,
         record_id=record_id,
         region=region,
@@ -171,12 +183,16 @@ async def get_record_residency(
     table_name: str,
     record_id: str,
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get data residency tag for a record"""
     result = await db.execute(
         select(DataResidencyTag).where(
             and_(
+                # Explicit as well as by policy. RLS is the enforcement; this is what a
+                # reader of the handler can see, and it keeps the query honest if the
+                # table is ever read through a privileged session.
+                DataResidencyTag.organization_id == str(current_user.organization_id),
                 DataResidencyTag.table_name == table_name,
                 DataResidencyTag.record_id == record_id
             )
@@ -209,10 +225,17 @@ async def list_residency_tags(
     table_name: Optional[str] = None,
     region: Optional[str] = None,
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
-    """List data residency tags"""
-    query = select(DataResidencyTag)
+    """List data residency tags for the caller's organisation (FS-433).
+
+    This listed EVERY tenant's tags to any authenticated user. Each row carries a
+    `record_id` from a tenant-scoped table and the `tagged_by` user id, so it exposed both
+    which of another organisation's records were tagged and who tagged them.
+    """
+    query = select(DataResidencyTag).where(
+        DataResidencyTag.organization_id == str(current_user.organization_id)
+    )
     
     if table_name:
         query = query.where(DataResidencyTag.table_name == table_name)
@@ -245,12 +268,16 @@ async def remove_residency_tag(
     table_name: str,
     record_id: str,
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Remove data residency tag"""
     result = await db.execute(
         select(DataResidencyTag).where(
             and_(
+                # Explicit as well as by policy. RLS is the enforcement; this is what a
+                # reader of the handler can see, and it keeps the query honest if the
+                # table is ever read through a privileged session.
+                DataResidencyTag.organization_id == str(current_user.organization_id),
                 DataResidencyTag.table_name == table_name,
                 DataResidencyTag.record_id == record_id
             )
@@ -281,10 +308,19 @@ async def remove_residency_tag(
 async def get_residency_summary(
     request: Request,
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
-    """Get data residency summary"""
-    result = await db.execute(select(DataResidencyTag))
+    """Data residency summary for the caller's organisation (FS-433).
+
+    This counted every tenant's tags and returned the total as the caller's own compliance
+    position — a figure an auditor is meant to rely on, computed over data the caller does
+    not own.
+    """
+    result = await db.execute(
+        select(DataResidencyTag).where(
+            DataResidencyTag.organization_id == str(current_user.organization_id)
+        )
+    )
     tags = result.scalars().all()
     
     summary = {
@@ -310,7 +346,7 @@ async def validate_data_residency(
     table_names: List[str],
     expected_region: str = DEFAULT_REGION,
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Validate data residency for specified tables. See `ResidencyValidation` for what
     this can and cannot see — the untagged rows are the finding, and they are invisible
@@ -334,7 +370,10 @@ async def validate_data_residency(
     for table_name in table_names:
         # Get all tags for this table
         result = await db.execute(
-            select(DataResidencyTag).where(DataResidencyTag.table_name == table_name)
+            select(DataResidencyTag).where(
+                DataResidencyTag.organization_id == str(current_user.organization_id),
+                DataResidencyTag.table_name == table_name,
+            )
         )
         tags = result.scalars().all()
         

@@ -2284,6 +2284,11 @@ class DataResidencyTag(Base):
     __tablename__ = "data_residency_tags"
 
     id = UUIDColumn()
+    #: FS-433. This table had no owner: every tenant's tags in one pool, behind three
+    #: endpoints open to any authenticated user and three behind a PER-ORG admin. Migration
+    #: 062 adds the column, backfills it from `tagged_by`'s organisation, and puts the table
+    #: under FORCE ROW LEVEL SECURITY like every other tenant table.
+    organization_id = UUIDForeignKey("organizations.id", nullable=False)
     table_name = Column(String(100), nullable=False)
     record_id = Column(String(36), nullable=False)
     region = Column(String(50), nullable=False, default="USA")
@@ -2296,7 +2301,19 @@ class DataResidencyTag(Base):
     #: `lazy="raise"` because nothing should traverse them: they exist to order
     #: inserts, and an accidental lazy load in async code is a MissingGreenlet.
     user = relationship("User", foreign_keys="DataResidencyTag.tagged_by", lazy="raise")
+    organization = relationship(
+        "Organization", foreign_keys="DataResidencyTag.organization_id", lazy="raise"
+    )
     meta_data = Column(JSON, default={})
+
+    __table_args__ = (
+        # One tag per (org, table, record). Without the organisation in the key, two
+        # tenants tagging the same record id collided and one silently became the other's.
+        UniqueConstraint(
+            "organization_id", "table_name", "record_id",
+            name="uq_data_residency_tags_org_table_record",
+        ),
+    )
 
 
 # ==================== ERP Integration Models ====================
