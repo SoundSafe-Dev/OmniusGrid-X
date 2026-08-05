@@ -30,6 +30,10 @@ from pydantic import BaseModel, Field
 # newlines. Newline splitting keeps serialized table rows as separate segments.
 _SEGMENT_RE = re.compile(r"(?<=[.!?])\s+|\n+")
 
+#: The smallest chunk budget that can hold a short sentence. Below this the packer is not
+#: chunking, it is shredding — see the note in `chunk_blocks`.
+_MIN_CHUNK_CHARS = 32
+
 
 class TextBlock(BaseModel):
     """A structural unit of a document (one page / section) plus its metadata."""
@@ -122,7 +126,26 @@ def chunk_blocks(
     merged back into the previous chunk of the *same* block to avoid slivers.
     Ordinals are assigned sequentially across the whole document.
     """
-    max_chars = max(int(target_tokens * chars_per_token), 1)
+    # REFUSES A NONSENSE TARGET RATHER THAN SHREDDING (FS-441).
+    #
+    # This was `max(int(target_tokens * chars_per_token), 1)`. A floor of ONE CHARACTER is
+    # not a sane fallback: with `target_tokens=0` the packer emitted one chunk per
+    # character — "hello world" became eleven chunks — and `rag_ingestion` passes
+    # `settings.RAG_CHUNK_TOKENS`, which is env-overridable. A single mistyped deployment
+    # variable would embed a 40-page manual one letter at a time, report `indexed: True`
+    # with an enormous `num_chunks`, and retrieve nothing usable. Success, an embedding
+    # bill, and no searchable document.
+    #
+    # Loud, because the alternative is a corpus that looks indexed and is not, and nothing
+    # downstream can tell the difference between that and a genuinely unhelpful document.
+    max_chars = int(target_tokens * chars_per_token)
+    if max_chars < _MIN_CHUNK_CHARS:
+        raise ValueError(
+            f"chunk target is {max_chars} characters "
+            f"(target_tokens={target_tokens}, chars_per_token={chars_per_token}); "
+            f"below {_MIN_CHUNK_CHARS} the packer emits near-single-character chunks, "
+            f"which embed and retrieve as noise. Check RAG_CHUNK_TOKENS."
+        )
     overlap_chars = max(int(overlap_tokens * chars_per_token), 0)
     # Overlap must be smaller than the chunk or packing cannot make progress.
     overlap_chars = min(overlap_chars, max_chars - 1) if max_chars > 1 else 0

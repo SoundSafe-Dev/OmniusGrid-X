@@ -399,6 +399,25 @@ def validate_settings(s: "Settings" = None) -> list[str]:
     """
     s = s or settings
     problems: list[str] = []
+
+    # NOT gated on production (FS-441). A chunk budget this small shreds every uploaded
+    # document into near-single-character chunks, embeds each one, and reports success —
+    # so the corpus looks indexed and retrieves nothing. That is as wrong in staging as in
+    # production, and the whole point of catching it here is that it is otherwise found by
+    # a user asking a question the document already answered.
+    if s.RAG_CHUNK_TOKENS * s.RAG_CHARS_PER_TOKEN < 32:
+        problems.append(
+            f"RAG_CHUNK_TOKENS={s.RAG_CHUNK_TOKENS} with RAG_CHARS_PER_TOKEN="
+            f"{s.RAG_CHARS_PER_TOKEN} gives a chunk budget under 32 characters; "
+            f"ingestion would shred documents rather than chunk them"
+        )
+    if s.RAG_CHUNK_OVERLAP_TOKENS >= s.RAG_CHUNK_TOKENS:
+        problems.append(
+            f"RAG_CHUNK_OVERLAP_TOKENS={s.RAG_CHUNK_OVERLAP_TOKENS} is not smaller than "
+            f"RAG_CHUNK_TOKENS={s.RAG_CHUNK_TOKENS}; the chunker clamps it and every "
+            f"chunk becomes almost entirely a copy of the one before it"
+        )
+
     if s.ENVIRONMENT.lower() == "production":
         if not s.JWT_SECRET_KEY or s.JWT_SECRET_KEY == _INSECURE_JWT:
             problems.append("JWT_SECRET_KEY is unset or the insecure dev default")

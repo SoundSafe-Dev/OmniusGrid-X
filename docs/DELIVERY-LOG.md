@@ -2998,3 +2998,76 @@ than keeping a guard that guards nothing"* — exactly the wrong conclusion, sin
 is zero *because* the file works. It now asserts the structural fact instead: the global
 vocabulary is strictly wider than any single payload, which is true whether or not anything
 is currently broken.
+
+## FS-440 — the document-intake path had no tests at all
+
+`pdf_parser`, `docx_parser`, `image_text_extractor`, `rag_chunker` and `rag_ingestion` —
+1,210 lines — had **zero test references between them**. Everything a user uploads passes
+through them on its way to being searchable, and the failure mode is the one this codebase
+keeps finding: quietly returning less than it was given while reporting success.
+
+83 tests. The assertions were chosen for what fails *silently*, not for coverage:
+
+* **Nothing is lost.** A segment dropped in chunking is a fact that is never indexed, never
+  retrieved and never cited. The upload succeeds, the chunk count looks plausible, and the
+  answer to a question about that paragraph is "I don't know" — and nothing in the system
+  can report it, because nothing else knows what was in the file.
+* **A citation resolves to one block.** A chunk carrying page 4's text under page 3's `meta`
+  produces a citation that looks precise and points at the wrong place. Worse than no
+  citation, because a reader checks it and is reassured.
+* **A table row stands alone.** The module's own comment names the failure — *"the 'who
+  signs vs who approves' failure mode"*. Retrieval returns rows out of context by design,
+  so the column names have to travel with them.
+* **An unread image is distinguishable from a blank one.** Both return
+  `extracted_text: ""`. Only `extraction_method: "none"`, a zero confidence and an explicit
+  `note` separate "we looked and found nothing" from "we never looked".
+
+## FS-441 — a chunk budget of one character
+
+`chunk_blocks` computed `max_chars = max(int(target_tokens * chars_per_token), 1)`. **A
+floor of one character is not a fallback, it is a different operation.** With
+`target_tokens=0`, "hello world" became eleven chunks — one per character.
+
+`rag_ingestion` passes `settings.RAG_CHUNK_TOKENS`, which is env-overridable. So one
+mistyped deployment variable would embed a 40-page manual one letter at a time, report
+`indexed: True` with an enormous `num_chunks`, and retrieve nothing usable. **Success, an
+embedding bill, and no searchable document** — and nothing downstream can tell that corpus
+apart from a genuinely unhelpful one.
+
+Now refused at both ends: `chunk_blocks` raises below a 32-character budget, and
+`validate_settings` reports the misconfiguration at startup — deliberately **not** gated on
+production, because a shredded staging corpus is just as wrong and the alternative is
+finding out when a user asks a question the document already answered. The overlap setting
+is checked there too: an overlap at or above the target makes every chunk almost entirely a
+copy of the one before it, and the chunker silently clamps it.
+
+**Found by a test I wrote wrong.** It asserted the text survived a degenerate target, and
+the text *did* survive — shredded. The assertion was too weak to say so, and the failure
+message showing eleven single-character chunks is what made it visible.
+
+### Three more tests that were wrong, and what they were wrong about
+
+* Three header-detection tests used pages that were half headings. The threshold is
+  `median_size * 1.15`, so when large text is at least half the words **the median is the
+  large size and nothing clears the bar**. My ratios were unrealistic — but the property is
+  real and now has its own test: a title page or section divider yields no headers at all,
+  silently. Pinned as a known limit rather than treated as a bug, since a page that is
+  entirely 24pt text arguably has no heading.
+* One asserted an asset id in a filename becomes a shared key. It does not:
+  `shared_key_detector` matches a fixed vocabulary (PO/SO/INV/TR/WO numbers, dates,
+  DOCK/ZONE codes, and `ASSET|EQ|EQUIP|MCH|MACHINE` + digits). Real assets here are named
+  "CNC Mill #1" and "Press Line 3", so `CNC-01-alarm.png` yields nothing and cannot be
+  linked to its machine by filename. Recorded as scope, not a bug.
+
+### Recorded and not fixed
+
+`parse_pdf_structure` stores `text[:20000]` per page and sets no flag; `truncated` covers
+only pages dropped past `max_pages`. A single dense page over 20,000 characters is cut, the
+document reports `truncated: False`, and the lost half is never chunked, embedded or
+retrievable.
+
+Left as a test that pins the constant rather than a fix: changing that return shape touches
+`document_domain_mapper` and `document_scenario_builder`, which is a decision about the
+intake contract rather than a bug fix. This codebase has a whole guard family for exactly
+this shape — a cap that cannot say it capped — and that family only looks at HTTP list
+endpoints.
