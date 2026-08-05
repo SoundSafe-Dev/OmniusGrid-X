@@ -40,6 +40,15 @@ RESOLVED_ELSEWHERE: dict[str, str] = {
         "denormalised by get_dock_doors from yard_trailers via current_trailer_id, in one "
         "batched query. Pinned by test_yard_trailer_plate_is_resolved.py."
     ),
+    "AlarmResponse.asset_name": (
+        "denormalised by alarms.py's `_resolve_asset_names` from `assets` via asset_id, in "
+        "one batched query per page — the same shape as DockDoorResponse.trailer_license_"
+        "plate above, and found the same way. The dashboard's Active Alarms panel renders "
+        "`{assetName} • {occurredAt}` and nothing had ever sent the name, so every row "
+        "showed a bullet with an empty space in front of it. Filled by GET /alarms/active "
+        "and GET /alarms/ only; the single-alarm paths leave it null deliberately. Pinned "
+        "by test_alarms_name_their_asset_realdb.py."
+    ),
     "TaskColumnResponse.task_count": (
         "computed by the kanban board handler with a batched GROUP BY (kanban.py), not "
         "stored. Nothing renders it today, but it is resolved rather than defaulted."

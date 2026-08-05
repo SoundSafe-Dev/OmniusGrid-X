@@ -2727,3 +2727,60 @@ their OpenAPI schema is empty while the handler dumps a full model — **the sch
 the payload**, and reading it as one is its own instrument error.
 
 Ratchet at 38 with zero slack, verified by planting a phantom field.
+
+## FS-436 — the dashboard's alarms could not say which machine
+
+The Active Alarms panel renders `{alarm.assetName} • {occurredAt}`. **Nothing has ever sent
+`assetName`.** `AlarmResponse` carries `asset_id`; the name lives on `assets`. Every row on
+the main dashboard displayed a bullet with an empty space in front of it.
+
+An alarm you cannot attribute to a machine is not actionable. The asset is the first thing
+an operator needs and the only one that tells them where to walk.
+
+**`mockApi.ts` supplied `assetName`**, and the default development mode is
+`VITE_USE_MOCK=true` — so the panel looked finished in development and was blank against
+the real API. Exactly the pairing already recorded for the yard's `trailerLicensePlate`,
+whose resolver this one copies: one query for the page, not one per row.
+
+Fixed on both endpoints, because two screens read the field — `/alarms/active` behind the
+dashboard panel and `/alarms/` behind the Alarms page. Fixing only the first would have
+left the larger screen blank.
+
+### The note that said the opposite
+
+`ActiveAlarmsResponse`'s own docstring reads *"every field the client's `Alarm` type reads
+is in `AlarmResponse` already"* — written when the response model was introduced, accurate
+about the fields it was comparing, and wrong about this one.
+
+**Third time in two days that an accurate-sounding note stood in for a check**, after
+`validate_data_residency`'s *"data_residency_tags has no organization_id at all"* and the
+`_lane_failures` diagnoses. A note records what someone believed at the time; only a test
+records what is true now.
+
+### tsc proved the mechanism
+
+`Alarm.createdAt` and `updatedAt` were also declared — **required**, so TypeScript entitled
+every consumer to `new Date(alarm.createdAt)` without a guard. The `alarms` table has
+neither column, so no fix could make them arrive; they were deleted.
+
+Deleting them broke the type-check in one place only: **`mockApi.ts`, which supplied both**.
+The mock is the reason a required field that is always `undefined` at runtime looked fine
+for as long as it did, and the compiler named it the moment the declaration went.
+
+Per-type unfed count 38 → 35; one of the three now arrives, two could never have.
+
+### A tenth guard catch, and it wanted the resolver named
+
+`test_response_models_match_their_tables` failed on the commit that added
+`AlarmResponse.asset_name`: *"declares fields that are not columns of its table and are not
+listed as resolved elsewhere."* Its `RESOLVED_ELSEWHERE` register already held
+`DockDoorResponse.trailer_license_plate` — **the same defect, in the same shape, found the
+same way, one screen over.**
+
+The register does not just permit the field; it requires naming what fills it and what pins
+it. So the two entries now read as a pair, and the next denormalised field has an obvious
+place to go.
+
+Both instances were also found by the *same kind of instrument*: a sweep that compares a
+declaration against the specific thing that feeds it, rather than against the codebase in
+general.

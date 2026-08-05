@@ -15,8 +15,12 @@ export interface Alarm {
   acknowledgedBy?: string;
   acknowledgedComment?: string;
   metadata?: Record<string, any>;
-  createdAt: string;
-  updatedAt: string;
+  /* `createdAt` and `updatedAt` are GONE (FS-436). The `alarms` table has neither column —
+   * an alarm's timeline is `occurredAt`, `acknowledgedAt` and `clearedAt` — so nothing
+   * could ever have sent them. Both were declared REQUIRED, which meant TypeScript
+   * entitled every consumer to `new Date(alarm.createdAt)` without a guard, on a value
+   * that is `undefined` at runtime. Nothing read them, which is the only reason this was
+   * a trap for the next page rather than a crash on the current one. */
 }
 
 export interface AlarmAcknowledge {

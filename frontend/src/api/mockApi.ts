@@ -166,8 +166,6 @@ const mockAlarms: Alarm[] = [
     isActive: true,
     isAcknowledged: false,
     occurredAt: new Date(Date.now() - 3600000).toISOString(),
-    createdAt: new Date(Date.now() - 3600000).toISOString(),
-    updatedAt: new Date(Date.now() - 3600000).toISOString(),
   },
   {
     id: 'alarm-2',
@@ -183,8 +181,6 @@ const mockAlarms: Alarm[] = [
     acknowledgedAt: new Date(Date.now() - 1800000).toISOString(),
     acknowledgedComment: 'Replenished filament',
     occurredAt: new Date(Date.now() - 7200000).toISOString(),
-    createdAt: new Date(Date.now() - 7200000).toISOString(),
-    updatedAt: new Date(Date.now() - 1800000).toISOString(),
   },
   {
     id: 'alarm-3',
@@ -197,8 +193,6 @@ const mockAlarms: Alarm[] = [
     isActive: true,
     isAcknowledged: false,
     occurredAt: new Date(Date.now() - 10800000).toISOString(),
-    createdAt: new Date(Date.now() - 10800000).toISOString(),
-    updatedAt: new Date(Date.now() - 10800000).toISOString(),
   },
   {
     id: 'alarm-4',
@@ -215,8 +209,6 @@ const mockAlarms: Alarm[] = [
     acknowledgedComment: 'Recalibrated bed manually',
     occurredAt: new Date(Date.now() - 90000000).toISOString(),
     clearedAt: new Date(Date.now() - 85000000).toISOString(),
-    createdAt: new Date(Date.now() - 90000000).toISOString(),
-    updatedAt: new Date(Date.now() - 85000000).toISOString(),
   },
 ];
 

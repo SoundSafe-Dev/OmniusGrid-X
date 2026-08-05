@@ -24,7 +24,7 @@ it set and RLS hides the row. See the warning in ``app/core/tenant.py`` — the 
 calls here survived that cleanup only because ``alarms`` had no policy at the time.
 """
 
-from typing import List, Optional
+from typing import List, Optional, Dict
 from uuid import UUID
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -39,6 +39,27 @@ from app.models.schemas import AlarmResponse, AlarmAcknowledge
 from app.core.tenant import get_tenant_db, get_tenant_org_id
 from app.middleware.rbac import require_operator_or_admin
 from pydantic import BaseModel
+
+
+async def _resolve_asset_names(asset_ids, db: AsyncSession) -> Dict[str, str]:
+    """Map {asset_id -> name} in one query (FS-436).
+
+    The dashboard's Active Alarms panel renders `{alarm.assetName} • {occurredAt}` and
+    nothing has ever sent `assetName`: `AlarmResponse` carries `asset_id` and the name lives
+    on `assets`. Every row showed a bullet with an empty space before it, and an alarm you
+    cannot attribute to a machine is not actionable — the asset is the first thing an
+    operator needs.
+
+    `mockApi.ts` supplies `assetName`, and the default dev mode is `VITE_USE_MOCK=true`, so
+    the panel looked finished in development and was blank against the real API. That is the
+    same pairing recorded for the yard's `trailerLicensePlate`, whose resolver two files over
+    this one copies — one query for the whole page, not one per row.
+    """
+    ids = {a for a in asset_ids if a}
+    if not ids:
+        return {}
+    rows = (await db.execute(select(Asset.id, Asset.name).where(Asset.id.in_(ids)))).all()
+    return {str(asset_id): name for asset_id, name in rows}
 
 
 class ActiveAlarmSeverityCounts(BaseModel):
@@ -146,7 +167,18 @@ async def list_alarms(
     ).scalar_one()
     query = query.order_by(Alarm.occurred_at.desc()).offset(skip).limit(limit)
     result = await db.execute(query)
-    return paginate(result.scalars().all(), total, SimpleNamespace(skip=skip, limit=limit))
+    alarms = result.scalars().all()
+
+    # The Alarms page renders the asset per row too (FS-436), and this is the endpoint
+    # behind it. One query for the page.
+    names = await _resolve_asset_names({a.asset_id for a in alarms}, db)
+    rows = []
+    for alarm in alarms:
+        row = AlarmResponse.model_validate(alarm)
+        row.asset_name = names.get(str(alarm.asset_id))
+        rows.append(row)
+
+    return paginate(rows, total, SimpleNamespace(skip=skip, limit=limit))
 
 
 @router.get("/active", response_model=ActiveAlarmsResponse, summary="List active alarms", description="Retrieve all currently active (unacknowledged) alarms with severity-based ordering. Used for real-time monitoring dashboards.")
@@ -176,6 +208,14 @@ async def get_active_alarms(
     result = await db.execute(query)
     alarms = result.scalars().all()
 
+    # One query for the page (FS-436). See `_resolve_asset_names`.
+    names = await _resolve_asset_names({a.asset_id for a in alarms}, db)
+    rows = []
+    for alarm in alarms:
+        row = AlarmResponse.model_validate(alarm)
+        row.asset_name = names.get(str(alarm.asset_id))
+        rows.append(row)
+
     return {
         "count": len(alarms),
         "by_severity": {
@@ -185,7 +225,7 @@ async def get_active_alarms(
             "low": len([a for a in alarms if a.severity == "low"]),
             "info": len([a for a in alarms if a.severity == "info"]),
         },
-        "alarms": alarms
+        "alarms": rows
     }
 
 

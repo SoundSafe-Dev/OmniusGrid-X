@@ -208,7 +208,11 @@ KNOWN_UNFED: dict[str, str] = {}
 #:
 #: 38 is a floor, not a total. Only 14 TS interfaces pair with a same-named response model;
 #: the rest are assembled from several endpoints and are out of this sweep's reach.
-MAX_UNFED_FIELDS = 38
+#: 38 -> 35 on 2026-08-04 (FS-436). `Alarm.assetName` now ARRIVES — the dashboard's Active
+#: Alarms panel had been rendering `{assetName} • {occurredAt}` with nothing in front of the
+#: bullet. `createdAt`/`updatedAt` were DELETED: the `alarms` table has neither column, so
+#: no fix could have made them arrive.
+MAX_UNFED_FIELDS = 35
 
 
 def _all_unfed() -> dict[str, set[str]]:

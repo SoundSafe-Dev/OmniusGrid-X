@@ -121,6 +121,16 @@ class AlarmResponse(AlarmCreate):
     acknowledged_comment: Optional[str]
     occurred_at: datetime
     cleared_at: Optional[datetime]
+    #: Resolved by join, not stored (FS-436). The dashboard's Active Alarms panel renders
+    #: `{alarm.assetName} • {occurredAt}` and this was never sent, so every row showed a
+    #: bullet with an empty space in front of it. `alarms` carries only `asset_id`.
+    #:
+    #: Optional and defaulting to None because the two single-row paths (`GET /alarms/{id}`
+    #: and the acknowledge/clear responses) do not run the resolver — a null that means
+    #: "not resolved here" is honest, and a client rendering it falls back to the id. The
+    #: alternative, resolving it on every path, adds a query to writes for a field only the
+    #: list views display.
+    asset_name: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
