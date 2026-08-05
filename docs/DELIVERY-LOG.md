@@ -3205,3 +3205,53 @@ containerised backend is crashlooping on a missing `jwt` module, the container's
 has zero assets, and two Postgres instances contend for 5432 — so a local live run would
 have failed for want of data rather than for a defect. CI stands up its own stack, migrates,
 seeds and runs them; that is where these first execute for real.
+
+## FS-444 — "capacity" opened a quality investigation
+
+`correlation_registry_integration` is 1,130 lines with one test reference, and it is the
+service that turns an AI analysis into **work someone is assigned** — a registry item and a
+Kanban task per detected domain. Domain detection was `keyword in analysis_lower`, a
+substring test, and the short keywords sit inside words this domain uses constantly:
+
+| analysis text | routed to | because |
+|---|---|---|
+| "Line **capa**city was reduced by 12%" | QUALITY_CONTROL | `capa` = Corrective And Preventive Action |
+| "The valve was **iso**lated for servicing" | COMPLIANCE_REGISTRIES | `iso` = the standards body |
+| "Cycle counts are ex**cell**ent this week" | PRODUCTION_OEE | `cell` = work cell |
+| "Two customer orders were can**cell**ed" | PRODUCTION_OEE | `cell` |
+
+**Not cosmetic.** A registry item and a Kanban task are created per detected domain, and the
+analysis text is quoted into the item — so the mismatch reads as a judgement somebody made
+rather than a string bug. A routine capacity note opened a formal quality investigation; a
+valve isolation opened an ISO compliance item.
+
+Fixed with word boundaries. The tests assert **both halves** — the false positives are gone
+*and* the eight real keyword families still fire — because a matcher that matches nothing
+also has no false positives, and this repository has shipped that mistake before.
+
+### 46 registries, 8 that anything can fill
+
+`initialize_registries_for_organization` creates a registry for every mapped domain. Of the
+46:
+
+* **8** can be returned by the extractor, so only those can receive an analysis-derived item
+* **5** also receive default items — a *subset* of the 8, not a separate group
+* **38** have neither and are created empty and stay empty
+
+On a compliance screen that reads as 38 programmes **not started** rather than 38 that
+**cannot be started**, which is a different fact and the more alarming one. Recorded with the
+numbers pinned rather than fixed: closing it means either giving those domains keywords and
+default items, or not creating a registry nothing can fill — a product decision.
+
+The docstring said "all 47 operational domains". There are 46.
+
+### I got the arithmetic wrong first
+
+The first version of that note said **41** unfillable, from `46 − 5 default-item domains`.
+The five are a **subset** of the eight extractable ones, so the union is 8 and the answer is
+38. The test I wrote caught it — `reachable >= 9` failed at 8 — and both the test and the
+service docstring were corrected before either was committed.
+
+Worth stating plainly after a week spent finding stale notes: **a number in a comment is a
+claim, and I had just written a wrong one.** The only reason it did not ship is that it was
+asserted rather than only written down.

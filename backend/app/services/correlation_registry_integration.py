@@ -6,6 +6,7 @@ and Kanban task management system to automatically create tasks, registry items,
 and correlations based on AI analysis results.
 """
 
+import re
 from typing import List, Dict, Any, Optional, Tuple
 from uuid import UUID
 from datetime import datetime, timedelta, timezone
@@ -467,7 +468,21 @@ class CorrelationRegistryIntegration:
         created_by: UUID
     ) -> Dict[str, UUID]:
         """
-        Initialize registries for all 47 operational domains for an organization.
+        Initialize registries for every mapped operational domain (46 of them).
+
+        THE COUNT WAS WRONG AND THE SHAPE IS WORTH KNOWING (FS-444). This said "all 47";
+        `DOMAIN_REGISTRY_MAPPING` has 46. More importantly, of those 46:
+
+          *  8 can be returned by `_extract_domains_from_analysis`, so only those can ever
+             receive an item derived from a correlation analysis
+          *  5 also receive default items — a SUBSET of those 8, not a separate group
+          * 38 have neither, and are created empty and stay empty
+
+        So an organisation is initialised with 46 registries, 38 of which nothing in this
+        service can populate. On a compliance screen that reads as 38 programmes not started
+        rather than 38 that cannot be started, which is a different fact. Pinned by
+        `test_correlation_registry_integration.py`; closing it means either giving those
+        domains default items and keywords, or not creating a registry nothing can fill.
         
         Args:
             organization_id: Organization UUID
@@ -822,9 +837,28 @@ class CorrelationRegistryIntegration:
             "SYSTEM_INFRASTRUCTURE": ["network", "database", "latency", "infrastructure", "availability", "error rate"]
         }
         
+        # WHOLE WORDS, not substrings (FS-444).
+        #
+        # This was `keyword in analysis_lower`, and the short keywords are inside ordinary
+        # words this domain uses constantly:
+        #
+        #   "Line CAPAcity was reduced by 12%"      -> QUALITY_CONTROL   (capa)
+        #   "The valve was ISOlated for servicing"  -> COMPLIANCE_REGISTRIES (iso)
+        #   "Throughput is exCELLent"               -> PRODUCTION_OEE    (cell)
+        #   "Two orders were canCELLed"             -> PRODUCTION_OEE    (cell)
+        #
+        # `capa` is Corrective And Preventive Action and `iso` is the standards body, so a
+        # routine note about capacity opened a formal quality item and a valve isolation
+        # opened an ISO compliance item. Not cosmetic: `process_correlation_analysis` creates
+        # a registry item AND a Kanban task per detected domain, so someone is assigned work
+        # in a domain the analysis never mentioned — and the analysis text is quoted into the
+        # item, which makes the mismatch look like a judgement rather than a string bug.
         analysis_lower = analysis_text.lower()
         for domain, keywords in domain_keywords.items():
-            if any(keyword in analysis_lower for keyword in keywords):
+            if any(
+                re.search(rf"\b{re.escape(keyword)}\b", analysis_lower)
+                for keyword in keywords
+            ):
                 domains.append(domain)
         
         return domains
