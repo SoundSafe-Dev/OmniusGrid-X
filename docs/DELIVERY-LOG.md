@@ -3255,3 +3255,55 @@ service docstring were corrected before either was committed.
 Worth stating plainly after a week spent finding stale notes: **a number in a comment is a
 claim, and I had just written a wrong one.** The only reason it did not ship is that it was
 asserted rather than only written down.
+
+## FS-445 — the decisions were in docstrings, where nobody deciding would find them
+
+Six findings from this week are understood, reproduced and **deliberately not fixed**,
+because closing each is a product or contract decision rather than a bug fix. Each was
+recorded in the docstring of the test that pins it — the right place for the *reasoning* and
+the wrong place for the *decision*. **A docstring is read by whoever next edits that file,
+and none of these will be closed by that person.**
+
+`docs/engineering/open-decisions.md` collects them: the PDF page truncated at 20,000
+characters with no flag, 38 registries created that nothing can populate, eleven capped
+lists that cannot say they were capped, five fields declared on shapes the server never
+defines, twelve paths served at a doubled prefix, and two PUT handlers that replace rather
+than patch. Every entry names the test that pins it and what would have to change.
+
+It is listed in `test_documented_files_exist.py`'s checked set, **added with the file rather
+than after it** — that guard's own note warns that moving prose out of a checked document
+moves it out of the check, and a new document full of citations is the same trap facing the
+other way. Verified by pointing an entry at a file that does not exist and watching it fail.
+
+Five new classes and three new rules went into `defect-class-sweeps.md`: the half-written
+alias map, the block gated on a field nobody sends, the floor that changes the operation,
+substring matching that routes work to the wrong domain, and the spec CI does not name.
+
+### The count in that document was already wrong
+
+Its heading read **"The forty-seven classes"** while its own highest class number was **60**
+— stale by thirteen before this week added five. The early classes are rows in a summary
+table, later ones got their own sections, and nobody reconciled the two.
+
+I made it worse first: seeing 65 as the highest heading number I wrote "sixty-five classes"
+into the README without checking whether the numbering was a count. It is not — numbers 30
+through 51 have no sections at all. Both places now say **"sixty-five numbered classes"**,
+which is the one thing a reader can verify against the document in front of them.
+
+**That is rule 75 catching its own author, twice in two days.** The first time a test caught
+it before it shipped. This time nothing did — a heading is not asserted by anything — and it
+was only found by counting instead of trusting the number already written down.
+
+### The rules were guarded and the classes were not
+
+`test_method_rules_are_indexed` already asserted that the README cites the current **rule**
+range — added after that range drifted once before. Nothing asserted the **class** count, so
+the sweeps document's own first heading was wrong by thirteen for weeks while the rule range
+beside it stayed correct.
+
+**A guard covering one half of a pair is how the other half rots.** The class count is now
+asserted in both places, and the count is the *numbering* rather than a heading tally,
+because classes 30–51 have no sections of their own — counting headings gives a different and
+equally defensible number, which is exactly how I got it wrong.
+
+Mutation-verified by restoring the stale heading.

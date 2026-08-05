@@ -48,6 +48,12 @@ DOCS = [
     # from the check while the file count went UP. Moving prose out of a checked document
     # moves it out of the check unless the scope moves with it.
     ROOT / "docs" / "DELIVERY-LOG.md",
+    # ADDED WITH THE FILE (2026-08-05). `open-decisions.md` is nothing BUT citations — every
+    # entry names the test that pins it and the module it is about — so a stale path there
+    # sends a decision-maker to a file that does not exist, about a decision they came to
+    # make. The note above this list applies to new documents as much as moved ones: prose
+    # full of paths is unchecked unless the scope includes it.
+    ROOT / "docs" / "engineering" / "open-decisions.md",
 ]
 
 #: `` `something.py` `` — a backticked filename with a source extension.

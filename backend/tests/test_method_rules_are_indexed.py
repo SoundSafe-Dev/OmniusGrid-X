@@ -127,3 +127,47 @@ class TestTheReadmeAgreesOnTheCount:
         assert f"Rules 21–{highest} are recorded in" in readme, (
             f"the README does not cite the current rule range (highest is {highest})"
         )
+
+    def test_the_class_count_agrees_too(self):
+        """THE RULES WERE GUARDED AND THE CLASSES WERE NOT (FS-445).
+
+        This class checked the rule range and nothing checked the class count, so the
+        document's own heading read "The forty-seven classes" while its highest class number
+        was **60** — stale by thirteen, in the first heading a reader meets.
+
+        The count is the NUMBERING, deliberately: classes 30–51 have no sections of their
+        own (they are rows in the summary table), so counting headings gives a different and
+        equally defensible number. Seeing 65 as the highest heading and writing "sixty-five
+        classes" into the README is exactly the mistake this now prevents — asserting the
+        numbering is what makes the phrase checkable against the document.
+        """
+        import re
+
+        doc = DOC.read_text()
+        numbers = {int(m) for m in re.findall(r"^## (\d+)\.", doc, re.M)}
+        numbers |= {int(m) for m in re.findall(r"^## Class (\d+)", doc, re.M)}
+        assert numbers, "no class sections found; the heading patterns have drifted"
+        highest = max(numbers)
+
+        readme = (DOC.parents[2] / "README.md").read_text()
+        phrase = f"{_spell(highest)} numbered classes"
+        for name, text in (("the sweeps document", doc), ("the README", readme)):
+            assert phrase in text, (
+                f"{name} does not say '{phrase}'. The highest class number is {highest}, and "
+                f"a count stated in prose beside a document that contradicts it is worse "
+                f"than no count — this heading was wrong by thirteen for weeks"
+            )
+
+
+def _spell(n: int) -> str:
+    """Just the range this document is plausibly in. A wrong word fails loudly, which is
+    the point — the alternative is a digit nobody reads."""
+    tens = {50: "fifty", 60: "sixty", 70: "seventy", 80: "eighty", 90: "ninety"}
+    units = ["", "-one", "-two", "-three", "-four", "-five", "-six", "-seven", "-eight",
+             "-nine"]
+    if n in tens:
+        return tens[n]
+    base = (n // 10) * 10
+    if base in tens:
+        return tens[base] + units[n % 10]
+    raise AssertionError(f"class count {n} is outside the range this speller covers")

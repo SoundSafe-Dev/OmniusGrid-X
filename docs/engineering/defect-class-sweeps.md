@@ -26,7 +26,13 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The forty-seven classes
+## The sixty-five numbered classes
+
+**The count is the numbering, and it was already stale before this line was corrected.**
+This heading read "forty-seven" while the document's own highest class was 60 — the summary
+table below lists the early classes as rows, later ones got their own `## Class N` sections,
+and nobody reconciled the two. Stated as the highest number assigned, which is the one thing
+a reader can check against the document in front of them (rule 75).
 
 The first five were all originally found in ERP. The sixth came out of the fifth, the
 seventh out of two failing tests that turned out to share a cause, and the eighth out of
@@ -2434,6 +2440,25 @@ one of its findings. The habit that catches it:
    conclusion into a correct one in ten seconds. The general form: when a verification
    contradicts a change you are confident in, check the verification's premises before the
    change's.
+
+73. **A vacuity guard keyed to a defect population fails on success.**
+   Twice in three days a guard written to stop a sweep passing over nothing broke *because
+   the sweep worked*: one asserted a current offender existed and failed at zero with the
+   message "delete it rather than keeping a guard that guards nothing" — exactly the wrong
+   conclusion. Key the vacuity check to the INSTRUMENT (vocabulary size, interface count,
+   routes walked), which does not move when the findings do.
+
+74. **A default is a claim.**
+   `?? 'violation'` made every alert read "Violation"; `?? []` made every zone report "0
+   vehicles inside", a *count*, which reads as a measurement; `|| 'Not assigned'` made every
+   shipment report a vehicle it never had. A blank is visibly missing; a default is a
+   statement, and a wrong one is indistinguishable from a right one.
+
+75. **A number in a comment is a claim.**
+   A registry finding was written up as 41 unfillable and the answer was 38 — the smaller
+   set was a subset of the larger, not disjoint. The test caught it before it shipped.
+   Corollary: three notes that turned out to be wrong this week were *accurate when
+   written*. A note records what someone believed; only a test records what is true now.
 
 ---
 
@@ -4894,3 +4919,149 @@ The general form, and it is the same shape as rule 68: **when a verification con
 change you have good reason to believe in, check the verification's premises before the
 change's.** A stale process, a cached bundle, a browser holding an old service worker, and a
 test run against the wrong database all present as "your fix does not work".
+
+## Class 61 — a half-written alias map
+
+The casing seam renames some fields beyond casing. `YARD_ALIASES` mapped
+`scheduledStart → scheduledArrival` and `scheduledEnd → scheduledDeparture`, and stopped
+there: `actual_start` and `actual_end` are columns on the same table, are sent, and were
+never mapped. `TRANSPORT_ALIASES` aliased `ctpatExpiresAt` and `insuranceExpiresAt` to their
+`*Expiry` names and omitted `medical_cert_expires` — the one of the three with a hard DOT
+consequence.
+
+**A half-written alias map looks complete at the line above it.** Each entry is evidence that
+someone understood the seam, which is exactly why the missing sibling reads as a decision
+rather than an omission.
+
+Six aliases added across two maps. Every one is a field that now *arrives* rather than a
+declaration deleted — the same sweep found `jockey_driver_id`, `started_at` and `completed_at`
+reaching a yard move as three undefineds.
+
+Guard: `backend/tests/test_frontend_types_match_their_own_payload.py` — per type, not against
+a global vocabulary, which is what made the missing siblings visible at all.
+
+## Class 62 — a block gated on a field nobody sends
+
+`{trailer.driverName && ( … )}` wrapped a trailer's whole driver section, and `driverName`
+was never sent. So the block never rendered — **and it took `driverPhone` with it**, a field
+a resolver existed specifically to deliver, under a docstring calling it "the number an
+operator calls when a trailer has been sitting on the yard".
+
+That phone fix was real, correct, tested, and invisible for as long as the gate stood. **A
+guard on a field nobody sends is a permanent `false`, and everything inside it disappears** —
+worse than a blank line, because a blank line can be seen, and worse than a missing field,
+because it silently cancels work that was done properly.
+
+The rule is narrower than "do not gate on an unsent field". Two other gates do exactly that,
+correctly: `{zone.vehiclesInside && …}` exists to stop the panel rendering a fabricated
+`0 vehicles inside`. The defect is the other shape — an absent field standing in front of one
+that **does** arrive.
+
+Guard: `backend/tests/test_no_block_is_gated_on_a_field_nobody_sends.py`. Its first version
+used the global wire vocabulary and **would not have caught the defect it was written for**:
+`driverName` is sent by `fleet_health.py`, so it stayed in the vocabulary no matter what the
+yard did. Found by reverting the fix and running the guard, not by reading it.
+
+## Class 63 — a floor that changes the operation
+
+`chunk_blocks` computed `max_chars = max(int(target_tokens * chars_per_token), 1)`. **A floor
+of one character is not a fallback; it is a different operation.** With `target_tokens=0`,
+"hello world" became eleven chunks — one per character.
+
+`rag_ingestion` passes `settings.RAG_CHUNK_TOKENS`, which is env-overridable, so one mistyped
+deployment variable would embed a 40-page manual one letter at a time, report `indexed: True`
+with an enormous `num_chunks`, and retrieve nothing usable. Success, an embedding bill, and no
+searchable document — and nothing downstream can tell that corpus apart from a genuinely
+unhelpful one.
+
+The general form: a clamp written to avoid a crash (`max(x, 1)`, `or 1`, `min(x, len(y))`)
+turns a nonsense input into a *plausible* one. Ask what the clamped value **means**, not
+whether it is safe to divide by.
+
+Refused at both ends now: the chunker raises below a 32-character budget, and
+`validate_settings` reports the misconfiguration at startup — deliberately not gated on
+production, because a shredded staging corpus is just as wrong.
+
+## Class 64 — substring matching that routes work to the wrong domain
+
+`correlation_registry_integration` detected domains with `keyword in analysis_lower`, and the
+short keywords sit inside words this domain uses constantly:
+
+    "Line CAPAcity was reduced by 12%"       -> QUALITY_CONTROL        (capa)
+    "The valve was ISOlated for servicing"   -> COMPLIANCE_REGISTRIES  (iso)
+    "Cycle counts are exCELLent this week"   -> PRODUCTION_OEE         (cell)
+    "Two customer orders were canCELLed"     -> PRODUCTION_OEE         (cell)
+
+`capa` is Corrective And Preventive Action and `iso` is the standards body. **A registry item
+and a Kanban task are created per detected domain, and the analysis text is quoted into the
+item** — so a routine capacity note opened a formal quality investigation, and the mismatch
+reads as a judgement somebody made rather than a string bug.
+
+Guard: `backend/tests/test_correlation_registry_integration.py` asserts both halves — the
+false positives are gone *and* the eight real keyword families still fire, because a matcher
+that matches nothing also has no false positives.
+
+## Class 65 — a spec CI does not name is a spec that never runs
+
+Playwright collects `e2e/*.spec.ts` automatically, so a new spec *appears* wired up the moment
+it is written. But the live-backend job invoked files **by name**, and a live-backend spec
+`test.skip`s itself without `E2E_LIVE_BACKEND=1`.
+
+So a new one would be collected everywhere, skipped on every laptop for want of a backend, and
+**executed nowhere** — green locally, absent from CI, indistinguishable from a passing test in
+both.
+
+Distinct from FS-365, where a file was not collected at all. Here collection was never the
+question; execution was.
+
+Guard: `backend/tests/test_every_e2e_spec_is_run.py`, in the **backend** suite deliberately —
+no browser, no Node, so it runs in the cheapest job on every push rather than only where
+Playwright is installed.
+
+## Rule 73 — a vacuity guard keyed to a defect population fails on success
+
+Twice in three days, a guard written to stop a sweep passing over nothing broke *because the
+sweep worked*:
+
+* `test_the_global_vocabulary_really_does_hide_these` asserted a current offender existed. At
+  zero it failed with the message *"delete it rather than keeping a guard that guards
+  nothing"* — exactly the wrong conclusion, since the count was zero **because** the file
+  worked.
+* `test_it_finds_the_unread_ones_at_all` asserted the phantom population was large. Sound at
+  34, self-defeating at 5.
+
+**A floor under a defect count is a guard that fails when you fix the defects.** Key the
+vacuity check to the *instrument* instead — the vocabulary size, the interface count, the
+number of routes walked. Those do not move when the findings do.
+
+## Rule 74 — a default is a claim
+
+Three defects in one week were a fallback turning an absent field into an answered question:
+
+* `alertType: … ?? 'violation'` — every geofence alert read "Violation"
+* `vehiclesInside: … ?? []` — every zone reported "0 vehicles inside", a *count*, which reads
+  as a measurement
+* `{shipment.vehicleId || 'Not assigned'}` — every shipment read "Not assigned" under a
+  Vehicle heading, for a column that does not exist
+
+A blank is visibly missing. **A default is a statement, and a wrong one is indistinguishable
+from a right one.** Where the absence is meaningful, let it be absent and let the reader see
+that nobody answered.
+
+## Rule 75 — a number in a comment is a claim
+
+Writing up class 63's registry finding, the first version said **41** unfillable registries,
+from `46 − 5 default-item domains`. The five are a *subset* of the eight extractable ones, so
+the union is 8 and the answer is **38**.
+
+The test caught it — `reachable >= 9` failed at 8 — and both the test and the service
+docstring were corrected before either was committed. After a week spent finding stale notes
+in this codebase: the only reason a wrong number did not ship is that it had been **asserted**
+rather than only written down.
+
+Corollary, and the whole reason this rule is worth its space: three of the notes that turned
+out to be wrong this week were *accurate when written* — `ActiveAlarmsResponse`'s "every field
+the client's `Alarm` type reads is in `AlarmResponse` already", `validate_data_residency`'s
+"`data_residency_tags` has no `organization_id` at all", and a `DockDoor` deferral listing
+five fields that had already been fixed in the same interface. **A note records what someone
+believed; only a test records what is true now.**
