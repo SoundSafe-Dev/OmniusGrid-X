@@ -3505,3 +3505,35 @@ It runs in the **frontend unit suite**, not as an e2e test: no browser, no backe
 fires on every push rather than only where Playwright and a live stack exist. The sweep it
 guards is the expensive one; this is the cheap thing that keeps it honest. Both directions
 mutation-verified.
+
+## FS-450 — the pages render; nothing proved they work
+
+The route sweep proves every page **renders**. Nothing proved any of it **works**. A button
+whose handler throws, or whose request 500s, leaves the page looking exactly as it did
+before — React swallows the error into a boundary, or the failure lands in a rejected promise
+nobody awaits.
+
+That is not hypothetical here: `dispatchShipment` returned **422 on every call since the day
+it was written** (FS-420), and no test could see it because no test clicked anything.
+
+`controls-do-not-break.spec.ts` clicks up to five controls on each of the eight most
+interactive routes and watches for two unambiguous signals — an uncaught page error, and any
+response of 500 or worse. Nothing about what each button *should* do, which is what keeps it
+useful without encoding product judgement. Destructive labels are skipped by name: a sweep
+that clicks "Delete" eventually deletes something a later assertion needed.
+
+**32 controls clicked, zero problems.**
+
+### It reported that same clean result while clicking nothing
+
+The first version had no wait after `goto`, so it counted buttons before the page rendered,
+clicked **zero**, and **passed in 4.7 seconds**. A sweep reporting no problems because it did
+no work — the exact shape this codebase has seventy-five rules about, produced by the person
+who wrote several of them.
+
+`expect(clicked).toBeGreaterThan(15)` is now the first assertion in the file. It is what makes
+the clean result mean anything, and without it the other assertion is decoration.
+
+An earlier attempt failed differently and is worth recording too: 32 routes × 12 controls with
+waits between each **timed out at ten minutes** before printing its findings. Too slow to run
+is the same outcome as too blind to see — neither tells you anything.
