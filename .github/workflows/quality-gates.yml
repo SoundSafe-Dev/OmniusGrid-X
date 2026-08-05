@@ -1115,14 +1115,25 @@ jobs:
       - name: Install Playwright browser
         working-directory: ./frontend
         run: npx playwright install --with-deps chromium
-      - name: Authenticated journey
+      - name: Live-backend e2e (authenticated journey + data reaches the screen)
         working-directory: ./frontend
         env:
           E2E_LIVE_BACKEND: "1"
           # Points the SPA at the backend started above; without it the dev build
           # guesses http://<hostname>:8000, which is right here but only by luck.
           VITE_API_URL: http://127.0.0.1:8000
-        run: npx playwright test e2e/authenticated.spec.ts
+        # NAMED FILES, not the whole directory, and both are named (FS-443). This ran
+        # `authenticated.spec.ts` alone, so a new live-backend spec would have been
+        # collected by Playwright, skipped on every laptop for want of a backend, and
+        # never executed anywhere — a test that exists and never runs, which is the
+        # failure `test_ci_quarantine_expires.py` exists to prevent one layer down.
+        #
+        # Still explicit rather than `npx playwright test`: the smoke suite runs in its own
+        # job without a backend, and running it here too would double every smoke test.
+        run: |
+          npx playwright test \
+            e2e/authenticated.spec.ts \
+            e2e/data-reaches-the-screen.spec.ts
 
   # --- task 19: pre-commit hooks as a CI gate ------------------------------
   pre-commit:

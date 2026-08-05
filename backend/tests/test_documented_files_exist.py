@@ -51,7 +51,12 @@ DOCS = [
 ]
 
 #: `` `something.py` `` — a backticked filename with a source extension.
-CITED = re.compile(r"`([A-Za-z0-9_./-]+\.(?:py|tsx?|sql|ya?ml))`")
+#:
+#: The leading `[A-Za-z0-9_]` is load-bearing (FS-443): without it, prose naming a bare
+#: EXTENSION matched. "the sweep now skips `.d.ts` entirely" was reported as a missing file,
+#: which is a sentence about a file-type, not a citation of a path. A basename is required
+#: before the dot, so `.d.ts` and `.tsx` are prose and `foo.d.ts` is still a citation.
+CITED = re.compile(r"`([A-Za-z0-9_][A-Za-z0-9_./-]*\.(?:py|tsx?|sql|ya?ml))`")
 
 #: Names the docs cite ON PURPOSE while they do not exist here, with the reason.
 #: Not a convenience list — each entry is a claim that has to stay true.

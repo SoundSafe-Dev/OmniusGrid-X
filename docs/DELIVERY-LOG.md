@@ -3144,3 +3144,64 @@ defect population fails when you fix the defects** — the same shape as
 Rewritten to check what the guard was actually for: that the parser has not gone blind. It
 now asserts the wire vocabulary and the interface count, neither of which moves when the
 findings do.
+
+## FS-443 — the instrument that could have seen all four
+
+Four defects this week were the same shape and **no existing instrument could see any of
+them**. The server sent the data, the response model declared it, TypeScript compiled, every
+backend test passed — and the screen showed nothing:
+
+| | what the screen did |
+|---|---|
+| FS-436 | alarm rows rendered `{assetName} • {time}` with nothing before the bullet |
+| FS-437 | the yard's driver block was gated on a field never sent, hiding the phone inside it |
+| FS-439 | every shipment read "Not assigned" under a Vehicle heading |
+| FS-435 | a yard move's mover and both its times arrived under unmapped names |
+
+A backend test asserts the API sends the field. A type-checker asserts the field is
+declared. **Neither can see the gap between them, and that is where all four lived.** Only a
+browser looking at a rendered page can.
+
+E2E goes from 8 tests to 20. Three assert the specific fixes; nine assert the general case —
+that no route renders `undefined`, `NaN`, `[object Object]` or `Invalid Date`, which is what
+a missing field looks like once it reaches a template. That last set costs one page load per
+route and is aimed at the defects nobody has found yet.
+
+Values, not elements, following the precedent `authenticated.spec.ts` set for a good reason:
+the FS-191 tenancy bug rendered a complete, error-free dashboard of zeros, and any
+element-exists assertion would have passed it.
+
+### A route that does not exist passes vacuously
+
+The first draft listed `/maintenance`. There is no such route — the real one is
+`/analytics/maintenance` — and a typo'd path renders the 404 page, which contains no
+`undefined` and would have passed while asserting nothing. Every route in the list is now
+checked against `App.tsx`.
+
+### A spec CI does not name is a spec that never runs
+
+The live-backend job invoked **one file by name**, and a live-backend spec `test.skip`s
+itself without `E2E_LIVE_BACKEND=1`. So a new one would have been collected by Playwright,
+skipped on every laptop for want of a backend, and **executed nowhere** — green locally,
+absent from CI, and indistinguishable from a passing test in both.
+
+The job now names both files, and `test_every_e2e_spec_is_run.py` asserts that any spec
+gating on a live backend is named by some workflow. It lives in the **backend** suite
+deliberately: it needs no browser and no Node, so it runs in the cheapest job on every push
+rather than only where Playwright is installed.
+
+Same failure `test_ci_quarantine_expires.py` guards one layer down, and the same one FS-365
+recorded for `compliance-assistant.visual.ts` — except there the file was not collected,
+and here collection was never the question. Execution was.
+
+### What is verified, and what is not
+
+The specs are **collected** (20 tests in 3 files), **syntactically valid**, **skip cleanly**
+without a backend, and every route and selector they use was checked against `App.tsx` and
+the components. The guard that CI names them is mutation-verified.
+
+**The assertions themselves have not been executed against a live stack.** The local
+containerised backend is crashlooping on a missing `jwt` module, the container's database
+has zero assets, and two Postgres instances contend for 5432 — so a local live run would
+have failed for want of data rather than for a defect. CI stands up its own stack, migrates,
+seeds and runs them; that is where these first execute for real.
