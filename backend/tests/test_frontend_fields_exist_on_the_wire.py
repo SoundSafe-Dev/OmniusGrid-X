@@ -578,7 +578,12 @@ class TestTheThreeFindingsStayFixed:
 #: LOWER THIS as phantom declarations are removed; never raise it. A rise means someone
 #: declared a field with no producer — the first half of the cycle above, and the cheapest
 #: moment to stop it.
-MAX_UNREAD_PHANTOM_FIELDS = 34
+#: 34 -> 30 on 2026-08-04 (FS-435). Not four deletions: four fields that now ARRIVE.
+#: `actualArrival`/`actualDeparture`, `medicalCertExpiry` and `performedBy` all had sources
+#: on the wire all along — `actual_start`/`actual_end`, `medical_cert_expires`,
+#: `jockey_driver_id` — and no alias between them. Two alias maps each stopped one entry
+#: short of finishing a pair they had started.
+MAX_UNREAD_PHANTOM_FIELDS = 30
 
 #: Interfaces describing a REQUEST rather than a response. A field here is something the
 #: client sends, so "no backend producer" is the normal case and not a defect. `*Params` is

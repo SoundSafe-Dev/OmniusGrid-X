@@ -2642,3 +2642,88 @@ strongest claim, so it has to be written at the construction site.**
 
 Ninth time a guard in this repository has caught work in progress rather than a regression
 months later. That is what they are for.
+
+## FS-304 — the guard for a class that was already fixed twice
+
+Media types have gone wrong in both directions here: five downloads promising JSON, and an
+export declaring `text/csv` while serving JSON. Both were fixed by hand, one at a time,
+with nothing left behind. Measured today: all seven file-returning operations declare their
+type and no route declares a type it does not send — so this is a guard for a clean state,
+which is the cheapest moment to write one.
+
+It matters because FastAPI documents `application/json` by default and **silently**, and an
+SDK is generated from this schema across 375 paths. A generated client reading the schema
+will try to JSON-parse a spreadsheet, and the failure lands in the caller's code.
+
+**The detector was wrong twice before it was right**, which is most of the value here:
+
+* Reading only the handler body for a response class found **4 of the 7**.
+  `compliance_reports.py` and `exports.py` build responses through
+  `_secure_file_response`/`_secure_streaming_response`, so the body never names a class.
+  That is the FS-305 blind spot, and it made the sweep report a clean schema over three
+  endpoints it could not see.
+* Adding `Response(` to the pattern with a `\b` after the paren matched nothing — a word
+  boundary cannot follow `(` — so five handlers returning
+  `Response(content=…, media_type=XLSX_MEDIA_TYPE)` were reported as declaring a file type
+  while returning JSON. **Five false findings from one misplaced metacharacter.**
+
+Both were caught by the vacuity class, not by review. Three mutations verified the
+assertions, including one that blinds the detector itself.
+
+A third error was caught and is worth recording because it was in the *comment*, not the
+code: the first version of the `textwrap.dedent` note claimed cleandoc had broken the real
+sweep. It had not — a decorated handler's source starts at column 0 on both its first lines,
+so cleandoc left it alone, and only the two-line synthetic test inputs broke.
+`test_there_are_enough_emitters` was passing throughout, which is the evidence. **A wrong
+explanation attached to a right fix is still wrong**, and it is the kind that survives
+because the tests are green.
+
+## FS-435 — a vocabulary of 8,229 names, and what it hides
+
+`test_frontend_fields_exist_on_the_wire` asks whether a declared TS field appears anywhere
+in a vocabulary drawn from every response model, raw dict key and alias in the codebase.
+That is the right question for *"is this name a fiction"* and the wrong one for *"does this
+field arrive"*.
+
+**`YardMoveResponse` sends twelve fields. The TS interface declared eleven, seven of which
+were not among the twelve** — and six were invisible because some *other* endpoint sends a
+`status`, a `notes`, a `startTime`. The older sweep saw one. Its total of 34 is a floor.
+
+### Four aliases that were never written
+
+`performedBy`, `startTime` and `endTime` had sources all along — `jockey_driver_id`,
+`started_at`, `completed_at` — and no alias between them. **A yard move rendered its mover
+and both of its times as undefined.**
+
+The pattern repeats next door. `YARD_ALIASES` maps `scheduledStart → scheduledArrival` and
+`scheduledEnd → scheduledDeparture`, and stops there: `actual_start`/`actual_end` are
+columns, are sent, and were never mapped. `TRANSPORT_ALIASES` aliases `ctpatExpiresAt` and
+`insuranceExpiresAt` to their `*Expiry` names and omits `medical_cert_expires` — the one of
+the three with a hard DOT consequence.
+
+**A half-written alias map looks complete at the line above it.** Six aliases added; the
+older sweep's count fell 34 → 30, and every one is a field that now arrives rather than a
+declaration deleted.
+
+### Verified before believed, three times
+
+* The new per-type sweep first reported **63** unfed fields. `DockAppointment.carrierName`,
+  `trailerLicensePlate` and `driverPhone` are set by the handler two lines after
+  `model_dump`, so a third of the finding was the detector reading only the response model —
+  FS-305 again, third time in this family.
+* It reported `DriverWaitTime.detentionAssessed` as never sent. That field was added three
+  commits earlier as a Pydantic v2 `@computed_field`, which is serialised and appears in the
+  OpenAPI schema but is **not in `model_fields`**. A guard that calls a working field broken
+  teaches people to skip its findings.
+* Before publishing an alias as a fix, each was checked against the payload that feeds it —
+  `DockAppointmentBase.actual_start`, `DriverResponse.medical_cert_expires`,
+  `YardMoveResponse.jockey_driver_id`. **An alias for a field the server never sends is
+  worse than the phantom it replaces**: it silences the guard, because the sweep credits
+  alias targets as wire names.
+
+The first probe of this said "no declared schema" for two of the three endpoints and would
+have stopped the fix. Those endpoints declare `response_model=List[Dict[str, Any]]`, so
+their OpenAPI schema is empty while the handler dumps a full model — **the schema is not
+the payload**, and reading it as one is its own instrument error.
+
+Ratchet at 38 with zero slack, verified by planting a phantom field.

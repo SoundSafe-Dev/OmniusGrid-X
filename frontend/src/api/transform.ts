@@ -68,6 +68,18 @@ export const YARD_ALIASES: Record<string, string> = {
   // DockAppointment: backend scheduled_start/_end -> TS scheduledArrival/Departure
   scheduledStart: 'scheduledArrival',
   scheduledEnd: 'scheduledDeparture',
+  // THE OTHER HALF OF THAT PAIR (FS-435). `actual_start`/`actual_end` are columns on
+  // dock_appointments and the server sends them; only the scheduled pair was mapped, so
+  // `actualArrival` and `actualDeparture` were declared on the TS type and arrived as
+  // undefined forever. A half-written alias map looks complete at the line above it.
+  actualStart: 'actualArrival',
+  actualEnd: 'actualDeparture',
+  // YardMove: the backend records WHO moved the trailer as `jockey_driver_id`, and the
+  // timestamps as `started_at`/`completed_at`. None of the three were mapped, so a move's
+  // mover and both of its times arrived as undefined.
+  jockeyDriverId: 'performedBy',
+  startedAt: 'startTime',
+  completedAt: 'endTime',
 }
 // Outbound (TS name -> camel backend name) for write payloads.
 export const YARD_OUT_ALIASES: Record<string, string> = {
@@ -86,6 +98,11 @@ export const TRANSPORT_ALIASES: Record<string, string> = {
   metaData: 'metadata',
   // Driver: backend hazmat_endorsed -> TS hazmatCertified
   hazmatEndorsed: 'hazmatCertified',
+  // The third expiry, missed when the other two were mapped (FS-435). `ctpatExpiresAt`
+  // and `insuranceExpiresAt` are aliased above; `medical_cert_expires` is the same shape
+  // and the same rename, and a driver's medical certificate is the one of the three with
+  // a hard DOT consequence.
+  medicalCertExpires: 'medicalCertExpiry',
   // Shipment: backend total_weight_lbs/total_pieces -> TS weight/pieces
   totalWeightLbs: 'weight',
   totalPieces: 'pieces',
