@@ -89,19 +89,20 @@ test.describe('data reaches the screen', () => {
     await page.goto('/alarms')
     await expect(page.locator('body')).toContainText(/alarm/i, { timeout: 20_000 })
 
-    const rows = page.locator('table tbody tr')
-    const count = await rows.count()
-    test.skip(count === 0, 'no alarms seeded; nothing to assert about')
-
-    // The asset column must carry a NAME, not an empty cell and not a bare UUID. Before
-    // the fix `asset_name` was never sent and this cell rendered blank on every row.
-    const text = (await rows.first().innerText()).trim()
-    expect(text.length, 'the first alarm row rendered no text at all').toBeGreaterThan(0)
-    expect(
-      text,
-      'an alarm row shows a bare UUID where the asset name belongs — the name is ' +
-        'resolved by join and a null means the resolver stopped running',
-    ).not.toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-/i)
+    // NOT `table tbody tr` (FS-448). `Alarms.tsx` renders a div list, so that locator
+    // matched nothing — and because the guard below was `test.skip(count === 0)`, a
+    // selector that could never match turned into a SILENT SKIP rather than a failure.
+    // The assertion sat inert and green for as long as it existed, which is worse than a
+    // red one: nothing was ever going to tell me.
+    //
+    // Asserting the seeded asset NAME instead. `/api/v1/alarms/` has sent `asset_name`
+    // since FS-436; until FS-448 the page received it and rendered the alarm code alone,
+    // so an operator could see that something was wrong and not which machine.
+    await expect(
+      page.getByText(/CNC Mill|Conveyor|Vibration Sensor/).first(),
+      'no alarm row names its machine — `asset_name` is resolved by join on /alarms/, so ' +
+        'either the resolver stopped running or the page stopped rendering it',
+    ).toBeVisible({ timeout: 20_000 })
   })
 
   test('a trailer with a driver shows the driver block (FS-437)', async ({ page }) => {
@@ -109,11 +110,33 @@ test.describe('data reaches the screen', () => {
     await page.goto('/logistics/yard')
     await expect(page.locator('body')).toContainText(/yard|trailer/i, { timeout: 20_000 })
 
+    // OPEN A TRAILER FIRST (FS-448). The driver block lives in the DETAIL panel, which
+    // renders only once a trailer row is clicked — so asserting on the list page found no
+    // heading and `test.skip(count === 0)` turned that into a silent pass. The test was
+    // inert for the same reason the alarm one was: a skip guard in front of a locator that
+    // could not match.
+    // A TRAILER THAT HAS A DRIVER, named explicitly. `.first()` picked whichever row the
+    // list happened to order first — which is the trailer with no driver, so the block
+    // correctly did not render and the test failed for the right reason about the wrong
+    // trailer. TRL-4482 is the detention case in the demo seed, and detention is exactly
+    // when someone needs the driver's number.
+    const row = page.locator('tbody tr').filter({ hasText: 'TRL-4482' })
+    await expect(
+      row,
+      'the seeded detention trailer TRL-4482 is not on the yard; the demo data changed ' +
+        'and this assertion is now about nothing',
+    ).toBeVisible({ timeout: 20_000 })
+    await row.click()
+
     // The block is gated on `trailer.driverName`. If the heading is present at all, the
     // gate opened — which is the whole assertion, because for months it could not.
     const heading = page.getByText('Driver Information', { exact: false })
-    const visible = await heading.count()
-    test.skip(visible === 0, 'no trailer with a driver on this yard; nothing to assert')
+    await expect(
+      heading,
+      'the driver block did not render for a trailer that has a driver. It is gated on ' +
+        '`trailer.driverName`, so this is the gate closed again — and it takes ' +
+        '`driverPhone` with it, the number an operator calls about a dwelling trailer',
+    ).toBeVisible({ timeout: 15_000 })
 
     // And the phone that lives INSIDE the gated block must be reachable, which is the
     // half that was invisible: the resolver delivered it and the gate hid it.

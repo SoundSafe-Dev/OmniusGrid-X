@@ -152,7 +152,19 @@ const Alarms: FC = () => {
                 
                 <div>
                   <p className="font-medium">{alarm.message}</p>
+                  {/* THE MACHINE, first (FS-448). This line read
+                      `{alarmCode} • {occurredAt}` and named no asset at all — on the
+                      dedicated alarms screen, where deciding what to do about an alarm
+                      begins with knowing where to walk. The dashboard panel was given
+                      `assetName` in FS-436 and `/api/v1/alarms/` has sent `asset_name`
+                      since the same commit; the data was arriving here and nothing
+                      rendered it.
+
+                      Falls back to the code alone rather than printing a UUID or an empty
+                      separator: the name is resolved by join and is null when the asset is
+                      gone, and a bullet with nothing before it is what FS-436 was. */}
                   <p className="text-sm text-opsgrid-text-secondary">
+                    {alarm.assetName ? `${alarm.assetName} • ` : ''}
                     {alarm.alarmCode} • {new Date(alarm.occurredAt).toLocaleString()}
                   </p>
                 </div>

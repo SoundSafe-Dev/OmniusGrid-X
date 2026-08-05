@@ -629,6 +629,13 @@ async def main(verify: bool = False) -> int:
                        operating_authority="contract", scac="PREX"))
 
         db.add(YardTrailer(id=TRAILER_DWELL, organization_id=ORG, trailer_number="TRL-4482",
+                           # DRIVER LINKED (FS-448). The yard panel wraps its whole driver
+                           # section in `{trailer.driverName && …}`, so a demo with no
+                           # driver on any trailer never renders it — the block is invisible
+                           # in the product demo AND its e2e assertion skips rather than
+                           # runs. This trailer is the detention case, which is exactly when
+                           # someone needs the number to call.
+                           driver_id=DRIVER_1,
                            carrier_id=CARRIER_A, trailer_type="dry_van", status="yard",
                            yard_location="Zone A-04", seal_number="SL-88121",
                            check_in_at=NOW - timedelta(hours=6),  # 4h past free time -> detention
@@ -636,6 +643,7 @@ async def main(verify: bool = False) -> int:
                            license_plate="IL TRL4482", detention_cost=200.0, detention_risk="high",
                            meta_data={"po_number": "PO-10018", "contents": "6061 aluminum billet"}))
         db.add(YardTrailer(id=TRAILER_DOCKED, organization_id=ORG, trailer_number="TRL-7731",
+                           driver_id=DRIVER_2,
                            carrier_id=CARRIER_A, trailer_type="reefer", status="docked",
                            dock_door_id=DOOR_IDS[2], seal_number="SL-88907",
                            check_in_at=NOW - timedelta(hours=1.2),
@@ -674,18 +682,21 @@ async def main(verify: bool = False) -> int:
         # migration 042 — HOS remaining = 11 - drive_today / 14 - on_duty_today
         db.add(Driver(id=DRIVER_1, organization_id=ORG, carrier_id=CARRIER_A, first_name="Maria",
                       last_name="Santos", license_number="IL-D449-2210", license_state="IL",
+                      phone="+1-312-555-0148", email="m.santos@primeexpress.test",
                       cdl_class="A", hos_drive_hours_today=10.6, hos_on_duty_hours_today=12.9,
                       hos_cycle_hours=61.0, current_hos_status="driving", is_active=True,
                       endorsements=["hazmat", "tanker"], license_expiry=NOW + timedelta(days=365),
                       hos_drive_hours_remaining=11 - 10.6, hos_duty_hours_remaining=14 - 12.9))
         db.add(Driver(id=DRIVER_2, organization_id=ORG, carrier_id=CARRIER_A, first_name="Dwayne",
                       last_name="Carter", license_number="IL-D101-8837", license_state="IL",
+                      phone="+1-312-555-0172", email="d.carter@primeexpress.test",
                       cdl_class="A", hos_drive_hours_today=3.2, hos_on_duty_hours_today=5.0,
                       hos_cycle_hours=28.5, current_hos_status="on_duty", is_active=True,
                       endorsements=["hazmat"], license_expiry=NOW + timedelta(days=420),
                       hos_drive_hours_remaining=11 - 3.2, hos_duty_hours_remaining=14 - 5.0))
         db.add(Driver(id=DRIVER_3, organization_id=ORG, carrier_id=CARRIER_B, first_name="Priya",
                       last_name="Natarajan", license_number="WI-D778-1204", license_state="WI",
+                      phone="+1-414-555-0193", email="p.natarajan@midwest.test",
                       cdl_class="A", hos_drive_hours_today=0.0, hos_on_duty_hours_today=1.5,
                       hos_cycle_hours=44.0, current_hos_status="off_duty", is_active=True,
                       medical_cert_expires=NOW + timedelta(days=18),

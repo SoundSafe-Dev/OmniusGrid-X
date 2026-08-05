@@ -3414,3 +3414,48 @@ adopt-an-initdb-database path, which the compose comment had already retired —
 volume was the last thing still using it.
 
 Final state: **18 e2e passed, 2 skipped, 0 failed** against a live stack.
+
+## FS-448 — two assertions that skipped instead of failing, and the screen they were about
+
+With the stack running, the two e2e tests aimed at this week's actual fixes — FS-436 and
+FS-437 — turned out to be **skipping**, not passing. Both had a guard of the shape:
+
+    const rows = page.locator('table tbody tr')
+    test.skip(await rows.count() === 0, 'nothing to assert about')
+
+**A skip guard in front of a locator that cannot match is worse than a failing test.** A red
+test gets fixed; this sat green and inert for as long as it existed, and nothing was ever
+going to say so. Both selectors were wrong for the same reason as the assets test: they
+assumed a table where the page renders divs.
+
+### The alarms screen never said which machine
+
+Chasing the first one found the real defect. `Alarms.tsx` renders
+`{alarm.message}` and `{alarmCode} • {occurredAt}` — **no asset anywhere**. On the dedicated
+alarms screen, where deciding what to do about an alarm begins with knowing where to walk.
+
+FS-436 gave the dashboard panel `assetName` and made `/api/v1/alarms/` send `asset_name` in
+the same commit. **The data has been arriving at this page ever since and nothing rendered
+it.** One line; it falls back to the code alone rather than printing a UUID or a bullet with
+nothing before it, which is what FS-436 was.
+
+### The demo never exercised the driver block
+
+`yard_trailers` had 5 rows and **0 with a driver**; the 3 seeded drivers had **no phone**. So
+the block FS-437 unblocked could not render in the demo either — an operator walking through
+the product would never see a driver on a trailer, and the e2e assertion skipped for want of
+data rather than passing.
+
+The seed now gives the drivers phone numbers and puts them on the two trailers that have a
+story: the detention case and the docked reefer. Detention is exactly when someone needs the
+number to call.
+
+### And the test still failed, correctly
+
+Once it ran, it clicked `tbody tr` **`.first()`** — which is the trailer with no driver, so
+the block correctly did not render. Right failure, wrong trailer. It now names `TRL-4482`,
+and asserts that trailer is present so a seed change cannot quietly make the test about
+nothing.
+
+**20 e2e passed, 0 skipped.** Both assertions this week's fixes were written for now execute
+against a live stack, and the two screens they are about show what they were always sending.
