@@ -37,6 +37,17 @@ const LIVE = process.env.E2E_LIVE_BACKEND === '1'
 const EMAIL = process.env.E2E_USER_EMAIL ?? 'e2e@omniusgrid.test'
 const PASSWORD = process.env.E2E_USER_PASSWORD ?? 'e2e-playwright-password'
 
+/** Every routed page except `/login`, which has no authenticated content to check. */
+export const ROUTES = [
+  '/', '/assets', '/alarms', '/alarms/rules', '/oee', '/kanban', '/shop-floor',
+  '/activations', '/engines/tactical', '/engines/strategic', '/engines/mlops',
+  '/engines/cloud', '/analytics/telemetry', '/analytics/health', '/analytics/maintenance',
+  '/predictive/rul', '/predictive/historian', '/fleet', '/fleet/organization',
+  '/logistics/yard', '/logistics/transportation', '/erp', '/compliance', '/nlp', '/intake',
+  '/admin/users', '/admin/collectors', '/admin/health', '/admin/settings',
+  '/admin/notifications', '/admin/errors', '/admin/fleet',
+]
+
 /** The visible signature of a field that never arrived. */
 const NOT_ARRIVED = /\bundefined\b|\bNaN\b|\[object Object\]|Invalid Date/
 
@@ -167,17 +178,19 @@ test.describe('data reaches the screen', () => {
   // page, which trivially contains no "undefined" and passes while asserting nothing.
   // `/maintenance` was in the first draft of this list and is not a route; the real one is
   // `/analytics/maintenance`.
-  for (const route of [
-    '/',
-    '/assets',
-    '/alarms',
-    '/logistics/yard',
-    '/logistics/transportation',
-    '/oee',
-    '/analytics/maintenance',
-    '/predictive/rul',
-    '/fleet',
-  ]) {
+  // EVERY ROUTED PAGE (FS-449). This was nine hand-picked routes; the app has 32, and the
+  // defects this file exists for were found on pages nobody thought to check. Swept all 32
+  // against a seeded stack before widening the list: zero `undefined`, zero `NaN`, zero
+  // `[object Object]`, zero error states, nothing under 80 characters.
+  //
+  // The clean result was verified rather than trusted — running the same sweep with a
+  // pattern that matches every page reported all 32, which proves the loop visits and reads
+  // them. A sweep that finds nothing and a sweep that looks at nothing are the same output.
+  //
+  // Kept in sync with `App.tsx` by `frontend/src/test/everyRouteIsSwept.test.ts`, because a
+  // hand-maintained list of routes drifts the moment someone adds a page — and the page
+  // nobody added to the list is exactly the one that goes unchecked.
+  for (const route of ROUTES) {
     test(`no field renders as undefined on ${route}`, async ({ page }) => {
       await login(page)
       await page.goto(route)

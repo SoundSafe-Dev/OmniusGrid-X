@@ -3474,3 +3474,34 @@ and watching `/fleet` fail with `rendered 335 characters`.
 
 All nine render real data against the seeded stack, so the checks were not vacuous *today*.
 The point is that nothing was stopping them from becoming so.
+
+## FS-449 — nine hand-picked routes became all thirty-two
+
+The undefined sweep covered nine routes I chose. The app has **32**, and the four defects
+this sweep was written for were all on pages nobody thought to check — which is the argument
+against choosing.
+
+Swept all 32 against the seeded stack: **zero** `undefined`, `NaN`, `[object Object]` or
+`Invalid Date`, zero error states, nothing under 80 characters of content.
+
+**A clean result is a claim.** Verified by re-running the same sweep with a pattern that
+matches every page — all 32 reported, which proves the loop visits and reads them. A sweep
+that finds nothing and a sweep that looks at nothing produce the same output.
+
+E2E goes from 20 tests to 43.
+
+### The list will drift the day someone adds a page
+
+`frontend/src/test/everyRouteIsSwept.test.ts` compares the swept list against `App.tsx` in
+both directions:
+
+* a route in the app and not in the sweep — **the page nobody added is exactly the one that
+  goes unchecked**;
+* a route in the sweep and not in the app — it navigates to the 404 page, which contains no
+  `undefined` and passes while asserting nothing. That is not hypothetical: `/maintenance`
+  was in the first draft of this list and is not a route.
+
+It runs in the **frontend unit suite**, not as an e2e test: no browser, no backend, so it
+fires on every push rather than only where Playwright and a live stack exist. The sweep it
+guards is the expensive one; this is the cheap thing that keeps it honest. Both directions
+mutation-verified.
