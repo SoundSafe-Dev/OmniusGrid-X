@@ -78,7 +78,8 @@ export interface Workcell {
   name: string;
   description?: string;
   organizationId?: string;
-  supervisorId?: string;
+  /** `supervisorId` is GONE (FS-442). `workcells` carries id, organisation, name,
+   *  description and location — there is no supervisor relationship to resolve. */
   location?: string;
   metadata?: Record<string, any>;
   createdAt: string;
@@ -89,7 +90,9 @@ export interface Organization {
   id: string;
   name: string;
   description?: string;
-  parentId?: string;
+  /** `parentId` is GONE (FS-442). `organizations` has no parent column and nothing in
+   *  the product models a hierarchy; declaring it invited a tree view that could never
+   *  have more than one level. */
   metadata?: Record<string, any>;
   createdAt: string;
   updatedAt: string;

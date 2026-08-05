@@ -15,7 +15,16 @@
       "Bash(/tmp/og_venv/bin/python -c \"import yaml; from opsgrid_agent.config_schema import validate_entries; d=yaml.safe_load\\(open\\('config/poc_collectors.yml'\\)\\); n=validate_entries\\(d['collectors']\\); print\\(len\\(n\\),'collectors:', [e['type'] for e in n][-3:]\\)\")",
       "Bash(/tmp/og_venv/bin/python -m pytest tests/test_new_collectors.py -q -p no:cacheprovider)",
       "Bash(/tmp/og_venv/bin/python -m pytest -q -p no:cacheprovider)",
-      "Bash(git rev-list *)"
+      "Bash(git rev-list *)",
+      "Bash(venv/bin/python -m pytest *)",
+      "Bash(venv/bin/python -c *)",
+      "Bash(npx tsc *)",
+      "Bash(npx vitest *)",
+      "Bash(git status)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git restore *)"
     ],
     "additionalDirectories": [
       "/Users/hamaddada/Downloads/OmniusGrid"

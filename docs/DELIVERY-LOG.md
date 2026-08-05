@@ -3071,3 +3071,76 @@ Left as a test that pins the constant rather than a fix: changing that return sh
 intake contract rather than a bug fix. This codebase has a whole guard family for exactly
 this shape — a cap that cannot say it capped — and that family only looks at HTTP list
 endpoints.
+
+## FS-442 — the half the per-type sweep could not reach
+
+`test_frontend_types_match_their_own_payload` pairs a TS interface with a same-named
+response model. That covers what the server sends directly and reaches **none** of the
+adapter-built types — the ones assembled in `src/api/*.ts` from a response whose shape
+diverges from the component's.
+
+**That uncovered half is not the quiet half.** Two of this week's defects lived there: every
+geofence alert reading `'Violation'` because an unrecognised type fell back to a constant,
+and every zone reporting `0 vehicles inside` because an absent list was defaulted to `[]`.
+
+The new sweep pairs on **the adapter's own return annotation**, so nothing is guessed:
+`const adaptZone = (z: any): GeofenceZoneExtended => ({ … })` states which interface it
+builds, and the keys of that literal are exactly the fields it can populate. A declared
+field the literal never sets is `undefined` for every consumer whatever the server sent.
+
+`const adaptTrailer = (t: any): YardTrailer => ({ ...t })` is skipped rather than guessed at.
+A spread forwards fields it never names, so no conclusion is available — and inferring
+through it would be the same mistake the annotation-pairing exists to avoid.
+
+### Three detector errors, each caught by a finding that looked wrong
+
+* **Shorthand property syntax.** The key regex read `field: value` only, so `adaptZone`'s
+  `center,` — computed into a local first — looked unset. A confident false finding about
+  the one adapter the file was written for.
+* **`extends`.** The shared interface regex requires `{` immediately after the name, so it
+  silently skips every extended interface. `GeofenceZoneExtended extends GeofenceZone` is
+  exactly the type this sweep needed to reach, and an adapter for it must populate the
+  parent's fields too.
+* **Judging mocks.** `mockAnswer`, `mockAssessment` and `mockResponse` share the adapter
+  shape. A mock omitting an optional field is doing nothing wrong; an adapter omitting one
+  is a field no consumer can read. Restricted to `adapt*` so the real finding is not buried
+  under every field a fixture skipped.
+
+### Phantoms 17 → 5
+
+`FuelStop` and `RestStop` were **dead types** — they existed only to type `Route.fuelStops`
+and `restStops`, deleted with the Route rewrite, after which nothing referenced them at all.
+Dead types describing a feature that was never built are exactly what a later reader
+mistakes for a contract.
+
+`AxeMatcherResult.pass` was never a wire field: it lives in `jest-axe.d.ts`, an **ambient
+declaration for a test library**. The sweep now skips `.d.ts` entirely — nothing in a
+declaration file describes a payload.
+
+`lastLoginAt` renamed to `lastLogin` (the column and the response field are both
+`last_login`); `parentId` and `supervisorId` deleted as fictions; six more deleted after
+confirming no column, handler or computation anywhere produces them.
+
+### The five that remain, and why they stay
+
+All on `Location` and `Address` — and they are arguably not this sweep's business.
+`shipments.origin`/`destination` are `Dict[str, Any]` on the wire, free-form JSON with no
+contracted keys, so those interfaces document **an expectation a caller may fill in, not a
+payload the server promises**. Asking "does the backend send this name" of a shape the
+backend never defines gets an answer that means nothing.
+
+Left in the count rather than exempted: the distinction is not one this sweep can currently
+make, and an allowance it cannot verify is worse than a number that is slightly too high.
+Two of the five also carry a deliberate keep-decision from an earlier pass, recorded in the
+type itself — worth not overturning silently.
+
+### A second vacuity guard that failed on success
+
+`test_it_finds_the_unread_ones_at_all` asserted the phantom population was large. Sound at
+34; self-defeating at 5, because the count fell *because the sweep works*. **A floor under a
+defect population fails when you fix the defects** — the same shape as
+`test_the_global_vocabulary_really_does_hide_these` two days ago.
+
+Rewritten to check what the guard was actually for: that the parser has not gone blind. It
+now asserts the wire vocabulary and the interface count, neither of which moves when the
+findings do.

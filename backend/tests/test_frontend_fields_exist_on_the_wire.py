@@ -578,14 +578,26 @@ class TestTheThreeFindingsStayFixed:
 #: LOWER THIS as phantom declarations are removed; never raise it. A rise means someone
 #: declared a field with no producer — the first half of the cycle above, and the cheapest
 #: moment to stop it.
-#: 34 -> 30 -> 17 (FS-435, FS-439). The 13 that went in the second pass were removed as a
-#: side effect of taking the PER-TYPE count to zero: this sweep asks whether a name exists
-#: anywhere on the wire, and its sibling asks whether it exists on the payload that feeds
-#: its type. Fixing the sharper question answers part of the blunter one for free.
+#: 34 -> 30 -> 17 -> 5 (FS-435, FS-439, FS-442).
 #:
-#: The 17 that remain sit on interfaces with no same-named response model — adapter-built
-#: shapes the per-type sweep cannot reach — so this file is the only thing watching them.
-MAX_UNREAD_PHANTOM_FIELDS = 17
+#: THE FIVE THAT REMAIN ARE ALL ON `Location` AND `Address`, and they are arguably not this
+#: sweep's business. Both are CLIENT-CONSTRUCTED shapes: `shipments.origin`/`destination`
+#: are `Dict[str, Any]` on the wire — free-form JSON with no contracted keys — so the
+#: interfaces document an expectation a caller may fill in, not a payload the server
+#: promises. Asking "does the backend send this name" of a shape the backend never defines
+#: gets an answer that means nothing.
+#:
+#: Left in the count rather than exempted, because the distinction is not one this sweep can
+#: currently make and an allowance it cannot verify is worse than a number that is slightly
+#: too high. `Location.contactPhone`/`contactEmail` also carry a deliberate keep-decision
+#: from an earlier pass, recorded in the type itself.
+#:
+#: The others went as follows: 12 renamed or deleted with the per-type sweep, `FuelStop` and
+#: `RestStop` deleted entirely (dead types left behind by the Route rewrite), `lastLoginAt`
+#: renamed to what the wire calls it, `parentId` and `supervisorId` deleted as fictions, and
+#: `AxeMatcherResult.pass` removed from the sweep's view — it lives in `jest-axe.d.ts`, an
+#: ambient declaration for a test library that could never be on any wire.
+MAX_UNREAD_PHANTOM_FIELDS = 5
 
 #: Interfaces describing a REQUEST rather than a response. A field here is something the
 #: client sends, so "no backend producer" is the normal case and not a defect. `*Params` is
@@ -598,6 +610,11 @@ def _declared_unread_and_unsent() -> set[str]:
     source = _component_source()
     found = set()
     for path in (FRONTEND / "types").glob("*.ts"):
+        # `.d.ts` files declare AMBIENT types for third-party libraries — `jest-axe.d.ts`
+        # gave this sweep `AxeMatcherResult.pass`, a vitest matcher result that could never
+        # be on any wire. Nothing in a declaration file describes a payload (FS-442).
+        if path.name.endswith(".d.ts"):
+            continue
         text = COMMENT.sub(" ", path.read_text())
         for match in INTERFACE.finditer(text):
             interface, body = match.group(1), match.group(2)
@@ -620,13 +637,31 @@ class TestTheTrapsForTheNextPage:
         would be double-counting rather than dividing."""
         assert not (_declared_but_unsent() & _declared_unread_and_unsent())
 
-    def test_it_finds_the_unread_ones_at_all(self):
-        """Vacuity guard. If the interface or field regex drifts this returns nothing and
-        the ratchet below passes at zero — the failure every sweep in this repo has a rule
-        about, and one this session hit three times in other tools."""
-        assert len(_declared_unread_and_unsent()) >= 15, (
-            "the unread-phantom sweep found almost nothing; fix the parsing rather than "
-            "accepting the pass"
+    def test_the_parser_still_reads_the_types(self):
+        """Vacuity guard, rewritten as the population shrank (FS-442).
+
+        It asserted `len(_declared_unread_and_unsent()) >= 15` — sound while there were
+        dozens of phantoms, and self-defeating as they were fixed: the count is down to 5
+        BECAUSE the sweep works, and a floor under the defect population fails on success.
+
+        The actual concern is the PARSER going blind. That is what this checks now, and it
+        does not move when the findings do: the interface and field regexes must still see
+        the type surface they are supposed to read.
+        """
+        vocabulary = _wire_vocabulary()
+        assert len(vocabulary) > 5000, (
+            f"the wire vocabulary collapsed to {len(vocabulary)} names; the schema walk or "
+            f"the source scan is broken and every field would look like a phantom"
+        )
+
+        interfaces = 0
+        for path in (FRONTEND / "types").glob("*.ts"):
+            if path.name.endswith(".d.ts"):
+                continue
+            interfaces += len(INTERFACE.findall(COMMENT.sub(" ", path.read_text())))
+        assert interfaces > 80, (
+            f"only {interfaces} TS interfaces parsed; the interface regex has drifted and "
+            f"the ratchet below would pass over almost nothing"
         )
 
     def test_the_count_does_not_grow(self):

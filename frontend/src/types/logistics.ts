@@ -419,7 +419,6 @@ export interface GeoTabTrip {
 export interface GeoTabDiagnostic {
   id: string;
   deviceId: string;
-  diagnosticCode: string;
   name: string;
   source: string;
   value?: string;
@@ -434,7 +433,6 @@ export interface GeoTabException {
   id: string;
   deviceId: string;
   ruleName: string;
-  ruleType: string;
   startTime: string;
   endTime?: string;
   duration: number; // minutes
@@ -448,8 +446,6 @@ export interface GeoTabException {
 export interface GeoLocation {
   latitude: number;
   longitude: number;
-  accuracy?: number;
-  altitude?: number;
   heading?: number;
   speed?: number; // km/h
   timestamp: string;
@@ -483,20 +479,11 @@ export interface Address {
   country: string;
 }
 
-export interface FuelStop {
-  location: GeoLocation;
-  address: string;
-  estimatedTime: string;
-  fuelPrice?: number;
-}
-
-export interface RestStop {
-  location: GeoLocation;
-  address: string;
-  estimatedTime: string;
-  duration: number;
-  type: 'rest_break' | 'meal_break' | 'overnight';
-}
+/* `FuelStop` and `RestStop` are GONE (FS-442). They existed only to type
+ * `Route.fuelStops` / `Route.restStops`, which were removed with the Route rewrite because
+ * `routes` has no such columns and nothing computes them. After that they were referenced
+ * by nothing at all — dead types describing a feature that was never built, and exactly
+ * the kind of thing a later reader mistakes for a contract. */
 
 // Dashboard Types
 
@@ -846,7 +833,6 @@ export interface ServiceHistoryEntry {
   cost: number;
   technician?: string;
   notes?: string;
-  partsReplaced?: string[];
 }
 
 export interface MaintenanceCosts {
@@ -925,7 +911,6 @@ export interface VehicleHealthScoreData {
     dtcs: number;
     maintenance: number;
     safety: number;
-    connectivity: number;
   };
 }
 

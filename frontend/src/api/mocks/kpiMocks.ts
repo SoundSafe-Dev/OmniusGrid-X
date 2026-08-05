@@ -111,7 +111,6 @@ export const mockVehicleHealthScoreData: VehicleHealthScoreData = {
     dtcs: 25,
     maintenance: 20,
     safety: 30,
-    connectivity: 25,
   },
 };
 

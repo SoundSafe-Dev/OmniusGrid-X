@@ -7,7 +7,9 @@ export interface User {
   role: UserRole;
   organizationId?: string;
   isActive: boolean;
-  lastLoginAt?: string;
+  /** `last_login` on the wire (FS-442). Declared as `lastLoginAt`, which nothing sends
+   *  — the column and the response field are both `last_login`. */
+  lastLogin?: string;
   createdAt: string;
   updatedAt: string;
 }

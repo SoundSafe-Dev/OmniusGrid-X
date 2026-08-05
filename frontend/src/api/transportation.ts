@@ -953,8 +953,8 @@ export const geoTabApi = {
     if (USE_MOCK) {
       await delay(MOCK_DELAY);
       return [
-        { id: 'diag-1', deviceId, diagnosticCode: 'P0101', name: 'Mass Air Flow Sensor', source: 'OBDII', timestamp: new Date().toISOString(), isActive: false },
-        { id: 'diag-2', deviceId, diagnosticCode: 'Seatbelt', name: 'Seatbelt Violation', source: 'Safety', value: 'Unbuckled', timestamp: new Date().toISOString(), isActive: true },
+        { id: 'diag-1', deviceId, name: 'Mass Air Flow Sensor', source: 'OBDII', timestamp: new Date().toISOString(), isActive: false },
+        { id: 'diag-2', deviceId, name: 'Seatbelt Violation', source: 'Safety', value: 'Unbuckled', timestamp: new Date().toISOString(), isActive: true },
       ];
     }
     const response = await api.get<any>(`/api/v1/geotab/devices/${deviceId}/diagnostics`);
@@ -966,7 +966,6 @@ export const geoTabApi = {
     return codes.map((code, i) => ({
       id: `${deviceId}-dtc-${i}`,
       deviceId,
-      diagnosticCode: code,
       name: code,
       source: 'OBDII',
       // NOT `?? new Date()`. A device that has never reported would have had every fault
@@ -988,7 +987,6 @@ export const geoTabApi = {
           id: 'exc-1',
           deviceId: 'gt-device-001',
           ruleName: 'Speeding > 10mph over',
-          ruleType: 'Speeding',
           startTime: new Date(Date.now() - 2 * 3600000).toISOString(),
           endTime: new Date(Date.now() - 1.9 * 3600000).toISOString(),
           duration: 6,

@@ -197,7 +197,6 @@ export const mockServiceHistory: ServiceHistoryEntry[] = [
     cost: 125,
     technician: 'Tom Anderson',
     notes: 'Filter replaced, full synthetic 5W-30 used',
-    partsReplaced: ['Oil Filter', 'Engine Oil (10qt)'],
   },
   {
     id: 'sh-002',
@@ -209,7 +208,6 @@ export const mockServiceHistory: ServiceHistoryEntry[] = [
     mileageAtService: 115500,
     cost: 65,
     technician: 'Mike Rodriguez',
-    partsReplaced: [],
   },
   {
     id: 'sh-003',
@@ -222,7 +220,6 @@ export const mockServiceHistory: ServiceHistoryEntry[] = [
     cost: 325,
     technician: 'Steve Williams',
     notes: 'Filter and fluid replaced, no issues found',
-    partsReplaced: ['Transmission Filter', 'ATF Fluid (10qt)'],
   },
   {
     id: 'sh-004',
@@ -235,7 +232,6 @@ export const mockServiceHistory: ServiceHistoryEntry[] = [
     cost: 150,
     technician: 'Lisa Thompson',
     notes: 'Passed inspection, brake pads at 60%',
-    partsReplaced: [],
   },
   {
     id: 'sh-005',
@@ -248,7 +244,6 @@ export const mockServiceHistory: ServiceHistoryEntry[] = [
     cost: 580,
     technician: 'Mike Rodriguez',
     notes: 'Rotors resurfaced, ceramic pads installed',
-    partsReplaced: ['Brake Pads - Front', 'Brake Rotors - Front'],
   },
   {
     id: 'sh-006',
@@ -260,7 +255,6 @@ export const mockServiceHistory: ServiceHistoryEntry[] = [
     mileageAtService: 65000,
     cost: 95,
     technician: 'Tom Anderson',
-    partsReplaced: [],
   },
   {
     id: 'sh-007',
@@ -273,7 +267,6 @@ export const mockServiceHistory: ServiceHistoryEntry[] = [
     cost: 450,
     technician: 'Steve Williams',
     notes: 'Spark plugs, filters, belts replaced',
-    partsReplaced: ['Spark Plugs (8)', 'Air Filter', 'Fuel Filter', 'Serpentine Belt'],
   },
   {
     id: 'sh-008',
@@ -286,7 +279,6 @@ export const mockServiceHistory: ServiceHistoryEntry[] = [
     cost: 720,
     technician: 'Mike Rodriguez',
     notes: 'Two steer tires replaced, alignment performed',
-    partsReplaced: ['Steer Tires (2)', 'Wheel Alignment'],
   },
 ];
 
