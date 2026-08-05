@@ -278,61 +278,48 @@ const mockOrganizations: Organization[] = [
   },
 ];
 
+// MIRRORS THE WIRE, not a richer idea of it (FS-439). This carried `description`,
+// `capabilities` and `updatedAt` on every entry; `asset_types` has none of those columns
+// and `AssetTypeResponse` matches its table exactly. So development showed asset types with
+// descriptions and capability lists, and production showed neither — and the TS type agreed
+// with the mock, so nothing anywhere disagreed with itself until the type was corrected.
 const mockAssetTypes: AssetType[] = [
   {
     id: 'printer',
     name: '3D Printer',
     category: 'additive_manufacturing',
-    description: 'FDM 3D printers (temperature, progress telemetry)',
-    capabilities: ['start', 'stop', 'pause', 'resume'],
     createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
   },
   {
     id: 'conveyor',
     name: 'Conveyor Belt',
     category: 'material_handling',
-    description: 'Belt conveyors (speed, load telemetry)',
-    capabilities: ['start', 'stop', 'set_speed'],
     createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
   },
   {
     id: 'cnc',
     name: 'CNC Machine',
     category: 'subtractive_manufacturing',
-    description: 'CNC mills (spindle RPM, feed rate telemetry)',
-    capabilities: ['start', 'stop', 'pause', 'home'],
     createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
   },
   // Sensor taxonomy demo types (migration 024).
   {
     id: 'audio_sensor',
     name: 'Acoustic Sensor',
     category: 'acoustic_monitoring',
-    description: 'Audio feature telemetry (RMS, peak frequency, band energies)',
-    capabilities: ['audio_rms', 'audio_peak_hz', 'fft_bands'],
     createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
   },
   {
     id: 'video_camera',
     name: 'Video Camera',
     category: 'visual_monitoring',
-    description: 'Frame metrics (brightness, motion score) + live feed',
-    capabilities: ['mjpeg_stream', 'motion_score', 'snapshots'],
     createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
   },
   {
     id: 'vibration_sensor',
     name: 'Vibration Sensor',
     category: 'condition_monitoring',
-    description: 'Machinery condition metrics (vibration RMS, temperature, load)',
-    capabilities: ['vibration_rms', 'temperature', 'load_percent'],
     createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
   },
 ];
 

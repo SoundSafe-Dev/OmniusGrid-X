@@ -12,7 +12,8 @@ export interface YardTrailer {
   assignedDoorId?: string;
   checkedInAt?: string;
   checkedOutAt?: string;
-  expectedDuration?: number; // minutes
+  /** `expectedDuration` is GONE (FS-439). No column, no computation, and the unit
+   *  comment made it look like a settled contract. */
   detentionRisk: 'low' | 'medium' | 'high';
   detentionCost: number;
   /** `contents` and `poNumber` were HERE and are gone. `yard_trailers` records what the
@@ -42,19 +43,21 @@ export interface DockDoor {
   /** `dock_doors.door_type` — inbound | outbound | cross_dock. A real column that the API
    *  has always sent and this interface never declared. */
   doorType?: string | null;
-  /** OPTIONAL, and unfed: `dock_doors` has no `workcell_id` column. Nothing reads it, so
-   *  there is no render defect — but it was declared as REQUIRED, which is a promise the
-   *  wire cannot keep. `workcellName` sat beside it and was rendered; it is deleted rather
-   *  than resolved, because there is no workcell relationship here to resolve through. The
-   *  card printed a blank line for an association this schema does not have.
+  /** `workcellId` is GONE (FS-439). `dock_doors` has no `workcell_id` column and no
+   *  handler joins one, so it could never arrive; `workcellName` sat beside it, was
+   *  rendered, and printed a blank line for an association this schema does not have.
    *
-   *  NOTE: several fields below (`supportedEquipment`, `hasLoadingEquipment`,
-   *  `maxWeightCapacity`, `currentAppointmentId`, `estimatedReleaseAt`) have the same
-   *  problem — `dock_doors` carries only `equipment_capabilities` as JSON. They did not
-   *  surface in the wire-vocabulary sweep because its vocabulary is GLOBAL: a name that
-   *  exists as a column on any table passes, even when this entity has no such column.
-   *  Recorded rather than fixed here; auditing one interface end to end is its own task. */
-  workcellId?: string;
+   *  THE NOTE THAT USED TO BE HERE IS RESOLVED AND WAS ALREADY STALE. It listed
+   *  `supportedEquipment`, `hasLoadingEquipment`, `maxWeightCapacity`,
+   *  `currentAppointmentId` and `estimatedReleaseAt` as having the same problem and said
+   *  "recorded rather than fixed here" — but all five were fixed in this very interface,
+   *  which now declares `equipmentCapabilities` and `lastOccupiedAt` with the reasoning
+   *  attached. A deferral note outlived the work it deferred.
+   *
+   *  It was right about the cause: the wire-vocabulary sweep is GLOBAL, so a name that is
+   *  a column on ANY table passes even when this entity has no such column. That gap is
+   *  now closed by `test_frontend_types_match_their_own_payload`, which pairs each
+   *  interface with its own response model — and which is what flagged this last field. */
   status: 'available' | 'occupied' | 'reserved' | 'maintenance' | 'blocked';
   currentTrailerId?: string;
   trailerLicensePlate?: string;
@@ -85,22 +88,25 @@ export interface DockAppointment {
   carrierName: string;
   trailerId?: string;
   trailerLicensePlate?: string;
-  doorId?: string;
+  /** `dock_door_id` on the wire (FS-439). Declared as `doorId`, which nothing sends.
+   *  `workcellId` is GONE with it: `dock_appointments` has no workcell column and no
+   *  handler joins one, and it was declared REQUIRED — TypeScript vouching for a string
+   *  that is `undefined` at runtime. */
+  dockDoorId?: string;
   doorNumber?: string;
-  workcellId: string;
   appointmentType: 'pickup' | 'delivery' | 'transfer';
   scheduledArrival: string;
   actualArrival?: string;
   scheduledDeparture: string;
   actualDeparture?: string;
   status: 'scheduled' | 'checked_in' | 'docked' | 'loading' | 'complete' | 'cancelled' | 'no_show';
-  poNumber?: string;
-  loadDescription?: string;
+  /** `poNumber`, `loadDescription`, `detentionStartAt` and `notes` are GONE (FS-439). None
+   *  is a column on `dock_appointments` and nothing computes them, so no fix could have
+   *  made them arrive. Detention is reported by the driver-wait-time endpoint, which has
+   *  its own assessed/not-assessed qualifier rather than a bare start timestamp. */
   priority: 'low' | 'normal' | 'high' | 'urgent';
-  detentionStartAt?: string;
   driverName?: string;
   driverPhone?: string;
-  notes?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -113,11 +119,13 @@ export interface YardMove {
   toLocation: string;
   moveType: 'check_in' | 'check_out' | 'dock' | 'undock' | 'reposition' | 'maintenance';
   performedBy: string;
-  equipmentUsed?: string;
+  /** `equipmentUsed` is GONE (FS-439). `yard_moves` records who moved a trailer and
+   *  when, never what with. Nothing to send and nothing read it. */
   startTime: string;
   endTime?: string;
   status: 'in_progress' | 'completed' | 'cancelled';
-  notes?: string;
+  /** `notes` is GONE (FS-439). `yard_moves` carries `meta_data` and no notes column;
+   *  a free-text note would have to go in the metadata bag or get a column of its own. */
   createdAt: string;
 }
 
@@ -186,7 +194,8 @@ export interface Carrier {
    *  The carrier card rendered a "Contact" heading above two empty lines for every row.
    *  Carrier contact details are collected nowhere in this product: a gap in the schema,
    *  not something the type can assert its way out of. */
-  billingAddress?: Address;
+  /** `billingAddress` is GONE (FS-439). `carriers` has no such column and nothing
+   *  computes one; the `Address` type it referenced is still used by other shapes. */
   isActive: boolean;
   complianceScore: number;
   onTimePerformance: number; // percentage
@@ -243,7 +252,13 @@ export interface Shipment {
   carrierName: string;
   driverId?: string;
   driverName?: string;
-  vehicleId?: string;
+  /** `vehicleId`, `freightDescription`, `geoTabTripId`, `detentionRate`,
+   *  `detentionHours` and `detentionTotal` are GONE (FS-439). None is a column on
+   *  `shipments` and none is computed: a shipment references a TRAILER, a driver and
+   *  a carrier, not a vehicle, and detention belongs to the driver-wait-time record
+   *  where it is measured — with an assessed/not-assessed qualifier these three bare
+   *  numbers could not carry. Declaring them here invited a screen to add up a
+   *  detention bill from three undefineds. */
   trailerId?: string;
   status: 'planned' | 'dispatched' | 'picked_up' | 'in_transit' | 'delivered' | 'cancelled';
   origin: Location;
@@ -256,7 +271,6 @@ export interface Shipment {
    *  `estimatedDelivery > scheduledDelivery` — a late-running warning driven by a field no
    *  endpoint has ever sent, so it never fired, and the field is gone. Same shape as `DockDoor.estimatedReleaseAt`. */
   actualDelivery?: string;
-  freightDescription?: string;
   weight?: number; // kg
   pieces?: number;
   palletCount?: number;
@@ -266,33 +280,49 @@ export interface Shipment {
   bolNumber?: string;
   proNumber?: string;
   freightCharge?: number;
-  detentionRate?: number; // per hour
-  detentionHours?: number;
-  detentionTotal?: number;
   /** `shipments` carries no position. The nearest real thing is the assigned driver's
    *  vehicle's `last_location`, two hops away through `shipments.driver_id` ->
    *  `vehicles.current_driver_id` — and that silently becomes another load's position the
    *  moment a driver changes vehicle. Presenting it as the shipment's would be the
    *  `currentMileage` defect: the right number under the wrong label. The field is gone. */
-  geoTabTripId?: string;
   routeId?: string;
   createdAt: string;
   updatedAt: string;
 }
 
+/** `RouteResponse`, field for field (FS-439).
+ *
+ *  EVERY NAME HERE WAS WRONG, and four of them were wrong about the UNITS as well. The
+ *  server sends `total_distance_miles` and `estimated_duration_hours`; this declared
+ *  `distance // km` and `estimatedDuration // minutes`. So the data arrived, was renamed
+ *  into nothing by the casing seam, and had it been aliased instead the numbers would have
+ *  been read as kilometres and minutes — wrong by 1.6x and 60x, silently, on a fuel and
+ *  routing screen.
+ *
+ *  That is the argument for renaming rather than aliasing here: `totalDistanceMiles` and
+ *  `estimatedDurationHours` carry their units in the name, and a component cannot use one
+ *  while believing the other.
+ *
+ *  `averageSpeed`, `fuelStops` and `restStops` are GONE. `routes` has no such columns and
+ *  no handler computes them; `FuelStop` and `RestStop` existed only to type them. Nothing
+ *  read any of the eleven fields, which is the only reason this was a trap for the next
+ *  page rather than a broken one.
+ *
+ *  `origin`/`destination`/`waypoints` are free-form JSON on the wire, not the `Location`
+ *  object this declared. Typed as such rather than promising a shape the server does not
+ *  guarantee. */
 export interface Route {
   id: string;
-  name: string;
-  origin: Location;
-  destination: Location;
-  waypoints?: Location[];
-  distance: number; // km
-  estimatedDuration: number; // minutes
-  averageSpeed?: number; // km/h
-  fuelStops?: FuelStop[];
-  restStops?: RestStop[];
-  tollCosts?: number;
-  fuelCosts?: number;
+  routeName?: string;
+  origin: Record<string, any>;
+  destination: Record<string, any>;
+  waypoints?: Record<string, any>[];
+  totalDistanceMiles?: number;
+  estimatedDurationHours?: number;
+  tollCostEstimate?: number;
+  fuelCostEstimate?: number;
+  optimizationCriteria?: string;
+  isActive: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -338,12 +368,16 @@ export interface FreightCharge {
   shipmentId: string;
   carrierId: string;
   chargeType: 'line_haul' | 'fuel_surcharge' | 'accessorial' | 'detention' | 'layover' | 'lumper' | 'redelivery' | 'tonu';
-  description: string;
+  /** `charge_description` on the wire (FS-439). Declared as `description`, which nothing
+   *  sends — `freight_charges` has no such column. */
+  chargeDescription?: string;
   quantity: number;
   rate: number;
   amount: number;
   currency: string;
-  approved: boolean;
+  /** `approved` is GONE. There is no such column: approval is recorded as `approvedBy` and
+   *  `approvedAt`, and a boolean beside them would be a third source of truth that could
+   *  disagree with both. A caller wanting the boolean asks `approvedAt != null`. */
   approvedBy?: string;
   approvedAt?: string;
   invoiceNumber?: string;
@@ -544,7 +578,15 @@ export interface ShipmentFilters {
 
 export interface AppointmentFilters {
   status?: DockAppointment['status'];
-  workcellId?: string;
+  /** `workcellId` is GONE (FS-439). `dock_appointments` has no workcell column and the
+   *  endpoint declares no such parameter, so the filter worked in mock mode and did
+   *  NOTHING in real mode — the request went out, the server ignored the unknown
+   *  parameter, and the full unfiltered list came back looking filtered.
+   *
+   *  `test_dock_doors_ignores_a_workcell_filter` pinned exactly this for dock DOORS,
+   *  under a note reading "pinned so nobody reintroduces it believing it filters". The
+   *  appointment beside it was left. Method rule 18: the second instance is in the
+   *  nearest neighbour of the first. */
   carrierId?: string;
   dateFrom?: string;
   dateTo?: string;

@@ -1113,9 +1113,14 @@ const ShipmentDetailModal: FC<{
               <p className="text-sm text-opsgrid-text-secondary">Driver</p>
               <p className="font-medium">{shipment.driverName || 'Not assigned'}</p>
             </div>
+            {/* TRAILER, not vehicle (FS-439). This read `shipment.vehicleId`, which
+                `shipments` has no column for and no handler computes — so every shipment
+                in the product rendered "Not assigned" under a Vehicle heading, which is a
+                STATEMENT, not a blank. A shipment references a trailer; `trailerId` was
+                declared here all along and is sent. */}
             <div>
-              <p className="text-sm text-opsgrid-text-secondary">Vehicle</p>
-              <p className="font-medium">{shipment.vehicleId || 'Not assigned'}</p>
+              <p className="text-sm text-opsgrid-text-secondary">Trailer</p>
+              <p className="font-medium">{shipment.trailerId || 'Not assigned'}</p>
             </div>
           </div>
 

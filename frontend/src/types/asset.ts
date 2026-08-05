@@ -15,28 +15,42 @@ export type PackMLState =
   | 'Aborting'
   | 'Stopping';
 
+/** `AssetTypeResponse`, field for field (FS-439).
+ *
+ *  This declared FOUR fields `asset_types` does not have — `vendor`, `description`,
+ *  `capabilities`, `updatedAt` — and MISSED four it does: `actionSpace`, `packmlConfig`,
+ *  `sensorClass`, `telemetrySchema`. The response model matches its table exactly, so the
+ *  divergence was entirely on this side.
+ *
+ *  The missing four are the interesting half. `actionSpace` and `packmlConfig` are what
+ *  make an asset type mean anything operationally — which commands it accepts and which
+ *  state machine it follows — and no screen could reach them through a type that did not
+ *  admit they existed. */
 export interface AssetType {
   id: string;
   name: string;
   category: string;
-  vendor?: string;
-  description?: string;
-  capabilities?: string[];
+  sensorClass?: string | null;
+  actionSpace?: Record<string, any> | null;
+  packmlConfig?: Record<string, any> | null;
+  telemetrySchema?: Record<string, any> | null;
   createdAt: string;
-  updatedAt: string;
 }
 
 export interface Asset {
   id: string;
   name: string;
   assetTypeId: string;
-  assetType?: AssetType;
+  /** `assetType` and `workcell` are GONE (FS-439). Both were NESTED OBJECTS, and
+   *  `AssetResponse` sends `asset_type_id` and `workcell_id` — ids, not expansions. No
+   *  handler joins either, so a component reaching for `asset.assetType.name` would have
+   *  read a property of `undefined`. Nothing did, which is why this was a trap rather than
+   *  a crash. Resolve through the id, or add a join and declare what it sends. */
   vendor?: string;
   model?: string;
   serialNumber?: string;
   organizationId?: string;
   workcellId?: string;
-  workcell?: Workcell;
   currentPackmlState: PackMLState;
   isActive: boolean;
   /** WAS `isInMaintenance`, a name the wire has never used. The column is
@@ -51,7 +65,10 @@ export interface Asset {
   // Sensor taxonomy (migration 024): drives type-aware AssetDetail panes.
   sensorClass?: 'machinery' | 'audio' | 'video' | 'environmental' | 'generic';
   mediaConfig?: Record<string, any>;
-  metadata?: Record<string, any>;
+  /** `metadata` is GONE (FS-439). `assets` has no such column — `connection_config`
+   *  and `media_config` are the two config bags it does carry, and both are declared
+   *  by name. A generic `metadata` beside them invites a caller to look for settings
+   *  in a third place that does not exist. */
   createdAt: string;
   updatedAt: string;
 }

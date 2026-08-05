@@ -2911,3 +2911,90 @@ have objected was the one being tested.
 
 `git restore` is the correct tool once the work is committed, and it cannot fail into a
 half-restored state the way a copy can.
+
+## FS-439 — the unfed count reaches zero
+
+38 → 0. Every field resolved rather than excused: **six renames** where the data was
+arriving under another name, and the rest deleted because no column, join or computation
+could ever have filled them. The global phantom count fell 30 → 17 as a side effect —
+answering the sharper question answers part of the blunter one for free.
+
+### Route: eleven fields, and the units were wrong too
+
+`RouteResponse` sends `total_distance_miles` and `estimated_duration_hours`. The TS type
+declared `distance // km` and `estimatedDuration // minutes`.
+
+**So the data arrived, was renamed into nothing by the casing seam, and had it merely been
+aliased the numbers would have been read as kilometres and minutes — wrong by 1.6× and 60×,
+silently, on a fuel and routing screen.** That is the argument for renaming to the wire name
+rather than aliasing: `totalDistanceMiles` carries its unit, and a component cannot use one
+while believing the other.
+
+The mock agreed with the type and both disagreed with the server: `distance: 3200` is
+Chicago to LA **in kilometres**. Development would have shown a plausible route and
+production a different one.
+
+`averageSpeed`, `fuelStops` and `restStops` are gone — no columns, nothing computes them,
+and `FuelStop`/`RestStop` existed only to type them.
+
+### A shipment showed "Not assigned" under a Vehicle heading
+
+`TransportationManagement.tsx` rendered `{shipment.vehicleId || 'Not assigned'}`. `shipments`
+has no vehicle column and never had one — a shipment references a **trailer**. So every
+shipment in the product displayed "Not assigned", which is a *statement*, not a blank.
+`trailerId` was declared on that interface all along and is sent.
+
+This is the third defect in three days where a fallback made an absent field look like an
+answered question: `'Violation'` for an unmapped alert type, `0 vehicles inside`, and now
+`Not assigned`. **A default is a claim.**
+
+### A filter that worked only in development
+
+`AppointmentFilters.workcellId` filtered correctly in mock mode and did nothing in real
+mode: `dock_appointments` has no workcell column, the endpoint declares no such parameter,
+and an unknown query parameter is ignored — so the full unfiltered list came back looking
+filtered.
+
+`test_dock_doors_ignores_a_workcell_filter` pinned exactly this for dock **doors**, under a
+note reading *"pinned so nobody reintroduces it believing it filters"*. The appointment
+beside it was left. Method rule 18 again: the second instance is in the nearest neighbour
+of the first.
+
+### A deferral note that outlived its own work
+
+`DockDoor`'s comment listed five fields with the same problem and said *"recorded rather
+than fixed here; auditing one interface end to end is its own task"*. **All five had been
+fixed in that same interface** — it now declares `equipmentCapabilities` and
+`lastOccupiedAt` with the reasoning attached. Only `workcellId` was left.
+
+The note was right about the cause, and said so precisely: *"they did not surface in the
+wire-vocabulary sweep because its vocabulary is GLOBAL"*. That is the gap
+`test_frontend_types_match_their_own_payload` was built to close, three days later, without
+knowing this note existed — and it is what flagged the one field the note's own fix missed.
+
+### AssetType declared four fields it doesn't have and missed four it does
+
+`vendor`, `description`, `capabilities`, `updatedAt` — none is a column. Meanwhile
+`actionSpace`, `packmlConfig`, `sensorClass` and `telemetrySchema` **are** sent and were not
+declared. The missing half is the interesting one: `actionSpace` and `packmlConfig` are what
+make an asset type mean anything operationally — which commands it accepts, which state
+machine it follows — and no screen could reach them through a type that did not admit they
+existed.
+
+### tsc as the instrument
+
+Every deletion was made blind and the type-checker named each consequence: 15 mock-data
+errors and **one real reader** (`shipment.vehicleId`). That is the right division of labour —
+the sweep says which fields have no producer, the compiler says who would notice.
+
+Both ratchets moved: per-type **38 → 0** with zero slack, verified by planting a single
+field; global 34 → 30 → **17**. The 17 sit on adapter-built interfaces with no same-named
+response model, which the per-type sweep cannot reach — so that file is the only thing
+watching them, and its vacuity floor moved with the population rather than being left to rot.
+
+`test_the_global_vocabulary_really_does_hide_these` had to be rewritten: it asserted that a
+current offender existed, so reaching zero made it fail with the message *"delete it rather
+than keeping a guard that guards nothing"* — exactly the wrong conclusion, since the count
+is zero *because* the file works. It now asserts the structural fact instead: the global
+vocabulary is strictly wider than any single payload, which is true whether or not anything
+is currently broken.

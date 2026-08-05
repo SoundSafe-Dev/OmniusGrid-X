@@ -288,7 +288,6 @@ const mockShipments: Shipment[] = [
     carrierName: 'Swift Transportation',
     driverId: 'driver-1',
     driverName: 'John Smith',
-    vehicleId: 'vehicle-1',
     trailerId: 'trailer-1',
     status: 'in_transit',
     origin: {
@@ -310,7 +309,6 @@ const mockShipments: Shipment[] = [
     scheduledPickup: new Date(Date.now() - 24 * 3600000).toISOString(),
     actualPickup: new Date(Date.now() - 24 * 3600000).toISOString(),
     scheduledDelivery: new Date(Date.now() + 12 * 3600000).toISOString(),
-    freightDescription: 'Electronics - Consumer Goods',
     weight: 25000,
     pieces: 500,
     palletCount: 20,
@@ -319,8 +317,6 @@ const mockShipments: Shipment[] = [
     bolNumber: 'BOL-2024-001',
     proNumber: 'PRO-987654',
     freightCharge: 2850.00,
-    detentionRate: 50,
-    geoTabTripId: 'trip-001',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   },
@@ -331,7 +327,6 @@ const mockShipments: Shipment[] = [
     carrierName: 'Schneider National',
     driverId: 'driver-2',
     driverName: 'Maria Garcia',
-    vehicleId: 'vehicle-2',
     trailerId: 'trailer-2',
     status: 'in_transit',
     origin: {
@@ -353,7 +348,6 @@ const mockShipments: Shipment[] = [
     scheduledPickup: new Date(Date.now() - 12 * 3600000).toISOString(),
     actualPickup: new Date(Date.now() - 12 * 3600000).toISOString(),
     scheduledDelivery: new Date(Date.now() + 6 * 3600000).toISOString(),
-    freightDescription: 'Frozen Foods - Reefer Required',
     weight: 35000,
     pieces: 800,
     palletCount: 32,
@@ -363,8 +357,6 @@ const mockShipments: Shipment[] = [
     bolNumber: 'BOL-2024-002',
     proNumber: 'PRO-987655',
     freightCharge: 3200.00,
-    detentionRate: 65,
-    geoTabTripId: 'trip-002',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   },
@@ -392,13 +384,11 @@ const mockShipments: Shipment[] = [
     },
     scheduledPickup: new Date(Date.now() + 24 * 3600000).toISOString(),
     scheduledDelivery: new Date(Date.now() + 72 * 3600000).toISOString(),
-    freightDescription: 'Steel Components - Flatbed',
     weight: 42000,
     pieces: 150,
     hazmat: false,
     poNumber: 'PO-78236',
     freightCharge: 4500.00,
-    detentionRate: 75,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   },
@@ -407,7 +397,7 @@ const mockShipments: Shipment[] = [
 const mockRoutes: Route[] = [
   {
     id: 'route-1',
-    name: 'Chicago to LA - I-80 West',
+    routeName: 'Chicago to LA - I-80 West',
     origin: {
       name: 'Main Distribution Center',
       address: '1000 Warehouse Blvd',
@@ -424,11 +414,18 @@ const mockRoutes: Route[] = [
       zipCode: '90021',
       country: 'USA',
     },
-    distance: 3200,
-    estimatedDuration: 2160,
-    averageSpeed: 88,
-    tollCosts: 250,
-    fuelCosts: 800,
+    // MILES AND HOURS, matching the wire (FS-439). This read `distance: 3200` and
+    // `estimatedDuration: 2160` — Chicago to LA in KILOMETRES and MINUTES, because the type
+    // said km and minutes while the server sends `total_distance_miles` and
+    // `estimated_duration_hours`. The mock agreed with the type and both disagreed with the
+    // server, so development would have shown a plausible route and production a different
+    // one by a factor of 1.6.
+    totalDistanceMiles: 2015,
+    estimatedDurationHours: 30,
+    tollCostEstimate: 250,
+    fuelCostEstimate: 800,
+    optimizationCriteria: 'balanced',
+    isActive: true,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   },
@@ -932,7 +929,6 @@ export const geoTabApi = {
           id: 'trip-001',
           deviceId,
           driverId: 'driver-1',
-          vehicleId: 'vehicle-1',
           startTime: from,
           endTime: to,
           distance: 3200,

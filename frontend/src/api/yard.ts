@@ -95,7 +95,6 @@ const mockTrailers: YardTrailer[] = [
     status: 'yard',
     yardLocation: 'ZONE-B-12',
     checkedInAt: new Date(Date.now() - 4 * 3600000).toISOString(),
-    expectedDuration: 180,
     detentionRisk: 'medium',
     detentionCost: 75,
     sealNumber: 'SL-998878',
@@ -128,7 +127,6 @@ const mockTrailers: YardTrailer[] = [
     status: 'yard',
     yardLocation: 'ZONE-A-05',
     checkedInAt: new Date(Date.now() - 6 * 3600000).toISOString(),
-    expectedDuration: 240,
     detentionRisk: 'high',
     detentionCost: 450,
     sealNumber: 'SL-998879',
@@ -143,7 +141,6 @@ const mockDockDoors: DockDoor[] = [
   {
     id: 'door-1',
     doorNumber: 'DOCK-A1',
-    workcellId: 'workcell-1',
     status: 'occupied',
     currentTrailerId: 'trailer-1',
     trailerLicensePlate: 'ABC-1234',
@@ -154,7 +151,6 @@ const mockDockDoors: DockDoor[] = [
   {
     id: 'door-2',
     doorNumber: 'DOCK-A2',
-    workcellId: 'workcell-1',
     status: 'available',
     equipmentCapabilities: { 'forklift': true, 'pallet_jack': true },
     createdAt: new Date().toISOString(),
@@ -163,7 +159,6 @@ const mockDockDoors: DockDoor[] = [
   {
     id: 'door-3',
     doorNumber: 'DOCK-B1',
-    workcellId: 'workcell-2',
     status: 'reserved',
     equipmentCapabilities: { 'forklift': true, 'crane': true },
     createdAt: new Date().toISOString(),
@@ -172,7 +167,6 @@ const mockDockDoors: DockDoor[] = [
   {
     id: 'door-4',
     doorNumber: 'DOCK-B2',
-    workcellId: 'workcell-2',
     status: 'maintenance',
     equipmentCapabilities: { 'forklift': true },
     createdAt: new Date().toISOString(),
@@ -187,15 +181,13 @@ const mockAppointments: DockAppointment[] = [
     carrierName: 'Swift Transportation',
     trailerId: 'trailer-1',
     trailerLicensePlate: 'ABC-1234',
-    doorId: 'door-1',
+    dockDoorId: 'door-1',
     doorNumber: 'DOCK-A1',
-    workcellId: 'workcell-1',
     appointmentType: 'delivery',
     scheduledArrival: new Date(Date.now() - 2 * 3600000).toISOString(),
     actualArrival: new Date(Date.now() - 2 * 3600000).toISOString(),
     scheduledDeparture: new Date(Date.now() + 2 * 3600000).toISOString(),
     status: 'docked',
-    loadDescription: 'Electronics - Batch #4521',
     priority: 'normal',
     driverName: 'John Smith',
     driverPhone: '+1-555-0101',
@@ -208,12 +200,10 @@ const mockAppointments: DockAppointment[] = [
     carrierName: 'Schneider National',
     trailerId: 'trailer-2',
     trailerLicensePlate: 'XYZ-5678',
-    workcellId: 'workcell-2',
     appointmentType: 'pickup',
     scheduledArrival: new Date(Date.now() + 1 * 3600000).toISOString(),
     scheduledDeparture: new Date(Date.now() + 3 * 3600000).toISOString(),
     status: 'scheduled',
-    loadDescription: 'Frozen Foods - Temperature Sensitive',
     priority: 'high',
     driverName: 'Maria Garcia',
     driverPhone: '+1-555-0102',
@@ -231,7 +221,6 @@ const mockYardMoves: YardMove[] = [
     toLocation: 'DOCK-A1',
     moveType: 'dock',
     performedBy: 'Yard Jockey - Mike Wilson',
-    equipmentUsed: 'Yard Truck #3',
     startTime: new Date(Date.now() - 2 * 3600000).toISOString(),
     endTime: new Date(Date.now() - 1.9 * 3600000).toISOString(),
     status: 'completed',
@@ -245,7 +234,6 @@ const mockYardMoves: YardMove[] = [
     toLocation: 'ZONE-B-12',
     moveType: 'check_in',
     performedBy: 'Yard Jockey - Sarah Lee',
-    equipmentUsed: 'Yard Truck #2',
     startTime: new Date(Date.now() - 4 * 3600000).toISOString(),
     endTime: new Date(Date.now() - 3.9 * 3600000).toISOString(),
     status: 'completed',
@@ -378,7 +366,6 @@ export const yardApi = {
       await delay(MOCK_DELAY);
       let filtered = [...mockAppointments];
       if (filters?.status) filtered = filtered.filter(a => a.status === filters.status);
-      if (filters?.workcellId) filtered = filtered.filter(a => a.workcellId === filters.workcellId);
       if (filters?.carrierId) filtered = filtered.filter(a => a.carrierId === filters.carrierId);
       if (filters?.priority) filtered = filtered.filter(a => a.priority === filters.priority);
       return {

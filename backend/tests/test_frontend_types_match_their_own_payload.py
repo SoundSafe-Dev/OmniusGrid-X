@@ -208,11 +208,14 @@ KNOWN_UNFED: dict[str, str] = {}
 #:
 #: 38 is a floor, not a total. Only 14 TS interfaces pair with a same-named response model;
 #: the rest are assembled from several endpoints and are out of this sweep's reach.
-#: 38 -> 35 on 2026-08-04 (FS-436). `Alarm.assetName` now ARRIVES — the dashboard's Active
-#: Alarms panel had been rendering `{assetName} • {occurredAt}` with nothing in front of the
-#: bullet. `createdAt`/`updatedAt` were DELETED: the `alarms` table has neither column, so
-#: no fix could have made them arrive.
-MAX_UNFED_FIELDS = 35
+#: ZERO as of 2026-08-05 (FS-439). It opened at 38, and every one is now resolved rather
+#: than excused: six renames where the data arrived under another name, and the rest deleted
+#: because no column, join or computation could ever have filled them.
+#:
+#: A ratchet at zero is the only kind that cannot rot. There is no headroom to absorb a
+#: regression and no number to argue about — the next declared field either has a producer
+#: or this fails.
+MAX_UNFED_FIELDS = 0
 
 
 def _all_unfed() -> dict[str, set[str]]:
@@ -236,21 +239,28 @@ def test_the_count_of_unfed_fields_does_not_grow():
     )
 
 
-def test_the_global_vocabulary_really_does_hide_these():
+def test_the_global_vocabulary_is_wider_than_any_single_payload():
     """The premise of this whole file, asserted so it cannot quietly stop being true.
 
-    If every unfed field were also absent from the global vocabulary, the older sweep would
-    already catch them and this one would be redundant.
+    It used to assert that at least one CURRENT offender was hidden by the global
+    vocabulary — sound while offenders existed, and self-defeating the moment the count
+    reached zero: its own failure message said "delete it rather than keeping a guard that
+    guards nothing", which would have been exactly the wrong conclusion. The count is zero
+    BECAUSE this file works.
+
+    The structural fact is what matters and it does not depend on offenders existing: the
+    global vocabulary is drawn from every model, dict key and alias in the codebase, so it
+    is strictly wider than any one payload. A field can therefore be in it and absent from
+    the payload that feeds its type — which is the whole reason a per-type check is needed,
+    whether or not anything is currently wrong.
     """
     vocabulary = _wire_vocabulary()
-    hidden = {
-        f"{name}.{field}"
-        for name, fields in _all_unfed().items()
-        for field in fields
-        if field in vocabulary
-    }
-    assert hidden, (
-        "every field missing from its own payload is also missing from the global "
-        "vocabulary, so the older sweep catches them all and this file is redundant — "
-        "delete it rather than keeping a guard that guards nothing"
+    wider_than = [
+        name for name, (_, sent) in PAIRS.items() if len(vocabulary - sent) > len(sent)
+    ]
+    assert len(wider_than) >= 5, (
+        f"the global vocabulary is no longer meaningfully wider than the individual "
+        f"payloads ({len(wider_than)} of {len(PAIRS)} paired types); if that is genuinely "
+        f"true the sibling sweep now answers this file's question and this one is "
+        f"redundant"
     )

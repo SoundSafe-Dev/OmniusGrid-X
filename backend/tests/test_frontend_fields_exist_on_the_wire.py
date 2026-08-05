@@ -578,12 +578,14 @@ class TestTheThreeFindingsStayFixed:
 #: LOWER THIS as phantom declarations are removed; never raise it. A rise means someone
 #: declared a field with no producer — the first half of the cycle above, and the cheapest
 #: moment to stop it.
-#: 34 -> 30 on 2026-08-04 (FS-435). Not four deletions: four fields that now ARRIVE.
-#: `actualArrival`/`actualDeparture`, `medicalCertExpiry` and `performedBy` all had sources
-#: on the wire all along — `actual_start`/`actual_end`, `medical_cert_expires`,
-#: `jockey_driver_id` — and no alias between them. Two alias maps each stopped one entry
-#: short of finishing a pair they had started.
-MAX_UNREAD_PHANTOM_FIELDS = 30
+#: 34 -> 30 -> 17 (FS-435, FS-439). The 13 that went in the second pass were removed as a
+#: side effect of taking the PER-TYPE count to zero: this sweep asks whether a name exists
+#: anywhere on the wire, and its sibling asks whether it exists on the payload that feeds
+#: its type. Fixing the sharper question answers part of the blunter one for free.
+#:
+#: The 17 that remain sit on interfaces with no same-named response model — adapter-built
+#: shapes the per-type sweep cannot reach — so this file is the only thing watching them.
+MAX_UNREAD_PHANTOM_FIELDS = 17
 
 #: Interfaces describing a REQUEST rather than a response. A field here is something the
 #: client sends, so "no backend producer" is the normal case and not a defect. `*Params` is
@@ -622,7 +624,7 @@ class TestTheTrapsForTheNextPage:
         """Vacuity guard. If the interface or field regex drifts this returns nothing and
         the ratchet below passes at zero — the failure every sweep in this repo has a rule
         about, and one this session hit three times in other tools."""
-        assert len(_declared_unread_and_unsent()) > 20, (
+        assert len(_declared_unread_and_unsent()) >= 15, (
             "the unread-phantom sweep found almost nothing; fix the parsing rather than "
             "accepting the pass"
         )
