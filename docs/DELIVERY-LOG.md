@@ -3362,3 +3362,55 @@ project** and two unnamed images of 7.9 GB and 4.1 GB that I cannot identify.
 Pruning would fix the build and might delete someone's work. `docs/planning/` already gates
 FS-293 on exactly this — *"pruning deletes someone's images"* — and that gate is still the
 right one. Recorded in `docs/engineering/open-decisions.md`.
+
+## FS-447 — the e2e suite ran for the first time, and three of its assertions were wrong
+
+Clearing 13 GB of abandoned build containers let the backend image rebuild, and a fresh
+`timescaledb` volume let the migration chain build the schema in order. **The compose stack
+answered `health: 200` for the first time**, and with demo data seeded the live-backend e2e
+specs executed — including the ones written yesterday that had never run anywhere.
+
+`FS-436` confirmed against a running system rather than a testcontainer:
+
+    asset_name='CNC Mill #1'                    SPINDLE_TEMP_HIGH
+    asset_name='Conveyor #1'                    BELT_SLIP
+    asset_name='Vibration Sensor — CNC Spindle' VIB_ELEVATED
+
+### Three assertions that could never have passed
+
+* **`the assets page lists seeded assets`** located `table tbody tr, [role="row"]`.
+  `Assets.tsx` renders a **card grid** — no table, no row role anywhere on the page. The
+  locator could not match, so the assertion could only ever fail. Now asserts a seeded asset
+  *name*, which is the stronger check and the one this file argues for elsewhere.
+* **`the dashboard shows NON-ZERO data`** waited on `body` containing `/asset/i` — satisfied
+  the instant the shell mounts by the **sidebar's "Assets" nav link**. It then read the page
+  before any query resolved and failed with *"dashboard rendered no numeric values at all"*
+  against an API returning `total_assets: 5`. **A wait satisfied by furniture is not a wait.**
+* **Twelve logins in one file**, against `AUTH_LOGIN_RATE_LIMIT = 10/minute` which compose
+  turns on by default. Two tests failed on a login *timeout* rather than on anything they
+  assert, and which two depended on worker scheduling. **A rate limiter is not a flake** —
+  it is the server correctly refusing the seventeenth login in a minute, and retrying would
+  have hidden it. One shared login now; the file runs in 14s instead of 46s.
+
+The first two were in `authenticated.spec.ts`, written months ago in the job that must pass
+on every push. They are the reason to be careful about what "green" meant there.
+
+### What let this happen
+
+`docker-compose.yml`'s comment already explained it: the `./database/migrations` initdb mount
+was removed because raw `psql` ran the chain with `ON_ERROR_STOP`, never recorded
+`schema_migrations`, and `create_all` then built a second source of truth on top. **My local
+volume predated that fix**, so it carried the full schema, no migration records, and five
+TimescaleDB continuous aggregates.
+
+Baselining then failed on `032_uuid_consolidation.sql`:
+
+    cannot alter type of a column used by a view or rule
+    DETAIL: rule _RETURN on view _timescaledb_internal._partial_view_4 depends on "asset_id"
+
+Not a migration bug. On a fresh database the chain creates the aggregates *after* 032, and
+all 61 migrations applied cleanly once the volume was recreated. It is a defect of the
+adopt-an-initdb-database path, which the compose comment had already retired — the stale
+volume was the last thing still using it.
+
+Final state: **18 e2e passed, 2 skipped, 0 failed** against a live stack.

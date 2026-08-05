@@ -54,8 +54,17 @@ test.describe('authenticated journey', () => {
     await login(page)
     await page.goto('/')
 
-    // Wait for the KPI region to have resolved rather than for a fixed timeout.
-    await expect(page.locator('body')).toContainText(/asset/i, { timeout: 20_000 })
+    // WAIT FOR THE KPI REGION, not for the word "asset" (FS-447). This waited on
+    // `body` containing /asset/i — which the SIDEBAR's "Assets" nav link satisfies the
+    // instant the shell mounts, before any query resolves. The test then read the page and
+    // found no numbers, failing with "dashboard rendered no numeric values at all" against
+    // an API returning `total_assets: 5`.
+    //
+    // A wait that is satisfied by furniture is not a wait. `Total Assets` is a KPI label
+    // rendered only by the dashboard itself, and the value beside it is what this test is
+    // actually about.
+    await expect(page.getByText('Total Assets')).toBeVisible({ timeout: 20_000 })
+    await expect(page.getByText('—').first()).toBeHidden({ timeout: 20_000 }).catch(() => {})
 
     // The actual regression guard. A dashboard that renders every tile as "0" is
     // exactly what the RLS bug produced, and it looks completely healthy: no
@@ -80,9 +89,16 @@ test.describe('authenticated journey', () => {
   test('the assets page lists seeded assets', async ({ page }) => {
     await login(page)
     await page.goto('/assets')
-    // The demo seeder creates named assets; an empty list here is the same
-    // tenancy failure as the zeroed dashboard, one page over.
-    await expect(page.locator('table tbody tr, [role="row"]').first()).toBeVisible({
+    // A CARD GRID, not a table (FS-447). This asserted
+    // `table tbody tr, [role="row"]`, and `Assets.tsx` renders
+    // `<div className="grid …">` of `<Link>` cards — there is no table and no row role
+    // anywhere on the page, so the locator could never match and the assertion could only
+    // ever fail. Found by running it against a live stack for the first time.
+    //
+    // Asserting a seeded NAME rather than a container is also the stronger check and the
+    // one this file argues for elsewhere: an empty grid and a grid of cards rendering
+    // `undefined` are both "rows exist" to a structural selector.
+    await expect(page.getByText(/CNC Mill|Conveyor|Acoustic Monitor/).first()).toBeVisible({
       timeout: 20_000,
     })
   })
