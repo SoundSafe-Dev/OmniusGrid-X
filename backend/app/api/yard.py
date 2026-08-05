@@ -77,8 +77,26 @@ async def _resolve_trailer_plates(trailer_ids, db: AsyncSession) -> Dict[str, An
     return {str(tid): plate for tid, plate in rows}
 
 
-async def _resolve_driver_phones(driver_ids, db: AsyncSession) -> Dict[str, Any]:
-    """Map {driver_id -> phone} in one query.
+async def _resolve_driver_contacts(driver_ids, db: AsyncSession) -> Dict[str, Any]:
+    """Map {driver_id -> {"phone", "name"}} in ONE query.
+
+    THE NAME CAME LATER AND HAD TO COME IN THE SAME QUERY (FS-437). Adding a second
+    resolver beside this one worked and was caught immediately by
+    `test_yard_driver_phone_is_resolved_realdb.py`: *"expected exactly one query against
+    drivers for a page of trailers, saw 2"*. That guard was written for this resolver and
+    was right to refuse the second — a per-page lookup that becomes two per page becomes
+    three the next time someone needs a field.
+
+    WHY THE NAME MATTERS AT ALL, given the phone already worked. The trailer detail panel
+    wraps the whole driver section in `{trailer.driverName && ( … )}`, and `driverName` was
+    never sent — so the block never rendered and took the phone inside it with it. The phone
+    resolution below was real, correct, and invisible. A guard on a field nobody sends is a
+    permanent `false`, and everything inside it disappears; that is worse than a blank line,
+    because a blank line can be seen.
+
+    `drivers` stores `first_name`/`last_name`, so the display name is composed here rather
+    than stored. A driver with neither yields `None` and the panel then correctly omits the
+    block — for a driver record with no name, rather than for every driver in the system.
 
     The trailer card and the trailer detail panel both render `trailer.driverPhone`, and the
     appointment row renders `appt.driverPhone` — the number an operator calls when a trailer
@@ -93,9 +111,16 @@ async def _resolve_driver_phones(driver_ids, db: AsyncSession) -> Dict[str, Any]
     if not ids:
         return {}
     rows = (await db.execute(
-        select(Driver.id, Driver.phone).where(Driver.id.in_(ids))
+        select(Driver.id, Driver.phone, Driver.first_name, Driver.last_name)
+        .where(Driver.id.in_(ids))
     )).all()
-    return {str(did): phone for did, phone in rows}
+    return {
+        str(did): {
+            "phone": phone,
+            "name": " ".join(part for part in (first, last) if part) or None,
+        }
+        for did, phone, first, last in rows
+    }
 
 
 # ==================== Yard Trailer Endpoints ====================
@@ -182,7 +207,7 @@ async def get_yard_inventory(
     carrier_names = await _resolve_carrier_names(
         {t.carrier_id for t in trailers if t.carrier_id}, db
     )
-    driver_phones = await _resolve_driver_phones({t.driver_id for t in trailers}, db)
+    driver_contacts = await _resolve_driver_contacts({t.driver_id for t in trailers}, db)
 
     items: List[Dict[str, Any]] = []
     for t in trailers:
@@ -191,7 +216,9 @@ async def get_yard_inventory(
         # The number an operator calls about a trailer sitting on the yard. Declared by the
         # client, rendered on the card and in the detail panel, and sent by nothing —
         # `yard_trailers.driver_id` references `drivers`, where the phone is.
-        row["driverPhone"] = driver_phones.get(str(t.driver_id))
+        contact = driver_contacts.get(str(t.driver_id)) or {}
+        row["driverPhone"] = contact.get("phone")
+        row["driverName"] = contact.get("name")
         row["licensePlate"] = t.license_plate
         row["detentionCost"] = t.detention_cost
         row["detentionRisk"] = t.detention_risk
@@ -388,14 +415,16 @@ async def get_dock_schedule(
         {a.carrier_id for a in appointments if a.carrier_id}, db
     )
     plates = await _resolve_trailer_plates({a.trailer_id for a in appointments}, db)
-    driver_phones = await _resolve_driver_phones({a.driver_id for a in appointments}, db)
+    driver_contacts = await _resolve_driver_contacts({a.driver_id for a in appointments}, db)
 
     items: List[Dict[str, Any]] = []
     for a in appointments:
         row = DockAppointmentResponse.model_validate(a).model_dump(mode="json", by_alias=True)
         row["carrierName"] = carrier_names.get(str(a.carrier_id))
         row["trailer_license_plate"] = plates.get(str(a.trailer_id))
-        row["driverPhone"] = driver_phones.get(str(a.driver_id))
+        contact = driver_contacts.get(str(a.driver_id)) or {}
+        row["driverPhone"] = contact.get("phone")
+        row["driverName"] = contact.get("name")
         items.append(row)
     return items
 

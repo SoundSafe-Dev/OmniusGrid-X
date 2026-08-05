@@ -2784,3 +2784,67 @@ place to go.
 Both instances were also found by the *same kind of instrument*: a sweep that compares a
 declaration against the specific thing that feeds it, rather than against the codebase in
 general.
+
+## FS-437 — a correct fix that nothing could see
+
+`YardManagement.tsx` wraps the trailer's whole driver section in one condition:
+
+```tsx
+{trailer.driverName && (
+  <div>
+    <h4>Driver Information</h4>
+    <p>{trailer.driverName}</p>
+    {trailer.driverPhone && <p>{trailer.driverPhone}</p>}
+  </div>
+)}
+```
+
+**`driverName` was never sent.** So the block never rendered — and it took `driverPhone`
+with it: a field the yard resolver exists specifically to deliver, under a docstring calling
+it *"the number an operator calls when a trailer has been sitting on the yard"*.
+
+That fix was real, correct, tested, and invisible. **A guard on a field nobody sends is a
+permanent `false`, and everything inside it disappears.** That is worse than a blank line,
+because a blank line can be seen — and worse than a missing field, because it silently
+cancels work that was done properly.
+
+### Why the phone's own test could not notice
+
+`test_yard_driver_phone_is_resolved_realdb.py` asserts the API sends the phone. It does.
+Nothing was wrong at that boundary. The defect lives one layer up, in a condition no backend
+test can see and no type-checker objects to — `driverName?: string` is a perfectly
+well-typed thing to test for.
+
+So the new file asserts the **conjunction** the screen needs: not "the phone is sent" but
+"the block's condition is satisfiable, and the phone is inside it when it is".
+
+### The eleventh guard catch, and it made the fix better
+
+The first version added a second resolver beside the phone one. That test refused it
+immediately:
+
+    expected exactly one query against drivers for a page of trailers, saw 2
+
+Right, and not merely stylistic: a per-page lookup that becomes two becomes three the next
+time someone needs a field. Both are now one query returning `{phone, name}` — and the
+batching is asserted in **both** files, so whichever is edited next fails on its own terms.
+
+This is the second time in two days that a guard did not just block a regression but
+improved the design of the fix in front of it.
+
+### And I nearly shipped a flake
+
+The dock-appointment case passed three times in isolation and failed in the full suite.
+`GET /yard/dock/appointments` filters `scheduled_start >= start_date`, and `start_date`
+defaults to **now at request time** — so a row stamped `now()` at insert is already in the
+past by the time the request runs. Whether it appeared came down to sub-millisecond ordering
+between a Postgres transaction clock and a Python one.
+
+**Passing in isolation and failing in the suite is the worst way for a test to be wrong**,
+because the natural response is to re-run it. Fixed by scheduling the appointment ten
+minutes ahead, which removes the timing dependence entirely and is also what a dock
+appointment actually is.
+
+Worth noting what caught it: not the three isolated runs, but the full suite — the same
+run that has caught eleven guard violations. Running the whole thing before every commit is
+not a formality.
