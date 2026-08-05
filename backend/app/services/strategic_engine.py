@@ -28,6 +28,14 @@ class StrategicRecommendation:
     simulation_basis: str  # Description of cloud simulation that generated this
     valid_until: datetime
     requires_approval: bool
+    #: FS-434. `simulation_basis` is the provenance field, and for the demo seeds it read
+    #: "Fleet OEE rollup + maintenance-window scheduler (14 days)" — a real-sounding
+    #: derivation over the reader's own fleet, beside `confidence: 0.88`. The only tell
+    #: that none of it was computed was an id beginning "demo-rec-", which no screen shows.
+    #:
+    #: A provenance field that lies is worse than no provenance field: it is the thing a
+    #: careful reader checks. This makes the claim falsifiable in one boolean.
+    simulated: bool = False
 
 
 class CloudStrategicEngine:
@@ -80,7 +88,8 @@ class CloudStrategicEngine:
                 ),
                 expected_impact={"oee_improvement": 0.06, "cost_reduction": 4200},
                 confidence=0.88,
-                simulation_basis="Fleet OEE rollup + maintenance-window scheduler (14 days)",
+                simulation_basis="Demo seed — not computed from this deployment's data. Stands in for: Fleet OEE rollup + maintenance-window scheduler (14 days)",
+                simulated=True,
                 valid_until=now + timedelta(days=7),
                 requires_approval=True,
             ),
@@ -95,7 +104,8 @@ class CloudStrategicEngine:
                 ),
                 expected_impact={"oee_improvement": 0.03, "throughput_gain": 0.04},
                 confidence=0.79,
-                simulation_basis="Bottleneck analysis on seeded telemetry",
+                simulation_basis="Demo seed — not computed from this deployment's data. Stands in for: Bottleneck analysis on seeded telemetry",
+                simulated=True,
                 valid_until=now + timedelta(days=5),
                 requires_approval=True,
             ),
@@ -110,7 +120,8 @@ class CloudStrategicEngine:
                 ),
                 expected_impact={"rul_extension_days": 45, "cost_reduction": 1500},
                 confidence=0.72,
-                simulation_basis="Vibration-degradation slope + RUL model",
+                simulation_basis="Demo seed — not computed from this deployment's data. Stands in for: Vibration-degradation slope + RUL model",
+                simulated=True,
                 valid_until=now + timedelta(days=10),
                 requires_approval=True,
             ),
@@ -143,6 +154,12 @@ class CloudStrategicEngine:
                 expected_impact=recommendation.get('expected_impact', {}),
                 confidence=recommendation['confidence'],
                 simulation_basis=recommendation.get('simulation_basis', ''),
+                # STATED, not defaulted (FS-434). `False` is the strongest claim this model
+                # makes — "a real cloud engine computed this" — so it has to be written at
+                # the construction site rather than inherited from a dataclass default. The
+                # payload wins if the cloud says otherwise; a cloud engine running its own
+                # simulation is a thing that can happen and the reader should be told.
+                simulated=bool(recommendation.get('simulated', False)),
                 # fromisoformat on a tz-less ISO string yields a NAIVE datetime;
                 # the expiry check below is aware (FS-96), so coerce naive->UTC.
                 valid_until=(

@@ -2525,3 +2525,120 @@ The lesson is about instruments, not tenancy: **perturbing the system found one 
 and five explainable exceptions; reading the source produced 25 findings and then 30, none
 of them real.** A guard that reads code can only recognise the spellings its author thought
 of. A mutation asks the system, and the system has no opinion about naming.
+
+## FS-433 — a compliance table with no owner
+
+`data_residency_tags` had **no `organization_id` column and no RLS policy**. Every
+organisation's residency tags sat in one pool behind six endpoints — three open to any
+authenticated user, three behind `require_admin`.
+
+`require_admin` here is a **per-organisation** admin. That is precisely the argument FS-311
+records for why eight data-retention routes are dark — *"a per-org admin would let one
+tenant purge another's data"* — and it applied here, unenforced.
+
+So before the fix:
+
+* any authenticated user could enumerate every tenant's tagged `record_id`s together with
+  the `tagged_by` user ids;
+* org A's admin could delete org B's residency tags;
+* **`/summary` and `/validate` counted every tenant's rows and returned the total as the
+  caller's own compliance position** — a figure an auditor is meant to rely on, computed
+  over data the caller does not own.
+
+The third is the worst of the three, and it is not a leak. It is a wrong answer to a
+compliance question, delivered confidently.
+
+### It was written down and not fixed
+
+`validate_data_residency`'s own docstring said it: *"`data_residency_tags` has no
+`organization_id` at all, so its rows and a per-tenant row count are not the same
+population."* Someone saw the defect, recorded it accurately as a limitation of a figure,
+and did not follow it to the six endpoints reading the table. A note is not a fix, and a
+note in the one place a careful reader looks is the easiest kind to mistake for one.
+
+### Migration 062
+
+`organization_id UUID NOT NULL`, FK to `organizations`, backfilled through `tagged_by` —
+a user belongs to exactly one organisation, so ownership is recoverable rather than
+guessed. Rows with no attributable user are **deleted**, not assigned: a residency tag on
+the wrong tenant is worse than a missing one, because these endpoints would then report it
+as that tenant's compliance evidence.
+
+The unique index gained the organisation too. Without it, two tenants tagging the same
+`record_id` in the same table collided, and one tenant's tag silently became the other's.
+
+Caught by the schema rather than shipped: the first attempt used `VARCHAR(36)`, matching
+the ORM's declared type, and Postgres refused the foreign key — *"Key columns are of
+incompatible types: character varying and uuid"*. Migration 032 had converted those columns
+and 033's policy quals cast with `::uuid` for exactly that reason.
+
+### What the mutations showed
+
+* **Explicit `organization_id` filters removed → all 8 tests still pass.** RLS alone holds
+  the isolation; the filters are readability, not enforcement. Worth knowing, because it
+  means a future handler that forgets the filter is still safe, and one that forgets the
+  session is not.
+* **Session reverted to `get_db` → 4 fail.** The dependency is the load-bearing part.
+
+The positive-visibility assertion is written first in that file, deliberately: without it,
+every scoping assertion below is satisfied by an empty list — the failure mode FS-431 found
+in the kanban suite one commit earlier.
+
+## FS-434 — provenance fields that lied, and one that never arrived
+
+Verifying the planned Wave F items found **eight of ten already done** — `_simulated_
+provenance` stamped on every gated GeoTab function, `get_device_location` stamping
+*conditionally* so a real GPS fix is not labelled simulated, the compliance counts
+genuinely counted, the collector-restart stub removed outright. The plan overstates
+remaining work, as its own header warns. Two were real.
+
+**`model_version: "gemma-4-placeholder"`.** There is no gemma-4. The configured base is
+`settings.CORRELATION_BASE_MODEL` and a loaded model reports `<base>+lora`, so the default
+named a model that does not exist — in a version field, on a payload a consumer uses to
+decide how far to trust an analysis. It reached the logs:
+`correlation_analysis_complete model_version=gemma-4-placeholder`. FS-349 had already made
+the payload say `simulated: True` with a lowered confidence; this one field still claimed a
+model, so anyone grouping logs by `model_version` filed heuristic output under a plausible
+model name. Now `"none (no correlation model loaded)"`.
+
+**A provenance field that described a computation that never ran.** The strategic
+recommendations seeded under `ALLOW_DEV_TOKEN` carried
+`simulation_basis="Fleet OEE rollup + maintenance-window scheduler (14 days)"` beside
+`confidence: 0.88` — a real-sounding derivation over the reader's own fleet. The only tell
+was an id beginning `demo-rec-`, which no screen shows.
+
+**A provenance field that lies is worse than no provenance field**, because it is the thing
+a careful reader checks.
+
+### And it would not have reached the screen anyway
+
+`StrategicRecommendationResponse` declared neither `simulated` nor `simulation_basis`, and
+the handler did not send them — so a strategic recommendation arrived at the client as a
+description, an expected impact and a confidence with **no provenance at all**. Adding the
+flag to the dataclass alone would have died at the response boundary, which is the FS-366
+shape recorded against this very model.
+
+Wired end to end: dataclass → response model → handler → the TS type → the card, where the
+caveat renders **above** the figures rather than below them. `simulated?: boolean` is
+optional on purpose — a server predating the field sends nothing, and absent must not
+render as "simulated: false", which would be the same lie by default.
+
+`test_qualifiers_reach_the_frontend` passed throughout and could not have caught this: it
+matches qualifier names across the whole app, so a second `simulated` on a different
+response is invisible to it once the name is read somewhere. A name-keyed guard cannot see
+per-endpoint coverage.
+
+### An existing guard caught the fix
+
+`test_provenance_flags_are_always_set::test_no_construction_relies_on_the_default` failed
+on the commit that added the flag, pointing at the **real** cloud-recommendation path:
+
+    app/services/strategic_engine.py:148 StrategicRecommendation omits ['simulated']
+
+Adding a `simulated: bool = False` default meant every construction that did not mention it
+was silently claiming *"a real engine computed this"* — the strongest claim the model makes,
+made by omission. The guard's own wording is the rule: **for `simulated` the default is the
+strongest claim, so it has to be written at the construction site.**
+
+Ninth time a guard in this repository has caught work in progress rather than a regression
+months later. That is what they are for.

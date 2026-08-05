@@ -53,6 +53,18 @@ export interface StrategicRecommendation {
     [key: string]: any;
   };
   confidence: number;
+  /** Where this came from, and whether it came from anywhere at all (FS-434).
+   *
+   *  Neither field was declared and the API did not send them, so a recommendation arrived
+   *  as a description, an impact and a confidence with no provenance whatsoever — and the
+   *  demo seeds loaded under ALLOW_DEV_TOKEN carried a `simulationBasis` reading
+   *  "Fleet OEE rollup + maintenance-window scheduler (14 days)" beside 0.88 confidence,
+   *  describing a computation over the reader's own fleet that never happened.
+   *
+   *  `simulated` is optional because a server that predates the field sends nothing, and
+   *  absent must not render as "simulated: false" — that would be the same lie by default. */
+  simulated?: boolean;
+  simulationBasis?: string;
   validUntil: string;
   requiresApproval: boolean;
   status: 'pending' | 'approved' | 'rejected' | 'expired' | 'implemented';

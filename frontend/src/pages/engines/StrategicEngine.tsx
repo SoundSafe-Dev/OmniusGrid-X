@@ -389,6 +389,22 @@ const RecommendationCard: FC<RecommendationCardProps> = ({ rec, onApprove, onRej
 
       <p className="font-medium mb-2">{rec.description}</p>
 
+      {/* THE CAVEAT GOES ABOVE THE NUMBERS, not below them (FS-434). A recommendation that
+          was not computed from this deployment's data carries a confidence and an expected
+          impact that read exactly like a measured one; the only thing distinguishing them
+          is this line, so it has to be seen before the figures are believed. */}
+      {rec.simulated && (
+        <p className="text-xs text-status-warning mb-2">
+          Demo recommendation — not computed from this deployment's data.
+        </p>
+      )}
+
+      {rec.simulationBasis && (
+        <p className="text-xs text-opsgrid-text-secondary mb-2">
+          Basis: {rec.simulationBasis}
+        </p>
+      )}
+
       {rec.assetName && (
         <p className="text-sm text-opsgrid-text-secondary mb-3">Asset: {rec.assetName}</p>
       )}

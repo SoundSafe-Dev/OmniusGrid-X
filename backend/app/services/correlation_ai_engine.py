@@ -38,9 +38,26 @@ class CorrelationAIEngine:
     - Execute AI-recommended commands
     """
     
+    #: What `model_version` says before any model is loaded (FS-434).
+    #:
+    #: It said **"gemma-4-placeholder"**. There is no gemma-4 — the configured base is
+    #: `settings.CORRELATION_BASE_MODEL` and the loaded version reads `<base>+lora`. So the
+    #: default named a model that does not exist, in a version field, on a payload a
+    #: consumer uses to decide how much to trust the analysis, and it reached the logs:
+    #: `correlation_analysis_complete model_version=gemma-4-placeholder`.
+    #:
+    #: `_simulate_analysis` already carries `simulated: True` and a lowered confidence
+    #: (FS-349), so the payload was honest about being a heuristic while this one field
+    #: still claimed a model. A reader filtering logs by `model_version` would have grouped
+    #: heuristic output under a plausible model name.
+    #:
+    #: The replacement is not a nicer placeholder. It states the only true thing available
+    #: before load: no model produced this.
+    NO_MODEL_VERSION = "none (no correlation model loaded)"
+
     def __init__(self):
         self._model_loaded = False
-        self._model_version = "gemma-4-placeholder"
+        self._model_version = self.NO_MODEL_VERSION
         self._tokenizer = None
         self._model = None
     

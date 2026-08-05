@@ -42,6 +42,16 @@ class StrategicRecommendationResponse(BaseModel):
     confidence: float
     valid_until: str
     requires_approval: bool
+    #: FS-434. Neither of these was declared, so the ONLY provenance a strategic
+    #: recommendation carried died at this boundary — the client received a description, an
+    #: expected impact and a confidence with nothing saying where any of it came from.
+    #:
+    #: `simulated` is the falsifiable one. The demo seeds loaded under ALLOW_DEV_TOKEN read
+    #: `simulation_basis="Fleet OEE rollup + maintenance-window scheduler (14 days)"` beside
+    #: `confidence: 0.88`, which describes a computation over the reader's own fleet that
+    #: never happened.
+    simulated: bool = False
+    simulation_basis: str = ""
 
 
 class ModelStatusResponse(BaseModel):
@@ -107,6 +117,8 @@ async def get_strategic_recommendations(min_priority: Optional[int] = None):
             'confidence': r.confidence,
             'valid_until': r.valid_until.isoformat(),
             'requires_approval': r.requires_approval,
+            'simulated': getattr(r, 'simulated', False),
+            'simulation_basis': r.simulation_basis,
         }
         for r in recs
     ]
