@@ -2848,3 +2848,66 @@ appointment actually is.
 Worth noting what caught it: not the three isolated runs, but the full suite — the same
 run that has caught eleven guard violations. Running the whole thing before every commit is
 not a formality.
+
+## FS-438 — a guard for dead blocks, and the version of it that would not have worked
+
+FS-437's shape generalises: **a conditional gated on a field nobody sends is a permanent
+`false`, and everything inside it disappears.** Worth a sweep, since it had just cost a
+completed feature.
+
+Measured: 25 gates on a field with no wire producer — **22 of them React Query state**
+(`isError`, `isPending`, `isFetching`) read off a hook result rather than a payload. Of the
+three real ones, all three are correct:
+
+* `{zone.vehiclesInside && …}` — added deliberately, under a comment saying the panel used
+  to render an unconditional `{n} vehicles inside` and every zone reported **0**, *"a count,
+  which reads as a measurement, not as a blank"*.
+* `{vehicle.tripInfo && …}` — the block shows only `tripInfo.destination`.
+* `{selectedCommand.requiresParam && …}` — a client-side constant on a locally-declared
+  array, not a wire field at all.
+
+**So the rule is narrower than "do not gate on an unsent field".** Gating on an absent field
+to hide a fabricated zero is right. The defect is the other shape: an absent field standing
+in front of one that **does** arrive.
+
+### Three detectors, and the third is the only sound one
+
+* **A fixed 700-character window** past the `&&` reported all three legitimate gates as
+  defects: it ran off the end of a four-line block, picked up the `name` of the next
+  element and `target`/`value` from a handler below it. A window cannot work — a gated block
+  is one line here and forty there, and over-reading *attributes fields to a block that does
+  not contain them*, which is exactly the claim being made. Replaced with brace balancing.
+* **Any field read inside the block** still counted `vehicle.tripInfo.destination` — a
+  sub-field of the absent thing, not a sibling being hidden. Narrowed to fields read on the
+  **same object** as the gate, which is precisely the FS-437 shape.
+* **The global wire vocabulary was the wrong instrument**, and this is the one that matters:
+  with the yard fix reverted, the guard still passed. `driverName` is sent by
+  `fleet_health.py:480`, so it stays in the 8,229-name vocabulary no matter what the yard
+  does. **The guard written to catch FS-437 would not have caught FS-437.**
+
+Found by reverting the fix and running it — not by reading it. The same collision that
+motivated the per-type sweep one commit earlier had reappeared inside the guard built to
+complement it.
+
+Now judged per type, and soundly: a gate is examined only when the gating field **and** a
+field read inside the block are both declared on one paired interface. Two names co-occurring
+on a single interface is evidence of the object's type; requiring the pair is what makes it
+evidence rather than a guess. With the yard fix reverted it now reports:
+
+    pages/logistics/YardManagement.tsx: {trailer.driverName && …} — on `DockAppointment`,
+    `YardTrailer`, `driverName` has no producer, so this block never renders, and it stands
+    in front of ['driverPhone'], which the server does send
+
+It names **both** interfaces declaring that pair rather than picking one. The sweep does not
+resolve the object's type, so it must not claim to — reporting `DockAppointment` alone would
+have sent a reader to the wrong file about a gate on a trailer.
+
+### And a process note
+
+The scratchpad copies used for mutation testing were gone at the start of this session, so a
+`cp` restore failed silently and left `yard.py` mutated while the tests reported green. Caught
+by `git status`, not by the suite — the mutation was a *removal*, and the guard that would
+have objected was the one being tested.
+
+`git restore` is the correct tool once the work is committed, and it cannot fail into a
+half-restored state the way a copy can.
