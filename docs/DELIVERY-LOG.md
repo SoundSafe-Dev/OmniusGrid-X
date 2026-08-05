@@ -3459,3 +3459,18 @@ nothing.
 
 **20 e2e passed, 0 skipped.** Both assertions this week's fixes were written for now execute
 against a live stack, and the two screens they are about show what they were always sending.
+
+### And the nine route checks could have passed on an empty page
+
+`no field renders as undefined on /x` is **trivially true of an error page, an empty state,
+or a shell that never resolved** — so it passes hardest exactly when the page is most broken.
+That is the same vacuity shape every sweep in this repository has a rule about, in a test
+written two days after writing that rule down.
+
+Measured across the nine routes first, rather than guessed: 134 to 1,414 characters of main
+content. The floor is 80 — comfortably below the thinnest real page, far above a spinner —
+plus an assertion that no error state is showing. Verified by raising the floor to 99,999
+and watching `/fleet` fail with `rendered 335 characters`.
+
+All nine render real data against the seeded stack, so the checks were not vacuous *today*.
+The point is that nothing was stopping them from becoming so.

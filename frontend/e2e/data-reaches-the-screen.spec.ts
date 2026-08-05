@@ -186,6 +186,23 @@ test.describe('data reaches the screen', () => {
       await expect(page.locator('main, body')).not.toBeEmpty({ timeout: 20_000 })
       await page.waitForLoadState('networkidle').catch(() => {})
 
+      // NOT VACUOUS. "contains no `undefined`" is trivially true of an error page, an empty
+      // state, or a shell that never resolved — so this assertion needs the page to have
+      // rendered something first, or it passes hardest exactly when the page is most
+      // broken. Measured across these nine routes: 134 to 1,414 characters of main content,
+      // so 80 is comfortably below the thinnest real page and far above a spinner.
+      const main = await page.locator('main').innerText().catch(() => '')
+      expect(
+        main.length,
+        `${route} rendered ${main.length} characters of main content. The undefined check ` +
+          `below passes on an empty page, so a route that fails to load would look clean`,
+      ).toBeGreaterThan(80)
+      expect(
+        main,
+        `${route} is showing an error state, so the undefined check below is not testing ` +
+          `a rendered page`,
+      ).not.toMatch(/failed to load|could not load|something went wrong/i)
+
       const body = await page.locator('body').innerText()
       const match = body.match(NOT_ARRIVED)
       expect(
