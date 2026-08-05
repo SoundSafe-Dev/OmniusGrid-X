@@ -57,7 +57,7 @@ from tests._route_tree import http_routes
 #:
 #: LOWER THIS as endpoints are fixed WITH their consumers; never raise it. A new capped
 #: bare-array endpoint must either signal truncation or return an envelope carrying a total.
-MAX_UNSIGNALLED = 11
+MAX_UNSIGNALLED = 5
 
 #: Files another dev owns. Counted, because the number is about the API's surface rather
 #: than about who fixes it — but named so a failure says whose lane it is in.
@@ -179,3 +179,54 @@ class TestTheDebtIsAttributed:
             "no cross-lane entries found; if they were fixed, lower MAX_UNSIGNALLED and "
             "update this note rather than leaving a stale claim about other people's work"
         )
+
+
+class TestTheSignalCanActuallyBeSent:
+    """`mark_truncated(response, ...)` needs a `response` parameter, and nothing said so.
+
+    Three handlers were edited to signal truncation and shipped a bare `NameError` — a 500
+    on every call, on `/notifications/log`, `/health-index` and `/assets/{id}/commands`
+    (FS-456). It was mine: a rewrite added the call to nine handlers and the parameter to
+    six.
+
+    Nothing caught it at edit time. `import app.main` succeeds, because the name is resolved
+    when the line RUNS, not when the module loads; the type checker is not run on this
+    package; and the unit tests for these routers use mocked sessions that never reach the
+    line. Only a real request against a real database found it, which is the slowest and
+    most expensive place to learn about a typo.
+
+    So: an AST check, in the file that owns the truncation-signal rule. It costs milliseconds
+    and it fires on the edit rather than three test suites later.
+    """
+
+    def test_every_handler_that_signals_truncation_can_reach_a_response(self):
+        import ast
+        from pathlib import Path
+
+        api_dir = Path(__file__).resolve().parent.parent / "app" / "api"
+        broken = []
+        paths = sorted(api_dir.glob("*.py"))
+        assert len(paths) > 20, f"only {len(paths)} api modules found; the glob is wrong"
+        for path in paths:
+            for node in ast.walk(ast.parse(path.read_text())):
+                if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                calls = [
+                    n for n in ast.walk(node)
+                    if isinstance(n, ast.Call)
+                    and isinstance(n.func, ast.Name)
+                    and n.func.id == "mark_truncated"
+                ]
+                if not calls:
+                    continue
+                names = {a.arg for a in node.args.args + node.args.kwonlyargs}
+                if "response" not in names:
+                    broken.append(f"{path.name}:{node.lineno} {node.name}")
+
+        assert not broken, (
+            "these handlers call mark_truncated(response, ...) and take no `response` "
+            "parameter, so every request raises NameError and answers 500:\n  "
+            + "\n  ".join(broken)
+            + "\nAdd `response: Response` to the signature (FastAPI injects it)."
+        )
+

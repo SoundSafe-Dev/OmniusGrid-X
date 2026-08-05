@@ -2,7 +2,8 @@
 
 from typing import Optional, Dict, Any, List
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, Query
+from app.core.pagination import mark_truncated
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -189,6 +190,7 @@ async def cancel_command(
 @router.get("/asset/{asset_id}", response_model=List[CommandResponse])
 async def get_asset_commands(
     asset_id: UUID,
+    response: Response,
     status: Optional[str] = None,
     limit: int = Query(50, ge=1, description="Maximum rows to return."),
     current_user = Depends(get_current_active_user),
@@ -211,10 +213,13 @@ async def get_asset_commands(
     if status:
         query = query.where(Command.status == status)
     
-    query = query.order_by(Command.issued_at.desc()).limit(limit)
+    query = query.order_by(Command.issued_at.desc()).limit(limit + 1)
     
     result = await db.execute(query)
     commands = result.scalars().all()
+    # SAYS WHEN IT CAPPED (FS-455): a bare array of exactly `limit` rows is
+    # indistinguishable from the complete set.
+    commands = mark_truncated(response, commands, limit)
     
     return [
         {

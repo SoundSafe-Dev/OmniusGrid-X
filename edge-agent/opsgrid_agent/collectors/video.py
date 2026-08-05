@@ -85,6 +85,7 @@ class VideoFrameCollector(BaseCollector):
     # Defaults to a synthetic source -> BaseCollector enforces explicit config
     # under EDGE_REQUIRE_EXPLICIT_SOURCES (no silent demo frames).
     has_synthetic_default = True
+    known_sources = ("stream", "simulate")
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
@@ -127,8 +128,11 @@ class VideoFrameCollector(BaseCollector):
                 pass
         logger.info("video_collector_stopped", asset_id=self.asset_id)
 
-    def _grab_frame(self) -> Optional["np.ndarray"]:
-        """Blocking frame grab (runs in a worker thread)."""
+    def _grab_frame(self) -> 'tuple[Optional["np.ndarray"], bool]':
+        """Blocking frame grab (runs in a worker thread).
+
+        Returns (frame, synthetic) — see AudioFeatureCollector._capture (FS-457).
+        """
         if self.source == "stream":  # pragma: no cover - needs a live stream
             if self._capture is None:
                 self._capture = _cv2.VideoCapture(self.stream_url)  # type: ignore[union-attr]
@@ -139,23 +143,30 @@ class VideoFrameCollector(BaseCollector):
                     self._capture.release()
                 finally:
                     self._capture = None
-                return None
-            return frame
-        return synthesize_frame(self._tick)
+                return None, False
+            return frame, False
+        return synthesize_frame(self._tick), True
 
     async def _poll_loop(self) -> None:
         while self._running:
             try:
-                frame = await asyncio.to_thread(self._grab_frame)
+                frame, synthetic = await asyncio.to_thread(self._grab_frame)
                 if frame is not None:
                     metrics = extract_frame_metrics(frame, self._prev_frame)
                     self._prev_frame = frame
                     self._frames_analyzed += 1
                     self._tick += 1
                     payload = {**metrics, "frames_analyzed": self._frames_analyzed}
-                    if self.source == "simulate":
-                        # Stamp synthetic data so it can never masquerade as a
-                        # real camera downstream.
+                    if synthetic:
+                        # Stamp synthetic data so it can never masquerade as a real
+                        # camera downstream.
+                        #
+                        # FROM `_grab_frame`, not from `self.source` (FS-457). The old
+                        # condition stamped only on the exact string "simulate" while the
+                        # grab synthesized on anything that was not "stream" — so
+                        # `source: "rtsp"` or `source: "camera"` emitted a synthetic frame,
+                        # a motion score and a brightness reading indistinguishable from a
+                        # real camera's.
                         payload["simulated"] = True
                     await self.emit({
                         "asset_id": self.asset_id,

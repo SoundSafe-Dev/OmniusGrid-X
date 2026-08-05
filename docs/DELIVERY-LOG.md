@@ -3672,3 +3672,87 @@ Same shape as rule 72 (a `kill` that did not take) and as the `docker compose bu
 "succeeded" because it was piped to `tail`: **a step that is not asked whether it succeeded
 will not volunteer that it failed.** Edits now go one at a time, and the guard above means a
 lost one fails a test rather than sitting in a document.
+
+---
+
+## 2026-08-05 — FS-456/457/458: the truncation flag closed end to end, and the edge agent
+
+### The open decision that was three layers deep
+
+Decision #1 in the register read: the PDF parser caps each page at 20,000 characters and says
+nothing. Closing it turned out to need three changes, and only the first was the one written
+down.
+
+The parser now reports `text_truncated` and `text_chars_dropped`. Then
+`POST /nlp/correlation/intake/analyze` — which had been sending a `truncated` flag for dropped
+PAGES all along — gained `pages_text_truncated` beside it. Then the intake panel, which had
+been receiving that page flag and rendering a risk score next to it without comment, gained a
+notice.
+
+**Layers 2 and 3 were found by fixing layer 1, not by reading.** An open decision's scope is a
+guess until someone starts closing it, which is an argument for closing them rather than
+re-describing them.
+
+### A self-inflicted 500 on three endpoints
+
+The same session's edit added `mark_truncated(response, ...)` to nine handlers and the
+`response` parameter to six. `/notifications/log`, `/health-index` and `/assets/{id}/commands`
+answered 500 on every call.
+
+Nothing caught it at edit time: `import app.main` succeeds because the name resolves when the
+line RUNS; the unit tests for those routers use mocked sessions that never reach the line. A
+real request against a real database found it, which is the slowest place to learn about a
+typo. Now an AST check in `test_capped_lists_cannot_grow.py` costing milliseconds.
+
+### The edge agent — 14,349 lines, previously unexamined
+
+Two findings, both in the class this repository already had a name for.
+
+**Synthetic sensor data that could ship unstamped.** The audio and video collectors fabricate
+readings when hardware is absent and stamp `simulated: True` so the platform can tell an
+invented number from a measured one. But the capture synthesized on `source != "device"` while
+the stamp fired on `source == "simulate"` — not complements. `source: "mic"` or `"rtsp"`, or
+any typo, produced fabricated RMS, peak frequency, brightness and motion scores arriving
+against a real asset and indistinguishable from a real sensor's. Both collectors, same shape.
+The existing `EDGE_REQUIRE_EXPLICIT_SOURCES` guard could not help: it catches an *omitted*
+source, and these were present and wrong.
+
+Fixed by returning the fact instead of re-deriving it — `_capture()` answers
+`(samples, synthetic)` — and by refusing a source the collector does not know.
+
+**The buffer loss nobody could see.** Store-and-forward loses undelivered telemetry three
+ways. Dead-lettering and size-pruning each increment a counter and warn. Retention expiry only
+logged, at INFO — and expiry is the one that happens when the device has been unable to reach
+the cloud for longer than the retention window. The buffer's whole purpose, failing, recorded
+only on the box that cannot ship logs. The operator's view of a week-long outage was a pending
+gauge that stops rising.
+
+Both halves shipped: the counter, and a HIGH-severity `EdgeBufferExpiring` rule. A counter
+with no alert is a time series nobody looks at — invisible for a different reason than the
+log line it replaced, while looking on the dashboard like it was handled. The guard asserts
+the pairing, so a fourth loss counter cannot ship without a rule.
+
+### The guard that passed with the fix deleted
+
+The first version of the buffer-loss guard searched 400 characters after each call for
+`metrics.record_`. It passed with the fix mutated out, because the window reached down into
+the *next* loss path's counter — green whether or not the defect was present, while also
+being a claim that someone had checked.
+
+Caught by mutating the fix out, which is the step that is easiest to skip when a test passes
+on the first run. Rewritten to bind the assigned variable and follow it, which also catches
+the subtler mutation: a counter present but reading the wrong variable. Rule 84.
+
+### One failure recorded as unexplained
+
+A full-suite run reported `test_backup_restore_drill.py::test_dump_restores_into_an_empty_database`
+failing. It passed in isolation and passed on a full re-run, and the traceback was gone —
+the run had been piped through `tail`, which keeps the summary line and discards the
+diagnosis. Same shape as the `docker compose build | tail` that "succeeded" while failing on
+`No space left on device`.
+
+Written down rather than dismissed. A failure seen once and not reproduced is still a fact
+about the suite, and calling it flaky is how a real order-dependency becomes folklore. Rule 85.
+
+**Suite:** 3445 passed, 100 skipped (backend) · 201 passed (edge agent).
+

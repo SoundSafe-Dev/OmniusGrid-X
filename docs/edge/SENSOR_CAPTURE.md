@@ -22,6 +22,13 @@ Set that on the asset (`PUT /api/v1/assets/{id}` → `media_config:
 Readings from simulate mode are stamped `simulated: true` in telemetry
 metadata, so dashboards can tell demo data from real.
 
+**The stamp comes from the capture itself, not from the config** (FS-457). It used to be
+decided by re-reading `source == "simulate"` one method away from the code that synthesized,
+which fabricated on `source != "device"` — so any *other* value emitted synthetic readings
+with no stamp. A misspelled source is now a startup error, not a silent switch to demo data:
+`audio` accepts `device` or `simulate`, `video` accepts `stream` or `simulate`, and anything
+else refuses to start naming what you typed.
+
 ## Audio (`collector_type: audio`)
 
 ```yaml
@@ -77,3 +84,7 @@ Host requirements for `source: device`:
 `EDGE_REQUIRE_EXPLICIT_SOURCES=true` (recommended in production since
 Sprint D) makes the agent refuse to start collectors whose `source` was
 omitted — a config that silently fell back to synthetic data now fails loudly.
+
+That flag covers an **omitted** source. A source that is present and misspelled is rejected
+unconditionally, with or without the flag, because there is no posture in which `source:
+"mic"` should quietly mean "synthesize a tone".

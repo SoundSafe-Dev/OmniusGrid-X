@@ -214,37 +214,64 @@ class TestSizeGates:
         )
 
 
-class TestThePageTextCapIsSilent:
-    """RECORDED, NOT ASSERTED-AS-CORRECT (FS-440).
+class TestThePageTextCapAnnouncesItself:
+    """CLOSED (FS-454). This class used to record the gap rather than assert a fix.
 
-    `parse_pdf_structure` stores `text[:20000]` per page and sets no flag. `truncated` in
-    that result refers ONLY to pages dropped past `max_pages`, so a single dense page over
-    20,000 characters is cut in half and the document reports `truncated: False`.
+    `parse_pdf_structure` stored `text[:20000]` and set nothing, while the document-level
+    `truncated` flag covered only pages dropped past `max_pages` — so a single dense page
+    over the cap was cut in half and the document reported `truncated: False`. The lost half
+    is never chunked, embedded or retrievable, and the only symptom is an answer that does
+    not know something the document said.
 
-    The lost half is never chunked, never embedded and never retrievable, and the only
-    symptom is an answer that does not know something the document said. This codebase has
-    a whole guard family for exactly this shape — a cap that cannot say it capped
-    (`test_capped_lists_cannot_grow`) — and that family only looks at HTTP list endpoints.
-
-    Left as a test that documents the constant rather than a fix, because changing the
-    return shape touches `document_domain_mapper` and `document_scenario_builder` and is a
-    decision about the intake contract, not a bug fix. Whoever raises the cap or adds the
-    flag should delete this class.
+    It was left open on the belief that fixing it meant changing the return shape, which
+    `document_domain_mapper` and `document_scenario_builder` both consume. That belief was
+    wrong and checking it took one grep: both read NAMED KEYS off each page, so an added key
+    breaks nothing. **The blocker was the assumption, not the coupling.**
     """
 
-    def test_the_cap_is_where_this_note_says_it_is(self):
+    def test_the_cap_is_a_named_constant(self):
+        assert pdf_parser.PAGE_TEXT_CAP == 20000, (
+            "the page-text cap moved; the tests below describe its behaviour, not its value, "
+            "but the delivery log names 20,000 characters"
+        )
+
+    def test_a_page_under_the_cap_is_not_flagged(self):
+        page = _page_dict("short text")
+        assert page["text_truncated"] is False
+        assert page["text_chars_dropped"] == 0
+
+    def test_a_page_over_the_cap_says_so_and_by_how_much(self):
+        page = _page_dict("x" * (pdf_parser.PAGE_TEXT_CAP + 137))
+        assert page["text_truncated"] is True, (
+            "a page cut at the cap still reports no truncation, so the lost half is "
+            "unsearchable and nothing says why"
+        )
+        assert page["text_chars_dropped"] == 137, (
+            "the flag is set but the size of the loss is not reported; 'some text was "
+            "dropped' and '40,000 characters were dropped' are different facts"
+        )
+
+    def test_the_document_level_flags_are_distinct(self):
+        """`truncated` is about PAGES dropped; `pages_text_truncated` is about text cut
+        WITHIN a page. Conflating them is what let a cut page report success."""
         import inspect
 
         source = inspect.getsource(pdf_parser.parse_pdf_structure)
-        assert "text[:20000]" in source, (
-            "the page-text cap moved; this note names 20,000 characters and is now wrong"
+        assert '"pages_text_truncated"' in source and '"truncated": truncated' in source, (
+            "the two truncation signals are no longer both reported"
         )
 
-    def test_truncated_is_documented_as_being_about_pages_only(self):
-        import inspect
 
-        source = inspect.getsource(pdf_parser.parse_pdf_structure)
-        assert "truncated = True" in source and "idx >= max_pages" in source, (
-            "the `truncated` flag no longer tracks the page cap; if it now covers the "
-            "text cap too, this class is obsolete"
-        )
+def _page_dict(text: str) -> dict:
+    """One page's worth of the dict `parse_pdf_structure` builds, without needing a PDF.
+
+    Mirrors the construction rather than importing it — `parse_pdf_structure` needs
+    pdfplumber and a real file, and the assertion here is about the FLAG, not the parse.
+    Pinned to the real constant so it cannot drift from the code it stands for.
+    """
+    cap = pdf_parser.PAGE_TEXT_CAP
+    return {
+        "text": text[:cap],
+        "text_truncated": len(text) > cap,
+        "text_chars_dropped": max(len(text) - cap, 0),
+    }

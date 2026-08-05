@@ -1615,6 +1615,12 @@ async def _analyze_document_item(
         "document_type": structure.get("subtype"),
         f"{unit}_count": count,
         "truncated": structure.get("truncated", False),
+        # The PAGE cap and the per-page TEXT cap are two different amputations, and this
+        # response reported only the first (FS-456). An analysis built from the first 20k
+        # characters of a 90k-character page is not wrong, it is partial — and partial with
+        # a confident risk score attached is the shape this repository keeps finding.
+        "pages_text_truncated": structure.get("pages_text_truncated", 0),
+        "text_chars_dropped": structure.get("text_chars_dropped", 0),
         "section_domain_mapping": mapping.to_dict(),
         "scenarios_analyzed": agg["scenario_count"],
         "cross_domain_links": agg["cross_links"],

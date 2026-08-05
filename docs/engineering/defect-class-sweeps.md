@@ -26,7 +26,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The sixty-seven numbered classes
+## The sixty-nine numbered classes
 
 **The count is the numbering, and it was already stale before this line was corrected.**
 This heading read "forty-seven" while the document's own highest class was 60 — the summary
@@ -2487,6 +2487,31 @@ one of its findings. The habit that catches it:
    right. Every number in `open-decisions.md` was correct when audited and every one was
    unasserted — "correct today with nothing keeping it correct" is what every ratchet here
    exists to prevent, applied to prose.
+
+81. **A provenance stamp derived from config is a second guess at a decision already made.**
+    The capture knows whether it fabricated; the stamp must come from the capture, not from
+    re-reading the same setting one method away. Two conditions that "obviously" complement
+    each other — `== "device"` and `== "simulate"` — do not, and everything between them
+    fabricates unlabelled.
+
+82. **A fallback is a decision. Make an unrecognised value an error.**
+    "Not the hardware value, therefore simulate" turns a typo into a silent change of what
+    the system measures. A collector that cannot honour its config should refuse to start.
+
+83. **The loss that only happens during an outage cannot be reported only in logs.**
+    An edge device deletes buffered telemetry precisely when it has been unable to reach the
+    network — so the log line recording it is on the one box that cannot ship logs. Losses
+    need counters, and the loss whose cause is an outage needs one most.
+
+84. **A guard whose window can reach a neighbour's evidence proves nothing.**
+    A proximity search for "is there a counter near this call" passed with the fix deleted,
+    because the window reached the next call's counter. Bind the variable and follow it.
+    Found only by mutating the fix out — which is why that step is not optional.
+
+85. **`| tail` on a test run discards the diagnosis of whatever it reports.**
+    A summary line names the failure; the traceback explains it. Piping to `tail` keeps the
+    first and throws away the second, so an intermittent that appears once is unreproducible
+    by the time you read about it. Write the run to a file and tail the file.
 
 ---
 
@@ -5203,3 +5228,118 @@ prevent, applied to prose instead of code.
 prose, not the reasoning, not whether an entry still deserves to be open. It also requires
 every entry to name the test that pins it, because **an entry with no pin is a note, and
 notes are what that document replaced.**
+
+---
+
+## Class 68 — a provenance stamp decided somewhere other than where the data was made
+
+**Where:** `edge-agent/opsgrid_agent/collectors/audio.py`, `video.py` (FS-457)
+
+Two edge collectors fabricate readings when hardware is absent, and stamp `simulated: True`
+so the platform can tell an invented number from a measured one. The stamp is the entire
+safety property — an agent reporting invented vibration as fact is worse than one reporting
+nothing, because nothing is visibly nothing.
+
+The capture synthesized on one condition:
+
+```python
+if self.source == "device":
+    ...record from the microphone...
+return synthesize_frame(...)          # everything else
+```
+
+and the stamp fired on another, a method away:
+
+```python
+if self.source == "simulate":
+    features["simulated"] = True
+```
+
+**Those are not complements.** `source: "mic"`, `"alsa"`, `"rtsp"`, `"camera"` — any typo, any
+plausible-looking alternative — took the synthesis branch and missed the stamp. Fabricated
+audio RMS, peak frequency, brightness and motion score, arriving in the platform indexed
+against a real asset and indistinguishable from a real sensor's.
+
+Both collectors had it, in the same shape. The existing `EDGE_REQUIRE_EXPLICIT_SOURCES` guard
+did not help: it catches an OMITTED source, and these sources were present and wrong.
+
+**Fixed** by returning the fact rather than re-deriving it — `_capture()` and `_grab_frame()`
+now answer `(data, synthetic)` — and by rejecting a source the collector does not know, so a
+typo stops the agent instead of quietly changing what it measures. Pinned by
+`edge-agent/tests/test_synthetic_data_is_always_stamped.py`, which asserts the SHAPE (no
+provenance stamp assigned inside a branch on `self.source`) rather than the two instances.
+
+## Class 69 — the loss that only occurs during an outage, reported only to the outage
+
+**Where:** `edge-agent/opsgrid_agent/buffer/store_forward.py` (FS-458)
+
+The store-and-forward buffer loses undelivered telemetry three ways. Two of them increment a
+Prometheus counter and log a warning. The third — deletion for passing the retention window —
+returned its count faithfully and the caller only logged it, at INFO.
+
+That third one is the one that matters. Dead-lettering and size-pruning happen on a healthy
+device under load. Expiry happens when the device has been **unable to reach the cloud for
+longer than the retention window**: the buffer's whole reason for existing, failing. Its only
+trace was a log line on a box that by construction cannot ship logs.
+
+The operator's view of a week-long outage was a pending-messages gauge that stops rising.
+Nothing distinguished "holding steady" from "deleting the oldest hour, every hour."
+
+**Fixed** with `edge_buffer_expired_total`, wired at the call site, and the log raised to
+warning to match its two siblings. Pinned by
+`edge-agent/tests/test_every_buffer_loss_is_counted.py`, which walks the file for methods
+that `DELETE FROM messages` and requires each to have a counter reading its return value.
+
+**And an alert, because the counter is only half of it.** Both sibling counters already had
+a Prometheus rule; a third that was scraped and unwatched would be exactly as unnoticed as
+the log line it replaced, while looking on the dashboard like it had been handled. The new
+`EdgeBufferExpiring` rule is HIGH rather than the size cap's MEDIUM, because of what causes
+it: the size cap trips on a busy device, expiry trips on a device that has been cut off long
+enough to start losing what it buffered. The guard asserts the pairing, so a fourth loss
+counter cannot ship without a rule.
+
+## Rule 81 — a provenance stamp derived from config is a second guess
+
+Class 68. The function that fabricated the data knows it fabricated the data. Ask it.
+
+## Rule 82 — a fallback is a decision; make an unrecognised value an error
+
+Class 68. `else: simulate` converts a typo into a silent change of what the system measures.
+
+## Rule 83 — the loss that only happens during an outage cannot be reported only in logs
+
+Class 69. Losses need counters. The loss whose cause is an outage needs one most.
+
+## Rule 84 — a guard whose window can reach a neighbour's evidence proves nothing
+
+The first version of the Class 69 guard searched 400 characters after each buffer call for
+`metrics.record_`. It passed with the fix deleted, because the window reached down into the
+NEXT loss path's counter. A guard that is green whether or not the defect is present is worse
+than no guard, because it is also a claim that someone checked.
+
+Caught by mutating the fix out and watching the test stay green — the step that is easy to
+skip when a test passes on the first run, and the only thing that distinguishes a guard from
+a decoration. The rewrite binds the assigned variable and follows it to the counter, which
+also catches the subtler mutation: a counter present but reading the wrong variable.
+
+## Rule 85 — `| tail` on a test run discards the diagnosis of whatever it reports
+
+The second time this cost something in one week. Earlier it was `docker compose build | tail`,
+where the shell reported **tail's** exit code and a build that failed on `No space left on
+device` read as a success.
+
+Here it was `pytest ... | tail -6`. The run reported one failure —
+`test_backup_restore_drill.py::test_dump_restores_into_an_empty_database` — and the traceback
+that would have explained it had already been thrown away. The test passed in isolation and
+passed on a full re-run, so it is an intermittent, and the one observation that could have
+diagnosed it is gone.
+
+**Recorded as unexplained rather than quietly dropped.** A failure seen once and not
+reproduced is still a fact about the suite; calling it "flaky" and moving on is how a real
+order-dependency becomes folklore. What is known: it dumps and restores the shared
+`omniusgrid_test` database and compares row counts, so anything writing to that database
+between its snapshot and its `pg_dump` would produce exactly this.
+
+Redirect to a file and read the file. The cost is one path; the alternative is running the
+whole suite again to see what you already saw.
+

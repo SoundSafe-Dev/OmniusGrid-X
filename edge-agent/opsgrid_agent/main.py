@@ -368,6 +368,7 @@ class EdgeAgent:
             try:
                 # Clean old messages past the retention window.
                 deleted = await self.buffer.cleanup_old_messages()
+                metrics.record_expired(deleted)
                 if deleted > 0:
                     logger.info("cleanup_completed", deleted_messages=deleted)
 

@@ -2,7 +2,8 @@
 
 from typing import Any, Dict, List
 
-from fastapi import APIRouter, Depends, Query
+from app.core.pagination import mark_truncated
+from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel
 from sqlalchemy import select
 
@@ -37,6 +38,7 @@ async def get_asset_health(
 
 @router.get("", response_model=List[HealthResponse])
 async def list_asset_health(
+    response: Response,
     hours: int = Query(default=24, ge=1, le=168),
     limit: int = Query(default=100, ge=1, le=500),
     current_user=Depends(get_current_active_user),
@@ -69,7 +71,10 @@ async def list_asset_health(
     stmt = select(Asset).order_by(Asset.name)
     if org_id is not None:
         stmt = stmt.where(Asset.organization_id == org_id)
-    rows = (await db.execute(stmt.limit(limit))).scalars().all()
+    rows = (await db.execute(stmt.limit(limit + 1))).scalars().all()
+    # SAYS WHEN IT CAPPED (FS-455): a bare array of exactly `limit` rows is
+    # indistinguishable from the complete set.
+    rows = mark_truncated(response, rows, limit)
 
     results = []
     for asset in rows:

@@ -27,6 +27,10 @@ DEFAULT_MAX_PAGES = 100
 DEFAULT_MAX_SECTIONS_PER_PAGE = 20
 # Heuristic: text whose font size exceeds (body_size * HEADER_SIZE_RATIO) is a header.
 HEADER_SIZE_RATIO = 1.15
+#: Per-page text cap. Bounded to keep one pathological page from dominating memory, but a
+#: cap that cannot say it capped is the defect class this repository has a guard family for
+#: — see `text_truncated` on each page and `pages_text_truncated` on the result.
+PAGE_TEXT_CAP = 20000
 
 
 def estimate_processing_seconds(page_count: int) -> float:
@@ -147,11 +151,27 @@ def parse_pdf_structure(
             except Exception:
                 pass
             page_keys = extract_keys_from_text(text)
+            # THE CAP NOW SAYS IT CAPPED (FS-454). This was `text[:20000]` with no signal,
+            # and the document-level `truncated` flag covers only pages dropped past
+            # `max_pages` — so a single dense page over the cap was cut in half and the
+            # document reported `truncated: False`. The lost half is never chunked, never
+            # embedded and never retrievable, and the only symptom is an answer that does
+            # not know something the document said.
+            #
+            # An ADDED KEY rather than a changed shape: `document_domain_mapper` and
+            # `document_scenario_builder` both read named keys off each page
+            # (`structure.get("pages")` then `page["text"]`), so nothing iterates the dict
+            # and nothing breaks. That is what made this a fix rather than a contract
+            # decision — the blocker recorded in open-decisions.md assumed the shape had to
+            # change.
+            page_text = text[:PAGE_TEXT_CAP]
             pages.append({
                 "page_num": idx + 1,
                 "headers": headers,
                 "tables": tables,
-                "text": text[:20000],  # cap stored text per page
+                "text": page_text,
+                "text_truncated": len(text) > PAGE_TEXT_CAP,
+                "text_chars_dropped": max(len(text) - PAGE_TEXT_CAP, 0),
                 "shared_keys": page_keys,
             })
 
@@ -170,7 +190,11 @@ def parse_pdf_structure(
         "document_metadata": document_metadata,
         "page_count": page_count,
         "pages_parsed": len(pages),
+        #: Pages DROPPED past `max_pages`. Distinct from `pages_text_truncated` below, and
+        #: the confusion between the two is what let a cut page report success.
         "truncated": truncated,
+        "pages_text_truncated": sum(1 for p in pages if p["text_truncated"]),
+        "text_chars_dropped": sum(p["text_chars_dropped"] for p in pages),
         "pages": pages,
         "tables": all_tables,
         "shared_keys": shared_keys,

@@ -3,14 +3,14 @@ Actionable Registries API
 Endpoints for managing actionable registries (compliance and operational)
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_
 from typing import List, Optional
 from datetime import datetime, timedelta, timezone
 import uuid
 
-from app.core.pagination import MAX_OFFSET
+from app.core.pagination import MAX_OFFSET, mark_truncated
 from app.db.models import (
     ActionableRegistry,
     ActionableRegistryItem,
@@ -40,6 +40,7 @@ router = APIRouter(prefix="/api/v1/registries", tags=["registries"])
 
 @router.get("", response_model=List[ActionableRegistryResponse])
 async def get_registries(
+    response: Response,
     registry_type: Optional[str] = None,
     is_compliance: Optional[bool] = None,
     is_active: Optional[bool] = None,
@@ -62,11 +63,13 @@ async def get_registries(
     if is_active is not None:
         query = query.where(ActionableRegistry.is_active == is_active)
     
-    query = query.offset(skip).limit(limit)
+    query = query.offset(skip).limit(limit + 1)
     result = await db.execute(query)
-    registries = result.scalars().all()
-    
-    return registries
+    # SAYS WHEN IT CAPPED (FS-455). A bare-array endpoint returning exactly `limit`
+    # rows is indistinguishable from one returning the complete set, so a page reads
+    # as the whole list. `mark_truncated` selects one extra row and sets the header
+    # when it comes back — one row instead of a COUNT over the table.
+    return mark_truncated(response, result.scalars().all(), limit)
 
 
 @router.get("/{registry_id}", response_model=ActionableRegistryResponse)
@@ -171,6 +174,7 @@ async def delete_registry(
 
 @router.get("/{registry_id}/items", response_model=List[ActionableRegistryItemResponse])
 async def get_registry_items(
+    response: Response,
     registry_id: uuid.UUID,
     is_active: Optional[bool] = None,
     skip: int = Query(0, ge=0, le=MAX_OFFSET),
@@ -202,11 +206,10 @@ async def get_registry_items(
     if is_active is not None:
         query = query.where(ActionableRegistryItem.is_active == is_active)
     
-    query = query.offset(skip).limit(limit)
+    query = query.offset(skip).limit(limit + 1)
     result = await db.execute(query)
-    items = result.scalars().all()
-    
-    return items
+    # SAYS WHEN IT CAPPED (FS-455) — see `get_registries` above.
+    return mark_truncated(response, result.scalars().all(), limit)
 
 
 @router.post("/{registry_id}/items", response_model=ActionableRegistryItemResponse, status_code=201, dependencies=[Depends(require_admin)])
@@ -302,6 +305,7 @@ async def delete_registry_item(
 
 @router.get("/correlations", response_model=List[DataCorrelationResponse])
 async def get_correlations(
+    response: Response,
     correlation_type: Optional[str] = None,
     source_type: Optional[str] = None,
     target_type: Optional[str] = None,
@@ -327,11 +331,10 @@ async def get_correlations(
     if is_active is not None:
         query = query.where(DataCorrelation.is_active == is_active)
     
-    query = query.offset(skip).limit(limit)
+    query = query.offset(skip).limit(limit + 1)
     result = await db.execute(query)
-    correlations = result.scalars().all()
-    
-    return correlations
+    # SAYS WHEN IT CAPPED (FS-455) — see `get_registries` above.
+    return mark_truncated(response, result.scalars().all(), limit)
 
 
 @router.post("/correlations", response_model=DataCorrelationResponse, status_code=201, dependencies=[Depends(require_admin)])

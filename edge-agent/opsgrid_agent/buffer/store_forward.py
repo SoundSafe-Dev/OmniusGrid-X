@@ -370,7 +370,11 @@ class StoreForwardBuffer:
                     deleted = cursor.rowcount
                 
                 if deleted > 0:
-                    logger.info(
+                    # WARNING, not info (FS-458). Rows in `messages` are UNDELIVERED —
+                    # `mark_sent` removes them on success — so every row counted here
+                    # is telemetry that was captured and then destroyed without reaching
+                    # the cloud. The other two loss paths in this file already warn.
+                    logger.warning(
                         "old_messages_cleaned",
                         deleted=deleted,
                         retention_hours=self.retention_hours

@@ -196,6 +196,23 @@ groups:
           summary: "Edge buffer dropping messages (size cap)"
           description: "{{ $value }} oldest edge messages pruned to stay under the buffer size cap"
 
+      # HIGH: buffer deleting undelivered telemetry for age (FS-458).
+      #
+      # Higher severity than the size-cap drop above, despite being the same
+      # kind of loss, because of what causes it: expiry means the agent has
+      # been unable to reach the cloud for longer than its retention window.
+      # The size cap trips on a busy device; this one trips on a device that
+      # has been cut off long enough to start losing what it buffered.
+      - alert: EdgeBufferExpiring
+        expr: increase(edge_buffer_expired_total[15m]) > 0
+        for: 0m
+        labels:
+          severity: high
+          team: edge
+        annotations:
+          summary: "Edge buffer deleting undelivered messages (retention)"
+          description: "{{ $value }} edge messages passed the retention window without ever being delivered — the agent has been disconnected longer than it can buffer for"
+
       # MEDIUM: sustained collector error rate
       - alert: EdgeCollectorErrors
         expr: sum by (asset_id, collector_type) (rate(edge_collector_errors_total[5m])) > 0.1

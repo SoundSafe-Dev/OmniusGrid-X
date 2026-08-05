@@ -3,7 +3,8 @@
 from uuid import UUID
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from app.core.pagination import mark_truncated
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select, delete
 
@@ -172,7 +173,8 @@ async def send_test(body: TestEvent, organization_id=Depends(get_tenant_org_id))
 
 
 @router.get("/log", response_model=List[DeliveryLogEntry])
-async def delivery_log(limit: int = Query(default=100, ge=1, le=1000),
+async def delivery_log(response: Response,
+                       limit: int = Query(default=100, ge=1, le=1000),
                        organization_id=Depends(get_tenant_org_id)) -> List[Dict[str, Any]]:
     async with tenant_session(organization_id) as session:
         # UNCONDITIONAL, like the subscription list. The delivery log carries alarm titles and
@@ -184,7 +186,10 @@ async def delivery_log(limit: int = Query(default=100, ge=1, le=1000),
             .where(NotificationDelivery.organization_id == str(organization_id))
             .order_by(NotificationDelivery.created_at.desc())
         )
-        rows = (await session.execute(stmt.limit(limit))).scalars().all()
+        rows = (await session.execute(stmt.limit(limit + 1))).scalars().all()
+        # SAYS WHEN IT CAPPED (FS-455): a bare array of exactly `limit` rows is
+        # indistinguishable from the complete set.
+        rows = mark_truncated(response, rows, limit)
     return [{"id": str(r.id), "channel": r.channel, "severity": r.severity, "title": r.title,
              "delivered": r.delivered, "detail": r.detail,
              "created_at": r.created_at.isoformat() if r.created_at else None} for r in rows]

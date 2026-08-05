@@ -78,6 +78,12 @@ buffer_dropped_total = Counter(
 )
 
 
+buffer_expired_total = Counter(
+    "edge_buffer_expired_total",
+    "Undelivered messages deleted for passing the retention window",
+)
+
+
 def set_buffer_stats(pending: int, backfill_lag_seconds: float) -> None:
     buffer_messages.set(pending)
     buffer_backfill_lag_seconds.set(backfill_lag_seconds)
@@ -91,6 +97,19 @@ def record_dead_lettered(count: int) -> None:
 def record_dropped(count: int) -> None:
     if count > 0:
         buffer_dropped_total.inc(count)
+
+
+def record_expired(count: int) -> None:
+    """Telemetry deleted for age, having never been delivered (FS-458).
+
+    The buffer loses messages three ways — dead-lettered after retries, pruned for size,
+    and expired for age. The first two increment a counter; this one only logged, at INFO,
+    on a device that by definition has been unable to reach the cloud for longer than the
+    retention window. The one loss whose cause is a LONG OUTAGE was the one invisible to
+    the monitoring that would show the outage.
+    """
+    if count > 0:
+        buffer_expired_total.inc(count)
 
 
 # --- Local OEE (from PackML states) ------------------------------------------

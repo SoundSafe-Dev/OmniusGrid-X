@@ -22,6 +22,18 @@ class BaseCollector(ABC):
     # here so every current and future synthetic-capable collector inherits it.
     has_synthetic_default = False
 
+    #: The source values this collector understands. When set, a `source` outside this
+    #: set is a CONFIG ERROR rather than a silent fallback (FS-457).
+    #:
+    #: `has_synthetic_default` above catches an OMITTED source. It cannot catch a source
+    #: that is present and misspelled — and both synthetic-capable collectors branched on
+    #: one exact string and synthesized on everything else, so `source: "mic"` or
+    #: `source: "rtsp"` produced fabricated audio and fabricated motion scores, silently,
+    #: on a collector the operator believed was reading hardware.
+    #:
+    #: A typo should stop the collector, not quietly change what it measures.
+    known_sources: tuple[str, ...] = ()
+
     def __init__(self, config: Dict[str, Any]):
         self.config = config
         self.asset_id = config.get("asset_id")
@@ -36,6 +48,15 @@ class BaseCollector(ABC):
             raise ValueError(
                 f"{type(self).__name__} requires an explicit 'source' "
                 "(EDGE_REQUIRE_EXPLICIT_SOURCES is enabled)"
+            )
+
+        source = config.get("source")
+        if self.known_sources and source is not None and source not in self.known_sources:
+            raise ValueError(
+                f"{type(self).__name__} got source={source!r}, which it does not "
+                f"understand. Known sources: {', '.join(sorted(self.known_sources))}. "
+                f"Refusing to start rather than falling back to synthetic data that "
+                f"would look like a reading from hardware."
             )
     
     @abstractmethod

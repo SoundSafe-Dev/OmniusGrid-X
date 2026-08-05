@@ -3,6 +3,15 @@
 Findings that are **understood, reproduced, and deliberately not fixed** — because closing
 each one is a product or contract decision rather than a bug fix.
 
+**Seven when this page was written; five now.** Two closed on 2026-08-05:
+
+* *A PDF page's text truncated at 20,000 characters, silently.* Left open on the belief that
+  fixing it meant changing a return shape two consumers read. **The belief was wrong and
+  checking it took one grep** — both read named keys off each page, so an added key breaks
+  nothing. The blocker was the assumption, not the coupling.
+* *The backend image cannot be rebuilt — the Docker VM is full.* 13 GB was reclaimed from
+  abandoned build containers, the image rebuilt, and the stack now answers `health: 200`.
+
 They are currently recorded in test docstrings, which is the right place for the *reasoning*
 and the wrong place for the *decision*: a docstring is read by whoever next edits that file,
 and none of these will be closed by that person. This page is where someone deciding can see
@@ -25,28 +34,7 @@ that were right.**
 
 ---
 
-## 1. A PDF page's text is truncated at 20,000 characters, silently
-
-**Pinned by** `backend/tests/test_document_intake_parsers.py::TestThePageTextCapIsSilent`
-· FS-440
-
-`parse_pdf_structure` stores `text[:20000]` per page and sets no flag. The `truncated` field
-in that result covers **only** pages dropped past `max_pages`, so a single dense page over
-20,000 characters is cut in half and the document reports `truncated: False`.
-
-The lost half is never chunked, never embedded, and never retrievable. The only symptom is
-an answer that does not know something the document said — and nothing in the system can
-report it, because nothing else knows what was in the file.
-
-**Why not fixed here:** changing the return shape touches `document_domain_mapper` and
-`document_scenario_builder`. That is a decision about the intake contract.
-
-**To close:** raise the cap, or add a per-page truncation flag and have the consumers read
-it. Then delete the pinning test class.
-
----
-
-## 2. 38 registries are created that nothing can fill
+## 1. 38 registries are created that nothing can fill
 
 **Pinned by** `backend/tests/test_correlation_registry_integration.py::TestTheRegistriesNothingCanFill`
 · FS-444
@@ -67,19 +55,33 @@ registry nothing can populate.
 
 ---
 
-## 3. Eleven capped lists cannot say they were capped
+## 2. Five capped lists cannot say they were capped
 
-**Pinned by** `backend/tests/test_capped_lists_cannot_grow.py` (`MAX_UNSIGNALLED = 11`)
+**Pinned by** `backend/tests/test_capped_lists_cannot_grow.py` (`MAX_UNSIGNALLED = 5`)
 
 An endpoint that caps its result and cannot signal the cap reports a partial answer as a
-complete one. Three of the eleven have no consumer today, which is why they are cheap to
-leave and easy to forget.
+complete one.
 
-**To close:** give each a `mark_truncated` signal, lower the ratchet. It only ever goes down.
+**Eleven when this register was written; six were closed on 2026-08-05** — three registries
+endpoints, `/health-index`, `/commands/asset/{id}` and `/notifications/log`. Each was a
+`limit + 1` select and a `mark_truncated` call, which is the whole fix: one extra row instead
+of a `COUNT` over the table.
+
+The five that remain are all in `analysis_sessions.py` and `kanban.py`:
+
+    /api/v1/nlp/sessions/chat/history
+    /api/v1/nlp/sessions/chat/search
+    /api/v1/nlp/sessions/{session_id}/messages
+    /api/v1/kanban/tasks
+    /api/v1/kanban/tasks/{task_id}/comments
+
+**To close:** the same change, in two files owned by another lane. Mechanical, not a
+decision — it is on this page only because the work has not been done, which makes it the
+one entry here that does not need anybody's intent.
 
 ---
 
-## 4. Five declared fields on shapes the server never defines
+## 3. Five declared fields on shapes the server never defines
 
 **Pinned by** `backend/tests/test_frontend_fields_exist_on_the_wire.py`
 (`MAX_UNREAD_PHANTOM_FIELDS = 5`) · FS-442
@@ -97,7 +99,7 @@ the sweep to recognise client-constructed types and exempt them with a verifiabl
 
 ---
 
-## 5. `logistics_correlation` serves twelve paths at a doubled prefix
+## 4. `logistics_correlation` serves twelve paths at a doubled prefix
 
 **Pinned by** `backend/tests/test_logistics_correlation_scoping_realdb.py`
 
@@ -112,7 +114,7 @@ which the frontend actually calls. Whichever router registers first would silent
 
 ---
 
-## 6. Two PUT handlers replace rather than patch
+## 5. Two PUT handlers replace rather than patch
 
 **Pinned by** `backend/tests/test_partial_updates_do_not_wipe_fields.py` (2 allowances)
 
@@ -122,30 +124,6 @@ different shape from the update payload.
 
 **To close:** confirm the intended semantics per route and either narrow the allowance or
 switch the verb.
-
----
-
-## 7. The backend image cannot be rebuilt — the Docker VM is full
-
-**Pinned by** `backend/tests/test_the_container_image_is_not_stale.py` (the guard that makes
-the failure readable, not the disk itself) · FS-446
-
-`docker compose build backend` fails with `OSError: [Errno 28] No space left on device`, so
-the image stays two months old. Because compose mounts `./backend:/app`, the container runs
-**current code against two-month-old packages** and crashloops on `import jwt` — `PyJWT`
-replaced `python-jose` three weeks ago.
-
-13 GB is reclaimable from 26 stopped containers. Most is test detritus (randomly-named
-`timescaledb` containers from testcontainers runs). **It also includes `overpeak-*`
-containers from a different project and two unnamed images of 7.9 GB and 4.1 GB.**
-
-**Why not done:** pruning would fix the build and might delete someone's work. This is the
-same gate `docs/planning/` already records against FS-293 — *"pruning deletes someone's
-images"*.
-
-**To close:** identify the two large unnamed containers, prune what is genuinely disposable,
-rebuild. A `make` target that removes only *testcontainers-labelled* containers would make
-this self-maintaining and is recorded as FS-371.
 
 ---
 
@@ -161,3 +139,25 @@ Three registers already govern their own items and expire on their own terms:
 Ratchets that are at **zero** and stay there by assertion, rather than being open decisions:
 per-type unfed fields (`MAX_UNFED_FIELDS = 0`) and adapter-unset fields
 (`MAX_UNSET_FIELDS = 0`).
+
+## Closed, and what closing one cost
+
+**The PDF truncation flag** (FS-454/456) was entry #1 on this page: the parser capped each
+page at 20,000 characters and said nothing. Closing it took three layers, and only the first
+was the one written down:
+
+1. the parser now reports `text_truncated` and `text_chars_dropped` per page;
+2. `POST /nlp/correlation/intake/analyze` carries `pages_text_truncated` beside the
+   `truncated` flag it already sent — **two different amputations, one of them reported**;
+3. the intake panel renders a notice. It had been receiving `truncated` all along and
+   rendering a risk score next to it without comment.
+
+Worth recording because the entry was written as a parser problem and was a **three-layer**
+problem, and because layers 2 and 3 were found by fixing layer 1 rather than by reading. An
+open decision's scope is a guess until someone starts closing it.
+
+It also cost a self-inflicted outage: the same session's edit added
+`mark_truncated(response, ...)` to nine handlers and the `response` parameter to six, so
+three endpoints answered **500 on every call**. Nothing caught it until a real request did —
+now pinned by `TestTheSignalCanActuallyBeSent` in
+`backend/tests/test_capped_lists_cannot_grow.py`, which is an AST check costing milliseconds.

@@ -370,6 +370,29 @@ export const IntakeInbox: React.FC = () => {
                         </div>
                       </div>
                     </div>
+                    {/* The analysis was built from part of the document (FS-456).
+
+                        The parser caps pages, and caps text within each page. Both caps
+                        already reached this component and neither was rendered — so a risk
+                        score derived from the first 20k characters of a 90k-character page
+                        read exactly like one derived from the whole thing. A confident
+                        number over a partial reading is worse than no number, because
+                        nothing about it looks partial. */}
+                    {(item.analysis_result.truncated ||
+                      item.analysis_result.pages_text_truncated > 0) && (
+                      <div className="mb-3 rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2">
+                        <p className="text-xs text-amber-300">
+                          Analysed from part of the document
+                          {item.analysis_result.truncated && ' — some pages were not read'}
+                          {item.analysis_result.pages_text_truncated > 0 &&
+                            ` — text was cut on ${item.analysis_result.pages_text_truncated} page(s)` +
+                              (item.analysis_result.text_chars_dropped
+                                ? ` (${item.analysis_result.text_chars_dropped.toLocaleString()} characters dropped)`
+                                : '')}
+                          . Findings below may be incomplete.
+                        </p>
+                      </div>
+                    )}
                     <div>
                       <p className="text-xs font-medium text-opsgrid-text-secondary mb-1">Analysis</p>
                       <p className="text-sm text-opsgrid-text">{item.analysis_result.analysis}</p>
