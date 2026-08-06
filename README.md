@@ -55,6 +55,26 @@ it cites. **Two documents that must agree are a pair, and a pair needs a guard**
 a register gets read once, found wrong, and then discounted, including the entries that were
 right.
 
+**Where the programme stands.** Four ratchets are at zero and stay there by assertion —
+per-type unfed fields, adapter-unset fields, capped lists that cannot signal truncation, and
+declared frontend fields with no producer. The open-decisions register is empty.
+
+They reached zero by different routes, which is more useful than the tally: some by building
+the missing half, one by deleting something that should not have existed, and one by
+discovering the question had no answer. `git log -S` has the peaks — the unfed-field
+allowance was first written at 38 and the phantom-field one at 57.
+
+`test_the_ratchets_that_reached_zero_stay_there.py` asserts the four, because a ratchet at
+zero is the easiest kind of number to raise back: there is no allowance left to lower and no
+failing test to argue with until someone adds one.
+
+**A first draft of this paragraph named five peak figures and three were wrong** — it gave an
+adapter-unset allowance that was introduced at zero and never had slack, and it quoted the
+final pre-zero values for two others as though they were the starting ones. That is the fifth
+wrong figure in this documentation, and the lesson has stopped being about carelessness: a
+number written in prose from memory is wrong often enough that the ones worth keeping are the
+ones a test derives.
+
 **Longer material lives in `docs/` rather than here:**
 [delivery log](docs/DELIVERY-LOG.md) ·
 [ERP architecture](docs/erp/ARCHITECTURE.md) ·

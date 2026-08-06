@@ -5868,3 +5868,95 @@ Two of five closed by removing something that had been framed as work to add.
 Exempting to silence five meaningless entries silenced 34 real ones on the first attempt.
 Check both directions of an exemption before believing the count it produces.
 
+---
+
+# What this session produced, and what it cost
+
+**FS-431 to FS-471 — forty-one items, no gaps** — over one working session. Recorded
+together because the individual entries above answer "what was wrong" and this answers "what
+the method actually does", which is the thing worth reusing.
+
+The count is stated because it is checkable, and it was wrong when first written: the draft
+said "forty items", a figure nobody had counted. `test_the_session_arc_is_a_real_range.py`
+now derives it from the FS references in the tree. Four wrong figures in this documentation
+in one week is what that guard family exists for, and writing a fifth into the paragraph
+describing them would have been its own small joke.
+
+## The shape of the work
+
+It ran in three phases, and each produced a different kind of finding.
+
+**Opportunistic.** Fix a defect, notice the class, sweep for it. This produced the E2E work
+(FS-447 to FS-452), the document-intake tests, and the truncation-flag chain. Its strength is
+that the class is fresh in mind; its weakness is that what you find depends on where you
+happened to be standing.
+
+**Component-by-component.** Take a subsystem nothing has examined and read it. This is how
+the edge agent's 14,349 lines came under review at all, and it produced FS-457 (synthetic data
+that could ship unstamped) and FS-458 (a buffer loss nobody could see). Its weakness showed up
+immediately: three consecutive findings turned out to be classes the backend had **already
+fixed**, discovered by accident, one at a time.
+
+**The carry-across pass.** Take each closed class and ask which other component computes the
+same quantity. Run in all three directions — backend → agent, agent → backend, both →
+frontend — it found four more defects in an afternoon and, more usefully, produced a set of
+*clean* results: 24 unbounded loops that all sleep, 17 collector classes with symmetric
+lifecycles, 25 metrics all incremented, SQL parameterised throughout. Negatives are the
+expensive thing to re-derive, so they are written down beside the positives.
+
+The progression is worth naming: **opportunistic finds what is nearby, component sweeps find
+what is unread, and carry-across finds what is already understood but not applied.** The third
+is the only one that terminates.
+
+## Where the numbers ended
+
+Four ratchets at zero, the open-decisions register empty, and every figure in the
+documentation paired with the thing it describes. The routes to zero were not the same:
+
+| ratchet | from | closed by |
+|---|---|---|
+| unfed fields | 38 | building the missing producers |
+| adapter-unset fields | 17 | building, one layer further in |
+| unsignalled capped lists | 11 | `limit + 1` and one function call per endpoint |
+| phantom frontend fields | 5 | discovering the question had no answer |
+| open decisions | 7 | two by deleting, two by distinguishing, three by deciding |
+
+## What it cost
+
+**Eight defects were mine**, introduced while fixing something else. Three endpoints answering
+500 because a rewrite added a call to nine handlers and a parameter to six. Four documentation
+figures wrong in a single week. A test asserting 1.0 hours that got 6.0 because I used a naive
+local timestamp inside a guard written for naive-timestamp defects. An open-decisions entry
+whose central claim was false because I read one of two consumers and generalised.
+
+**Four guards passed with their fix deleted.** A window that reached the next call's evidence,
+a substring that matched the line above, a source check that matched its own docstring, a
+`re.search` that found a second declaration. Each was caught by mutating the fix out — never
+by review, never by the suite — and each would otherwise have shipped as a green claim that
+somebody had checked.
+
+**A fifth wrong figure, written into the paragraph about wrong figures.** The README's new
+"where the programme stands" note first named five peak ratchet values and three were wrong:
+it gave an adapter-unset allowance that was introduced at zero and never had slack, and
+quoted the final pre-zero values for two others as though they were the starting ones. Caught
+by checking `git log -S` before committing, which took thirty seconds and should have come
+before the sentence rather than after it.
+
+The lesson has stopped being about carelessness. Five times now, and the common factor is
+always the same: **a number recalled into prose.** The figures in this repository that have
+never been wrong are the ones a test derives — the rule index, the class count, the ratchets,
+the FS range. The ones that keep being wrong are the ones a person typed from memory into a
+sentence. That is not a discipline problem with a discipline fix; it is an argument for
+deriving more of them.
+
+**The detectors were wrong before the code was.** The hot-spin sweep flagged the
+best-protected collector in the tree. The provenance sweep missed every site by searching for
+the wrong helper name. The client-constructed exemption silenced 34 real types to remove five
+meaningless ones. In each case the first run's output was noise, and the useful work was
+narrowing the detector until its output was a list somebody would act on.
+
+If there is one thing to carry forward from all of it: **a green test is a claim that someone
+checked, and the only way to know whether it is true is to break the thing it checks and watch
+it fail.** Four of the guards written this week were decorations until that step, and none of
+them looked like decorations.
+

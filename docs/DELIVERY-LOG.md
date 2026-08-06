@@ -4195,3 +4195,63 @@ parse the keys, run the function.
 
 **Suite:** backend 3500 passed / 100 skipped (clean run, exit 0) · frontend 555 · edge agent 237.
 
+---
+
+## 2026-08-05 — FS-471: what the session produced, and two claims about it that were wrong
+
+A consolidation rather than a fix. `defect-class-sweeps.md` now closes with a section on what
+the method actually does, because the individual entries answer "what was wrong" and nothing
+answered "what is worth reusing".
+
+### The shape
+
+Three phases, three kinds of finding.
+
+**Opportunistic** — fix a defect, notice the class, sweep for it. Finds what is nearby.
+**Component-by-component** — read a subsystem nobody has read. Finds what is unread; this is
+how 14,349 lines of edge agent came under review at all. **Carry-across** — take each closed
+class and ask which other component computes the same quantity. Finds what is already
+understood but not applied, and it is the only one of the three that terminates.
+
+The middle phase is what argued for the third: three consecutive edge-agent findings turned
+out to be classes the backend had already fixed, discovered one at a time by accident.
+
+### Where the numbers ended
+
+Four ratchets at zero and the open-decisions register empty — and the four reached zero by
+four different routes, which is the part worth keeping. Two by building the missing half, one
+by deleting something that should not have existed, one by discovering the question had no
+answer.
+
+A ratchet at zero has a specific weakness: there is no allowance left to lower and no failing
+test to argue with, so raising it is a one-character edit in a file whose purpose is to
+prevent exactly that. `test_the_ratchets_that_reached_zero_stay_there.py` holds all four in
+one place.
+
+### Three wrong claims, in the paragraphs about wrong claims
+
+The consolidation's first draft opened "Forty items, FS-431 to FS-471" — a count nobody had
+counted. It is forty-one. Written into a paragraph whose subject is four wrong figures
+produced in a single week, which would have been its own small joke had it shipped.
+
+`test_the_session_arc_is_a_real_range.py` derives the range from the FS references in the
+tree and checks three things: the floor, the ceiling, and the absence of gaps. The gap check
+is the useful one — an FS number is how this repository cross-references itself, and a comment
+saying "the same shape as FS-457" is only worth anything if FS-457 is findable. An item living
+only in a commit message is not.
+
+The README's new claim about the four ratchets is paired the same way, because a number that
+several documents cite and nothing checks is precisely how the four wrong figures happened.
+
+**And then a fifth.** That same README paragraph first named five peak ratchet values, of
+which three were wrong — an adapter-unset allowance that was introduced at zero and never had
+slack, and two final pre-zero values quoted as starting ones. Caught by running `git log -S`
+before committing, which took thirty seconds and belonged before the sentence rather than
+after it.
+
+Five is enough to stop calling it carelessness. Every wrong figure in this documentation has
+been a number recalled into prose; every figure that has never been wrong is one a test
+derives. The remedy is not more care, it is fewer hand-written numbers.
+
+**Suite:** backend 3511 passed / 100 skipped · frontend 555 · edge agent 237.
+
