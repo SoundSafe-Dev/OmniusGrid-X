@@ -5004,12 +5004,78 @@ That is the third and fourth time this session; reading the type first is faster
 
 ### Still open
 
-Six clients keep `USE_MOCK` forks with no real-mode test: `dashboardAnalytics` (6), `rul` (3),
-`platformCorrelation` (3), `userContext` (2), `twinOptimizer` (2), `historian` (2),
-`alarmRules` (2). All were scanned for the classes in this batch — hand-built query strings
+**Eight** clients keep `USE_MOCK` forks with no real-mode test — the figure was first written
+as six beside a list of seven, and neither was right. `fleetTracker` (6) is on it too: its
+poll was fixed here and its *component* got a test, which is not the same file and does not
+cover the client. Then `dashboardAnalytics` (6), `rul` (3), `platformCorrelation` (3),
+`userContext` (2), `twinOptimizer` (2), `historian` (2), `alarmRules` (2). Derived by walking
+`src/api/*.ts` for a `USE_MOCK` with no sibling `.realmode.test.ts`, rather than counted by
+hand — which is how the first two figures went wrong. All were scanned for the classes in this batch — hand-built query strings
 against the backend's declared parameters, nullable returns the real branch cannot produce,
 trailing-slash path mismatches, and mock-versus-declared-type key divergence. Two scan hits in
 `notifications` were read and found to be false positives (the mock builds a local object and
 returns a narrower one). `alarmRules`' trailing slash matches the backend's `"/"` declaration.
 
 **Suite:** frontend 717 → 753 · backend 3560 · edge agent 289.
+
+## FS-488 — the last eight clients, and the count that kept flattering itself
+
+Every api client with a `USE_MOCK` fork now has a real-mode test. The eight remaining were
+`fleetTracker`, `dashboardAnalytics`, `rul`, `platformCorrelation`, `userContext`,
+`twinOptimizer`, `historian` and `alarmRules`.
+
+### One defect, and it was hiding behind a fix
+
+`userContext.ts` mocked its READ and not its four WRITES. `getUserContext` returned a fixture;
+`updateUserContext`, `addUserGoal`, `updateGoal` and `deleteGoal` went to the API in every
+mode — so in the demo, `ContextManagementModal` showed a context, accepted edits, and failed
+on Save against a backend that is not running.
+
+It had been that way quietly until FS-478 gave the failure a message, which turned a silent
+oddity into a visibly broken button. Every other client mocks its writes —
+`erp.createIntegration` pushes to an array, `notifications.createSubscription` assigns an id,
+`kanbanStore.moveTask` updates local state — so the convention existed and this file had
+adopted half of it. **A double that covers half a surface is a double for exactly the half
+nobody was testing.**
+
+### Three registrations that are load-bearing and invisible
+
+`historian`, `twinOptimizer` and `alarmRules` each call `registerTransform('<prefix>')` at
+module load, and the axios request interceptor renames their camelCase keys on the way out.
+Delete that one line and:
+
+* every historian query is a **422** — `asset_id` is required with no default;
+* every twin optimisation is a **422** — `OptimizeRequest` is `extra="forbid"`, so a single
+  unrecognised key rejects the whole body.
+
+No compile error, no failing unit test, because the mock branch reads the camelCase names off
+the same object and agrees with itself. Those registrations are now asserted.
+
+### Two parameter tables compared across the boundary
+
+`BucketName` against `BUCKET_SECONDS`, in both directions. This is the better-behaved of the
+codebase's two range parameters: `resolve_bucket` **raises** on a name it does not know, where
+`kpi`'s `_RANGE_DAYS.get(value, 30)` turns every mistake into a thirty-day answer nobody can
+spot. Raising is why `bucket` needed no fix — only a guard that the two lists stay one list.
+
+`alarmRules` reads `hasMore` with a triple fallback — `meta.hasMore ?? meta.has_more ??
+meta.skip + items.length < meta.total` — a client hedging about its own wire. All three
+branches are asserted, including the computed one, because a wrong `hasMore` on a rules list
+tells an operator they have seen every rule governing their alarms.
+
+### The count that was wrong twice
+
+The number of clients still lacking a real-mode test was carried by hand. It was written as
+**six**, beside a list of **seven**, when the true figure was **eight** — `fleetTracker` had
+been crossed off because its *component* got a test in FS-487, which is a different file and
+exercises none of the client.
+
+Deriving it takes one line: walk `src/api/*.ts` for a `USE_MOCK` with no sibling
+`.realmode.test.ts`. That is now `everyMockedClientHasARealModeTest.test.ts`, and it reports
+none.
+
+This is the fourth hand-carried figure in this documentation to drift, and every one drifted
+the same way — fewer items left, more work done. **A number nobody derives is a number that
+agrees with whoever last recalled it.**
+
+**Suite:** frontend 753 → 821 · backend 3560 → 3564 · edge agent 289.

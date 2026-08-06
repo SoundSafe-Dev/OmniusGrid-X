@@ -26,7 +26,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The eighty-two numbered classes
+## The eighty-three numbered classes
 
 **The count is the numbering, and it was already stale before this line was corrected.**
 This heading read "forty-seven" while the document's own highest class was 60 — the summary
@@ -2692,6 +2692,12 @@ one of its findings. The habit that catches it:
      alert feed shows an empty list both when nothing has happened and when the poll has
      died. Streams, alert feeds and live maps need an explicit health signal beside the
      content, because nothing about the content can carry one.
+
+113. **Mock the whole surface or none of it.**
+     A demo mode that fakes reads and lets writes through produces a UI that displays,
+     accepts input, and then fails — in the half nobody exercised, because everything visible
+     worked. `userContext` mocked one read and four writes went to a backend that is not
+     running in demo mode.
 
 ---
 
@@ -5963,7 +5969,7 @@ Check both directions of an exemption before believing the count it produces.
 
 # What this session produced, and what it cost
 
-**FS-431 to FS-487 — fifty-seven items, no gaps** — over one working session. Recorded
+**FS-431 to FS-488 — fifty-eight items, no gaps** — over one working session. Recorded
 together because the individual entries above answer "what was wrong" and this answers "what
 the method actually does", which is the thing worth reusing.
 
@@ -6778,3 +6784,42 @@ A screen whose normal state is "nothing here" has no room left to show that it s
 working: the broken rendering and the healthy one are the same pixels. Streams, alert feeds,
 live maps and empty queues all have this shape. They need an explicit health signal beside
 the content, because nothing about the content can carry one.
+
+## Class 83 — a mode that mocks half a surface (FS-488)
+
+`userContext.ts` mocked its READ and not its four WRITES. `getUserContext` returned a fixture;
+`updateUserContext`, `addUserGoal`, `updateGoal` and `deleteGoal` went to the API in every
+mode. So in the demo, `ContextManagementModal` showed a context, accepted edits, and failed on
+Save against a backend that is not running.
+
+It had been that way quietly. FS-478 gave the failure a message — which turned a silent oddity
+into a **visibly broken button**, and is how it was noticed at all. Fixing one thing making
+another legible is the usual way this happens.
+
+Every other client here mocks its writes: `erp.createIntegration` pushes to an array,
+`notifications.createSubscription` assigns an id, `kanbanStore.moveTask` updates local state.
+The convention existed and this file had adopted half of it. **A double that covers half a
+surface is a double for exactly the half nobody was testing** — and worse than none, because
+the half that works implies the whole.
+
+## The count that was wrong twice, and the guard that ends it
+
+The number of clients still lacking a real-mode test was carried by hand across several
+sessions. It was written as **six**, beside a list of **seven**, when the true figure was
+**eight** — `fleetTracker` had been crossed off because its *component* got a test in FS-487,
+which is a different file and exercises none of the client.
+
+Deriving it takes one line: walk `src/api/*.ts` for a `USE_MOCK` with no sibling
+`.realmode.test.ts`. That is now `everyMockedClientHasARealModeTest.test.ts`, and the list is
+empty — every client with a mock fork has a test that runs its real branch.
+
+This is the fourth time in this document that a hand-carried figure drifted, and every one
+drifted in the flattering direction: fewer items left, more work done. That is not a
+coincidence about arithmetic. **A number nobody derives is a number that agrees with whoever
+last recalled it.**
+
+## Rule 113 — mock the whole surface or none of it
+
+A demo mode that fakes reads and lets writes through produces a UI that displays, accepts
+input, and then fails — and the failure is in the half nobody exercised, because everything
+visible worked. If a client has a mock branch, every method needs one.
