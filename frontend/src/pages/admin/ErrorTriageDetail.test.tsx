@@ -129,6 +129,57 @@ describe("ErrorTriageDetail — another tenant's sample", () => {
   })
 })
 
+describe('ErrorTriageDetail — the frame around the redaction (FS-477)', () => {
+  // The placeholder inside the block was already right and is asserted above. What sat
+  // AROUND it was not: the card promised "Latest occurrence · scrubbed of PII" over a
+  // sentence that is neither, and Copy was enabled — the marker is a truthy string, so the
+  // clipboard would carry "[redacted: …]" into somebody's bug report as a stack trace.
+  //
+  // Both read `samples_redacted`, a flag the server derives from the same condition that
+  // does the withholding. Matching the marker TEXT would work today and break the day
+  // somebody rewords it: prose is not an API.
+
+  it('does not promise a scrubbed sample over a withheld one', () => {
+    show(detail({ traceback_sample: REDACTED, samples_redacted: true }))
+    expect(screen.queryByText(/scrubbed of PII/i)).not.toBeInTheDocument()
+    expect(screen.getByText(/another organisation/i)).toBeInTheDocument()
+  })
+
+  it('does not offer to copy a refusal', () => {
+    show(detail({ traceback_sample: REDACTED, samples_redacted: true }))
+    const copy = screen
+      .getAllByRole('button')
+      .find((b) => /copy/i.test(b.textContent || ''))
+    expect(copy).toBeTruthy()
+    expect(copy).toBeDisabled()
+  })
+
+  it('still offers to copy a real traceback', () => {
+    // The other direction: disabling it unconditionally passes the test above and takes
+    // away the button's only purpose.
+    show(detail())
+    const copy = screen
+      .getAllByRole('button')
+      .find((b) => /copy/i.test(b.textContent || ''))
+    expect(copy).not.toBeDisabled()
+    expect(screen.getByText(/scrubbed of PII/i)).toBeInTheDocument()
+  })
+
+  it('trusts the flag rather than the wording', () => {
+    // If the server improves the marker text, the frame must still say withheld.
+    show(detail({ traceback_sample: 'withheld — reworded', samples_redacted: true }))
+    expect(screen.getByText(/another organisation/i)).toBeInTheDocument()
+  })
+
+  it('treats an older server that sends no flag as not redacted', () => {
+    // `samples_redacted` is optional: a deployment running an older API omits it, and the
+    // page must not mark every error as withheld.
+    const { samples_redacted: _omitted, ...older } = detail({ samples_redacted: false })
+    show(older)
+    expect(screen.getByText(/scrubbed of PII/i)).toBeInTheDocument()
+  })
+})
+
 describe('ErrorTriageDetail — status changes', () => {
   it('sends the new status for this fingerprint', async () => {
     show(detail())

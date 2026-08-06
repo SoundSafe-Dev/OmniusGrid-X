@@ -77,7 +77,10 @@ authenticated `/ws` stream) is untouched, and that is a feature rather than a bu
 ### What is still open, verified 2026-08-06
 
 `FS-344` (`GEOTAB_SIMULATED` defaults `True`; a production validator flags it, so the
-question is whether one validator is enough) · `FS-307` (the contract gate still runs as superuser) · `FS-362` (ERP suites still
+question is whether one validator is enough) · `FS-364` **partially** — it names eight
+untested routed pages and four remain: `CorrelationAIPane`, `IntakeInbox`, `Historian`,
+`FleetRolloutDetail`. `Fleet`, `ErrorTriage`, `Kanban` and `ShopFloor` have since been
+covered · `FS-307` (the contract gate still runs as superuser) · `FS-362` (ERP suites still
 skip without credentials) · `FS-364` (routed pages with no test) · `FS-369`…`FS-376` (the
 production-readiness wave: PITR, HA/autoscaling wiring, the advisory `pre-commit` job, the
 missing latency SLO gate, hand-provisioned secrets, the README/manifest contradiction).

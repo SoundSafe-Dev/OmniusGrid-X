@@ -4512,3 +4512,49 @@ but it can stop the document contradicting itself — which is how both drifts b
 
 **Suite:** backend 3541 passed / 100 skipped · edge agent 289 · frontend 555.
 
+---
+
+## 2026-08-06 — FS-477: a refusal offered as a stack trace
+
+Picked up FS-364 (routed pages with no tests) and found a defect before writing a line of
+test, which is the argument for that entry in one sentence.
+
+`error_events` is platform-wide by design, so the server withholds another organisation's
+`message_sample` and `traceback_sample` and substitutes a marker sentence. The detail page
+renders that placeholder in its code block **on purpose** — an existing test asserts it,
+because "No traceback captured." is a claim about the error while a redaction is a claim about
+the viewer's permissions. That decision is right and I did not touch it.
+
+**The frame around it was wrong.** The card's subtitle read "Latest occurrence · scrubbed of
+PII" over a sentence that is neither, and the Copy button was **enabled** — the marker is a
+truthy string — so an operator could put `[redacted: belongs to another organization]` on the
+clipboard and into a bug report believing it was a stack trace.
+
+Both now read `samples_redacted`, a boolean the server derives from the same condition that
+does the withholding. Matching the marker text on the client would have worked today and
+broken the day somebody improved the wording: **prose is not an API.** The flag is narrower
+than the condition, too — an outsider viewing a row that captured no samples has had nothing
+kept from them, and a withholding notice over an error that never had a traceback is an
+absence dressed as a refusal.
+
+### Two things I got wrong first, both the same error
+
+**The page was not untested.** My detector matched test files by filename and reported
+seventeen untested routed components; the real number is four. `ErrorTriageDetail` was on the
+false list and I started writing a duplicate test for a page that already had a thorough one.
+The Write tool's read-before-write guard stopped it — not my reasoning.
+
+**And my first fix reversed a deliberate decision.** Before reading the existing test I had
+replaced the code block with prose for redacted rows, which would have failed an assertion
+written specifically to keep the placeholder visible, for a reason its docstring explains.
+
+That is three times in two days: FS-460 (a field's second consumer), FS-355 (a policy's
+deliberate absence), and now a test I assumed was missing. Different costumes, one error —
+**a conclusion drawn from half a search** — and the correction each time was cheap and
+identical: read the thing that would have told you.
+
+FS-364 is corrected in the plan rather than closed: four pages remain — `CorrelationAIPane`,
+`IntakeInbox`, `Historian`, `FleetRolloutDetail`.
+
+**Suite:** backend 3542 passed / 100 skipped · frontend 560 · edge agent 289.
+

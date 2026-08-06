@@ -5900,7 +5900,7 @@ Check both directions of an exemption before believing the count it produces.
 
 # What this session produced, and what it cost
 
-**FS-431 to FS-476 — forty-six items, no gaps** — over one working session. Recorded
+**FS-431 to FS-477 — forty-seven items, no gaps** — over one working session. Recorded
 together because the individual entries above answer "what was wrong" and this answers "what
 the method actually does", which is the thing worth reusing.
 
@@ -6236,4 +6236,47 @@ current shape is documented and intentional.
 
 "No RLS policy" is a fact; "missing an RLS policy" is a conclusion. The difference is a second
 search, and the reasoning is often in a test docstring rather than in the code.
+
+## FS-477 — a refusal offered as a stack trace
+
+Found while looking for an untested page to write a test for, which is the argument for
+FS-364 in one sentence.
+
+`error_events` is a platform-wide table by design, so the server withholds another
+organisation's `message_sample` and `traceback_sample`, substituting
+`[redacted: belongs to another organization]`. The detail page renders that placeholder in
+its code block **on purpose** — `ErrorTriageDetail.test.tsx` asserts it, because "No traceback
+captured." is a claim about the error while a redaction is a claim about the viewer's
+permissions, and showing the first where the second is true tells an operator the wrong thing.
+That decision is right and was not touched.
+
+**What was wrong was the frame around it.** The card's subtitle read "Latest occurrence ·
+scrubbed of PII" over a sentence that is neither. And the Copy button was **enabled** — the
+marker is a truthy string — so an operator could put `[redacted: belongs to another
+organization]` on the clipboard and into a bug report, believing it was a stack trace, and
+find out from whoever read it.
+
+Both now read `samples_redacted`, a boolean the server derives from the same condition that
+does the withholding. **Matching the marker text on the client would have worked today and
+broken the day somebody improved the wording**: prose is not an API. The flag is also
+narrower than the condition — an outsider viewing a row that captured no samples has had
+nothing kept from them, and a withholding notice over an error that never had a traceback is
+an absence dressed as a refusal.
+
+### Two things this pass got wrong first
+
+**The page was not untested.** A detector matched test files by filename and reported
+seventeen routed components with no coverage; the real number is four. `ErrorTriageDetail`
+was on the false list, and I began writing a duplicate test file for a page that already had
+a thorough one. The tool's read-before-write guard stopped it — not the reasoning.
+
+**And the first fix reversed a deliberate decision.** Before checking the existing test, I
+had replaced the code block with prose for redacted rows, which would have failed an
+assertion written specifically to keep the placeholder visible. The existing test explained
+why in its docstring.
+
+Both are the same error as FS-355 and FS-460: **a conclusion drawn from half a search.** Three
+times in two days, in three different costumes — a missing consumer, a missing policy, a
+missing test. The correction each time was cheap and the same: read the thing that would have
+told you.
 

@@ -95,6 +95,16 @@ class ErrorEventDetail(BaseModel):
     regression_count: int
     message_sample: Optional[str]
     traceback_sample: Optional[str]
+    #: True when the two samples above were withheld because the row belongs to another
+    #: organisation (FS-477). The withheld value is a sentence, not a traceback, and the
+    #: client cannot tell the difference by looking at it — `_REDACTED` is prose, and a
+    #: client matching on prose is a coupling nobody declared.
+    #:
+    #: Without this the detail page rendered the sentence inside a `<pre>` under the
+    #: subtitle "Latest occurrence · scrubbed of PII", with the Copy button ENABLED — so
+    #: an operator could paste "[redacted: belongs to another organization]" into a bug
+    #: report believing it was a stack trace.
+    samples_redacted: bool = False
     organization_id: Optional[str]
     status_changed_by: Optional[str]
     status_changed_at: Optional[datetime]
@@ -285,6 +295,24 @@ async def error_summary(
 _REDACTED = "[redacted: belongs to another organization]"
 
 
+def _samples_are_redacted(row, viewer_org: Optional[str]) -> bool:
+    """Whether `_visible_sample` withheld this row's samples (FS-477).
+
+    Derived from the same condition rather than by comparing the returned value to
+    `_REDACTED` — the marker is prose, and a caller that matches on prose breaks the day
+    somebody improves the wording. The flag is what the client reads.
+    """
+    owner = row["organization_id"]
+    outsider = owner is not None and (
+        viewer_org is None or str(owner) != str(viewer_org)
+    )
+    # SOMETHING WAS ACTUALLY WITHHELD. An outsider viewing a row that carries no samples
+    # has had nothing kept from them, and "redacted" there would put a withholding notice
+    # over an error that simply never captured a traceback — an absence dressed as a
+    # refusal, which is its own small lie.
+    return outsider and bool(row["message_sample"] or row["traceback_sample"])
+
+
 def _visible_sample(row, field: str, viewer_org: Optional[str]) -> Optional[str]:
     """Return an error sample only to a viewer in the row's own organisation.
 
@@ -348,6 +376,7 @@ async def _build_detail(
         # instead of dropping the check.
         message_sample=_visible_sample(row, "message_sample", viewer_org),
         traceback_sample=_visible_sample(row, "traceback_sample", viewer_org),
+        samples_redacted=_samples_are_redacted(row, viewer_org),
         organization_id=str(row["organization_id"]) if row["organization_id"] else None,
         status_changed_by=str(row["status_changed_by"]) if row["status_changed_by"] else None,
         status_changed_at=row["status_changed_at"],

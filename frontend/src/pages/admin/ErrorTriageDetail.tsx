@@ -174,13 +174,38 @@ export const ErrorTriageDetail: FC = () => {
             )}
           </ChartContainer>
 
-          {/* Traceback */}
+          {/* Traceback.
+
+              THE PLACEHOLDER STAYS IN THE BLOCK, DELIBERATELY. `ErrorTriageDetail.test.tsx`
+              asserts it: "No traceback captured." is a claim about the error and the
+              redaction is a claim about the viewer's permissions, and showing the first
+              where the second is true tells an operator the wrong thing. That decision is
+              older than this comment and is not being reversed.
+
+              WHAT WAS WRONG WAS AROUND IT (FS-477). The subtitle promised "Latest
+              occurrence · scrubbed of PII" over a sentence that is neither, and Copy was
+              ENABLED — the marker is a truthy string, so an operator could paste
+              "[redacted: belongs to another organization]" into a bug report believing it
+              was a stack trace.
+
+              Both now read `samples_redacted` rather than matching the server's wording,
+              because prose is not an API: matching the marker text would work today and
+              break the day somebody improves it. */}
           <Card
             noPadding
             title="Sample traceback"
-            subtitle="Latest occurrence · scrubbed of PII"
+            subtitle={
+              data.samples_redacted
+                ? 'Withheld — this error belongs to another organisation'
+                : 'Latest occurrence · scrubbed of PII'
+            }
             action={
-              <Button variant="ghost" size="sm" onClick={copyTraceback} disabled={!data.traceback_sample}>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={copyTraceback}
+                disabled={!data.traceback_sample || data.samples_redacted}
+              >
                 {copied ? <Check size={16} className="mr-1.5" /> : <Copy size={16} className="mr-1.5" />}
                 {copied ? 'Copied' : 'Copy'}
               </Button>
