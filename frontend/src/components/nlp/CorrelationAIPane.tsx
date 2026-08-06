@@ -133,6 +133,11 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
   const { alert } = useDialog();
   const [currentSession, setCurrentSession] = useState<AnalysisSession | null>(null);
   const [messages, setMessages] = useState<SessionMessage[]>([]);
+  // The messages endpoint caps at `limit` and orders OLDEST FIRST (FS-459), so a session
+  // over the cap loses its most recent turns — the pane shows the beginning of a
+  // conversation and silently omits what was just said, which is the half a user is
+  // actually looking at.
+  const [historyTruncated, setHistoryTruncated] = useState(false);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [activeProgressStep, setActiveProgressStep] = useState(0);
@@ -253,7 +258,8 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
         setCurrentSession(latest);
         const sessionMessages = await analysisSessionsApi.getSessionMessages(latest.id, 100, 0);
         if (!cancelled) {
-          setMessages(sessionMessages);
+          setMessages(sessionMessages.items);
+          setHistoryTruncated(sessionMessages.truncated);
         }
       } catch (error) {
         console.error('[CorrelationAIPane] Failed to bootstrap session:', error);
@@ -273,6 +279,7 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
       const session = await createReplacementSession();
       console.log('[CorrelationAIPane] Session created:', session);
       setMessages([]);
+      setHistoryTruncated(false);
     } catch (error) {
       console.error('[CorrelationAIPane] Error creating session:', error);
       await alert({ title: 'Could not create session', message: 'Failed to create session. Check the console for details.' });
@@ -283,7 +290,8 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
     setCurrentSession(session);
     try {
       const sessionMessages = await analysisSessionsApi.getSessionMessages(session.id, 100, 0);
-      setMessages(sessionMessages);
+      setMessages(sessionMessages.items);
+      setHistoryTruncated(sessionMessages.truncated);
     } catch (error) {
       console.error('Error loading session messages:', error);
     }
@@ -318,6 +326,7 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
     try {
       const session = await createReplacementSession();
       setMessages([]);
+      setHistoryTruncated(false);
       return session.id;
     } catch (error) {
       console.error('Error recovering missing session:', error);
@@ -669,6 +678,19 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
             </div>
           ) : (
             <div className="space-y-4 overflow-x-hidden">
+              {/* Say so when the pane is showing a page (FS-459). The list is oldest
+                  first, so the messages missing are the RECENT ones — a user scrolling to
+                  the bottom of this pane would otherwise believe they had reached the end
+                  of the conversation. */}
+              {historyTruncated && (
+                <div
+                  role="status"
+                  className="rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300"
+                >
+                  This session has more messages than are shown here. The most recent turns
+                  may be missing — start a new session to continue the conversation.
+                </div>
+              )}
               {messages.map((message, index) => {
                 const followUpQuestions = message.role === 'assistant' ? getFollowUpQuestions(message) : [];
 

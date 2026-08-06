@@ -55,33 +55,7 @@ registry nothing can populate.
 
 ---
 
-## 2. Five capped lists cannot say they were capped
-
-**Pinned by** `backend/tests/test_capped_lists_cannot_grow.py` (`MAX_UNSIGNALLED = 5`)
-
-An endpoint that caps its result and cannot signal the cap reports a partial answer as a
-complete one.
-
-**Eleven when this register was written; six were closed on 2026-08-05** — three registries
-endpoints, `/health-index`, `/commands/asset/{id}` and `/notifications/log`. Each was a
-`limit + 1` select and a `mark_truncated` call, which is the whole fix: one extra row instead
-of a `COUNT` over the table.
-
-The five that remain are all in `analysis_sessions.py` and `kanban.py`:
-
-    /api/v1/nlp/sessions/chat/history
-    /api/v1/nlp/sessions/chat/search
-    /api/v1/nlp/sessions/{session_id}/messages
-    /api/v1/kanban/tasks
-    /api/v1/kanban/tasks/{task_id}/comments
-
-**To close:** the same change, in two files owned by another lane. Mechanical, not a
-decision — it is on this page only because the work has not been done, which makes it the
-one entry here that does not need anybody's intent.
-
----
-
-## 3. Five declared fields on shapes the server never defines
+## 2. Five declared fields on shapes the server never defines
 
 **Pinned by** `backend/tests/test_frontend_fields_exist_on_the_wire.py`
 (`MAX_UNREAD_PHANTOM_FIELDS = 5`) · FS-442
@@ -99,7 +73,7 @@ the sweep to recognise client-constructed types and exempt them with a verifiabl
 
 ---
 
-## 4. `logistics_correlation` serves twelve paths at a doubled prefix
+## 3. `logistics_correlation` serves twelve paths at a doubled prefix
 
 **Pinned by** `backend/tests/test_logistics_correlation_scoping_realdb.py`
 
@@ -114,7 +88,7 @@ which the frontend actually calls. Whichever router registers first would silent
 
 ---
 
-## 5. Two PUT handlers replace rather than patch
+## 4. Two PUT handlers replace rather than patch
 
 **Pinned by** `backend/tests/test_partial_updates_do_not_wipe_fields.py` (2 allowances)
 
@@ -124,6 +98,32 @@ different shape from the update payload.
 
 **To close:** confirm the intended semantics per route and either narrow the allowance or
 switch the verb.
+
+---
+
+## 5. Three heartbeat fields arrive at the cloud and are discarded
+
+**Pinned by** `backend/tests/test_heartbeat_contract_is_fully_read.py` · FS-460
+
+`build_heartbeat_payload` sends eleven fields. `_process_agent_heartbeat` persists
+`agent_id`, `agent_version`, `config_hash` and `build_id`, and uses `organization_id`,
+`asset_ids` and `timestamp` to route and stamp the update. It never touches:
+
+| field | what it would tell an operator |
+|---|---|
+| `buffer_depth` | pending messages on the device — the number that says it is falling behind |
+| `collector_status` | per-collector health, from the agent's own coordinator |
+| `git_sha` | which build is actually running, beyond `build_id` |
+
+`buffer_depth` is the one that matters. The `EdgeBufferGrowing` alert answers the same
+question from the agent's `/metrics`, which requires **reaching the device** — and the case
+worth catching is the device you cannot reach. The heartbeat is the path that survives NAT,
+it already arrives, and the cloud already parses it.
+
+**To close:** decide whether the fleet surface should show device backlog and collector
+health. If yes it is a migration (three columns on `assets`), a worker change and a panel; if
+no, stop computing and transmitting them on every device. Both are defensible; doing neither
+is what is currently happening.
 
 ---
 
@@ -141,6 +141,29 @@ per-type unfed fields (`MAX_UNFED_FIELDS = 0`) and adapter-unset fields
 (`MAX_UNSET_FIELDS = 0`).
 
 ## Closed, and what closing one cost
+
+**The capped lists** (FS-455/459) were entry #2 and are at zero. Eleven endpoints could not
+say they had capped; the fix was `limit + 1` and one `mark_truncated` call each. Six went on
+2026-08-05 in `registries.py`, `health_index.py`, `commands.py` and `notifications.py`; the
+last five went the same day in `analysis_sessions.py` and `kanban.py`.
+
+**Those last two files belong to another lane, and crossing it was the right call here** —
+this entry recorded itself as the one needing nobody's intent. The change contains no
+decision about semantics. The entries that DO need someone's intent are still on this page,
+untouched, which is the distinction that makes the lane rule worth keeping rather than a rule
+to route around.
+
+Half a fix would have been to stop at the server. The three chat endpoints have real callers,
+so `getChatHistory`, `searchChatHistory` and `getSessionMessages` now return `ListResult`, and
+both components render a notice. Search is the sharpest: a capped result means matches exist
+that were not shown, and a search box that quietly omits hits is worse than one that finds
+nothing, because the user concludes the thing is not there. The two `kanban.py` endpoints have
+no frontend caller at all — the board uses `/kanban/board` — so the signal is there for
+whoever writes one.
+
+`MAX_UNSIGNALLED = 0`, and the class that used to attribute the debt across lanes now asserts
+there is none.
+
 
 **The PDF truncation flag** (FS-454/456) was entry #1 on this page: the parser capped each
 page at 20,000 characters and said nothing. Closing it took three layers, and only the first

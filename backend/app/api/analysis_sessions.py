@@ -23,7 +23,9 @@ application layer was correct throughout. Only the GUC was missing.
 from typing import List, Dict, Any, Optional, Union
 from uuid import UUID
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, UploadFile, File, Query
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, UploadFile, File, Query, Response
+
+from app.core.pagination import mark_truncated
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_, func
 from pydantic import BaseModel, Field
@@ -1362,6 +1364,7 @@ async def session_chat(
 @router.get("/{session_id}/messages", response_model=List[SessionMessageResponse])
 async def get_session_messages(
     session_id: UUID,
+    response: Response,
     limit: int = Query(100, ge=1, description="Maximum rows to return."),
     offset: int = Query(0, ge=0, description="Rows to skip."),
     db: AsyncSession = Depends(get_tenant_db),
@@ -1378,9 +1381,13 @@ async def get_session_messages(
     # Get messages
     query = select(SessionMessage).where(SessionMessage.session_id == session_id_str)
     query = query.order_by(SessionMessage.timestamp.asc())
-    query = query.limit(limit).offset(offset)
+    query = query.limit(limit + 1).offset(offset)
     result = await db.execute(query)
-    messages = result.scalars().all()
+    # SAYS WHEN IT CAPPED (FS-459). A bare array of exactly `limit` rows is
+    # indistinguishable from the complete set, so a page of chat history reads as the
+    # whole conversation. One extra row settles it; a COUNT over the table would not
+    # be worth the scan.
+    messages = mark_truncated(response, result.scalars().all(), limit)
     
     return [
         SessionMessageResponse(
@@ -1511,6 +1518,7 @@ async def generate_session_title(
 
 @router.get("/chat/history", response_model=List[SessionMessageResponse])
 async def get_chat_history(
+    response: Response,
     limit: int = Query(100, ge=1, description="Maximum rows to return."),
     offset: int = Query(0, ge=0, description="Rows to skip."),
     session_id: Optional[UUID] = None,
@@ -1531,10 +1539,13 @@ async def get_chat_history(
         query = query.where(SessionMessage.session_id == session_id)
     
     query = query.order_by(SessionMessage.timestamp.desc())
-    query = query.limit(limit).offset(offset)
-    
+    query = query.limit(limit + 1).offset(offset)
     result = await db.execute(query)
-    messages = result.scalars().all()
+    # SAYS WHEN IT CAPPED (FS-459). A bare array of exactly `limit` rows is
+    # indistinguishable from the complete set, so a page of chat history reads as the
+    # whole conversation. One extra row settles it; a COUNT over the table would not
+    # be worth the scan.
+    messages = mark_truncated(response, result.scalars().all(), limit)
     
     return [
         SessionMessageResponse(
@@ -1557,6 +1568,7 @@ async def get_chat_history(
 
 @router.get("/chat/search", response_model=List[SessionMessageResponse])
 async def search_chat_history(
+    response: Response,
     q: str = Query(..., description="Search query"),
     limit: int = Query(50, ge=1, description="Maximum rows to return."),
     offset: int = Query(0, ge=0, description="Rows to skip."),
@@ -1581,10 +1593,13 @@ async def search_chat_history(
         query = query.where(SessionMessage.session_id == session_id)
     
     query = query.order_by(SessionMessage.timestamp.desc())
-    query = query.limit(limit).offset(offset)
-    
+    query = query.limit(limit + 1).offset(offset)
     result = await db.execute(query)
-    messages = result.scalars().all()
+    # SAYS WHEN IT CAPPED (FS-459). A bare array of exactly `limit` rows is
+    # indistinguishable from the complete set, so a page of chat history reads as the
+    # whole conversation. One extra row settles it; a COUNT over the table would not
+    # be worth the scan.
+    messages = mark_truncated(response, result.scalars().all(), limit)
     
     return [
         SessionMessageResponse(

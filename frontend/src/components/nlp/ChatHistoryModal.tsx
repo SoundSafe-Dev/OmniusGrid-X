@@ -15,6 +15,11 @@ export const ChatHistoryModal: React.FC<ChatHistoryModalProps> = ({
   onClose
 }) => {
   const [messages, setMessages] = useState<SessionMessage[]>([]);
+  // The server caps this list and says so in a header (FS-459). Held in state because a
+  // history modal showing 100 of 400 messages, with nothing saying so, is a record the
+  // user reads as complete — and "there is no earlier conversation" is the wrong
+  // conclusion to hand someone looking for what was said.
+  const [truncated, setTruncated] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   // Without this a failed fetch left `messages` empty and the modal said "No chat history
   // found" — a claim that the conversation did not happen.
@@ -45,7 +50,8 @@ export const ChatHistoryModal: React.FC<ChatHistoryModalProps> = ({
     setError(null);
     try {
       const history = await analysisSessionsApi.getChatHistory(100, 0, sessionIdFilter);
-      setMessages(history);
+      setMessages(history.items);
+      setTruncated(history.truncated);
     } catch (err) {
       console.error('Error loading chat history:', err);
       setError('Could not load chat history.');
@@ -63,7 +69,8 @@ export const ChatHistoryModal: React.FC<ChatHistoryModalProps> = ({
     setIsLoading(true);
     try {
       const results = await analysisSessionsApi.searchChatHistory(searchQuery, 50, 0, sessionIdFilter);
-      setMessages(results);
+      setMessages(results.items);
+      setTruncated(results.truncated);
     } catch (error) {
       console.error('Error searching chat history:', error);
     } finally {
@@ -135,6 +142,19 @@ export const ChatHistoryModal: React.FC<ChatHistoryModalProps> = ({
             </div>
           ) : (
             <div className="space-y-4">
+              {/* Say so when this is a page rather than the history (FS-459). Placed
+                  ABOVE the list because the truncation is at the far end — the reader
+                  would otherwise have to scroll to the bottom to find out that what they
+                  just scrolled past was incomplete. */}
+              {truncated && (
+                <div
+                  role="status"
+                  className="rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300"
+                >
+                  Showing the most recent messages only — older ones are not included.
+                  Narrow the search or filter by session to see further back.
+                </div>
+              )}
               {messages.map((message) => (
                 <div
                   key={message.id}

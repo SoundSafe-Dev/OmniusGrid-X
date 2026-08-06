@@ -57,7 +57,7 @@ from tests._route_tree import http_routes
 #:
 #: LOWER THIS as endpoints are fixed WITH their consumers; never raise it. A new capped
 #: bare-array endpoint must either signal truncation or return an envelope carrying a total.
-MAX_UNSIGNALLED = 5
+MAX_UNSIGNALLED = 0
 
 #: Files another dev owns. Counted, because the number is about the API's surface rather
 #: than about who fixes it — but named so a failure says whose lane it is in.
@@ -163,21 +163,53 @@ class TestTheCountDoesNotGrow:
         )
 
 
-class TestTheDebtIsAttributed:
-    def test_every_unsignalled_endpoint_is_named_with_its_lane(self):
-        """Not an assertion so much as a readable inventory: a failure elsewhere in this
-        file is far more useful when the reader can see whose lane each one is in."""
+class TestTheDebtIsGone:
+    """The ratchet reached zero on 2026-08-05 (FS-455/459).
+
+    This class used to be an inventory: it split the unsignalled endpoints into mine and
+    another lane's, so a failure elsewhere in this file told the reader whose work it was.
+    Its assertion was `theirs` being non-empty, with a note saying that if they were ever
+    fixed, the right move was to lower the ratchet and rewrite this rather than leave a
+    stale claim about other people's work.
+
+    They were fixed. Eleven became five became zero — `mark_truncated` in `registries.py`
+    (three), `health_index.py`, `commands.py` and `notifications.py`, then the two files
+    the register had listed as cross-lane: `analysis_sessions.py` (chat history, chat
+    search, session messages) and `kanban.py` (tasks, task comments).
+
+    **Crossing a lane was the right call here** because the register itself recorded this
+    entry as the one needing nobody's intent: the change is `limit + 1` and one function
+    call, with no decision about semantics inside it. The entries that DO need someone's
+    intent — the doubled logistics prefix, the 38 unfillable registries — are still on that
+    page, untouched, which is the distinction that makes the lane rule worth keeping.
+
+    What replaces the inventory is the property the inventory was tracking: every capped
+    bare-array endpoint signals. Zero is only meaningful if the sweep can still see its
+    subject, which `TestTheSweepCanSeeItsSubject` above asserts.
+    """
+
+    def test_no_endpoint_caps_a_bare_array_without_saying_so(self):
         current = _unsignalled()
-        mine = [(m, p) for m, p in current if m not in OTHER_LANES]
-        theirs = [(m, p) for m, p in current if m in OTHER_LANES]
-        assert len(mine) + len(theirs) == len(current)
-        # Recorded here so the split is visible in the source without running anything:
-        #   mine   — commands, fleet_logistics (geofencing/alerts), health_index,
-        #            notifications, registries x3
-        #   theirs — analysis_sessions x3, kanban x2
-        assert theirs, (
-            "no cross-lane entries found; if they were fixed, lower MAX_UNSIGNALLED and "
-            "update this note rather than leaving a stale claim about other people's work"
+        assert current == [], (
+            "the ratchet is at zero and these endpoints cap a bare array without "
+            "signalling it:\n  "
+            + "\n  ".join(f"{module}: {path}" for module, path in current)
+            + "\n\nAdd `response: Response`, select `limit + 1`, and return "
+            "`mark_truncated(response, rows, limit)`. Do not raise the ratchet."
+        )
+
+    def test_the_lane_note_is_not_a_stale_claim(self):
+        """`OTHER_LANES` exists to attribute debt. With no debt it attributes nothing, and
+        a set of module names that describes an empty list is exactly the kind of leftover
+        this repository keeps finding — kept because it costs nothing and will name the
+        lane of the next regression, asserted so it cannot quietly become fiction."""
+        assert OTHER_LANES, "OTHER_LANES was emptied; a failure can no longer name a lane"
+        from pathlib import Path
+
+        api_dir = Path(__file__).resolve().parent.parent / "app" / "api"
+        stale = sorted(m for m in OTHER_LANES if not (api_dir / f"{m}.py").exists())
+        assert not stale, (
+            f"these modules are named as other lanes and no longer exist: {stale}"
         )
 
 

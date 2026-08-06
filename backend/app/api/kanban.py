@@ -6,7 +6,9 @@ Actionable decision-making kanban system for OmniusGrid
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks, Response
+
+from app.core.pagination import mark_truncated
 from sqlalchemy import select, update, delete, func, and_, or_, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -275,6 +277,7 @@ async def update_board_view(
 
 @router.get("/tasks", response_model=List[TaskResponse])
 async def list_tasks(
+    response: Response,
     board_id: Optional[UUID] = None,
     column_id: Optional[UUID] = None,
     assignee_id: Optional[UUID] = None,
@@ -314,9 +317,13 @@ async def list_tasks(
     if approval_status:
         query = query.where(Task.approval_status == approval_status)
     
-    query = query.order_by(Task.position).offset(offset).limit(limit)
+    # SAYS WHEN IT CAPPED (FS-459). A board page that returns exactly `limit` tasks is
+    # indistinguishable from a board with exactly that many tasks — and a planning board
+    # silently missing its tail is the shape where "there is nothing else to do" and "you
+    # cannot see what else there is" look the same.
+    query = query.order_by(Task.position).offset(offset).limit(limit + 1)
     result = await session.execute(query)
-    return result.scalars().all()
+    return mark_truncated(response, result.scalars().all(), limit)
 
 
 @router.post("/tasks", response_model=TaskResponse, dependencies=[Depends(require_operator_or_admin)])
@@ -981,6 +988,7 @@ async def execute_completion_actions(task_id: str, actions: Dict[str, Any], orga
 @router.get("/tasks/{task_id}/comments", response_model=List[TaskCommentResponse])
 async def get_task_comments(
     task_id: UUID,
+    response: Response,
     limit: int = Query(50, ge=1, le=200),
     session: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
@@ -991,9 +999,11 @@ async def get_task_comments(
         select(TaskComment)
         .where(TaskComment.task_id == task_id)
         .order_by(TaskComment.created_at.desc())
-        .limit(limit)
+        .limit(limit + 1)
     )
-    return result.scalars().all()
+    # SAYS WHEN IT CAPPED (FS-459). An activity feed cut at the cap reads as the task's
+    # complete history, which is the one thing an activity feed is for.
+    return mark_truncated(response, result.scalars().all(), limit)
 
 
 @router.post("/tasks/{task_id}/comments", response_model=TaskCommentResponse, dependencies=[Depends(require_operator_or_admin)])

@@ -26,7 +26,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The sixty-nine numbered classes
+## The seventy numbered classes
 
 **The count is the numbering, and it was already stale before this line was corrected.**
 This heading read "forty-seven" while the document's own highest class was 60 — the summary
@@ -2512,6 +2512,11 @@ one of its findings. The habit that catches it:
     A summary line names the failure; the traceback explains it. Piping to `tail` keeps the
     first and throws away the second, so an intermittent that appears once is unreproducible
     by the time you read about it. Write the run to a file and tail the file.
+
+86. **A contract with one side asserted is not asserted.**
+    The agent's payload builder and the cloud's handler each had tests, both passed, and
+    three fields were transmitted to nobody. Assert the JOIN — every field one side sends is
+    read by the other or written down as ignored, with a reason.
 
 ---
 
@@ -5342,4 +5347,78 @@ between its snapshot and its `pg_dump` would produce exactly this.
 
 Redirect to a file and read the file. The cost is one path; the alternative is running the
 whole suite again to see what you already saw.
+
+---
+
+## The capped-list ratchet reached zero (FS-459)
+
+Class 12 — a cap that cannot say it capped — is closed on the API surface. Eleven endpoints
+returned a bare array truncated at `limit`, which makes a full page indistinguishable from
+the complete set; all eleven now select `limit + 1` and set `X-Result-Truncated`.
+
+**One extra row, not a COUNT.** The whole fix per endpoint is a `+ 1` on the limit and one
+`mark_truncated(response, rows, limit)` call. A `COUNT(*)` over the table would answer the
+same question and cost a scan on every list request, which is why the ratchet sat at eleven
+for as long as it did: the fix was assumed to be expensive.
+
+The last five were in `analysis_sessions.py` and `kanban.py`, files another lane owns. The
+open-decisions register had recorded that entry as **the one needing nobody's intent** — the
+change contains no decision about semantics — and crossing a lane for a mechanical fix while
+leaving the entries that need someone's judgement untouched is what keeps the lane rule
+meaningful rather than a rule to route around.
+
+**Stopping at the server would have been half of it,** and this repository has now recorded
+that failure three times (FS-434, FS-456, and the `truncated` flag the intake panel had been
+receiving and not rendering). So the three chat endpoints with real callers return
+`ListResult` and both components render a notice. Ranked by how badly silence hurts:
+
+| endpoint | what silence costs |
+|---|---|
+| `chat/search` | matches EXIST that were not shown — the user concludes the thing is not there |
+| `{session}/messages` | ordered OLDEST FIRST, so truncation drops the most RECENT turns |
+| `chat/history` | a page reads as the whole record of what was said |
+
+The two `kanban.py` endpoints have no frontend caller — the board uses `/kanban/board` — so
+the signal is there for whoever writes one, and the client half was not invented for it.
+
+**What replaced the ratchet.** `TestTheDebtIsAttributed` used to split the unsignalled
+endpoints into mine and another lane's, asserting the cross-lane list was non-empty, with a
+note saying that if they were ever fixed the right move was to lower the ratchet and rewrite
+the class rather than leave a stale claim about other people's work. That is what happened.
+It is now `TestTheDebtIsGone`, asserting the property the inventory was tracking.
+
+---
+
+## Class 70 — fields transmitted across a boundary that the other side never reads
+
+**Where:** `edge-agent/opsgrid_agent/versioning.py` → `backend/app/workers/ingestion.py`
+(FS-460)
+
+The edge agent builds one heartbeat payload of eleven fields. The cloud persists four, uses
+three for routing and stamping, and **never touches `git_sha`, `collector_status` or
+`buffer_depth`** — computed on every device, serialised, transmitted, discarded.
+
+Both sides had tests. `edge-agent/tests/test_heartbeat.py` asserts the payload is built
+correctly; `test_agent_heartbeat_updates_assets_realdb.py` asserts the update lands. Neither
+could see the gap, because a contract with only one side asserted is not asserted.
+
+`buffer_depth` is the one that matters. It is the number that says a device is falling
+behind, and the `EdgeBufferGrowing` alert answers the same question from the agent's own
+`/metrics` — **which requires reaching the device, and the case worth catching is the device
+you cannot reach.** The heartbeat survives NAT, already arrives, and is already parsed.
+
+**Not fixed, recorded** (open-decisions #5). Persisting them is a migration, a worker change
+and a panel; the alternative is to stop computing them. Both are defensible and the choice
+is not a bug fix. What is now impossible is the gap widening quietly: the guard walks the
+agent's payload dict and the worker's `data.get` calls and requires every field to be
+consumed or explicitly exempted with a reason.
+
+The guard asserts BOTH directions. The reverse — the worker reading a field no agent sends —
+is the one that fails silently in production: `data.get` returns `None` rather than raising,
+so the column stays NULL forever while the code reads as though it were populated.
+
+## Rule 86 — a contract with one side asserted is not asserted
+
+Class 70. Two green suites, one on each side of a boundary, prove that each side does what
+its author intended. They say nothing about whether those intentions match. Assert the join.
 

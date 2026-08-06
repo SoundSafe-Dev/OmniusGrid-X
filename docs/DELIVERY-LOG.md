@@ -3756,3 +3756,72 @@ about the suite, and calling it flaky is how a real order-dependency becomes fol
 
 **Suite:** 3445 passed, 100 skipped (backend) · 201 passed (edge agent).
 
+---
+
+## 2026-08-05 — FS-459: the capped-list ratchet reached zero
+
+Eleven endpoints returned a bare array truncated at `limit`, so a full page was
+indistinguishable from the complete set. All eleven now signal.
+
+The last five were in `analysis_sessions.py` and `kanban.py` — another lane's files. The
+open-decisions register had recorded that entry as **the one needing nobody's intent**: the
+change is `limit + 1` and one `mark_truncated` call, with no decision about semantics inside
+it. Crossing a lane for that while leaving the entries that need someone's judgement
+untouched — the doubled logistics prefix, the 38 unfillable registries — is what keeps the
+lane rule meaningful rather than a rule to route around.
+
+The ratchet sat at eleven for as long as it did because the fix was assumed to cost a
+`COUNT(*)` per request. It costs one extra row.
+
+### Stopping at the server would have been half of it
+
+Three times now this repository has produced a correct flag that reached nobody: FS-434, the
+`truncated` flag the intake panel had been receiving and not rendering, and this. So the
+three chat endpoints with real callers return `ListResult`, and both components render a
+notice.
+
+Search is the sharpest of the three. A capped result set means matches **exist** that were
+not shown, and a search box that quietly omits hits is worse than one that finds nothing —
+the user concludes the thing is not there. Session messages is the subtlest: the endpoint
+orders oldest first, so truncation removes the most RECENT turns, and a user scrolling to the
+bottom of the pane would believe they had reached the end of the conversation.
+
+The two `kanban.py` endpoints have no frontend caller at all — the board uses
+`/kanban/board` — so the signal is there for whoever writes one, and no client work was
+invented to justify it.
+
+### The class that replaced the ratchet
+
+`TestTheDebtIsAttributed` split the unsignalled endpoints into mine and another lane's and
+asserted the cross-lane list was non-empty, with a note saying that if they were ever fixed,
+the right move was to lower the ratchet and rewrite the class rather than leave a stale claim
+about other people's work. That is exactly what happened, and the note is why the rewrite was
+obvious rather than a judgement call — **a test that says what to do when it stops being true
+is worth more than one that only says what is true.**
+
+### FS-460 — three heartbeat fields that reach the cloud and are thrown away
+
+Found while sweeping the edge agent for the same class one boundary out. The agent builds an
+eleven-field heartbeat; the cloud persists four, uses three to route and stamp, and never
+touches `git_sha`, `collector_status` or `buffer_depth`.
+
+Both sides had passing tests. The agent's asserts the payload is built correctly; the
+worker's asserts the update lands. **A contract with one side asserted is not asserted** —
+neither could see that three fields were being computed on every device, serialised,
+transmitted and discarded.
+
+`buffer_depth` is the one that matters: it is the number that says a device is falling
+behind, and the alert that answers the same question reads the agent's own `/metrics` —
+which requires reaching the device, and the case worth catching is the device you cannot
+reach. The heartbeat survives NAT, already arrives, and is already parsed.
+
+**Recorded rather than fixed.** Persisting them is a migration, a worker change and a panel;
+the alternative is to stop computing them. Both are defensible and neither is a bug fix, so
+it is open-decisions #5 with a guard that makes the gap unable to widen quietly. The guard
+asserts both directions — the reverse case, a worker reading a field no agent sends, is the
+one that fails silently in production, because `data.get` returns None rather than raising
+and the column stays NULL while the code reads as though it were populated.
+
+**Suite:** backend 3445 passed / 100 skipped · frontend 553 passed, coverage above all four
+thresholds.
+
