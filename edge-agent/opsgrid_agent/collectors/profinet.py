@@ -29,7 +29,7 @@ import asyncio
 import structlog
 
 from .base import BaseCollector
-from ..resilience import CircuitBreaker, ExponentialBackoff
+from ..resilience import ReconnectPolicy
 
 logger = structlog.get_logger()
 
@@ -50,17 +50,13 @@ class ProfinetCollector(BaseCollector):
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
-        # Reconnect discipline, matching modbus/opcua/mqtt (FS-472). Without this the
-        # loop retried every `poll_interval` for as long as the device stayed down —
-        # a PLC out for a day drew ~17,000 identical connection attempts, and each one
-        # costs the device a socket it has to refuse.
-        self._backoff = ExponentialBackoff(initial=1.0, cap=60.0, multiplier=2.0)
-        self._breaker = CircuitBreaker(
-            failure_threshold=5,
-            initial_cooldown=30.0,
-            cooldown_cap=300.0,
-            cooldown_multiplier=2.0,
-            name=f"profinet:{config.get('asset_id')}",
+        # Reconnect discipline, from the ONE policy (FS-473). FS-472 gave five collectors
+        # a backoff and a breaker by copying the same four constants into each, which made
+        # sixteen occurrences across eight files of a number `modbus` documents as a
+        # first-pass guess. `ReconnectPolicy` owns them now, and `reconnect:` in this
+        # collector's config overrides them per site without editing this file.
+        self._backoff, self._breaker = ReconnectPolicy.from_config(config).instruments(
+            f"profinet:{config.get('asset_id')}"
         )
         self.ip_address = config.get("ip_address")
         self.rack = config.get("rack", 0)

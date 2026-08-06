@@ -78,14 +78,46 @@ class TestTheSweepCanSeeItsSubject:
 
 @pytest.mark.parametrize("path", _reconnecting_modules(), ids=lambda p: p.stem)
 class TestEachOneOwnsTheInstruments:
-    def test_it_constructs_both(self, path: Path):
+    def test_it_obtains_both(self, path: Path):
+        """OWNS a matched pair — not necessarily by constructing them itself (FS-473).
+
+        This asserted `ExponentialBackoff(` and `CircuitBreaker(` appeared in the file,
+        which was true when every collector built its own. Factoring the constants into
+        `ReconnectPolicy` removed those literals and failed five collectors that had just
+        become *more* correct. **A guard written against one implementation of a property
+        fails the next implementation of the same property**, so it asks about the
+        attributes now.
+        """
         source = path.read_text()
-        for tool in ("ExponentialBackoff", "CircuitBreaker"):
-            assert f"{tool}(" in source, (
-                f"{path.name} reconnects and never constructs {tool}. `resilience.py` has "
-                f"had both since modbus was written; a device that is switched off is "
-                f"otherwise dialled once per poll interval indefinitely."
-            )
+        obtains = "ReconnectPolicy" in source or (
+            "ExponentialBackoff(" in source and "CircuitBreaker(" in source
+        )
+        assert obtains, (
+            f"{path.name} reconnects and obtains no backoff or breaker. `resilience.py` "
+            f"has had both since modbus was written; a device that is switched off is "
+            f"otherwise dialled once per poll interval indefinitely."
+        )
+        for attribute in ("self._backoff", "self._breaker"):
+            assert attribute in source, f"{path.name} has no {attribute}"
+
+    def test_it_does_not_hardcode_the_tuning(self, path: Path):
+        """The point of the policy (FS-473).
+
+        The four constants were a first-pass guess written in eight files. A guess in one
+        place is a guess; a guess in eight is one nobody can revise, because the person
+        with the telemetry has to find all eight and the ones they miss keep the old
+        behaviour.
+        """
+        source = path.read_text()
+        hardcoded = [
+            literal
+            for literal in ("failure_threshold=", "cooldown_cap=", "initial_cooldown=", "cap=60")
+            if literal in source
+        ]
+        assert not hardcoded, (
+            f"{path.name} sets {hardcoded} inline instead of taking them from "
+            f"ReconnectPolicy. That is how the same guess ended up in eight files."
+        )
 
     def test_it_consults_the_breaker_before_attempting(self, path: Path):
         """Owning a breaker and not asking it is the same as not having one."""

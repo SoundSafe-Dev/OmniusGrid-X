@@ -4295,3 +4295,52 @@ true, and now true in five more places.
 
 **Suite:** backend 3511 passed / 100 skipped · edge agent 268 · frontend 555.
 
+---
+
+## 2026-08-05 — FS-473: the fix that spread the guess
+
+FS-472 was complete and not finished, and its own summary said which part: *"I left the tuning
+alone — it's the same first-pass guess modbus has carried since it was written."*
+
+True, and it understated the problem. Giving five collectors a backoff and a breaker by
+copying four constants into each put those numbers in **sixteen places across eight files** —
+numbers one of those files documents as provisional pending production telemetry. Whoever
+eventually holds that telemetry would have had to find all eight, and the ones they missed
+would keep the old behaviour while looking deliberate.
+
+**The copies were also less capable than the originals.** `modbus`, `opcua` and `mqtt` accept
+an injected `backoff=` / `breaker=` so the coordinator can hand one collector a tuned
+instrument. The five new ones accepted nothing. The fix imitated what made the pattern work
+and not what made it changeable.
+
+`ReconnectPolicy` owns the numbers now, and **they have not changed** — same guess, one place,
+plus a `reconnect:` block in collector config to override per site and injection available
+everywhere. All eight take it through two entry points that reach identical validation,
+because an operator writing YAML cannot see which kind of collector they are configuring.
+
+Two validations earn a class rather than a dict. An unknown key is an error, because a typo
+that silently keeps the default is a tuning the operator believes they applied. And
+`max_delay > cooldown_cap` is refused, because the loop would already be waiting longer than
+the breaker's cooldown — an instrument present and inert.
+
+### The guard had to change, which is its own finding
+
+The FS-472 guard asserted `ExponentialBackoff(` and `CircuitBreaker(` appeared in each
+collector. True only while every collector built its own — factoring them out failed five
+collectors that had just become *more* correct.
+
+**A guard written against one implementation of a property fails the next implementation of
+the same property.** It asks about the attributes now, and separately asserts that no
+collector hardcodes the tuning, which is the property the refactor actually established.
+
+### Found by running it, not by the suite
+
+Migrating the three original collectors, I wrote `ReconnectPolicy.from_config(config)` into
+constructors that take explicit keyword arguments and have no `config` in scope. **The full
+suite passed** — nothing constructs those three directly — and it surfaced only when I built
+one by hand to check the tuning actually flowed. That is the argument for driving the thing
+rather than trusting green: 289 tests had nothing to say about a `NameError` on the first
+line of a constructor.
+
+**Suite:** backend 3511 passed / 100 skipped · edge agent 289 · frontend 555.
+

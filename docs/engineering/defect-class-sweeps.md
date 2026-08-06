@@ -2607,6 +2607,17 @@ one of its findings. The habit that catches it:
     since the day they were written. Five later collectors reimplemented the retry loop
     without them — not by deciding against, by not knowing.
 
+98. **Spreading a guess is worse than leaving it in one place.**
+    Four tuning constants, copied into five files to fix a real defect, became sixteen
+    occurrences across eight modules of a number documented as provisional. A guess in one
+    place is a guess; a guess in eight is one nobody can revise, because whoever gets the
+    data has to find them all and the ones they miss look tuned.
+
+99. **A fix that copies the pattern should copy the seams too.**
+    The five collectors got the instruments and not the injection parameter the three
+    originals had, so the newer code was less configurable than the code it imitated. When
+    copying a shape, copy what makes it changeable, not only what makes it work.
+
 ---
 
 ## Open observations, not yet tickets
@@ -5877,7 +5888,7 @@ Check both directions of an exemption before believing the count it produces.
 
 # What this session produced, and what it cost
 
-**FS-431 to FS-472 — forty-two items, no gaps** — over one working session. Recorded
+**FS-431 to FS-473 — forty-three items, no gaps** — over one working session. Recorded
 together because the individual entries above answer "what was wrong" and this answers "what
 the method actually does", which is the thing worth reusing.
 
@@ -6004,4 +6015,51 @@ rate.
 Class 73. Three collectors used the resilience module and five reimplemented the loop without
 it. When a utility exists for a problem that recurs, the question is not whether it is good
 but whether the next person writing that problem will find it.
+
+## Class 73, second half — the fix that spread the guess (FS-473)
+
+FS-472 above is complete and was not finished. It gave five collectors a backoff and a
+breaker by copying four constants into each, and the summary said so plainly: *"I left the
+tuning alone — it's the same first-pass guess modbus has carried since it was written."*
+
+That was true and it understated the problem. The constants were now in **sixteen places
+across eight files**, one of which carried a `TODO(tune)` explaining they were provisional
+pending production telemetry. Whoever eventually holds that telemetry would have had to find
+all eight, and the ones they missed would keep the old behaviour while looking deliberate.
+
+**And the copies were less capable than the originals.** `modbus`, `opcua` and `mqtt` accept
+an injected `backoff=` / `breaker=` so the coordinator can hand one collector a tuned
+instrument. The five new ones accepted nothing — the fix imitated what made the pattern work
+and not what made it changeable.
+
+`ReconnectPolicy` now owns the numbers. **They have not changed**: the same guess, in one
+place, with a `reconnect:` block in collector config to override them per site and injection
+available everywhere. All eight collectors take it the same way, through two entry points
+(`from_config` for the config-dict collectors, `from_settings` for the three built from
+keyword arguments) that reach identical validation — because an operator writing YAML cannot
+see which kind they are configuring.
+
+Two validations earn the class rather than a dict:
+
+* **an unknown key is an error.** A typo that silently keeps the default is a tuning the
+  operator believes they applied;
+* **the pair must agree.** `max_delay > cooldown_cap` means the loop already waits longer
+  than the breaker's cooldown, so opening it changes nothing — an instrument that is present
+  and inert.
+
+The guard that checked the original fix had to change, and that is worth recording too: it
+asserted `ExponentialBackoff(` and `CircuitBreaker(` appeared in each collector, which was
+true only while every collector built its own. Factoring them out failed five collectors that
+had just become more correct. **A guard written against one implementation of a property
+fails the next implementation of the same property** — it asks about the attributes now, and
+separately asserts that no collector hardcodes the tuning.
+
+## Rule 98 — spreading a guess is worse than leaving it in one place
+
+Class 73. Before copying a constant into a fifth file, ask who will have to find all five.
+
+## Rule 99 — a fix that copies the pattern should copy the seams too
+
+Class 73. The five copies took the instruments and left behind the injection parameter, so
+newer code was less configurable than the code it imitated.
 

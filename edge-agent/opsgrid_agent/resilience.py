@@ -1,7 +1,8 @@
 """Resilience primitives for edge agent collectors.
 
-Two composable building blocks used by the MQTT, OPC-UA and Modbus
-collectors to handle real-world production failures gracefully:
+Two composable building blocks, and one policy that decides how they are tuned. Used by
+**every collector that reconnects to a device** — three since they were written, and five
+more since FS-472 found them retrying a switched-off PLC every five seconds forever:
 
 * :class:`ExponentialBackoff` — increases the delay between retries so
   the collector stops hammering a struggling service. Resets on success.
@@ -34,6 +35,12 @@ Usage::
         except ConnectionError:
             breaker.record_failure()
             await asyncio.sleep(backoff.next_delay())
+
+* :class:`ReconnectPolicy` — the tuning, in one place. The two primitives take seven
+  numbers between them; those numbers used to be written inline in eight collectors, which
+  made a first-pass guess into something nobody could revise (FS-473). A collector now asks
+  the policy for a matched pair, and a ``reconnect:`` block in its config overrides them per
+  site.
 
 Run ``python -m opsgrid_agent.resilience`` from ``edge-agent/`` to see
 a self-contained behavioural demo of both primitives.
@@ -146,9 +153,13 @@ class CircuitBreaker:
     :meth:`record_failure`.
 
     Defaults are deliberately conservative for first-instance-of-pattern
-    rollout. Tune via constructor arguments once production telemetry on
-    real outage patterns accumulates — see the ``TODO(tune)`` notes in
-    each collector for the per-deployment override hook.
+    rollout. Tune via :class:`ReconnectPolicy` below, which every collector now takes its
+    values from, or per site with a ``reconnect:`` block in that collector's config.
+
+    This used to say "see the ``TODO(tune)`` notes in each collector", which was accurate
+    while eight collectors each carried their own copy of the numbers. They do not (FS-473),
+    and a cross-reference that survives the thing it points at is how a reader ends up
+    editing a file that no longer decides anything.
 
     Args:
         failure_threshold: Consecutive failures in CLOSED state required
@@ -314,6 +325,124 @@ class CircuitBreaker:
 # --------------------------------------------------------------------------- #
 # Self-contained demo
 # --------------------------------------------------------------------------- #
+
+
+class ReconnectPolicy:
+    """How hard a collector retries a device it cannot reach (FS-473).
+
+    THE NUMBERS LIVED IN EIGHT FILES. `modbus`, `opcua` and `mqtt` each constructed a
+    backoff and a breaker inline; FS-472 gave the same treatment to five more collectors by
+    copying the same four constants into each. Sixteen occurrences of `cap=60.0` and
+    `failure_threshold=5` across eight modules, and a `TODO(tune)` comment in one of them
+    explaining that they were a first-pass guess pending production telemetry.
+
+    A guess in one place is a guess. A guess in eight places is a guess nobody can revise:
+    the person with the telemetry has to find all eight, and the ones they miss are the ones
+    that keep the old behaviour.
+
+    **So the defaults live here, once, and they are still the same first-pass guess.** This
+    class does not make them right — it makes them changeable, and it makes a per-site
+    override possible without editing any collector.
+
+    WHY A CLASS RATHER THAN MODULE CONSTANTS. `instruments()` returns a matched pair. A
+    backoff whose cap exceeds the breaker's cooldown means the breaker never gets to do
+    anything, and two loose constants invite exactly that mismatch; `__post_init__` refuses
+    it.
+    """
+
+    # TODO(tune): a first-pass conservative guess, carried here from
+    # `modbus_collector.py` where it was written (FS-473). Revisit once there is production
+    # telemetry on real controller outage patterns. Changing them here changes all eight
+    # collectors, which is the point — and a single site can override with a `reconnect:`
+    # block rather than waiting for this.
+
+    #: Delay before the first retry, and the ceiling the doubling reaches.
+    initial_delay: float = 1.0
+    max_delay: float = 60.0
+    multiplier: float = 2.0
+
+    #: Consecutive failures before the breaker opens, and how long it then waits.
+    failure_threshold: int = 5
+    initial_cooldown: float = 30.0
+    cooldown_cap: float = 300.0
+    cooldown_multiplier: float = 2.0
+
+    def __init__(
+        self,
+        initial_delay: float = 1.0,
+        max_delay: float = 60.0,
+        multiplier: float = 2.0,
+        failure_threshold: int = 5,
+        initial_cooldown: float = 30.0,
+        cooldown_cap: float = 300.0,
+        cooldown_multiplier: float = 2.0,
+    ) -> None:
+        self.initial_delay = initial_delay
+        self.max_delay = max_delay
+        self.multiplier = multiplier
+        self.failure_threshold = failure_threshold
+        self.initial_cooldown = initial_cooldown
+        self.cooldown_cap = cooldown_cap
+        self.cooldown_multiplier = cooldown_multiplier
+
+        # The pair has to make sense together. A backoff that climbs past the breaker's
+        # cooldown cap means the breaker opens and the loop was already waiting longer than
+        # the cooldown, so opening changes nothing — the instrument is present and inert,
+        # which is the failure mode this repository has a rule about.
+        if self.max_delay > self.cooldown_cap:
+            raise ValueError(
+                f"max_delay ({self.max_delay}) exceeds cooldown_cap ({self.cooldown_cap}); "
+                f"the breaker would never slow anything down"
+            )
+
+    @classmethod
+    def from_settings(cls, settings: Optional[dict]) -> "ReconnectPolicy":
+        """Build from the `reconnect:` block itself.
+
+        Two entry points because the collectors take their configuration two ways: the
+        older three (`modbus`, `opcua`, `mqtt`) are constructed with explicit keyword
+        arguments by the coordinator, and the rest receive a config dict. Both reach the
+        same validation, so a `reconnect:` block in YAML behaves identically either way —
+        which is the point, since an operator writing the file cannot see the difference.
+        """
+        return cls.from_config({"reconnect": settings})
+
+    @classmethod
+    def from_config(cls, config: Optional[dict]) -> "ReconnectPolicy":
+        """Build from a collector's `reconnect:` block, falling back to the defaults.
+
+        Unknown keys are REJECTED rather than ignored. A typo in a YAML key that silently
+        keeps the default is the shape of every config defect in this repository: the
+        operator believes they tuned it, and nothing says otherwise.
+        """
+        settings = (config or {}).get("reconnect") or {}
+        if not isinstance(settings, dict):
+            raise ValueError(f"`reconnect` must be a mapping, got {type(settings).__name__}")
+
+        known = {
+            "initial_delay", "max_delay", "multiplier",
+            "failure_threshold", "initial_cooldown", "cooldown_cap", "cooldown_multiplier",
+        }
+        unknown = sorted(set(settings) - known)
+        if unknown:
+            raise ValueError(
+                f"unknown reconnect settings {unknown}; known keys are {sorted(known)}"
+            )
+        return cls(**settings)
+
+    def instruments(self, name: str) -> tuple[ExponentialBackoff, CircuitBreaker]:
+        """The matched pair a reconnect loop needs, named for its log lines."""
+        backoff = ExponentialBackoff(
+            initial=self.initial_delay, cap=self.max_delay, multiplier=self.multiplier
+        )
+        breaker = CircuitBreaker(
+            failure_threshold=self.failure_threshold,
+            initial_cooldown=self.initial_cooldown,
+            cooldown_cap=self.cooldown_cap,
+            cooldown_multiplier=self.cooldown_multiplier,
+            name=name,
+        )
+        return backoff, breaker
 
 
 def _demo() -> None:

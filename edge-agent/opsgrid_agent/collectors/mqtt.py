@@ -9,7 +9,7 @@ import structlog
 
 from opsgrid_agent.packml import PackMLStateMapper, create_mapper_for_asset_type
 
-from ..resilience import CircuitBreaker, ExponentialBackoff
+from ..resilience import CircuitBreaker, ExponentialBackoff, ReconnectPolicy
 
 logger = structlog.get_logger()
 
@@ -43,6 +43,7 @@ class MQTTCollector:
         on_message_callback: Optional[Callable] = None,
         backoff: Optional[ExponentialBackoff] = None,
         breaker: Optional[CircuitBreaker] = None,
+        reconnect: Optional[Dict[str, Any]] = None,
     ):
         self.broker_host = broker_host
         self.broker_port = broker_port
@@ -74,16 +75,19 @@ class MQTTCollector:
         # broker outage patterns, or pass a tuned ExponentialBackoff /
         # CircuitBreaker instance from the coordinator for per-deployment
         # overrides without touching this file.
-        self._backoff = backoff or ExponentialBackoff(
-            initial=1.0, cap=60.0, multiplier=2.0
+        # ONE POLICY, still injectable (FS-473). These three collectors each wrote the
+        # same four constants inline, and FS-472 copied them into five more — sixteen
+        # occurrences across eight files of a number this file's own TODO called a
+        # first-pass guess. The guess has not changed; it now lives in one place where the
+        # person holding production telemetry can change it once.
+        #
+        # An explicit `backoff=` / `breaker=` still wins, so the coordinator can hand a
+        # tuned instrument to one collector without disturbing the rest.
+        _policy_backoff, _policy_breaker = ReconnectPolicy.from_settings(reconnect).instruments(
+            f"mqtt:{asset_id}"
         )
-        self._breaker = breaker or CircuitBreaker(
-            failure_threshold=5,
-            initial_cooldown=30.0,
-            cooldown_cap=300.0,
-            cooldown_multiplier=2.0,
-            name=f"mqtt:{asset_id or 'agent'}",
-        )
+        self._backoff = backoff or _policy_backoff
+        self._breaker = breaker or _policy_breaker
         
         # Setup callbacks
         self.client.on_connect = self._on_connect
