@@ -4255,3 +4255,43 @@ derives. The remedy is not more care, it is fewer hand-written numbers.
 
 **Suite:** backend 3511 passed / 100 skipped · frontend 555 · edge agent 237.
 
+---
+
+## 2026-08-05 — FS-472: a dead PLC dialled 17,000 times a day
+
+The gap I flagged last pass and did not fix, on the grounds that it was robustness rather
+than wrong data and the call was not mine to make. Picked up as the next step.
+
+Five industrial collectors — `profinet`, `dnp3`, `bacnet`, `ethernet_ip`, `can_bus` — ran the
+same loop: read the device, and on failure drop the connection and sleep for
+`poll_interval`. **The same interval they use when everything is working.** So a PLC that was
+switched off drew a connection attempt every five seconds indefinitely: roughly 17,000 a day,
+each costing the device a socket it has to refuse.
+
+Nothing about it is wrong. The readings are correct, the suite is green, and the only symptom
+is a device being dialled at a rate nobody chose — which is exactly why it lasted. It first
+surfaced as a note during the hot-spin sweep, which correctly reported these loops as *not*
+spinning, because they do sleep. "Not a hot loop" was true and turned out not to be the
+interesting question.
+
+**The machinery already existed.** `resilience.py` has `ExponentialBackoff` and a three-state
+`CircuitBreaker`, both tested, and `modbus`, `opcua` and `mqtt` have used them since they were
+written. The five that did not were written later. Nobody decided against them — nothing in
+those files pointed at them, which is the whole of Rule 97.
+
+Measured on a dead device over twelve loop iterations: **five connection attempts instead of
+twelve**, with delays of 1, 2, 4, 8, 16 seconds and then the breaker holding at its cooldown.
+In steady state an unreachable device is probed once per 300-second cap rather than once per
+poll interval.
+
+The guard checks four things per collector — constructs both instruments, consults the breaker
+*before* attempting, records both outcomes, and sleeps on the backoff rather than the poll
+interval — and then runs a real loop against a device that always fails. The first four are
+structural, and a collector can satisfy all of them while still retrying at a fixed rate.
+
+Tuning is unchanged from the values `modbus` has carried since it was written, including its
+comment that they are a first-pass guess pending production telemetry. That comment is still
+true, and now true in five more places.
+
+**Suite:** backend 3511 passed / 100 skipped · edge agent 268 · frontend 555.
+

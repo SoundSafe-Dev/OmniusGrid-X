@@ -26,7 +26,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The seventy-two numbered classes
+## The seventy-three numbered classes
 
 **The count is the numbering, and it was already stale before this line was corrected.**
 This heading read "forty-seven" while the document's own highest class was 60 — the summary
@@ -2601,6 +2601,11 @@ one of its findings. The habit that catches it:
     The client-constructed exemption, without transitive closure, silenced 34 types
     including several genuinely on the wire — to remove five meaningless ones. When
     exempting, check both directions before believing the count.
+
+97. **A shared utility is only shared if the files that need it point at it.**
+    `resilience.py` had a backoff and a circuit breaker, tested, used by three collectors
+    since the day they were written. Five later collectors reimplemented the retry loop
+    without them — not by deciding against, by not knowing.
 
 ---
 
@@ -5872,7 +5877,7 @@ Check both directions of an exemption before believing the count it produces.
 
 # What this session produced, and what it cost
 
-**FS-431 to FS-471 — forty-one items, no gaps** — over one working session. Recorded
+**FS-431 to FS-472 — forty-two items, no gaps** — over one working session. Recorded
 together because the individual entries above answer "what was wrong" and this answers "what
 the method actually does", which is the thing worth reusing.
 
@@ -5959,4 +5964,44 @@ If there is one thing to carry forward from all of it: **a green test is a claim
 checked, and the only way to know whether it is true is to break the thing it checks and watch
 it fail.** Four of the guards written this week were decorations until that step, and none of
 them looked like decorations.
+
+---
+
+## Class 73 — a retry loop that retries at the same rate whether or not anything is working
+
+**Where:** `edge-agent/opsgrid_agent/collectors/{profinet,dnp3,bacnet,ethernet_ip,can_bus}.py`
+(FS-472)
+
+Every industrial collector runs the same loop: read, and on failure drop the connection and
+sleep. Five of them slept for `poll_interval` — **the same interval they use when everything
+is working** — so a PLC that was switched off drew a connection attempt every five seconds
+indefinitely. Roughly 17,000 a day, each costing the device a socket it has to refuse.
+
+It is not a data defect, and that is why it lasted: the readings are correct, the suite is
+green, and the only symptom is a device being dialled at a rate nobody chose. It surfaced as
+a note during the hot-spin sweep (which correctly reported these loops as *not* spinning —
+they do sleep) and was set aside as "a robustness gap, not wrong data". That was the right
+call at the time and the wrong place to leave it.
+
+**The machinery already existed.** `resilience.py` has `ExponentialBackoff` and a three-state
+`CircuitBreaker`, both with their own tests, and `modbus`, `opcua` and `mqtt` have used them
+since they were written. The five that did not were written later. Nobody decided against
+them; nothing in those files pointed at them.
+
+Measured on a dead device over twelve loop iterations: **five connection attempts instead of
+twelve**, delays of 1, 2, 4, 8, 16 seconds, and then the breaker holding at its cooldown. In
+steady state an unreachable device is probed once per 300-second cap rather than once per
+poll interval.
+
+The guard checks four things per collector — constructs both instruments, consults the
+breaker *before* attempting, records both outcomes, and sleeps on the backoff rather than the
+poll interval — and then runs a loop against a device that always fails, because the first
+four are structural and a collector can satisfy all of them while still retrying at a fixed
+rate.
+
+## Rule 97 — a shared utility is only shared if the files that need it point at it
+
+Class 73. Three collectors used the resilience module and five reimplemented the loop without
+it. When a utility exists for a problem that recurs, the question is not whether it is good
+but whether the next person writing that problem will find it.
 

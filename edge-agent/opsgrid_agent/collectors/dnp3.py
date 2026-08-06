@@ -20,6 +20,7 @@ import asyncio
 import structlog
 
 from .base import BaseCollector
+from ..resilience import CircuitBreaker, ExponentialBackoff
 
 logger = structlog.get_logger()
 
@@ -38,6 +39,18 @@ class DNP3Collector(BaseCollector):
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
+        # Reconnect discipline, matching modbus/opcua/mqtt (FS-472). Without this the
+        # loop retried every `poll_interval` for as long as the device stayed down —
+        # a PLC out for a day drew ~17,000 identical connection attempts, and each one
+        # costs the device a socket it has to refuse.
+        self._backoff = ExponentialBackoff(initial=1.0, cap=60.0, multiplier=2.0)
+        self._breaker = CircuitBreaker(
+            failure_threshold=5,
+            initial_cooldown=30.0,
+            cooldown_cap=300.0,
+            cooldown_multiplier=2.0,
+            name=f"dnp3:{config.get('asset_id')}",
+        )
         self.host = config.get("host") or config.get("ip_address")
         self.port = config.get("port", 20000)
         self.master_addr = config.get("master_addr", 1)
@@ -125,15 +138,37 @@ class DNP3Collector(BaseCollector):
 
     async def _poll_loop(self) -> None:
         while self._running:
+            # Checked BEFORE the attempt (FS-472). This loop calls `_connect()` on every
+            # iteration, so without the breaker an unreachable outstation was dialled once
+            # per `poll_interval` indefinitely.
+            if not self._breaker.allow():
+                wait = self._breaker.time_until_retry()
+                logger.info(
+                    "dnp3_circuit_open", asset_id=self.asset_id, wait_seconds=wait
+                )
+                await asyncio.sleep(wait)
+                continue
+
             try:
                 await self._connect()
                 if self.points:
                     values = await asyncio.to_thread(self._read_points)
                     if values:
                         await self.emit(self._normalize_data(values))
+                self._backoff.reset()
+                self._breaker.record_success()
             except Exception as exc:
                 logger.error("dnp3_poll_error", asset_id=self.asset_id, error=str(exc))
                 await self._disconnect()
+                self._breaker.record_failure()
+                delay = self._backoff.next_delay()
+                logger.info(
+                    "dnp3_reconnect_backoff",
+                    asset_id=self.asset_id,
+                    delay_seconds=delay,
+                )
+                await asyncio.sleep(delay)
+                continue
             await asyncio.sleep(self.poll_interval)
 
     def _normalize_data(self, values: Dict[str, Any]) -> Dict[str, Any]:

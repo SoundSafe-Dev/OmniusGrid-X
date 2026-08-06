@@ -26,6 +26,7 @@ import asyncio
 import structlog
 
 from .base import BaseCollector
+from ..resilience import CircuitBreaker, ExponentialBackoff
 
 logger = structlog.get_logger()
 
@@ -44,6 +45,18 @@ class BACnetCollector(BaseCollector):
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
+        # Reconnect discipline, matching modbus/opcua/mqtt (FS-472). Without this the
+        # loop retried every `poll_interval` for as long as the device stayed down —
+        # a PLC out for a day drew ~17,000 identical connection attempts, and each one
+        # costs the device a socket it has to refuse.
+        self._backoff = ExponentialBackoff(initial=1.0, cap=60.0, multiplier=2.0)
+        self._breaker = CircuitBreaker(
+            failure_threshold=5,
+            initial_cooldown=30.0,
+            cooldown_cap=300.0,
+            cooldown_multiplier=2.0,
+            name=f"bacnet:{config.get('asset_id')}",
+        )
         self.device_id = config.get("device_id")
         self.ip_address = config.get("ip_address")
         self.port = config.get("port", 47808)
@@ -136,8 +149,23 @@ class BACnetCollector(BaseCollector):
     async def _poll_loop(self) -> None:
         """Poll BACnet objects at configured intervals."""
         while self._running:
+            # The breaker is checked BEFORE the attempt (FS-472): once it opens, the
+            # loop waits out the cooldown instead of hammering a device that has
+            # already refused five times.
+            if not self._breaker.allow():
+                wait = self._breaker.time_until_retry()
+                logger.info(
+                    "bacnet_circuit_open", asset_id=self.asset_id, wait_seconds=wait
+                )
+                await asyncio.sleep(wait)
+                continue
+
             try:
                 await self._collect()
+                # A clean poll resets the curve, so a brief blip does not leave the
+                # next outage starting from a 60-second delay.
+                self._backoff.reset()
+                self._breaker.record_success()
             except Exception as exc:
                 logger.error(
                     "bacnet_poll_error",
@@ -146,6 +174,15 @@ class BACnetCollector(BaseCollector):
                     error=str(exc),
                 )
                 await self._disconnect()
+                self._breaker.record_failure()
+                delay = self._backoff.next_delay()
+                logger.info(
+                    "bacnet_reconnect_backoff",
+                    asset_id=self.asset_id,
+                    delay_seconds=delay,
+                )
+                await asyncio.sleep(delay)
+                continue
 
             await asyncio.sleep(self.poll_interval)
 
