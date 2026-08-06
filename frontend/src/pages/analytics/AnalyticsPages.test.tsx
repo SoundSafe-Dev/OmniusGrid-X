@@ -17,13 +17,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const listAssets = vi.fn()
 const getFleetOEE = vi.fn()
-const getHistory = vi.fn()
+const getHistoryPage = vi.fn()
 const getUpcomingMaintenance = vi.fn()
 
 vi.mock('../../api', () => ({
   assetsApi: { list: (...a: unknown[]) => listAssets(...a) },
   dashboardApi: { getFleetOEE: (...a: unknown[]) => getFleetOEE(...a) },
-  telemetryApi: { getHistory: (...a: unknown[]) => getHistory(...a) },
+  telemetryApi: { getHistoryPage: (...a: unknown[]) => getHistoryPage(...a) },
   maintenanceApi: {
     getUpcomingMaintenance: (...a: unknown[]) => getUpcomingMaintenance(...a),
   },
@@ -109,7 +109,9 @@ beforeEach(() => {
     availabilityOnly: true,
     assets: [],
   })
-  getHistory.mockResolvedValue([])
+  // The {items, meta} envelope since FS-486 — the page reads meta.hasMore to say when the
+  // chart is a slice of the window it is labelled with.
+  getHistoryPage.mockResolvedValue({ items: [], meta: { hasMore: false, count: 0 } })
   getUpcomingMaintenance.mockResolvedValue([])
 })
 
@@ -203,5 +205,37 @@ describe('TelemetryCharts — an unmeasured fleet draws no bar', () => {
     // The chart is rendered and its series carries no availability row — as opposed to
     // carrying one that reads zero.
     expect(seriesOf()).toEqual([])
+  })
+})
+
+describe('a chart of part of the range says so (FS-486)', () => {
+  it('warns when the server capped the readings', async () => {
+    // The server caps at 1000 points; a 30-day range at minute resolution is ten times
+    // that. A trend read off one end of a window is a wrong trend, not a partial one.
+    getHistoryPage.mockResolvedValue({
+      items: [
+        { timestamp: '2026-08-06T09:00:00Z', metricName: 'temperature', value: 41 },
+        { timestamp: '2026-08-06T09:01:00Z', metricName: 'temperature', value: 42 },
+      ],
+      meta: { hasMore: true, count: 2 },
+    })
+    wrap(<TelemetryCharts />)
+
+    const note = await screen.findByRole('status')
+    expect(note.textContent).toMatch(/more exist/i)
+    expect(note.textContent).toMatch(/not all of it/i)
+  })
+
+  it('says nothing when the whole range came back', async () => {
+    // The other direction. A permanent caveat would make the capped case indistinguishable
+    // from the complete one.
+    getHistoryPage.mockResolvedValue({
+      items: [{ timestamp: '2026-08-06T09:00:00Z', metricName: 'temperature', value: 41 }],
+      meta: { hasMore: false, count: 1 },
+    })
+    wrap(<TelemetryCharts />)
+
+    await waitFor(() => expect(getHistoryPage).toHaveBeenCalled())
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
   })
 })

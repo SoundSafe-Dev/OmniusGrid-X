@@ -285,7 +285,21 @@ export const erpApi = {
     if (USE_MOCK) { await delay(200); return { items: [...mockCorrelations], truncated: false, limit: mockCorrelations.length } }
     return toListResult(await api.get<ERPCorrelationRecord[]>('/api/v1/erp/integrations/correlations/recent'))
   },
+  /** The ERP types `ERPConnectorFactory` can actually build.
+   *
+   *  `ERPIntegrations.tsx` builds the create-form dropdown straight from this list, so it
+   *  is the whole surface through which an integration can be created. It has to match the
+   *  factory registry in BOTH directions (FS-486): a type listed here that the factory
+   *  cannot build fails at creation, and one the factory can build but this omits is a
+   *  shipped capability nobody can reach.
+   *
+   *  `intuit` — QuickBooks Online — was the second case. A 384-line connector with a
+   *  sandbox test suite, registered in the factory, and no way to select it.
+   *
+   *  `generic` is in the `ERPType` enum and deliberately NOT here: the factory has no entry
+   *  for it, so offering it would be the first case. `test_supported_erp_types_match.py`
+   *  holds both directions. */
   supportedTypes(): string[] {
-    return ['sap', 'oracle', 'dynamics', 'netsuite', 'odoo', 'infor', 'epicor']
+    return ['sap', 'oracle', 'dynamics', 'netsuite', 'odoo', 'infor', 'epicor', 'intuit']
   },
 }

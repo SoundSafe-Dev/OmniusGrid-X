@@ -14,6 +14,13 @@ const EMPTY_FORM: ERPIntegrationCreate = {
   auth_config: {},
 }
 
+/** Uppercasing the type is the product name for every ERP here except one: `intuit` is the
+ *  vendor, QuickBooks Online is the product, and an operator connecting QuickBooks does not
+ *  scan a list for "INTUIT" (FS-486). The rest fall through to the uppercase default. */
+const ERP_TYPE_LABELS: Record<string, string> = {
+  intuit: 'QUICKBOOKS (INTUIT)',
+}
+
 export const ERPIntegrationsPage: FC = () => {
   const qc = useQueryClient()
   // `isError` was not destructured at all, so a failed list query fell through to
@@ -214,7 +221,7 @@ export const ERPIntegrationsPage: FC = () => {
             <div className="grid grid-cols-2 gap-3">
               <Select label="ERP type" value={form.erp_type}
                 onChange={(e) => setForm({ ...form, erp_type: e.target.value })}
-                options={erpApi.supportedTypes().map((t) => ({ value: t, label: t.toUpperCase() }))} />
+                options={erpApi.supportedTypes().map((t) => ({ value: t, label: ERP_TYPE_LABELS[t] ?? t.toUpperCase() }))} />
               <Select label="Auth type" value={form.auth_type}
                 onChange={(e) => setForm({ ...form, auth_type: e.target.value })}
                 options={['oauth2', 'api_key', 'token', 'basic', 'certificate'].map((t) => ({ value: t, label: t }))} />

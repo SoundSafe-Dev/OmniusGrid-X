@@ -26,7 +26,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The seventy-nine numbered classes
+## The eighty-one numbered classes
 
 **The count is the numbering, and it was already stale before this line was corrected.**
 This heading read "forty-seven" while the document's own highest class was 60 — the summary
@@ -2679,6 +2679,12 @@ one of its findings. The habit that catches it:
      and only one justifies not looking again. `CommandPanel`'s capped history is exempted
      in the sweep's own allowlist, with why, and a second test asserts the exempted call
      still exists — otherwise the allowlist stops describing the code and starts excusing it.
+
+111. **Ask what the interface makes impossible, not only whether it works.**
+     Every check that starts from the UI's behaviour is blind to the option it never offers.
+     A QuickBooks connector with a sandbox suite shipped unreachable because the create-form
+     dropdown was a hand-written array compared against nothing. The absent option produces
+     no error, no log line and no failing test.
 
 ---
 
@@ -5950,7 +5956,7 @@ Check both directions of an exemption before believing the count it produces.
 
 # What this session produced, and what it cost
 
-**FS-431 to FS-485 — fifty-five items, no gaps** — over one working session. Recorded
+**FS-431 to FS-486 — fifty-six items, no gaps** — over one working session. Recorded
 together because the individual entries above answer "what was wrong" and this answers "what
 the method actually does", which is the thing worth reusing.
 
@@ -6657,3 +6663,71 @@ vacuity test that now fails on an unresolved prefix is the fix.
 only one of them justifies not looking again. Put the decision in the allowlist, put the
 reason next to it, and add a test that the exempted thing still exists — otherwise the
 allowlist slowly stops describing the code and starts excusing it.
+
+## Class 80 — a capability that ships and cannot be reached (FS-486)
+
+Every sweep in this document so far asks whether what the UI does works. None asks **what the
+UI cannot do**.
+
+`ERPIntegrations.tsx` builds its create-form dropdown from `erpApi.supportedTypes()`, a
+hand-written array of seven strings. That array is the entire surface through which an ERP
+integration can be created. It was compared against nothing.
+
+`ERPConnectorFactory._REGISTRY` has eight entries. The missing one is `intuit` — QuickBooks
+Online — a 384-line connector with OAuth token rotation, webhook signature verification, a
+health check, and two test files including a sandbox suite. It works. Nobody could select it.
+
+**The guard runs in both directions**, because the other one is worse when it happens:
+
+- *Offered but unbuildable* — the operator picks a type, fills in credentials, submits, and
+  `ERPConnectorFactory.create` raises. They have done work and have nothing to do about it.
+- *Buildable but unoffered* — a shipped capability nobody can reach. Silent forever, because
+  nothing in a test suite asks about the absence of an option.
+
+It compares against the **factory registry**, not the `ERPType` enum. The enum has nine
+members; `generic` is in it and correctly not offered, because the factory cannot build one.
+The enum says what the codebase has words for; the registry says what it can construct, and
+only one of those is a promise to a user.
+
+The label followed the same logic. Uppercasing the type is the product name for every entry
+but that one — `intuit` is the vendor, QuickBooks Online is the product — and an operator
+connecting QuickBooks does not scan a list for "INTUIT".
+
+## Class 81 — the number is right and the label is wrong (FS-486)
+
+Two in the same sweep, and this is the harder direction to notice: nothing on the screen looks
+incorrect.
+
+**`PerformancePanel`'s range selector** offered "Today / This Week / This Month / This Quarter
+/ This Year". `app/api/kpi.py` computes `now - timedelta(days=_RANGE_DAYS[range])` — a
+**rolling window**. On the 6th of August, "This Month" is the 7th of July to the 6th of
+August, and most of what it reports happened in a month the label does not name. Fuel
+efficiency, idle time, on-time performance and cost per mile all hang off it, and each figure
+is one somebody compares against last period's.
+
+Every other range selector in the application — Historian, ErrorTriage, AnalyticsPages —
+already reads "Last N days". This one was the exception, so the fix was to make the label
+agree with the computation and with the rest of the product, not to change what is computed.
+
+**`AnalyticsPages`' metric chart** called `telemetryApi.getHistory`, which returns
+`response.data.items` and discards the `{items, meta}` envelope — a documented choice, so
+short-window chart consumers keep a plain array. But that page offers a 30-day range against a
+1000-point server default: at minute resolution the cap is ten times under, so a chart headed
+"Last 30 Days" plotted one end of the window with nothing saying which end, or that there was
+another. **A trend taken off the wrong end of a window is not a partial answer; it is a wrong
+one, and it looks exactly like a right one.** It reads `getHistoryPage` now and says so when
+`meta.hasMore`.
+
+`TelemetryHistoryChart` had already been doing this — it gates a "Load older" control on the
+same flag. The pattern existed; one page had not adopted it. Rule 107 again.
+
+Note the mechanism: this is a fourth spelling of the truncation signal, and the FS-485 sweep
+could not see it. That sweep keys on `mark_truncated` and `X-Result-Truncated`; this endpoint
+carries `has_more` inside a JSON envelope. Same claim, different wire, different guard.
+
+## Rule 111 — ask what the interface makes impossible, not only whether it works
+
+Every check that starts from the UI's behaviour is blind to the option it never offers. When a
+list in the frontend enumerates what a user may choose, compare it against what the backend
+can actually do — in both directions. The absent option produces no error, no log line and no
+failing test, and it can outlive everyone who knew the feature existed.

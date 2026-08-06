@@ -4869,3 +4869,73 @@ nothing must prove it can find something — recurring in a sweep written days a
 was written. The vacuity test that now fails on an unresolved prefix is the fix.
 
 **Suite:** frontend 663 → 676 · backend 3542 → 3550 · edge agent 289.
+
+## FS-486 — the connector nobody could select, and two labels that named the wrong thing
+
+Three more clients off the real-mode list — `fleetHealth` (13 forks), `erp` (15) and
+`telemetry` (5) — and each one found something the mock branch could not have shown.
+
+### A shipped capability with no way to reach it
+
+`ERPIntegrations.tsx` builds its create-form dropdown from `erpApi.supportedTypes()`, a
+hand-written array of seven strings. That array is the **entire surface** through which an ERP
+integration can be created, and nothing compared it to anything.
+
+`ERPConnectorFactory._REGISTRY` has eight entries. The missing one is `intuit` — QuickBooks
+Online — a 384-line connector with OAuth token rotation, webhook signature verification, a
+health check, and two test files including a sandbox suite. It works. Nobody could pick it.
+
+The guard now runs in both directions, because each fails differently: a type offered that the
+factory cannot build wastes an operator's credentials on a form that was always going to fail;
+a type the factory can build and the UI omits is silent forever, because **nothing in a test
+suite asks about an absent option**. It compares against the factory registry rather than the
+`ERPType` enum — `generic` is in the enum and correctly not offered, since the factory has no
+entry for it. The enum says what the codebase has words for; the registry says what it can
+construct, and only one of those is a promise to a user.
+
+The label got the same treatment. Uppercasing the type is the product name for every entry but
+that one, and an operator connecting QuickBooks does not scan a list for "INTUIT".
+
+### Two labels that named a different thing from the number beneath them
+
+`PerformancePanel`'s range selector read "Today / This Week / This Month / This Quarter / This
+Year". `kpi.py` computes `now - timedelta(days=_RANGE_DAYS[range])` — a rolling window. On the
+6th of August, "This Month" is the 7th of July to the 6th of August. Fuel efficiency, idle
+time, on-time performance and cost per mile all hang off it, and each is a figure somebody
+compares against last period's. Every other selector in the app already reads "Last N days";
+this was the exception, so the label moved rather than the computation.
+
+`AnalyticsPages`' metric chart called `telemetryApi.getHistory`, which returns
+`response.data.items` and drops the `{items, meta}` envelope. That page offers a 30-day range
+against a 1000-point server default — ten times under at minute resolution — so a chart headed
+"Last 30 Days" plotted one end of the window with nothing saying which end, or that there was
+another. A trend taken off the wrong end of a window is not a partial answer; it is a wrong
+one, and it looks exactly like a right one.
+
+`TelemetryHistoryChart` had been reading `meta.hasMore` all along to gate its "Load older"
+control. The pattern existed and one page had not adopted it — Rule 107, a third time.
+
+Worth noting for the FS-485 sweep: this is a **fourth spelling** of the truncation signal. That
+sweep keys on `mark_truncated` and `X-Result-Truncated`; this endpoint carries `has_more`
+inside a JSON envelope, so the guard could not see it. Same claim, different wire.
+
+### What the real-mode tests hold
+
+The filters, mostly, because FastAPI ignores an undeclared query parameter — a misspelling is
+not an error, it is **200 and the default window**. `fleetHealth`'s two filtered security lists
+differ from the unfiltered one by a query string alone, and a panel headed "unacknowledged"
+showing acknowledged events is the failure. `telemetry` renames every filter on the way out
+(`metricName` → `metric_name`), and the mock branch reads the camelCase names off the same
+object, so it agrees with itself either way.
+
+### Still open
+
+Ten clients keep `USE_MOCK` forks with no real-mode test: `notifications` (6),
+`fleetTracker` (6), `dashboardAnalytics` (6), `kpi` (8), `rul` (3), `platformCorrelation` (3),
+`userContext` (2), `twinOptimizer` (2), `historian` (2), `alarmRules` (2). Scanned for the
+classes above; `kpi` yielded the label defect and the rest came back clean on paths, params and
+nullable returns. Clean is a claim, so: the scan covered hand-built query strings, adapters,
+and nullable returns whose real branch rejects instead — not shape-by-shape mock-versus-wire
+comparison, which is what a real-mode test does and what these ten still lack.
+
+**Suite:** frontend 676 → 717 · backend 3550 → 3560 · edge agent 289.

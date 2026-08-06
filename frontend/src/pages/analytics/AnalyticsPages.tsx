@@ -162,7 +162,12 @@ export const TelemetryCharts: FC = () => {
   const startTime = new Date(Date.now() - (RANGE_HOURS[timeRange] ?? 24) * 3600_000).toISOString();
   const { data: history, isLoading: historyLoading, isError: historyError } = useQuery({
     queryKey: ['analytics-telemetry', firstAsset?.id, timeRange],
-    queryFn: () => telemetryApi.getHistory(firstAsset!.id, { startTime }),
+    // getHistoryPage, not getHistory (FS-486). `getHistory` returns `response.data.items`
+    // and discards the `meta` envelope, so the 1000-point server default was invisible
+    // here: a chart headed "Last 30 Days" plotting one end of the window and nothing
+    // saying which end, or that there was another. `TelemetryHistoryChart` already reads
+    // `meta.hasMore` to gate its "Load older" control; this page ignored it.
+    queryFn: () => telemetryApi.getHistoryPage(firstAsset!.id, { startTime }),
     enabled: !!firstAsset,
   });
   const { data: fleetOEE, isLoading: oeeLoading, isError: oeeError } = useQuery({ queryKey: ['analytics-fleet-oee'], queryFn: () => dashboardApi.getFleetOEE() });
@@ -170,7 +175,7 @@ export const TelemetryCharts: FC = () => {
   // Pivot the flat TelemetryPoint[] into chart rows keyed by the full timestamp
   // (not time-of-day) so multi-day ranges don't collapse different days into the
   // same HH:MM bucket. Label includes the date for ranges longer than a day.
-  const points = history ?? [];
+  const points = history?.items ?? [];
   const metricNames = Array.from(new Set(points.map((p) => p.metricName))).slice(0, METRIC_COLORS.length);
   const multiDay = (RANGE_HOURS[timeRange] ?? 24) > 24;
   const byTime = new Map<number, Record<string, any>>();
@@ -280,6 +285,17 @@ export const TelemetryCharts: FC = () => {
             <h3 className="text-lg font-semibold mb-4 text-opsgrid-text-primary">
               Metric Trends{firstAsset ? ` — ${firstAsset.name}` : ''}
             </h3>
+            {/* Say so when the chart is a slice of the window it is labelled with (FS-486).
+                The server caps at 1000 points by default; a 30-day range at minute
+                resolution is ten times that, so the curve below is one end of the period —
+                and a trend read off the wrong end of a window is a wrong trend, not a
+                partial one. */}
+            {history?.meta?.hasMore && (
+              <p role="status" className="mb-2 text-xs text-status-warning">
+                Showing the first {points.length} readings in this range — more exist. This
+                is part of the selected period, not all of it.
+              </p>
+            )}
             {metricSeries.length === 0 ? (
               <p className="text-sm text-opsgrid-text-secondary">
                 {firstAsset ? 'No telemetry in this range.' : 'No assets available.'}
