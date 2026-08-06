@@ -62,22 +62,39 @@ def _registry_counts() -> tuple[int, int]:
 
 TEXT = REGISTER.read_text()
 
+#: Section titles that are not open decisions.
+_NOT_ENTRIES = ("Not on this page", "Closed, and what closing one cost", "None open")
+
+
+def _open_entries(text: str | None = None) -> list[str]:
+    """Titles of the open-decision sections, excluding the page's own furniture."""
+    source = TEXT if text is None else text
+    return [
+        block.splitlines()[0]
+        for block in source.split("\n## ")[1:]
+        if not block.startswith(_NOT_ENTRIES)
+    ]
+
 
 class TestTheRegisterIsReadable:
-    def test_it_exists_and_has_entries(self):
-        # Vacuity: an empty or moved file would make every assertion below pass over
+    def test_it_exists_and_still_says_something(self):
+        # Vacuity: a gutted or moved file would make every assertion below pass over
         # nothing, which is how a register quietly stops being checked.
         assert len(TEXT) > 2000, "the open-decisions register is missing or has been gutted"
-        assert TEXT.count("\n## ") >= 5, "fewer entries than expected; has the file changed shape?"
+        assert "## Closed, and what closing one cost" in TEXT, (
+            "the closed-items section is gone; with no open entries it is the only thing "
+            "on this page carrying information"
+        )
 
     def test_every_entry_names_the_test_that_pins_it(self):
-        """An entry without a pin is a note, and notes are what this document replaced."""
-        entries = [
-            block.splitlines()[0]
-            for block in TEXT.split("\n## ")[1:]
-            if not block.startswith("Not on this page")
-        ]
-        assert entries, "no entries parsed"
+        """An entry without a pin is a note, and notes are what this document replaced.
+
+        THE REGISTER IS EMPTY (2026-08-05), so this iterates nothing — and that is why the
+        parse is asserted separately below rather than inferred from a non-empty result.
+        A test that passes over an empty list looks identical whether the list is empty
+        because the work is done or because the parser broke.
+        """
+        entries = _open_entries()
         for entry in entries:
             section = TEXT.split(f"\n## {entry}", 1)[1].split("\n## ", 1)[0]
             assert "Pinned by" in section or "pinned by" in section, (
@@ -85,48 +102,55 @@ class TestTheRegisterIsReadable:
                 f"decision that will be discovered again rather than closed"
             )
 
+    def test_the_parser_would_see_an_entry_if_there_were_one(self):
+        """The vacuity guard for the test above, since the register is at zero.
+
+        Without this, deleting `_open_entries`' logic and returning `[]` would look exactly
+        like a page with nothing open.
+        """
+        sample = "# T\n\n## 1. A thing that is open\n\nPinned by `x`\n\n## Not on this page\n"
+        assert _open_entries(sample) == ["1. A thing that is open"]
+
+    def test_an_empty_register_says_so_in_words(self):
+        """A page with no headings could be an empty register or a broken one. The
+        difference has to be written down, because a reader cannot tell by looking."""
+        if not _open_entries():
+            assert "## None open" in TEXT, (
+                "no entries are open and the page does not say so, which reads as a "
+                "register somebody forgot rather than one somebody emptied"
+            )
+
 
 class TestTheNumbersStillMatch:
-    """Each figure the register states, against the thing it describes."""
+    """Each figure the register states, against the thing it describes.
 
-    def test_the_capped_list_count(self):
-        actual = _constant("tests/test_capped_lists_cannot_grow.py", "MAX_UNSIGNALLED")
-        assert f"MAX_UNSIGNALLED = {actual}" in TEXT, (
-            f"the register cites a capped-list count that is no longer {actual}. Lower it "
-            f"there in the same commit that lowers the ratchet"
-        )
-
-    def test_the_phantom_field_count(self):
-        actual = _constant(
-            "tests/test_frontend_fields_exist_on_the_wire.py", "MAX_UNREAD_PHANTOM_FIELDS"
-        )
-        assert f"MAX_UNREAD_PHANTOM_FIELDS = {actual}" in TEXT, (
-            f"the register cites a phantom-field count that is no longer {actual}"
-        )
-
-    def test_the_registry_counts(self):
-        mapped, unfillable = _registry_counts()
-        assert f"Of {mapped}:" in TEXT, (
-            f"the register says the mapping has a different size; it now has {mapped} domains"
-        )
-        assert f"**{unfillable}**" in TEXT, (
-            f"the register cites an unfillable-registry count that is no longer {unfillable}. "
-            f"This is the figure that was written as 41 and is 38 — the five domains with "
-            f"default items are a SUBSET of the eight extractable ones, not a separate group"
-        )
+    Most of these moved into the closed section as the entries closed. They are still
+    checked there: a closed entry describing the state that made it worth closing is a
+    claim like any other, and "38 registries nothing could fill" stops being true the day
+    someone gives those domains keywords.
+    """
 
     def test_the_ratchets_it_calls_closed_are_closed(self):
-        """The register's last section names two ratchets as being at zero. If either moves,
-        they are open decisions again and belong in the body rather than the footnote."""
+        """The register names four ratchets as being at zero. If any moves, the page is
+        describing a past that is no longer the present."""
         for relative, name in (
             ("tests/test_frontend_types_match_their_own_payload.py", "MAX_UNFED_FIELDS"),
             ("tests/test_adapter_built_types_are_fed.py", "MAX_UNSET_FIELDS"),
+            ("tests/test_capped_lists_cannot_grow.py", "MAX_UNSIGNALLED"),
+            ("tests/test_frontend_fields_exist_on_the_wire.py", "MAX_UNREAD_PHANTOM_FIELDS"),
         ):
             assert _constant(relative, name) == 0, (
-                f"{name} is no longer zero, but the register lists it under ratchets that "
-                f"'are at zero and stay there by assertion'"
+                f"{name} is no longer zero, and the register lists it among the ratchets "
+                f"that reached zero"
             )
-            assert f"{name} = 0" in TEXT, f"the register no longer states {name} = 0"
+
+    def test_the_registry_figures_in_the_closed_note_are_true(self):
+        mapped, unfillable = _registry_counts()
+        assert f"{unfillable} registries nothing could fill" in TEXT, (
+            f"the closed note cites an unfillable-registry count that is no longer "
+            f"{unfillable}. If those domains gained extractor keywords that is good news "
+            f"and the note should say the new number"
+        )
 
 
 def test_every_pinned_test_file_exists():

@@ -69,6 +69,7 @@ from __future__ import annotations
 
 import ast
 import pathlib
+import pathlib
 import re
 
 BACKEND = pathlib.Path(__file__).resolve().parents[1] / "app"
@@ -597,7 +598,7 @@ class TestTheThreeFindingsStayFixed:
 #: renamed to what the wire calls it, `parentId` and `supervisorId` deleted as fictions, and
 #: `AxeMatcherResult.pass` removed from the sweep's view — it lives in `jest-axe.d.ts`, an
 #: ambient declaration for a test library that could never be on any wire.
-MAX_UNREAD_PHANTOM_FIELDS = 5
+MAX_UNREAD_PHANTOM_FIELDS = 0
 
 #: Interfaces describing a REQUEST rather than a response. A field here is something the
 #: client sends, so "no backend producer" is the normal case and not a defect. `*Params` is
@@ -605,9 +606,92 @@ MAX_UNREAD_PHANTOM_FIELDS = 5
 _REQUEST_SUFFIXES = ("Params", "Request", "Create", "Update", "Filters", "Credentials")
 
 
+def _client_constructed_types() -> set[str]:
+    """Interfaces the client BUILDS, never parses out of a response (FS-469).
+
+    `Location` and `Address` describe `shipments.origin` / `destination`, which are
+    `Dict[str, Any]` on the wire — free-form JSON with no contracted keys. Asking "does the
+    backend send this name" of a shape the backend never defines produces an answer that
+    means nothing, and five such answers sat in the ratchet below as though they were debt.
+
+    THE RULE IS DERIVED, NOT LISTED, AND IT IS TRANSITIVE. Seed the wire-bound set with
+    every interface named as a response type in an api client, then close over field
+    references: if a wire-bound type has a field of type `T`, then `T` is on the wire too.
+    Whatever is left is client-constructed.
+
+    The closure is the whole correctness of this. A first version without it exempted 34
+    types including `GeofenceAlert`, `AgentVersionDistributionItem` and
+    `PackMLStateTransition` — all genuinely on the wire, just nested inside a response
+    shape rather than named as one. Exempting those would have silenced real debt, which
+    is a worse outcome than the five meaningless entries this set out to remove.
+
+    `TestTheClientConstructedExemptionIsReal` checks both directions.
+    """
+    api_source = COMMENT.sub(
+        " ",
+        "\n".join(
+            p.read_text() for p in (FRONTEND / "api").glob("*.ts") if ".test." not in p.name
+        ),
+    )
+
+    #: interface -> the type names its fields reference
+    references: dict[str, set[str]] = {}
+    all_interfaces: set[str] = set()
+    for path in (FRONTEND / "types").glob("*.ts"):
+        if path.name.endswith(".d.ts"):
+            continue
+        text = COMMENT.sub(" ", path.read_text())
+        for match in INTERFACE.finditer(text):
+            interface, body = match.group(1), match.group(2)
+            all_interfaces.add(interface)
+            references[interface] = set(re.findall(r"\b([A-Z]\w+)\b", body))
+
+    # Seed: named directly as a response type anywhere in an api client.
+    wire = {
+        name
+        for name in all_interfaces
+        if re.search(
+            rf"(?:api\.\w+<\s*{name}\b"
+            rf"|Promise<\s*{name}\b"
+            rf"|Promise<\s*\w+<\s*{name}\b"
+            rf"|<\s*{name}\[\]>)",
+            api_source,
+        )
+    }
+    # Closure: anything a wire-bound type references is also on the wire...
+    changed = True
+    while changed:
+        changed = False
+        for name in list(wire):
+            for referenced in references.get(name, ()):
+                if referenced in all_interfaces and referenced not in wire:
+                    wire.add(referenced)
+                    changed = True
+
+    # ...EXCEPT where the reference passes through a field the server does not contract.
+    # `Shipment.origin` is typed `Location` here and `Dict[str, Any]` in
+    # `app/models/schemas.py` — free-form JSON, no promised keys. The closure is right that
+    # a Location-shaped object rides inside a response; it is wrong that the backend owes
+    # its field names, which is the only question this sweep asks.
+    return (all_interfaces - wire) | _typed_over_an_uncontracted_field()
+
+
+#: TS interfaces that describe the CONTENTS of a server field declared `Dict[str, Any]`.
+#: Verified against the backend schema by `TestTheClientConstructedExemptionIsReal`, because
+#: an exemption resting on "the server does not contract this" must fail if it starts to.
+_UNCONTRACTED_CONTENT_TYPES = {
+    "Location": ("Shipment", ("origin", "destination")),
+}
+
+
+def _typed_over_an_uncontracted_field() -> set[str]:
+    return set(_UNCONTRACTED_CONTENT_TYPES)
+
+
 def _declared_unread_and_unsent() -> set[str]:
     vocab = _wire_vocabulary()
     source = _component_source()
+    client_built = _client_constructed_types()
     found = set()
     for path in (FRONTEND / "types").glob("*.ts"):
         # `.d.ts` files declare AMBIENT types for third-party libraries — `jest-axe.d.ts`
@@ -619,6 +703,10 @@ def _declared_unread_and_unsent() -> set[str]:
         for match in INTERFACE.finditer(text):
             interface, body = match.group(1), match.group(2)
             if interface.endswith(_REQUEST_SUFFIXES):
+                continue
+            if interface in client_built:
+                # Never parsed out of a response, so the backend does not owe these keys
+                # and their absence from the wire vocabulary says nothing (FS-469).
                 continue
             for field in FIELD.finditer(body):
                 name = field.group(1)
@@ -873,3 +961,78 @@ class TestInterfacesBesideTheirClient:
         assert not stale, (
             f"CLIENT_DERIVED explains fields that no longer need explaining: {stale}"
         )
+
+
+class TestTheClientConstructedExemptionIsReal:
+    """The exemption is a claim about other code, so it is checked (FS-469).
+
+    Five entries sat in this ratchet as debt and were not debt: `Location` and `Address`
+    describe `shipments.origin`/`destination`, which the server declares `Dict[str, Any]`.
+    Asking "does the backend send `contactEmail`" of a field the backend does not contract
+    gets an answer that means nothing, and five meaningless answers in a ratchet make the
+    whole number harder to trust.
+
+    Both halves are checked, because the exemption could go wrong in either direction: too
+    narrow and the five come back, too broad and real debt goes quiet. The first draft was
+    too broad — without transitive closure it exempted 34 types including `GeofenceAlert`
+    and `PackMLStateTransition`, which are genuinely on the wire, just nested inside a
+    response shape rather than named as one.
+    """
+
+    def test_the_closure_keeps_nested_response_types_on_the_wire(self):
+        """The mistake the closure exists to prevent."""
+        exempt = _client_constructed_types()
+        for nested in ("AgentVersionDistributionItem", "ErrorEventSummary", "TopError"):
+            assert nested not in exempt, (
+                f"{nested} is exempted as client-constructed and it is a wire shape — "
+                f"nested inside a response type rather than named as one. The transitive "
+                f"closure has been narrowed and real debt is now invisible."
+            )
+
+    def test_request_and_filter_types_are_still_exempt(self):
+        """The other direction: a closure that reached everything would exempt nothing and
+        put every client-only shape back in the ratchet."""
+        exempt = _client_constructed_types()
+        for built in ("LoginCredentials", "AlarmFilters", "AssetCreate"):
+            assert built in exempt, f"{built} is a client-built shape and is being checked"
+
+    def test_the_uncontracted_field_exemption_matches_the_backend(self):
+        """`Location` is exempt only because the server field it describes is
+        `Dict[str, Any]`. If that field ever gains a contracted shape, the backend owes
+        those keys and this exemption has to go — so it fails here rather than lingering.
+        """
+        schemas = (
+            pathlib.Path(__file__).resolve().parent.parent / "app" / "models" / "schemas.py"
+        ).read_text()
+        for ts_type, (_model, fields) in _UNCONTRACTED_CONTENT_TYPES.items():
+            for field in fields:
+                # EVERY declaration, not any. These fields are declared on more than one
+                # schema, and `re.search` found a surviving `Dict[str, Any]` elsewhere
+                # while the one under test had been contracted — a check that passed with
+                # the premise broken.
+                declarations = re.findall(
+                    rf"^\s*{field}:\s*(.+?)(?:\s*=|$)", schemas, re.M
+                )
+                assert declarations, (
+                    f"no declaration of `{field}` found in the backend schema; this "
+                    f"exemption rests on a field that no longer exists"
+                )
+                contracted = [d for d in declarations if not d.startswith("Dict[str, Any]")]
+                assert not contracted, (
+                    f"`{field}` is declared as {contracted} somewhere in the backend "
+                    f"schema, not `Dict[str, Any]`. `{ts_type}` is then describing a "
+                    f"contracted shape and its fields belong back in the sweep."
+                )
+
+    def test_the_exempted_types_are_not_dead(self):
+        """An exemption for an interface nothing uses would hide a deletion rather than
+        record a decision."""
+        source = _component_source() + "\n".join(
+            p.read_text() for p in (FRONTEND / "api").glob("*.ts")
+        )
+        for ts_type in _UNCONTRACTED_CONTENT_TYPES:
+            assert re.search(rf"\b{ts_type}\b", source), (
+                f"{ts_type} is exempted and referenced nowhere; delete the interface "
+                f"rather than exempting it"
+            )
+

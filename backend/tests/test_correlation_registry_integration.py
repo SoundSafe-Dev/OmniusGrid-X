@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import inspect
 import re
+from uuid import uuid4
 
 import pytest
 
@@ -149,25 +150,33 @@ class TestEveryDetectableDomainCanReceiveAnItem:
         )
 
 
-class TestTheRegistriesNothingCanFill:
-    """RECORDED, NOT ASSERTED-AS-CORRECT (FS-444).
+class TestNoRegistryIsCreatedThatNothingCanFill:
+    """CLOSED (FS-467). This class used to record the gap rather than assert a fix.
 
-    `initialize_registries_for_organization` creates a registry for every mapped domain.
-    Of the 46:
+    `initialize_registries_for_organization` created a registry for every one of the 46
+    mapped domains. Only 8 can be returned by `_extract_domains_from_analysis`, and 5 of
+    those also get default items — so **38 were created empty and stayed empty**, which on
+    a compliance screen reads as 38 programmes not started rather than 38 that cannot be
+    started. A different fact, and the more alarming one.
 
-      *  8 can be returned by the extractor, so only those can receive an analysis-derived
-         item
-      *  5 also receive default items — a SUBSET of those 8, not a separate group, which is
-         how a first reading of these numbers gets "13 reachable" instead of 8
-      * 38 have neither and are created empty and stay empty
+    Of the two ways to close it, writing extractor keywords and default items for 38
+    speculative domains would have been product scope invented to satisfy a count.
+    `INNOVATION_RD` and `KNOWLEDGE_MANAGEMENT` do not become real because a registry exists
+    for them. So: the initializer creates only what something can fill.
 
-    On a compliance screen that reads as 38 programmes **not started** rather than 41 that
-    **cannot be started**, which is a different fact and the more alarming one. Closing it
-    means either giving those domains keywords and default items, or not creating a registry
-    nothing can fill — a product decision, not a bug fix.
+    TWO THINGS MADE THAT SAFE TO DO.
 
-    These tests pin the numbers so the gap cannot drift silently in either direction.
-    Whoever closes it should delete this class.
+    The creation set is DERIVED — `_fillable_domains()` reads the extractor and the
+    default-items table, the same way these tests do, so giving a domain keywords is the
+    only step needed to have its registry created. A hand-maintained list would be a second
+    place to remember and a third number to drift.
+
+    And `_create_registry_item_from_analysis` now creates a registry on demand. It carried
+    the comment "Get or create registry for domain" above code that only got, returning
+    None when it found nothing — so an item from a real analysis was dropped because a row
+    was missing. Harmless while all 46 were pre-created; a silent loss the moment they were
+    not. **Narrowing creation without fixing that would have traded a cosmetic problem for
+    a data-loss one.**
     """
 
     def _extractable(self) -> set[str]:
@@ -191,11 +200,76 @@ class TestTheRegistriesNothingCanFill:
             f"populated at all; the fraction that is a permanently empty shell has grown"
         )
 
-    def test_the_unfillable_count_is_recorded(self):
-        unfillable = set(DOMAIN_REGISTRY_MAPPING) - self._extractable() - self._with_defaults()
-        assert len(unfillable) <= 38, (
-            f"{len(unfillable)} registries are created with no default items and no way to "
-            f"receive one from an analysis, up from 38. Each is an empty programme on a "
-            f"compliance screen that looks not-started rather than impossible:\n  "
-            + ", ".join(sorted(unfillable)[:12])
+    def test_the_service_agrees_with_this_test_about_what_is_fillable(self):
+        """The guard and the code must read the same thing, or the guard is checking its
+        own copy of the answer."""
+        assert integration._fillable_domains() == (
+            (self._extractable() | self._with_defaults()) & set(DOMAIN_REGISTRY_MAPPING)
         )
+
+    @pytest.mark.asyncio
+    async def test_the_initializer_creates_only_what_can_be_filled(self):
+        """BEHAVIOURAL, not a source-text search.
+
+        The first version of this asserted `"_fillable_domains()" in source` — and passed
+        with the fix mutated out, because the string also appears in the docstring right
+        above the code. A guard that greps its own explanation is worse than none. So this
+        runs the initializer against a session that reports no existing rows and counts
+        what it tries to add.
+        """
+        added: list = []
+
+        class _Result:
+            @staticmethod
+            def scalar_one_or_none():
+                return None
+
+        class _Session:
+            async def execute(self, *_a, **_k):
+                return _Result()
+
+            def add(self, obj):
+                added.append(obj)
+
+            async def commit(self):
+                pass
+
+            async def refresh(self, obj):
+                obj.id = uuid4()
+
+        org, user = uuid4(), uuid4()
+        await integration.initialize_registries_for_organization(org, _Session(), user)
+
+        registries = [o for o in added if type(o).__name__ == "ActionableRegistry"]
+        created = {r.meta_data["domain"] for r in registries}
+        assert created == integration._fillable_domains(), (
+            f"the initializer created {len(created)} registries and the fillable set has "
+            f"{len(integration._fillable_domains())}. Creating one for every mapped domain "
+            f"leaves 38 empty programmes on a compliance screen that read as not-started "
+            f"rather than impossible.\n  unexpected: "
+            f"{sorted(created - integration._fillable_domains())}"
+        )
+
+    def test_an_unfillable_domain_is_not_in_the_creation_set(self):
+        fillable = integration._fillable_domains()
+        for domain in ("INNOVATION_RD", "KNOWLEDGE_MANAGEMENT", "ESG"):
+            assert domain in DOMAIN_REGISTRY_MAPPING, f"{domain} left the mapping"
+            assert domain not in fillable, (
+                f"{domain} is now treated as fillable; if it genuinely gained extractor "
+                f"keywords that is correct and this list should shrink"
+            )
+
+    def test_a_fillable_domain_still_is(self):
+        """The other direction. A `_fillable_domains` that returned nothing would pass
+        every assertion above and create no registries at all."""
+        for domain in ("MAINTENANCE", "SAFETY", "QUALITY_CONTROL"):
+            assert domain in integration._fillable_domains()
+
+    def test_the_item_path_creates_a_registry_rather_than_dropping_the_item(self):
+        source = inspect.getsource(integration._create_registry_item_from_analysis)
+        assert "_ensure_registry(" in source, (
+            "the analysis-to-item path no longer creates a missing registry. With the "
+            "initializer narrowed, an item for a newly-extractable domain would be "
+            "silently discarded — which is worse than the empty registries this replaced"
+        )
+

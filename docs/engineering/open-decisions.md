@@ -34,108 +34,31 @@ that were right.**
 
 ---
 
-## 1. 38 registries are created that nothing can fill
+## None open
 
-**Pinned by** `backend/tests/test_correlation_registry_integration.py::TestTheRegistriesNothingCanFill`
-· FS-444
+**Every entry on this page has been closed** (FS-466 … FS-470, 2026-08-05). What each one
+needed turned out to be a decision rather than an investigation, which is what this page was
+for — and in three of the five, making the decision took less time than the entry had spent
+being re-read.
 
-`initialize_registries_for_organization` creates a registry for every mapped domain. Of 46:
+They are recorded under "Closed, and what closing one cost" below, with what the closing
+actually involved. The pattern worth keeping: **two of the five were closed by deleting
+something rather than building something** — the registries nothing could fill are no longer
+created, and the heartbeat fields nobody read are no longer sent.
 
-| | count |
-|---|---|
-| reachable by `_extract_domains_from_analysis` | **8** |
-| also receive default items (a *subset* of the 8) | 5 |
-| **neither — created empty, stay empty** | **38** |
+### Adding an entry
 
-On a compliance screen that reads as 38 programmes **not started** rather than 38 that
-**cannot be started**, which is a different fact and the more alarming one.
+An entry belongs here when the work is blocked on **intent**, not on investigation: someone
+has to choose between two defensible answers and the code cannot choose for them. It needs:
 
-**To close:** give those domains extractor keywords and default items, or stop creating a
-registry nothing can populate.
+* a **pin** — the test that fails if the situation drifts, so the entry cannot go stale
+  silently;
+* the **figures**, which `test_open_decisions_numbers_are_true.py` checks against reality;
+* what closing it would take, concretely enough that the next reader can judge the cost.
 
----
-
-## 2. Five declared fields on shapes the server never defines
-
-**Pinned by** `backend/tests/test_frontend_fields_exist_on_the_wire.py`
-(`MAX_UNREAD_PHANTOM_FIELDS = 5`) · FS-442
-
-All five are on `Location` and `Address`. `shipments.origin`/`destination` are
-`Dict[str, Any]` on the wire — free-form JSON with no contracted keys — so those interfaces
-document **an expectation a caller may fill in, not a payload the server promises.**
-
-Asking "does the backend send this name" of a shape the backend never defines gets an answer
-that means nothing. Two of the five also carry a deliberate keep-decision from an earlier
-pass, recorded in the type itself.
-
-**To close:** contract the JSON shape server-side (then they become real fields), or teach
-the sweep to recognise client-constructed types and exempt them with a verifiable rule.
-
----
-
-## 3. `logistics_correlation` serves twelve paths at a doubled prefix
-
-**Pinned by** `backend/tests/test_logistics_correlation_scoping_realdb.py`
-
-The router declares `prefix="/logistics"` and `main.py` mounts it at `/api/v1/logistics`, so
-its routes serve at `/api/v1/logistics/logistics/…`.
-
-**It is not a routing edit.** Removing the inner prefix lands two of those paths on
-`/delivery-efficiency` and `/compliance/summary`, which `fleet_logistics` already serves and
-which the frontend actually calls. Whichever router registers first would silently win.
-
-**To close:** decide which implementation is canonical per path, then fix the prefix.
-
----
-
-## 4. Two PUT handlers replace rather than patch
-
-**Pinned by** `backend/tests/test_partial_updates_do_not_wipe_fields.py` (2 allowances)
-
-Both are recorded with reasons; one is a genuine full-replacement PUT where every field has
-a default, which is what PUT means. The other dumps nested checklist items and is a
-different shape from the update payload.
-
-**To close:** confirm the intended semantics per route and either narrow the allowance or
-switch the verb.
-
----
-
-## 5. The agent reports its health twice, by two paths, under two names
-
-**Pinned by** `backend/tests/test_heartbeat_contract_is_fully_read.py` · FS-460, **corrected
-2026-08-05**
-
-**This entry was first written with a wrong conclusion, and the correction is the useful
-part.** It originally read "three heartbeat fields arrive at the cloud and are discarded",
-and said of `buffer_depth` that "the fleet view's answer to *is anything wrong out there* is
-arriving at the cloud and being thrown away". That is false.
-
-There are **two** heartbeat paths:
-
-| path | payload | consumed? |
-|---|---|---|
-| Kafka `agent_status` → `_process_agent_heartbeat` | `build_heartbeat_payload`, 11 fields incl. `buffer_depth`, `collector_status`, `git_sha` | version/config/build only |
-| HTTP `POST /api/v1/edge/heartbeat` → `app/api/edge_fleet.py` | `buffer_pending`, `dead_lettered`, `dropped`, `active_collectors`, `cert_expires_in_seconds` | **yes** — persisted on `edge_agent_status` and published as `edge_agent_*` gauges |
-
-The original finding examined the Kafka path and generalised from it. Device backlog is
-**not** invisible: it is stored, gauged per agent, and alertable. The HTTP path was found
-later, from the other end, while checking whether a backend gauge had a producer.
-
-**What is actually true**, and why this is still open: the same health is assembled twice,
-under different names for the same quantity (`buffer_depth` / `buffer_pending`), and the
-Kafka copy of it is read by nobody. That is redundant work on every device and two vocabularies
-for one fact — the condition that produced FS-435's six aliases.
-
-**To close:** either drop `buffer_depth`, `collector_status` and `git_sha` from the Kafka
-payload, since the HTTP heartbeat already carries that information to a consumer, or
-consume them and retire the HTTP path. Not both paths with two names.
-
-**The lesson, which is worth more than the entry.** A sweep that finds one consumer and
-concludes there is no other is asserting a negative it did not check. The guard is still
-correct and still useful — every field on a payload should be consumed or explicitly
-declared unread — but its *reason* was overstated, and it took a second look from the
-opposite direction to catch it.
+An entry that is really "nobody has got to it yet" is not a decision. The capped-list
+ratchet sat here for weeks under that description, and closing it was `limit + 1` and one
+function call per endpoint.
 
 ---
 
@@ -153,6 +76,50 @@ per-type unfed fields (`MAX_UNFED_FIELDS = 0`) and adapter-unset fields
 (`MAX_UNSET_FIELDS = 0`).
 
 ## Closed, and what closing one cost
+
+### The five that were open on 2026-08-05
+
+**38 registries nothing could fill** (FS-467). `initialize_registries_for_organization`
+created one for every mapped domain; only 8 can receive an item. Writing extractor keywords
+for `INNOVATION_RD` and `KNOWLEDGE_MANAGEMENT` would have been product scope invented to
+satisfy a count, so the initializer now creates only what something can fill, from a set
+DERIVED from the extractor rather than listed beside it. Closing it exposed a second defect:
+the analysis-to-item path carried the comment "Get or create registry for domain" above code
+that only got, returning None and dropping the item. Harmless while all 46 existed; a silent
+loss the moment they did not. **Narrowing creation without fixing that would have traded a
+cosmetic problem for a data-loss one.**
+
+**Five phantom `Location`/`Address` fields** (FS-469). Not debt: they describe
+`shipments.origin`, which the server declares `Dict[str, Any]`. Asking "does the backend send
+`contactEmail`" of an uncontracted field gets an answer that means nothing. The sweep now
+derives which types are client-constructed — seeded from response types and closed
+transitively over field references — and the exemption for `Location` is checked against the
+backend schema, so it expires by itself if that field is ever contracted. The first version
+had no closure and exempted 34 types including `GeofenceAlert`: **too broad silences real
+debt, which is worse than the five meaningless entries it set out to remove.**
+
+**The doubled logistics prefix** (FS-468). Twelve paths served at
+`/api/v1/logistics/logistics/…`. The blocker was never the edit — dropping the prefix
+collided with `fleet_logistics` on two paths, and the router registering first would have
+silently won. `fleet_logistics` is canonical: response models, the HOS fix that stopped an
+unreported driver counting as compliant, and the paths the frontend calls. The
+correlation-flavoured variants moved under `/correlation/`. A guard now fails any route that
+repeats an adjacent segment, which is the shape a prefix collision produces.
+
+**Two PUT handlers replacing rather than patching** (FS-470). One was a detector false
+positive — `kanban.update_task` dumps nested checklist items, not the patch body — and the
+detector now checks that `model_dump()`'s receiver is the handler's own parameter, so the
+distinction is read from the code instead of carried as an allowance. The other was correct
+PUT semantics with a silent trap: every field defaulted, so a partial body reset six
+retention settings. It takes a model requiring all seven now, so a partial body is a 422
+naming the missing field. **The verb did not need to change; the trap did.**
+
+**The agent reporting health twice** (FS-466). Two heartbeat paths carried overlapping facts
+under two names. The HTTP one has a consumer, so the Kafka payload was narrowed to identity —
+and the agent stopped reading its SQLite buffer on every beat to fill fields the cloud
+discarded. This entry is also the one that had been **written with a wrong conclusion** and
+corrected; see Rule 92.
+
 
 **The capped lists** (FS-455/459) were entry #2 and are at zero. Eleven endpoints could not
 say they had capped; the fix was `limit + 1` and one `mark_truncated` call each. Six went on

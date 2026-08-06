@@ -12,7 +12,7 @@ omitted it. Both are fixed: the session is tenant-bound and the org comes from t
 
 WHAT IS NOT FIXED, AND IS NOT AN OVERSIGHT. This router declares `prefix="/logistics"`
 while `main.py` mounts it at `/api/v1/logistics`, so every route serves at
-`/api/v1/logistics/logistics/...`. That is the double-prefix bug already corrected in the
+`/api/v1/logistics/...` since FS-468 closed the double-prefix bug — the same one corrected in the
 yard and transportation routers, and it is why the paths below look wrong. Correcting it
 would collide with `fleet_logistics.logistics_router`, which serves `/delivery-efficiency`
 and `/compliance/summary` at the single prefix — the two paths the frontend actually
@@ -31,7 +31,7 @@ import pytest_asyncio
 
 pytestmark = pytest.mark.asyncio
 
-BASE = "/api/v1/logistics/logistics"
+BASE = "/api/v1/logistics"
 
 
 @pytest_asyncio.fixture

@@ -461,6 +461,91 @@ class CorrelationRegistryIntegration:
     def __init__(self):
         self._initialized = False
     
+    def _fillable_domains(self) -> set:
+        """Domains something in this service can actually put an item into (FS-467).
+
+        DERIVED FROM THE CODE, not listed. Reading the extractor's own source and the
+        default-items table means giving a domain keywords is the only step needed to have
+        its registry created — a hand-maintained list here would be a second place to
+        remember, and the count it produced would drift from the behaviour it describes.
+
+        Exactly the method `test_correlation_registry_integration.py` uses to assert the
+        figure, which is deliberate: the guard and the code should be reading the same
+        thing, or the guard is checking its own copy.
+        """
+        import inspect
+        import re
+
+        pattern = r'"([A-Z_]+)":\s*\['
+        extractable = set(
+            re.findall(pattern, inspect.getsource(self._extract_domains_from_analysis))
+        )
+        with_defaults = set(
+            re.findall(pattern, inspect.getsource(self._get_default_items_for_domain))
+        )
+        return (extractable | with_defaults) & set(DOMAIN_REGISTRY_MAPPING)
+
+    async def _ensure_registry(
+        self,
+        organization_id: UUID,
+        domain_name: str,
+        db: AsyncSession,
+        created_by: UUID,
+    ) -> Optional[ActionableRegistry]:
+        """Find the registry for a domain, creating it if absent (FS-467).
+
+        Extracted so the two paths that need a registry cannot disagree about whether one
+        exists — `initialize_registries_for_organization` used to be the only creator, and
+        `_create_registry_item_from_analysis` said "Get or create registry for domain" in a
+        comment above code that only got, and returned None when it found nothing. An item
+        derived from a real analysis was dropped, silently, because a row was missing.
+
+        That mattered little while every domain was pre-created. It matters now: the
+        initializer only creates registries something can fill, so on-demand creation is
+        what keeps a newly-extractable domain from losing its first items.
+        """
+        registry_config = DOMAIN_REGISTRY_MAPPING.get(domain_name)
+        if not registry_config:
+            return None
+
+        result = await db.execute(
+            select(ActionableRegistry).where(
+                and_(
+                    ActionableRegistry.organization_id == organization_id,
+                    ActionableRegistry.registry_name == registry_config["registry_name"],
+                )
+            )
+        )
+        existing = result.scalar_one_or_none()
+        if existing:
+            return existing
+
+        registry = ActionableRegistry(
+            organization_id=organization_id,
+            registry_name=registry_config["registry_name"],
+            registry_type=registry_config["registry_type"],
+            registry_category=registry_config["registry_category"],
+            description=f"Operational registry for {domain_name} domain",
+            is_active=True,
+            is_compliance=registry_config["registry_type"] == "compliance",
+            frequency=registry_config["frequency"],
+            priority_level=registry_config["priority_level"],
+            created_by=created_by,
+            meta_data={
+                "domain": domain_name,
+                "compliance_standards": registry_config["compliance_standards"],
+            },
+        )
+        db.add(registry)
+        await db.commit()
+        await db.refresh(registry)
+        logger.info(
+            "registry_created_on_demand",
+            organization_id=str(organization_id),
+            domain=domain_name,
+        )
+        return registry
+
     async def initialize_registries_for_organization(
         self,
         organization_id: UUID,
@@ -468,21 +553,28 @@ class CorrelationRegistryIntegration:
         created_by: UUID
     ) -> Dict[str, UUID]:
         """
-        Initialize registries for every mapped operational domain (46 of them).
+        Initialize registries for the mapped domains something can actually fill.
 
-        THE COUNT WAS WRONG AND THE SHAPE IS WORTH KNOWING (FS-444). This said "all 47";
-        `DOMAIN_REGISTRY_MAPPING` has 46. More importantly, of those 46:
+        NOT ALL 46 (FS-467). `DOMAIN_REGISTRY_MAPPING` has 46 domains, and of those only
+        8 can be returned by `_extract_domains_from_analysis` — so only 8 can ever receive
+        an item derived from a correlation analysis, and 5 of those 8 also get default
+        items. **The other 38 were created empty and stayed empty**, which on a compliance
+        screen reads as 38 programmes not started rather than 38 that cannot be started.
+        A different fact, and the more alarming one.
 
-          *  8 can be returned by `_extract_domains_from_analysis`, so only those can ever
-             receive an item derived from a correlation analysis
-          *  5 also receive default items — a SUBSET of those 8, not a separate group
-          * 38 have neither, and are created empty and stay empty
+        Of the two ways to close that — write extractor keywords and default items for 38
+        speculative domains, or stop creating registries nothing can populate — the second
+        is the honest one. Keywords for `INNOVATION_RD` or `KNOWLEDGE_MANAGEMENT` would be
+        product scope invented to satisfy a count.
 
-        So an organisation is initialised with 46 registries, 38 of which nothing in this
-        service can populate. On a compliance screen that reads as 38 programmes not started
-        rather than 38 that cannot be started, which is a different fact. Pinned by
-        `test_correlation_registry_integration.py`; closing it means either giving those
-        domains default items and keywords, or not creating a registry nothing can fill.
+        THE SET IS DERIVED, NOT LISTED. `_fillable_domains()` reads the extractor and the
+        default-items table, so giving a domain keywords is all it takes to have its
+        registry created — no second place to remember. And `_ensure_registry` creates one
+        on demand if an analysis ever names a domain outside the set, so narrowing this
+        cannot lose an item.
+
+        Existing registries are untouched: the lookup below returns them, so an
+        organisation initialised before this change keeps its 46.
         
         Args:
             organization_id: Organization UUID
@@ -495,8 +587,25 @@ class CorrelationRegistryIntegration:
         logger.info("initializing_registries_for_organization", organization_id=str(organization_id))
         
         registry_ids = {}
+        fillable = self._fillable_domains()
         
         for domain_name, registry_config in DOMAIN_REGISTRY_MAPPING.items():
+            # Skip only domains that have NEVER had a registry here. An existing one is
+            # still returned below, so this narrows creation without orphaning anything.
+            if domain_name not in fillable:
+                result = await db.execute(
+                    select(ActionableRegistry).where(
+                        and_(
+                            ActionableRegistry.organization_id == organization_id,
+                            ActionableRegistry.registry_name
+                            == registry_config["registry_name"],
+                        )
+                    )
+                )
+                already = result.scalar_one_or_none()
+                if already is not None:
+                    registry_ids[domain_name] = already.id
+                continue
             # Check if registry already exists
             result = await db.execute(
                 select(ActionableRegistry).where(
@@ -874,22 +983,19 @@ class CorrelationRegistryIntegration:
     ) -> Optional[UUID]:
         """Create a registry item from correlation analysis"""
         
-        # Get or create registry for domain
-        registry_config = DOMAIN_REGISTRY_MAPPING.get(domain)
-        if not registry_config:
-            return None
-        
-        result = await db.execute(
-            select(ActionableRegistry).where(
-                and_(
-                    ActionableRegistry.organization_id == organization_id,
-                    ActionableRegistry.registry_name == registry_config["registry_name"]
-                )
+        # GET OR CREATE, which this comment claimed and the code did not (FS-467). It
+        # looked the registry up and returned None when it found nothing, so an item
+        # derived from a real analysis was dropped because a row was missing — silently,
+        # since the caller cannot tell "no registry" from "nothing to record".
+        registry = await self._ensure_registry(organization_id, domain, db, created_by)
+        if registry is None:
+            # Only reachable for a domain outside DOMAIN_REGISTRY_MAPPING, which is a
+            # mapping gap rather than a missing row, and worth saying so.
+            logger.warning(
+                "registry_item_dropped_unmapped_domain",
+                organization_id=str(organization_id),
+                domain=domain,
             )
-        )
-        registry = result.scalar_one_or_none()
-        
-        if not registry:
             return None
         
         # Determine severity from risk score

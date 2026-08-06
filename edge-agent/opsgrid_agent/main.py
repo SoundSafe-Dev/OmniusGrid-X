@@ -388,16 +388,16 @@ class EdgeAgent:
                 await asyncio.sleep(3600)
 
     async def _heartbeat_payload(self) -> Dict[str, Any]:
-        stats = await self.buffer.get_stats()
-        status = self.coordinator.get_status()
+        # No buffer stats, no collector status (FS-466). This heartbeat answers "which
+        # build is running on which assets"; device health goes over the HTTP heartbeat,
+        # which has a consumer. Two calls per beat removed — `get_stats()` reads the
+        # SQLite buffer — that existed only to fill fields the cloud discarded.
         return build_heartbeat_payload(
             agent_id=self.config['agent_id'],
             organization_id=self.config['organization_id'],
             asset_ids=asset_ids_from_collectors(self.config.get('collectors', [])),
             manifest=self.manifest,
             config_hash=self.config_hash,
-            collector_status=status,
-            buffer_depth=stats['total_messages'],
         )
 
     async def _publish_heartbeat(self):

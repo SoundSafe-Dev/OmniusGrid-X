@@ -16,12 +16,13 @@ drift; paths that return 404 to anyone who tries them:
   * `/api/v1/registries/{id}/compliance-score` and `/risk-score` — two invented variants of
     one real `/score`;
   * five `/api/v1/correlations*` rows that live under `/registries/correlations`;
-  * five logistics rows missing a segment, because `logistics_correlation` carries its own
-    `/logistics` prefix AND is mounted under `/api/v1/logistics`, so its routes really are
-    at `/api/v1/logistics/logistics/…`. That doubling is a recorded defect, deliberately
-    not fixed because removing the inner prefix collides with `fleet_logistics` — and
-    documenting the *intended* path instead of the real one hid it from everyone who
-    would have hit the 404.
+  * five logistics rows missing a segment, because `logistics_correlation` carried its own
+    `/logistics` prefix AND was mounted under `/api/v1/logistics`, so its routes really
+    were at `/api/v1/logistics/logistics/…`. **Closed by FS-468**: `fleet_logistics` was
+    made canonical for the two colliding paths and the correlation variants moved under
+    `/correlation/`, so the doubling is gone and the documented paths are the real ones
+    again. Recorded here because documenting the *intended* path instead of the real one
+    is what hid it from everyone who would have hit the 404.
 
 THE POINT. Documentation that cannot be executed rots silently, and the rot is invisible
 precisely because nobody runs a README. This makes the API Reference a checked artefact.

@@ -79,7 +79,7 @@ async def fleet(admin_sync_url, seeded_orgs):
 
 
 async def _status(client):
-    response = await client.get("/api/v1/logistics/logistics/compliance/summary")
+    response = await client.get("/api/v1/logistics/correlation/compliance-summary")
     assert response.status_code == 200, response.text
     return response.json()
 
@@ -155,7 +155,7 @@ class TestAGradeIsAlsoAVerdict:
 
     async def test_a_period_with_no_shipments_is_not_graded_d(self, client_a):
         response = await client_a.get(
-            "/api/v1/logistics/logistics/delivery-efficiency", params={"days": 1}
+            "/api/v1/logistics/correlation/delivery-efficiency", params={"days": 1}
         )
         assert response.status_code == 200, response.text
         body = response.json()
@@ -170,7 +170,7 @@ class TestAGradeIsAlsoAVerdict:
         """Withholding the grade must not withhold the figures it was derived from."""
         body = (
             await client_a.get(
-                "/api/v1/logistics/logistics/delivery-efficiency", params={"days": 1}
+                "/api/v1/logistics/correlation/delivery-efficiency", params={"days": 1}
             )
         ).json()
         assert "total_delivered_shipments" in body

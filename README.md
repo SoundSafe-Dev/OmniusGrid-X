@@ -37,7 +37,7 @@
 | [Documentation](#documentation) | The rest of `docs/` |
 
 **Engineering method.** The sweeps and guards in this repository follow a set of numbered
-rules, each written after a defect that a weaker check had missed. Rules 21–94 are recorded in
+rules, each written after a defect that a weaker check had missed. Rules 21–96 are recorded in
 `docs/engineering/defect-class-sweeps.md`, with the reasoning for each; the short list at the
 top of that file is what most people read.
 
@@ -61,7 +61,7 @@ right.
 [correlation dataset](docs/CORRELATION-DATASET.md) ·
 [demo walkthrough](docs/DEMO.md) ·
 [defect-class sweeps](docs/engineering/defect-class-sweeps.md) ·
-[open decisions](docs/engineering/open-decisions.md) — **five items awaiting a decision, not more investigation** ·
+[open decisions](docs/engineering/open-decisions.md) — **no items open; all five closed 2026-08-05, with what each cost** ·
 [sprint plans](docs/planning/)
 
 ---
@@ -1028,21 +1028,29 @@ OmniusGrid/
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/v1/logistics/logistics/correlation-dashboard` | Cross-domain metrics |
-| POST | `/api/v1/logistics/logistics/predict-detention` | ML detention risk prediction |
-| GET | `/api/v1/logistics/logistics/dock-production-sync` | Production-dock alignment |
-| POST | `/api/v1/logistics/logistics/load-quality` | Log defect with root cause |
-| GET | `/api/v1/logistics/logistics/liability/costs` | Total liability tracking |
+| GET | `/api/v1/logistics/correlation-dashboard` | Cross-domain metrics |
+| POST | `/api/v1/logistics/predict-detention` | ML detention risk prediction |
+| GET | `/api/v1/logistics/dock-production-sync` | Production-dock alignment |
+| POST | `/api/v1/logistics/load-quality` | Log defect with root cause |
+| GET | `/api/v1/logistics/liability/costs` | Total liability tracking |
 | GET | `/api/v1/logistics/delivery-efficiency` | On-time delivery analytics (`fleet_logistics`) |
 | GET | `/api/v1/logistics/compliance/summary` | Logistics compliance summary (`fleet_logistics`) |
 
-**The doubled segment is real, not a typo.** `logistics_correlation` carries its own
-`/logistics` prefix *and* is mounted under `/api/v1/logistics`, so its routes land at
-`/api/v1/logistics/logistics/…`. Dropping the inner prefix would collide with
-`fleet_logistics`, which already owns `/delivery-efficiency` and `/compliance/summary` at
-the single-prefix path — which is why it is recorded rather than fixed. This table used
-to show the intended paths, so every row above was a 404 waiting to be discovered by
-whoever tried them.
+**The doubled segment is gone** (FS-468). `logistics_correlation` used to carry its own
+`/logistics` prefix *and* be mounted under `/api/v1/logistics`, so its routes landed at
+`/api/v1/logistics/logistics/…`. The inner prefix could not simply be dropped: it would
+have collided with `fleet_logistics`, which owns `/delivery-efficiency` and
+`/compliance/summary` at the single-prefix path, and — registering first — silently won.
+
+The blocker was the decision, not the edit. `fleet_logistics` is canonical for those two:
+it declares response models, its compliance summary carries the fix that stopped an
+unreported driver counting as compliant, and its paths are the ones the frontend calls.
+The correlation-flavoured variants, which take a `days` window and answer a different
+question, now live at `/api/v1/logistics/correlation/…`.
+
+This table used to show the *intended* paths while the router served the doubled ones, so
+every row above was a 404 waiting to be discovered by whoever tried them. It is checked
+now — `test_documented_endpoints_exist.py` fails if a documented path is not served.
 
 ### GeoTab Integration
 
@@ -1813,7 +1821,7 @@ today, start at [`docs/erp/README.md`](docs/erp/README.md) instead.
 
 **Engineering practice**
 - [Open decisions](docs/engineering/open-decisions.md) - Six findings that are understood, reproduced and deliberately NOT fixed, because closing each is a product or contract decision rather than a bug fix: a PDF page truncated at 20,000 characters with no flag, 38 registries created that nothing can populate, eleven capped lists that cannot say they were capped, and three more. Every entry is pinned by a test and names what would have to change; they lived in test docstrings, which is the right place for the reasoning and the wrong place for the decision, because a docstring is read by whoever next edits that file and none of these will be closed by that person
-- [Defect-class sweeps](docs/engineering/defect-class-sweeps.md) - The seventy-two numbered classes of "code that looks wired and cannot work" found so far, what each sweep found (including the ones that came back clean), which mutation-tested guard keeps each closed, and ninety-four rules for writing a sweep worth trusting — including the one class no test could have caught, because contrast is not a dimension a suite has an opinion about — most of them paid for by a detector that was wrong first, including one that reported zero offenders while three pages were broken, one that compared a baseline against itself, and **one that reported a class clean while it contained a feature returning 422 on every call since the day it was written**
+- [Defect-class sweeps](docs/engineering/defect-class-sweeps.md) - The seventy-two numbered classes of "code that looks wired and cannot work" found so far, what each sweep found (including the ones that came back clean), which mutation-tested guard keeps each closed, and ninety-six rules for writing a sweep worth trusting — including the one class no test could have caught, because contrast is not a dimension a suite has an opinion about — most of them paid for by a detector that was wrong first, including one that reported zero offenders while three pages were broken, one that compared a baseline against itself, and **one that reported a class clean while it contained a feature returning 422 on every call since the day it was written**
 - [Large assets](docs/engineering/large-assets.md) - Why `backend/dataset` is 1.5 GB on disk but only 41 MB packed, why it must not be deleted (the generator sets no seed, so it is generated but NOT reproducible), and the `make lean` / sparse-checkout recipes that keep it off your disk and out of all 28 CI checkouts
 - [The API contract gate](docs/engineering/api-contract-gate.md) - The schemathesis job that drives all 470 documented operations, why it could never finish (every component fast, the whole impossible — a per-example event loop plus a retry path with no backoff), the four independent faults that each alone would have stopped it, why it blocks as a *ratchet* on a measured floor rather than demanding a green suite, and what it has found since — including an audit trail that had never recorded a single row, and thirteen identical unbounded `skip` declarations of which it could only ever have reported one, which is why the fix is a shared bound and a sweep rather than the one endpoint that happened to fail — and `POST /api/v1/user/goals`, which raised `TypeError` on every call since it was written because `str(UUID())` has no zero-argument form, so the whole goals feature was dead behind an endpoint that looked wired and any test that called it once with anything would have caught it
 - [The test quarantine](docs/engineering/test-quarantine.md) - What CI is allowed not to run, and the register that gives every exclusion an owner, a diagnosis and an expiry — including the staleness half that fails when a quarantined test starts passing. Records the 2026-07-30 release of four entries, and the rule it earned: before accepting that a quarantined test is another lane's problem, check whether the code under it is *running* — "the test is broken" and "the feature is unbuilt" look identical from the list and have opposite consequences

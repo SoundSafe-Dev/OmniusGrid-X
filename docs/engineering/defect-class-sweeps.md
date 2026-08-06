@@ -2592,6 +2592,16 @@ one of its findings. The habit that catches it:
     one returned 0.0 — so the defect existed in two forms, and fixing either would have
     left the other.
 
+95. **Closing a decision often means deleting, not building.**
+    Two of the five open decisions closed by removing something: registries nothing could
+    fill are no longer created, heartbeat fields nobody read are no longer sent. Both had
+    been framed as work to add.
+
+96. **A too-broad exemption is worse than the entries it removes.**
+    The client-constructed exemption, without transitive closure, silenced 34 types
+    including several genuinely on the wire — to remove five meaningless ones. When
+    exempting, check both directions before believing the count.
+
 ---
 
 ## Open observations, not yet tickets
@@ -5807,4 +5817,54 @@ field, written by someone who had the class clearly in mind.
 Class 29. When the same quantity is computed in two places, the edge case is where they part
 company — and fixing the one you found leaves the other. Look for the second producer before
 believing the fix is complete.
+
+## The register reached zero (FS-466 … FS-470)
+
+`docs/engineering/open-decisions.md` held five entries described as needing intent rather than
+investigation. All five are closed. Three took less time to decide than they had spent being
+re-read, which is worth knowing about that page: an entry can sit there because it is
+genuinely contested, or because nobody has been asked.
+
+**Two closed by deleting.** The 38 registries nothing could fill are no longer created; the
+heartbeat fields nobody read are no longer sent. Both had been written up as work to add —
+extractor keywords for 38 domains, a migration and a panel for three fields — and in both
+cases the honest answer was that the thing should not exist. `INNOVATION_RD` does not become
+a real programme because a registry row exists for it.
+
+**Two were closed by making a distinction the code already knew.** The kanban PUT was a
+detector false positive: it dumps nested checklist items, not the patch body, and the
+detector now reads the receiver of `model_dump()` instead of carrying the difference as an
+allowance. The `Location` phantoms were not debt: they describe a server field declared
+`Dict[str, Any]`, so the question the sweep was asking had no answer. In both, the fix was to
+make the sweep ask a better question rather than to change the code it was asking about.
+
+**One had a second defect hiding behind it.** Narrowing registry creation would have caused
+silent data loss, because `_create_registry_item_from_analysis` carried the comment "Get or
+create registry for domain" above code that only got — returning None and dropping the item
+when the row was missing. Harmless while all 46 were pre-created. **The blocker had been
+protecting a bug.**
+
+### Four weak assertions, all caught the same way
+
+Four guards written this week passed with their fix mutated out:
+
+| guard | why it passed anyway |
+|---|---|
+| buffer-loss counter | 400-char window reached the *next* loss path's counter |
+| heartbeat producer | substring search matched the name one line above the emitted key |
+| registry initializer | source-text check matched the string inside its own docstring |
+| uncontracted-field exemption | `re.search` found a second declaration of the same field |
+
+Every one was found by deleting the fix and re-running, and every one would have shipped as a
+green claim that somebody had checked. The shape they share: **a check that looks near the
+right place rather than at it.** Bind the variable, parse the keys, run the function.
+
+## Rule 95 — closing a decision often means deleting, not building
+
+Two of five closed by removing something that had been framed as work to add.
+
+## Rule 96 — a too-broad exemption is worse than the entries it removes
+
+Exempting to silence five meaningless entries silenced 34 real ones on the first attempt.
+Check both directions of an exemption before believing the count it produces.
 

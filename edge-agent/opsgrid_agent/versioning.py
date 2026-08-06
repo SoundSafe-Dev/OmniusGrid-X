@@ -59,10 +59,24 @@ def build_heartbeat_payload(
     asset_ids: list[str],
     manifest: dict[str, Any],
     config_hash: str,
-    collector_status: dict[str, Any],
-    buffer_depth: int,
     timestamp: str | None = None,
 ) -> dict[str, Any]:
+    """The Kafka agent-status heartbeat: which build is running on which assets.
+
+    NARROWED (FS-466). This used to also carry `git_sha`, `collector_status` and
+    `buffer_depth`, and the cloud read none of them — `_process_agent_heartbeat` updates
+    `Asset.agent_version / agent_config_hash / agent_build_id / last_seen` and nothing else.
+
+    Device HEALTH travels the other heartbeat, `POST /api/v1/edge/heartbeat`, which reports
+    `buffer_pending`, `dead_lettered`, `dropped` and `active_collectors`; the backend
+    persists those on `edge_agent_status` and publishes per-agent `edge_agent_*` gauges.
+    That path has a consumer, so it is the one that keeps the health fields.
+
+    Two paths carrying the same facts under two names (`buffer_depth` / `buffer_pending`)
+    is the condition that produced six aliases in FS-435. This one now answers exactly one
+    question — what is running where — and the caller no longer computes buffer stats and
+    collector status on every beat to fill fields nobody reads.
+    """
     return {
         "message_type": "agent_heartbeat",
         "agent_id": agent_id,
@@ -71,9 +85,6 @@ def build_heartbeat_payload(
         "agent_version": manifest["agent_version"],
         "config_hash": config_hash,
         "build_id": manifest.get("build_id"),
-        "git_sha": manifest.get("git_sha"),
-        "collector_status": collector_status,
-        "buffer_depth": buffer_depth,
         "timestamp": timestamp or _utc_now(),
     }
 

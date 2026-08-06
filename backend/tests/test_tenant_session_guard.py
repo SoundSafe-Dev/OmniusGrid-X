@@ -159,13 +159,13 @@ KNOWN_GET_DB_ON_RLS: dict[str, int] = {
     # as a required client-supplied query parameter: the IDOR shape, and a 422 for any
     # client that did not send it. Both now derive the org from the token.
     #
-    # STILL OUTSTANDING there, deliberately: logistics_correlation declares
-    # prefix="/logistics" and main.py mounts it at /api/v1/logistics, so its routes
-    # serve at /api/v1/logistics/logistics/... — the double-prefix bug already fixed in
-    # yard and transportation. Removing it collides with fleet_logistics.logistics_router
-    # on /delivery-efficiency and /compliance/summary, which are the two paths the
-    # frontend actually calls. Choosing which implementation is canonical is a product
-    # decision, not a routing edit.
+    # CLOSED (FS-468): logistics_correlation used to declare prefix="/logistics" while
+    # main.py mounted it at /api/v1/logistics, so its routes served at
+    # /api/v1/logistics/logistics/... The blocker was never the edit — it was that
+    # dropping the prefix collided with fleet_logistics.logistics_router on
+    # /delivery-efficiency and /compliance/summary. fleet_logistics is canonical for
+    # those two (response models, the HOS compliance fix, and the paths the frontend
+    # calls); the correlation variants moved under /correlation/.
     # transportation.py is GONE from this list, and so is geotab.py.
     #
     # `get_vehicles` leaked outright: no organization filter, on a table with no RLS

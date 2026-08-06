@@ -5,10 +5,11 @@ The agent builds one payload, `build_heartbeat_payload` in
 `_process_agent_heartbeat`. Nothing connected the two: the agent could add a field, or the
 worker could stop reading one, and both sides would keep passing their own tests.
 
-**Three fields are computed on every device, serialised, transmitted, and dropped.** The
-worker persists `agent_id`, `agent_version`, `config_hash` and `build_id`; it reads
-`organization_id` and `asset_ids` to route the update and `timestamp` to stamp it. It never
-touches `git_sha`, `collector_status` or `buffer_depth`.
+**Three fields were computed on every device, serialised, transmitted, and dropped** —
+`git_sha`, `collector_status` and `buffer_depth`. They are gone from the payload now
+(FS-466), which is the right end for them: the worker persists `agent_id`, `agent_version`,
+`config_hash` and `build_id`, reads `organization_id` and `asset_ids` to route the update and
+`timestamp` to stamp it, and that is the whole job of this message.
 
 WHY THAT IS WORTH A GUARD RATHER THAN A SHRUG — **and a correction, because the first
 version of this docstring drew the wrong conclusion.**
@@ -23,10 +24,11 @@ The original claim came from reading this path and generalising. **A sweep that 
 consumer and concludes there is no other is asserting a negative it did not check** — found
 by coming at it from the opposite end, while checking whether a backend gauge had a producer.
 
-What remains true is narrower and still worth a guard: the same health is assembled twice,
-under two names for one quantity (`buffer_depth` here, `buffer_pending` there), and this
-path's copy is read by nobody. Redundant work on every device, and two vocabularies for one
-fact — the condition that produced six aliases in FS-435.
+So the same health was being assembled twice, under two names for one quantity
+(`buffer_depth` here, `buffer_pending` there), and this path's copy was read by nobody —
+redundant work on every device and two vocabularies for one fact, the condition that produced
+six aliases in FS-435. **Closed by narrowing this payload rather than by widening the
+worker**, because the other path already answers the question and answers it to something.
 
 WHAT THIS ASSERTS. Not that the fields must be stored — persisting them needs a migration and
 a decision about what the fleet surface should show, which is on the open-decisions page. Only
@@ -53,21 +55,13 @@ INGESTION = ROOT / "backend" / "app" / "workers" / "ingestion.py"
 #: Fields the worker deliberately does not persist, each with the reason. An entry is a
 #: claim that someone looked; keep them short enough to check and specific enough to argue
 #: with. Removing a field from here without consuming it fails the test.
+#:
+#: **This dict is nearly empty now, and that is the outcome** (FS-466). It once held
+#: `git_sha`, `collector_status` and `buffer_depth` with reasons about why nobody read
+#: them. Those three were removed from the payload instead: the cloud read none of them,
+#: and device health travels the HTTP heartbeat, which has a consumer. An exemption is a
+#: place to record a decision, not a place to keep one indefinitely.
 DELIBERATELY_UNREAD: dict[str, str] = {
-    "git_sha": (
-        "build provenance. `agent_build_id` already identifies the build and is persisted; "
-        "the sha adds precision nothing currently asks for"
-    ),
-    "collector_status": (
-        "per-collector health. The HTTP heartbeat reports `active_collectors` / "
-        "`total_collectors`, which is the same question answered more coarsely — "
-        "open-decisions.md"
-    ),
-    "buffer_depth": (
-        "pending messages on the device. NOT invisible to the cloud: the HTTP heartbeat "
-        "carries the same number as `buffer_pending` and it is gauged per agent. This copy "
-        "is the redundant one — open-decisions.md"
-    ),
     # Routing and envelope, consumed but not by name in a `data.get(...)` the scan can see.
     "message_type": "the branch discriminator; read before dispatch",
 }
@@ -157,21 +151,21 @@ class TestTheContractHasNoSilentGap:
         )
 
 
-class TestTheThreeUnreadFieldsAreStillUnread:
-    """A ratchet, so closing the gap is visible rather than quiet.
+class TestNothingIsQuietlyDiscardedAgain:
+    """The ratchet, at its floor.
 
-    If someone persists `buffer_depth`, this fails and the entry comes out of both this file
-    and the open-decisions register in the same commit — which is the only way that page
-    stays worth reading.
+    This class used to allow three discarded fields and assert the count had not grown.
+    They were removed, so the allowance is zero and the assertion is that it stays there:
+    a field added to this payload has to be consumed or explicitly exempted, and an
+    exemption has to say why in a sentence someone can disagree with.
     """
 
-    def test_the_count_has_not_grown(self):
-        # `message_type` is envelope, not payload data — excluded from the count so the
-        # number means "fields the cloud throws away".
+    def test_no_payload_field_is_discarded(self):
         dropped = {f for f in DELIBERATELY_UNREAD if f != "message_type"}
-        assert len(dropped) <= 3, (
-            f"{len(dropped)} heartbeat fields are now discarded, up from three. The agent "
-            f"is doing work on every device that reaches nobody."
+        assert not dropped, (
+            f"{sorted(dropped)} are exempted from being read. The last three exemptions "
+            f"here were closed by DELETING the fields, because the agent was computing "
+            f"them on every beat for nobody. Prefer that to writing a reason."
         )
 
 

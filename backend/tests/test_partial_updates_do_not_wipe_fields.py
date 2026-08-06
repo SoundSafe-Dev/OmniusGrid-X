@@ -11,7 +11,7 @@ name-only PUT leaves `vendor` alone — and this stops the pattern spreading to 
 that test does not reach.
 
 THE DEFAULTED VARIANT IS THE DANGEROUS ONE. Blanking a column to NULL at least looks wrong
-downstream. `HistorianRetentionSettings` gives every field a default, so a partial PUT
+downstream. `HistorianRetentionSettings` gave every field a default, so a partial PUT
 resets six retention settings to plausible-looking values — a cold-retention window quietly
 returning from 3650 days to 1825 is not obviously a bug to anyone reading the row
 afterwards.
@@ -37,18 +37,15 @@ _UPDATE_HINTS = ("update", "patch", "edit", "set_")
 #: `file:function` allowed to call `model_dump()` without an exclusion, and why.
 #: Each entry is a claim that has to stay true, not a convenience.
 ALLOWED: dict[str, str] = {
-    "kanban.py:update_task":
-        "NOT the update payload — it dumps each nested `ChecklistItem` inside "
-        "`[item.model_dump() for item in task_update.checklist_items]`, guarded by the "
-        "field being present. Dumping a nested model in full is correct; the risk in this "
-        "class is dumping the PATCH BODY in full.",
     "data_retention.py:update_historian_retention_policy":
-        "a genuine full-replacement PUT: the route is PUT, `HistorianRetentionSettings` "
-        "defaults every field, and the SQL sets every column. A partial body therefore "
-        "means 'reset the rest to defaults', which is what PUT means. Recorded rather than "
-        "changed because no client calls it today — but the first caller to treat it as a "
-        "PATCH will silently reset six retention settings, so if a consumer appears, this "
-        "entry should be revisited before it does.",
+        "a genuine full-replacement PUT, and now a safe one (FS-470). The route is PUT, "
+        "the SQL sets every column, and PUT means replace — so dumping the whole body is "
+        "correct. What made it a trap was `HistorianRetentionSettings` defaulting every "
+        "field, so a partial body silently reset six retention settings instead of "
+        "failing. The handler now takes `HistorianRetentionReplace`, which requires all "
+        "seven, so a partial body is a 422 naming the missing field. The defaults stay on "
+        "the base model, which CREATE inherits — sane values are what a default is for, "
+        "and replacing an existing policy is not.",
 }
 
 
@@ -76,11 +73,24 @@ def _unguarded_dumps() -> list[str]:
                 continue
             if not _is_update(node):
                 continue
+            # THE PATCH BODY, not any model in reach (FS-470). The receiver must be one
+            # of the handler's own parameters — the object FastAPI parsed the request into.
+            #
+            # `kanban.update_task` does `[item.model_dump() for item in
+            # task_update.checklist_items]`: dumping a nested model in full is correct, and
+            # the risk in this class is dumping the PATCH BODY in full. That distinction
+            # was carried as an allowance for months; it is a property of the code and can
+            # simply be read.
+            parameters = {
+                a.arg for a in node.args.args + node.args.kwonlyargs + node.args.posonlyargs
+            }
             for sub in ast.walk(node):
                 if not isinstance(sub, ast.Call):
                     continue
                 func = sub.func
                 if not (isinstance(func, ast.Attribute) and func.attr == "model_dump"):
+                    continue
+                if not (isinstance(func.value, ast.Name) and func.value.id in parameters):
                     continue
                 if {k.arg for k in sub.keywords} & {"exclude_unset", "exclude_none"}:
                     continue
@@ -163,3 +173,70 @@ class TestNoUpdateWipesWhatItWasNotAsked:
             "compliant when this guard was written; a rise means it is being abandoned "
             "rather than followed."
         )
+
+
+class TestTheReplacementPUTRefusesAPartialBody:
+    """The allowance above says a partial body is now a 422 rather than a silent reset.
+    That is a claim about a model, so it is checked (FS-470)."""
+
+    def test_every_field_is_required(self):
+        from app.api.data_retention import HistorianRetentionReplace
+
+        optional = [
+            name
+            for name, field in HistorianRetentionReplace.model_fields.items()
+            if not field.is_required()
+        ]
+        assert not optional, (
+            f"{optional} are optional on the PUT body, so omitting them resets those "
+            f"columns to defaults instead of failing. That is the trap the allowance "
+            f"describes as closed."
+        )
+
+    def test_a_partial_body_is_rejected(self):
+        """The behaviour, not just the model. A validator or a default reintroduced
+        elsewhere would pass the field check above."""
+        import pytest as _pytest
+        from pydantic import ValidationError
+
+        from app.api.data_retention import HistorianRetentionReplace
+
+        with _pytest.raises(ValidationError) as exc:
+            HistorianRetentionReplace(hot_retention_days=30)
+        assert "cold_retention_days" in str(exc.value)
+
+    def test_a_complete_body_is_still_accepted(self):
+        """The other direction: a model that rejects everything passes both tests above
+        and breaks the endpoint."""
+        from app.api.data_retention import HistorianRetentionReplace
+
+        policy = HistorianRetentionReplace(
+            hot_retention_days=30,
+            warm_retention_days=365,
+            cold_retention_days=1825,
+            ingestion_priority=3,
+            ingestion_sample_rate=1.0,
+            max_ingest_age_seconds=30,
+            archival_enabled=True,
+        )
+        assert policy.cold_retention_days == 1825
+
+    def test_create_still_has_its_defaults(self):
+        """`HistorianRetentionCreate` inherits the defaulting base on purpose. Making the
+        base required would have closed this entry by breaking policy creation."""
+        from app.api.data_retention import HistorianRetentionCreate
+
+        created = HistorianRetentionCreate()
+        assert created.hot_retention_days == 30
+        assert created.metric_name == "*"
+
+    def test_the_handler_uses_the_replacement_model(self):
+        import inspect
+
+        from app.api.data_retention import update_historian_retention_policy
+
+        signature = inspect.signature(update_historian_retention_policy)
+        assert signature.parameters["policy"].annotation.__name__ == (
+            "HistorianRetentionReplace"
+        ), "the PUT handler is back on the defaulting model, so a partial body resets"
+

@@ -49,14 +49,19 @@ def test_agent_state_persists_atomically(tmp_path):
 
 
 def test_heartbeat_payload_shape():
+    """The Kafka heartbeat carries identity only (FS-466).
+
+    `git_sha`, `collector_status` and `buffer_depth` were removed: the cloud read none of
+    them, and device health travels the HTTP heartbeat, which does have a consumer. The
+    exact-equality assertion is the point — an added field that nobody reads is how the
+    three got here, and `==` fails on an addition where `issubset` would not.
+    """
     payload = build_heartbeat_payload(
         agent_id="agent-1",
         organization_id="org-1",
         asset_ids=["asset-1", "asset-2"],
         manifest={"agent_version": "1.2.3", "build_id": "build-7"},
         config_hash="abc123",
-        collector_status={"active_collectors": 2, "total_collectors": 2},
-        buffer_depth=4,
         timestamp="2030-01-01T00:00:00Z",
     )
 
@@ -68,8 +73,5 @@ def test_heartbeat_payload_shape():
         "agent_version": "1.2.3",
         "config_hash": "abc123",
         "build_id": "build-7",
-        "git_sha": None,
-        "collector_status": {"active_collectors": 2, "total_collectors": 2},
-        "buffer_depth": 4,
         "timestamp": "2030-01-01T00:00:00Z",
     }

@@ -49,17 +49,24 @@ from app.middleware.rbac import require_operator_or_admin
 # /api/v1/logistics/logistics/... That looks like an obvious bug to delete —
 # don't, without reading this first.
 #
-# fleet_logistics.logistics_router is ALSO mounted at /api/v1/logistics and
-# defines its own /delivery-efficiency and /compliance/summary with different
-# (legacy camelCase) response shapes — and those single-prefix paths are what
-# the frontend calls today. Dropping the prefix here would collide on both, and
-# since this router is registered first it would silently win, changing the
-# payload the frontend receives.
+# RESOLVED (FS-468). This router declared `prefix="/logistics"` while `main.py` mounted it
+# at `/api/v1/logistics`, so all twelve of its paths served at
+# `/api/v1/logistics/logistics/…`. The prefix could not simply be dropped, because
+# `fleet_logistics.logistics_router` is mounted at the same place and defines its own
+# `/delivery-efficiency` and `/compliance/summary`; this router registers first, so it
+# would have silently won and changed the payload the frontend receives.
 #
-# De-duplicating means picking one implementation per path and migrating the
-# frontend deliberately; it is not a prefix edit.
+# THE DECISION, which was the actual blocker rather than the edit:
+# `fleet_logistics` is canonical for those two paths. It declares response models, its
+# `/compliance/summary` carries the HOS fix that stopped an unreported driver counting as
+# compliant, and its single-prefix paths are what `transportation.ts` calls today.
+#
+# So the two here are renamed under `/correlation/` — they are correlation-flavoured
+# variants with different semantics (this one takes a `days` window) and deserve names
+# that say so — and the inner prefix is gone. Twelve paths moved from
+# `/api/v1/logistics/logistics/X` to `/api/v1/logistics/X`; nothing outside this
+# repository's own tests referenced the doubled form.
 router = APIRouter(
-    prefix="/logistics",
     tags=["logistics_correlation"],
     dependencies=[Depends(get_current_active_user)],
 )
@@ -218,7 +225,7 @@ async def get_load_quality_correlation(
 
 # ==================== Delivery Efficiency Endpoints ====================
 
-@router.get("/delivery-efficiency")
+@router.get("/correlation/delivery-efficiency")
 async def get_delivery_efficiency(
     days: int = Query(30, ge=1, le=365),
     # organization_id from the TOKEN. As a required client-supplied query
@@ -355,7 +362,7 @@ async def get_upcoming_detention_risks(
 
 # ==================== Compliance & Safety Endpoints ====================
 
-@router.get("/compliance/summary")
+@router.get("/correlation/compliance-summary")
 async def get_compliance_summary(
     # organization_id from the TOKEN. As a required client-supplied query
     # parameter it was the IDOR shape app/core/tenant.py forbids, and it made

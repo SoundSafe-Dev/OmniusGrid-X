@@ -141,6 +141,32 @@ class HistorianRetentionSettings(BaseModel):
         return self
 
 
+class HistorianRetentionReplace(HistorianRetentionSettings):
+    """The PUT body: every field required (FS-470).
+
+    PUT replaces, and this route's SQL sets every column — so a body missing
+    `cold_retention_days` does not leave it alone, it resets it to 1825. That is correct
+    PUT semantics and a silent trap for the first client that treats the route as a PATCH,
+    which is how the allowance in `test_partial_updates_do_not_wipe_fields.py` described
+    it: "if a consumer appears, this entry should be revisited before it does."
+
+    Requiring the fields settles it without changing the verb or the semantics. A partial
+    body is now a 422 naming the missing field instead of six retention settings quietly
+    returning to defaults — the difference between an error and an incident.
+
+    The defaults stay on the base, which `HistorianRetentionCreate` inherits: creating a
+    policy from sane values is exactly what a default is for. **Replacing one is not.**
+    """
+
+    hot_retention_days: int = Field(..., ge=1, le=1825)
+    warm_retention_days: int = Field(..., ge=1, le=1825)
+    cold_retention_days: int = Field(..., ge=1, le=3650)
+    ingestion_priority: int = Field(..., ge=1, le=5)
+    ingestion_sample_rate: float = Field(..., gt=0, le=1)
+    max_ingest_age_seconds: int = Field(..., ge=1, le=86400)
+    archival_enabled: bool = Field(...)
+
+
 class HistorianRetentionCreate(HistorianRetentionSettings):
     metric_name: str = Field(
         "*",
@@ -266,7 +292,7 @@ async def create_historian_retention_policy(
 @tenant_router.put("/policies/{metric_name}", response_model=HistorianPolicyOut, dependencies=[Depends(require_admin)])
 async def update_historian_retention_policy(
     metric_name: str,
-    policy: HistorianRetentionSettings,
+    policy: HistorianRetentionReplace,
     current_user: User = Depends(get_current_active_user),
     organization_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),

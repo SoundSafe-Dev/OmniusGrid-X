@@ -4139,3 +4139,59 @@ offset.
 
 **Suite:** backend 3483 passed / 100 skipped · frontend 555 · edge agent 237.
 
+---
+
+## 2026-08-05 — FS-466…470: the open-decisions register reached zero
+
+Five entries, all described as needing intent rather than investigation. All five closed.
+Three took less time to decide than they had spent being re-read — which is worth knowing
+about that page: an entry can sit there because it is genuinely contested, or because nobody
+has been asked.
+
+**FS-466 — the agent reported its health twice.** Two heartbeat paths carried overlapping
+facts under two names. The HTTP one has a consumer, so the Kafka payload was narrowed to
+identity, and the agent stopped reading its SQLite buffer on every beat to fill fields the
+cloud discarded.
+
+**FS-467 — 38 registries nothing could fill.** Writing extractor keywords for
+`INNOVATION_RD` and `KNOWLEDGE_MANAGEMENT` would have been product scope invented to satisfy
+a count, so the initializer now creates only what something can fill, from a set derived from
+the extractor rather than listed beside it. **Closing it exposed a second defect**:
+`_create_registry_item_from_analysis` carried the comment "Get or create registry for domain"
+above code that only got, returning None and dropping the item. Harmless while all 46 were
+pre-created; a silent loss the moment they were not. The blocker had been protecting a bug.
+
+**FS-468 — the doubled logistics prefix.** The blocker was never the edit. Dropping the
+prefix collided with `fleet_logistics` on two paths, and the router registering first would
+have won silently. `fleet_logistics` is canonical — response models, the HOS fix that stopped
+an unreported driver counting as compliant, and the paths the frontend calls — and the
+correlation variants moved under `/correlation/`. A guard now fails any route repeating an
+adjacent segment, which is the shape a prefix collision produces and nothing else does.
+
+**FS-469 — five phantom `Location`/`Address` fields.** Not debt: they describe
+`shipments.origin`, which the server declares `Dict[str, Any]`, so the question the sweep was
+asking had no answer. The sweep now derives which types are client-constructed and checks the
+`Location` exemption against the backend schema, so it expires by itself if that field is
+ever contracted.
+
+**FS-470 — two PUT handlers.** One was a detector false positive: `kanban.update_task` dumps
+nested checklist items, not the patch body, and the detector now reads the receiver of
+`model_dump()` rather than carrying the difference as an allowance for months. The other was
+correct PUT semantics with a silent trap — every field defaulted, so a partial body reset six
+retention settings. It requires all seven now, so a partial body is a 422 naming the missing
+field. The verb did not need to change; the trap did.
+
+### Four weak assertions, all caught the same way
+
+Four guards written this week passed with their fix mutated out: a 400-character window that
+reached the next loss path's counter; a substring search that matched the name one line above
+the emitted key; a source-text check that matched the string inside its own docstring; and a
+`re.search` that found a second declaration of the same field.
+
+Every one was found by deleting the fix and re-running. Every one would otherwise have shipped
+as a green claim that somebody had checked. They share a shape — **a check that looks near the
+right place rather than at it** — and the remedy is the same each time: bind the variable,
+parse the keys, run the function.
+
+**Suite:** backend 3500 passed / 100 skipped (clean run, exit 0) · frontend 555 · edge agent 237.
+
