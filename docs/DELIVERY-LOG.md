@@ -4689,3 +4689,131 @@ PDF" as precedent for this class. There is no truncation flag in `exports.py` or
 the cross-reference was invented. It now cites FS-456, which is real.
 
 **Suite:** frontend 584 → 606 · backend 3542 · edge agent 289.
+
+## FS-482 — the failed read that offered to make it worse
+
+`ShopFloor` was the last large routed page with no test. Almost everything on it is written
+with unusual care — every mutation reads `isError` and says what did *not* happen in the
+operator's own terms, and two places deliberately refuse to show a client-side duration next
+to a payroll or cost claim. One thing was wrong, and it was the one that mattered most.
+
+`ClockTime` destructured `{ data: open, isLoading }` from the open-clock query and never read
+`isError`. On a failed lookup `open` is `undefined` and `isLoading` is `false` — which is the
+exact shape of "no clock is running". The card rendered the **Clock in** button to somebody
+who may already be clocked in.
+
+The page already knew the cost. The message under that very button reads *"two open clocks
+produce overlapping hours and payroll cannot tell which is real"*. A failed read defaulted
+into the state the page warns about, on the page that warns about it.
+
+It now shows **neither** button and offers a retry. Falling back to "Clock out" would be the
+mirror defect — telling an operator who is not clocked in that they are.
+
+### The sweep that could not see it, and the one that can
+
+`failureIsNotEmptiness.test.ts` has covered this class since the yard rendered "No trailers
+found" at a yard manager. Its two detectors key on an empty-state **phrase** and on a widget
+**gate** — both need something in the render to match. `ClockTime` falls through to a button
+and `YardManagement`'s doors tab falls through to a blank grid; neither has a string.
+
+The third detector keys on the **destructure** instead: reading `isLoading` is a component
+saying out loud that it models "not yet known" as its own state, and having said that,
+omitting `isError` collapses "the request failed" into "the answer is no". A component that
+reads neither flag is left alone — that is a different and far more visible kind of unfinished.
+
+It found exactly two, both above.
+
+`YardManagement` is the more instructive of the two. That file handles this class on its
+trailers tab and its appointments tab, with a comment explaining why — and missed the third
+tab, because the fix was made where the bug was reported rather than where the class lives.
+
+### Tests
+
+`ShopFloor.test.tsx` (10) and four more in `YardManagement.test.tsx`, both directions of every
+property, mutation-verified. The ShopFloor file also asserts what the page already did right,
+including the two refusals to compute a duration client-side.
+
+**Remaining from FS-364:** one routed page, `Kanban` (254).
+
+**Suite:** frontend 608 → 627 · backend 3542 · edge agent 289.
+
+## FS-483 — the drag that snapped back and said nothing
+
+`Kanban` was the last routed page from FS-364 with no test. Its load path was already
+careful — a failed board fetch renders the error with a retry rather than an empty board,
+which matters because an empty kanban reads as "nothing needs doing".
+
+`handleDragEnd` awaited `moveTask` and caught into `console.error`. `moveTask` posts to the
+server *before* it updates local state, so on failure the card re-renders in the column it
+came from — **which is also exactly what a mis-drop looks like**. The operator reads it as
+their own miss, drags again, and the board and the server go on disagreeing about where the
+task is. A snap-back is not a message.
+
+### The fourth hiding place for one class
+
+Neither hand-rolled sweep could see it: the awaited call is `moveTask(…)`, destructured from
+the kanban store, and the `api.post` it wraps lives in `kanbanStore.tsx` — two files from the
+`catch`. No window over `Kanban.tsx` could have seen a mutation happening at all.
+
+The new check keys on the **verb in the callee's name**. It was measured before it was added:
+two hits across the tree, **both false positives**. Reading them produced two exemptions, both
+on principle rather than by name — a catch that `return`s is propagating the failure by value
+to a caller that handles it, and a catch that only `console.warn`s is the optional-enrichment
+shape the first heuristic in this family was narrowed to exclude. Those exemptions are what
+make the check worth running, and re-deleting the `setMoveError` line turns it red.
+
+That is four hiding places for one class, found in order: the `useMutation` options object,
+the hand-rolled `async` handler, the hook file the sweeps did not scan, and the store action
+whose api call is in another file. Each was invisible to every check written before it.
+
+### FS-364 is not closed, and the walk that said it was
+
+`Kanban.test.tsx` (7) landed, and the first version of this section said FS-364 was finished
+— on a walk that resolved `pages/<Path>` out of `App.tsx` and matched it against
+`src/pages/**`. It reported zero untested routed pages.
+
+It was wrong, in the way these walks are always wrong: **`Fleet` and `ErrorTriage` are
+imported through the `./pages/admin` barrel**, so the route reads `named(() =>
+import('./pages/admin'), 'Fleet')` and the string `pages/admin/Fleet` appears nowhere. The
+walk asked for a path that a barrel import does not spell.
+
+Counting the files on disk instead of the routes in `App.tsx` finds them immediately: 31
+pages, three without a test file of their own name. So **two routed pages remain**: `Fleet`
+(574) and `ErrorTriage` (371). The third, `UserAppPlaceholder`, is not routed by that walk
+and is not claimed either way here.
+
+Recorded rather than quietly fixed, because the failure mode is the reusable part: a
+resolver keyed on an import path reports "none left" for everything reached another way, and
+"none left" is the answer nobody re-checks.
+
+### FS-484 — both pages, and a guard that follows the barrel
+
+`ErrorTriage.test.tsx` (8) and `Fleet.test.tsx` (10) close FS-364's list for real. Neither
+page needed fixing — both were written carefully, and the tests exist to keep them that way:
+
+* `ErrorTriage` distinguishes **four** states where most pages manage two — loading, failed,
+  *filtered to nothing*, and genuinely nothing. That third one is the interesting one: "No
+  errors match these filters" and "No production errors recorded" are opposite claims, and a
+  triage engineer acts differently on each. It also refuses to let the summary tile's failure
+  pass for a quiet week.
+* `Fleet` distinguishes failure from emptiness on all three of its lists, including the
+  version distribution — where an empty table reads as "no agent has checked in", which is a
+  fleet-wide outage. And it carries FS-480's card, which names *which* OTA action failed.
+
+`everyRoutedPageHasATest.test.ts` is the guard. It resolves `<Route element={<X />} />` back
+to a source file through **both** import forms, following `named(() => import('./pages/admin'),
+'Fleet')` into the barrel's `index.ts` to find which module exports that name — including
+exports renamed on the way out, which is how the four AdminPages routes resolve. Its vacuity
+tests assert it resolves a direct import, a barrel import, and a renamed barrel export,
+because a broken resolver returns an empty list and an empty list passes.
+
+It does not claim a test file is coverage. It asks only whether somebody has written
+*something* against each routed page — a low bar on purpose, since the two pages it caught
+had no file at all.
+
+**Two fixture corrections along the way**, both from guessing a shape instead of reading it:
+the error-triage row uses `count_in_range`, not `count`, and the version distribution uses
+`agent_version`/`asset_count`. Both threw inside the page and rendered an empty document,
+which reads as a component bug rather than as a test that made something up.
+
+**Suite:** frontend 627 → 663 · backend 3542 (100 skipped) · edge agent 289.

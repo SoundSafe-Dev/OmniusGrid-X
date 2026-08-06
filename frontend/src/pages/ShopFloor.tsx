@@ -168,7 +168,12 @@ const IssuePart: FC = () => {
 
 const ClockTime: FC = () => {
   const queryClient = useQueryClient()
-  const { data: open, isLoading } = useQuery({
+  // `isError` is read because the failure defaults into the DANGEROUS branch (FS-482).
+  // On a failed lookup `open` is undefined and `isLoading` is false, which is exactly the
+  // shape of "no clock is running" — so the card offered "Clock in" to somebody who may
+  // already be clocked in, producing the two open clocks the message below that button
+  // warns about. Absence of an answer is not the answer "no".
+  const { data: open, isLoading, isError, refetch } = useQuery({
     queryKey: ['shop-floor-open-labor'],
     queryFn: () => shopFloorApi.openLaborEntry(),
   })
@@ -196,6 +201,17 @@ const ClockTime: FC = () => {
     >
       {isLoading ? (
         <p className="text-xs text-opsgrid-text-secondary">Checking for a running clock…</p>
+      ) : isError ? (
+        <div>
+          <p className="text-xs text-status-alarm" role="alert">
+            Could not check whether you already have a clock running. Neither button is shown,
+            because clocking in on top of an open clock produces overlapping hours that
+            payroll cannot reconcile.
+          </p>
+          <Button className="mt-2" size="sm" variant="outline" onClick={() => refetch()}>
+            Check again
+          </Button>
+        </div>
       ) : open ? (
         <div>
           <p className="text-sm text-opsgrid-text">

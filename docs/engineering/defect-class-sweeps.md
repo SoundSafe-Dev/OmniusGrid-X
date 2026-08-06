@@ -26,7 +26,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The seventy-six numbered classes
+## The seventy-eight numbered classes
 
 **The count is the numbering, and it was already stale before this line was corrected.**
 This heading read "forty-seven" while the document's own highest class was 60 — the summary
@@ -2650,6 +2650,29 @@ one of its findings. The habit that catches it:
      `add` and `remove` were absent from the hand-rolled sweep's verb list, and nothing
      recorded that decision because nobody made it. When a sweep enumerates what it matches,
      the enumeration is the guard's real boundary.
+
+106. **When a failure has to default somewhere, default away from the irreversible side.**
+     Every unhandled read lands in some branch; ask which one costs more when it is wrong.
+     `ClockTime` defaulted to offering a clock-in, which creates a duplicate payroll record,
+     over a clock-out, which is a no-op that fails loudly. Where neither direction is safe,
+     show neither and say why.
+
+107. **A fix applied per instance leaves the instances nobody was looking at.**
+     `YardManagement` handles the failed-read class on two of its three tabs, in one file,
+     under one author — because the fix was made where the bug was reported rather than
+     where the class lives. Enumerate a file's other instances before leaving it.
+
+108. **Measure a proposed guard's yield before adding it, and read every hit.**
+     A check earns its place by what it finds. The indirect-mutation sweep returned two hits
+     across the tree, both false on inspection. Adding it unread would have put two permanent
+     lies into a report people are meant to trust; discarding it unread would have left the
+     class open. Reading both produced the exemptions, and the exemptions are the guard.
+
+109. **A walk that finds nothing must prove it can find something.**
+     Any sweep answering "which are left?" needs a test that it still resolves a known
+     member. The FS-364 walk reported zero untested pages twice, because it could not follow
+     a barrel import — and "none" is indistinguishable from success, arrives without a
+     failure, and is believed.
 
 ---
 
@@ -5921,7 +5944,7 @@ Check both directions of an exemption before believing the count it produces.
 
 # What this session produced, and what it cost
 
-**FS-431 to FS-481 — fifty-one items, no gaps** — over one working session. Recorded
+**FS-431 to FS-484 — fifty-four items, no gaps** — over one working session. Recorded
 together because the individual entries above answer "what was wrong" and this answers "what
 the method actually does", which is the thing worth reusing.
 
@@ -6452,3 +6475,128 @@ message, because it invites the reader to look at the content.
 `add` and `remove` were absent from the Class 74 verb list. Nothing recorded that decision
 because nobody made it. When a sweep enumerates what it matches, the enumeration is the
 guard's real boundary — re-read it when the class turns up somewhere new.
+
+## Class 77 — a failed read defaulting into the branch that causes harm (FS-482)
+
+`failureIsNotEmptiness.test.ts` has covered this class since `YardManagement` rendered "No
+trailers found" at a yard manager. It carries two detectors: one keyed on an **empty-state
+phrase**, one on a **widget gate**. Both need something in the render to key on.
+
+Neither can see a query whose failure falls through to something with no string of its own.
+
+**`ShopFloor.ClockTime`.** `{ data: open, isLoading }` — no `isError`. On failure `open` is
+`undefined` and `isLoading` is `false`, which is the exact shape of *"no clock is running"*.
+So the card offered **Clock in** to somebody who may already be clocked in.
+
+The page already knew what that costs. The message under that very button reads:
+
+> two open clocks produce overlapping hours and payroll cannot tell which is real
+
+A failed read defaulted into the state the page warns about, on the page that warns about it.
+The fix shows **neither** button and offers a retry — because falling back to "Clock out"
+would be the mirror defect, telling an operator who is not clocked in that they are.
+
+**`YardManagement`, doors tab.** `{ data: doorsData, isLoading: doorsLoading }`. A failure
+rendered the same blank grid as a dock with no doors configured. The trailers and appointments
+tabs in that same file both distinguish the two — written by somebody who had already met this
+class and fixed it twice. The doors tab was one short, which is the shape a per-tab fix always
+leaves.
+
+**The new detector keys on the destructure, not the render.** Reading `isLoading` is a
+component saying out loud that it models "not yet known" as its own state. Having said that
+and then omitted `isError`, it has collapsed "the request failed" into "the answer is no". A
+component reading neither flag is not flagged — that is `data ?? []` with no loading state
+either, a different and far more visible kind of unfinished.
+
+Two occurrences in the codebase, both above, both now closed.
+
+## Rule 106 — when a failure has to default somewhere, default away from the irreversible side
+
+Every unhandled read lands in some branch. Ask which branch costs more when it is wrong.
+`ClockTime` had two: offering to clock in (creates a duplicate payroll record) and offering to
+clock out (a no-op that fails loudly). It defaulted to the first. Where neither direction is
+safe, show neither and say why — a screen that declines to guess is usable; a screen that
+guesses wrong is not.
+
+## Rule 107 — a fix applied per instance leaves the instances nobody was looking at
+
+`YardManagement` handles this class on its trailers tab and its appointments tab. The third
+tab, in the same file, under the same author, was never touched — because the fix was made
+where the bug was reported rather than where the class lives. When you fix a class in a file,
+enumerate that file's other instances before you leave it.
+
+## Class 74, fourth hiding place — the mutation that is not an api call (FS-483)
+
+`silentHandRolledMutations` keys on `await …Api.<verb>(`. `Kanban.handleDragEnd` awaits
+`moveTask(…)` — destructured from the kanban store — and the `api.post` it wraps lives in
+`kanbanStore.tsx`, two files from the `catch`. No window over `Kanban.tsx` could have seen a
+mutation happening at all.
+
+`moveTask` posts to the server *before* it updates local state, so on failure the card
+re-renders in the column it came from. **That is also exactly what a mis-drop looks like.**
+The operator reads it as their own miss, drags again, and the board and the server go on
+disagreeing about where the task is. A snap-back is not a message; it is a shrug.
+
+The fifth check keys on the **verb in the callee's name** rather than on an api object, with
+two exemptions taken on principle rather than by name:
+
+- **A catch that `return`s is propagating the failure by value**, not swallowing it.
+  `CorrelationAIPane.handleSessionMissingForUpload` returns `null`, and `DataSourcesPanel`
+  branches on that and rethrows into a surfaced `uploadError`. Same lesson as the hook check:
+  the obligation can live at the call site, and a sweep reading one file cannot see it.
+- **A catch that only `console.warn`s is the defensive-enrichment shape** the first heuristic
+  in this family was deliberately narrowed to exclude. A failed `generateSessionTitle` costs a
+  session its auto-title and nothing else.
+
+Without those two the check reports two offenders that are not offenders. It was measured
+before it was added: two hits, both false, zero true — the exemptions are what make it worth
+running, and both were verified by reading the callers rather than assumed.
+
+**Four hiding places for one class**, found in order: the `useMutation` options object, the
+hand-rolled `async` handler, the hook file the sweeps did not scan, and now the store action
+whose api call is in another file. Each was invisible to every check written before it.
+
+## Rule 108 — measure a proposed guard's yield before adding it, and read every hit
+
+A new check earns its place by what it finds, not by what it could find. This one was run
+across the tree first: two hits, both false positives on inspection. Adding it unread would
+have put two permanent lies in a report people are meant to trust; discarding it unread would
+have left the class open. Reading both is what produced the two exemptions, and the exemptions
+are the guard.
+
+## Class 78 — a resolver that reports "none left" for everything reached another way (FS-484)
+
+FS-364 listed eight routed pages with no test. Answering "which are left?" meant reading the
+lazy imports out of `App.tsx` and looking for a sibling `.test.tsx`. That walk reported zero
+remaining — **twice** — while `Fleet` (574 lines) and `ErrorTriage` (371) had no test at all.
+
+Both are imported through a barrel:
+
+```tsx
+const Fleet = named(() => import('./pages/admin'), 'Fleet')
+```
+
+The string `pages/admin/Fleet` appears nowhere. A resolver keyed on the import path goes
+looking for a test beside the *barrel directory* rather than beside the page, finds no page
+there either, and reports nothing missing.
+
+**A walk that under-reports is worse than no walk**, because "none left" is the answer nobody
+re-checks. The same shape has appeared in this document before under different names — a
+detector that matched test files by filename, a sweep that scanned `.tsx` while the code lived
+in `.ts` — and it will appear again. What they share is a resolver that models one way of
+reaching a thing and silently returns nothing for the others.
+
+The guard now follows `named(loader, 'Export')` into `pages/<dir>/index.ts` and resolves which
+module actually exports that name, including exports renamed on the way out (`UsersPage as
+Users`) — without which the four AdminPages routes resolve to nothing and drop out of the
+check, which is the same defect one level down.
+
+Its vacuity tests assert three things separately: it resolves a direct import, a barrel
+import, and a renamed barrel export. A broken resolver returns an empty list, and an empty
+list passes every comparison in the file.
+
+## Rule 109 — a walk that finds nothing must prove it can find something
+
+Any sweep that answers "which are left?" needs a test that it can still resolve a known
+member. Otherwise the day its resolver stops matching, its answer becomes "none" — which is
+indistinguishable from success, arrives without a failure, and is believed.

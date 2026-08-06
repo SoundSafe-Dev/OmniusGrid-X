@@ -244,3 +244,61 @@ describe('what the operator actually reads', () => {
     expect(excess.textContent).not.toMatch(/\d\.\d{3,}/)
   })
 })
+
+/**
+ * The same block, one tab over (FS-482).
+ *
+ * The trailers tab above got the "a failure is not an empty yard" treatment; the doors tab
+ * did not. A failed `getDockDoors` rendered the same blank grid as a dock with no doors
+ * configured — and a blank grid is read as a fact about the dock, not about the request.
+ * Same file, same class, one tab short, which is the shape a per-tab fix always leaves.
+ */
+describe('YardManagement — an empty dock is not a failed one', () => {
+  const openDoorsTab = async () => {
+    fireEvent.click(await screen.findByRole('button', { name: /doors/i }))
+  }
+
+  it('does not render a failure as a dock with no doors', async () => {
+    getDockDoors.mockRejectedValue(new Error('doors unreachable'))
+    wrap()
+    await openDoorsTab()
+
+    await waitFor(() =>
+      expect(screen.getByText(/not an empty dock/i)).toBeInTheDocument(),
+    )
+    expect(screen.queryByText(/no dock doors are configured/i)).not.toBeInTheDocument()
+  })
+
+  it('says the dock is empty when it genuinely is', async () => {
+    getDockDoors.mockResolvedValue([])
+    wrap()
+    await openDoorsTab()
+
+    await waitFor(() =>
+      expect(screen.getByText(/no dock doors are configured/i)).toBeInTheDocument(),
+    )
+    expect(screen.queryByText(/not an empty dock/i)).not.toBeInTheDocument()
+  })
+
+  it('lists the doors when they load', async () => {
+    getDockDoors.mockResolvedValue([
+      { id: 'd-1', doorNumber: 'D-04', doorType: 'dock', status: 'available' },
+    ])
+    wrap()
+    await openDoorsTab()
+
+    await waitFor(() => expect(screen.getByText('D-04')).toBeInTheDocument())
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('offers a retry rather than a dead end', async () => {
+    getDockDoors.mockRejectedValue(new Error('doors unreachable'))
+    wrap()
+    await openDoorsTab()
+    await screen.findByText(/not an empty dock/i)
+
+    const before = getDockDoors.mock.calls.length
+    fireEvent.click(screen.getByRole('button', { name: /retry/i }))
+    await waitFor(() => expect(getDockDoors.mock.calls.length).toBeGreaterThan(before))
+  })
+})

@@ -597,3 +597,85 @@ describe('no widget disappears because a query failed', () => {
     ).toEqual([])
   })
 })
+
+/**
+ * A THIRD DETECTOR, for the form both of the above are blind to (FS-482).
+ *
+ * The first keys on an empty-state PHRASE. The second keys on a widget GATE. Neither can
+ * see a query whose failure falls through to something with no string of its own:
+ *
+ *   `ShopFloor.ClockTime` — `{ data: open, isLoading }`, no `isError`. On failure `open`
+ *   is undefined and `isLoading` is false, which is the exact shape of "no clock is
+ *   running" — so the card offered **Clock in** to somebody who may already be clocked in.
+ *   The message under that very button says two open clocks produce overlapping hours that
+ *   payroll cannot reconcile. The failure defaulted into the state the page warns about.
+ *
+ *   `YardManagement` doors tab — `{ data: doorsData, isLoading: doorsLoading }`. A failure
+ *   rendered the same blank grid as a dock with no doors configured. The trailers and
+ *   appointments tabs in that same file both distinguish the two; the doors tab was one
+ *   short, which is the shape a per-tab fix always leaves.
+ *
+ * THE HEURISTIC IS THE DESTRUCTURE, not the render. Reading `isLoading` is a component
+ * saying out loud that it models "not yet known" as its own state. Having said that and
+ * then omitted `isError`, it has collapsed "the request failed" into "the answer is no" —
+ * and which of those two the operator is looking at is exactly what they cannot tell.
+ *
+ * A component that reads NEITHER flag is not flagged: it is rendering `data ?? []` with no
+ * loading state either, which is a different and more visible kind of unfinished.
+ */
+export function queriesThatCannotFail(raw: string): string[] {
+  const source = raw.replace(COMMENT, ' ')
+  const found: string[] = []
+  const DESTRUCTURE = /const\s*\{([^}]*)\}\s*=\s*use(?:Query|\w*Query)\s*\(/g
+  for (const match of source.matchAll(DESTRUCTURE)) {
+    const keys = match[1]
+    if (!/\bisLoading\b|\bisPending\b/.test(keys)) continue
+    if (/\bisError\b|\berror\b|\bstatus\b/.test(keys)) continue
+    found.push(`{${keys.trim().replace(/\s+/g, ' ')}}`)
+  }
+  return [...new Set(found)]
+}
+
+const UNFAILABLE = FILES.map((file) => ({
+  file: file.slice(SRC.length + 1),
+  queries: queriesThatCannotFail(readFileSync(file, 'utf8')),
+})).filter((o) => o.queries.length > 0)
+
+describe('the unhandled-query sweep is not vacuous', () => {
+  it('flags a query that models loading but not failure', () => {
+    // ClockTime verbatim, before FS-482.
+    const bad = `const { data: open, isLoading } = useQuery({ queryKey: ['c'], queryFn: f })`
+    expect(queriesThatCannotFail(bad)).toEqual(['{data: open, isLoading}'])
+  })
+
+  it('accepts the same query once it reads isError', () => {
+    const good = `const { data: open, isLoading, isError } = useQuery({ queryKey: ['c'], queryFn: f })`
+    expect(queriesThatCannotFail(good)).toEqual([])
+  })
+
+  it('accepts a query that reads status instead', () => {
+    // `status` carries 'error' as one of its values, so a component switching on it has
+    // not collapsed the two — flagging it would be the sweep being wrong about the idiom
+    // rather than the code being wrong about the user.
+    const good = `const { data, isLoading, status } = useQuery({ queryKey: ['c'], queryFn: f })`
+    expect(queriesThatCannotFail(good)).toEqual([])
+  })
+
+  it('ignores a query that models neither loading nor failure', () => {
+    const plain = `const { data } = useQuery({ queryKey: ['c'], queryFn: f })`
+    expect(queriesThatCannotFail(plain)).toEqual([])
+  })
+})
+
+describe('no query models loading without modelling failure', () => {
+  it('has no offenders', () => {
+    expect(
+      UNFAILABLE.map(
+        (o) =>
+          `${o.file} — ${o.queries.join(', ')} reads a loading flag and no error flag, so ` +
+          `a failed request is indistinguishable from an answer of "none" — and whichever ` +
+          `branch that falls through to is presented as a fact about the world`,
+      ),
+    ).toEqual([])
+  })
+})

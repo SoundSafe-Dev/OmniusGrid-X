@@ -466,3 +466,117 @@ describe('no failed load leaves the previous subject under the new one\'s name',
     ).toEqual([])
   })
 })
+
+/**
+ * The fifth shape: a mutation that is not an api call (FS-483).
+ *
+ * `silentHandRolledMutations` keys on `await …Api.<verb>(`. `Kanban.handleDragEnd` awaits
+ * `moveTask(…)` — a function destructured from the kanban store — and the `api.post` it
+ * wraps lives in `kanbanStore.tsx`, two files away from the `catch`. No window over this
+ * file could have seen a mutation happening.
+ *
+ * `moveTask` posts BEFORE it updates local state, so on failure the card re-renders in the
+ * column it came from. That is also exactly what a mis-drop looks like: the operator reads
+ * it as their own miss, drags again, and the board and the server go on disagreeing.
+ *
+ * TWO EXEMPTIONS, BOTH ON PRINCIPLE RATHER THAN BY NAME:
+ *
+ *   A catch that RETURNS is propagating the failure by value, not swallowing it.
+ *   `CorrelationAIPane.handleSessionMissingForUpload` returns `null`, and `DataSourcesPanel`
+ *   branches on that and rethrows into a surfaced `uploadError`. Same lesson as the hook
+ *   check above — the obligation can live at the call site.
+ *
+ *   A catch that only WARNS is the defensive-enrichment shape this file's first heuristic
+ *   was deliberately narrowed to exclude. `generateSessionTitle` failing costs a session its
+ *   auto-title and nothing else.
+ *
+ * Without those two the check reports two offenders that are not offenders, and a sweep that
+ * spends the reader's trust on noise stops being run.
+ */
+const MUTATING_VERB =
+  'create|update|delete|upload|analyze|dispatch|send|post|approve|reject|trigger|start|' +
+  'complete|activate|assign|move|issue|clock|add|remove|attach|detach|link|cancel|pause|' +
+  'resume|save|submit|archive|restore'
+
+export function silentIndirectMutations(raw: string): string[] {
+  const source = raw.replace(COMMENT, ' ')
+  const found: string[] = []
+  const BARE = new RegExp(String.raw`\bawait\s+(?:${MUTATING_VERB})[A-Z]\w*\s*\(`, 'i')
+  const CATCH = /catch\s*\((\w+)?\)?\s*\{([^}]*)\}/g
+  let match: RegExpExecArray | null
+  while ((match = CATCH.exec(source))) {
+    const body = match[2]
+    if (!/console\.(?:error|log)/.test(body)) continue
+    if (/set\w*(?:Error|Message|Toast|Alert|Status)/i.test(body)) continue
+    if (/alert\(|toast|notify|showError/i.test(body)) continue
+    // Propagated by value — the caller decides, and this file cannot see that decision.
+    if (/\breturn\b|\bthrow\b/.test(body)) continue
+    const before = source.slice(Math.max(0, match.index - 900), match.index)
+    if (!BARE.test(before)) continue
+    const handler = (before.match(/const (\w+) = (?:async|useCallback\(async)/g) || []).slice(-1)[0]
+    found.push(handler ? handler.replace(/const (\w+) = .*/, '$1') : 'anonymous handler')
+  }
+  return [...new Set(found)]
+}
+
+const INDIRECT = FILES.map((file) => ({
+  file: file.slice(SRC.length + 1),
+  handlers: silentIndirectMutations(readFileSync(file, 'utf8')),
+})).filter((o) => o.handlers.length > 0)
+
+describe('the indirect-mutation sweep is not vacuous', () => {
+  it('recognises the shape it is looking for', () => {
+    // Kanban.handleDragEnd verbatim, before FS-483.
+    const silent = `
+      const handleDragEnd = async (id, col) => {
+        try { await moveTask(id, col) } catch (e) { console.error('Failed to move task:', e) }
+      }`
+    expect(silentIndirectMutations(silent)).toEqual(['handleDragEnd'])
+  })
+
+  it('clears a handler that surfaces the failure', () => {
+    const surfaced = `
+      const handleDragEnd = async (id, col) => {
+        try { await moveTask(id, col) } catch (e) { console.error(e); setMoveError('no') }
+      }`
+    expect(silentIndirectMutations(surfaced)).toEqual([])
+  })
+
+  it('exempts a catch that hands the failure back to its caller', () => {
+    const propagated = `
+      const recover = async () => {
+        try { return (await createReplacementSession()).id }
+        catch (e) { console.error(e); return null }
+      }`
+    expect(silentIndirectMutations(propagated)).toEqual([])
+  })
+
+  it('exempts a warn around optional enrichment', () => {
+    const enrichment = `
+      const label = async () => {
+        try { await createSessionTitle(id) } catch (e) { console.warn('optional', e) }
+      }`
+    expect(silentIndirectMutations(enrichment)).toEqual([])
+  })
+
+  it('ignores a call whose name does not claim to change anything', () => {
+    const reader = `
+      const load = async () => {
+        try { await fetchBoard() } catch (e) { console.error(e) }
+      }`
+    expect(silentIndirectMutations(reader)).toEqual([])
+  })
+})
+
+describe('no indirect mutation fails in silence', () => {
+  it('has no offenders', () => {
+    expect(
+      INDIRECT.map(
+        (o) =>
+          `${o.file} — ${o.handlers.join(', ')} await something named as a mutation and ` +
+          `report failure only to the console, so the user who acted sees the screen ` +
+          `exactly as it was`,
+      ),
+    ).toEqual([])
+  })
+})

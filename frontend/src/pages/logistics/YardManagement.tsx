@@ -58,7 +58,16 @@ export const YardManagement: FC = () => {
     queryFn: () => yardApi.getTrailers(filters),
   });
 
-  const { data: doorsData, isLoading: doorsLoading } = useQuery({
+  const {
+    data: doorsData,
+    isLoading: doorsLoading,
+    // The trailers and appointments tabs both distinguish a failed load from an empty one.
+    // This tab did not (FS-482): a failure rendered the same blank grid as a yard with no
+    // doors configured, and a blank grid is read as a fact about the dock, not about the
+    // request. Same file, same class, one tab short.
+    isError: doorsError,
+    refetch: refetchDoors,
+  } = useQuery({
     queryKey: [YARD_QUERY_KEY, 'doors'],
     queryFn: () => yardApi.getDockDoors(),
   });
@@ -504,6 +513,19 @@ export const YardManagement: FC = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {doorsLoading ? (
             <div className="col-span-full p-8 text-center text-opsgrid-text-secondary">Loading doors...</div>
+          ) : doorsError ? (
+            <div className="col-span-full p-8 text-center space-y-3" role="alert">
+              <p className="text-status-alarm">
+                Couldn’t load dock doors — this is a loading failure, not an empty dock.
+              </p>
+              <Button variant="secondary" onClick={() => refetchDoors()}>
+                Retry
+              </Button>
+            </div>
+          ) : doors.length === 0 ? (
+            <div className="col-span-full p-8 text-center text-opsgrid-text-secondary">
+              No dock doors are configured.
+            </div>
           ) : doors.map(door => (
             <div 
               key={door.id}

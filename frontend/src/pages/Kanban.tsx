@@ -36,6 +36,11 @@ const KanbanContent: React.FC = () => {
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'board' | 'list'>('board');
   const [showFilters, setShowFilters] = useState(false);
+  // A move the server refused (FS-483). `moveTask` posts BEFORE it updates local state, so
+  // on failure the card re-renders in the column it came from — which is also exactly what
+  // a mis-drop looks like. The operator's reading is that they missed, and they try again;
+  // the truth is that the board and the server disagree about where this task is.
+  const [moveError, setMoveError] = useState<string | null>(null);
 
   // Initial load
   useEffect(() => {
@@ -56,8 +61,10 @@ const KanbanContent: React.FC = () => {
   const handleDragEnd = useCallback(async (taskId: string, targetColumnId: string, position?: number) => {
     try {
       await moveTask(taskId, targetColumnId, position);
+      setMoveError(null);
     } catch (error) {
       console.error('Failed to move task:', error);
+      setMoveError('That task could not be moved — it is still in the column it started in.');
     }
   }, [moveTask]);
 
@@ -176,6 +183,18 @@ const KanbanContent: React.FC = () => {
           onFiltersChange={setFilters}
           className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700"
         />
+      )}
+
+      {/* A move that did not happen, said out loud (FS-483). Above the board rather than
+          on the card, because the card is back where it started and there is nothing there
+          to attach a message to. */}
+      {moveError && (
+        <div
+          role="alert"
+          className="mx-4 mt-3 rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-600 dark:text-red-400"
+        >
+          {moveError}
+        </div>
       )}
 
       {/* Main Board Area */}
