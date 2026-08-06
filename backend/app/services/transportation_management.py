@@ -10,6 +10,7 @@ import structlog
 from sqlalchemy import text, select, and_, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import hos_limits
 from app.core.config import settings
 from app.db.database import AsyncSessionLocal
 from app.db.models import (
@@ -47,11 +48,14 @@ def _as_utc(value):
 class HOSComplianceMonitor:
     """Monitor driver Hours of Service compliance"""
     
-    # FMCSA HOS limits
-    MAX_DRIVE_HOURS_DAY = 11.0
-    MAX_ON_DUTY_HOURS_DAY = 14.0
-    MAX_CYCLE_HOURS = 70.0  # 8-day cycle
-    REQUIRED_REST_HOURS = 10.0
+    # FMCSA HOS limits (49 CFR 395), from `app.core.hos_limits` — the one place they are
+    # written (FS-475). Kept as class attributes because callers reach them that way
+    # (`HOSComplianceMonitor.MAX_CYCLE_HOURS` in fleet_logistics), so both access paths
+    # give the same number by construction rather than by two people agreeing.
+    MAX_DRIVE_HOURS_DAY = hos_limits.MAX_DRIVE_HOURS_DAY
+    MAX_ON_DUTY_HOURS_DAY = hos_limits.MAX_ON_DUTY_HOURS_DAY
+    MAX_CYCLE_HOURS = hos_limits.MAX_CYCLE_HOURS
+    REQUIRED_REST_HOURS = hos_limits.REQUIRED_REST_HOURS
     
     def check_compliance(self, driver: Driver) -> Dict[str, Any]:
         """Check driver's current HOS compliance status"""

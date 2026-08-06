@@ -393,10 +393,16 @@ async def create_driver(
     return driver
 
 
-# 49 CFR 395. Kept beside the serializer that needs them rather than imported from the
-# compliance service, which would drag its session dependencies into this module.
-MAX_DRIVE_HOURS_DAY = 11.0
-MAX_ON_DUTY_HOURS_DAY = 14.0
+# 49 CFR 395, from `app.core.hos_limits` (FS-475). These used to be re-declared here, with
+# a comment explaining that importing them from the compliance service "would drag its
+# session dependencies into this module" — true, and the reason the copy survived review.
+#
+# The copy was the problem, not the import. This module computes hours REMAINING, which a
+# dispatcher reads before assigning a load; the compliance service decides VIOLATIONS,
+# which is read afterwards. Two copies meant those two answers could disagree about the
+# same driver while both looked authoritative. `hos_limits` has no imports at all, so the
+# original objection no longer applies to it.
+from app.core.hos_limits import MAX_DRIVE_HOURS_DAY, MAX_ON_DUTY_HOURS_DAY  # noqa: E402
 
 
 def _hours_remaining(stored, consumed, limit):

@@ -5888,7 +5888,7 @@ Check both directions of an exemption before believing the count it produces.
 
 # What this session produced, and what it cost
 
-**FS-431 to FS-474 — forty-four items, no gaps** — over one working session. Recorded
+**FS-431 to FS-475 — forty-five items, no gaps** — over one working session. Recorded
 together because the individual entries above answer "what was wrong" and this answers "what
 the method actually does", which is the thing worth reusing.
 
@@ -6094,4 +6094,65 @@ re-entering. Nothing to do with reaching the broker. It distinguishes structural
 reconnect handling sits at the top level of the `while` body, per-message handling inside the
 `async for`. **A guard that cannot tell a real pause from a defect gets turned off by the
 next person**, and this is the sixth detector this week that was wrong before the code was.
+
+## Classes 98 and 99 carried across (FS-475)
+
+The other two classes from the reconnect work, asked of the backend and the frontend.
+
+### Class 98 — a guess spread across files. **One real instance, and it is not a guess.**
+
+The sweep looked for named constants with the same name and value declared in more than one
+module. Two hits, and both are the same thing: `MAX_DRIVE_HOURS_DAY` and
+`MAX_ON_DUTY_HOURS_DAY` — the FMCSA driving limits from 49 CFR 395 — declared in
+`api/transportation.py` and again in `services/transportation_management.py`. A third file,
+`api/fleet_logistics.py`, reached them through the compliance class.
+
+**These are law, not tuning, which makes the duplication worse rather than better.** The two
+copies feed different answers about the same driver: `api/transportation.py` computes hours
+REMAINING, which a dispatcher reads before assigning a load, and the compliance service
+decides VIOLATIONS, which is read afterwards. Edit one and not the other and the platform
+tells a dispatcher a driver may keep driving while recording that same driver as in breach.
+Both numbers look authoritative and neither says which is stale.
+
+**Why it survived review** is the part worth keeping. The duplicate carried a reason:
+
+> *Kept beside the serializer that needs them rather than imported from the compliance
+> service, which would drag its session dependencies into this module.*
+
+That objection was true. It was also already being ignored, since `fleet_logistics` imports
+the same class for the same purpose. **A justified duplicate is harder to spot than an
+unjustified one**, because the comment answers the question a reviewer was about to ask.
+
+The answer was a module with no imports: `backend/app/core/hos_limits.py`. A constant cannot drag a
+session dependency if it lives somewhere that has none. All three access paths now resolve to
+the same object, asserted with `is` rather than `==` so a second set of values that happens to
+match today still fails.
+
+### Class 99 — a pattern copied without its seams. **Clean.**
+
+* **Service classes**: only two accept an injected collaborator at all, so there is no
+  population of siblings where some are injectable and some are not.
+* **The four workers**, which genuinely are copies of one another, all take the same
+  `stale_after_seconds` seam — and use it deliberately: ingestion at 300 seconds because
+  telemetry is continuous, the other three at 0 with comments explaining that scheduled and
+  orchestrating work is legitimately bursty. That is the pattern applied well.
+
+### The frontend — no instance with a consequence
+
+`MOCK_DELAY` is declared in nine api clients at two different values (300 and 500), and
+`REFRESH_MS = 30_000` in two hooks. Both are duplication; neither has a consequence, since
+one is development-only and the other is a polling interval where the two copies agree.
+Recorded rather than "fixed" because unifying them would be motion, not work.
+
+**And the documentation guard caught this entry twice.** The first citation of the new
+module omitted its `backend/` prefix; the paragraph written to explain that then spelled the
+bad path out, and the guard reads a backticked path as a citation whether it is being made or
+quoted. Fourth time prose explaining a defect has tripped the detector for it — describe the
+shape, do not reproduce it.
+
+**One detector note.** The frontend scan reported `REFRESH_MS = 30`, having read `30_000` as
+`30` — a numeric separator the regex did not expect. Thirty milliseconds would have been a
+hot refresh loop and a real finding; it took one look at the file to see it was thirty
+seconds. Seventh detector this week to be wrong before the code was, and the first where the
+error was in the reported VALUE rather than in what it selected.
 

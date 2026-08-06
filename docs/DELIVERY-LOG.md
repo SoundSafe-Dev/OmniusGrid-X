@@ -4381,3 +4381,70 @@ polish.
 
 **Suite:** backend 3520 passed / 100 skipped · edge agent 289 · frontend 555.
 
+---
+
+## 2026-08-05 — FS-475: a duplicate with a good reason, on federal driving limits
+
+Classes 98 and 99 carried across to the backend and frontend, finishing the pass that FS-474
+started.
+
+**One real instance, and it is not a guess.** `MAX_DRIVE_HOURS_DAY` and
+`MAX_ON_DUTY_HOURS_DAY` — the FMCSA limits from 49 CFR 395 — were declared in
+`api/transportation.py` and again in `services/transportation_management.py`, with a third
+file reaching them through the compliance class. Three files, three approaches, four numbers
+that are law.
+
+Duplication is sharper here than usual because **the two copies feed different answers about
+the same driver**: one module computes hours REMAINING, which a dispatcher reads before
+assigning a load; the other decides VIOLATIONS, which a compliance officer reads afterwards.
+Edit one and not the other and the platform tells the dispatcher a driver may keep driving
+while recording that same driver as in breach. Both numbers look authoritative and neither
+says which is stale.
+
+### Why it survived review
+
+The duplicate carried a reason: *"Kept beside the serializer that needs them rather than
+imported from the compliance service, which would drag its session dependencies into this
+module."*
+
+That objection was true — and already being ignored, since `fleet_logistics` imports the same
+class for the same purpose. **A justified duplicate is harder to spot than an unjustified
+one**, because the comment answers the question a reviewer was about to ask. The answer was a
+module with no imports at all, which the original objection cannot apply to.
+
+All three access paths now resolve to the same object, asserted with `is` rather than `==` so
+a second set of values that happens to match today still fails.
+
+### Class 99 came back clean, and that is a result
+
+Only two service classes accept an injected collaborator, so there is no population of
+siblings where some are injectable and some are not. The four workers — which genuinely are
+copies of one another — all take the same `stale_after_seconds` seam and use it deliberately:
+ingestion at 300 seconds because telemetry is continuous, the other three at 0 with comments
+explaining that scheduled and orchestrating work is legitimately bursty.
+
+The frontend has duplication without consequence: `MOCK_DELAY` in nine clients at two
+different values, and `REFRESH_MS` in two hooks where both agree. Recorded rather than fixed,
+because unifying a development-only constant is motion rather than work.
+
+### Two guards caught me
+
+The frontend scan reported `REFRESH_MS = 30`, having read `30_000` as `30` — a numeric
+separator the regex did not expect. Thirty milliseconds would have been a hot refresh loop
+and a real finding; one look at the file showed thirty seconds. Seventh detector this week to
+be wrong before the code was, and the first where the error was in the reported VALUE rather
+than in what it selected.
+
+And `test_documented_files_exist` failed on my own documentation: I cited the new module
+without its `backend/` prefix, where the repository resolves documented paths from its root.
+A reader following that citation would have found nothing and had no way to tell whether the
+file moved, was renamed, or never existed.
+
+**Then it failed again on this entry**, because the paragraph describing the mistake spelled
+the bad path out to explain it — and the guard reads a backticked path as a citation whether
+it is being made or being quoted. That is the fourth time in this repository that prose
+explaining a defect has tripped the detector for it, and the fix is the same each time:
+describe the shape rather than reproduce it.
+
+**Suite:** backend 3534 passed / 100 skipped · edge agent 289 · frontend 555.
+
