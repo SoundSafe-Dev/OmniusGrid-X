@@ -199,6 +199,7 @@ describe('yardApi.getDwellTimes in real mode', () => {
       avgDwellTime: 180,
       maxDwellTime: 300,
       trailersExceedingTarget: 2,
+      trailersUnmeasured: 0,
     })
   })
 
@@ -210,16 +211,44 @@ describe('yardApi.getDwellTimes in real mode', () => {
     expect((await api.getDwellTimes()).trailersExceedingTarget).toBe(1)
   })
 
-  it('returns zeroes rather than NaN for an empty yard', async () => {
+  it('returns null rather than NaN or zero for an empty yard', async () => {
     // `Math.max()` of nothing is -Infinity and a mean over zero rows is NaN; either would
     // reach `formatDuration` and render as garbage in the banner.
+    //
+    // NULL, NOT ZERO (FS-465). This originally asserted zeroes, which avoided the garbage
+    // and introduced a quieter problem: "Average dwell time: 0m" is a claim about a yard,
+    // and an empty result is the absence of one. `formatDuration` renders null as "N/A".
     get.mockResolvedValue({ data: [] })
     const api = await yard()
     expect(await api.getDwellTimes()).toEqual({
-      avgDwellTime: 0,
-      maxDwellTime: 0,
+      avgDwellTime: null,
+      maxDwellTime: null,
       trailersExceedingTarget: 0,
+      trailersUnmeasured: 0,
     })
+  })
+
+  it('excludes a trailer with no recorded check-in rather than counting it as zero', async () => {
+    // The defect (FS-465). `dwell_hours` is null when the trailer has no check-in, and
+    // `?? 0` made it a trailer that had just arrived: it pulled the mean DOWN and was
+    // absent from the exceeding-target count, on a banner that exists to report that
+    // count. Three trailers, one unmeasured -> the mean is over the two that were.
+    get.mockResolvedValue({
+      data: [row('A', 1), row('B', 5), { ...row('C', 0), dwellHours: null }],
+    })
+    const api = await yard()
+    const result = await api.getDwellTimes()
+    expect(result.avgDwellTime).toBe(180) // (60 + 300) / 2, not (60 + 300 + 0) / 3 = 120
+    expect(result.trailersUnmeasured).toBe(1)
+    expect(result.trailersExceedingTarget).toBe(1)
+  })
+
+  it('reports nothing measurable when every trailer lacks a check-in', async () => {
+    get.mockResolvedValue({ data: [{ ...row('A', 0), dwellHours: null }] })
+    const api = await yard()
+    const result = await api.getDwellTimes()
+    expect(result.avgDwellTime).toBeNull()
+    expect(result.trailersUnmeasured).toBe(1)
   })
 
   it('survives a payload that is not a list', async () => {

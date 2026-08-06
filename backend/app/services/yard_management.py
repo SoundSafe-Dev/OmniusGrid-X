@@ -416,10 +416,25 @@ class YardManagementService:
             wait_time.demurrage_minutes = demurrage['demurrage_minutes']
             wait_time.demurrage_charge = demurrage['demurrage_charge']
     
-    def _calculate_dwell_hours(self, trailer: YardTrailer) -> float:
-        """Calculate total dwell time in hours"""
+    def _calculate_dwell_hours(self, trailer: YardTrailer) -> Optional[float]:
+        """Total dwell time in hours, or None when the trailer has no check-in (FS-465).
+
+        `check_in_at` is nullable — its `default=utcnow` is applied by the ORM and skipped
+        by a raw insert, which is a case this repository already tests for
+        (`test_raw_insert_timestamps.py` parametrises over `yard_trailers`).
+
+        This used to subtract from `_as_utc(None)` and raise
+        `TypeError: unsupported operand type(s) for -: 'datetime.datetime' and 'NoneType'`,
+        which is a 500 on the yard inventory. **The sibling path computing the same
+        quantity returned 0.0 instead** — so one crashed and one reported that a trailer of
+        unknown age had just arrived. Neither is the answer; the answer is that nobody
+        recorded when it came in.
+        """
+        check_in = _as_utc(trailer.check_in_at)
+        if check_in is None:
+            return None
         end_time = _as_utc(trailer.check_out_at) or datetime.now(timezone.utc)
-        return round((end_time - _as_utc(trailer.check_in_at)).total_seconds() / 3600, 2)
+        return round((end_time - check_in).total_seconds() / 3600, 2)
     
     async def get_yard_inventory(
         self,
@@ -502,7 +517,13 @@ class YardManagementService:
                 check_in = _aware(row.check_in_at)
                 check_out = _aware(row.check_out_at)
                 end = check_out or now
-                dwell_hours = (end - check_in).total_seconds() / 3600 if check_in else 0.0
+                # None, not 0.0 (FS-465). A trailer with no recorded check-in has an
+                # unknown dwell, and 0.0 reads as "arrived just now" — the most favourable
+                # reading available, on a page whose banner exists to flag trailers that
+                # have been sitting too long.
+                dwell_hours = (
+                    (end - check_in).total_seconds() / 3600 if check_in else None
+                )
                 # `detention_charge` is NULL until the charge has been CALCULATED, and
                 # `float(None or 0)` turns "not yet worked out" into "nothing owed".
                 # `is_detention` below then reads as a settled answer on a trailer that
@@ -515,7 +536,7 @@ class YardManagementService:
                     'trailer_number': row.trailer_number,
                     'check_in_at': row.check_in_at,
                     'check_out_at': row.check_out_at,
-                    'dwell_hours': round(dwell_hours, 2),
+                    'dwell_hours': None if dwell_hours is None else round(dwell_hours, 2),
                     'is_detention': detention_known and detention > 0,
                     'detention_assessed': detention_known,
                     'detention_charge': detention if detention_known else None,

@@ -2582,6 +2582,16 @@ one of its findings. The habit that catches it:
     the first path you walked. A heartbeat field was recorded as discarded because one of
     its two consumers was found and the other was not looked for.
 
+93. **Proximity to a correct decision is not protection.**
+    `dwell_hours = ... if check_in else 0.0` sat one line above a comment explaining, at
+    length, why the sibling field must stay null rather than become zero. Someone reasoned
+    carefully about the class and did not look up.
+
+94. **Two producers of one number will disagree about the edge case.**
+    The same dwell time was computed in two places. Given a null check-in, one raised and
+    one returned 0.0 — so the defect existed in two forms, and fixing either would have
+    left the other.
+
 ---
 
 ## Open observations, not yet tickets
@@ -5745,4 +5755,56 @@ whether an agent field had a consumer.
 **Two directions, one boundary.** When checking whether a producer's output is consumed, walk
 it from the consumer's side as well. The two searches fail in different ways, which is what
 makes running both worth the time.
+
+## The third leg — backend and agent classes asked of the frontend (FS-465)
+
+The pass has now run all three ways: backend → agent, agent → backend, and both → frontend.
+The last leg found one defect, and it was found from the CLIENT and fixed in the SERVER,
+which is the direction that had not been tried.
+
+| class | asked of the frontend | result |
+|---|---|---|
+| 29 — absence coerced into a number | `(x ?? 0) *` and `(x \|\| 0) *` in rendered figures | **4 hits, 1 real** |
+| 29 — the OEE page specifically | `pct = (v) => (v ?? 0) * 100` | **clean** — guarded by `{f.measured ? pct(f.value) : '—'}`; the `?? 0` only ever sees measured values |
+
+The three false positives are worth naming: a form's default radius, and two helpers whose
+callers already branch on a measured flag. **A coercion is only a defect where the coerced
+value is rendered as a measurement**, and a detector that cannot tell the difference produces
+a list nobody reads.
+
+### The real one
+
+`(r.dwellHours ?? 0) * 60` in the yard client. Following it back to the server found that the
+same quantity is computed in **two places that disagree about a null check-in**:
+
+    _calculate_dwell_hours    end_time - _as_utc(None)   -> TypeError, a 500
+    the dwell-times query     ... if check_in else 0.0   -> 0.0, "arrived just now"
+
+One crashed and one lied. The lie is worse: the yard banner exists to report trailers past a
+120-minute target, and a trailer nobody could age was scored as the most favourable value
+available — then averaged in at zero by the client, pulling the mean down, while being absent
+from the count the banner reports. `check_in_at` is nullable, and its `default=utcnow` is
+skipped by a raw insert, a case `test_raw_insert_timestamps.py` already parametrises over
+`yard_trailers` for.
+
+**The comment on the next line already knew.** Immediately below the `else 0.0`, the source
+explains that `detention_charge` must stay null until assessed because "`float(None or 0)`
+turns 'not yet worked out' into 'nothing owed'". The reasoning was right there and one line
+too low.
+
+Fixed to `None` in both producers, `Optional[float]` on the wire, and the client now averages
+over measured rows and reports `trailersUnmeasured` — the same shape as `assets_measured` on
+the OEE surfaces. `formatDuration` also stopped collapsing `0` and `null`, which it had been
+doing with `if (!minutes) return 'N/A'`.
+
+## Rule 93 — proximity to a correct decision is not protection
+
+Class 29. The reasoning that would have caught this was one line below it, about a sibling
+field, written by someone who had the class clearly in mind.
+
+## Rule 94 — two producers of one number will disagree about the edge case
+
+Class 29. When the same quantity is computed in two places, the edge case is where they part
+company — and fixing the one you found leaves the other. Look for the second producer before
+believing the fix is complete.
 

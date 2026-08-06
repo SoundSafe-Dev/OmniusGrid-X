@@ -4087,3 +4087,55 @@ morning.
 
 **Suite:** backend 3474 passed / 100 skipped (clean run, exit 0) · edge agent 237 · frontend 553.
 
+---
+
+## 2026-08-05 — FS-465: a trailer nobody could age, scored as freshly arrived
+
+The third leg of the carry-across pass: backend and agent classes re-asked of the frontend.
+The pass has now run all three ways, and this leg found its defect **from the client and
+fixed it in the server** — the direction that had not been tried.
+
+The sweep for "absence coerced into a number" returned four hits in rendered figures. Three
+were false positives worth naming: a form's default radius, and two percentage helpers whose
+callers already branch on a measured flag — the OEE page's `pct` never sees an unmeasured
+value because the render is `{f.measured ? pct(f.value) : '—'}`. **A coercion is only a
+defect where the coerced value is rendered as a measurement**, and a detector that cannot
+tell the difference produces a list nobody reads.
+
+### The real one
+
+`(r.dwellHours ?? 0) * 60`, in the yard client. Following it back found the same quantity
+computed in two server-side places that disagree about a null check-in:
+
+    _calculate_dwell_hours    end_time - _as_utc(None)   -> TypeError, a 500
+    the dwell-times query     ... if check_in else 0.0   -> 0.0, "arrived just now"
+
+One crashed and one lied. The lie is worse. The yard banner exists to report trailers past a
+120-minute target, and a trailer nobody could age was scored as the most favourable value
+available — then averaged in at zero by the client, pulling the mean down, while being absent
+from the count the banner reports. So an unmeasurable trailer made the yard look better in
+two directions at once.
+
+`check_in_at` is nullable: its `default=utcnow` is applied by the ORM and skipped by a raw
+insert, which `test_raw_insert_timestamps.py` already parametrises over `yard_trailers` for.
+
+**The comment on the next line already knew.** Immediately below the `else 0.0`, the source
+explains that `detention_charge` must stay null until a charge is assessed, because
+"`float(None or 0)` turns 'not yet worked out' into 'nothing owed'". The reasoning was there
+and one line too low. Proximity to a correct decision is not protection.
+
+Fixed to `None` in both producers, `Optional[float]` on the wire, and the client averages over
+measured rows and reports `trailersUnmeasured`. `formatDuration` also stopped collapsing `0`
+and `null` — it was `if (!minutes) return 'N/A'`, so a yard where every trailer had just
+arrived and a yard that could not be measured rendered identically.
+
+### And one of my own
+
+The first draft of the backend guard's naive-timestamp test used `datetime.now()` where
+`_as_utc` documents that a naive value is assumed **UTC**. It expected 1.0 hours and got 6.0
+on a host at −05:00. That is FS-461's class landing inside a test written for a different one,
+and it is the same trap: a bare `datetime.now()` looks correct and is wrong by the host's
+offset.
+
+**Suite:** backend 3483 passed / 100 skipped · frontend 555 · edge agent 237.
+

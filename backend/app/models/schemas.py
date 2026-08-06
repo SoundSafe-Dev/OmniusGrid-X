@@ -860,7 +860,9 @@ class DwellTimeAnalytics(BaseModel):
     trailer_number: str
     check_in_at: datetime
     check_out_at: Optional[datetime]
-    dwell_hours: float
+    #: None when the trailer has no recorded check-in (FS-465) — an unknown dwell, not a
+    #: zero one. Mirrors `detention_charge`, which is null until a charge is assessed.
+    dwell_hours: Optional[float]
     is_detention: bool
     detention_charge: Optional[float]
 

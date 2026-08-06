@@ -26,7 +26,10 @@ registerTransform('/api/v1/yard', { inAliases: YARD_ALIASES, outAliases: YARD_OU
 interface DwellTimeRow {
   trailerId: string;
   trailerNumber: string;
-  dwellHours: number;
+  // Null when the trailer has no recorded check-in (FS-465). An unknown dwell, not a
+  // zero one — see the aggregation below, which excludes these rather than averaging
+  // them in at zero.
+  dwellHours: number | null;
   // `isDetention` and `detentionCharge` are DELIBERATELY NOT DECLARED, and the omission is
   // load-bearing. The endpoint sends `detention_charge: null` until a charge has been
   // ASSESSED, and a sibling `detention_assessed` flag saying which — because
@@ -416,13 +419,21 @@ export const yardApi = {
   },
 
   // Analytics
-  getDwellTimes: async (): Promise<{ avgDwellTime: number; maxDwellTime: number; trailersExceedingTarget: number }> => {
+  getDwellTimes: async (): Promise<{
+    avgDwellTime: number | null;
+    maxDwellTime: number | null;
+    trailersExceedingTarget: number;
+    trailersUnmeasured: number;
+  }> => {
     if (USE_MOCK) {
       await delay(MOCK_DELAY);
       return {
         avgDwellTime: 180,
         maxDwellTime: 420,
         trailersExceedingTarget: 2,
+        // The mock's rows are all measured, so this is a fact about the fixture rather
+        // than a placeholder (FS-465).
+        trailersUnmeasured: 0,
       };
     }
     // THE ENDPOINT RETURNS A LIST, NOT THIS SUMMARY (FS-393).
@@ -444,13 +455,25 @@ export const yardApi = {
     const rows = Array.isArray(response.data) ? response.data : [];
     // `dwell_hours` is hours; the page formats minutes and compares against a 120-minute
     // target, so the conversion belongs here and not in the component.
-    const minutes = rows.map((r) => (r.dwellHours ?? 0) * 60);
+    // MEASURED ROWS ONLY (FS-465). `dwell_hours` is null for a trailer with no recorded
+    // check-in, and this used to coerce it with `?? 0` — so a trailer of unknown age
+    // counted as zero minutes and pulled the average DOWN, on a page whose banner exists
+    // to say when trailers have been sitting too long. It was also excluded from
+    // `trailersExceedingTarget`, which is the number the banner is built on.
+    //
+    // Averaging over what was measured, and reporting how many were not, is the same
+    // shape as `assets_measured` on the OEE surfaces.
+    const measured = rows.filter((r) => typeof r.dwellHours === 'number');
+    const minutes = measured.map((r) => (r.dwellHours as number) * 60);
     return {
+      // Null rather than 0 for an empty set: "average dwell 0 minutes" is a claim about
+      // a yard, and no rows is the absence of one.
       avgDwellTime: minutes.length
         ? Math.round(minutes.reduce((a, b) => a + b, 0) / minutes.length)
-        : 0,
-      maxDwellTime: minutes.length ? Math.round(Math.max(...minutes)) : 0,
+        : null,
+      maxDwellTime: minutes.length ? Math.round(Math.max(...minutes)) : null,
       trailersExceedingTarget: minutes.filter((m) => m > DWELL_TARGET_MINUTES).length,
+      trailersUnmeasured: rows.length - measured.length,
     };
   },
 

@@ -149,8 +149,12 @@ export const YardManagement: FC = () => {
     }
   };
 
-  const formatDuration = (minutes?: number) => {
-    if (!minutes) return 'N/A';
+  const formatDuration = (minutes?: number | null) => {
+    // `null` is "not measured" and `0` is a real, measured zero (FS-465). The old
+    // `if (!minutes)` collapsed them, so a yard whose dwell could not be computed and a
+    // yard where every trailer had just arrived rendered the same string.
+    if (minutes === null || minutes === undefined) return 'N/A';
+    if (minutes === 0) return '0m';
     const hours = Math.floor(minutes / 60);
     // ROUNDED. `minutes % 60` on a float from the detention calculator rendered
     // "4h 11.300000000000011m excess" on the detention banner — a floating-point artifact
@@ -280,6 +284,19 @@ export const YardManagement: FC = () => {
             <p className="text-sm text-opsgrid-text-secondary">
               Average dwell time: {formatDuration(dwellTimes.avgDwellTime)} (Target: 120 min)
             </p>
+            {/* Say how many trailers this figure could not include (FS-465). A trailer
+                with no recorded check-in has an unknown dwell, so it is absent from both
+                the average and the exceeding-target count above — and the count is what
+                this banner exists to report. Silence would make the yard look better than
+                it is by exactly the number of trailers nobody can age. */}
+            {dwellTimes.trailersUnmeasured > 0 && (
+              <p className="text-sm text-opsgrid-text-secondary">
+                {dwellTimes.trailersUnmeasured} trailer
+                {dwellTimes.trailersUnmeasured === 1 ? ' has' : 's have'} no recorded
+                check-in and {dwellTimes.trailersUnmeasured === 1 ? 'is' : 'are'} not
+                counted above.
+              </p>
+            )}
           </div>
         </div>
       )}
