@@ -642,6 +642,40 @@ groups:
           description: "The ingestion worker's last completed unit of work is more than 10 minutes old and its liveness probe has not recovered it. Telemetry is not being persisted and the topic is backing up. Check the pod's restart count, the Redpanda connection, and consumer-group state."
           runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/kafka-consumer-lag.md"
 
+      # HIGH: the ingestion worker is dead-lettering telemetry (FS-464).
+      #
+      # A dead-lettered message was ACCEPTED from a device and acknowledged, so the
+      # agent's buffer has already dropped its copy. The DLQ makes it replayable, but
+      # nothing about it is visible until someone reads the topic — and the equivalent
+      # on the agent side has had a counter and an alert since FS-458. The platform
+      # was watching the edge's data loss and not its own.
+      #
+      # HIGH rather than critical: the data is preserved and replayable. Distinct from
+      # the alert below, where it is not.
+      - alert: IngestionDeadLettering
+        expr: increase(opsgrid_ingestion_dead_lettered_total[15m]) > 0
+        for: 0m
+        labels:
+          severity: high
+          team: platform
+        annotations:
+          summary: "Ingestion worker is dead-lettering telemetry"
+          description: "{{ $value }} messages from {{ $labels.source_topic }} could not be processed in the last 15m and were published to the DLQ. The data is replayable but is not in the database. Check the DLQ topic for the failure reason."
+
+      # CRITICAL: the dead-letter publish itself failed, so the message is neither
+      # processed nor preserved and its offset advances regardless. This is telemetry
+      # leaving the system: the device has been told the data was received, its buffer
+      # has dropped it, and nothing in the cloud holds it.
+      - alert: IngestionDataLost
+        expr: increase(opsgrid_ingestion_dead_letter_failed_total[15m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Ingestion worker LOST telemetry — the dead-letter publish also failed"
+          description: "{{ $value }} messages from {{ $labels.source_topic }} were dropped entirely: unprocessable, and the DLQ publish failed too. The sending device has already been acknowledged and has discarded its copy. Check broker reachability and the DLQ topic's existence."
+
       # HIGH: a worker's metrics endpoint is unreachable — either the process is
       # gone or its health server never came up. Distinct from WorkerStalled, which
       # requires a REACHABLE worker reporting a stale heartbeat.

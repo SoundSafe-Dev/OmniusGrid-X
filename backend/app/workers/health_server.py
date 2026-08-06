@@ -51,6 +51,34 @@ WORKER_UNITS = Counter(
     ["worker"],
 )
 
+#: Telemetry this worker ACCEPTED from a device and then could not process (FS-464).
+#:
+#: The message is published to a dead-letter topic so it can be replayed, which makes it
+#: recoverable — but recoverable is not the same as noticed. Until this counter existed the
+#: only record was a log line, on the one path where the data has already been acknowledged
+#: to the device that sent it: the agent's buffer drops it after the ack, so a poison
+#: message is gone from the edge and invisible in the cloud.
+#:
+#: The agent side of exactly this has had a counter and a Prometheus alert since FS-458.
+#: **The platform was monitoring the edge's data loss and not its own.**
+#:
+#: Labelled by SOURCE TOPIC, which is bounded (a handful of topics), never by error text.
+INGESTION_DEAD_LETTERED = Counter(
+    "opsgrid_ingestion_dead_lettered_total",
+    "Messages the ingestion worker could not process and published to the DLQ",
+    ["source_topic"],
+)
+
+#: The DLQ publish itself failing, which is the TOTAL loss: the message is neither
+#: processed nor preserved, and its offset advances regardless. Separate from the counter
+#: above because they need different responses — one is a bug to fix at leisure, the other
+#: is data leaving the system.
+INGESTION_DEAD_LETTER_FAILED = Counter(
+    "opsgrid_ingestion_dead_letter_failed_total",
+    "Messages lost entirely because the dead-letter publish also failed",
+    ["source_topic"],
+)
+
 _started = False
 
 

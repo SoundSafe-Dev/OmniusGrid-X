@@ -101,29 +101,41 @@ switch the verb.
 
 ---
 
-## 5. Three heartbeat fields arrive at the cloud and are discarded
+## 5. The agent reports its health twice, by two paths, under two names
 
-**Pinned by** `backend/tests/test_heartbeat_contract_is_fully_read.py` · FS-460
+**Pinned by** `backend/tests/test_heartbeat_contract_is_fully_read.py` · FS-460, **corrected
+2026-08-05**
 
-`build_heartbeat_payload` sends eleven fields. `_process_agent_heartbeat` persists
-`agent_id`, `agent_version`, `config_hash` and `build_id`, and uses `organization_id`,
-`asset_ids` and `timestamp` to route and stamp the update. It never touches:
+**This entry was first written with a wrong conclusion, and the correction is the useful
+part.** It originally read "three heartbeat fields arrive at the cloud and are discarded",
+and said of `buffer_depth` that "the fleet view's answer to *is anything wrong out there* is
+arriving at the cloud and being thrown away". That is false.
 
-| field | what it would tell an operator |
-|---|---|
-| `buffer_depth` | pending messages on the device — the number that says it is falling behind |
-| `collector_status` | per-collector health, from the agent's own coordinator |
-| `git_sha` | which build is actually running, beyond `build_id` |
+There are **two** heartbeat paths:
 
-`buffer_depth` is the one that matters. The `EdgeBufferGrowing` alert answers the same
-question from the agent's `/metrics`, which requires **reaching the device** — and the case
-worth catching is the device you cannot reach. The heartbeat is the path that survives NAT,
-it already arrives, and the cloud already parses it.
+| path | payload | consumed? |
+|---|---|---|
+| Kafka `agent_status` → `_process_agent_heartbeat` | `build_heartbeat_payload`, 11 fields incl. `buffer_depth`, `collector_status`, `git_sha` | version/config/build only |
+| HTTP `POST /api/v1/edge/heartbeat` → `app/api/edge_fleet.py` | `buffer_pending`, `dead_lettered`, `dropped`, `active_collectors`, `cert_expires_in_seconds` | **yes** — persisted on `edge_agent_status` and published as `edge_agent_*` gauges |
 
-**To close:** decide whether the fleet surface should show device backlog and collector
-health. If yes it is a migration (three columns on `assets`), a worker change and a panel; if
-no, stop computing and transmitting them on every device. Both are defensible; doing neither
-is what is currently happening.
+The original finding examined the Kafka path and generalised from it. Device backlog is
+**not** invisible: it is stored, gauged per agent, and alertable. The HTTP path was found
+later, from the other end, while checking whether a backend gauge had a producer.
+
+**What is actually true**, and why this is still open: the same health is assembled twice,
+under different names for the same quantity (`buffer_depth` / `buffer_pending`), and the
+Kafka copy of it is read by nobody. That is redundant work on every device and two vocabularies
+for one fact — the condition that produced FS-435's six aliases.
+
+**To close:** either drop `buffer_depth`, `collector_status` and `git_sha` from the Kafka
+payload, since the HTTP heartbeat already carries that information to a consumer, or
+consume them and retire the HTTP path. Not both paths with two names.
+
+**The lesson, which is worth more than the entry.** A sweep that finds one consumer and
+concludes there is no other is asserting a negative it did not check. The guard is still
+correct and still useful — every field on a payload should be consumed or explicitly
+declared unread — but its *reason* was overstated, and it took a second look from the
+opposite direction to catch it.
 
 ---
 

@@ -2577,6 +2577,11 @@ one of its findings. The habit that catches it:
     fixed. Finding them one at a time is luck; the systematic version — walk the closed
     classes, ask which other component computes the same thing — is cheap and finishes.
 
+92. **Finding one consumer does not prove there is no other.**
+    "This field reaches nobody" is a negative, and a negative needs the whole search, not
+    the first path you walked. A heartbeat field was recorded as discarded because one of
+    its two consumers was found and the other was not looked for.
+
 ---
 
 ## Open observations, not yet tickets
@@ -5461,10 +5466,22 @@ Both sides had tests. `edge-agent/tests/test_heartbeat.py` asserts the payload i
 correctly; `test_agent_heartbeat_updates_assets_realdb.py` asserts the update lands. Neither
 could see the gap, because a contract with only one side asserted is not asserted.
 
-`buffer_depth` is the one that matters. It is the number that says a device is falling
-behind, and the `EdgeBufferGrowing` alert answers the same question from the agent's own
-`/metrics` — **which requires reaching the device, and the case worth catching is the device
-you cannot reach.** The heartbeat survives NAT, already arrives, and is already parsed.
+**The first version of this entry drew the wrong conclusion, and the correction is the more
+useful half.** It said `buffer_depth` was the one that mattered because device backlog was
+invisible to the cloud. It is not invisible. A SECOND heartbeat path exists —
+`POST /api/v1/edge/heartbeat` — and the agent posts `buffer_pending`, `dead_lettered`,
+`dropped` and `active_collectors` to it; the backend persists them on `edge_agent_status`
+and publishes per-agent `edge_agent_*` gauges.
+
+The claim came from reading the Kafka path and generalising from it. **A sweep that finds one
+consumer and concludes there is no other is asserting a negative it did not check.** It was
+caught coming the other way, while checking whether a backend gauge had a producer — which is
+the only reason it was caught at all.
+
+What is actually true is narrower and still worth the guard: the same health is assembled
+twice, under two names for one quantity (`buffer_depth` / `buffer_pending`), and the Kafka
+copy is read by nobody. Redundant work on every device, and two vocabularies for one fact —
+the condition that produced six aliases in FS-435.
 
 **Not fixed, recorded** (open-decisions #5). Persisting them is a migration, a worker change
 and a panel; the alternative is to stop computing them. Both are defensible and the choice
@@ -5679,4 +5696,53 @@ computed from sixty.
 
 Finding the same class four times by accident is luck. Walking the closed classes and asking
 which other component computes the same thing is a method, and it terminates.
+
+### The reverse pass — the agent's classes re-asked of the backend (FS-464)
+
+The carry-across pass ran one way: closed backend classes, re-asked of the agent. Running it
+back the other way — the classes the AGENT taught us, asked of the backend and frontend — took
+an afternoon and found one defect, one wrong claim of my own, and four clean results.
+
+| class the agent taught | asked of the backend | result |
+|---|---|---|
+| 71 — a guard matching one spelling | the backend's naive-datetime guard | **clean** — already AST-based, checks both spellings, and self-tests its own pattern. The agent was the laggard |
+| 68 — provenance decided away from the data | `geotab_service` gated/stamped functions | **clean** — every gated function stamps, and `get_device_location` sets `invented = True` in the same block that fabricates the point, which is the correct shape |
+| 72 — unrecognised input defaulted into meaning | `except (Value|Key|Type)Error -> return <constant>` | **clean** — 7 sites, 6 return a caller-supplied `default`, the seventh is a sort key |
+| 29 — absence rendered as a number | backend OEE `quality = ... else 1.0` | **clean** — `quality_measured` / `performance_measured` flow calculator → API → the OEE page's hint. Wired end to end, and better than the agent's was |
+| 69 — a loss reported only to a log | the ingestion worker's DLQ | **NEW — FS-464** |
+| 70 — a contract asserted on one side | my own FS-460 entry | **my error** — see Rule 92 |
+
+**FS-464.** A message the ingestion worker cannot process is published to a dead-letter topic
+and logged, and that was all: no counter, no alert, nothing on a dashboard. The agent's
+equivalent has had a counter and a rule since FS-458 — **the platform was monitoring the
+edge's data loss and not its own.**
+
+The cloud case is the sharper one. A dead-lettered message was ACCEPTED: the device sent it,
+the broker acknowledged it, and the agent's buffer dropped its copy on that acknowledgement.
+The data then exists in exactly one place, a DLQ topic nobody watches, while the device has
+been told everything is fine.
+
+And one branch lost it completely. `_dead_letter` opened with `if self._producer is None:
+return` — no DLQ record, no counter, no log. Defensive, since the producer starts before the
+consumer, but it was the only branch in the worker where an accepted message vanished leaving
+no trace of any kind, and "unreachable" there is a property of today's start-up order rather
+than of the code.
+
+Two counters, not one, because they need different responses: dead-lettering is replayable
+and alerts HIGH; a failed DLQ publish is data leaving the system and alerts CRITICAL. The
+guard asserts that ranking, because collapsing it wastes the only distinction that matters at
+three in the morning.
+
+## Rule 92 — finding one consumer does not prove there is no other
+
+Class 70, learned by getting it wrong. "Nothing reads this" is a claim about everything, and
+the search that supports it has to be about everything too. The FS-460 entry asserted that a
+device's buffer depth reached the cloud and was thrown away; a second heartbeat path was
+consuming it the whole time, and the mistake surfaced only because a later sweep came at the
+same code from the opposite end — asking whether a backend gauge had a producer instead of
+whether an agent field had a consumer.
+
+**Two directions, one boundary.** When checking whether a producer's output is consumed, walk
+it from the consumer's side as well. The two searches fail in different ways, which is what
+makes running both worth the time.
 

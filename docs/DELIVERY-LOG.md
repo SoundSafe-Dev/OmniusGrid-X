@@ -4002,3 +4002,88 @@ computed from sixty.
 
 **Suite:** edge agent 237 passed.
 
+---
+
+## 2026-08-05 — FS-460 corrected: I asserted a negative I had not checked
+
+The reverse carry-across pass — the agent-discovered classes re-asked of the backend and
+frontend — found a defect in my own work from a few hours earlier.
+
+FS-460 recorded that the edge agent sends three heartbeat fields the cloud discards, and said
+of the sharpest one: *"the fleet view's answer to 'is anything wrong out there' is arriving at
+the cloud, in a message the cloud already parses, and being thrown away."*
+
+**That is false.** There are two heartbeat paths. I read one.
+
+| path | carries | consumed |
+|---|---|---|
+| Kafka `agent_status` → `_process_agent_heartbeat` | 11 fields incl. `buffer_depth` | version/config/build only |
+| HTTP `POST /api/v1/edge/heartbeat` → `api/edge_fleet.py` | `buffer_pending`, `dead_lettered`, `dropped`, `active_collectors` | **yes** — persisted and published as `edge_agent_*` gauges |
+
+Device backlog is stored, gauged per agent, and alertable. It always was.
+
+**How it surfaced.** Not by re-reading FS-460. By coming at the same code from the opposite
+end: the reverse pass asked whether a backend gauge had a producer, and the answer led
+straight back to a claim I had made in the other direction. Two searches across one boundary
+fail in different ways, and that is the whole argument for running both.
+
+What is actually true is narrower and still worth the guard: the same health is assembled
+twice, under two names for one quantity, and the Kafka copy is read by nobody. Redundant work
+on every device and two vocabularies for one fact — the condition that produced six aliases
+in FS-435. Open-decisions #5 is rewritten to say that, at its real severity.
+
+**The corrected claim is now pinned** rather than asserted in prose, because an uncheckable
+claim inside an exemption is exactly how the original error survived being written down. If
+the HTTP path stops consuming device health, the reasons beside `buffer_depth` become false
+and a test says so.
+
+And the first version of that pin was itself too weak — it searched the agent module for
+`buffer_pending` and passed when the emitted key was renamed, because `build_payload` reads
+the same name out of its health snapshot one line above. It parses the returned dict's keys
+now. **Second time this week a proximity check has passed with the defect present**, and both
+were caught the same way: mutate the fix out and watch.
+
+Rule 92: finding one consumer does not prove there is no other.
+
+---
+
+## 2026-08-05 — FS-464: the platform was monitoring the edge's data loss and not its own
+
+The reverse carry-across pass — the classes the agent taught us, asked of the backend and
+frontend. One defect, one wrong claim of my own (above), four clean.
+
+Clean: the backend's naive-datetime guard is already AST-based, checks both spellings, and
+self-tests its own pattern — the agent was the laggard, not the backend; `geotab_service`
+gates and stamps every simulated function, and sets `invented = True` in the same block that
+fabricates a position, which is the correct shape; `except → return <constant>` sites all
+return a caller-supplied default or a sort key; and the backend's OEE carries
+`quality_measured` / `performance_measured` from the calculator through the API to a hint on
+the OEE page, wired end to end and better than the agent's was.
+
+### The defect
+
+A message the ingestion worker cannot process is published to a dead-letter topic and logged.
+That was all — no counter, no alert, nothing on a dashboard. The agent's equivalent has had
+both since FS-458.
+
+The cloud case is sharper than the agent's. A dead-lettered message was **accepted**: the
+device sent it, the broker acknowledged it, and the agent's store-and-forward buffer dropped
+its copy on that acknowledgement. The data then exists in exactly one place — a DLQ topic
+nobody is watching — while the device has been told everything is fine.
+
+One branch lost it completely:
+
+    if self._producer is None:
+        return
+
+No DLQ record, no counter, no log. Defensive, since the producer starts before the consumer,
+but it was the only branch in the worker where an accepted message vanished leaving no trace
+of any kind — and "unreachable" there is a property of today's start-up order, not of the code.
+
+Two counters, because they need different responses. Dead-lettering is replayable and alerts
+HIGH; a failed DLQ publish is data leaving the system and alerts CRITICAL. The guard asserts
+that ranking, because collapsing it wastes the only distinction that matters at three in the
+morning.
+
+**Suite:** backend 3474 passed / 100 skipped (clean run, exit 0) · edge agent 237 · frontend 553.
+

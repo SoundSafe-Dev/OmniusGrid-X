@@ -16,7 +16,11 @@ import sys
 sys.path.insert(0, '/app')
 
 from app.core.config import settings
-from app.workers.health_server import start_health_server
+from app.workers.health_server import (
+    INGESTION_DEAD_LETTERED,
+    INGESTION_DEAD_LETTER_FAILED,
+    start_health_server,
+)
 from app.core.datetime_utils import aware_utc
 from app.db.database import AsyncSessionLocal
 from app.db.models import Telemetry, PackMLState, Asset, Alarm
@@ -151,7 +155,20 @@ class IngestionWorker:
         original payload plus enough provenance (topic/partition/offset) to
         replay it after the underlying bug is fixed.
         """
+        topic = getattr(msg, "topic", None) or "unknown"
         if self._producer is None:
+            # SAYS SO RATHER THAN RETURNING (FS-464). This branch is defensive — the
+            # producer is started before the consumer — but a bare `return` here discards
+            # an accepted message with no log, no counter and no DLQ record, which is the
+            # only truly silent loss in this worker.
+            INGESTION_DEAD_LETTER_FAILED.labels(source_topic=topic).inc()
+            logger.error(
+                "ingestion_dead_letter_unavailable",
+                source_topic=topic,
+                source_offset=getattr(msg, "offset", None),
+                error=str(error),
+                hint="no DLQ producer; the message is lost and its offset will advance",
+            )
             return
         try:
             envelope = {
@@ -168,6 +185,7 @@ class IngestionWorker:
             }
             key = (msg.key if isinstance(msg.key, (bytes, bytearray)) else None)
             await self._producer.send_and_wait(self.dlq_topic, envelope, key=key)
+            INGESTION_DEAD_LETTERED.labels(source_topic=msg.topic).inc()
             logger.warning(
                 "ingestion_dead_lettered",
                 source_topic=msg.topic,
@@ -175,6 +193,7 @@ class IngestionWorker:
                 error=str(error),
             )
         except Exception as dlq_error:  # noqa: BLE001 — DLQ failure must not crash the worker
+            INGESTION_DEAD_LETTER_FAILED.labels(source_topic=topic).inc()
             logger.error(
                 "ingestion_dead_letter_failed",
                 source_topic=getattr(msg, "topic", None),

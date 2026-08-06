@@ -10,13 +10,23 @@ worker persists `agent_id`, `agent_version`, `config_hash` and `build_id`; it re
 `organization_id` and `asset_ids` to route the update and `timestamp` to stamp it. It never
 touches `git_sha`, `collector_status` or `buffer_depth`.
 
-WHY THAT IS WORTH A GUARD RATHER THAN A SHRUG. `buffer_depth` is the single number that says
-a device is falling behind, and the heartbeat is the path that works when the device is
-behind NAT and its `/metrics` cannot be scraped. `collector_status` is per-collector health
-from the same place. So the fleet view's answer to "is anything wrong out there" is arriving
-at the cloud, in a message the cloud already parses, and being thrown away — while the
-`EdgeBufferGrowing` alert that would say the same thing requires reaching the device that,
-in the case worth catching, cannot be reached.
+WHY THAT IS WORTH A GUARD RATHER THAN A SHRUG — **and a correction, because the first
+version of this docstring drew the wrong conclusion.**
+
+It said device backlog was invisible to the cloud. It is not. A SECOND heartbeat path exists,
+`POST /api/v1/edge/heartbeat` in `app/api/edge_fleet.py`, and the agent posts `buffer_pending`,
+`dead_lettered`, `dropped` and `active_collectors` to it; the backend persists them on
+`edge_agent_status` and publishes per-agent `edge_agent_*` gauges. Backlog is stored, gauged
+and alertable.
+
+The original claim came from reading this path and generalising. **A sweep that finds one
+consumer and concludes there is no other is asserting a negative it did not check** — found
+by coming at it from the opposite end, while checking whether a backend gauge had a producer.
+
+What remains true is narrower and still worth a guard: the same health is assembled twice,
+under two names for one quantity (`buffer_depth` here, `buffer_pending` there), and this
+path's copy is read by nobody. Redundant work on every device, and two vocabularies for one
+fact — the condition that produced six aliases in FS-435.
 
 WHAT THIS ASSERTS. Not that the fields must be stored — persisting them needs a migration and
 a decision about what the fleet surface should show, which is on the open-decisions page. Only
@@ -49,12 +59,14 @@ DELIBERATELY_UNREAD: dict[str, str] = {
         "the sha adds precision nothing currently asks for"
     ),
     "collector_status": (
-        "per-collector health. Needs a column and a decision about what the fleet surface "
-        "shows — open-decisions.md"
+        "per-collector health. The HTTP heartbeat reports `active_collectors` / "
+        "`total_collectors`, which is the same question answered more coarsely — "
+        "open-decisions.md"
     ),
     "buffer_depth": (
-        "pending messages on the device. The operationally sharpest of the three, and the "
-        "reason this guard exists rather than a comment — open-decisions.md"
+        "pending messages on the device. NOT invisible to the cloud: the HTTP heartbeat "
+        "carries the same number as `buffer_pending` and it is gauged per agent. This copy "
+        "is the redundant one — open-decisions.md"
     ),
     # Routing and envelope, consumed but not by name in a `data.get(...)` the scan can see.
     "message_type": "the branch discriminator; read before dispatch",
@@ -161,3 +173,83 @@ class TestTheThreeUnreadFieldsAreStillUnread:
             f"{len(dropped)} heartbeat fields are now discarded, up from three. The agent "
             f"is doing work on every device that reaches nobody."
         )
+
+
+class TestTheOtherHeartbeatPathStillConsumesTheseFields:
+    """The correction, pinned (FS-460, Rule 92).
+
+    This file originally asserted that a device's buffer depth reached the cloud and was
+    thrown away. It was wrong: `POST /api/v1/edge/heartbeat` consumes the same quantity
+    under the name `buffer_pending`, persists it, and publishes it as a per-agent gauge.
+
+    The exemptions above now say so, which makes them claims about code in a different
+    module — and an uncheckable claim in an exemption is how the original error survived
+    review. So they are checked. If the HTTP path stops consuming device health, the
+    reasons written beside `buffer_depth` and `collector_status` become false and the
+    Kafka copy stops being the redundant one.
+    """
+
+    HTTP_HEARTBEAT = ROOT / "backend" / "app" / "api" / "edge_fleet.py"
+    FLEET_SERVICE = ROOT / "backend" / "app" / "services" / "edge_fleet.py"
+
+    def test_the_http_heartbeat_endpoint_exists(self):
+        assert self.HTTP_HEARTBEAT.exists(), (
+            "the HTTP heartbeat module is gone; the exemptions above claim it consumes "
+            "device health"
+        )
+        assert "/edge/heartbeat" in self.HTTP_HEARTBEAT.read_text(), (
+            "no /edge/heartbeat route found"
+        )
+
+    @pytest.mark.parametrize("field", ["buffer_pending", "dead_lettered", "active_collectors"])
+    def test_it_reads_the_health_fields(self, field: str):
+        assert field in self.HTTP_HEARTBEAT.read_text(), (
+            f"the HTTP heartbeat no longer reads {field!r}, so device health is no longer "
+            f"reaching the cloud by that path — and the exemption beside `buffer_depth` "
+            f"above, which says this copy is the redundant one, is now false"
+        )
+
+    def test_buffer_depth_reaches_a_gauge(self):
+        """Persisting it is not the same as making it visible. The claim in the exemption
+        is that an operator can see device backlog, which needs the gauge."""
+        service = self.FLEET_SERVICE.read_text()
+        assert "edge_agent_buffer_pending" in service, (
+            "the per-agent buffer gauge is gone; device backlog is no longer observable "
+            "from the cloud and open-decisions #5 needs reopening at its original severity"
+        )
+        assert ".set(" in service, "the gauge is declared but nothing sets it"
+
+    def test_the_agent_actually_sends_that_payload(self):
+        """The last link. A consumer with no producer is the mirror image of the mistake
+        this class was written to correct.
+
+        The KEYS OF THE RETURNED DICT, not a substring search of the module. The first
+        version searched the file text and passed when the emitted key was renamed,
+        because `build_payload` reads the same name out of its health snapshot one line
+        above — so the string was still present while the payload no longer carried it.
+        Caught by mutating the key and watching this stay green.
+        """
+        reporter = ROOT / "edge-agent" / "opsgrid_agent" / "heartbeat.py"
+        assert reporter.exists(), "the agent's HTTP heartbeat reporter is gone"
+
+        tree = ast.parse(reporter.read_text())
+        sent: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == "build_payload":
+                for inner in ast.walk(node):
+                    if isinstance(inner, ast.Dict):
+                        sent |= {
+                            k.value
+                            for k in inner.keys
+                            if isinstance(k, ast.Constant) and isinstance(k.value, str)
+                        }
+        assert sent, "build_payload not found or returns no literal dict"
+
+        missing = sorted(
+            {"buffer_pending", "dead_lettered", "active_collectors"} - sent
+        )
+        assert not missing, (
+            f"the agent no longer sends {missing} on the HTTP heartbeat, so the cloud "
+            f"consumer has nothing to consume and the exemptions above are false"
+        )
+
