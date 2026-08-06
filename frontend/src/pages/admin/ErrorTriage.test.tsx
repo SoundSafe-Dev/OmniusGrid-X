@@ -170,3 +170,46 @@ describe('the filters reach the query', () => {
     )
   })
 })
+
+describe('a summary that has not arrived is not a count of zero (FS-489)', () => {
+  it('shows an em dash rather than 0 while the summary is loading', async () => {
+    // react-query RETRIES by default, so `isError` stays false for seconds. During that
+    // window `summary.data` is undefined and `?? 0` rendered "Open errors 0" — on the page
+    // an engineer checks to find out whether a deploy broke anything. Zero open errors is
+    // the most reassuring possible lie.
+    useErrorSummary.mockReturnValue(summary({ data: undefined, isLoading: true }))
+    show()
+
+    expect(screen.getByText('Open errors').closest('div')?.textContent).toContain('—')
+    expect(screen.getByText('Open errors').closest('div')?.textContent).not.toContain('0')
+  })
+
+  it('says the figure could not be loaded when it failed', async () => {
+    useErrorSummary.mockReturnValue(summary({ data: undefined, isError: true }))
+    show()
+
+    expect(screen.getAllByText(/not a count of zero/i).length).toBeGreaterThan(0)
+  })
+
+  it('shows a real zero when the server actually reported zero', async () => {
+    // The other direction, and it matters: a quiet week is a real answer, and replacing it
+    // with an em dash would make the failure above indistinguishable from good news.
+    useErrorSummary.mockReturnValue(
+      summary({
+        data: {
+          range: '7d',
+          open_count: 0,
+          acknowledged_count: 0,
+          events_in_range: 0,
+          regressions_in_range: 0,
+          top_error: null,
+          series: [],
+        },
+      }),
+    )
+    show()
+
+    expect(screen.getByText('Open errors').closest('div')?.textContent).toContain('0')
+    expect(screen.queryByText(/not a count of zero/i)).not.toBeInTheDocument()
+  })
+})

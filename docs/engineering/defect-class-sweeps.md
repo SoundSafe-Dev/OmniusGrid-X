@@ -26,7 +26,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The eighty-three numbered classes
+## The eighty-four numbered classes
 
 **The count is the numbering, and it was already stale before this line was corrected.**
 This heading read "forty-seven" while the document's own highest class was 60 — the summary
@@ -2698,6 +2698,18 @@ one of its findings. The habit that catches it:
      accepts input, and then fails — in the half nobody exercised, because everything visible
      worked. `userContext` mocked one read and four writes went to a backend that is not
      running in demo mode.
+
+114. **A two-state read is wrong for as long as the retries last.**
+     `isLoading` and `isError` are not the same absence, and with react-query's default
+     retries the window between them is seconds. A component branching on `isError` alone
+     shows its not-yet-known state as a fact about the world for most of every outage a user
+     actually sees — "No assets", "Open errors 0".
+
+115. **A negative assertion needs a positive precondition.**
+     "No route claims emptiness" is satisfied by a route that renders nothing at all. The
+     browser sweep's first version aborted the dev server's own modules, so React never
+     mounted and all 32 assertions passed against a blank document. Assert the page rendered
+     before asserting anything about its text.
 
 ---
 
@@ -5969,7 +5981,7 @@ Check both directions of an exemption before believing the count it produces.
 
 # What this session produced, and what it cost
 
-**FS-431 to FS-488 — fifty-eight items, no gaps** — over one working session. Recorded
+**FS-431 to FS-489 — fifty-nine items, no gaps** — over one working session. Recorded
 together because the individual entries above answer "what was wrong" and this answers "what
 the method actually does", which is the thing worth reusing.
 
@@ -6823,3 +6835,56 @@ last recalled it.**
 A demo mode that fakes reads and lets writes through produces a UI that displays, accepts
 input, and then fails — and the failure is in the half nobody exercised, because everything
 visible worked. If a client has a mock branch, every method needs one.
+
+## Class 84 — the state between loading and failed (FS-489)
+
+Three source sweeps cover failure-as-emptiness, and all three read one file at a time. So the
+browser sweep was written to ask the question they cannot: **with every `/api/v1/` call
+aborted, what does a whole page say?** It needs no backend — auth is seeded into localStorage
+and requests are failed at the network layer — so it runs beside the smoke tests rather than
+in the job that stands up Postgres.
+
+It found two, and both had already been fixed for the case they were fixed for:
+
+**`Historian`'s asset picker** reads `assetsError ? 'Asset list unavailable' : 'No assets'`.
+That is FS-479's fix, and it is correct. But **react-query retries by default**, so `isError`
+stays false for seconds while the retries run — and during that window `assets` is empty and
+`assetsError` is false. The branch it renders for most of any outage is *"this plant has
+nothing instrumented"*.
+
+**`ErrorTriage`'s summary tiles** read `summary.data?.open_count ?? 0`. A summary that has not
+arrived renders **"Open errors 0"** — on the page an engineer opens to find out whether a
+deploy broke anything. That is FS-191's shape returning in a new place: *a complete,
+error-free dashboard of zeros*, which is the exact defect `frontend-e2e-authenticated` exists
+to catch. Zero open errors is the most reassuring lie this product can tell.
+
+**The missing state is the same in both**: `isError` was handled, `isLoading` was not, and the
+gap between them is where a retrying request lives. A three-state chain is not a style
+preference — with retries on, the two-state version shows the wrong state for longer than the
+right one.
+
+### The sweep was vacuous first, and would have shipped that way
+
+Its first version routed `**/api/**`. The frontend's own source lives in `src/api/`, and Vite
+serves those modules over HTTP — so the pattern aborted the application's own JavaScript.
+React never mounted, every body was empty, and **all 32 assertions passed**: a page that
+rendered nothing claims no emptiness. It reported green.
+
+`assertTheAppRendered` now fails any route whose body is under twenty characters, before any
+claim about its text is made. That is the difference between a guard and a decoration, and the
+only reason it was caught is that the *other* half of the same file — "does not go blank
+instead" — failed on three routes and had to be explained.
+
+## Rule 114 — a two-state read is wrong for as long as the retries last
+
+`isLoading` and `isError` are not the same absence, and with retries enabled the window
+between them is seconds, not milliseconds. A component that branches on `isError` alone shows
+its not-yet-known state as a fact about the world for the whole retry window — which is most
+of every outage a user actually sees.
+
+## Rule 115 — a negative assertion needs a positive precondition
+
+"No route claims emptiness" is satisfied by a route that renders nothing at all. Any sweep
+asserting the *absence* of something must first assert the presence of the thing it is
+searching — the page mounted, the file parsed, the list is non-empty. Otherwise the greenest
+possible result is a total failure of the harness.

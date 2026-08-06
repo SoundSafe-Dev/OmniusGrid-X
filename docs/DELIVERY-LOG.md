@@ -5079,3 +5079,86 @@ the same way — fewer items left, more work done. **A number nobody derives is 
 agrees with whoever last recalled it.**
 
 **Suite:** frontend 753 → 821 · backend 3560 → 3564 · edge agent 289.
+
+## FS-489 — what a whole page says when nothing loads
+
+Three of the four items in this batch turned out to be closed already; the fourth was mostly
+stale, and the real gap was standing next to it.
+
+### FS-359, FS-360, FS-361 — closed, and the plan disagreed with itself
+
+All three were recorded as "code that ships and nothing exercises". Re-measured by walking
+`backend/tests/` for each module name: `correlation_registry_integration` has 24 tests across
+two suites, `yard_management` has 53 across four, and the document-intake cluster has 47.
+
+Two of the three had already been corrected in the table at the *top* of
+`fixed-sprints-344-393.md` while the Wave H body still listed them as open work — so the
+document contradicted itself for as long as anybody read only one half. The line counts were
+low by a third as well (`correlation_registry_integration` is 1,270 lines, not 1,065). **A plan
+authored from task pools rather than from the codebase ages in both directions at once**: the
+work gets done and the file gets bigger, and neither reaches the document.
+
+### FS-365 — three claims, two stale, one deliberate
+
+`data-reaches-the-screen.spec.ts` walks **32** routes, not four. Playwright runs in **two** CI
+jobs, not one. And `compliance-assistant.visual.ts` is uncollected on purpose — its own
+docstring says *"Not part of the e2e suite — a throwaway harness… run with `npx tsx`"*.
+
+**The real gap was adjacent.** Nothing distinguished a deliberate non-spec from a spec that had
+silently stopped being collected. Playwright's default `testMatch` needs a `.spec` or `.test`
+infix, this config overrides it only on the setup project, and a rename during a refactor
+costs a whole file — with no error, and a suite that goes green *faster* than the day before,
+which is the direction nobody investigates. `everyE2eFileIsCollectedOrExcused.test.ts` now
+asserts every `e2e/*.ts` is collected or excused with its reason, and that the config still
+relies on the default it describes.
+
+### The browser sweep, and the two defects it found
+
+`failure-is-not-emptiness.spec.ts` drives all 32 routes with every `/api/v1/` call aborted at
+the network layer and asserts no page claims the world is empty. It needs no backend — auth is
+seeded into localStorage — so it runs in the fast browser job.
+
+Both finds had already been fixed *for the case they were fixed for*:
+
+* **`Historian`'s asset picker** reads `assetsError ? 'Asset list unavailable' : 'No assets'`,
+  which is FS-479's fix and is correct. But react-query **retries by default**, so `isError`
+  stays false for seconds — and during that window `assets` is empty and `assetsError` is
+  false. The branch shown for most of any outage was "this plant has nothing instrumented".
+* **`ErrorTriage`'s summary tiles** read `summary.data?.open_count ?? 0`, so a summary that had
+  not arrived rendered **"Open errors 0"** on the page an engineer opens to find out whether a
+  deploy broke anything. That is FS-191's shape in a new place — a complete, error-free
+  dashboard of zeros — and zero open errors is the most reassuring lie this product can tell.
+
+The missing state is the same in both: `isError` handled, `isLoading` not, and the gap between
+them is where a retrying request lives.
+
+### The sweep was vacuous first
+
+Its first version routed `**/api/**`. The frontend's own source lives in `src/api/`, and Vite
+serves those modules over HTTP — so the pattern aborted the application's own JavaScript. React
+never mounted, every body was empty, and **all 32 assertions passed against a blank document**.
+It reported green.
+
+`assertTheAppRendered` now fails any route whose body is under twenty characters before any
+claim about its text is made. The only reason this was caught at all is that the other half of
+the same file — "and it does not go blank instead" — failed on three routes and had to be
+explained. **A negative assertion is satisfied by nothing at all**, which makes total harness
+failure the greenest possible result.
+
+### And the new spec broke the whole e2e suite for a minute
+
+Importing `ROUTES` from `data-reaches-the-screen.spec.ts` is a hard Playwright error —
+*"test file X should not import test file Y"* — and it fails collection for the **entire
+suite**, not the importing file. The symptom is `Total: 0 tests in 0 files`.
+
+It only appears when both files are collected, so every filtered run of the new spec passed.
+The check that caught it was `npx playwright test --list` with no filter, and nothing else
+would have: 84 tests reported as 0, in a job that would have gone green in seconds.
+
+`ROUTES` now lives in `e2e/routes.ts`, imported by both specs and excused in the collection
+guard with that reason. `everyRouteIsSwept.test.ts` reads the new path — it regexes the array
+out of a file, so pointing it at the old one would have left it comparing against an empty
+list and passing.
+
+**Suite:** frontend 821 → 833 · e2e 49 → 84 collected, 38 passing without a backend
+(35 new) · backend 3564 · edge agent 289.

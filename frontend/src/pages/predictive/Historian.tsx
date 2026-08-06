@@ -67,7 +67,12 @@ const exportCsv = (result: HistorianQueryResponse) => {
 };
 
 export const Historian: FC = () => {
-  const { data: assetsPage, isError: assetsError } = useQuery({
+  // `isLoading` is read as well as `isError` (FS-489). react-query retries by default, so
+  // `isError` stays false for SECONDS while the retries run — and during that window
+  // `assets` is empty and `assetsError` is false, which is the shape of "this plant has
+  // nothing instrumented". The state the picker was missing is the one it is in most of the
+  // time something is wrong.
+  const { data: assetsPage, isError: assetsError, isLoading: assetsLoading } = useQuery({
     queryKey: ['historian-assets'],
     queryFn: () => assetsApi.list({ limit: 500 }),
   });
@@ -148,7 +153,11 @@ export const Historian: FC = () => {
                    nothing instrumented. On a failed load it means the list could not be
                    read, which is a different thing to go and check. */
                 <option value="">
-                  {assetsError ? 'Asset list unavailable' : 'No assets'}
+                  {assetsLoading
+                    ? 'Loading assets…'
+                    : assetsError
+                      ? 'Asset list unavailable'
+                      : 'No assets'}
                 </option>
               )}
               {assets.map((a) => (

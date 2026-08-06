@@ -43,6 +43,8 @@ Every FS-344…393 item was checked against the code it cites. Eight no longer r
 | FS-357 | twelve paths at `/api/v1/logistics/logistics/…` | closed by FS-468: `fleet_logistics` is canonical, the correlation variants moved under `/correlation/`, and a guard fails any route that repeats a segment |
 | FS-359 | `correlation_registry_integration.py` has zero test references | `test_correlation_registry_integration.py`, 30 tests |
 | FS-361 | the document-intake cluster is untested end to end | `test_document_intake_parsers.py` and siblings, from FS-440/441 |
+| FS-360 | `yard_management.py` has zero tests | four suites, 53 tests — detention charges, dock-scheduling conflicts, dwell-without-check-in, naive-timestamp verdicts |
+| FS-365 | the E2E suite covers four routes | `data-reaches-the-screen.spec.ts` walks **32**, and Playwright runs in two CI jobs (`frontend-e2e`, `frontend-e2e-authenticated`). The `.visual.ts` file is excluded **deliberately** — its own docstring calls it a `npx tsx` screenshot harness, not a spec |
 
 **FS-355 makes nine, and I missed it on the first pass.** The entry reads "`error_events`
 carries `organization_id` and **no RLS policy**", sized L on a primary-key grain change. The
@@ -530,15 +532,26 @@ for placeholder secrets.
   conformance to drop** when it lands; that needs a deliberate re-baseline, which is a
   different act from lowering a floor to make a build pass.
 
-### Code that ships and nothing exercises
+### Code that ships and nothing exercises — **CLOSED, all three** (verified 2026-08-06)
 
-~3,640 lines of wired service code have **zero** references anywhere in `backend/tests/`.
+This section read "~3,640 lines of wired service code have **zero** references anywhere in
+`backend/tests/`". Re-measured by walking `backend/tests/` for each module name:
 
-- **FS-359 · `correlation_registry_integration.py`** · L — 1,065 lines, four app importers.
-- **FS-360 · `yard_management.py`** · M — 749 lines, backs a live API surface.
-- **FS-361 · The document-intake cluster** · L — `pdf_parser` (188), `docx_parser` (175),
-  `image_text_extractor` (161), `document_store` (187), `rag_chunker` (152), `rag_ingestion`
-  (534). **1,397 lines, the entire file-ingest path, untested end to end.**
+- **FS-359 · `correlation_registry_integration.py`** — 1,270 lines, and
+  `test_correlation_registry_integration.py` (17) plus
+  `test_correlation_alerts_are_dispatched.py` (7) reference it. **Closed.**
+- **FS-360 · `yard_management.py`** — 824 lines across four suites: detention charges (18),
+  dock-scheduling conflicts (15), dwell-without-a-check-in (9), naive-timestamp verdicts (11).
+  **Closed.**
+- **FS-361 · The document-intake cluster** — `rag_chunker` (17) and
+  `rag_ingestion_normalization` (30), with parser suites from FS-440/441. **Closed.**
+
+The line counts in the original entry were also low by a third — `correlation_registry_integration`
+is 1,270 lines, not 1,065. **A plan authored from task pools rather than from the codebase
+ages in both directions at once**: the work gets done and the file gets bigger, and neither
+change reaches the document. Two of these were already corrected in the table at the top of
+this file while this section still listed them as open, so the document disagreed with itself
+for as long as anyone read only one half.
 
 ### Tests that pass without running
 
@@ -568,26 +581,35 @@ for placeholder secrets.
   `dashboardAnalytics`, `fleetTracker`, `alarmRules`, `rul`, `historian`, `twinOptimizer`,
   `userContext`.
 
-- **FS-364 · Eight routed pages with no test at all** · L
-  `CorrelationAIPane` (863 lines, `/nlp`), `Fleet` (574), `IntakeInbox` (387), `ErrorTriage`
-  (371), `Historian` (309), `FleetRolloutDetail` (268), `Kanban` (255). The directories
-  `components/kanban/` (7 files, ~1,700 lines) and `components/nlp/` (9 files, ~2,400 lines)
-  have **no tests whatsoever**.
+- **FS-364 · Eight routed pages with no test at all** · **CLOSED** (FS-478…FS-484)
+  All eight now have one, and `everyRoutedPageHasATest.test.ts` keeps it true — resolving
+  `<Route element={<X />} />` back to a source file **through the `./pages/admin` barrel**,
+  which is how `Fleet` and `ErrorTriage` stayed hidden while a hand-written walk twice
+  reported none remaining.
 
-- **FS-365 · The E2E suite covers four routes** · L
-  `authenticated.spec.ts` is `test.skip(!LIVE)` and runs only in one job; it covers `/`,
-  `/assets`, `/alarms`, `/login`. Nothing E2E touches Kanban, NLP, intake, ERP, yard,
-  transportation, OEE, engines, compliance, historian or admin. Two structural problems beside
-  the coverage:
-  - `frontend/e2e/compliance-assistant.visual.ts` is **not collected** — `playwright.config.ts:6`
-    matches `.spec.ts`, so a visual test exists and never runs.
-  - `nightly-e2e.yml` is named "Nightly real-mode e2e" and **starts no browser**: it is a Python
-    `urllib` script hitting five endpoints for `status == 200`. It is also cron-only, so it
-    gates nothing.
+- **FS-365 · The E2E suite covers four routes** · **mostly stale; one real item, now done**
+  Re-measured 2026-08-06 by listing what Playwright actually collects:
+  - *"covers four routes"* — `data-reaches-the-screen.spec.ts` walks **32**, every routed page
+    but `/login`. Written after this plan was.
+  - *"runs only in one job"* — two: `frontend-e2e` (browser smoke, no backend) and
+    `frontend-e2e-authenticated` (Postgres, migrations, demo data, uvicorn), both on every push.
+  - *"`compliance-assistant.visual.ts` is not collected"* — true, and **deliberate**. Its own
+    docstring: *"Not part of the e2e suite — a throwaway harness for eyeballing the page
+    without a live RAG stack. Run with `npx tsx`."* The extension is the mechanism, not a bug.
+  - *"`nightly-e2e.yml` starts no browser"* — true, and it does not need to. It runs real HTTP
+    and websocket flows against a live stack; the browser-against-real-stack job is
+    `frontend-e2e-authenticated`, which runs on every push rather than nightly.
 
----
+  **The real gap was next to the claim, not in it.** Nothing distinguished a deliberate
+  non-spec from a spec that had silently stopped being collected — a rename during a refactor
+  costs a whole file, with no error and a suite that goes green *faster*.
+  `everyE2eFileIsCollectedOrExcused.test.ts` now asserts every `e2e/*.ts` is collected or
+  excused with a reason, and that the config still relies on the default `testMatch`.
 
-# Wave I — Product capability (FS-241…250, FS-285, FS-366 … FS-368)
+  And `failure-is-not-emptiness.spec.ts` (FS-489) drives all 32 routes with every `/api/v1/`
+  call aborted, asserting no page claims the world is empty. It found two: the historian's
+  asset picker reading "No assets" during the retry window, and error triage rendering
+  **"Open errors 0"** for a summary that had not arrived.
 
 - **FS-366 · The Decision History panel is built on seven fields the API never sends** · M
   The sharpest of the declared-but-unsent findings, because unlike the known

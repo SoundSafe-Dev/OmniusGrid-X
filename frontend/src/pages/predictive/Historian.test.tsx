@@ -187,3 +187,37 @@ describe('an unavailable asset list is not an empty one', () => {
     )
   })
 })
+
+describe('an asset list still loading is not an empty plant (FS-489)', () => {
+  it('says it is loading rather than "No assets"', async () => {
+    // The picker distinguished failed from empty (FS-479) and not LOADING from empty. With
+    // react-query's default retries, `isError` stays false for seconds while `assets` is
+    // empty — so the state it showed for most of any outage was "this plant has nothing
+    // instrumented".
+    let resolveList: (value: unknown) => void = () => {}
+    list.mockReturnValue(new Promise((resolve) => { resolveList = resolve }))
+    show()
+
+    await waitFor(() => expect(screen.getByText(/loading assets/i)).toBeInTheDocument())
+    expect(screen.queryByText(/^No assets$/)).not.toBeInTheDocument()
+
+    resolveList({ items: [], total: 0 })
+  })
+
+  it('still says the list is unavailable when it failed', async () => {
+    list.mockRejectedValue(new Error('down'))
+    show()
+
+    await waitFor(() =>
+      expect(screen.getByText(/Asset list unavailable/i)).toBeInTheDocument(),
+    )
+  })
+
+  it('says "No assets" when the plant really has none', async () => {
+    // The third state, and the only one where that sentence is true.
+    list.mockResolvedValue({ items: [], total: 0 })
+    show()
+
+    await waitFor(() => expect(screen.getByText('No assets')).toBeInTheDocument())
+  })
+})

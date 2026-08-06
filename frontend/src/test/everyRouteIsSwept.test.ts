@@ -30,7 +30,10 @@ function declaredRoutes(): string[] {
 }
 
 function sweptRoutes(): string[] {
-  const spec = readFileSync(resolve(ROOT, 'e2e/data-reaches-the-screen.spec.ts'), 'utf8')
+  // `e2e/routes.ts`, not the spec that used to hold it: Playwright refuses spec-to-spec
+  // imports, and a second spec needed the same list — so it moved to a shared module
+  // (FS-489). Reading the old path would leave this comparison over an empty array.
+  const spec = readFileSync(resolve(ROOT, 'e2e/routes.ts'), 'utf8')
   const block = spec.match(/export const ROUTES = \[([\s\S]*?)\]/)
   if (!block) throw new Error('the ROUTES array could not be found in the e2e spec')
   return [...block[1].matchAll(/'([^']+)'/g)].map((m) => m[1])

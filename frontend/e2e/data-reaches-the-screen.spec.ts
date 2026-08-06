@@ -1,4 +1,5 @@
 import { test, expect, Page } from '@playwright/test'
+import { ROUTES } from './routes'
 
 /**
  * A field that arrives must reach the screen (FS-443).
@@ -37,16 +38,6 @@ const LIVE = process.env.E2E_LIVE_BACKEND === '1'
 const EMAIL = process.env.E2E_USER_EMAIL ?? 'e2e@omniusgrid.test'
 const PASSWORD = process.env.E2E_USER_PASSWORD ?? 'e2e-playwright-password'
 
-/** Every routed page except `/login`, which has no authenticated content to check. */
-export const ROUTES = [
-  '/', '/assets', '/alarms', '/alarms/rules', '/oee', '/kanban', '/shop-floor',
-  '/activations', '/engines/tactical', '/engines/strategic', '/engines/mlops',
-  '/engines/cloud', '/analytics/telemetry', '/analytics/health', '/analytics/maintenance',
-  '/predictive/rul', '/predictive/historian', '/fleet', '/fleet/organization',
-  '/logistics/yard', '/logistics/transportation', '/erp', '/compliance', '/nlp', '/intake',
-  '/admin/users', '/admin/collectors', '/admin/health', '/admin/settings',
-  '/admin/notifications', '/admin/errors', '/admin/fleet',
-]
 
 /** The visible signature of a field that never arrived. */
 const NOT_ARRIVED = /\bundefined\b|\bNaN\b|\[object Object\]|Invalid Date/
