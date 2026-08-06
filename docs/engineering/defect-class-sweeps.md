@@ -2618,6 +2618,12 @@ one of its findings. The habit that catches it:
     originals had, so the newer code was less configurable than the code it imitated. When
     copying a shape, copy what makes it changeable, not only what makes it work.
 
+100. **A plan overstating what is left is harder to catch than one that flatters.**
+     A flattering plan gets checked, because someone eventually looks for the thing it
+     says is finished. An inflated one does not — nobody investigates a backlog for being
+     too long. Two plans in a row overstated, the second written specifically to avoid the
+     first's mistake.
+
 ---
 
 ## Open observations, not yet tickets
@@ -5888,7 +5894,7 @@ Check both directions of an exemption before believing the count it produces.
 
 # What this session produced, and what it cost
 
-**FS-431 to FS-475 — forty-five items, no gaps** — over one working session. Recorded
+**FS-431 to FS-476 — forty-six items, no gaps** — over one working session. Recorded
 together because the individual entries above answer "what was wrong" and this answers "what
 the method actually does", which is the thing worth reusing.
 
@@ -6155,4 +6161,40 @@ shape, do not reproduce it.
 hot refresh loop and a real finding; it took one look at the file to see it was thirty
 seconds. Seventh detector this week to be wrong before the code was, and the first where the
 error was in the reported VALUE rather than in what it selected.
+
+## The plan overstated again (FS-476)
+
+`fixed-sprints-241-343.md` was written from the task pools, and five of the eight items
+examined described work already delivered. `fixed-sprints-344-393.md` was written **from the
+codebase specifically to avoid that**, and by 2026-08-06 eight of its own entries no longer
+reproduced — `FS-266`, `FS-272`, `FS-345`, `FS-350`, `FS-354`, `FS-357`, `FS-359`, `FS-361`.
+A ninth, `FS-368`, is half true: the defect is fixed and the capability is not.
+
+**Overstating is the harder direction to catch.** A plan that flatters gets checked, because
+somebody eventually goes looking for the thing it claims is finished and does not find it. A
+plan that inflates is never investigated — nobody audits a backlog for being too long — and
+the cost is paid quietly, in work planned twice and estimates built on a number that was
+never true.
+
+**Why it happened twice** is the part worth keeping, because the second plan did everything
+the first got wrong. It was derived from the code, every item carried a file and a line, and
+unverifiable claims were marked as such. None of that helped, because the failure is not in
+how a plan is written — it is that **a plan is a snapshot of a belief about a repository, and
+the repository does not update it.**
+
+The documents in this repository that have not drifted are the ones written as things happen:
+the delivery log, and this file. The ones that drift are written in advance. That is not an
+argument against planning; it is an argument for a plan carrying a *dated verification pass*
+rather than a status column, and for the checkable part of it being asserted like everything
+else here.
+
+`backend/tests/test_the_plan_does_not_claim_finished_work.py` holds the narrow part: an item
+recorded as delivered must stay delivered, a fix cited as closing one must be findable, and no
+item may appear in both the delivered table and the still-open list. It cannot judge whether
+a multi-day item is done — but it can stop the document contradicting itself, which is how
+both drifts began.
+
+## Rule 100 — a plan overstating what is left is harder to catch than one that flatters
+
+Nobody investigates a backlog for being too long.
 

@@ -25,6 +25,47 @@ measurement taken on 2026-08-01. Where a claim could not be verified it is marke
 rather than asserted. **Verify the premise before starting anyway**, and if it does not
 reproduce, correct the entry in place with the date.
 
+## Verification pass, 2026-08-06 — eight entries were already delivered
+
+**This plan now overstates what is left, in the same direction as the one it replaced.** Its
+own header says to verify a premise before starting and to correct the entry in place with the
+date. This is that correction, taken from the codebase rather than from this document.
+
+Every FS-344…393 item was checked against the code it cites. Eight no longer reproduce:
+
+| item | claim | what is actually there |
+|---|---|---|
+| FS-266 | `DELETE /rag/documents/{doc_id}` has no org filter | org-scoped from the token via `_org_id(current_user)`, and documented in the handler |
+| FS-272 | residual contract `ServerError`s | `tests/_lane_failures.py` is **empty** — `GET_FAILURES` and `WRITE_FAILURES` are both `{}` |
+| FS-345 | a simulated position is indistinguishable from a fix | `get_device_location` sets `invented = True` where it fabricates and stamps from that variable |
+| FS-350 | demo recommendations loaded into the live queue | gated on `ALLOW_DEV_TOKEN`, seeds only when the queue is empty, and carries `simulation_basis` provenance since FS-434 |
+| FS-354 | `kanban.py` and `nlp_correlation.py` on `get_db` over FORCE-RLS tables | both at zero. The one `Depends(get_db)` string left in `kanban.py` is inside a comment explaining its removal |
+| FS-357 | twelve paths at `/api/v1/logistics/logistics/…` | closed by FS-468: `fleet_logistics` is canonical, the correlation variants moved under `/correlation/`, and a guard fails any route that repeats a segment |
+| FS-359 | `correlation_registry_integration.py` has zero test references | `test_correlation_registry_integration.py`, 30 tests |
+| FS-361 | the document-intake cluster is untested end to end | `test_document_intake_parsers.py` and siblings, from FS-440/441 |
+
+**FS-368 is half true and worth splitting.** The defect — a WebSocket opened to
+`/ws/fleet-tracking`, a route that does not exist, so the live map silently froze — is fixed;
+both clients poll now and say so in a comment. The *capability* (real push through the
+authenticated `/ws` stream) is untouched, and that is a feature rather than a bug.
+
+### What is still open, verified 2026-08-06
+
+`FS-344` (`GEOTAB_SIMULATED` defaults `True`; a production validator flags it, so the
+question is whether one validator is enough) · `FS-355` (`error_events` still has no RLS
+policy) · `FS-307` (the contract gate still runs as superuser) · `FS-362` (ERP suites still
+skip without credentials) · `FS-364` (routed pages with no test) · `FS-369`…`FS-376` (the
+production-readiness wave: PITR, HA/autoscaling wiring, the advisory `pre-commit` job, the
+missing latency SLO gate, hand-provisioned secrets, the README/manifest contradiction).
+
+**Why this keeps happening**, since it is the second plan in a row to overstate: both were
+written as inventories and then *not* re-derived, while the work carried on against the
+codebase. A plan is a snapshot of a belief about a repository, and the repository does not
+update it. The delivery log and the defect-class sweeps are written as things happen and have
+not drifted; this document is written in advance and has, twice.
+
+---
+
 ## Lane discipline
 
 Derived from each dev's own commits. **Hands off**: `auth.py`, `kanban.py`, `telemetry.py`,

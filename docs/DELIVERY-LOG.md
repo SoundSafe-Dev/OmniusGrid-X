@@ -4448,3 +4448,49 @@ describe the shape rather than reproduce it.
 
 **Suite:** backend 3534 passed / 100 skipped · edge agent 289 · frontend 555.
 
+---
+
+## 2026-08-06 — FS-476: the plan overstated what was left, again
+
+The verification pass. `fixed-sprints-344-393.md` says in its own header to verify a premise
+before starting and correct the entry in place with the date; this is that, taken from the
+codebase rather than from the document.
+
+**Eight of its entries no longer reproduce.** `FS-266` (the RAG delete is org-scoped from the
+token), `FS-272` (the lane-failure allowlist is empty in both directions), `FS-345`
+(`get_device_location` stamps from where it fabricates), `FS-350` (demo recommendations are
+gated on `ALLOW_DEV_TOKEN`, seed only an empty queue, and carry provenance), `FS-354` (both
+modules at zero `get_db` uses — the one string left is inside a comment explaining its
+removal), `FS-357` (closed by FS-468), `FS-359` and `FS-361` (both now have test modules).
+
+A ninth, `FS-368`, is **half true and worth splitting**: the defect — a WebSocket opened to a
+route that does not exist, so the live map silently froze — is fixed and both clients poll
+with a comment saying why. The capability is untouched. Those are different pieces of work
+and one entry covering both reads as neither being done.
+
+Still open, verified: `FS-344`, `FS-355`, `FS-307`, `FS-362`, `FS-364`, and the whole
+production-readiness wave `FS-369`…`FS-376`.
+
+### Why it happened twice
+
+The first plan was written from the task pools and inherited every claim they had outgrown.
+**The second was written from the codebase specifically to avoid that** — every item carrying
+a file and a line, unverifiable claims marked as such — and drifted anyway.
+
+So the failure is not in how a plan is written. **A plan is a snapshot of a belief about a
+repository, and the repository does not update it.** The documents here that have not drifted
+are the ones written as things happen: this log, and the defect-class sweeps. The ones that
+drift are written in advance.
+
+Overstating is also the harder direction to catch. A plan that flatters gets checked, because
+somebody eventually looks for the thing it says is finished. Nobody audits a backlog for being
+too long, and the cost is paid quietly — in work planned twice, and estimates built on a
+number that was never true.
+
+`test_the_plan_does_not_claim_finished_work.py` holds the checkable part: an item recorded as
+delivered stays delivered, a fix cited as closing one has to be findable, and no item may
+appear in both the delivered table and the still-open list. It cannot judge a multi-day item,
+but it can stop the document contradicting itself — which is how both drifts began.
+
+**Suite:** backend 3541 passed / 100 skipped · edge agent 289 · frontend 555.
+
