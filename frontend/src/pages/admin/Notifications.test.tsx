@@ -233,13 +233,16 @@ describe('Notifications — the test dispatch', () => {
   it('says a matched count of zero rather than implying success', async () => {
     // "Test dispatched" alone would read as delivered. Zero matches means the event
     // reached nobody, which is the thing the tester is trying to find out.
+    //
+    // This asserted the COUNT — "matched 0 subscriptions" — which was already better than
+    // silence, and still read as an outcome report in the same grey as a success. FS-487
+    // says which it is in the first three words and points at the filters that caused it;
+    // the assertion moved with it, and the tone is asserted separately below.
     sendTest.mockResolvedValue({ matched: 0, results: [] })
     wrap()
     await screen.findByText('Ops webhook')
     fireEvent.click(screen.getByRole('button', { name: /send test/i }))
-    expect(
-      await screen.findByText(/Test dispatched — matched 0 subscriptions\./),
-    ).toBeInTheDocument()
+    expect(await screen.findByText(/nothing was sent/i)).toBeInTheDocument()
   })
 
   it('does not report a failed dispatch as a dispatch', async () => {
@@ -273,5 +276,42 @@ describe('a page of the log is not the log (FS-485)', () => {
 
     await waitFor(() => expect(deliveryLog).toHaveBeenCalled())
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+})
+
+describe('a test that reached nobody (FS-487)', () => {
+  const pressTest = async () => {
+    wrap()
+    fireEvent.click(await screen.findByRole('button', { name: /send test/i }))
+  }
+
+  it('says nothing was sent when no subscription matched', async () => {
+    // The request succeeded and nothing was delivered — which is the one thing pressing
+    // Test is meant to find out. "Test dispatched — matched 0 subscriptions" in the same
+    // grey as every other outcome reads as "done" to anyone skimming.
+    sendTest.mockResolvedValue({ matched: 0, results: [] })
+    await pressTest()
+
+    const note = await screen.findByRole('alert')
+    expect(note.textContent).toMatch(/nothing was sent/i)
+    expect(note.textContent).toMatch(/minimum severity/i)
+  })
+
+  it('reports a match as ordinary status, not an alert', async () => {
+    // The other direction. Alerting on every test would make the zero case
+    // indistinguishable from the working one, which is the defect pointing the other way.
+    sendTest.mockResolvedValue({ matched: 2, results: [] })
+    await pressTest()
+
+    const note = await screen.findByRole('status')
+    expect(note.textContent).toMatch(/matched 2 subscriptions/i)
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('gets the singular right for one match', async () => {
+    sendTest.mockResolvedValue({ matched: 1, results: [] })
+    await pressTest()
+
+    expect((await screen.findByRole('status')).textContent).toMatch(/matched 1 subscription\./)
   })
 })

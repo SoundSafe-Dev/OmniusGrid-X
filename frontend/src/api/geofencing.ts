@@ -205,7 +205,17 @@ export const geofencingApi = {
     await api.post(`/api/v1/geofencing/alerts/${alertId}/acknowledge`, {});
   },
 
-  subscribeToAlerts: (onAlert: (alert: GeofenceAlertExtended) => void): (() => void) => {
+  /** Poll for unacknowledged geofence alerts, calling `onAlert` for each new one.
+   *
+   *  `onError` matters more here than on the position poll (FS-487). A geofence alert is an
+   *  event somebody is WAITING for. When the poll fails, no alerts arrive — which is exactly
+   *  what a quiet fleet looks like. A truck leaves its zone, the alert exists on the server,
+   *  and the panel goes on saying nothing at all. There is no stale value to notice, because
+   *  the absence IS the display. */
+  subscribeToAlerts: (
+    onAlert: (alert: GeofenceAlertExtended) => void,
+    onError?: (error: unknown) => void,
+  ): (() => void) => {
     if (USE_MOCK) {
       const interval = setInterval(async () => {
         const alerts = await geofencingApi.getUnacknowledgedAlerts();
@@ -237,8 +247,10 @@ export const geofencingApi = {
           }
         }
         first = false;
+        onError?.(null);
       } catch (error) {
         console.error('Geofencing alert poll failed:', error);
+        onError?.(error);
       }
     }, 15000);
     return () => clearInterval(interval);

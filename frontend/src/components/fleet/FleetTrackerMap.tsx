@@ -121,6 +121,12 @@ export const FleetTrackerMap: FC<FleetTrackerMapProps> = ({
   const [isLoading, setIsLoading] = useState(true);
   const [showLegend, setShowLegend] = useState(true);
   const unsubscribeRef = useRef<(() => void) | null>(null);
+  // A failed initial load renders an empty map, which reads as "nothing is being tracked"
+  // rather than "we could not ask" (FS-487).
+  const [loadError, setLoadError] = useState(false);
+  // And a failed POLL leaves the pins exactly where they were. Both are said out loud
+  // because neither is visible in the map itself.
+  const [liveStalled, setLiveStalled] = useState(false);
 
   // Initial data fetch
   useEffect(() => {
@@ -135,8 +141,10 @@ export const FleetTrackerMap: FC<FleetTrackerMapProps> = ({
         setVehicles(vehicleData);
         setShipments(shipmentData);
         setGeofences(geofenceData);
+        setLoadError(false);
       } catch (error) {
         console.error('Failed to fetch fleet data:', error);
+        setLoadError(true);
       } finally {
         setIsLoading(false);
       }
@@ -147,14 +155,17 @@ export const FleetTrackerMap: FC<FleetTrackerMapProps> = ({
 
   // Subscribe to real-time updates
   useEffect(() => {
-    unsubscribeRef.current = fleetTrackerApi.subscribeToUpdates((update: FleetUpdate) => {
-      if (update.type === 'vehicle_position') {
-        const vehicleData = update.data as FleetVehiclePosition;
-        setVehicles(prev => 
-          prev.map(v => v.deviceId === vehicleData.deviceId ? vehicleData : v)
-        );
-      }
-    });
+    unsubscribeRef.current = fleetTrackerApi.subscribeToUpdates(
+      (update: FleetUpdate) => {
+        if (update.type === 'vehicle_position') {
+          const vehicleData = update.data as FleetVehiclePosition;
+          setVehicles(prev =>
+            prev.map(v => v.deviceId === vehicleData.deviceId ? vehicleData : v)
+          );
+        }
+      },
+      (error) => setLiveStalled(Boolean(error)),
+    );
 
     return () => {
       if (unsubscribeRef.current) {
@@ -219,6 +230,21 @@ export const FleetTrackerMap: FC<FleetTrackerMapProps> = ({
             ({displayedVehicles.length} vehicles visible)
           </span>
         </div>
+        {/* Neither of these is visible in the map itself: an unloaded fleet and an
+            untracked one draw the same empty tiles, and a stalled poll draws the same pins
+            as a moving fleet standing still (FS-487). */}
+        {loadError && (
+          <span role="alert" className="text-xs text-status-alarm">
+            Vehicle positions could not be loaded — this map is empty because the request
+            failed, not because nothing is being tracked.
+          </span>
+        )}
+        {!loadError && liveStalled && (
+          <span role="alert" className="text-xs text-status-warning">
+            Live updates have stopped — the positions shown are the last received and may be
+            out of date.
+          </span>
+        )}
         <div className="flex items-center gap-2">
           <button
             onClick={() => setShowLegend(!showLegend)}

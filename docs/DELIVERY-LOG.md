@@ -4939,3 +4939,77 @@ and nullable returns whose real branch rejects instead — not shape-by-shape mo
 comparison, which is what a real-mode test does and what these ten still lack.
 
 **Suite:** frontend 676 → 717 · backend 3550 → 3560 · edge agent 289.
+
+## FS-487 — the poll that stopped, on a screen with no error state
+
+Four more clients off the real-mode list — `notifications` (6 forks), `kpi` (8),
+`fleetTracker` (6) and `geofencing` — and the last two turned up the sharpest thing in this
+whole sequence.
+
+### Two live surfaces that were wrong while rendering correctly
+
+`/ws/fleet-tracking` and `/ws/geofencing` do not exist on the backend; both were replaced with
+REST polls when that was found. Each poll's catch ended at `console.error`, and **a
+subscription has no promise for a caller to catch** — the failure lands fifteen or thirty
+seconds after anybody was looking, on a screen built to show a stream rather than a result.
+There is no spinner that fails to clear and no empty state to fall into.
+
+`FleetTrackerMap` kept drawing the last positions it received for as long as the tab stayed
+open. An operator looking at a live map that has stopped updating is looking at where the
+vehicles **were**, with every reason to believe it is where they are — a stationary fleet and
+a frozen map are the same picture. Its initial load had the same catch, so a failed fetch drew
+an empty map, which reads as "nothing is being tracked".
+
+`GeofencingPanel` is worse, and it is why this got its own class. **The display of "no alerts"
+is an empty list.** A dead poll produces exactly the same empty list as a fleet where nothing
+has happened. There is no stale value to notice and no pin in the wrong place — *the absence
+is the display*. A truck leaves its zone, the alert exists on the server, and the panel goes
+on saying nothing.
+
+Both clients now take an optional `onError` beside `onUpdate`/`onAlert`, called with the error
+on a failed tick and `null` on a good one, so a recovered poll clears its own warning. The
+wording is about what the display means rather than about the request: "an empty list right
+now means nobody knows, not that nothing has happened" is actionable; "poll failed" is not.
+
+### And a test that reached nobody
+
+`Notifications` reported a dispatch that matched zero subscriptions as "Test dispatched —
+matched 0 subscriptions", in the same grey as every other outcome. The request succeeded and
+nothing was delivered, which is the one thing pressing Test is meant to find out. It now says
+which it is in the first three words and names the filters that caused it.
+
+An existing test asserted the old wording, under the name *"says a matched count of zero
+rather than implying success"*. The intent was already right; the assertion moved with the
+message rather than being deleted, and the tone is now asserted separately.
+
+### What the real-mode tests hold
+
+`kpi`'s five range-taking calls build `?range=${timeRange}` by hand, and `range` is declared
+`Query("month")` with `_RANGE_DAYS.get(value, 30)` behind it — so a dropped parameter, a
+misspelled one and an unrecognised value all produce **the same thirty-day answer**. There is
+no figure you could compare to catch it; only the request shows it. The two calls that take no
+range are asserted as the control, because a client that appended `?range=` everywhere would
+pass every other test and start narrowing two endpoints silently.
+
+`notifications`' `matched` count is the number that page turns on, and the mock returns
+`mockSubscriptions.length` — every subscription, always. The case worth seeing cannot occur in
+mock mode.
+
+### Two fixture corrections, both from guessing instead of reading
+
+`FleetVehiclePosition` keeps its coordinates under `position`, not flat; `getZones` returns a
+bare array where `getAlerts` returns a `ListResult`. Each threw inside the render and produced
+an **empty document**, which looks exactly like an assertion failing on a working component.
+That is the third and fourth time this session; reading the type first is faster every time.
+
+### Still open
+
+Six clients keep `USE_MOCK` forks with no real-mode test: `dashboardAnalytics` (6), `rul` (3),
+`platformCorrelation` (3), `userContext` (2), `twinOptimizer` (2), `historian` (2),
+`alarmRules` (2). All were scanned for the classes in this batch — hand-built query strings
+against the backend's declared parameters, nullable returns the real branch cannot produce,
+trailing-slash path mismatches, and mock-versus-declared-type key divergence. Two scan hits in
+`notifications` were read and found to be false positives (the mock builds a local object and
+returns a narrower one). `alarmRules`' trailing slash matches the backend's `"/"` declaration.
+
+**Suite:** frontend 717 → 753 · backend 3560 · edge agent 289.

@@ -53,6 +53,9 @@ export const Notifications: FC = () => {
   const [assetId, setAssetId] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
   const [testSummary, setTestSummary] = useState<string | null>(null);
+  // Whether that summary is bad news, so it can be told apart from the good kind at a
+  // glance rather than by reading it (FS-487).
+  const [testMatchedNone, setTestMatchedNone] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const createMutation = useMutation({
@@ -95,12 +98,23 @@ export const Notifications: FC = () => {
   const testMutation = useMutation({
     mutationFn: () => notificationsApi.sendTest({ severity: 'warning' }),
     onSuccess: (result) => {
+      // MATCHED ZERO IS NOT A SUCCESS (FS-487). The request succeeded and nothing was
+      // delivered — which is the one thing pressing Test is meant to find out. It used to
+      // read "Test dispatched — matched 0 subscriptions" in the same grey as every other
+      // outcome, so the sentence a user skims says "dispatched" either way.
       setTestSummary(
-        `Test dispatched — matched ${result.matched} subscription${result.matched === 1 ? '' : 's'}.`
+        result.matched === 0
+          ? 'Nothing was sent — no subscription matches a warning-severity test event. ' +
+            'Check the minimum severity, domain and asset filters below.'
+          : `Test dispatched — matched ${result.matched} subscription${result.matched === 1 ? '' : 's'}.`
       );
+      setTestMatchedNone(result.matched === 0);
       queryClient.invalidateQueries({ queryKey: ['notification-log'] });
     },
-    onError: () => setTestSummary('Test dispatch failed.'),
+    onError: () => {
+      setTestSummary('Test dispatch failed.');
+      setTestMatchedNone(true);
+    },
   });
 
   const handleCreate = (e: FormEvent) => {
@@ -148,7 +162,12 @@ export const Notifications: FC = () => {
         }
       >
         {testSummary && (
-          <p className="text-sm text-opsgrid-text-secondary mb-3">{testSummary}</p>
+          <p
+            role={testMatchedNone ? 'alert' : 'status'}
+            className={`text-sm mb-3 ${testMatchedNone ? 'text-status-warning' : 'text-opsgrid-text-secondary'}`}
+          >
+            {testSummary}
+          </p>
         )}
         {deleteError && (
           <p role="alert" className="text-sm text-status-alarm mb-3">{deleteError}</p>

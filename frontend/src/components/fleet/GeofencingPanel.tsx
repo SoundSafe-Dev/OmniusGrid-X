@@ -74,19 +74,26 @@ export const GeofencingPanel: FC<GeofencingPanelProps> = ({ onAlert }) => {
 
   useEffect(() => {
     loadData();
-    const unsubscribe = geofencingApi.subscribeToAlerts((alert) => {
-      setAlerts(prev => [alert, ...prev]);
-      if (soundEnabled && alert.severity === 'critical') {
-        playAlertSound();
-      }
-      onAlert?.(alert);
-    });
+    const unsubscribe = geofencingApi.subscribeToAlerts(
+      (alert) => {
+        setAlerts(prev => [alert, ...prev]);
+        if (soundEnabled && alert.severity === 'critical') {
+          playAlertSound();
+        }
+        onAlert?.(alert);
+      },
+      (error) => setAlertPollStalled(Boolean(error)),
+    );
     return unsubscribe;
   // eslint-disable-next-line react-hooks/exhaustive-deps -- pre-existing; adding deps changes retrigger behavior (FS-54)
   }, [soundEnabled]);
 
   // True when the server had more alerts than it returned. See loadData.
   const [alertsTruncated, setAlertsTruncated] = useState(false);
+  // True when the alert poll is failing (FS-487). Distinct from every other state here
+  // because the display of "no alerts" is an EMPTY LIST, and a poll that has stopped
+  // produces exactly that — silence is the normal case and also the broken one.
+  const [alertPollStalled, setAlertPollStalled] = useState(false);
 
   const loadData = async () => {
     setIsLoading(true);
@@ -347,6 +354,12 @@ export const GeofencingPanel: FC<GeofencingPanelProps> = ({ onAlert }) => {
             )}
             {!isLoading && !error && alerts.length === 0 && (
               <p className="p-4 text-sm text-gray-500 text-center">No geofence alerts.</p>
+            )}
+            {alertPollStalled && (
+              <p className="border-b border-status-alarm/50 bg-status-alarm/10 p-3 text-xs text-opsgrid-text" role="alert">
+                Alert checks are failing — new geofence alerts will not appear here. An empty
+                list right now means nobody knows, not that nothing has happened.
+              </p>
             )}
             {alertsTruncated && (
               <p className="border-b border-status-warning/50 bg-status-warning/10 p-3 text-xs text-opsgrid-text" role="status">

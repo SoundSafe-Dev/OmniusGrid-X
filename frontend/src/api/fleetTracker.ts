@@ -214,8 +214,22 @@ export const fleetTrackerApi = {
     return response.data;
   },
 
-  // Subscribe to WebSocket updates (returns cleanup function)
-  subscribeToUpdates: (onUpdate: (update: FleetUpdate) => void): (() => void) => {
+  /** Poll vehicle positions, calling `onUpdate` per vehicle per tick.
+   *
+   *  `onError` is optional and matters more than it looks (FS-487). A failed poll used to
+   *  reach `console.error` and stop there, so the map kept rendering the last positions it
+   *  received — for as long as the tab stayed open. **A live map that has stopped updating
+   *  is worse than an empty one**: the operator is looking at where the vehicles were and
+   *  has every reason to believe it is where they are. There is no error state to infer
+   *  from the pins, because the pins look exactly the same.
+   *
+   *  The callback rather than a thrown error, because this is a subscription: there is no
+   *  promise for a caller to catch, and the failure happens thirty seconds after anyone
+   *  was looking. */
+  subscribeToUpdates: (
+    onUpdate: (update: FleetUpdate) => void,
+    onError?: (error: unknown) => void,
+  ): (() => void) => {
     if (USE_MOCK) {
       // Simulate WebSocket with polling
       const interval = setInterval(async () => {
@@ -247,8 +261,10 @@ export const fleetTrackerApi = {
             data: position,
           });
         });
+        onError?.(null);
       } catch (error) {
         console.error('Fleet position poll failed:', error);
+        onError?.(error);
       }
     }, 30000);
     return () => clearInterval(interval);

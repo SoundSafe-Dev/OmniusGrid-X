@@ -26,7 +26,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The eighty-one numbered classes
+## The eighty-two numbered classes
 
 **The count is the numbering, and it was already stale before this line was corrected.**
 This heading read "forty-seven" while the document's own highest class was 60 — the summary
@@ -2685,6 +2685,13 @@ one of its findings. The habit that catches it:
      A QuickBooks connector with a sandbox suite shipped unreachable because the create-form
      dropdown was a hand-written array compared against nothing. The absent option produces
      no error, no log line and no failing test.
+
+112. **When absence is the display, absence cannot report failure.**
+     A screen whose normal state is "nothing here" has no room left to show that it stopped
+     working — the broken rendering and the healthy one are the same pixels. The geofence
+     alert feed shows an empty list both when nothing has happened and when the poll has
+     died. Streams, alert feeds and live maps need an explicit health signal beside the
+     content, because nothing about the content can carry one.
 
 ---
 
@@ -5956,7 +5963,7 @@ Check both directions of an exemption before believing the count it produces.
 
 # What this session produced, and what it cost
 
-**FS-431 to FS-486 — fifty-six items, no gaps** — over one working session. Recorded
+**FS-431 to FS-487 — fifty-seven items, no gaps** — over one working session. Recorded
 together because the individual entries above answer "what was wrong" and this answers "what
 the method actually does", which is the thing worth reusing.
 
@@ -6731,3 +6738,43 @@ Every check that starts from the UI's behaviour is blind to the option it never 
 list in the frontend enumerates what a user may choose, compare it against what the backend
 can actually do — in both directions. The absent option produces no error, no log line and no
 failing test, and it can outlive everyone who knew the feature existed.
+
+## Class 82 — the poll that stopped, on a screen with no error state (FS-487)
+
+`/ws/fleet-tracking` and `/ws/geofencing` do not exist on the backend; both were replaced with
+REST polls when that was found. Each poll's catch ended at `console.error`.
+
+**A subscription has no promise for a caller to catch.** The failure happens fifteen or thirty
+seconds after anyone was looking at it, on a screen built to show a stream rather than a
+result — so there is no loading spinner that fails to clear and no empty state to fall into.
+Both surfaces below render *correctly* while being wrong.
+
+**`FleetTrackerMap`** kept drawing the last positions it received, for as long as the tab
+stayed open. An operator looking at a live map that has stopped updating is looking at where
+the vehicles **were**, with every reason to believe it is where they are. A stationary fleet
+and a frozen map are the same picture. (Its initial load had the same catch, and an empty map
+reads as "nothing is being tracked" — a statement about the fleet, from a failure of the
+request.)
+
+**`GeofencingPanel`** is the sharper one, and the reason this is its own class rather than an
+instance of the silent-failure one. **The display of "no alerts" is an empty list.** A poll
+that has stopped produces exactly the same empty list as a fleet where nothing has happened.
+There is no stale value to notice and no pin in the wrong place — *the absence is the
+display*. A truck leaves its zone, the alert exists on the server, and the panel goes on
+saying nothing at all.
+
+Both clients now take an optional `onError` alongside `onUpdate`/`onAlert`, called with the
+error on a failed tick and with `null` on a successful one, so a recovered poll clears its own
+warning — a banner that survives recovery is one people learn to ignore, and these need to be
+believed the one time they fire.
+
+The wording is about the meaning of the display, not about the request. "Alert checks are
+failing — an empty list right now means nobody knows, not that nothing has happened" is what
+an operator can act on. "Poll failed" is not.
+
+## Rule 112 — when absence is the display, absence cannot report failure
+
+A screen whose normal state is "nothing here" has no room left to show that it stopped
+working: the broken rendering and the healthy one are the same pixels. Streams, alert feeds,
+live maps and empty queues all have this shape. They need an explicit health signal beside
+the content, because nothing about the content can carry one.
