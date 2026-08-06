@@ -127,7 +127,7 @@ export const Notifications: FC = () => {
   }
 
   const subs = subscriptions ?? [];
-  const deliveries = log ?? [];
+  const deliveries = log?.items ?? [];
 
   return (
     <div className="space-y-6">
@@ -288,6 +288,16 @@ export const Notifications: FC = () => {
       </Card>
 
       <Card title="Delivery Log" subtitle="Most recent notification dispatch attempts">
+        {/* Say so when this is a page of the log rather than the log (FS-485). It is ordered
+            newest first, so what is missing is the OLDEST attempts — and the question this
+            card answers is "was that alert delivered?". An absent row read off a list
+            presented as complete says the alert was never sent. */}
+        {log?.truncated && (
+          <p role="status" className="pb-2 text-xs text-status-warning">
+            Showing the {log.limit} most recent attempts. Older deliveries exist and are not
+            listed — an alert missing from this page may still have been sent.
+          </p>
+        )}
         {isLogError ? (
           <p className="text-status-alarm text-sm py-4">Failed to load the delivery log.</p>
         ) : deliveries.length === 0 ? (

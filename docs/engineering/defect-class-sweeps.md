@@ -26,7 +26,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The seventy-eight numbered classes
+## The seventy-nine numbered classes
 
 **The count is the numbering, and it was already stale before this line was corrected.**
 This heading read "forty-seven" while the document's own highest class was 60 — the summary
@@ -2673,6 +2673,12 @@ one of its findings. The habit that catches it:
      member. The FS-364 walk reported zero untested pages twice, because it could not follow
      a barrel import — and "none" is indistinguishable from success, arrives without a
      failure, and is believed.
+
+110. **An exemption belongs beside the guard, with its reason and an expiry check.**
+     "Checked and deliberately left" and "never looked at" are indistinguishable afterwards,
+     and only one justifies not looking again. `CommandPanel`'s capped history is exempted
+     in the sweep's own allowlist, with why, and a second test asserts the exempted call
+     still exists — otherwise the allowlist stops describing the code and starts excusing it.
 
 ---
 
@@ -5944,7 +5950,7 @@ Check both directions of an exemption before believing the count it produces.
 
 # What this session produced, and what it cost
 
-**FS-431 to FS-484 — fifty-four items, no gaps** — over one working session. Recorded
+**FS-431 to FS-485 — fifty-five items, no gaps** — over one working session. Recorded
 together because the individual entries above answer "what was wrong" and this answers "what
 the method actually does", which is the thing worth reusing.
 
@@ -6600,3 +6606,54 @@ list passes every comparison in the file.
 Any sweep that answers "which are left?" needs a test that it can still resolve a known
 member. Otherwise the day its resolver stops matching, its answer becomes "none" — which is
 indistinguishable from success, arrives without a failure, and is believed.
+
+## Class 79 — a flag the server went out of its way to send, dropped by the client (FS-485)
+
+`mark_truncated` selects `limit + 1` rows and sets `X-Result-Truncated`. Every endpoint that
+does it has already been judged worth the extra row: somebody decided the difference between
+a full page and the complete set mattered enough to change the query.
+
+Then the client returns `response.data`, and the flag is gone. Nothing fails, no type
+complains, and the page renders a page of the list as the whole list.
+
+**`notificationsApi.deliveryLog`** was the one. The log is ordered newest-first, so a cap
+removes the *oldest* attempts — and the question that card answers is "was that alert
+delivered?". A row absent from a list presented as complete says the alert was never sent,
+which is a statement about the notification system rather than about the query.
+
+**One deliberately left.** `CommandPanel`'s history is capped at five and reads
+`response.data`. Checked rather than skipped: it is newest-first, the heading reads "Recent
+commands", and the command an operator just sent is in the first five by construction. The
+label already carries the caveat. That decision is recorded *in the guard's allowlist with
+its reason*, and a second test asserts the exemption still names an endpoint the frontend
+calls — a stale permission is how an allowlist stops describing the code it guards.
+
+**The guard is a backend test because the question needs both trees.** The backend is the
+only side that knows which endpoints signal; the frontend is the only side that knows which
+of them are called.
+
+### Three detector defects before one code defect
+
+Worth recording, because the detector was wrong three times and the code once:
+
+1. **Slicing on `@router.get` alone.** A `@router.post` between two GETs put a later
+   handler's `mark_truncated` inside an earlier handler's slice. It reported
+   `DELETE /{id}/mappings` as a truncating route.
+2. **Matching on the last path segment.** `/erp/integrations/{id}/events` collided with
+   `/fleet/security/events` — unrelated endpoints, one of which does not truncate.
+3. **Capturing the URL up to the first `${`.** ``` `${BASE}/log` ``` became the empty
+   string, which then matched every route whose prefix failed to resolve. Eleven reported
+   offenders, none real.
+
+And the prefix resolution had its own hole: three routers — `registries`,
+`analysis_sessions`, `erp_integrations` — declare the prefix on their own `APIRouter` and are
+included bare, so reading only `main.py` dropped all three *silently*. That is Rule 109
+again, one week later, in a sweep written by somebody who had just written Rule 109. The
+vacuity test that now fails on an unresolved prefix is the fix.
+
+## Rule 110 — an exemption belongs beside the guard, with its reason and an expiry check
+
+"Checked and deliberately left" and "never looked at" are indistinguishable afterwards, and
+only one of them justifies not looking again. Put the decision in the allowlist, put the
+reason next to it, and add a test that the exempted thing still exists — otherwise the
+allowlist slowly stops describing the code and starts excusing it.

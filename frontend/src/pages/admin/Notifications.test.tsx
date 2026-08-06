@@ -81,7 +81,8 @@ const wrap = () => {
 beforeEach(() => {
   vi.clearAllMocks()
   listSubscriptions.mockResolvedValue([subscription()])
-  deliveryLog.mockResolvedValue([delivery()])
+  // ListResult since FS-485; the page reads `.items` and renders a note off `.truncated`.
+  deliveryLog.mockResolvedValue({ items: [delivery()], truncated: false, limit: 100 })
   createSubscription.mockResolvedValue({ id: 'sub-2', name: 'New', channel: 'webhook' })
   deleteSubscription.mockResolvedValue(undefined)
   sendTest.mockResolvedValue({ matched: 1, results: [] })
@@ -248,5 +249,29 @@ describe('Notifications — the test dispatch', () => {
     fireEvent.click(screen.getByRole('button', { name: /send test/i }))
     expect(await screen.findByText('Test dispatch failed.')).toBeInTheDocument()
     expect(screen.queryByText(/Test dispatched/)).not.toBeInTheDocument()
+  })
+})
+
+describe('a page of the log is not the log (FS-485)', () => {
+  it('says so when the server capped it', async () => {
+    // Ordered newest first, so what is missing is the OLDEST attempts — and this card is
+    // where somebody checks whether an alert was delivered. A capped list presented as
+    // complete turns "not listed here" into "never sent".
+    deliveryLog.mockResolvedValue({ items: [delivery()], truncated: true, limit: 100 })
+    wrap()
+
+    const note = await screen.findByRole('status')
+    expect(note.textContent).toMatch(/100 most recent/i)
+    expect(note.textContent).toMatch(/may still have been sent/i)
+  })
+
+  it('says nothing when the whole log came back', async () => {
+    // The other direction. A permanent caveat would make the capped case indistinguishable
+    // from the complete one, which is the whole point of the flag.
+    deliveryLog.mockResolvedValue({ items: [delivery()], truncated: false, limit: 100 })
+    wrap()
+
+    await waitFor(() => expect(deliveryLog).toHaveBeenCalled())
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
   })
 })

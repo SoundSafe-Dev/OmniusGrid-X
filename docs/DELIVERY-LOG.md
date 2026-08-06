@@ -4817,3 +4817,55 @@ the error-triage row uses `count_in_range`, not `count`, and the version distrib
 which reads as a component bug rather than as a test that made something up.
 
 **Suite:** frontend 627 → 663 · backend 3542 (100 skipped) · edge agent 289.
+
+## FS-485 — the flag the server sent and the client threw away
+
+The correlation assistant's client, `analysisSessions.ts`, was the largest in the tree without
+a real-mode test: 503 lines and **eighteen** `USE_MOCK` forks. Every unit test in this
+repository runs with `VITE_USE_MOCK=true` stubbed before any module evaluates, so all eighteen
+were exercised on their mock side and none on the side that ships.
+
+Its eleven new tests hold two properties the mock branch cannot check, because in mock mode
+both are true by construction: truncation is read off the response headers rather than
+assumed, and `simulated` is carried through rather than defaulted. The second is the other end
+of the wire `CorrelationAIPane.test.tsx` already asserts — the server sets that flag when a
+reply is a heuristic or an error fallback, and a client defaulting it to `false` would put the
+confident version back in front of the operator.
+
+### The sweep it turned into
+
+Every `mark_truncated` endpoint has already been judged worth an extra row: somebody decided
+a full page and the complete set needed telling apart. So the question is whether the client
+on the other side keeps the answer. **One did not.**
+
+`notificationsApi.deliveryLog` returned `response.data`. The log is ordered newest-first, so a
+cap removes the *oldest* attempts — and that card is where somebody checks whether an alert
+was delivered. A row absent from a list presented as complete says the alert was never sent,
+which is a claim about the notification system rather than about the query. It now returns a
+`ListResult`, and the page says "Showing the 100 most recent attempts" when the flag is set
+and nothing when it is not.
+
+**One was checked and deliberately left.** `CommandPanel`'s history caps at five and reads
+the body alone — but it is newest-first, the heading says "Recent commands", and the command
+just sent is in the first five by construction. That decision now lives in the guard's own
+allowlist with its reason, and a second test asserts the exempted call still exists.
+
+### Three detector defects for one code defect
+
+The guard was wrong three times before the code was wrong once, and each way is reusable:
+
+1. **Slicing on `@router.get` alone** put a later handler's `mark_truncated` inside an earlier
+   handler's slice, reporting `DELETE /{id}/mappings` as a truncating route.
+2. **Matching the last path segment** collided `/erp/integrations/{id}/events` with
+   `/fleet/security/events`.
+3. **Capturing the URL up to the first `${`** turned `` `${BASE}/log` `` into the empty
+   string, which matched every route whose prefix failed to resolve — eleven reported
+   offenders, none real.
+
+And the prefix table had its own hole: `registries`, `analysis_sessions` and
+`erp_integrations` declare their prefix on their own `APIRouter` and are included bare, so
+reading `main.py` alone dropped all three **silently**. That is Rule 109 — a walk that finds
+nothing must prove it can find something — recurring in a sweep written days after Rule 109
+was written. The vacuity test that now fails on an unresolved prefix is the fix.
+
+**Suite:** frontend 663 → 676 · backend 3542 → 3550 · edge agent 289.

@@ -79,9 +79,12 @@ describe('notificationsApi (mock mode)', () => {
   it('send test dispatches to matching subscriptions and logs a delivery', async () => {
     const result = await notificationsApi.sendTest({ severity: 'warning' });
     expect(result.matched).toBeGreaterThanOrEqual(1);
+    // ListResult since FS-485 — the endpoint caps and says so, and the flag has to survive
+    // the client or the page presents a page of the log as the whole log.
     const log = await notificationsApi.deliveryLog();
-    expect(log.length).toBeGreaterThanOrEqual(1);
-    expect(log[0]).toHaveProperty('delivered');
-    expect(log[0]).toHaveProperty('createdAt');
+    expect(log.items.length).toBeGreaterThanOrEqual(1);
+    expect(log.items[0]).toHaveProperty('delivered');
+    expect(log.items[0]).toHaveProperty('createdAt');
+    expect(log).toHaveProperty('truncated');
   });
 });
