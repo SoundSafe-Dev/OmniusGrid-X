@@ -298,6 +298,32 @@ export const Fleet: FC = () => {
         <SummaryCard label="Failed / rolled back targets" value={formatNumber(failedTargets, 0)} icon={AlertTriangle} tone={failedTargets > 0 ? 'danger' : 'default'} />
       </div>
 
+      {/* THE FOUR OTA MUTATIONS SAY WHEN THEY FAIL (FS-480).
+      
+          All four read only `isPending` before this. `yankRelease` is the sharpest: it is
+          the safety action — pulling a release that is going badly — and a failed yank left
+          the release listed exactly as it was, which is what a successful one looks like
+          for the moment before the list refetches.
+      
+          They are defined in `useFleet.ts`, and the mutation-failure sweep scans `.tsx`
+          only, so it could not see them. */}
+      {(createRelease.isError ||
+        publishRelease.isError ||
+        yankRelease.isError ||
+        createRollout.isError) && (
+        <Card className="p-4">
+          <p role="alert" className="text-sm text-status-alarm">
+            {yankRelease.isError
+              ? 'Could not yank that release — it is still published.'
+              : publishRelease.isError
+                ? 'Could not publish that release — it is unchanged.'
+                : createRollout.isError
+                  ? 'Could not create the rollout — nothing was started.'
+                  : 'Could not create the release — nothing was saved.'}
+          </p>
+        </Card>
+      )}
+
       {(showReleaseForm || showRolloutForm) && (
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
           {showReleaseForm && (

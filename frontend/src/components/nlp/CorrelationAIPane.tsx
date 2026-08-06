@@ -138,6 +138,9 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
   // conversation and silently omits what was just said, which is the half a user is
   // actually looking at.
   const [historyTruncated, setHistoryTruncated] = useState(false);
+  // Why a transcript is missing, when it is missing because the request failed rather than
+  // because the session is new (FS-481). Those two look identical without it.
+  const [transcriptError, setTranscriptError] = useState<string | null>(null);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [activeProgressStep, setActiveProgressStep] = useState(0);
@@ -227,6 +230,7 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
     const session = await analysisSessionsApi.createSession({});
     await analysisSessionsApi.getSession(session.id);
     setCurrentSession(session);
+    setTranscriptError(null);
     setSessionListKey(prev => prev + 1);
     setDataSourcesKey(prev => prev + 1);
     return session;
@@ -263,6 +267,11 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
         }
       } catch (error) {
         console.error('[CorrelationAIPane] Failed to bootstrap session:', error);
+        // FS-481. `setCurrentSession(latest)` may already have run, so the pane can show a
+        // named session with no messages — indistinguishable from a session nobody used.
+        if (!cancelled) {
+          setTranscriptError('Your last session could not be loaded — it is not an empty session. Reload to retry.');
+        }
       }
     };
 
@@ -288,12 +297,22 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
 
   const handleSessionSelect = async (session: AnalysisSession) => {
     setCurrentSession(session);
+    setTranscriptError(null);
     try {
       const sessionMessages = await analysisSessionsApi.getSessionMessages(session.id, 100, 0);
       setMessages(sessionMessages.items);
       setHistoryTruncated(sessionMessages.truncated);
     } catch (error) {
       console.error('Error loading session messages:', error);
+      // FS-481. The session is switched BEFORE its transcript arrives, so a failure here
+      // used to leave the PREVIOUS session's conversation on screen under the new
+      // session's name — the header, the data-sources panel and the suggested questions
+      // all say session B while the messages are session A's. That is worse than showing
+      // nothing: it is another investigation, read as this one. Clear it, and say why the
+      // pane is empty so it is not mistaken for a session that was never used.
+      setMessages([]);
+      setHistoryTruncated(false);
+      setTranscriptError('This session\'s history could not be loaded — it is not an empty session. Select it again to retry.');
     }
   };
 
@@ -305,6 +324,12 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
       setDataSourcesKey(prev => prev + 1);
     } catch (error) {
       console.error('Error adding intake data:', error);
+      // FS-481. Silently, the document simply never appears in the panel — and the next
+      // question is answered from a data set the operator believes contains it.
+      await alert({
+        title: 'Could not attach that document',
+        message: 'The document was not added to this session. Answers will not take it into account.',
+      });
     }
   };
 
@@ -644,6 +669,17 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
         </div>
 
         <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-4 bg-opsgrid-bg">
+          {/* A transcript that failed to load, said out loud (FS-481). Above the branch
+              below because that branch renders the SAME empty state for a session with no
+              messages and a session whose messages could not be fetched. */}
+          {transcriptError && (
+            <div
+              role="alert"
+              className="mb-3 rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-500"
+            >
+              {transcriptError}
+            </div>
+          )}
           {!currentSession ? (
             <div className="h-full min-h-0 rounded-xl border border-gray-300 bg-white text-center text-gray-900 flex flex-col items-center justify-center px-8">
               <Plus className="w-12 h-12 mb-4 text-gray-400" />
@@ -865,6 +901,7 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
+                  data-testid="correlation-send"
                   onClick={handleSendMessage}
                   disabled={isLoading || !input.trim()}
                   className="px-4"

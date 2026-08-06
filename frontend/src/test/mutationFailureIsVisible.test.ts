@@ -202,7 +202,7 @@ export function silentHandRolledMutations(raw: string): string[] {
   const found: string[] = []
   const CATCH = /catch\s*\((\w+)?\)?\s*\{([^}]*)\}/g
   const MUTATING_CALL =
-    /\bawait\s+\w+Api\.(?:create|update|delete|upload|analyze|dispatch|send|post|approve|reject|trigger|start|complete|activate|assign|move|issue|clock)\w*\s*\(/i
+    /\bawait\s+\w+Api\.(?:create|update|delete|upload|analyze|dispatch|send|post|approve|reject|trigger|start|complete|activate|assign|move|issue|clock|add|remove|attach|detach|link|cancel|pause|resume)\w*\s*\(/i
   let match: RegExpExecArray | null
   while ((match = CATCH.exec(source))) {
     const body = match[2]
@@ -264,3 +264,205 @@ describe('no hand-rolled mutation fails in silence', () => {
   })
 })
 
+/**
+ * The third place the same class hides: a mutation defined in a HOOK (FS-480).
+ *
+ * Everything above scans `.tsx`, because that is where components live. Mutation hooks live
+ * in `src/hooks/*.ts` and were outside the sweep entirely — sixteen of them, including the
+ * six OTA operations in `useFleet.ts`. Two of those are the safety actions: `useYankAgentRelease`
+ * pulls a release that is going badly, and `useCancelAgentRollout` stops a rollout mid-flight.
+ * A failed yank left the release listed exactly as it was, which is what a successful one
+ * looks like for the moment before the list refetches.
+ *
+ * THE OBLIGATION IS THE CALLER'S, NOT THE HOOK'S. A hook returning `useMutation` is a
+ * library: it has no screen to render on, and forcing an `onError` into it would put a
+ * message in the wrong place. So this asks of each USED hook whether its call site surfaces
+ * the failure, by any of the three idioms this codebase actually uses:
+ *
+ *   `save.isError` / `save.error`   read the flag and render something
+ *   `save.mutateAsync`              awaited, so the try/catch at the call site is the handler
+ *   `save.mutate(x, { onError })`   per-call options — which `ErrorTriageDetail` uses, and
+ *                                   which an earlier version of this check did not know
+ *                                   about, reporting it as silent when it was not
+ *
+ * AND ONLY WHERE THE HOOK IS USED. Eight of the sixteen have no caller at all — exported
+ * from `src/hooks/index.ts` and never imported by a component. There is no user to fail in
+ * front of, so flagging them here would be noise; they are dead exports, which is a
+ * different and much smaller problem.
+ */
+const HOOK_DIR = join(SRC, 'hooks')
+
+export function mutationHooks(source: string): string[] {
+  const clean = source.replace(COMMENT, ' ')
+  const names: string[] = []
+  let current = ''
+  for (const line of clean.split('\n')) {
+    const declared = line.match(/^export function (\w+)/)
+    if (declared) current = declared[1]
+    if (/return useMutation/.test(line) && current) names.push(current)
+  }
+  return [...new Set(names)]
+}
+
+export function callSiteSurfacesFailure(source: string, hook: string): boolean | null {
+  const clean = source.replace(COMMENT, ' ')
+  const used = clean.match(new RegExp(String.raw`const\s+(\w+)\s*=\s*${hook}\s*\(`))
+  if (!used) return null // not called here
+  const variable = used[1]
+  if (new RegExp(String.raw`\b${variable}\.(?:isError|error|mutateAsync)\b`).test(clean)) {
+    return true
+  }
+  // Per-call options: `variable.mutate(arg, { onError: … })`
+  const perCall = new RegExp(String.raw`\b${variable}\.mutate\s*\([\s\S]{0,600}?onError`)
+  return perCall.test(clean)
+}
+
+const HOOK_FILES = readdirSync(HOOK_DIR).filter((f) => f.endsWith('.ts') && !f.includes('.test.'))
+const PAGES = FILES.map((f) => readFileSync(f, 'utf8'))
+
+const UNSURFACED = HOOK_FILES.flatMap((file) =>
+  mutationHooks(readFileSync(join(HOOK_DIR, file), 'utf8')).flatMap((hook) => {
+    const verdicts = PAGES.map((page) => callSiteSurfacesFailure(page, hook))
+    const callers = verdicts.filter((v) => v !== null)
+    if (callers.length === 0) return [] // dead export, not this defect
+    return callers.every((v) => v === false) ? [`${file} — ${hook}`] : []
+  }),
+)
+
+describe('the hook sweep knows what counts as handling', () => {
+  it('finds the mutation hooks', () => {
+    const found = HOOK_FILES.flatMap((f) =>
+      mutationHooks(readFileSync(join(HOOK_DIR, f), 'utf8')),
+    )
+    expect(found.length).toBeGreaterThan(10)
+    expect(found).toContain('useCancelAgentRollout')
+  })
+
+  it('accepts a caller that reads the flag', () => {
+    expect(callSiteSurfacesFailure('const save = useThing()\nif (save.isError) x', 'useThing')).toBe(true)
+  })
+
+  it('accepts per-call onError, which an earlier version did not', () => {
+    const perCall = `const save = useThing()
+      save.mutate({ id }, { onSuccess: ok, onError: () => note() })`
+    expect(callSiteSurfacesFailure(perCall, 'useThing')).toBe(true)
+  })
+
+  it('rejects a caller that only shows a spinner', () => {
+    const spinner = `const save = useThing()
+      <Button loading={save.isPending} onClick={() => save.mutate({ id })} />`
+    expect(callSiteSurfacesFailure(spinner, 'useThing')).toBe(false)
+  })
+
+  it('says nothing about a file that does not call it', () => {
+    expect(callSiteSurfacesFailure('const other = useSomethingElse()', 'useThing')).toBeNull()
+  })
+})
+
+describe('no mutation hook fails in silence at every call site', () => {
+  it('has no offenders', () => {
+    expect(
+      UNSURFACED.map(
+        (entry) =>
+          `${entry} is called and no caller reads isError, awaits mutateAsync, or passes ` +
+          `onError — so a failed request leaves the screen as it was`,
+      ),
+    ).toEqual([])
+  })
+})
+
+
+/**
+ * The fourth shape, and the only one here that is not a mutation at all (FS-481).
+ *
+ * Everything above asks whether a failed WRITE reaches the user. This asks about a failed
+ * READ — specifically the handler that changes what is being looked at, then fetches what
+ * belongs to it:
+ *
+ *   const handleSelect = async (thing) => {
+ *     setCurrent(thing)                                 // the label moves immediately
+ *     try   { setRows(await api.getRows(thing.id)) }    // the content arrives later
+ *     catch { console.error(e) }                        // …or never
+ *   }
+ *
+ * On failure the label has moved and the content has not, so the PREVIOUS thing's data sits
+ * under the NEW thing's name. That is a worse failure than showing nothing, and it is the
+ * reason this is a separate check rather than a wider version of the ones above: a silent
+ * write leaves the screen truthful-but-stale, while this one makes it actively wrong, and
+ * an operator has no reason to doubt it.
+ *
+ * `CorrelationAIPane.handleSessionSelect` was the one occurrence — a failed transcript fetch
+ * left another investigation's conversation under the newly selected session's title.
+ *
+ * NARROW ON PURPOSE. It requires the setter to be called with the handler's OWN parameter
+ * (so it is the selection changing, not incidental state), the awaited read to come after
+ * it, and a catch that neither sets state, alerts, nor rethrows. Loosening any of the three
+ * floods the list with ordinary loaders, which are not this defect.
+ */
+export function staleAfterFailedSwitch(source: string): string[] {
+  const clean = source.replace(COMMENT, ' ')
+  const found: string[] = []
+  const HANDLER = /const (\w+) = async \(\s*(\w+)[^)]*\)\s*(?::[^=]*)?=>\s*\{/g
+  let match: RegExpExecArray | null
+  while ((match = HANDLER.exec(clean))) {
+    const [, name, param] = match
+    const body = clean.slice(match.index, match.index + 2500).split(/\n  const \w+ = /)[0]
+    const setIndex = body.search(new RegExp(`set[A-Z]\\w*\\(\\s*${param}\\b`))
+    if (setIndex < 0) continue
+    const readIndex = body.search(/await\s+\w+Api\.\w+\s*\(/)
+    if (readIndex < 0 || readIndex < setIndex) continue
+    const caught = body.match(/catch\s*\((\w+)?\)?\s*\{([^}]*)\}/)
+    if (!caught) continue
+    if (/set\w+|alert\(|toast|throw/.test(caught[2])) continue
+    found.push(name)
+  }
+  return [...new Set(found)]
+}
+
+const STALE = FILES.map((file) => ({
+  file: file.slice(SRC.length + 1),
+  handlers: staleAfterFailedSwitch(readFileSync(file, 'utf8')),
+})).filter((o) => o.handlers.length > 0)
+
+describe('the stale-switch sweep is not vacuous', () => {
+  it('recognises the shape it is looking for', () => {
+    const stale = `
+      const handleSelect = async (thing) => {
+        setCurrent(thing)
+        try { setRows(await thingApi.getRows(thing.id)) } catch (e) { console.error(e) }
+      }`
+    expect(staleAfterFailedSwitch(stale)).toEqual(['handleSelect'])
+  })
+
+  it('clears a handler that empties the stale view and says why', () => {
+    const fixed = `
+      const handleSelect = async (thing) => {
+        setCurrent(thing)
+        try { setRows(await thingApi.getRows(thing.id)) }
+        catch (e) { console.error(e); setRows([]); setLoadError('could not load') }
+      }`
+    expect(staleAfterFailedSwitch(fixed)).toEqual([])
+  })
+
+  it('ignores a loader that does not change what is being looked at first', () => {
+    // An ordinary fetch-on-mount has nothing stale to leave behind, because no label moved.
+    const loader = `
+      const load = async (id) => {
+        try { setRows(await thingApi.getRows(id)) } catch (e) { console.error(e) }
+      }`
+    expect(staleAfterFailedSwitch(loader)).toEqual([])
+  })
+})
+
+describe('no failed load leaves the previous subject under the new one\'s name', () => {
+  it('has no offenders', () => {
+    expect(
+      STALE.map(
+        (o) =>
+          `${o.file} — ${o.handlers.join(', ')} switch the selection before fetching what ` +
+          `belongs to it, so a failed fetch leaves the previous subject's data on screen ` +
+          `under the new subject's name`,
+      ),
+    ).toEqual([])
+  })
+})

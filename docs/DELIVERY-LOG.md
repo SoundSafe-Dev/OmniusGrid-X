@@ -4602,3 +4602,90 @@ its inferred type never had. The test suite was green either way.
 
 **Suite:** frontend 564 → 571 · backend 3542 · edge agent 289.
 
+
+## FS-479 to FS-481 — the last three untested pages, and what writing the tests found
+
+FS-364 named eight routed pages with no test at all. Three of the remaining ones were taken
+here: `Historian` (309), `FleetRolloutDetail` (268) and `CorrelationAIPane` (909, a component
+rather than a route, but the substance of the assistant page). Each was written to assert what
+the page already did well. **Each found a defect before it asserted anything.**
+
+Walking `App.tsx` against `src/pages/**` afterwards leaves **two** routed pages with no test:
+`ShopFloor` (511) and `Kanban` (254). That is the figure to carry forward — not the eight,
+which several sessions have been chipping at.
+
+### FS-479 — the caveat that reached the screen and not the file
+
+`Historian` queries a capped window. `hasMore`, `limit`, `offset` and `count` all come back,
+and the page renders them: "2 points (more available)". `exportCsv` wrote the header and the
+points and stopped.
+
+The CSV is the artefact that leaves the building — filed, mailed, opened by somebody who never
+saw the page and reads it as the history of that metric over that window. It now carries a
+two-line preamble at the top, because spreadsheet software shows the first rows and a caveat
+below ten thousand points is a caveat nobody reads; and only when `hasMore`, because a warning
+on every export would make the capped case indistinguishable from the complete one.
+
+The same page announced its first failed query as an empty window: `error && points.length ===
+0` fell through to "No data points in this window", which tells an operator their machine was
+idle when the truth is that nobody knows. Now `role="alert"`, saying which it was.
+
+### FS-480 — the mutation defined in a hook
+
+Class 74's sweeps scan `.tsx`. **Mutation hooks live in `src/hooks/*.ts`** and were outside
+both of them — sixteen hooks, seven with call sites that read nothing. Six are the OTA
+operations in `useFleet.ts`; the seventh is `useAcknowledgeAlarm`.
+
+Two are safety actions. `useYankAgentRelease` pulls a release that is going badly and
+`useCancelAgentRollout` stops a rollout mid-flight; both failed silently, and both look — for
+the second or two after a success — exactly like what the operator just saw.
+
+The new check is call-site aware, because **the obligation is the caller's, not the hook's**: a
+hook returning `useMutation` is a library with no screen to render on. It accepts any of the
+three idioms this codebase uses (`.isError`, awaited `mutateAsync`, `mutate(x, { onError })`) —
+an earlier version knew only two and reported `ErrorTriageDetail` as silent when it was not.
+It ignores the eight hooks with no caller at all: there is no user to fail in front of.
+
+### FS-481 — the label moved and the content did not
+
+`CorrelationAIPane.handleSessionSelect` switches the session, then fetches its transcript. On
+failure the header, the data-sources panel and the suggested-questions effect had all moved to
+session B while the message list still held **session A's conversation** — another
+investigation's transcript under this session's name, with nothing about it that looks wrong.
+
+This is a failed *read*, not a failed write, and it is worse than any silent mutation in this
+log: a silent write leaves the screen truthful-but-stale; this makes it actively wrong. The fix
+clears the stale transcript first and says why it is empty second — announcing the failure
+while leaving the wrong conversation on screen would be worse than the original.
+
+Two more from the same sweep. `handleAddIntakeData` dropped its failure to the console, so the
+document never appeared and the next answer was computed from a data set the operator believed
+contained it. And widening the Class 74 verb list — `add` and `remove` were simply missing —
+surfaced `DataSourcesPanel.handleRemove`: a failed removal leaves the row where it was, which
+is also what a click that never registered looks like, so the reasonable second reading is that
+it worked and the list is stale. It did not. The file is still attached, and still feeding
+answers.
+
+### The guards
+
+`mutationFailureIsVisible.test.ts` now carries four checks — `useMutation` options, hand-rolled
+handlers, hooks-by-call-site, and the stale-switch read. The last is narrow on purpose: the
+setter must take the handler's own parameter, the awaited read must follow it, and the catch
+must neither set state, alert, nor rethrow. It found one occurrence in the codebase.
+
+`Historian.test.tsx` (9), `FleetRolloutDetail.test.tsx` (8) and `CorrelationAIPane.test.tsx`
+(10) assert both directions of every property, and `Alarms.test.tsx` gained two for the
+acknowledgement — the sharpest of FS-480's seven, because an alarm nobody owns is the one
+nobody chases. They — the warning appears when it should and is
+absent when it should not — were all mutation-verified by deleting the fix and confirming they go red.
+
+Two things the tests taught about this codebase's jsdom setup, recorded in the files: `Tooltip`
+throws outside `TooltipProvider` (so a missing wrapper reads as a broken component), and
+`scrollIntoView` does not exist in jsdom while `CorrelationAIPane` calls it in an effect on
+every message change.
+
+**A correction made before shipping:** the first draft of `Historian.test.tsx` cited "the OEE
+PDF" as precedent for this class. There is no truncation flag in `exports.py` or `oee.py` —
+the cross-reference was invented. It now cites FS-456, which is real.
+
+**Suite:** frontend 584 → 606 · backend 3542 · edge agent 289.

@@ -34,7 +34,26 @@ const exportCsv = (result: HistorianQueryResponse) => {
   const rows = result.points.map(
     (p) => `${p.timestamp},${p.average},${p.minimum},${p.maximum},${p.sampleCount}`
   );
-  const blob = new Blob([[header, ...rows].join('\n') + '\n'], {
+
+  // THE FILE SAYS WHAT THE SCREEN SAYS (FS-479).
+  //
+  // The card's subtitle already reads "(more available)" when `hasMore` — the operator
+  // looking at the page knows the window was capped. The CSV carried no such note: header,
+  // rows, end of file. And the CSV is the artefact that leaves the building — filed,
+  // mailed, opened in a spreadsheet by somebody who never saw this page, and read as the
+  // history of that metric over that window.
+  //
+  // A leading comment line rather than a trailing one: spreadsheet software shows the
+  // first rows, and a caveat below ten thousand points is a caveat nobody reads.
+  const preamble = result.hasMore
+    ? [
+        `# PARTIAL: the first ${result.count} points of a larger result` +
+          ` (limit ${result.limit}, offset ${result.offset}).`,
+        `# Narrow the window or raise the limit for the rest.`,
+      ]
+    : [];
+
+  const blob = new Blob([[...preamble, header, ...rows].join('\n') + '\n'], {
     type: 'text/csv;charset=utf-8',
   });
   const url = URL.createObjectURL(blob);
@@ -188,10 +207,18 @@ export const Historian: FC = () => {
         </div>
       </Card>
 
+      {/* ANNOUNCED, and it says which failure it is (FS-479).
+          
+          This card is the only error surface on a FIRST query — the more specific "this is
+          a loading failure, not an empty window" lives inside the `{data && …}` block, so
+          it appears only when a previous query succeeded. Someone whose first query fails
+          saw an unannounced sentence and no empty-state, which is the right information
+          delivered to nobody using a screen reader. */}
       {isError && (
         <Card className="p-4">
-          <p className="text-status-alarm text-sm">
-            Query failed. Check the asset and metric, then try again.
+          <p className="text-status-alarm text-sm" role="alert">
+            Query failed — this is a loading failure, not an empty window. Check the asset
+            and metric, then try again.
           </p>
         </Card>
       )}

@@ -37,6 +37,9 @@ export const DataSourcesPanel = React.forwardRef<DataSourcesPanelHandle, DataSou
   // about the LIST: a failed load left it empty and the panel said "No data sources added
   // yet", telling the user they had added nothing.
   const [loadError, setLoadError] = useState<string | null>(null);
+  // A removal that did not happen (FS-481). Separate from `uploadError` because the two
+  // point opposite ways: one is a file that never arrived, this is one that never left.
+  const [removeError, setRemoveError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useImperativeHandle(ref, () => ({
@@ -181,8 +184,13 @@ export const DataSourcesPanel = React.forwardRef<DataSourcesPanelHandle, DataSou
     try {
       await analysisSessionsApi.removeDataSource(sessionId, sourceId);
       setDataSources(dataSources.filter(ds => ds.id !== sourceId));
+      setRemoveError(null);
     } catch (error) {
       console.error('Error removing data source:', error);
+      // FS-481. The row stays exactly where it was, which is also what a click that never
+      // registered looks like — so the reasonable second reading is that it worked and the
+      // list is stale. It did not: the file is still attached, and still feeding answers.
+      setRemoveError('That file could not be removed — it is still attached to this session.');
     }
   };
 
@@ -284,6 +292,12 @@ export const DataSourcesPanel = React.forwardRef<DataSourcesPanelHandle, DataSou
           {uploadError && (
             <p className="text-xs text-red-600">
               {uploadError}
+            </p>
+          )}
+
+          {removeError && (
+            <p role="alert" className="text-xs text-red-600">
+              {removeError}
             </p>
           )}
 

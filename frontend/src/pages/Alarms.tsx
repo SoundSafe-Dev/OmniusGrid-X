@@ -18,6 +18,14 @@ const Alarms: FC = () => {
 
   // Invalidates the shared ['alarms'] key, refreshing both list and active queries.
   const acknowledgeMutation = useAcknowledgeAlarm()
+  // A failed acknowledgement said nothing (FS-480). The row stays exactly as it was —
+  // which is what it looks like for the moment before the list refetches — so the
+  // reasonable reading is that it worked. On a critical alarm that means somebody believes
+  // it is acknowledged and nobody is coming.
+  //
+  // The hook lives in `useAlarms.ts` and the sweep that catches this class scanned `.tsx`
+  // only, so it was outside the sweep entirely.
+  const [ackError, setAckError] = useState<string | null>(null)
 
   const getSeverityColor = (severity: string) => {
     switch (severity) {
@@ -67,6 +75,17 @@ const Alarms: FC = () => {
 
   return (
     <div className="space-y-6">
+      {/* A failed acknowledgement, said out loud (FS-480). Above the summary so it is
+          visible without scrolling to the row that failed. */}
+      {ackError && (
+        <div
+          role="alert"
+          className="rounded border border-status-alarm/40 bg-status-alarm/10 px-3 py-2 text-sm text-status-alarm"
+        >
+          {ackError}
+        </div>
+      )}
+
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Tooltip>
@@ -190,7 +209,18 @@ const Alarms: FC = () => {
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <button
-                        onClick={() => acknowledgeMutation.mutate({ alarmId: alarm.id })}
+                        onClick={() => {
+                          setAckError(null)
+                          acknowledgeMutation.mutate(
+                            { alarmId: alarm.id },
+                            {
+                              onError: () =>
+                                setAckError(
+                                  `Could not acknowledge "${alarm.message ?? alarm.id}". It is still unacknowledged.`,
+                                ),
+                            },
+                          )
+                        }}
                         className="px-3 py-1 bg-opsgrid-primary text-white rounded text-sm hover:bg-opsgrid-primary/80"
                       >
                         Acknowledge

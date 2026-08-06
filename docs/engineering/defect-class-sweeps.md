@@ -26,7 +26,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The seventy-four numbered classes
+## The seventy-six numbered classes
 
 **The count is the numbering, and it was already stale before this line was corrected.**
 This heading read "forty-seven" while the document's own highest class was 60 — the summary
@@ -2635,6 +2635,21 @@ one of its findings. The habit that catches it:
      codebase mutates — and could not see five hand-rolled `async` handlers doing the same
      thing with a `console.error` catch. Scope is part of a guard's claim, and an unstated
      scope reads as "everywhere".
+
+103. **Ask of every export what the screen beside it knows that the file does not.**
+     A caveat rendered next to a number is not attached to it. The file leaves the building;
+     the screen does not. `Historian`'s CSV carried the points and not the cap that produced
+     them, so a partial history read as the whole one to everybody downstream.
+
+104. **Clearing the stale view comes before announcing the failure.**
+     When a fetch fails after the thing it belongs to has already changed, the first
+     obligation is to remove what is now mislabelled. A message beside the wrong content is
+     worse than no message, because it invites the reader to look at the content.
+
+105. **A verb list is a scope, and an unlisted verb is an exemption nobody granted.**
+     `add` and `remove` were absent from the hand-rolled sweep's verb list, and nothing
+     recorded that decision because nobody made it. When a sweep enumerates what it matches,
+     the enumeration is the guard's real boundary.
 
 ---
 
@@ -5906,7 +5921,7 @@ Check both directions of an exemption before believing the count it produces.
 
 # What this session produced, and what it cost
 
-**FS-431 to FS-478 — forty-eight items, no gaps** — over one working session. Recorded
+**FS-431 to FS-481 — fifty-one items, no gaps** — over one working session. Recorded
 together because the individual entries above answer "what was wrong" and this answers "what
 the method actually does", which is the thing worth reusing.
 
@@ -6321,3 +6336,119 @@ button that does nothing and admits nothing.
 State a guard's scope, and when a class has two idioms, sweep both. An unstated scope reads
 as "everywhere", which is how five mutations sat inside a swept class without being swept.
 
+
+## Class 75 — a caveat that reaches the screen and not the file (FS-479)
+
+`Historian.exportCsv` wrote the header and the points and stopped.
+
+The query is capped. `hasMore`, `limit`, `offset` and `count` all come back, and the page
+renders them: "2 points (more available)". The CSV carried none of it — and **the CSV is the
+artefact that leaves the building**: filed, mailed, opened in a spreadsheet by somebody who
+never saw this page and reads it as the history of that metric over that window.
+
+```
+# PARTIAL: the first 2 points of a larger result (limit 2, offset 0).
+# Narrow the window or raise the limit for the rest.
+timestamp,average,minimum,maximum,sample_count
+```
+
+**The preamble goes at the top.** Spreadsheet software shows the first rows; a caveat below
+ten thousand points is a caveat nobody reads. And it appears only when `hasMore` — a warning
+on every export is one nobody reads either, and it would make the capped case
+indistinguishable from the complete one.
+
+The same shape as the intake risk score (FS-456), one boundary further out: there, a partial
+reading produced a confident number on screen; here, a complete-looking screen produces a
+partial file. **Ask of every export what the screen beside it knows that the file does not.**
+
+`Historian` also announced its first failed query as an empty window — `error && points.length
+=== 0` fell through to "No data points in this window", which tells an operator their machine
+was idle when the truth is that nobody knows. Now `role="alert"`, and it says which it was.
+
+## Class 74, third hiding place — the mutation defined in a hook (FS-480)
+
+Class 74 closed the hand-rolled idiom. Both sweeps scan `.tsx`, because that is where
+components live. **Mutation hooks live in `src/hooks/*.ts`** and were outside both.
+
+Sixteen of them. Seven had call sites that read nothing:
+
+| hook | what a failure looked like |
+|---|---|
+| `useYankAgentRelease` | the release stays listed — which is what it does for the moment before the refetch |
+| `useCancelAgentRollout` | the badge still reads "running", which is also what a successful cancel looks like until the refetch |
+| `usePauseAgentRollout` | same |
+| `useCreateAgentRelease` / `usePublishAgentRelease` / `useCreateAgentRollout` | nothing appears |
+| `useAcknowledgeAlarm` | the alarm stays unacknowledged, which is what it looks like mid-flight |
+
+The two safety actions are the sharp ones. A yank pulls a release that is going badly; a
+cancel stops a rollout mid-flight. Both failed silently, and both look — for a second or two
+after a success — exactly like what the operator just saw.
+
+**The obligation is the caller's, not the hook's.** A hook returning `useMutation` is a
+library: it has no screen to render on. So the new check asks of each *used* hook whether its
+call site surfaces the failure, by any of the three idioms this codebase actually uses —
+`.isError`, `mutateAsync` inside a try, or `mutate(x, { onError })`. An earlier version knew
+only the first two and reported `ErrorTriageDetail` as silent when it was not.
+
+**And only where the hook is used.** Eight of the sixteen have no caller at all — exported
+from `src/hooks/index.ts` and never imported. There is no user to fail in front of; flagging
+them would be noise. Dead exports are a different and much smaller problem.
+
+## Class 76 — the label moved and the content did not (FS-481)
+
+Every check above asks whether a failed **write** reaches the user. This is a failed **read**,
+and it is worse than any of them.
+
+```tsx
+const handleSessionSelect = async (session) => {
+  setCurrentSession(session)                                  // the label moves now
+  try   { setMessages(await api.getSessionMessages(session.id)) }
+  catch { console.error(e) }                                  // …or never
+}
+```
+
+On failure the header, the data-sources panel and the suggested-questions effect have all
+moved to session B, and the message list still holds **session A's conversation**. A silent
+write leaves the screen truthful-but-stale. This makes it *actively wrong*: another
+investigation's transcript, under this session's name, with nothing about it that looks
+wrong. An operator has no reason to doubt it.
+
+The fix is two things, and the first matters more than the second: **clear the stale content**,
+then say why it is empty. Announcing the failure while leaving the wrong transcript on screen
+would be worse than the original.
+
+The same ordering exists in `bootstrapSession`, where `messages` is empty at boot — so there
+the failure mode is only the milder one, a named session with no history, indistinguishable
+from a session nobody used. Both now say so.
+
+Two more from the same file: `handleAddIntakeData` dropped its failure to the console, so the
+document never appeared and the next answer was computed from a data set the operator believed
+contained it. And widening the Class 74 verb list (`add`, `remove`, `attach`, `cancel`,
+`pause`, `resume` — `add` and `remove` were simply missing) surfaced
+`DataSourcesPanel.handleRemove`: a failed removal left the row exactly where it was, which is
+also what a click that never registered looks like, so the reasonable second reading is that
+it worked and the list is stale. It did not. The file is still attached, and still feeding
+answers.
+
+**The sweep is narrow on purpose**: the setter must be called with the handler's *own*
+parameter, the awaited read must come after it, and the catch must neither set state, alert,
+nor rethrow. Loosening any of the three floods the list with ordinary loaders. It found one
+occurrence in the codebase — the one above.
+
+## Rule 103 — ask of every export what the screen beside it knows that the file does not
+
+A caveat rendered next to a number is not attached to it. The file leaves; the screen does
+not. Anything the producer knows about the completeness of a result belongs in the artefact,
+at the top, and only when it is true.
+
+## Rule 104 — clearing the stale view comes before announcing the failure
+
+When a fetch fails after the thing it belongs to has already changed, the first obligation is
+to remove what is now mislabelled. A message beside the wrong content is worse than no
+message, because it invites the reader to look at the content.
+
+## Rule 105 — a verb list is a scope, and an unlisted verb is an exemption nobody granted
+
+`add` and `remove` were absent from the Class 74 verb list. Nothing recorded that decision
+because nobody made it. When a sweep enumerates what it matches, the enumeration is the
+guard's real boundary — re-read it when the class turns up somewhere new.

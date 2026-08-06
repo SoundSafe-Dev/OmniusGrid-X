@@ -117,6 +117,26 @@ export const FleetRolloutDetail: FC = () => {
         </div>
       </div>
 
+      {/* PAUSE AND CANCEL SAY WHEN THEY FAIL (FS-480).
+      
+          Both read only `isPending` before this. An operator cancelling a rollout that is
+          going wrong saw the spinner stop and the badge still read "running" — which is
+          exactly what it looks like a moment before the refetch, so the reasonable reading
+          is that it worked. On an OTA rollout that is a fleet still taking a bad release
+          while somebody believes they stopped it.
+      
+          The mutations live in `useFleet.ts`; the sweep that catches this class everywhere
+          else scans `.tsx` only, so neither it nor the hand-rolled sweep could see them. */}
+      {(pauseRollout.isError || cancelRollout.isError) && (
+        <Card className="p-4">
+          <p role="alert" className="text-sm text-status-alarm">
+            {cancelRollout.isError
+              ? 'Could not cancel this rollout — it is still running. Try again, or check the fleet service.'
+              : 'Could not pause this rollout — it is still running. Try again, or check the fleet service.'}
+          </p>
+        </Card>
+      )}
+
       {rollout.isLoading ? (
         <Card noPadding><SkeletonCard lines={4} /></Card>
       ) : rollout.isError || !rollout.data ? (
