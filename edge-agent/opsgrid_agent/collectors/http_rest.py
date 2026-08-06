@@ -1,7 +1,7 @@
 """HTTP/REST API Collector for Edge Agent"""
 
 from typing import Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 import httpx
 import asyncio
 import structlog
@@ -141,7 +141,8 @@ class HTTPRestCollector(BaseCollector):
         Returns:
             Normalized telemetry data
         """
-        timestamp = datetime.now()
+        # AWARE UTC (FS-461) — see the note in ethernet_ip.py.
+        timestamp = datetime.now(timezone.utc)
         
         # Handle different response structures
         if isinstance(data, dict):

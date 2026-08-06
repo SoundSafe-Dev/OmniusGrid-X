@@ -121,11 +121,26 @@ oee_ratio = Gauge("edge_oee", "Local OEE (availability x performance x quality)"
 
 
 def set_oee(asset_id: str, result: dict) -> None:
-    """Publish a LocalOEECalculator result dict (percentages 0-100)."""
-    oee_availability.labels(asset_id=asset_id).set(result.get("availability", 0.0))
-    oee_performance.labels(asset_id=asset_id).set(result.get("performance", 0.0))
-    oee_quality.labels(asset_id=asset_id).set(result.get("quality", 0.0))
-    oee_ratio.labels(asset_id=asset_id).set(result.get("oee", 0.0))
+    """Publish a LocalOEECalculator result dict (percentages 0-100).
+
+    A factor that could not be computed is **not published** (FS-461). Prometheus has no
+    null, and `.set(0.0)` on an unmeasurable factor is not a neutral default: 0% OEE is
+    the single worst number this system can report about a machine, and it was being
+    reported for every asset whose telemetry carries no part counts.
+
+    The series simply does not advance. A gauge that stops updating is what "no data"
+    looks like in Prometheus, and `absent()` / staleness are the tools written for it —
+    both of which a hardcoded zero defeats.
+    """
+    for gauge, key in (
+        (oee_availability, "availability"),
+        (oee_performance, "performance"),
+        (oee_quality, "quality"),
+        (oee_ratio, "oee"),
+    ):
+        value = result.get(key)
+        if value is not None:
+            gauge.labels(asset_id=asset_id).set(value)
 
 
 # --- Local analytics: anomalies + alerts -------------------------------------

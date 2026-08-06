@@ -3825,3 +3825,74 @@ and the column stays NULL while the code reads as though it were populated.
 **Suite:** backend 3445 passed / 100 skipped · frontend 553 passed, coverage above all four
 thresholds.
 
+---
+
+## 2026-08-05 — FS-461: telemetry timestamps off by the device's UTC offset, and OEE pinned at zero
+
+Two findings from sweeping the edge agent's analytics, and both were classes this repository
+had already found and fixed **somewhere else**.
+
+### The timestamps
+
+Five collectors — `bacnet`, `profinet`, `dnp3`, `ethernet_ip`, `http_rest` — emitted
+`timestamp_edge` as a bare `datetime.now()`, which is naive LOCAL time. `telemetry.time` is
+`timestamptz`, and the ingestion worker parses the string with `fromisoformat`, producing a
+naive datetime that Postgres reads as UTC.
+
+**Every reading from a device outside UTC was stored wrong by exactly that device's offset.**
+Verified on a host at −05:00: a stamp emitted at 19:36 local arrives as 19:36 UTC.
+
+The agent has had a guard against this since FS-96, written after two instances became silent
+data loss. It matched `datetime.utcnow(` and nothing else, and passed every run while
+fourteen `datetime.now()` calls sat in the same tree. A guard that greps for one spelling
+reports clean on every other spelling — in the confident voice of a check that ran.
+
+Also caught in the sweep: `local_oee.py` measured elapsed time against local wall-clock,
+which is not monotonic. On a DST fall-back it steps backwards an hour, so time-in-Execute
+goes negative and silently subtracts from operating time. Once a year, on a number nobody
+would think to question.
+
+`_parse_ts` deliberately produced local-naive time to match, and documented why —
+"collectors mostly emit local-naive timestamps". That premise had gone stale: seven of
+eleven emitted aware UTC. **A comment explaining a deviation ages into a justification
+for it.**
+
+And the correction I wrote for that docstring was itself stale within the hour: it said
+"four emit naive", which stopped being true as soon as I fixed those four. Rule 75 —
+a claim in a comment is a claim — applies to the comment describing the fix.
+
+The agent is aware-UTC throughout now, and the widened guard asserts itself: that the
+pattern matches both spellings and does NOT match `datetime.now(timezone.utc)`. A pattern
+that quietly narrows restores months of confident silence.
+
+It strips comments and string literals with `tokenize` before matching, because the first
+attempt fired on the docstring describing this very defect — the third time in this
+repository that a comment explaining a defect tripped the detector for it.
+
+### The OEE
+
+`calculate_quality` returned `0.0` when no parts had been counted; `calculate_performance`
+returned `0.0` when `production_count` was zero. OEE is the product of three factors, so
+either pinned it to zero.
+
+Not a rare edge case: part counts arrive through **optional** telemetry, and a PackML feed
+that reports state without counts — most of them — never populates it. Every asset on such a
+site published `edge_oee = 0` from agent start, forever. Reproduced before the fix: a machine
+that ran a solid hour in Execute reported `oee 0.0`.
+
+The backend fixed this exact defect months ago, in a file called
+`test_oee_failure_is_not_zero.py`, whose first line is "Zero OEE is not a null result." The
+edge agent computes the same metric and had the same defect the whole time. **A defect class
+does not stop at a repository boundary just because the sweep did.**
+
+Undefined factors are `None` now, OEE is `None` when either is, and `set_oee` does not
+publish a gauge for a value it does not have — a gauge that stops advancing is what absence
+looks like in Prometheus, and `absent()` and staleness are written for exactly that, both of
+which a hardcoded zero defeats.
+
+Availability stays a number on purpose: its denominator is the window, which always exists,
+so a machine that sat idle really was available 0% of the time. Emptiness is only ambiguous
+where a count stands in for a measurement.
+
+**Suite:** edge agent 217 passed.
+

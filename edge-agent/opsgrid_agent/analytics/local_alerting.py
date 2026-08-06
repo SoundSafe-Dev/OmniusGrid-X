@@ -1,7 +1,7 @@
 """Local Alerting Engine for Edge Agent"""
 
 from typing import Dict, Any, List, Optional, Callable
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 import structlog
 
@@ -59,12 +59,12 @@ class AlertRule:
         if self.last_triggered is None:
             return True
         
-        cooldown_expired = datetime.now() - self.last_triggered > timedelta(seconds=self.cooldown_seconds)
+        cooldown_expired = datetime.now(timezone.utc) - self.last_triggered > timedelta(seconds=self.cooldown_seconds)
         return cooldown_expired
     
     def trigger(self, value: float) -> Dict[str, Any]:
         """Trigger the alert and update last triggered time."""
-        self.last_triggered = datetime.now()
+        self.last_triggered = datetime.now(timezone.utc)
         
         return {
             "rule_id": self.rule_id,
@@ -74,7 +74,7 @@ class AlertRule:
             "condition": self.condition,
             "severity": self.severity.value,
             "message": self.message_template.format(value=value, threshold=self.threshold),
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
 
 
@@ -188,7 +188,7 @@ class LocalAlertingEngine:
         Returns:
             List of recent alerts
         """
-        cutoff = datetime.now() - timedelta(hours=hours)
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
         
         return [
             alert for alert in self.alerts

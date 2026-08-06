@@ -26,7 +26,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The seventy numbered classes
+## The seventy-one numbered classes
 
 **The count is the numbering, and it was already stale before this line was corrected.**
 This heading read "forty-seven" while the document's own highest class was 60 — the summary
@@ -1950,6 +1950,38 @@ state. Both halves are load-bearing: the query is what can fail, and the empty s
 where the failure lands. A presentational list handed its rows as props has nothing to
 distinguish and is correctly ignored.
 
+### A sixth mechanism, on the other side of a boundary the sweep never crossed (FS-461)
+
+Every instance above is in the backend or the frontend. **The same class was sitting in the
+edge agent, in the same metric**, and no sweep had ever run there.
+
+`LocalOEECalculator.calculate_quality` returned `0.0` when no parts had been counted, and
+`calculate_performance` returned `0.0` when `production_count` was zero — the numerator
+`parts × cycle_time` came out at zero and divided into a real operating time. OEE is the
+product of three factors, so either one pinned it to zero.
+
+This was not a rare edge case. Part counts arrive through **optional** telemetry
+(`payload.get("total_parts", payload.get("parts_total"))`), and a PackML feed that reports
+state without counts — which is most of them — never populates it. So every asset on such a
+site published `edge_oee = 0` from agent start, forever. Reproduced before the fix: a machine
+that ran a solid hour in Execute reported `availability 12.5, performance 0.0, quality 0.0,
+oee 0.0`.
+
+The two undefined factors now return `None`, OEE is `None` when either is, and `set_oee`
+does not publish a gauge for a value it does not have — **a gauge that stops advancing is
+what absence looks like in Prometheus**, and `absent()` and staleness are written for it,
+both of which a hardcoded zero defeats.
+
+Availability stays a number on purpose. Its denominator is the window itself, which always
+exists, so a machine that sat idle really was available 0% of the time. The line from the
+HOS work holds here too: **emptiness is only ambiguous where a count stands in for a
+measurement.**
+
+The lesson is about coverage, not arithmetic. The backend's version of this exact defect was
+found and fixed months ago, in a file called `test_oee_failure_is_not_zero.py`. The edge
+agent computes the same metric, and the class had never been carried across — a defect class
+does not stop at a repository boundary just because the sweep did.
+
 ## Writing a sweep that is worth trusting
 
 Both false starts above came from the same mistake — trusting the scan instead of testing
@@ -2517,6 +2549,17 @@ one of its findings. The habit that catches it:
     The agent's payload builder and the cloud's handler each had tests, both passed, and
     three fields were transmitted to nobody. Assert the JOIN — every field one side sends is
     read by the other or written down as ignored, with a reason.
+
+87. **A guard that greps for one spelling reports clean on every other spelling.**
+    And it reports it in the confident voice of a check that ran. `datetime.utcnow(` was
+    matched for months while fourteen equally-naive `datetime.now()` calls sat in the same
+    tree. When you write a pattern, assert the pattern: that it matches each form of the
+    defect, and does NOT match the correct form.
+
+88. **A defect class does not stop at a repository boundary just because the sweep did.**
+    The backend fixed "OEE absence rendered as 0%" months ago. The edge agent computes the
+    same metric and had the same defect the whole time. After fixing a class, ask which
+    other component computes the same thing.
 
 ---
 
@@ -5421,4 +5464,63 @@ so the column stays NULL forever while the code reads as though it were populate
 
 Class 70. Two green suites, one on each side of a boundary, prove that each side does what
 its author intended. They say nothing about whether those intentions match. Assert the join.
+
+---
+
+## Class 71 — a guard that matches one spelling of the defect it was written for
+
+**Where:** `edge-agent/tests/test_no_naive_utcnow.py` (FS-461)
+
+The agent has had a naive-datetime guard since FS-96, written after two instances became
+**silent data loss** — backfill lag reported as 0, collector readings dropped before
+forward. Its docstring says so. It matched:
+
+```python
+_NAIVE_CALL = re.compile(r"datetime\.utcnow\s*\(")
+```
+
+and passed, every run, while **fourteen bare `datetime.now()` calls** sat in the same tree.
+`datetime.now()` with no argument returns naive LOCAL time. It is the more dangerous
+spelling precisely because it looks right.
+
+Five were `timestamp_edge` on collectors that emit to the cloud — `bacnet`, `profinet`,
+`dnp3`, `ethernet_ip`, `http_rest`. `telemetry.time` is `timestamptz`, and the ingestion
+worker parses the string with `fromisoformat`, which yields a naive datetime that Postgres
+then reads as UTC. **Every reading from a device outside UTC was stored wrong by exactly
+that device's offset.** Verified: on a host at −05:00, a stamp emitted at 19:36 local
+arrives as 19:36 UTC.
+
+The rest were internal, and one was worse than internal: `local_oee.py` measured elapsed
+time against local wall-clock, which is not monotonic. On a DST fall-back it steps backwards
+an hour, so the "currently in Execute" term goes negative and silently subtracts from
+operating time — feeding availability and performance. Once a year, on a number nobody would
+think to question.
+
+`_parse_ts` in `oee_tracker.py` deliberately produced local-naive time to match, and
+documented why: "collectors mostly emit local-naive timestamps". That premise had gone
+stale — seven emit aware UTC and four emit naive. **A comment explaining a deviation ages
+into a justification for it.**
+
+**Fixed** by converting the agent to aware UTC throughout (`astimezone(timezone.utc)` is
+correct for both inputs: naive is read as local, aware is converted), and by widening the
+pattern. The widened guard now asserts ITSELF — that it matches both spellings and does not
+match `datetime.now(timezone.utc)` — because a pattern that quietly narrows restores months
+of confident silence.
+
+It also strips comments and string literals via `tokenize` before matching. The first
+attempt stripped only `#`-prefixed lines and fired on the docstring **describing this very
+defect** — the third time in this document that a comment explaining a defect tripped the
+detector for it. A guard that fires on its own explanation gets fixed by deleting the
+explanation.
+
+## Rule 87 — a guard that greps for one spelling reports clean on every other spelling
+
+Class 71. Assert the pattern itself: that it matches each form of the defect, and does not
+match the correct form.
+
+## Rule 88 — a defect class does not stop at a repository boundary just because the sweep did
+
+Class 29's sixth mechanism and class 71 were both found in the edge agent, and both had
+already been found and fixed elsewhere in this repository. After closing a class, ask which
+other component computes the same thing.
 

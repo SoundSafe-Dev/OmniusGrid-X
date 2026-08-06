@@ -1,7 +1,7 @@
 """Local OEE Calculation Module for Edge Agent"""
 
 from typing import Dict, Any, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 import structlog
 
@@ -51,7 +51,7 @@ class LocalOEECalculator:
         })
         
         # Keep only last 24 hours of history
-        cutoff = datetime.now() - timedelta(hours=24)
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
         self.state_history = [
             s for s in self.state_history
             if s["timestamp"] > cutoff
@@ -94,7 +94,7 @@ class LocalOEECalculator:
         Returns:
             Availability as a percentage (0-100)
         """
-        cutoff = datetime.now() - timedelta(hours=time_window_hours)
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=time_window_hours)
         
         # Calculate operating time (Execute state)
         operating_time = 0.0
@@ -108,7 +108,7 @@ class LocalOEECalculator:
         # If currently in Execute state, add time since last state change
         if self.state_history and self.state_history[-1]["state"] == "Execute":
             last_change = self.state_history[-1]["timestamp"]
-            operating_time += (datetime.now() - last_change).total_seconds()
+            operating_time += (datetime.now(timezone.utc) - last_change).total_seconds()
         
         planned_time = time_window_hours * 3600
         availability = (operating_time / planned_time) * 100 if planned_time > 0 else 0.0
@@ -123,7 +123,7 @@ class LocalOEECalculator:
         
         return min(availability, 100.0)
     
-    def calculate_performance(self, time_window_hours: float = 8) -> float:
+    def calculate_performance(self, time_window_hours: float = 8) -> Optional[float]:
         """
         Calculate performance percentage.
         
@@ -133,9 +133,11 @@ class LocalOEECalculator:
             time_window_hours: Time window for calculation (default 8 hours)
             
         Returns:
-            Performance as a percentage (0-100)
+            Performance as a percentage (0-100), or **None when it cannot be computed**
+            (FS-461) — no operating time to divide by, or no part counts to divide.
+            A machine nobody has measured is not a machine running at 0%.
         """
-        cutoff = datetime.now() - timedelta(hours=time_window_hours)
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=time_window_hours)
         
         # Calculate operating time (Execute state)
         operating_time = 0.0
@@ -149,15 +151,27 @@ class LocalOEECalculator:
         # If currently in Execute state, add time since last state change
         if self.state_history and self.state_history[-1]["state"] == "Execute":
             last_change = self.state_history[-1]["timestamp"]
-            operating_time += (datetime.now() - last_change).total_seconds()
+            operating_time += (datetime.now(timezone.utc) - last_change).total_seconds()
         
         if operating_time == 0:
-            return 0.0
+            # The machine has not run in this window. Performance is a RATE while
+            # running, so with no running time there is no rate — 0% would claim it ran
+            # and produced nothing.
+            return None
+        
+        # NO PART COUNTS, NO PERFORMANCE (FS-461). `total_parts` comes from optional
+        # telemetry (`total_parts`/`parts_total`), and plenty of PackML feeds carry state
+        # without counts. This used to compute `0 * cycle_time / operating_time` = 0%,
+        # so a machine that ran a full hour reported 0% performance and therefore 0% OEE
+        # — the worst number this system can report — for the whole of its life on a site
+        # whose telemetry simply does not include counts.
+        if self.production_count == 0:
+            return None
         
         # Calculate performance
         total_parts = self.production_count
         ideal_time = total_parts * self.ideal_cycle_time
-        performance = (ideal_time / operating_time) * 100 if operating_time > 0 else 0.0
+        performance = (ideal_time / operating_time) * 100
         
         logger.debug(
             "performance_calculated",
@@ -170,17 +184,19 @@ class LocalOEECalculator:
         
         return min(performance, 100.0)
     
-    def calculate_quality(self) -> float:
+    def calculate_quality(self) -> Optional[float]:
         """
         Calculate quality percentage.
         
         Quality = Good Parts / Total Parts
         
         Returns:
-            Quality as a percentage (0-100)
+            Quality as a percentage (0-100), or **None when no parts have been counted**
+            (FS-461). Zero good parts out of zero is not zero quality; it is a ratio with
+            no denominator.
         """
         if self.production_count == 0:
-            return 0.0
+            return None
         
         quality = (self.good_count / self.production_count) * 100
         
@@ -194,7 +210,7 @@ class LocalOEECalculator:
         
         return quality
     
-    def calculate_oee(self, time_window_hours: float = 8) -> Dict[str, float]:
+    def calculate_oee(self, time_window_hours: float = 8) -> Dict[str, Any]:
         """
         Calculate overall OEE.
         
@@ -204,20 +220,39 @@ class LocalOEECalculator:
             time_window_hours: Time window for calculation (default 8 hours)
             
         Returns:
-            Dictionary with availability, performance, quality, and oee
+            Dictionary with availability, performance, quality and oee. **Any of the three
+            factors may be None**, and OEE is then None too (FS-461) — a product is only
+            as defined as its factors, and multiplying an unknown by anything does not
+            produce zero.
+            
+            AVAILABILITY IS NEVER None, deliberately. Its denominator is the window
+            itself, which always exists, so a machine that sat idle really was available
+            0% of the time. That is a measurement, not an absence.
         """
         availability = self.calculate_availability(time_window_hours)
         performance = self.calculate_performance(time_window_hours)
         quality = self.calculate_quality()
         
-        oee = (availability / 100) * (performance / 100) * (quality / 100) * 100
+        if performance is None or quality is None:
+            oee = None
+        else:
+            oee = (availability / 100) * (performance / 100) * (quality / 100) * 100
         
         result = {
             "availability": round(availability, 2),
-            "performance": round(performance, 2),
-            "quality": round(quality, 2),
-            "oee": round(oee, 2),
-            "timestamp": datetime.now().isoformat()
+            "performance": None if performance is None else round(performance, 2),
+            "quality": None if quality is None else round(quality, 2),
+            "oee": None if oee is None else round(oee, 2),
+            # Names WHY it is None, so a reader of the payload does not have to work out
+            # which factor was missing — the distinction between "no counts yet" and
+            # "never ran" is the whole point of not sending a zero.
+            "oee_unavailable_reason": (
+                None if oee is not None
+                else "no operating time in the window" if performance is None
+                and self.production_count > 0
+                else "no part counts in telemetry"
+            ),
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
         
         logger.info(
@@ -238,7 +273,7 @@ class LocalOEECalculator:
         Returns:
             Dictionary mapping state to percentage of time
         """
-        cutoff = datetime.now() - timedelta(hours=time_window_hours)
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=time_window_hours)
         
         state_durations = defaultdict(float)
         
@@ -252,7 +287,7 @@ class LocalOEECalculator:
         # Add current state duration
         if self.state_history:
             last_change = self.state_history[-1]
-            current_duration = (datetime.now() - last_change["timestamp"]).total_seconds()
+            current_duration = (datetime.now(timezone.utc) - last_change["timestamp"]).total_seconds()
             state_durations[last_change["state"]] += current_duration
         
         # Calculate percentages

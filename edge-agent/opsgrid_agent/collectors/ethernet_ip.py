@@ -14,7 +14,7 @@ Config:
 """
 
 from typing import Dict, Any, Optional, List, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 import asyncio
 import structlog
 
@@ -213,7 +213,11 @@ class EthernetIPCollector(BaseCollector):
     def _normalize_data(self, tag_values: Dict[str, Any]) -> Dict[str, Any]:
         """Normalize PLC tag data to the standard telemetry envelope."""
         return {
-            "timestamp_edge": datetime.now().isoformat(),
+            # AWARE UTC (FS-461). This was a bare `datetime.now()`, i.e. LOCAL naive.
+            # `telemetry.time` is `timestamptz`, and a naive stamp lands there as
+            # though it were UTC — so every reading from a device outside UTC was
+            # stored wrong by exactly that device's offset.
+            "timestamp_edge": datetime.now(timezone.utc).isoformat(),
             "asset_id": self.asset_id,
             "topic": "telemetry",
             "collector_type": "ethernet_ip",
