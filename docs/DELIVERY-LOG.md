@@ -5162,3 +5162,47 @@ list and passing.
 
 **Suite:** frontend 821 → 833 · e2e 49 → 84 collected, 38 passing without a backend
 (35 new) · backend 3564 · edge agent 289.
+
+## FS-490 — counting what does not run
+
+Wave H's "tests that pass without running" had two items. **FS-363 is closed**:
+`tests/_lane_failures.py` is exactly the expiry register it asked for — owner, diagnosis, and
+two tiers of date, with the note explaining that *"an entry with an owner and a reason but no
+date is a decision nobody has to make again"*. **FS-362 was open**, and this is it.
+
+Six suites carry a module-level `pytest.mark.skipif` on credentials: SAP, Dynamics, Dataverse
+×2, Odoo, QuickBooks. Between them they are the whole vendor-facing surface, and in the
+ordinary run every one skips. That part is right — a fork PR has no secrets, and a red build
+for a key nobody can provision teaches people to ignore the colour.
+
+Half the item was already satisfied too: every one of the six had a real `reason`, and four of
+the five CI jobs already pass `-rs`. (The fifth, Odoo, sets `RUN_ODOO_INTEGRATION=1` and
+provisions a live Odoo, so it never skips and `-rs` would add nothing — checked rather than
+assumed, and not changed.)
+
+**The open half was the count.** A seventh suite added tomorrow with the same marker joins a
+green run as a silent skip, and the honest reading of "3,564 passed" quietly stops being
+honest. That is the shape of every hand-carried figure in this documentation that has drifted,
+and all of them drifted toward more work done.
+
+`test_credential_gated_suites_are_registered.py` makes the set explicit: a credential-gated
+suite must be registered, registering it names the variable that enables it, and that variable
+must appear in the suite's own skip reason — so the register and the sentence a person actually
+reads cannot drift apart. It fails in three directions: an unregistered skipper, a registered
+file that no longer exists, and a registered file that no longer skips.
+
+### What it found, including in itself
+
+`test_erp_platform_integration_realdb.py` — **23 tests** — skipped with *"needs live Dataverse
+credentials (see docs/erp/dynamics-dataverse-setup.md)"*, naming no variable at all. Its three
+sibling Dataverse suites spell theirs inline. A reader of the CI log learned that 23 tests did
+not run, and was sent to a document to find out how to change that. It now names all four.
+
+And it caught **me**: my first register entry for the QuickBooks suite said
+`INTUIT_SANDBOX_REALM_ID`; the variable is `INTUIT_REALM_ID`. Checking that the reason and the
+register agree is what makes the register worth having rather than a second place to be wrong.
+
+Mutation-verified by adding a suite that skips on a variable nobody sets — the register names
+it and fails.
+
+**Suite:** backend 3564 → 3575 · frontend 833 · e2e 84 collected · edge agent 289.

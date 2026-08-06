@@ -26,7 +26,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The eighty-four numbered classes
+## The eighty-five numbered classes
 
 **The count is the numbering, and it was already stale before this line was corrected.**
 This heading read "forty-seven" while the document's own highest class was 60 — the summary
@@ -2710,6 +2710,12 @@ one of its findings. The habit that catches it:
      browser sweep's first version aborted the dev server's own modules, so React never
      mounted and all 32 assertions passed against a blank document. Assert the page rendered
      before asserting anything about its text.
+
+116. **Count what does not run, not only what does.**
+     A pass count answers "how much worked", never "how much was asked", and the gap is
+     invisible: every skipped suite is a green line. Six credential-gated suites could have
+     become seven with nothing noticing. Any opt-out mechanism needs a register that fails
+     when the set grows.
 
 ---
 
@@ -5981,7 +5987,7 @@ Check both directions of an exemption before believing the count it produces.
 
 # What this session produced, and what it cost
 
-**FS-431 to FS-489 — fifty-nine items, no gaps** — over one working session. Recorded
+**FS-431 to FS-490 — sixty items, no gaps** — over one working session. Recorded
 together because the individual entries above answer "what was wrong" and this answers "what
 the method actually does", which is the thing worth reusing.
 
@@ -6888,3 +6894,42 @@ of every outage a user actually sees.
 asserting the *absence* of something must first assert the presence of the thing it is
 searching — the page mounted, the file parsed, the list is non-empty. Otherwise the greenest
 possible result is a total failure of the harness.
+
+## Class 85 — the set of things that do not run, which nothing counts (FS-490)
+
+Rule 49 is *"a suite that skipped is not a suite that passed"*, and this repository has the
+near-miss on record: **"'25 passed' would have confirmed the migration against tests that never
+ran the code it can break."**
+
+Six suites in `backend/tests/` carry a module-level `pytest.mark.skipif` on credentials — SAP,
+Dynamics, Dataverse ×2, Odoo, QuickBooks. Between them they are the entire vendor-facing
+surface, and in the ordinary run every one of them skips. **That is correct.** A fork PR has no
+secrets, and a red build for a key nobody can provision teaches people to ignore the colour.
+
+What is not correct is that **the set can grow and nothing counts it**. A seventh suite added
+tomorrow with the same marker joins a green run as a silent skip, and the honest reading of
+"3,564 passed" quietly stops being honest. That is the same shape as every hand-carried figure
+in this document that has drifted — and all of them drifted the same way, toward more work
+done.
+
+So the register is the claim and the test is the check on it: a credential-gated suite must be
+listed, listing it names the variable that enables it, and that variable must appear in the
+suite's own skip reason. Adding one now costs a line, which is the only moment anybody decides
+*on purpose* that a suite may run nowhere.
+
+**It found one immediately.** `test_erp_platform_integration_realdb.py` — 23 tests — skipped
+with *"needs live Dataverse credentials (see docs/erp/dynamics-dataverse-setup.md)"*, naming no
+variable at all. Its three sibling Dataverse suites all spell theirs inline. A reader of the CI
+log learned that 23 tests did not run and was sent to a document to find out why.
+
+The register also caught **me**: my first entry for the QuickBooks suite said
+`INTUIT_SANDBOX_REALM_ID`, and the variable is `INTUIT_REALM_ID`. The check that the reason and
+the register agree is what made the register worth having rather than a second place to be
+wrong.
+
+## Rule 116 — count what does not run, not only what does
+
+A pass count answers "how much worked". It does not answer "how much was asked", and the gap
+between those is invisible by construction: every skipped suite is a green line. Any mechanism
+that lets a test opt out — credentials, markers, CI `--ignore` — needs a register that fails
+when the set grows, or the suite's headline number slowly stops describing the suite.

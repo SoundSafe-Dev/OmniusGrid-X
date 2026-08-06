@@ -30,7 +30,15 @@ CLIENT_SECRET = os.environ.get("DATAVERSE_CLIENT_SECRET")
 
 pytestmark = pytest.mark.skipif(
     not all([ORG, TENANT_ID, CLIENT_ID, CLIENT_SECRET]),
-    reason="needs live Dataverse credentials (see docs/erp/dynamics-dataverse-setup.md)",
+    reason=(
+        # NAMES THE VARIABLES (FS-490). This read "needs live Dataverse credentials (see
+        # docs/…)", which tells a reader of the CI log that 23 tests did not run and sends
+        # them to a document to find out why. Its three sibling Dataverse suites already
+        # spell the variables inline; this one did not.
+        "needs live Dataverse credentials: DATAVERSE_ORG, DATAVERSE_TENANT_ID, "
+        "DATAVERSE_CLIENT_ID, DATAVERSE_CLIENT_SECRET "
+        "(see docs/erp/dynamics-dataverse-setup.md)"
+    ),
 )
 
 ENTITY_SET = "systemusers"
