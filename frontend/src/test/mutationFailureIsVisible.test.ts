@@ -178,3 +178,89 @@ describe('no mutation fails in silence', () => {
     ).toEqual([])
   })
 })
+
+/**
+ * The same class in the other idiom (FS-478).
+ *
+ * Everything above is scoped to `useMutation`, which is how most of this codebase mutates
+ * — and is therefore blind to the pages that do it by hand: an `async` handler that awaits
+ * an api call and catches with `console.error`. Structurally invisible to the sweep, and
+ * exactly the same defect: the user pressed a button, nothing changed, and nothing said so.
+ *
+ * It found five, in two files. `IntakeInbox` upload and analyse — analyse is the sharper of
+ * the two, because the spinner stops and the row stays as it was, which is what "there was
+ * nothing to analyse" looks like. And three in `ContextManagementModal`, where the modal
+ * closes on success, so a failure leaves it open — indistinguishable from still saving.
+ *
+ * WHY THE HEURISTIC IS NARROW. It requires an awaited `…Api.<verb>` call within the
+ * preceding window AND a catch whose body only logs. A broader version flagged every
+ * defensive `catch { console.warn }` around optional enrichment, which is not this defect
+ * and would have made the list unreadable.
+ */
+export function silentHandRolledMutations(raw: string): string[] {
+  const source = raw.replace(COMMENT, ' ')
+  const found: string[] = []
+  const CATCH = /catch\s*\((\w+)?\)?\s*\{([^}]*)\}/g
+  const MUTATING_CALL =
+    /\bawait\s+\w+Api\.(?:create|update|delete|upload|analyze|dispatch|send|post|approve|reject|trigger|start|complete|activate|assign|move|issue|clock)\w*\s*\(/i
+  let match: RegExpExecArray | null
+  while ((match = CATCH.exec(source))) {
+    const body = match[2]
+    if (!/console\.(?:error|warn|log)/.test(body)) continue
+    // Anything that puts the failure on screen clears it.
+    if (/set\w*(?:Error|Message|Toast|Alert|Status)/i.test(body)) continue
+    if (/alert\(|toast|notify|showError/i.test(body)) continue
+    const before = source.slice(Math.max(0, match.index - 900), match.index)
+    if (!MUTATING_CALL.test(before)) continue
+    const handler = (before.match(/const (\w+) = async/g) || []).slice(-1)[0]
+    found.push(handler ? handler.replace(/const (\w+) = async/, '$1') : 'anonymous handler')
+  }
+  return [...new Set(found)]
+}
+
+const HAND_ROLLED = FILES.map((file) => ({
+  file: file.slice(SRC.length + 1),
+  handlers: silentHandRolledMutations(readFileSync(file, 'utf8')),
+})).filter((o) => o.handlers.length > 0)
+
+describe('the hand-rolled sweep is not vacuous', () => {
+  it('recognises the shape it is looking for', () => {
+    const silent = `
+      const handleSave = async () => {
+        try { await thingApi.update(x) } catch (e) { console.error('nope', e) }
+      }`
+    expect(silentHandRolledMutations(silent)).toEqual(['handleSave'])
+  })
+
+  it('clears a handler that surfaces the failure', () => {
+    const surfaced = `
+      const handleSave = async () => {
+        try { await thingApi.update(x) } catch (e) { console.error(e); setActionError('no') }
+      }`
+    expect(silentHandRolledMutations(surfaced)).toEqual([])
+  })
+
+  it('ignores a defensive catch around something that does not mutate', () => {
+    // The reason the heuristic is narrow. Optional enrichment that logs and carries on is
+    // not this defect, and flagging it would bury the ones that are.
+    const enrichment = `
+      const load = async () => {
+        try { await thingApi.list() } catch (e) { console.warn('optional', e) }
+      }`
+    expect(silentHandRolledMutations(enrichment)).toEqual([])
+  })
+})
+
+describe('no hand-rolled mutation fails in silence', () => {
+  it('has no offenders', () => {
+    expect(
+      HAND_ROLLED.map(
+        (o) =>
+          `${o.file} — ${o.handlers.join(', ')} await a mutation and report failure only ` +
+          `to the console, so the user who pressed the button sees the screen exactly as ` +
+          `it was`,
+      ),
+    ).toEqual([])
+  })
+})
+

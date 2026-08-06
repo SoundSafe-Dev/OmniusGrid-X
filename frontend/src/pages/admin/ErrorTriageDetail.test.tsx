@@ -49,6 +49,10 @@ const detail = (over: Record<string, unknown> = {}) => ({
   last_seen: '2026-07-28T00:00:00Z',
   message_sample: 'customer_ref=AAA-BB-CCCC failed validation',
   traceback_sample: 'File "handler.py", line 9',
+  // Present on the base fixture so the type carries it — the redaction tests below
+  // destructure it to simulate an older server, and `tsc` rejects removing a key the
+  // inferred type never had. vitest passed either way; the typecheck is what caught it.
+  samples_redacted: false,
   organization_id: 'org-1',
   status_changed_by: null,
   // Every field the page reads. `count_in_range` and `series` are the ones an

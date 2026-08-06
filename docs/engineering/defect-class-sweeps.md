@@ -26,7 +26,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The seventy-three numbered classes
+## The seventy-four numbered classes
 
 **The count is the numbering, and it was already stale before this line was corrected.**
 This heading read "forty-seven" while the document's own highest class was 60 — the summary
@@ -2629,6 +2629,12 @@ one of its findings. The habit that catches it:
      conclusion, and it needs the second half of the search: whether someone already
      decided it should not have one, and why. The reasoning is often in a test docstring
      rather than the code.
+
+102. **A sweep scoped to one idiom is blind to the same defect in another.**
+     The mutation-failure sweep reads `useMutation` options, which is how most of this
+     codebase mutates — and could not see five hand-rolled `async` handlers doing the same
+     thing with a `console.error` catch. Scope is part of a guard's claim, and an unstated
+     scope reads as "everywhere".
 
 ---
 
@@ -5900,7 +5906,7 @@ Check both directions of an exemption before believing the count it produces.
 
 # What this session produced, and what it cost
 
-**FS-431 to FS-477 — forty-seven items, no gaps** — over one working session. Recorded
+**FS-431 to FS-478 — forty-eight items, no gaps** — over one working session. Recorded
 together because the individual entries above answer "what was wrong" and this answers "what
 the method actually does", which is the thing worth reusing.
 
@@ -6279,4 +6285,39 @@ Both are the same error as FS-355 and FS-460: **a conclusion drawn from half a s
 times in two days, in three different costumes — a missing consumer, a missing policy, a
 missing test. The correction each time was cheap and the same: read the thing that would have
 told you.
+
+## Class 74 — a guard scoped to one idiom, and the same defect in another (FS-478)
+
+`mutationFailureIsVisible.test.ts` sweeps every `useMutation` for options that handle only
+success, and its docstring is emphatic about why: a failed mutation renders as **nothing at
+all**, and the user pressed the button on purpose, so the absence of a response is
+indistinguishable from the moment before the list refreshes.
+
+It reads `useMutation` call sites. **Five mutations in this codebase are hand-rolled** — an
+`async` handler that awaits an api call and catches into `console.error` — and were
+structurally invisible to it while being exactly the defect it exists to prevent.
+
+| where | what a failure looked like |
+|---|---|
+| `IntakeInbox.handleAnalyze` | the spinner stops, the row stays pending — which is what an item with nothing to analyse looks like |
+| `IntakeInbox.handleUpload` | the file simply does not appear in the list |
+| `ContextManagementModal` ×3 | the modal stays open, which is what it does while saving |
+
+The analyse case is the sharpest: the page shows a risk score once analysed, so "no score"
+reads as "not analysed yet" rather than "the analysis failed", and the operator's remedy is
+to wait.
+
+**The heuristic is deliberately narrow.** It requires an awaited `…Api.<verb>` call in the
+preceding window and a catch whose body only logs. A broader version flagged every defensive
+`catch { console.warn }` around optional enrichment — not this defect, and enough of them to
+make the list unreadable. A sweep that spends the reader's trust on noise stops being run.
+
+**Found while writing a test for a page that had none**, which is FS-364's argument. The e2e
+route sweep covers these pages for `undefined` and `NaN`; it has nothing to say about a
+button that does nothing and admits nothing.
+
+## Rule 102 — a sweep scoped to one idiom is blind to the same defect in another
+
+State a guard's scope, and when a class has two idioms, sweep both. An unstated scope reads
+as "everywhere", which is how five mutations sat inside a swept class without being swept.
 

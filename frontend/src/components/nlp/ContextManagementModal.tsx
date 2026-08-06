@@ -23,6 +23,12 @@ export const ContextManagementModal: React.FC<ContextManagementModalProps> = ({
   const [priorityInput, setPriorityInput] = useState('');
   const [goals, setGoals] = useState<UserGoal[]>([]);
   const [isSaving, setIsSaving] = useState(false);
+  // Four handlers here mutate and reported failure only to the console (FS-478). This is a
+  // MODAL: it closes on success, so "nothing happened and the dialog is still open" is the
+  // only signal a user gets, and it is the same thing they see while the request is still
+  // in flight. Same class the useMutation sweep covers — these are hand-rolled handlers,
+  // which that sweep cannot see.
+  const [actionError, setActionError] = useState<string | null>(null);
   const [newGoalTitle, setNewGoalTitle] = useState('');
   const [newGoalProgress, setNewGoalProgress] = useState(0);
   const [newGoalDeadline, setNewGoalDeadline] = useState('');
@@ -65,6 +71,7 @@ export const ContextManagementModal: React.FC<ContextManagementModalProps> = ({
       setNewGoalDeadline('');
     } catch (error) {
       console.error('Error adding goal:', error);
+      setActionError('Could not add the goal. Nothing was changed.');
     }
   };
 
@@ -81,6 +88,7 @@ export const ContextManagementModal: React.FC<ContextManagementModalProps> = ({
       setGoals(updatedContext.user_goals);
     } catch (error) {
       console.error('Error updating goal:', error);
+      setActionError('Could not update the goal. Nothing was changed.');
     }
   };
 
@@ -93,6 +101,7 @@ export const ContextManagementModal: React.FC<ContextManagementModalProps> = ({
       setGoals(updatedContext.user_goals);
     } catch (error) {
       console.error('Error deleting goal:', error);
+      setActionError('Could not delete the goal. Nothing was changed.');
     }
   };
 
@@ -108,6 +117,7 @@ export const ContextManagementModal: React.FC<ContextManagementModalProps> = ({
       onClose();
     } catch (error) {
       console.error('Error saving context:', error);
+      setActionError('Could not save your context. Nothing was changed.');
     } finally {
       setIsSaving(false);
     }
@@ -126,6 +136,17 @@ export const ContextManagementModal: React.FC<ContextManagementModalProps> = ({
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-6">
+          {/* A failed add, update, delete or save, said out loud (FS-478). At the top of
+              the scrollable body so it is visible wherever the user was working — a modal
+              that simply stays open is indistinguishable from one still saving. */}
+          {actionError && (
+            <div
+              role="alert"
+              className="rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-500"
+            >
+              {actionError}
+            </div>
+          )}
           {/* User Context Section */}
           <div className="space-y-4">
             <h3 className="text-sm font-semibold text-gray-900 dark:text-white">User Information</h3>

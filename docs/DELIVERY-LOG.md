@@ -4558,3 +4558,47 @@ FS-364 is corrected in the plan rather than closed: four pages remain — `Corre
 
 **Suite:** backend 3542 passed / 100 skipped · frontend 560 · edge agent 289.
 
+---
+
+## 2026-08-06 — FS-478: five mutations that failed in silence, in the idiom the sweep could not see
+
+Started on FS-364's four untested pages, beginning with `IntakeInbox`. Writing the test found
+the defect first — for the second time in a row.
+
+`mutationFailureIsVisible.test.ts` sweeps every `useMutation` for options that handle only
+success, and its docstring is emphatic about why: a failed mutation renders as **nothing at
+all**, and the user pressed the button on purpose, so the absence of a response is
+indistinguishable from the moment before the list refreshes.
+
+**It reads `useMutation` call sites.** Five mutations here are hand-rolled — an `async`
+handler awaiting an api call, catching into `console.error` — and were structurally invisible
+to it while being exactly the defect it exists to prevent:
+
+* `IntakeInbox.handleAnalyze` — the spinner stops and the row stays pending, which is what an
+  item with nothing to analyse looks like. The page shows a risk score once analysed, so "no
+  score" reads as "not analysed yet" and the operator's remedy is to wait;
+* `IntakeInbox.handleUpload` — the file simply does not appear;
+* three in `ContextManagementModal`, which closes on success — so a failure leaves it open,
+  which is what it does while saving.
+
+All five now surface, and the analyse message names the item, because the inbox shows many
+rows and a bare "analysis failed" leaves the operator guessing which button they pressed.
+
+**The sweep is extended rather than duplicated.** The new heuristic is deliberately narrow —
+an awaited `…Api.<verb>` in the preceding window and a catch that only logs. A broader
+version flagged every defensive `catch { console.warn }` around optional enrichment, which is
+not this defect and would have made the list unreadable. A sweep that spends the reader's
+trust on noise stops being run.
+
+### And the page test that started it
+
+`IntakeInbox.test.tsx` now holds three properties: a partial analysis says so (the FS-456
+notice, both the dropped-page and cut-text cases, and silence when the document was read in
+full), a failed action reaches the operator, and an empty inbox is not a failed one — that
+last was already correct and is asserted so it stays that way.
+
+`tsc` also caught something vitest did not: the `ErrorTriageDetail` fixture destructured a key
+its inferred type never had. The test suite was green either way.
+
+**Suite:** frontend 564 → 571 · backend 3542 · edge agent 289.
+

@@ -13,6 +13,13 @@ export const IntakeInbox: React.FC = () => {
   // A failed load rendered "No items in the inbox" above "Upload data to get started" — an
   // invitation to re-upload work that may already be there.
   const [loadError, setLoadError] = useState<string | null>(null);
+  // A failed UPLOAD or ANALYSE reached only the console (FS-478). The user pressed a
+  // button on purpose, so the absence of any response is indistinguishable from the
+  // moment before the list refreshes — and for analyse it is worse, because the spinner
+  // stops and the row simply stays as it was, which is what "nothing to analyse" looks
+  // like. Same class the useMutation sweep covers; this page does not use useMutation, so
+  // the sweep could not see it.
+  const [actionError, setActionError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [analyzing, setAnalyzing] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -60,6 +67,7 @@ export const IntakeInbox: React.FC = () => {
     if (!selectedFile || !title) return;
 
     setUploading(true);
+    setActionError(null);
     try {
       const response = await nlpCorrelationApi.uploadToIntake(
         selectedFile,
@@ -73,6 +81,9 @@ export const IntakeInbox: React.FC = () => {
       setDescription('');
     } catch (error) {
       console.error('Error uploading file:', error);
+      setActionError(
+        `Could not upload ${selectedFile.name}. The file was not added to the inbox.`,
+      );
     } finally {
       setUploading(false);
     }
@@ -80,6 +91,7 @@ export const IntakeInbox: React.FC = () => {
 
   const handleAnalyze = async (itemId: string) => {
     setAnalyzing(itemId);
+    setActionError(null);
     try {
       const response = await nlpCorrelationApi.analyzeIntake(itemId);
       // Update the item with analysis results
@@ -90,6 +102,12 @@ export const IntakeInbox: React.FC = () => {
       ));
     } catch (error) {
       console.error('Error analyzing item:', error);
+      // Names the item: the inbox shows many rows and a bare "analysis failed" leaves the
+      // operator guessing which button they pressed.
+      const failed = items.find((item) => item.id === itemId);
+      setActionError(
+        `Could not analyse ${failed?.title ?? 'that item'}. It has not been analysed.`,
+      );
     } finally {
       setAnalyzing(null);
     }
@@ -263,6 +281,17 @@ export const IntakeInbox: React.FC = () => {
           </div>
         }
       >
+        {/* A failed upload or analysis, said out loud (FS-478). Above the list rather than
+            beside the button, because the analyse buttons are per-row and the failure has
+            to survive the row re-rendering. */}
+        {actionError && (
+          <div
+            role="alert"
+            className="mb-4 rounded border border-status-alarm/40 bg-status-alarm/10 px-3 py-2 text-sm text-status-alarm"
+          >
+            {actionError}
+          </div>
+        )}
         {isLoading ? (
           <div className="flex items-center justify-center py-8">
             <Loader2 className="w-8 h-8 animate-spin text-opsgrid-primary" />
