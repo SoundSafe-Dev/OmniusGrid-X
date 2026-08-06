@@ -107,7 +107,10 @@ class TestOEEIsNoneWhenAFactorIs(unittest.TestCase):
         )
 
     def test_a_fully_measured_machine_still_reports_a_number(self):
-        calc = LocalOEECalculator("m")
+        # A rated cycle time is now part of being "fully measured" (FS-463). It used to be
+        # hardcoded at 60s for every machine in the world, so this test passed without one
+        # and the number it asserted was fabricated.
+        calc = LocalOEECalculator("m", ideal_cycle_time=60.0)
         now = datetime.now(timezone.utc)
         calc.add_state_change("Stopped", "Execute", now, 3600.0)
         calc.add_production_count(40, 38)
@@ -140,6 +143,7 @@ class TestTheGaugeIsNotPublishedWithoutAValue(unittest.TestCase):
     def test_a_measurable_oee_is_published(self):
         oee_tracker.reset()
         asset = "fs461-measured"
+        oee_tracker.configure(asset, 60.0)  # rated cycle time; see FS-463
         now = datetime.now(timezone.utc)
         oee_tracker.record(_msg(asset, "Execute", now - timedelta(hours=1)))
         closing = _msg(asset, "Stopped", now)

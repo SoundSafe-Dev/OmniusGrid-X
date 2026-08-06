@@ -489,8 +489,15 @@ class EdgeAgent:
                 )
 
                 # Register any local alert rules declared for this asset.
-                from opsgrid_agent.analytics import alerting_tracker
+                from opsgrid_agent.analytics import alerting_tracker, oee_tracker
                 alerting_tracker.configure(asset_id, collector_config.get('alerts'))
+
+                # And the machine's rated cycle time, without which local performance
+                # cannot be computed (FS-463). Same key the backend reads per asset.
+                oee_tracker.configure(
+                    asset_id,
+                    (collector_config.get('oee') or {}).get('ideal_cycle_time_seconds'),
+                )
 
                 # Register with coordinator
                 self.coordinator.register_collector(config)

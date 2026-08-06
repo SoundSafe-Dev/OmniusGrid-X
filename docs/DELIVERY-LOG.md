@@ -3944,3 +3944,61 @@ value drifts. A copy is a claim.
 
 **Suite:** backend 3459 passed / 100 skipped · edge agent 228 passed.
 
+---
+
+## 2026-08-05 — FS-463: the carry-across pass, and a performance figure computed from a constant
+
+Four consecutive edge-agent findings (FS-457, FS-458, FS-461, FS-462) turned out to be
+classes the backend had already fixed. Each was found by accident while doing something else,
+which is luck rather than method. So this pass is the systematic version: take the closed
+backend classes, ask which of them the agent could also have, and check each mechanically.
+
+**Twelve classes carried across. One new defect, five confirmed clean, six already fixed.**
+The clean results are written down because they are the expensive part to re-derive, and a
+sweep whose negatives go unrecorded gets run again by the next person.
+
+Clean: SQL interpolation in the SQLite buffer (parameterised throughout); unordered
+truncation (every `[:N]` is byte slicing or a log preview); hot-spinning retry loops (24
+unbounded exception-swallowing loops examined, all sleep); start/stop symmetry (17 collector
+classes, none leaks a task); side-effect names (every `_send`/`_publish`/`_forward` performs
+it, and raises rather than logging when it cannot); metrics declared and never incremented
+(25 declared, all touched).
+
+**Two of those clean results were first reported as hits by a detector that was wrong** —
+the usual tax. The hot-spin sweep flagged `mqtt.py` because it sleeps through a
+`_sleep_or_stop()` wrapper rather than calling `asyncio.sleep` directly, and `mqtt.py` is in
+fact the best-protected collector in the tree. An earlier version flagged 21 loops by
+counting any loop containing an `except`, including `for` loops that terminate by
+construction.
+
+### The defect it found
+
+`Performance = (parts × ideal cycle time) / operating time`, where the ideal cycle time is
+seconds per part at the machine's rated rate — a property of **the machine**. The agent had
+`self.ideal_cycle_time: float = 60.0`, set in `__init__`, never read from configuration,
+never assignable, referenced nowhere else. Every machine in the world was assumed to take
+sixty seconds per part.
+
+Measured, both running flat out for an hour: a press with a 3-second cycle reported **100%**
+(it computed 2000% and clamped); a CNC with a 600-second cycle reported **10%**, and there is
+no clamp at the bottom.
+
+The clamp is why it survived. Fast machines came out at exactly 100% and looked perfect, so
+the error was only visible on slow ones — as a machine running perfectly reporting a tenth of
+its rate.
+
+The backend has read this per asset from `asset.connection_config['ideal_cycle_time_seconds']`
+all along. The agent had no way to be told at all.
+
+Fixed with **no default**. `oee_tracker.configure(asset_id, seconds)` is called from the
+collector-registration loop in `main.py`, beside the alert-rule registration already there,
+reading the same key the backend reads. Unconfigured, performance is `None` with a reason. A
+zero, negative or non-numeric rate is refused rather than clamped — clamping would resurrect
+an invented number by another route.
+
+**This turns performance off for any deployment that never configured a cycle time**, which
+is the point: those deployments were not getting performance, they were getting a number
+computed from sixty.
+
+**Suite:** edge agent 237 passed.
+

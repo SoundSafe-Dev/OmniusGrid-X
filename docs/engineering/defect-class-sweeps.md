@@ -2572,6 +2572,11 @@ one of its findings. The habit that catches it:
     coming. Unreachable handling for a real condition is a defect report left in the
     source.
 
+91. **Carry a closed class across every component that computes the same quantity.**
+    Four consecutive edge-agent defects turned out to be classes the backend had already
+    fixed. Finding them one at a time is luck; the systematic version — walk the closed
+    classes, ask which other component computes the same thing — is cheap and finishes.
+
 ---
 
 ## Open observations, not yet tickets
@@ -5596,4 +5601,82 @@ nobody asked it.
 
 Class 72. An unreachable branch for a real condition, or an accessor with no caller, is a
 defect report someone left in the source. Read it as one.
+
+---
+
+## The carry-across pass — closed backend classes, re-asked of the edge agent (FS-463)
+
+Four consecutive findings in the edge agent (FS-457, FS-458, FS-461, FS-462) were classes
+this repository had **already found and fixed in the backend**. Each was discovered by
+accident, in the middle of doing something else. That is not a method, so this is the
+systematic version: take the closed classes, ask which of them the agent could also have,
+and check each mechanically.
+
+**It found one new defect, confirmed five clean, and finished in an afternoon.** The clean
+results are recorded because they are the expensive part to re-derive, and because a sweep
+whose negatives are unwritten gets run again by the next person.
+
+| closed backend class | what it becomes for an agent | result |
+|---|---|---|
+| `test_sql_is_not_built_by_interpolation` | the SQLite store-and-forward buffer | **clean** — parameterised throughout; the `f"…{placeholders}"` are `','.join('?' * n)` |
+| `test_capped_lists_cannot_grow` | data the buffer discards | fixed earlier, FS-458 |
+| `test_capped_lists_are_ordered` | `[:N]` slices anywhere | **clean** — every hit is byte slicing or a log preview, not a result set |
+| `test_datetimes_are_timezone_aware` | naive time in the agent | fixed earlier, FS-461 (14 sites) |
+| `test_oee_failure_is_not_zero` | absence rendered as a number | fixed earlier, FS-461 / FS-462 |
+| `test_maintenance_costs_are_computed_not_invented` | a figure derived from a constant | **NEW — FS-463**, below |
+| `test_provenance_flags_are_always_set` | fabricated readings | fixed earlier, FS-457; sweep confirms only two stamp sites remain and both are correct |
+| `test_heartbeat_contract_is_fully_read` | agent → cloud field contract | recorded, FS-460 |
+| `test_ws_queue_processor_cannot_spin` | retry loops burning CPU | **clean** — 24 unbounded exception-swallowing loops examined, every one sleeps |
+| `test_service_lifecycle_is_declared` | start/stop symmetry | **clean** — 17 collector classes, none creates a task it fails to cancel |
+| `test_correlation_alerts_are_dispatched` | a name claiming a side effect | **clean** — every `_send`/`_publish`/`_forward` performs it, and raises rather than logging when it cannot |
+| `test_frontend_types_match_their_own_payload` | metrics declared and never touched | **clean** — 25 declared, all incremented |
+
+Two of the "clean" results were **first reported as hits by a detector that was wrong**,
+which is the usual tax:
+
+* the hot-spin sweep flagged `mqtt.py` because it sleeps via a `_sleep_or_stop()` wrapper
+  rather than calling `asyncio.sleep` directly — and `mqtt.py` is in fact the best-protected
+  collector in the tree, with both a circuit breaker and exponential backoff;
+* the first version flagged 21 loops by counting any loop with an `except`, including `for`
+  loops over finite collections, which terminate by construction.
+
+### FS-463 — a performance figure computed from a constant
+
+`Performance = (parts × ideal cycle time) / operating time`. The ideal cycle time is seconds
+per part when the machine runs flat out — a property of **the machine**. The agent had:
+
+```python
+self.ideal_cycle_time: float = 60.0  # seconds (default)
+```
+
+set in `__init__`, never read from configuration, never assignable, referenced nowhere else
+in the tree. Every machine in the world was assumed to take sixty seconds per part.
+Measured before the fix, both running flat out for an hour:
+
+| machine | reported performance | truth |
+|---|---|---|
+| press, 3s cycle | **100%** (computed 2000%, clamped) | 100% |
+| CNC, 600s cycle | **10%** (no clamp at the bottom) | 100% |
+
+The clamp is why it survived: fast machines came out at exactly 100% and looked perfect, so
+only slow machines showed the error — and they showed it as a machine running perfectly
+reporting one tenth of its rate.
+
+The backend has read this per asset from `asset.connection_config['ideal_cycle_time_seconds']`
+all along. The agent had no way to be told at all.
+
+**Fixed** with no default: `oee_tracker.configure(asset_id, seconds)` is called from the
+collector-registration loop in `main.py`, beside the alert-rule registration already there,
+reading the same key the backend reads. Unconfigured, performance is `None` with a reason —
+consistent with FS-461. A zero, negative or non-numeric rate is refused rather than clamped,
+because clamping would resurrect an invented number by another route.
+
+This turns performance **off** for any deployment that never configured a cycle time. That is
+the point: those deployments were not getting performance, they were getting a number
+computed from sixty.
+
+## Rule 91 — carry a closed class across every component that computes the same quantity
+
+Finding the same class four times by accident is luck. Walking the closed classes and asking
+which other component computes the same thing is a method, and it terminates.
 

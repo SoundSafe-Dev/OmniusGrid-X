@@ -206,6 +206,18 @@ collectors:
           severity: "critical"  # info | warning | error | critical
           message_template: "temperature {value} exceeded {threshold}"
           cooldown_seconds: 300
+      # Local OEE (FS-463). `ideal_cycle_time_seconds` is how long this machine takes to
+      # make one part when it runs at its rated speed — a property of the MACHINE, so
+      # there is deliberately no default.
+      #
+      # Without it the agent reports availability and quality, and reports performance and
+      # OEE as unavailable with a reason, rather than computing them against a guess. It
+      # was hardcoded at 60s for every asset: a 3-second-cycle press came out at 100%
+      # (2000%, clamped) and a 600-second-cycle CNC at 10%, both while running flat out.
+      #
+      # Same key the cloud reads from `asset.connection_config`, so the two agree.
+      oee:
+        ideal_cycle_time_seconds: 45
 
   # 13. Network device / UPS / gateway via SNMP (requires pysnmp)
   - asset_id: "switch-001"

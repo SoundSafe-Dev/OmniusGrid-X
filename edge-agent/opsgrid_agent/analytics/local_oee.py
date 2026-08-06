@@ -21,12 +21,24 @@ class LocalOEECalculator:
     Quality = Good Parts / Total Parts
     """
     
-    def __init__(self, asset_id: str):
+    def __init__(self, asset_id: str, ideal_cycle_time: Optional[float] = None):
         self.asset_id = asset_id
         self.state_history: list[Dict[str, Any]] = []
         self.production_count: int = 0
         self.good_count: int = 0
-        self.ideal_cycle_time: float = 60.0  # seconds (default)
+        #: Seconds per part when the machine runs at its rated rate. **No default**
+        #: (FS-463): this is the numerator of performance, and it is a property of the
+        #: MACHINE, not of this software.
+        #:
+        #: It was hardcoded to 60.0 for every asset in the world. A press with a 3-second
+        #: cycle running flat out computed 2000% and clamped to 100 — right by accident,
+        #: with the error invisible. A CNC with a 600-second cycle running flat out
+        #: computed 10%, and there is no clamp at the bottom.
+        #:
+        #: The backend has always read this per asset from
+        #: `asset.connection_config['ideal_cycle_time_seconds']`; the agent had no way to
+        #: be told at all.
+        self.ideal_cycle_time: Optional[float] = ideal_cycle_time
         self.planned_production_time: float = 8 * 3600  # 8 hours in seconds
     
     def add_state_change(
@@ -201,6 +213,13 @@ class LocalOEECalculator:
         if self.production_count == 0:
             return None
         
+        # NO RATED CYCLE TIME, NO PERFORMANCE (FS-463). Performance is production measured
+        # against the machine's rated rate; without that rate there is nothing to measure
+        # against, and a guessed one produces a number that is wrong by an unbounded
+        # factor while looking exactly like a measurement.
+        if not self.ideal_cycle_time:
+            return None
+        
         # Calculate performance
         total_parts = self.production_count
         ideal_time = total_parts * self.ideal_cycle_time
@@ -284,6 +303,8 @@ class LocalOEECalculator:
             "oee_unavailable_reason": (
                 None if oee is not None
                 else "no interpretable machine states in the window" if availability is None
+                else "no ideal cycle time configured for this asset"
+                if not self.ideal_cycle_time and self.production_count > 0
                 else "no operating time in the window" if performance is None
                 and self.production_count > 0
                 else "no part counts in telemetry"

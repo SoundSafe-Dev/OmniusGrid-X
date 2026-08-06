@@ -55,6 +55,42 @@ class OEETracker:
     def __init__(self) -> None:
         self._calcs: Dict[str, LocalOEECalculator] = {}
         self._last: Dict[str, Tuple[str, datetime]] = {}
+        self._cycle_times: Dict[str, float] = {}
+
+    def configure(self, asset_id: str, ideal_cycle_time_seconds: Any) -> None:
+        """Register an asset's rated cycle time (FS-463).
+
+        Mirrors `alerting_tracker.configure`, and is called from the same place in
+        `main.py` — the collector-registration loop, which is the only point that has
+        both the asset id and its configuration.
+
+        Without this the calculator has no rate to measure production against, and
+        `calculate_performance` returns None rather than inventing one. That is a
+        behaviour change for any deployment that never configured it: performance stops
+        being reported instead of being reported wrongly.
+        """
+        if ideal_cycle_time_seconds is None:
+            return
+        try:
+            value = float(ideal_cycle_time_seconds)
+        except (TypeError, ValueError):
+            logger.warning(
+                "oee_ideal_cycle_time_invalid",
+                asset_id=asset_id,
+                value=ideal_cycle_time_seconds,
+            )
+            return
+        if value <= 0:
+            # A zero or negative rate is not a rate. Rejected rather than clamped,
+            # because clamping would resurrect an invented number by another route.
+            logger.warning(
+                "oee_ideal_cycle_time_not_positive", asset_id=asset_id, value=value
+            )
+            return
+        self._cycle_times[asset_id] = value
+        calc = self._calcs.get(asset_id)
+        if calc is not None:
+            calc.ideal_cycle_time = value
 
     def record(self, message: Dict[str, Any]) -> Optional[Dict[str, float]]:
         payload = message.get("payload") or {}
@@ -66,7 +102,9 @@ class OEETracker:
         ts = _parse_ts(message.get("timestamp_edge"))
         calc = self._calcs.get(asset_id)
         if calc is None:
-            calc = self._calcs[asset_id] = LocalOEECalculator(asset_id)
+            calc = self._calcs[asset_id] = LocalOEECalculator(
+                asset_id, ideal_cycle_time=self._cycle_times.get(asset_id)
+            )
 
         prev = self._last.get(asset_id)
         if prev is not None:
@@ -97,6 +135,10 @@ _default = OEETracker()
 
 def record(message: Dict[str, Any]) -> Optional[Dict[str, float]]:
     return _default.record(message)
+
+
+def configure(asset_id: str, ideal_cycle_time_seconds: Any) -> None:
+    _default.configure(asset_id, ideal_cycle_time_seconds)
 
 
 def reset() -> None:
