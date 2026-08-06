@@ -26,7 +26,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The eighty-five numbered classes
+## The eighty-six numbered classes
 
 **The count is the numbering, and it was already stale before this line was corrected.**
 This heading read "forty-seven" while the document's own highest class was 60 — the summary
@@ -2716,6 +2716,12 @@ one of its findings. The habit that catches it:
      invisible: every skipped suite is a green line. Six credential-gated suites could have
      become seven with nothing noticing. Any opt-out mechanism needs a register that fails
      when the set grows.
+
+117. **A defect that needs data to appear needs a check that does not.**
+     A fractional value, a first null, a string longer than any row so far — some faults are
+     invisible to every dynamic test because their trigger has not occurred. `Decimal("12.0")`
+     validates against an `int` field and `Decimal("12.5")` does not. Comparing the
+     declaration against the storage finds it; testing harder never will.
 
 ---
 
@@ -6933,3 +6939,39 @@ A pass count answers "how much worked". It does not answer "how much was asked",
 between those is invisible by construction: every skipped suite is a green line. Any mechanism
 that lets a test opt out — credentials, markers, CI `--ignore` — needs a register that fails
 when the set grows, or the suite's headline number slowly stops describing the suite.
+
+## Class 86 — correct field name, wrong type, latent until the data arrives (FS-303)
+
+Two sweeps already pair a response model with its table: one asks whether a declared field is
+produced by anything, the other whether a produced field is declared. This is the third
+direction and the quietest, because the name is right.
+
+```python
+Decimal("12.0")  ->  int field  ->  12          # validates
+Decimal("12.5")  ->  int field  ->  ValidationError
+```
+
+A model declaring an integer over a numeric column is **not wrong in any way a fixture can
+show**. Whole-numbered rows validate, so it passes every test, every review and every staging
+run — and 500s on the first fractional row that reaches it. FS-284b caught two of these by
+eye, after they had shipped.
+
+**The defect is a property of the schema and the failure is a property of the data**, which is
+why a static pairing is the only instrument that can find it early. Nothing else in this
+repository is looking at the two together.
+
+It reports **nothing today**, and that is worth writing down rather than deleting. Class 25 is
+the standing warning: a sweep reported clean, recorded as deliberately unguarded, and it was
+not clean — the reader had covered a seventh of its subject. So this one carries three proofs
+alongside the check: that the pairing reaches fractional columns at all, that the check fires
+on the defect built from a real SQLAlchemy column, and that it stays quiet on the two correct
+shapes (`float` over `Numeric`, `int` over `Integer`). It was also mutation-verified against a
+real model — `AlarmRuleResponse.threshold` retyped to `int` over its `Float()` column, which it
+names.
+
+## Rule 117 — a defect that needs data to appear needs a check that does not
+
+Some faults are invisible to every dynamic test because the input that triggers them has not
+occurred yet: a fractional value, a null in a column that has never been null, a string longer
+than the widest row so far. Testing harder does not find these. Comparing the declaration
+against the storage does, and it costs one pass over a schema.

@@ -5206,3 +5206,35 @@ Mutation-verified by adding a suite that skips on a variable nobody sets — the
 it and fails.
 
 **Suite:** backend 3564 → 3575 · frontend 833 · e2e 84 collected · edge agent 289.
+
+## FS-303 — correct field name, wrong type
+
+The last open item in Wave H's verification block. FS-304 and FS-305 are both closed —
+`test_declared_media_types_are_honest.py` exists, and the returned-keys sweep's own docstring
+records that helper-built returns are now covered (39 returns across 15 shapers in 7 modules,
+where `fleet_logistics` had been the single file ever checked, by hand).
+
+Two sweeps already pair a response model with its table: one asks whether a declared field is
+produced by anything, the other whether a produced field is declared. This is the third
+direction, and the name is right in every instance of it — which is why it survives review.
+
+`Decimal("12.0")` validates against an `int` field. `Decimal("12.5")` raises. So a model
+declaring an integer over a numeric column serves whole-numbered rows correctly, passes every
+test whose fixture happens to use them, and 500s on the first fractional row that reaches it.
+FS-284b caught two of these by eye, after they had shipped. **The defect is a property of the
+schema and the failure is a property of the data**, so no dynamic test finds it until the data
+does.
+
+The check reuses the pairing already in `test_response_models_match_their_tables.py` rather
+than building a second one, and reports **nothing today**. That is recorded rather than
+deleted, because Class 25 is the standing warning here — a sweep once reported clean, was
+written down as deliberately unguarded, and had covered a seventh of its subject.
+
+So it ships with three proofs beside the check: the pairing reaches fractional columns at all
+(≥10 visible), the check fires on the defect built from a real SQLAlchemy column, and it stays
+quiet on both correct shapes (`float` over `Numeric`, `int` over `Integer`) — the control that
+stops it becoming noise, which the UUID check next door needed for the same reason. And it was
+mutation-verified against a real model: `AlarmRuleResponse.threshold` retyped to `int` over its
+`Float()` column, which it names in the failure.
+
+**Suite:** backend 3575 → 3580 · frontend 833 · e2e 84 collected · edge agent 289.

@@ -26,6 +26,9 @@ of them justifies not looking again.
 
 from __future__ import annotations
 
+from decimal import Decimal as _Decimal
+
+import sqlalchemy as sa
 import pytest
 from pydantic import BaseModel
 
@@ -290,4 +293,121 @@ class TestADeclaredTypeCanHoldWhatTheColumnStores:
         assert conventional >= 80, (
             f"only {conventional} UUID-over-VARCHAR(36) pairs seen; if the storage "
             "convention changed, the free-form test above is now measuring the wrong thing"
+        )
+
+
+# --- FS-303: a declared type that cannot hold the column's values ------------
+#
+# The name direction is above: a field declared and not produced, or produced and not
+# declared. This is the third direction and the quietest — **correct field name, wrong
+# type**.
+#
+# `Decimal("12.0")` validates against an `int` field. `Decimal("12.5")` raises. So a model
+# that declares an integer over a numeric column is not wrong in a way any fixture with whole
+# numbers can show: it passes every test, every review and every staging run, and then
+# 500s on the first fractional row that reaches it. FS-284b caught two of these by eye,
+# after they had shipped.
+#
+# A static pairing is the only instrument that finds this before the data does, because the
+# defect is a property of the SCHEMA and the failure is a property of the DATA.
+#
+# IT FINDS NOTHING TODAY, and that is the point of writing it down. `test_it_can_actually
+# _fire` builds the defect out of a real SQLAlchemy column and a real pydantic model and
+# asserts the check reports it — because "proven clean" and "never checked" look identical
+# afterwards, and only one of them justifies not looking again (Class 25).
+
+_FRACTIONAL = (sa.Numeric, sa.Float)
+
+
+def _integer_fields_over_fractional_columns(
+    models_and_columns: dict[str, tuple[type[BaseModel], dict[str, object]]],
+) -> list[str]:
+    """Fields declared `int` whose column stores a fractional type."""
+    offenders = []
+    for name, (model, columns) in models_and_columns.items():
+        for field_name, field in model.model_fields.items():
+            column = columns.get(field_name)
+            if column is None:
+                continue
+            # `sa.Integer` is not a subclass of Numeric, but a dialect-specific integer can
+            # report as one — so the exclusion is explicit rather than assumed.
+            if not isinstance(column, _FRACTIONAL) or isinstance(column, sa.Integer):
+                continue
+            declared = _declared(field.annotation)
+            if int in declared and float not in declared and _Decimal not in declared:
+                offenders.append(
+                    f"{name}.{field_name} is declared `int` over {column!r} — a whole-numbered "
+                    f"row validates and the first fractional one is a 500"
+                )
+    return offenders
+
+
+def _paired() -> dict[str, tuple[type[BaseModel], dict[str, object]]]:
+    types = _column_types()
+    return {
+        name: (model, types[name[: -len("Response")]])
+        for name, model in _response_models().items()
+        if name[: -len("Response")] in types
+    }
+
+
+class TestADeclaredTypeCanHoldItsColumn:
+    def test_the_pairing_reaches_numeric_columns_at_all(self):
+        # Vacuity. If no paired model has a fractional column, the check below is comparing
+        # nothing and would pass for the wrong reason.
+        seen = sum(
+            1
+            for _, columns in _paired().values()
+            for column in columns.values()
+            if isinstance(column, _FRACTIONAL) and not isinstance(column, sa.Integer)
+        )
+        assert seen >= 10, (
+            f"only {seen} fractional columns visible across paired models; the column-type "
+            f"read is broken and the check below is measuring nothing"
+        )
+
+    def test_it_can_actually_fire(self):
+        """The defect, built out of the real machinery, and reported."""
+
+        class _Broken(BaseModel):
+            quantity: int
+
+        offenders = _integer_fields_over_fractional_columns(
+            {"_BrokenResponse": (_Broken, {"quantity": sa.Numeric(12, 2)})}
+        )
+        assert len(offenders) == 1 and "quantity" in offenders[0]
+
+    def test_a_float_declaration_is_not_flagged(self):
+        """The control. Declaring `float` over a numeric column is the correct thing to do,
+        and a check that reported it would be turned off within a day."""
+
+        class _Fine(BaseModel):
+            quantity: float
+
+        assert (
+            _integer_fields_over_fractional_columns(
+                {"_FineResponse": (_Fine, {"quantity": sa.Numeric(12, 2)})}
+            )
+            == []
+        )
+
+    def test_an_integer_column_is_not_flagged(self):
+        """The other control: `int` over an integer column is simply correct."""
+
+        class _Counted(BaseModel):
+            attempts: int
+
+        assert (
+            _integer_fields_over_fractional_columns(
+                {"_CountedResponse": (_Counted, {"attempts": sa.Integer()})}
+            )
+            == []
+        )
+
+    def test_no_field_is_declared_narrower_than_its_column(self):
+        offenders = _integer_fields_over_fractional_columns(_paired())
+        assert not offenders, (
+            "these response models declare an integer over a column that stores fractions, "
+            "so they serve whole-numbered rows correctly and 500 on the first fractional "
+            "one: " + "; ".join(offenders)
         )
