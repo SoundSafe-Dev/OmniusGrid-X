@@ -3,6 +3,8 @@
 from typing import Dict, Any, Optional
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
+
+from ..packml import PackMLState
 import structlog
 
 logger = structlog.get_logger()
@@ -82,17 +84,25 @@ class LocalOEECalculator:
             good=good_count
         )
     
-    def calculate_availability(self, time_window_hours: float = 8) -> float:
+    def calculate_availability(self, time_window_hours: float = 8) -> Optional[float]:
         """
         Calculate availability percentage.
         
-        Availability = Operating Time / Planned Production Time
+        Availability = Operating Time / (Planned Production Time − Unmeasured Time)
         
         Args:
             time_window_hours: Time window for calculation (default 8 hours)
             
         Returns:
-            Availability as a percentage (0-100)
+            Availability as a percentage (0-100), or None when the window contains no
+            measured time at all (FS-462).
+            
+        TIME SPENT IN AN UNMAPPED STATE IS EXCLUDED FROM THE DENOMINATOR, not counted as
+        downtime. `PackMLState.UNDEFINED` means the mapper did not understand what the
+        machine reported — which is an absence of information, and dividing by it asserts
+        the machine was idle. This is the standard OEE treatment of excluded time, and it
+        is the same rule as everywhere else here: a count must not stand in for a
+        measurement.
         """
         cutoff = datetime.now(timezone.utc) - timedelta(hours=time_window_hours)
         
@@ -110,14 +120,37 @@ class LocalOEECalculator:
             last_change = self.state_history[-1]["timestamp"]
             operating_time += (datetime.now(timezone.utc) - last_change).total_seconds()
         
-        planned_time = time_window_hours * 3600
-        availability = (operating_time / planned_time) * 100 if planned_time > 0 else 0.0
+        # Time the mapper could not interpret, excluded from the denominator.
+        unmeasured_time = 0.0
+        for state_change in self.state_history:
+            if state_change["timestamp"] < cutoff:
+                continue
+            if (
+                state_change["previous_state"] == PackMLState.UNDEFINED.value
+                and state_change["duration_seconds"]
+            ):
+                unmeasured_time += state_change["duration_seconds"]
+        
+        planned_time = time_window_hours * 3600 - unmeasured_time
+        if planned_time <= 0:
+            # Every second of the window was in a state nothing could interpret. There is
+            # no availability to report — 0% would say the machine was down all shift.
+            logger.warning(
+                "availability_unmeasurable",
+                asset_id=self.asset_id,
+                unmeasured_time=unmeasured_time,
+                hint="the PackML mapping does not cover the states this asset reports",
+            )
+            return None
+        
+        availability = (operating_time / planned_time) * 100
         
         logger.debug(
             "availability_calculated",
             asset_id=self.asset_id,
             operating_time=operating_time,
             planned_time=planned_time,
+            unmeasured_time=unmeasured_time,
             availability=availability
         )
         
@@ -225,21 +258,23 @@ class LocalOEECalculator:
             as defined as its factors, and multiplying an unknown by anything does not
             produce zero.
             
-            AVAILABILITY IS NEVER None, deliberately. Its denominator is the window
-            itself, which always exists, so a machine that sat idle really was available
-            0% of the time. That is a measurement, not an absence.
+            AVAILABILITY IS None ONLY WHEN THE WHOLE WINDOW WAS UNINTERPRETABLE (FS-462).
+            Its denominator is the window minus time spent in states the PackML mapper did
+            not understand, so an idle machine still reports 0% — that is a measurement —
+            but a machine whose every reported state was unmapped reports nothing, because
+            0% would claim it was down all shift when in truth nobody could read it.
         """
         availability = self.calculate_availability(time_window_hours)
         performance = self.calculate_performance(time_window_hours)
         quality = self.calculate_quality()
         
-        if performance is None or quality is None:
+        if availability is None or performance is None or quality is None:
             oee = None
         else:
             oee = (availability / 100) * (performance / 100) * (quality / 100) * 100
         
         result = {
-            "availability": round(availability, 2),
+            "availability": None if availability is None else round(availability, 2),
             "performance": None if performance is None else round(performance, 2),
             "quality": None if quality is None else round(quality, 2),
             "oee": None if oee is None else round(oee, 2),
@@ -248,6 +283,7 @@ class LocalOEECalculator:
             # "never ran" is the whole point of not sending a zero.
             "oee_unavailable_reason": (
                 None if oee is not None
+                else "no interpretable machine states in the window" if availability is None
                 else "no operating time in the window" if performance is None
                 and self.production_count > 0
                 else "no part counts in telemetry"

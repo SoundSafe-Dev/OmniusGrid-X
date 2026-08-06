@@ -3896,3 +3896,51 @@ where a count stands in for a measurement.
 
 **Suite:** edge agent 217 passed.
 
+---
+
+## 2026-08-05 — FS-462: a machine running at full rate, recorded as stopped
+
+`PackMLStateMapper.map_state` turns whatever string a PLC reports into a standard PackML
+state. Anything it did not recognise became `PackMLState.IDLE` — **and `IDLE` is an
+availability-loss state.** So an unreadable state was recorded as downtime.
+
+The default could not be neutral. Every member of that enum belongs to a category, so any
+choice asserts something; `Idle` asserts the worst available thing.
+
+**It is not an exotic case.** The default maps are per asset type and do not overlap: the
+3D-printer map knows "printing" and not "running", the CNC map knows the reverse. One wrong
+`asset_type` in a config, one firmware update renaming a state, one vendor that says
+"in_progress". Verified before the fix — a printer mapper given "running" returned `Idle`
+with `is_availability_loss` True, and the only trace was one log line.
+
+### Three things in the file already said so
+
+* `get_state_category` had an `"unknown"` branch that was **dead code**, unreachable because
+  every enum member was categorised;
+* `get_unknown_states()` is a public accessor **nothing outside the module calls**;
+* the warning fires once per *distinct* string, on a device that may not be able to ship
+  logs — so the single line recording a permanently mis-measured machine is also the one
+  most likely to be lost.
+
+Someone foresaw this and the handling was lost. **Unreachable handling for a real condition
+is a defect report left in the source**, and it is worth reading as one.
+
+### And fixing the agent alone would have made it worse
+
+`/operations/{id}/packml-summary` computes `Execute / total_duration`, where the total sums
+every state bucket. The moment the agent started emitting an honest `Undefined`, that
+endpoint turned the honesty into a lower productivity number — a machine reporting as less
+productive the more of its states its configuration failed to cover. A property of the config
+presented as a property of the machine.
+
+That denominator now excludes unmapped time, and `unmeasured_seconds` is reported so a reader
+can see how much the answer rests on. It is Rule 88 applied to itself within the hour of
+writing it: fixing one side of a boundary is not finishing when the other side consumes the
+same quantity.
+
+The literal `"Undefined"` is duplicated across the two repositories because the backend does
+not import the agent package — so the backend test reads the agent's source and fails if the
+value drifts. A copy is a claim.
+
+**Suite:** backend 3459 passed / 100 skipped · edge agent 228 passed.
+

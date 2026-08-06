@@ -43,6 +43,12 @@ class PackMLStateSlice(BaseModel):
     percentage: float
 
 
+#: The state the edge agent emits for a vendor string its mapping does not cover (FS-462).
+#: Mirrors `PackMLState.UNDEFINED` in `edge-agent/opsgrid_agent/packml.py`; kept as a plain
+#: literal because the backend does not import from the agent package.
+UNMAPPED_STATE = "Undefined"
+
+
 class PackMLSummaryResponse(BaseModel):
     operation_id: str
     operation_name: Optional[str] = None
@@ -50,7 +56,14 @@ class PackMLSummaryResponse(BaseModel):
     total_duration_seconds: float
     state_breakdown: Dict[str, PackMLStateSlice]
     productive_time_seconds: float
+    #: Productive time over the duration that could be INTERPRETED — total minus time the
+    #: edge agent's PackML mapper could not translate (FS-462). Dividing by the raw total
+    #: dilutes the figure with time nobody could read, which reports a running machine as
+    #: less productive the more of its states are unmapped.
     productive_percentage: float
+    #: Seconds spent in states the agent could not map. Reported rather than folded away,
+    #: because a large value here means the answer above rests on a small sample.
+    unmeasured_seconds: float = 0.0
 
 
 @router.get("/", response_model=PaginatedResponse[OperationResponse])
@@ -276,6 +289,17 @@ async def get_operation_packml_summary(
     durations = operation.packml_state_durations or {}
     total_duration = sum(durations.values())
     
+    # TIME NOBODY COULD READ IS NOT TIME THE MACHINE WAS UNPRODUCTIVE (FS-462).
+    #
+    # The edge agent emits `Undefined` for a vendor state its PackML mapping does not
+    # cover — it used to emit `Idle`, which made a running machine look stopped. Now that
+    # the absence is honest, this endpoint has to treat it as an absence: dividing Execute
+    # time by a total that includes unmapped time reports a machine as less productive the
+    # more of its states are unrecognised, which is a property of the CONFIG, not the
+    # machine. The same fix as `calculate_availability` on the agent, one boundary out.
+    unmeasured = durations.get(UNMAPPED_STATE, 0)
+    measured_duration = total_duration - unmeasured
+    
     # Calculate percentages
     breakdown = {}
     for state, duration in durations.items():
@@ -292,6 +316,7 @@ async def get_operation_packml_summary(
         "state_breakdown": breakdown,
         "productive_time_seconds": durations.get('Execute', 0),
         "productive_percentage": round(
-            (durations.get('Execute', 0) / total_duration * 100), 2
-        ) if total_duration > 0 else 0
+            (durations.get('Execute', 0) / measured_duration * 100), 2
+        ) if measured_duration > 0 else 0,
+        "unmeasured_seconds": unmeasured,
     }

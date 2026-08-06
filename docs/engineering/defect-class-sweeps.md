@@ -26,7 +26,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The seventy-one numbered classes
+## The seventy-two numbered classes
 
 **The count is the numbering, and it was already stale before this line was corrected.**
 This heading read "forty-seven" while the document's own highest class was 60 — the summary
@@ -2560,6 +2560,17 @@ one of its findings. The habit that catches it:
     The backend fixed "OEE absence rendered as 0%" months ago. The edge agent computes the
     same metric and had the same defect the whole time. After fixing a class, ask which
     other component computes the same thing.
+
+89. **A fallback into a valid-looking value inherits that value's meaning.**
+    Unmapped machine states defaulted to `Idle`, and `Idle` is a downtime category — so
+    "we could not read this" was recorded as "the machine was stopped". Pick a value that
+    belongs to NO category, or the default silently answers a question nobody asked it.
+
+90. **Dead code that anticipates a case is evidence the case was foreseen and then lost.**
+    `get_state_category` had an `"unknown"` branch that nothing could reach, and
+    `get_unknown_states()` had no caller. Both were written by someone who saw this
+    coming. Unreachable handling for a real condition is a defect report left in the
+    source.
 
 ---
 
@@ -5523,4 +5534,66 @@ match the correct form.
 Class 29's sixth mechanism and class 71 were both found in the edge agent, and both had
 already been found and fixed elsewhere in this repository. After closing a class, ask which
 other component computes the same thing.
+
+---
+
+## Class 72 — an unrecognised input defaulted into a value that already means something
+
+**Where:** `edge-agent/opsgrid_agent/packml.py`, `backend/app/api/operations.py` (FS-462)
+
+`PackMLStateMapper.map_state` turns whatever string a PLC reports into a standard PackML
+state. For anything it did not recognise it returned `PackMLState.IDLE` — **and `IDLE` is in
+`AVAILABILITY_LOSS_STATES`**. So an unreadable state was recorded as downtime, and a machine
+running at full rate appeared stopped.
+
+The default was not neutral. It could not be: every member of that enum belongs to a
+category, so *any* choice of default asserts something. `Idle` asserts the worst available
+thing.
+
+**How likely is a miss.** The default maps are per asset type and do not overlap.
+`create_mapper_for_asset_type("3d_printer")` knows "printing" and not "running"; the CNC map
+knows "running" and not "printing". One wrong `asset_type` in a config, one firmware update
+that renames a state, one vendor that says "in_progress" — verified: a printer mapper given
+"running" returned `Idle`, `is_availability_loss` was `True`.
+
+**Three things in the file already said this was wrong**, which is what makes it a class
+rather than a slip:
+
+* `get_state_category` has an `"unknown"` branch that was **dead code** — unreachable,
+  because every enum member was categorised;
+* `get_unknown_states()` is a public accessor **nothing outside the module calls**, so the
+  record of what could not be mapped never left the object;
+* the warning fires once per *distinct* string, on a device that may be unable to ship logs,
+  so the single line recording a permanently mis-measured machine is also the one most
+  likely to be lost.
+
+Someone foresaw this and the handling was lost. Unreachable handling for a real condition is
+a defect report left in the source.
+
+**Fixed** with `PackMLState.UNDEFINED` in neither category set (which revives the "unknown"
+branch), a counter `edge_packml_unmapped_total` labelled by asset TYPE — the vendor string is
+arbitrary text off a PLC and would hand unbounded cardinality to Prometheus — and by
+excluding unmapped time from availability's denominator rather than scoring it as downtime.
+
+**And fixing the agent alone would have made things worse.** `/operations/{id}/packml-summary`
+computes `Execute / total_duration`, and `total_duration` sums every bucket — so the moment
+the agent started emitting an honest `Undefined`, that endpoint turned the honesty into a
+lower productivity number. A machine would report as less productive the more of its states
+its configuration failed to cover: a property of the config presented as a property of the
+machine. The denominator there excludes unmapped time now, and `unmeasured_seconds` is
+reported so a reader can see how much the answer rests on.
+
+That is class 19 again from a third side, and the reason the cross-boundary rule earns its
+place: **fixing one side of a boundary is not finishing when the other side consumes the same
+quantity.**
+
+## Rule 89 — a fallback into a valid-looking value inherits that value's meaning
+
+Class 72. Choose a value that belongs to no category, or the default answers a question
+nobody asked it.
+
+## Rule 90 — dead code that anticipates a case is evidence the case was foreseen and then lost
+
+Class 72. An unreachable branch for a real condition, or an accessor with no caller, is a
+defect report someone left in the source. Read it as one.
 

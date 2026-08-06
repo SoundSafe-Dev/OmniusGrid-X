@@ -143,6 +143,25 @@ def set_oee(asset_id: str, result: dict) -> None:
             gauge.labels(asset_id=asset_id).set(value)
 
 
+packml_unmapped_total = Counter(
+    "edge_packml_unmapped_total",
+    "Vendor states the PackML mapper does not understand",
+    ["asset_type"],
+)
+
+
+def record_packml_unmapped(asset_type: str) -> None:
+    """A vendor state the mapper could not translate (FS-462).
+
+    These used to become `Idle`, which is an AVAILABILITY LOSS state — a machine running
+    at full rate recorded as down, with one log line on a device that may not be able to
+    ship logs. This counter is what makes a missing mapping visible from the cloud, and it
+    is labelled by ASSET TYPE rather than by the vendor string: the string is arbitrary
+    text off a PLC, and using it as a label would hand unbounded cardinality to Prometheus.
+    """
+    packml_unmapped_total.labels(asset_type=asset_type or "generic").inc()
+
+
 # --- Local analytics: anomalies + alerts -------------------------------------
 
 anomaly_z_score = Gauge(
