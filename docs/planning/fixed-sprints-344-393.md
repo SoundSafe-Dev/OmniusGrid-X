@@ -45,6 +45,19 @@ Every FS-344…393 item was checked against the code it cites. Eight no longer r
 | FS-361 | the document-intake cluster is untested end to end | `test_document_intake_parsers.py` and siblings, from FS-440/441 |
 | FS-360 | `yard_management.py` has zero tests | four suites, 53 tests — detention charges, dock-scheduling conflicts, dwell-without-check-in, naive-timestamp verdicts |
 | FS-365 | the E2E suite covers four routes | `data-reaches-the-screen.spec.ts` walks **32**, and Playwright runs in two CI jobs (`frontend-e2e`, `frontend-e2e-authenticated`). The `.visual.ts` file is excluded **deliberately** — its own docstring calls it a `npx tsx` screenshot harness, not a spec |
+| FS-267 | four functions gate on `_require_simulated`, only two stamp provenance | seven gate, and every one stamps — `test_simulated_data_says_so.py` fails if a gated function ships unstamped |
+| FS-344 | `GEOTAB_SIMULATED` defaults `True`, exposure rests on one validator | the default is unchanged and deliberate (the offline demo needs it); the validator is asserted twice, in `test_config_validation.py` and again where the default makes it load-bearing |
+| FS-346 | four compliance figures are not computed | computed, with `consent_records` counted through `users` and the reason it cannot come from a consent table written down |
+| FS-347 | the residency validator counts only its own tags, scoring 100% on an untagged estate | `total_records` and `untagged_records` are `None` rather than a number, and the handler states what it cannot see and why |
+| FS-348 | route optimisation returns hard-coded mph/mpg/$ as results | the four literals are settings, and the values used come back in `assumptions` beside the figures |
+| FS-349 | `model_version` ships as `"gemma-4-placeholder"` | `NO_MODEL_VERSION = "none (no correlation model loaded)"` — states the only true thing available before load |
+| FS-351 | critical-risk correlations are logged, never dispatched | they reach the notification service; `test_correlation_alerts_are_dispatched.py` covers the tenant, the severity mapping, and a failed delivery |
+| FS-352 | `POST /admin/collectors/{id}/restart` is a bare return with a 2026-01-15 timestamp | removed rather than stubbed — a 501 is a 5xx and would have made contract conformance worse than the placeholder |
+
+**Wave F is closed in full.** It was the highest-severity block in this plan — figures a machine
+generated, presented to an operator as measurements — and all ten items now have a guard. Two
+of them (FS-344, FS-349) are guarded by tests that argue the subject without citing the item
+number, so they are pinned in the register to the file carrying the argument.
 
 **FS-355 makes nine, and I missed it on the first pass.** The entry reads "`error_events`
 carries `organization_id` and **no RLS policy**", sized L on a primary-key grain change. The
@@ -78,14 +91,36 @@ authenticated `/ws` stream) is untouched, and that is a feature rather than a bu
 
 ### What is still open, verified 2026-08-06
 
-`FS-344` (`GEOTAB_SIMULATED` defaults `True`; a production validator flags it, so the
-question is whether one validator is enough) · `FS-364` **partially** — it names eight
-untested routed pages and four remain: `CorrelationAIPane`, `IntakeInbox`, `Historian`,
-`FleetRolloutDetail`. `Fleet`, `ErrorTriage`, `Kanban` and `ShopFloor` have since been
-covered · `FS-307` (the contract gate still runs as superuser) · `FS-362` (ERP suites still
-skip without credentials) · `FS-364` (routed pages with no test) · `FS-369`…`FS-376` (the
-production-readiness wave: PITR, HA/autoscaling wiring, the advisory `pre-commit` job, the
-missing latency SLO gate, hand-provisioned secrets, the README/manifest contradiction).
+`FS-307` (the contract gate still runs as superuser, so it cannot see a tenant-isolation
+failure and its results must not be read as statements about isolation) · `FS-369`…`FS-376`
+(the production-readiness wave: PITR, HA/autoscaling wiring, the advisory `pre-commit` job,
+the missing latency SLO gate, hand-provisioned secrets, the README/manifest contradiction) ·
+Wave I's product-capability items.
+
+---
+
+### Four entries that left the still-open list on 2026-08-06
+
+Kept out of the section above on purpose: the guard reads that section for item numbers, and
+an item named there is an item claimed open, whatever the surrounding sentence says. A
+register cannot parse "no longer" — so the departures live here instead.
+
+How each of them read:
+
+* `FS-344` was listed as open on the question "is one validator enough". It is: the default
+  is deliberate — the offline demo needs it — and the validator is asserted twice, once in
+  `test_config_validation.py` and again where the default makes it load-bearing.
+* `FS-362` closed the same day, by FS-490.
+* `FS-364` appeared **twice in the same sentence** — once as "partially, four remain" and
+  once as a bare "routed pages with no test". All eight are covered, and
+  `everyRoutedPageHasATest.test.ts` now derives the answer rather than anyone recalling it.
+* Wave F closed entirely; see the table above.
+
+That this section — headed *"verified 2026-08-06"* — was stale within the day, and duplicated
+an item inside one sentence, is the argument for the guard beside it rather than against the
+plan. `test_the_plan_does_not_claim_finished_work.py` pairs this document with the register
+in both directions now: nothing may be listed open that a guard has closed, and nothing may
+be listed delivered that the register does not check.
 
 **Why this keeps happening**, since it is the second plan in a row to overstate: both were
 written as inventories and then *not* re-derived, while the work carried on against the

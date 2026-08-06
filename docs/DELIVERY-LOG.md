@@ -5238,3 +5238,57 @@ mutation-verified against a real model: `AlarmRuleResponse.threshold` retyped to
 `Float()` column, which it names in the failure.
 
 **Suite:** backend 3575 → 3580 · frontend 833 · e2e 84 collected · edge agent 289.
+
+## FS-491 — Wave F was finished and the plan did not know
+
+Wave F was the highest-severity block in `fixed-sprints-344-393.md`: **figures a machine
+generated, presented to an operator as measurements**. Ten items. Measured against the
+codebase, **all ten are closed**, each with a guard:
+
+| | what it was | what closed it |
+|---|---|---|
+| FS-267 | four geotab functions gated, two stamped | seven gate, all seven stamp; a sweep fails if a gated function ships unstamped |
+| FS-344 | `GEOTAB_SIMULATED` defaults `True` | the default is deliberate — the offline demo needs it — and the validator is asserted twice |
+| FS-346 | four compliance figures not computed | computed, with the reason `consent_records` comes through `users` written down |
+| FS-347 | residency validator scored 100% on an untagged estate | `total_records`/`untagged_records` are `None`, and the handler states what it cannot see |
+| FS-348 | hard-coded mph/mpg/$ returned as results | settings, with the values used returned in `assumptions` |
+| FS-349 | `model_version: "gemma-4-placeholder"` | `"none (no correlation model loaded)"` |
+| FS-351 | critical correlations logged, never dispatched | they reach the notification service |
+| FS-352 | a bare-return restart endpoint | removed rather than stubbed — a 501 is a 5xx and would have made conformance worse |
+
+FS-345 and FS-350 were already in the table.
+
+### The guard that should have known, and the direction it was missing
+
+`test_the_plan_does_not_claim_finished_work.py` exists for exactly this and did not catch it,
+because its register is hand-curated: it asserts every entry it knows about is still closed,
+and has no way to *discover* that a wave finished.
+
+It also had a one-way check. `test_the_table_lists_them_all` asserted **register ⊆ table** —
+so adding a row to the plan claiming something is done required nothing of anybody. I put two
+such rows in myself (FS-360, FS-365) earlier the same day, and nothing checked either claim.
+That is the failure this file exists to prevent, committed in the file that prevents it. The
+reverse direction is now asserted too.
+
+### What the still-open list said
+
+It was headed *"verified 2026-08-06"* and was stale within the day. `FS-344` was listed on the
+question "is one validator enough"; it is. `FS-362` closed the same day. And **`FS-364`
+appeared twice in one sentence** — once as "partially, four remain" and once as a bare "routed
+pages with no test" — when all eight were covered.
+
+The four departures are recorded below that section rather than inside it, and the reason is
+mechanical: the guard reads the section for item numbers, and **a register cannot parse "no
+longer"**. An item named in a list of open items is an item claimed open, whatever the
+surrounding prose says.
+
+### One structural correction to the register
+
+FS-344 and FS-349 are guarded by tests that argue their subject without citing the item
+number. My first attempt filed them under `_DECISION_EVIDENCE` — the map for things
+deliberately *not* done, whose test demands the file still record what was **rejected**. These
+are ordinary fixes, and filing them there would have made the register describe them wrongly,
+which is how a register stops being read. They have their own map now, pinned to the file and
+the subject.
+
+**Suite:** backend 3580 → 3583 · frontend 833 · e2e 84 collected · edge agent 289.

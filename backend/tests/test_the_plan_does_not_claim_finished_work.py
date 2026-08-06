@@ -42,6 +42,20 @@ DELIVERED: dict[str, str | None] = {
     "FS-359": None,      # has a test module
     "FS-361": None,      # has test modules
     "FS-355": None,      # the missing RLS policy is deliberate — see the redaction test
+    "FS-360": None,      # four suites, 53 tests
+    "FS-365": None,      # the e2e sweep walks 32 routes; the .visual.ts exclusion is on purpose
+    # Wave F, verified closed 2026-08-06. The whole wave — "generated figures presented as
+    # measurements" — was the highest-severity block in the plan and every item now has a
+    # guard. Two of them are guarded without citing their FS number, so they are pinned to
+    # the file carrying the argument instead, below.
+    "FS-267": None,      # every gated geotab function stamps provenance
+    "FS-344": None,      # the production validator refuses GEOTAB_SIMULATED
+    "FS-346": None,      # the four uncomputed compliance figures are computed
+    "FS-347": None,      # untagged rows are None, not silently excluded from the percentage
+    "FS-348": None,      # the four route literals are settings, returned in `assumptions`
+    "FS-349": None,      # model_version says "none (no correlation model loaded)"
+    "FS-351": None,      # critical correlations reach the notification service
+    "FS-352": None,      # the placeholder restart endpoint was removed, not stubbed
 }
 
 #: FS-355 is recorded as delivered on the strength of a decision written in a test
@@ -50,6 +64,19 @@ DELIVERED: dict[str, str | None] = {
 #: entry needs re-opening rather than quietly staying closed.
 _DECISION_EVIDENCE = {
     "FS-355": "test_error_triage_sample_redaction_realdb.py",
+}
+
+#: Items whose guard exists but does not cite the FS number, pinned to the file that holds it.
+#:
+#: Separate from `_DECISION_EVIDENCE` on purpose. That map is for a decision — a thing
+#: deliberately NOT done, whose closure is an argument, so its test demands the file still
+#: record what was rejected. These two are ordinary fixes with ordinary guards; the only
+#: thing unusual about them is that the guard argues the subject instead of naming the item.
+#: Filing them under "decision" would have made this register describe them wrongly, which
+#: is how a register stops being read.
+_GUARDED_WITHOUT_CITATION = {
+    "FS-344": ("test_simulated_data_says_so.py", "GEOTAB_SIMULATED"),
+    "FS-349": ("test_correlation_reporting_honesty.py", "gemma"),
 }
 
 
@@ -79,6 +106,26 @@ class TestTheDeliveredItemsAreStillDelivered:
         assert not missing, (
             f"{missing} are recorded here as delivered and are not in the plan's "
             f"verification table. The two have to agree or one of them is lying."
+        )
+
+    def test_the_table_lists_nothing_the_register_has_not_checked(self):
+        """The direction the first version of this guard was missing.
+
+        `test_the_table_lists_them_all` asserts register ⊆ table, so adding a row to the
+        plan claiming something is done required nothing of anybody — the claim went in
+        unchecked, which is precisely the failure this file exists to prevent, committed in
+        the file that prevents it. Two rows (FS-360, FS-365) went in that way before this
+        test was written.
+        """
+        plan = _plan()
+        section = plan.split("## Verification pass, 2026-08-06", 1)[1].split("### What is still open", 1)[0]
+        # A row whose first cell is not an FS number is a header or a separator.
+        claimed = {row.split("|")[1].strip() for row in section.splitlines() if row.startswith("| FS-")}
+        unchecked = sorted(claimed - set(DELIVERED))
+        assert not unchecked, (
+            f"the plan's verification table calls {unchecked} delivered and this register "
+            f"does not check them, so the claim rests on nobody. Add each to DELIVERED with "
+            f"the evidence, or take the row out of the table."
         )
 
     def test_the_lane_failure_allowlist_is_still_empty(self):
@@ -134,6 +181,25 @@ class TestTheStillOpenListIsHonest:
         assert not overlap, (
             f"{overlap} appear in both the delivered table and the still-open list. The "
             f"document contradicts itself, which is worse than either claim being wrong."
+        )
+
+
+class TestAGuardWithoutACitationIsStillFindable:
+    """An entry closed by a guard that never names it is one rename from unverifiable."""
+
+    @pytest.mark.parametrize(
+        "fs,filename,subject",
+        [(fs, f, sub) for fs, (f, sub) in sorted(_GUARDED_WITHOUT_CITATION.items())],
+    )
+    def test_the_guard_still_covers_its_subject(self, fs: str, filename: str, subject: str):
+        path = Path(__file__).resolve().parent / filename
+        assert path.exists(), (
+            f"{fs} is recorded as closed by {filename}, and that file is gone. Nothing else "
+            f"names {fs}, so the entry is unverifiable — reopen it or find the new guard."
+        )
+        assert subject.lower() in path.read_text().lower(), (
+            f"{filename} no longer mentions {subject!r}, which is the subject {fs} was "
+            f"closed on. The file survived and the coverage may not have."
         )
 
 
