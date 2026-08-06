@@ -5888,7 +5888,7 @@ Check both directions of an exemption before believing the count it produces.
 
 # What this session produced, and what it cost
 
-**FS-431 to FS-473 — forty-three items, no gaps** — over one working session. Recorded
+**FS-431 to FS-474 — forty-four items, no gaps** — over one working session. Recorded
 together because the individual entries above answer "what was wrong" and this answers "what
 the method actually does", which is the thing worth reusing.
 
@@ -6062,4 +6062,36 @@ Class 73. Before copying a constant into a fifth file, ask who will have to find
 
 Class 73. The five copies took the instruments and left behind the injection parameter, so
 newer code was less configurable than the code it imitated.
+
+## Class 73 in the cloud — the same loop, one boundary out (FS-474)
+
+Carried across the moment class 73 was written, rather than waiting to trip over it. Asked of
+the backend: which loops here retry at the same rate whether or not anything is working?
+
+The sweep examined every loop containing a `sleep` and an exception handler, and separated
+those whose delay grows from those whose does not. Twenty-one loops, six candidates, and
+**one real instance** — `CommandExecutor._ack_consumer_loop`, which has two exits (the
+consumer will not start; the consumer errors mid-stream) and slept a flat five seconds on
+both. A broker down for a day drew roughly 17,000 connection attempts and 17,000 error lines.
+
+The five other candidates were correctly rejected, and why is worth recording:
+
+| site | verdict |
+|---|---|
+| `command_executor` dispatch and timeout loops | **periodic polling.** A constant interval is the design; there is no device to back off from |
+| `erp_database_replication` | already sleeps longer on error (10s → 30s) — crude, but not a fixed rate |
+| `feature_extraction` egress cycle | a scheduler cycle, 10s on error against a normal interval |
+
+**The values live in `command_executor.py`, not in a policy class.** The agent has eight
+collectors with this loop, so `ReconnectPolicy` earns its place there; the backend has one.
+Building a framework for a single caller is how a guess reaches eight files, which is the
+mistake FS-473 spent a pass undoing. Rule 98 cuts both ways: do not spread a guess, and do
+not build the thing that would let you.
+
+The guard's first version flagged `await asyncio.sleep(1)` inside the per-message handler —
+a legitimate pause after ONE message failed, which seeks back to the offset before
+re-entering. Nothing to do with reaching the broker. It distinguishes structurally now:
+reconnect handling sits at the top level of the `while` body, per-message handling inside the
+`async for`. **A guard that cannot tell a real pause from a defect gets turned off by the
+next person**, and this is the sixth detector this week that was wrong before the code was.
 

@@ -4344,3 +4344,40 @@ line of a constructor.
 
 **Suite:** backend 3511 passed / 100 skipped · edge agent 289 · frontend 555.
 
+---
+
+## 2026-08-05 — FS-474: the same loop, one boundary out
+
+Class 73 carried across the moment it was written, rather than waiting to trip over it in a
+month. Asked of the backend: which loops here retry at the same rate whether or not anything
+is working?
+
+Twenty-one loops examined, six candidates, **one real instance**.
+`CommandExecutor._ack_consumer_loop` has two exits — the consumer will not start, and the
+consumer errors mid-stream — and slept a flat five seconds on both. A broker down for a day
+drew roughly 17,000 connection attempts and 17,000 error lines, at a rate that did not depend
+on anything.
+
+The five rejections matter as much as the finding: the dispatch and timeout loops are
+**periodic polling**, where a constant interval is the design and there is no device to back
+off from; `erp_database_replication` already sleeps longer on error; the egress cycle is a
+scheduler, not a connection. A sweep that flagged all six would have been noise.
+
+**The values live in `command_executor.py`, not in a policy class.** The agent has eight
+collectors with this loop, so `ReconnectPolicy` earns its place there; the backend has one.
+Building a framework for a single caller is how a guess reaches eight files — the mistake
+FS-473 spent a pass undoing. Rule 98 cuts both ways: do not spread a guess, and do not build
+the thing that would let you.
+
+The guard's first version flagged `await asyncio.sleep(1)` inside the per-message handler,
+which seeks back to the offset and pauses after ONE message failed — nothing to do with
+reaching the broker. It distinguishes structurally now: reconnect handling sits at the top
+level of the `while` body, per-message handling inside the `async for`.
+
+That is the sixth detector this week that was wrong before the code was, and the pattern in
+all six is the same — the first version asks a question that is *nearly* the right one. A
+guard that reports a defect where there is none gets turned off, so the narrowing is not
+polish.
+
+**Suite:** backend 3520 passed / 100 skipped · edge agent 289 · frontend 555.
+

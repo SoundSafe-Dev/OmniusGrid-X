@@ -75,6 +75,10 @@ class CommandExecutor:
         self._ack_consumer_task: Optional[asyncio.Task] = None
         self._producer: Optional[AIOKafkaProducer] = None
         self._ack_consumer: Optional[AIOKafkaConsumer] = None
+        #: Current reconnect delay, doubling to a cap while the broker is unreachable
+        #: (FS-474). Set here rather than lazily so the loop cannot read it before the
+        #: first failure has set it.
+        self._ack_reconnect_delay: float = self._ACK_RECONNECT_INITIAL_SECONDS
         self._timeout_seconds = 60
         self._max_retries = 3
         self._poll_interval_seconds = 1.0
@@ -655,11 +659,40 @@ class CommandExecutor:
             },
         )
 
+    #: Reconnect delays for the command-ack consumer (FS-474).
+    #:
+    #: Both exits from `_ack_consumer_loop` used to sleep a flat 5 seconds — the one where
+    #: the consumer will not start, and the one where it errors mid-stream. A broker down
+    #: for a day therefore drew ~17,000 connection attempts and the same number of error
+    #: lines, at a rate that did not depend on anything.
+    #:
+    #: This is the edge agent's FS-472 in the cloud. The agent has a `ReconnectPolicy` for
+    #: it; the backend has exactly one loop with this shape, so the values live here rather
+    #: than in a framework built for a single caller. **If a second loop needs them, that
+    #: is the moment to factor — not before.**
+    _ACK_RECONNECT_INITIAL_SECONDS = 1.0
+    _ACK_RECONNECT_CAP_SECONDS = 60.0
+
+    def _next_ack_reconnect_delay(self) -> float:
+        """Current delay, then double it for next time (capped)."""
+        delay = self._ack_reconnect_delay
+        self._ack_reconnect_delay = min(
+            delay * 2, self._ACK_RECONNECT_CAP_SECONDS
+        )
+        return delay
+
+    def _reset_ack_reconnect_delay(self) -> None:
+        """Called when the broker accepts a connection: the next outage starts low."""
+        self._ack_reconnect_delay = self._ACK_RECONNECT_INITIAL_SECONDS
+
     async def _ack_consumer_loop(self) -> None:
         while self._running:
             if not await self._ensure_ack_consumer():
-                await asyncio.sleep(5)
+                await asyncio.sleep(self._next_ack_reconnect_delay())
                 continue
+            # The broker accepted a connection, so an outage after this point starts its
+            # own curve rather than inheriting the last one's.
+            self._reset_ack_reconnect_delay()
 
             try:
                 async for message in self._ack_consumer:
@@ -712,7 +745,7 @@ class CommandExecutor:
             except Exception as exc:  # noqa: BLE001
                 logger.error("command_ack_consumer_error", error=str(exc))
                 await self._reset_ack_consumer()
-                await asyncio.sleep(5)
+                await asyncio.sleep(self._next_ack_reconnect_delay())
 
     async def _ensure_producer(self) -> bool:
         if self._producer is not None:
