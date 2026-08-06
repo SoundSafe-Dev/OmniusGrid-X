@@ -26,7 +26,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The eighty-six numbered classes
+## The eighty-seven numbered classes
 
 **The count is the numbering, and it was already stale before this line was corrected.**
 This heading read "forty-seven" while the document's own highest class was 60 — the summary
@@ -2722,6 +2722,13 @@ one of its findings. The habit that catches it:
      invisible to every dynamic test because their trigger has not occurred. `Decimal("12.0")`
      validates against an `int` field and `Decimal("12.5")` does not. Comparing the
      declaration against the storage finds it; testing harder never will.
+
+118. **Ask what a passing gate would still pass with.**
+     Point at the property a gate is cited for and ask what would have to break for it to
+     notice. The contract gate ran as a superuser, so `FORCE ROW LEVEL SECURITY` did not
+     apply and its number could not have moved if every policy had been dropped. A gate that
+     cannot fail in a dimension is not weak, it is mute — and its green gets spent on a claim
+     it never made.
 
 ---
 
@@ -6975,3 +6982,51 @@ Some faults are invisible to every dynamic test because the input that triggers 
 occurred yet: a fractional value, a null in a column that has never been null, a string longer
 than the widest row so far. Testing harder does not find these. Comparing the declaration
 against the storage does, and it costs one pass over a schema.
+
+## Class 87 — a gate that cannot fail in the dimension it is cited for (FS-307)
+
+The schemathesis contract job connected as the postgres service container's `POSTGRES_USER`.
+The official image makes that role a **superuser**, and a superuser bypasses `FORCE ROW LEVEL
+SECURITY` outright — not "mostly", not "unless a policy says otherwise". Every policy in the
+schema is simply not applied to its sessions.
+
+So ~375 operations were exercised against a database with tenant isolation **switched off**,
+and the gate's conformance number could not have moved if every RLS policy had been dropped in
+the same commit.
+
+Demonstrated rather than argued, on a throwaway database with `FORCE ROW LEVEL SECURITY` on
+and a tenant policy in place:
+
+```
+superuser (owner)             sees 2 rows   <- both tenants
+NOSUPERUSER NOBYPASSRLS role  sees 1 row    <- its own
+```
+
+**A red gate is a task. A green gate that cannot fail in a whole dimension is a belief** — and
+this one was cited in the burn-down as evidence about the API's behaviour. That is the harm:
+not the missing coverage, but the coverage everyone thought they had.
+
+The role already existed. `tests/conftest.py` has provisioned a `NOSUPERUSER NOBYPASSRLS`
+non-owning role since the RLS work, for exactly this reason, and the contract gate never used
+it. The grant list now lives in one script both callers use, because **a second copy of a
+security-relevant grant list is a second thing to forget**.
+
+Two details that decide whether the fix survives:
+
+- **Migrations still run as the owner**, as they do in production. The obvious way to "fix" a
+  permission error after this lands is to grant the app role DDL — which makes it an owner,
+  and an owner defeats a FORCE policy as surely as a superuser does. The guard asserts the
+  migration step still uses the owner, so that repair is visible as a change.
+- **The script verifies the role it just created**, reading `rolsuper` and `rolbypassrls` back
+  out of `pg_roles` rather than trusting its own DDL. A pre-existing role of the same name with
+  the wrong attributes would otherwise be used in silence.
+
+The guard reads the workflow YAML and needs no database, deliberately: a check that only runs
+where postgres is available does not run on the machine where the mistake is made.
+
+## Rule 118 — ask what a passing gate would still pass with
+
+Point at the property a gate is cited for and ask what would have to break for it to notice.
+If the answer is "nothing in that dimension" — a superuser bypassing RLS, a mock standing in
+for the boundary, an assertion that holds for both branches — the gate is not weak, it is
+*mute*, and its green is being spent on a claim it never made.

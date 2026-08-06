@@ -160,13 +160,39 @@ jobs:
         working-directory: ./backend
         # Without this the contract suite runs against an empty database and every
         # DB-backed operation 500s, which is what it did for weeks.
+        #
+        # Runs as the OWNER, which is correct and is also why the next step exists: the
+        # role that creates the tables can never be the role that proves RLS applies.
         env:
           DATABASE_URL: postgresql://omniusgrid:omniusgrid_dev_password@localhost:5432/omniusgrid_test
         run: python scripts/migrate.py
+      - name: Provision the non-superuser application role
+        working-directory: ./backend
+        # FS-307. Everything below used to connect as the service container's
+        # POSTGRES_USER, which the postgres image makes a SUPERUSER — and a superuser
+        # bypasses FORCE ROW LEVEL SECURITY outright. So ~375 operations were exercised
+        # against a database with tenant isolation switched off, and this gate's
+        # conformance number could not have moved if every policy in the schema had been
+        # dropped. A green gate that cannot fail in a whole dimension is worse than a red
+        # one, because it gets cited.
+        #
+        # The script is the same one `tests/conftest.py` uses for its `tenant_user`, and it
+        # asserts NOSUPERUSER/NOBYPASSRLS after creating the role rather than trusting the
+        # DDL — a silent bypass here would make every result downstream a fiction.
+        run: |
+          python scripts/provision_app_role.py \
+            --url postgresql://omniusgrid:omniusgrid_dev_password@localhost:5432/omniusgrid_test \
+            --role omniusgrid_contract \
+            --password contract_role_password
       - name: Run schemathesis contract tests
         working-directory: ./backend
         env:
-          DATABASE_URL: postgresql+asyncpg://omniusgrid:omniusgrid_dev_password@localhost:5432/omniusgrid_test
+          # The restricted role, not the owner (FS-307). If an operation starts failing
+          # after this landed, that is the gate finding something: the app reached for a
+          # privilege it does not have in production. The ratchet reads the junit report
+          # and rejects a collapsed operation count, so a wholesale breakage cannot be
+          # mistaken for a clean run.
+          DATABASE_URL: postgresql+asyncpg://omniusgrid_contract:contract_role_password@localhost:5432/omniusgrid_test
           RUN_CONTRACT_TESTS: "1"
           JWT_SECRET_KEY: test-secret-key
           # Points at the service above. Without it the app falls back to the compose

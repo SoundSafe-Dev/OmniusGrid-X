@@ -155,34 +155,17 @@ def _provision_tenant_role(sync_url: str, role: str, password: str) -> None:
     Critically, this role is NOT a superuser and does NOT own the tables
     (the container's POSTGRES_USER does). That combination is what makes
     RLS actually apply to its sessions.
-    """
-    import psycopg2
 
-    conn = psycopg2.connect(sync_url)
-    conn.autocommit = True
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                f"DO $$ BEGIN "
-                f"  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{role}') THEN "
-                f"    CREATE ROLE {role} LOGIN PASSWORD '{password}' NOSUPERUSER NOBYPASSRLS; "
-                f"  END IF; "
-                f"END $$;"
-            )
-            cur.execute(f"GRANT USAGE ON SCHEMA public TO {role};")
-            cur.execute(
-                f"GRANT SELECT, INSERT, UPDATE, DELETE "
-                f"ON ALL TABLES IN SCHEMA public TO {role};"
-            )
-            cur.execute(
-                f"GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {role};"
-            )
-            cur.execute(
-                f"ALTER DEFAULT PRIVILEGES IN SCHEMA public "
-                f"GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO {role};"
-            )
-    finally:
-        conn.close()
+    THE GRANT LIST LIVES IN `scripts/provision_app_role.py` (FS-307). The schemathesis
+    contract gate needed the same role for the same reason — it had been running as the
+    container superuser, so FORCE RLS did not apply and its conformance number could not
+    have moved if every policy in the schema had been dropped. Two copies of a
+    security-relevant grant list is two things to forget, so there is one, and CI calls it
+    as a script while this calls it as a function.
+    """
+    from scripts.provision_app_role import provision
+
+    provision(sync_url, role, password)
 
 
 def _build_async_url(sync_url: str, user: str, password: str) -> str:

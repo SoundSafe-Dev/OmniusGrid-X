@@ -5292,3 +5292,57 @@ which is how a register stops being read. They have their own map now, pinned to
 the subject.
 
 **Suite:** backend 3580 → 3583 · frontend 833 · e2e 84 collected · edge agent 289.
+
+## FS-307 — the gate that could not fail in the dimension it was cited for
+
+The schemathesis contract job connected as the postgres service container's `POSTGRES_USER`.
+The official image makes that role a **superuser**, and a superuser bypasses `FORCE ROW LEVEL
+SECURITY` outright. So ~375 operations ran against a database with tenant isolation switched
+off, and the gate's conformance number could not have moved if every RLS policy in the schema
+had been dropped in the same commit.
+
+Demonstrated on a throwaway database rather than argued from the manual — `FORCE ROW LEVEL
+SECURITY` on, tenant policy in place, two tenants' rows:
+
+```
+superuser (owner)             sees 2 rows
+NOSUPERUSER NOBYPASSRLS role  sees 1 row
+```
+
+**A red gate is a task; a green gate that cannot fail in a whole dimension is a belief.** This
+one was cited in the burn-down as evidence about the API's behaviour, which is the actual harm
+— not the coverage that was missing, but the coverage everyone thought they had.
+
+### The role already existed
+
+`tests/conftest.py` has provisioned a `NOSUPERUSER NOBYPASSRLS` non-owning role since the RLS
+work, for precisely this reason. The contract gate simply never used it. Rather than write a
+second one, the grant list moved into `scripts/provision_app_role.py` that both callers share
+— CI as a script, the fixture as a function. A second copy of a security-relevant grant list
+is a second thing to forget. The 398 realdb tests exercising that fixture are what verify the
+refactor.
+
+### The two details that decide whether the fix survives
+
+**Migrations still run as the owner**, as in production. The obvious way to "fix" a permission
+error after this lands is to grant the app role DDL — which makes it an owner, and an owner
+defeats a FORCE policy as surely as a superuser does. The guard asserts the migration step
+still uses the owner, so that repair cannot happen quietly.
+
+**The script verifies the role it just created**, reading `rolsuper` and `rolbypassrls` back
+out of `pg_roles` instead of trusting its own DDL. A pre-existing role of the same name with
+the wrong attributes would otherwise be used in silence.
+
+### The guard reads YAML, not a database
+
+Deliberately. The change is one URL in one file, and the failure mode if somebody reverts it
+is silence — the suite goes green, faster. A check that only runs where postgres is available
+does not run on the machine where the mistake is made. Both mutations were verified: reverting
+the URL to the owner, and deleting the provisioning step.
+
+**One thing to expect on the first real run.** If an operation starts failing after this, that
+is the gate finding something — the app reaching for a privilege it does not have in
+production. The ratchet reads the junit report and rejects a collapsed operation count, so a
+wholesale breakage fails loudly rather than passing as a clean run.
+
+**Suite:** backend 3583 → 3593 · frontend 833 · e2e 84 collected · edge agent 289.
