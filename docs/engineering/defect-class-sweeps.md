@@ -2624,6 +2624,12 @@ one of its findings. The habit that catches it:
      too long. Two plans in a row overstated, the second written specifically to avoid the
      first's mistake.
 
+101. **Absence is not evidence of a gap until you have checked whether it is deliberate.**
+     "This table has no RLS policy" is a fact. "This table is missing an RLS policy" is a
+     conclusion, and it needs the second half of the search: whether someone already
+     decided it should not have one, and why. The reasoning is often in a test docstring
+     rather than the code.
+
 ---
 
 ## Open observations, not yet tickets
@@ -6197,4 +6203,37 @@ both drifts began.
 ## Rule 100 — a plan overstating what is left is harder to catch than one that flatters
 
 Nobody investigates a backlog for being too long.
+
+### FS-355 was the ninth, and my own verification pass missed it
+
+The pass above checked whether `error_events` has an RLS policy. It does not — and that was
+recorded as "still open" without asking the next question.
+
+The absence is deliberate. The table is keyed on `fingerprint` alone **by design**: one row
+per distinct error for the whole platform, because a bug that two tenants hit is one bug. The
+disclosure risk was found, reproduced against a real database, and fixed by redacting the two
+payload-bearing fields from viewers outside the row's organisation; the write side 403s when
+the caller does not own the row. And `test_error_triage_sample_redaction_realdb.py` records
+why scoping the view by organisation was **rejected** — a shared row's `organization_id` names
+only one of the tenants that hit the bug, so filtering on it would hide errors that genuinely
+are the caller's.
+
+Adding RLS there would not harden the table; it would break the view it is meant to be. The
+question that remains is FS-311's — there is no platform-admin role, so tenant admins are
+doing platform triage — and that is a decision already on the page.
+
+**This is the same error as FS-460, in a different costume.** There I concluded a field
+reached nobody after finding one of its two consumers; here I concluded a policy was missing
+after finding it absent. Both are negatives asserted from half a search. The saving grace both
+times was the same: the answer was one grep away, in a file whose whole purpose was to record
+it.
+
+It is also the argument for verifying before building. The plan sized this L — a primary-key
+grain change, a composite foreign key, and a rewritten upsert — against a working feature whose
+current shape is documented and intentional.
+
+## Rule 101 — absence is not evidence of a gap until you have checked whether it is deliberate
+
+"No RLS policy" is a fact; "missing an RLS policy" is a conclusion. The difference is a second
+search, and the reasoning is often in a test docstring rather than in the code.
 

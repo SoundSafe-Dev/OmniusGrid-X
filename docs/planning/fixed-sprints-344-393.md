@@ -25,13 +25,13 @@ measurement taken on 2026-08-01. Where a claim could not be verified it is marke
 rather than asserted. **Verify the premise before starting anyway**, and if it does not
 reproduce, correct the entry in place with the date.
 
-## Verification pass, 2026-08-06 — eight entries were already delivered
+## Verification pass, 2026-08-06 — nine entries were already delivered
 
 **This plan now overstates what is left, in the same direction as the one it replaced.** Its
 own header says to verify a premise before starting and to correct the entry in place with the
 date. This is that correction, taken from the codebase rather than from this document.
 
-Every FS-344…393 item was checked against the code it cites. Eight no longer reproduce:
+Every FS-344…393 item was checked against the code it cites. Eight no longer reproduce, and a ninth is below the table:
 
 | item | claim | what is actually there |
 |---|---|---|
@@ -44,6 +44,31 @@ Every FS-344…393 item was checked against the code it cites. Eight no longer r
 | FS-359 | `correlation_registry_integration.py` has zero test references | `test_correlation_registry_integration.py`, 30 tests |
 | FS-361 | the document-intake cluster is untested end to end | `test_document_intake_parsers.py` and siblings, from FS-440/441 |
 
+**FS-355 makes nine, and I missed it on the first pass.** The entry reads "`error_events`
+carries `organization_id` and **no RLS policy**", sized L on a primary-key grain change. The
+absence of a policy is real. It is also **deliberate, evidenced, and already argued through**:
+
+* `error_events` is keyed on `fingerprint` alone by design — one row per distinct error for
+  the whole platform — so it is a cross-tenant triage view on purpose;
+* the disclosure risk was found, reproduced against a real database, and fixed by redaction:
+  `_visible_sample` withholds another tenant's `message_sample` and `traceback_sample` while
+  leaving the payload-free triage metadata visible;
+* the write side 403s when the row's owner is not the caller;
+* and `test_error_triage_sample_redaction_realdb.py` records **why scoping the view by
+  organisation was rejected** — a shared row's `organization_id` names only one of the
+  tenants that hit the bug, so filtering on it would hide errors that genuinely are the
+  caller's.
+
+Adding RLS would not harden that table; it would break the view it is supposed to be. What
+remains is the question FS-311 already carries — there is no platform-admin role, so tenant
+admins are performing platform triage — and that is a decision, not an L-sized migration.
+
+**How I missed it.** The first pass checked whether an RLS policy exists (it does not) and
+stopped. It did not ask whether one was *wanted*. That is the same error as FS-460: asserting
+something from one direction without checking the other. **Absence is not evidence of a gap
+until you have checked whether the absence is deliberate** — and here the reasoning was
+sitting in a test docstring, one grep away.
+
 **FS-368 is half true and worth splitting.** The defect — a WebSocket opened to
 `/ws/fleet-tracking`, a route that does not exist, so the live map silently froze — is fixed;
 both clients poll now and say so in a comment. The *capability* (real push through the
@@ -52,8 +77,7 @@ authenticated `/ws` stream) is untouched, and that is a feature rather than a bu
 ### What is still open, verified 2026-08-06
 
 `FS-344` (`GEOTAB_SIMULATED` defaults `True`; a production validator flags it, so the
-question is whether one validator is enough) · `FS-355` (`error_events` still has no RLS
-policy) · `FS-307` (the contract gate still runs as superuser) · `FS-362` (ERP suites still
+question is whether one validator is enough) · `FS-307` (the contract gate still runs as superuser) · `FS-362` (ERP suites still
 skip without credentials) · `FS-364` (routed pages with no test) · `FS-369`…`FS-376` (the
 production-readiness wave: PITR, HA/autoscaling wiring, the advisory `pre-commit` job, the
 missing latency SLO gate, hand-provisioned secrets, the README/manifest contradiction).

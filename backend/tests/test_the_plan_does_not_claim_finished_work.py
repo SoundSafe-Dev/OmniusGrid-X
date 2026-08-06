@@ -41,6 +41,15 @@ DELIVERED: dict[str, str | None] = {
     "FS-357": "FS-468",  # the doubled prefix
     "FS-359": None,      # has a test module
     "FS-361": None,      # has test modules
+    "FS-355": None,      # the missing RLS policy is deliberate — see the redaction test
+}
+
+#: FS-355 is recorded as delivered on the strength of a decision written in a test
+#: docstring, not a code change. That is a weaker kind of evidence, so it is pinned to the
+#: document that carries the reasoning: if that test goes, the argument goes with it and the
+#: entry needs re-opening rather than quietly staying closed.
+_DECISION_EVIDENCE = {
+    "FS-355": "test_error_triage_sample_redaction_realdb.py",
 }
 
 
@@ -126,3 +135,32 @@ class TestTheStillOpenListIsHonest:
             f"{overlap} appear in both the delivered table and the still-open list. The "
             f"document contradicts itself, which is worse than either claim being wrong."
         )
+
+
+class TestDecisionsHaveTheirReasoningOnFile:
+    """An entry closed by a DECISION rather than a change is closed by an argument.
+
+    FS-355 says `error_events` has no RLS policy — true — and concludes a gap. The absence
+    is deliberate: the table is a platform-wide triage view on purpose, the disclosure risk
+    was reproduced and fixed by redaction, and the test below records why scoping the view
+    by organisation was rejected.
+
+    **Absence is not evidence of a gap until you have checked whether the absence is
+    deliberate.** That reasoning lives in one docstring, and a docstring is easy to lose in
+    a rewrite — so the entry's closure is pinned to it.
+    """
+
+    @pytest.mark.parametrize("fs,filename", sorted(_DECISION_EVIDENCE.items()))
+    def test_the_reasoning_still_exists(self, fs: str, filename: str):
+        path = Path(__file__).resolve().parent / filename
+        assert path.exists(), (
+            f"{fs} is recorded as closed because {filename} argues the design is "
+            f"deliberate, and that file is gone. Without the argument the entry is open "
+            f"again."
+        )
+        text = path.read_text()
+        assert "rejected" in text.lower(), (
+            f"{filename} no longer records what was rejected and why, which is the whole "
+            f"of {fs}'s closure"
+        )
+

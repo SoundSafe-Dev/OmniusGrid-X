@@ -4468,8 +4468,26 @@ route that does not exist, so the live map silently froze — is fixed and both 
 with a comment saying why. The capability is untouched. Those are different pieces of work
 and one entry covering both reads as neither being done.
 
-Still open, verified: `FS-344`, `FS-355`, `FS-307`, `FS-362`, `FS-364`, and the whole
+Still open, verified: `FS-344`, `FS-307`, `FS-362`, `FS-364`, and the whole
 production-readiness wave `FS-369`…`FS-376`.
+
+**And then a ninth, which my own verification pass had just got wrong.** `FS-355` reads
+"`error_events` carries `organization_id` and no RLS policy", sized L on a primary-key grain
+change. The absence is real. It is also deliberate: the table is keyed on `fingerprint` alone
+**by design** — one row per distinct error for the whole platform, because a bug two tenants
+hit is one bug — the disclosure risk was reproduced against a real database and fixed by
+redacting the payload-bearing fields, the write side 403s when the caller does not own the
+row, and a test docstring records why scoping the view by organisation was **rejected**.
+
+Adding RLS would not harden that table; it would break the view it is meant to be.
+
+I found this by verifying the premise before building, which is what the plan's header says to
+do and what I had just spent a pass recommending. The first check asked "is there an RLS
+policy" (no) and stopped. It did not ask whether one was wanted. **That is the same error as
+FS-460 in a different costume** — there I concluded a field reached nobody after finding one
+of its two consumers; here I concluded a policy was missing after finding it absent. Both are
+negatives asserted from half a search, and both times the answer was one grep away in a file
+whose whole purpose was to record it. Rule 101.
 
 ### Why it happened twice
 
