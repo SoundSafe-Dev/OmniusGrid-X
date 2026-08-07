@@ -38,6 +38,23 @@ unlean: ## Restore the training corpus to this checkout
 	@git sparse-checkout disable
 	@echo "backend/dataset restored."
 
+reap-test-containers: ## Remove testcontainers left behind by killed test runs (FS-371)
+	# WHY THIS IS A TARGET AND NOT A CRON. Ryuk — testcontainers' own reaper — is
+	# DISABLED in `backend/tests/conftest.py`, deliberately: it needs the docker socket
+	# bind-mounted into a container, and colima's VM boundary makes that mount fail, so
+	# with Ryuk enabled the suite could not start at all. The comment there states the
+	# cost plainly: containers from a hard-killed run are no longer cleaned up.
+	#
+	# In the ordinary case the fixtures stop their own containers and nothing accumulates.
+	# The leak is Ctrl-C, a crashed runner, an OOM — and it had reached 23 stopped
+	# containers holding 13 GB, which is what gated the Docker-disk item.
+	#
+	# Matched on the testcontainers label rather than on an image name: the suite starts
+	# postgres, redpanda and redis, and a list of images is a list to forget to update.
+	# `--filter status=exited` so a container from a RUNNING suite is never touched — this
+	# has to be safe to run while somebody else is testing.
+	@stale=$$(docker ps -aq --filter "label=org.testcontainers=true" --filter "status=exited" 2>/dev/null); 	if [ -z "$$stale" ]; then 		echo "no stale test containers"; 	else 		echo "$$stale" | xargs docker rm -v; 		echo "reclaimed; run 'docker system df' to see the space back"; 	fi
+
 test: test-backend test-edge test-frontend ## Run all test suites
 
 smoke: ## Deployment-free end-to-end smoke (in-process app + SQLite)

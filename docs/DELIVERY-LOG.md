@@ -5346,3 +5346,65 @@ production. The ratchet reads the junit report and rejects a collapsed operation
 wholesale breakage fails loudly rather than passing as a clean run.
 
 **Suite:** backend 3583 → 3593 · frontend 833 · e2e 84 collected · edge agent 289.
+
+## Wave J — measured, and three kinds of answer
+
+The production-readiness wave, eight items. Measuring them produced three different outcomes,
+and the distinction is the useful part of this entry.
+
+### Already closed (3)
+
+* **FS-374** — the `if: github.event_name == 'push'` gate is gone from all four ERP sandbox
+  jobs. My first grep counted four hits and I nearly reopened it; they are the comments
+  explaining the removal.
+* **FS-376** — the README's worker-storage contradiction was corrected 2026-08-01, with the
+  stale paragraph's history kept beside the correct one.
+* **FS-373**, in the half that mattered. `p(95)<500` and `p(99)<1000` *are* asserted, on the
+  real-infrastructure profile, and `slo_rules.yml` is linted and unit-tested by the
+  `prometheus-rules` job.
+
+### Deliberate, and now pinned (1)
+
+`k6-load-test.js` keeps latency **out** of the CI profile on purpose, and says why: *"p(95)<500ms
+on a shared GitHub runner measures whichever neighbour is busy, not this API, and a gate that
+fails for reasons its author cannot act on is one that gets switched off."*
+
+That split can erode in both directions, silently:
+
+* Latency added to CI makes the job flaky, and a flaky blocking gate does not get repaired —
+  it gets `continue-on-error: true`, which takes the **error-rate** assertion down with it.
+* Latency removed from the real profile deletes the only latency SLO the load test carries,
+  and no CI job would notice, because none of them ever asserted it.
+
+`test_load_thresholds_stay_split.py` pins both arms. Mutation-verified each way.
+
+### Done (1)
+
+**FS-371** — `make reap-test-containers`. Ryuk, testcontainers' own reaper, is disabled in
+`conftest.py` deliberately: it needs the docker socket bind-mounted into a container, and
+colima's VM boundary makes that mount fail, so with Ryuk on the suite cannot start. The cost
+is stated there — containers from a hard-killed run are never cleaned up — and it had reached
+23 stopped containers holding 13 GB.
+
+The target matches on the **testcontainers label**, not on image names (a list of images is a
+list to forget to update), and filters `status=exited` so it is safe to run while somebody
+else's suite is mid-flight. Verified by planting a labelled exited container and reaping it.
+
+### Not done, with the reason (3)
+
+* **FS-372 · make `pre-commit` blocking.** This is decidable by measurement, so I measured it:
+  running `pre-commit run --all-files` reformats **924 files, +53,752/−39,025**, across
+  `frontend/src` (292), `backend/tests` (279), `backend/app` (195), `edge-agent` (73) and the
+  migrations. That is a repo-wide reformat touching every lane, and there are stashes on
+  another dev's branch right now. It would collide with every open branch, and it is a team
+  decision rather than something to slip into a defect-fix commit. **Reverted in full.** The
+  plan said "needs FS-280"; it now has a number attached instead of an adjective.
+* **FS-369 · PITR** and **FS-375 · secrets provisioning** need a cluster to validate. Shipping
+  manifests I cannot apply would be shipping unverified infrastructure, which is the opposite
+  of what the rest of this log is about. Left open, and left honest.
+* **FS-370** is environment-conditional rather than broken: `ci-cd.yml` applies `autoscaling/`
+  and `database-ha/` when the KEDA and CloudNativePG CRDs are present, and prints an explicit
+  `SKIP` with install instructions when they are not. What is missing — an assertion that a
+  staging cluster running single-replica is *noticed* — also needs a cluster.
+
+**Suite:** backend 3593 → 3600 · frontend 833 · e2e 84 collected · edge agent 289.
