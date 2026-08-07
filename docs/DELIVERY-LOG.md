@@ -6430,3 +6430,44 @@ drive any of it — the service takes each id straight into `WHERE id = :id` wit
 organization filter, so RLS is the only thing in the way.
 
 **Suite:** backend 3626 → 3668 · frontend 843 · `tsc` clean.
+
+---
+
+## FS-526 — proving the fourteen actually create, not merely that they answer
+
+FS-523 removed a required field fourteen create endpoints demanded and their handlers
+discarded. That makes them **callable**. It does not make them **work**, and the distinction is
+the whole reason this was invisible for so long: nobody had ever driven one of these to a 2xx.
+
+`test_write_endpoints_reject_cleanly_realdb.py` is the negative twin — an empty body
+everywhere, asserting 422 rather than 500. A route can satisfy that and be broken for every
+real payload.
+
+Nine tests take the positive half with a minimal valid body per endpoint, asking three things
+the negative walk cannot:
+
+1. does it answer 2xx,
+2. is a row there afterwards, and
+3. **does the row carry the caller's organisation.**
+
+(3) is the one that would be silently wrong. The request no longer carries a tenant, so the
+server is the only thing that can supply one — and a null there is a row invisible to its own
+creator through any scoped read, swept up by anything scanning the table unscoped. That is
+verbatim the defect `test_no_handler_takes_its_tenant_from_the_body.py` opens by describing.
+
+The load-plan and freight-charge test hangs both off a shipment created **through the API**,
+which also proves the id a create returns is usable as a foreign key rather than merely echoed
+back. And one test sends a body `organization_id` naming the *other* tenant and asserts the row
+still lands under the caller's: pydantic drops the extra key today, but `extra="allow"` and a
+handler reading `data.organization_id` would restore the IDOR shape, and nothing else would
+notice.
+
+### My own fixture reproduced the defect class it was written for
+
+The first version inserted an asset with no `workcell_id` and hit a NOT NULL constraint, which
+looked briefly like another instance of the FS-523 500. It was not: `AssetCreate` already
+**requires** `workcell_id`, correctly, and the fixture was simply wrong. Recorded in the file,
+because the distinction is the point — a required field over a NOT NULL column is right, and
+only an *optional* one over a NOT NULL column is the 500.
+
+**Suite:** backend 3668 → 3677.
