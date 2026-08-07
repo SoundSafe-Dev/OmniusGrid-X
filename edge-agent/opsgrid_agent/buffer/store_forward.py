@@ -204,22 +204,47 @@ class StoreForwardBuffer:
             )
             conn.commit()
 
-    def _prune_oldest_sync(self, rows: int) -> None:
-        """Delete the N oldest buffered rows.
+    def _prune_oldest_sync(self, rows: int) -> int:
+        """Delete the N oldest buffered rows, and return how many went.
 
         No VACUUM here: freeing internal pages is enough for the retry INSERT
         to succeed, while VACUUM needs the database's size in FREE disk space —
         unavailable by definition in the disk-full condition this recovers
         from — and would block the event loop rewriting the whole file. Space
         reclamation stays with the hourly enforce_size_limit cycle.
+
+        THESE ARE COUNTED (FS-504). This returned None and its caller discarded the number,
+        so up to 500 UNDELIVERED readings disappeared per disk-full event with nothing
+        recording it. The buffer's whole purpose is that a reading survives the uplink being
+        down; this is the one path where it does not, and it was the one path with no counter.
+
+        `test_every_buffer_loss_is_counted.py` allowlisted it, with the reason "emergency
+        space reclamation; the hourly path counts the steady state". That was **false**:
+        `enforce_size_limit` counts `cursor.rowcount` — rows ITS OWN delete removed — so rows
+        this method already deleted are gone from the table and can never appear in that
+        count. The allowlist entry is deleted rather than reworded.
         """
         with sqlite3.connect(self.buffer_path) as conn:
-            conn.execute(
+            cursor = conn.execute(
                 "DELETE FROM messages WHERE id IN "
                 "(SELECT id FROM messages ORDER BY created_at ASC LIMIT ?)",
                 (rows,),
             )
+            pruned = cursor.rowcount or 0
             conn.commit()
+
+        if pruned:
+            # Imported here rather than at module scope: the buffer is imported by nearly
+            # everything, and a top-level metrics import makes a cycle easy to introduce.
+            from .. import metrics
+
+            metrics.record_dropped(pruned)
+            logger.warning(
+                "buffer_pruned_for_space",
+                pruned=pruned,
+                note="undelivered readings discarded to recover from a full disk",
+            )
+        return pruned
 
     async def store_message(self, message: Dict[str, Any]) -> bool:
         """Adapter for coordinator message dicts -> store()."""

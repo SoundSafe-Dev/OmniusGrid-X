@@ -29,6 +29,8 @@ counter wired at the call site.
 from __future__ import annotations
 
 import ast
+import os
+from datetime import datetime, timezone
 import pathlib
 import unittest
 
@@ -44,10 +46,35 @@ NOT_A_LOSS = {
     # Removes rows the cloud has ACKNOWLEDGED. The delivery is the point; the delete is
     # bookkeeping.
     "mark_sent": "the cloud acknowledged these",
-    # Reclaims space inside the disk-full handler so the CURRENT write can land. The rows
-    # it drops are counted by the size-limit path on the next cleanup cycle.
-    "_prune_oldest_sync": "emergency space reclamation; the hourly path counts the steady state",
+    # `_prune_oldest_sync` WAS HERE, and the reason was wrong (FS-504). It read "emergency
+    # space reclamation; the hourly path counts the steady state" — but `enforce_size_limit`
+    # counts `cursor.rowcount`, rows its own DELETE removed, so anything the disk-full handler
+    # had already deleted was gone from the table and counted by nothing. Up to 500
+    # undelivered readings per event. It calls `metrics.record_dropped` now, so it belongs in
+    # the counted set and not here.
 }
+
+
+def _methods_recording_their_own_loss() -> set[str]:
+    """Methods in store_forward.py that call `metrics.record_*` in their own body.
+
+    The three periodic cleanups are counted by their caller in `main.py`; a method reached
+    from inside `store()` cannot be, so it counts itself instead. Both are honest — what is
+    not honest is a deletion counted by neither.
+    """
+    found: set[str] = set()
+    tree = ast.parse(STORE_FORWARD.read_text())
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for inner in ast.walk(node):
+            if (
+                isinstance(inner, ast.Call)
+                and isinstance(inner.func, ast.Attribute)
+                and inner.func.attr.startswith("record_")
+            ):
+                found.add(node.name)
+    return found
 
 
 def _methods_deleting_messages() -> dict[str, int]:
@@ -127,13 +154,25 @@ class TestEveryLossPathIsCounted(unittest.TestCase):
                     if isinstance(arg, ast.Name):
                         counted.add(arg.id)
 
+        # A METHOD MAY ALSO COUNT ITSELF (FS-504). The original model was "main.py calls it
+        # and passes the return value to metrics.record_*", which is how the three periodic
+        # cleanups work. `_prune_oldest_sync` is called from inside `store()` on the
+        # disk-full path — main.py never sees it — so under that model the only way to
+        # satisfy the guard was to be excused by NOT_A_LOSS, which is how it came to carry a
+        # reason that was not true. Counting at the point of deletion is the better shape,
+        # and the guard now recognises it.
+        self_counting = _methods_recording_their_own_loss()
+
         uncounted = []
         for name, line in sorted(_methods_deleting_messages().items()):
-            if name in NOT_A_LOSS:
+            if name in NOT_A_LOSS or name in self_counting:
                 continue
             variables = [v for v, method in assigned.items() if method == name]
             if not variables:
-                uncounted.append(f"{name} (store_forward.py:{line}) — main.py never calls it")
+                uncounted.append(
+                    f"{name} (store_forward.py:{line}) — main.py never calls it, and it does "
+                    f"not call metrics.record_* itself"
+                )
             elif not any(v in counted for v in variables):
                 uncounted.append(
                     f"{name} (store_forward.py:{line}) — its return value {variables} "
@@ -249,3 +288,66 @@ class TestEveryLossCounterIsAlertedOn(unittest.TestCase):
             f"looking on the dashboard like it was handled.",
         )
 
+
+
+class TheDiskFullPruneActuallyIncrementsTheCounter(unittest.TestCase):
+    """The structural guard above reads the AST. This drives the code (FS-504).
+
+    A method can call `metrics.record_*` in a branch that never runs, or with a count it
+    computed wrongly — the AST cannot tell. Up to 500 undelivered readings go per disk-full
+    event, so the number has to be right, not merely present.
+    """
+
+    def test_pruning_reports_the_rows_it_deleted(self):
+        import tempfile
+
+        from opsgrid_agent import metrics
+        from opsgrid_agent.buffer.store_forward import StoreForwardBuffer
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            buffer = StoreForwardBuffer(buffer_path=os.path.join(tmpdir, "b.db"))
+
+            # Six rows in, then prune four of them the way the disk-full handler does.
+            for i in range(6):
+                buffer._insert_row(
+                    datetime.now(timezone.utc), f"a{i}", "telemetry", {"v": i}, i
+                )
+
+            recorded: list[int] = []
+            original = metrics.record_dropped
+            metrics.record_dropped = lambda n: recorded.append(n)
+            try:
+                pruned = buffer._prune_oldest_sync(4)
+            finally:
+                metrics.record_dropped = original
+
+            self.assertEqual(pruned, 4, "the method did not report how many it deleted")
+            self.assertEqual(
+                recorded,
+                [4],
+                "the disk-full prune deleted undelivered rows and the dropped counter did "
+                "not move by that amount. Before FS-504 it moved by nothing at all, and the "
+                "allowlist excused it by claiming the hourly size-limit path counted them — "
+                "which counts only rows its own DELETE removes.",
+            )
+
+    def test_pruning_nothing_reports_nothing(self):
+        """The other direction: an empty buffer must not inflate the loss counter."""
+        import tempfile
+
+        from opsgrid_agent import metrics
+        from opsgrid_agent.buffer.store_forward import StoreForwardBuffer
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            buffer = StoreForwardBuffer(buffer_path=os.path.join(tmpdir, "b.db"))
+
+            recorded: list[int] = []
+            original = metrics.record_dropped
+            metrics.record_dropped = lambda n: recorded.append(n)
+            try:
+                pruned = buffer._prune_oldest_sync(500)
+            finally:
+                metrics.record_dropped = original
+
+            self.assertEqual(pruned, 0)
+            self.assertEqual(recorded, [], "nothing was deleted, so nothing should be counted")

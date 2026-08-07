@@ -5795,3 +5795,48 @@ serialisation contract is a property of that function whether or not anything ca
 and asserting it means the day the gate opens, it opens onto working code.
 
 **Suite:** edge agent 304 → 305.
+
+## FS-504 — the buffer loss nothing counted, and the allowlist entry that said otherwise
+
+*(The plan numbered this FS-503; that number went to the audit-log 500, which turned up
+mid-flight and needed one. Recorded rather than silently reused.)*
+
+`StoreForwardBuffer.store()` recovers from a full disk by deleting the 500 oldest rows and
+retrying the insert. Those rows are **undelivered telemetry** — the buffer's entire purpose is
+that a reading survives the uplink being down, and this is the one path where it does not.
+
+`_prune_oldest_sync` returned `None` and its caller discarded the number. Up to 500 readings
+disappeared per disk-full event with nothing recording it.
+
+**The allowlist knew, and was wrong.** `test_every_buffer_loss_is_counted.py` exists to make
+exactly this impossible, and it excused this method with a reason:
+
+> emergency space reclamation; the hourly path counts the steady state
+
+`enforce_size_limit` counts `cursor.rowcount` — rows **its own** DELETE removed. Anything the
+disk-full handler had already deleted was gone from the table and could never appear in that
+count. The entry is deleted, not reworded.
+
+### Why the guard had to allow it in the first place
+
+Its model was "`main.py` calls the method and passes the return value to `metrics.record_*`",
+which is how the three periodic cleanups work. `_prune_oldest_sync` is reached from inside
+`store()`, so `main.py` never sees it — and under that model the *only* way to satisfy the
+guard was to be excused. **A guard whose model does not admit the correct shape will collect
+exemptions**, and one of them will eventually carry a reason nobody re-checks.
+
+It now recognises a method that calls `metrics.record_*` in its own body. Counting at the point
+of deletion is the better shape for a path like this, and the guard should have said so.
+
+### Structural and behavioural, because the AST cannot see a wrong number
+
+The existing check reads the syntax tree, which proves a counter is *mentioned*. It cannot
+tell whether the branch runs or whether the count is right, and 500 readings per event is not
+a number to take on faith. Two behavioural tests drive the real buffer: six rows in, four
+pruned, the counter moves by four — and an empty buffer moves it by nothing, so recovery on a
+buffer with nothing to give up does not inflate the loss figure.
+
+Mutation-verified: removing `metrics.record_dropped` fails both the structural guard and the
+behavioural test.
+
+**Suite:** edge agent 305 → 307.
