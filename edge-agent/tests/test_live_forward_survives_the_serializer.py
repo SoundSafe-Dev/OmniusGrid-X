@@ -28,6 +28,12 @@ FS-496).
 
 So this file's producer double does the one thing the old one omitted: it applies the same
 serializer the real producer is configured with.
+
+THESE DRIVE `_forward_to_kafka` DIRECTLY. The call site is gated off by
+`IMMEDIATE_FORWARD_ENABLED` (FS-499) because publishing a second copy needs a topic and a
+delivery-marking decision that has not been made. The serialisation contract is a property of
+this function whether or not anything calls it today — and asserting it here means the day the
+gate opens, it opens onto correct code. The last test below pins the gate itself.
 """
 
 from __future__ import annotations
@@ -40,6 +46,8 @@ import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from opsgrid_agent.collectors import coordinator as coordinator_module  # noqa: E402
 
 from tests.test_edge_agent_integration import new_agent, run  # noqa: E402
 
@@ -69,7 +77,7 @@ class LiveForwardSurvivesTheSerializer(unittest.TestCase):
             agent = new_agent()
             producer = SerializingProducer()
             agent.coordinator.kafka_producer = producer
-            await agent.coordinator._on_collector_message(
+            await agent.coordinator._forward_to_kafka(
                 {
                     "timestamp_edge": "2026-08-06T12:00:00",
                     "asset_id": "a1",
@@ -104,7 +112,7 @@ class LiveForwardSurvivesTheSerializer(unittest.TestCase):
                     captured.append(value)
 
             agent.coordinator.kafka_producer = Capturing()
-            await agent.coordinator._on_collector_message(
+            await agent.coordinator._forward_to_kafka(
                 {
                     "timestamp_edge": "2026-08-06T12:00:00",
                     "asset_id": "a1",
@@ -132,7 +140,7 @@ class LiveForwardSurvivesTheSerializer(unittest.TestCase):
             agent = new_agent()
             producer = SerializingProducer()
             agent.coordinator.kafka_producer = producer
-            await agent.coordinator._on_collector_message(
+            await agent.coordinator._forward_to_kafka(
                 {
                     "timestamp_edge": "2026-08-06T12:00:00",
                     "asset_id": "press-1",
@@ -145,6 +153,24 @@ class LiveForwardSurvivesTheSerializer(unittest.TestCase):
         sent = run(scenario())
         self.assertTrue(sent, "nothing was sent")
         self.assertIn("press-1", sent[0][0])
+
+
+class TheGateIsClosedUntilTheDecisionIsMade(unittest.TestCase):
+    """FS-499. Re-enabling the immediate forward must be a deliberate act.
+
+    Correcting only the topic would deliver every reading twice, because nothing marks the
+    buffered row sent — `mark_sent` is called by the backfill loop alone. Switching this on
+    needs the org in the topic, an ack-guaranteed send, and the marking, together.
+    """
+
+    def test_the_immediate_forward_is_off(self):
+        self.assertFalse(
+            coordinator_module.IMMEDIATE_FORWARD_ENABLED,
+            "the immediate Kafka forward was re-enabled. Unless the topic now carries the "
+            "organization and the buffered row is marked sent, every reading is delivered "
+            "twice — or, with the old topic, rejected as invalid_topic_format and dropped "
+            "while the backfill copy arrives.",
+        )
 
 
 if __name__ == "__main__":

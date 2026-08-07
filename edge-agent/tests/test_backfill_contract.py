@@ -27,15 +27,25 @@ class BackfillContractTest(unittest.TestCase):
         async def scenario():
             agent = new_agent()
             fp = FakeProducer(fail=False)
-            agent.coordinator.kafka_producer = fp  # enable immediate forward
-            await agent.coordinator._on_collector_message({
+            agent.coordinator.kafka_producer = fp
+            # DRIVES `_forward_to_kafka` DIRECTLY (FS-499). This went through
+            # `_on_collector_message`, whose immediate-forward call site is now gated off:
+            # publishing a second copy needs the org in the topic and a delivery-marking
+            # decision that has not been made, and with the old topic every live message was
+            # rejected as `invalid_topic_format` while the backfill copy arrived.
+            #
+            # The property this test is about — packml_state at the TOP LEVEL of the live
+            # payload — belongs to the forward itself, and is asserted whether or not the
+            # call site is switched on today.
+            message = {
                 "timestamp_edge": "2026-07-05T12:00:00",
                 "asset_id": "a1",
                 "topic": "telemetry",
                 "collector_type": "modbus",
                 "packml_state": "Execute",
                 "payload": {"temp": 42, "packml_state": "Execute"},
-            })
+            }
+            await agent.coordinator._forward_to_kafka(message)
             return fp.sent
 
         sent = run(scenario())

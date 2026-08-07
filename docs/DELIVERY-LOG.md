@@ -5756,3 +5756,42 @@ its own stub now — a test of what the coordinator *passes along* should not de
 collector implementation happens to be loaded.
 
 **Suite:** edge agent 300 → 304.
+
+## FS-499 — the path my own fix switched on, and why it is off again
+
+FS-495 fixed the serialisation that had made the immediate Kafka forward raise on every message
+since the day it was written. That fix was correct, and it had a consequence I had not traced:
+**it turned the path on for the first time.**
+
+The live forward publishes `telemetry.{asset}`. The contract — stated in
+`edge-agent-statefulset.yaml:60-63` and parsed at `workers/ingestion.py:219` — is
+`telemetry.{org}.{asset}`, and the worker rejects anything with fewer than three parts as
+`invalid_topic_format`. So between FS-495 and this entry, every reading produced a backend
+warning and a dropped copy, while the backfill copy arrived correctly. Noise, not loss, and
+mine.
+
+**Correcting only the topic is worse.** Nothing marks the buffered row sent — `mark_sent` is
+called by the backfill loop alone (`main.py:357`), and `get_pending_messages` filters on
+`retry_count`, not on delivery. A correct live publish would therefore deliver every reading
+**twice**.
+
+And marking on a successful send would be wrong too: `producer.send()` awaits the message being
+batched, not acknowledged by the broker. Removing the buffered row on that basis gives away the
+guarantee store-and-forward exists to provide.
+
+So making the immediate forward real needs three things **together** — the organization in the
+topic, an ack-guaranteed send (`send_and_wait`), and marking the row sent so backfill skips it.
+That is a change to the delivery semantics of the core data path. It is not a defect fix and it
+is not mine to decide.
+
+**It is gated off, which restores exactly what has always shipped.** The path has never
+delivered anything; buffer-then-backfill is the only behaviour production has ever had.
+Enabling a second delivery path is the change that needs justification, not leaving it off.
+`IMMEDIATE_FORWARD_ENABLED = False` says so at the definition, and a test pins it — re-enabling
+it fails until the three pieces land together.
+
+`_forward_to_kafka` is kept and correct, with the FS-495 tests retargeted at it directly. The
+serialisation contract is a property of that function whether or not anything calls it today,
+and asserting it means the day the gate opens, it opens onto working code.
+
+**Suite:** edge agent 304 → 305.

@@ -45,6 +45,14 @@ logger = structlog.get_logger()
 #: naturally writes them, and they are read from there by the coordinator, the adapter and
 #: `main`. Splatting them into the constructor is what broke the four collectors that take
 #: no `**kwargs`.
+#: Whether a reading is published to Kafka the moment it arrives, in addition to being
+#: buffered (FS-499). **False**, and the long comment in `_on_collector_message` says why:
+#: the path raised on every message from the day it was written until FS-495, so
+#: buffer-then-backfill is the only delivery behaviour that has ever shipped; and switching it
+#: on needs the org in the topic, an ack-guaranteed send, and marking the buffered row sent,
+#: or every reading is delivered twice.
+IMMEDIATE_FORWARD_ENABLED = False
+
 CROSS_CUTTING_KEYS = frozenset({"quality", "packml", "alerts", "oee"})
 
 
@@ -352,8 +360,31 @@ class UnifiedCollectorCoordinator:
             if quality_action != QualityAction.QUARANTINE:
                 analytics_pipeline.record(message)
 
-            # Also try to forward immediately if connected
-            if self.kafka_producer:
+            # THE IMMEDIATE FORWARD IS OFF, DELIBERATELY (FS-499).
+            #
+            # FS-495 found that this path raised on every message since the day it was
+            # written, so the delivery behaviour production has ALWAYS had is
+            # buffer-then-backfill. Fixing the serialisation turned the path on for the first
+            # time — and it publishes to `telemetry.{asset}` while the contract, stated in
+            # `edge-agent-statefulset.yaml:60-63` and parsed at `workers/ingestion.py:219`,
+            # is `telemetry.{org}.{asset}`. The worker rejects anything with fewer than three
+            # parts as `invalid_topic_format`, so every live message became a backend warning
+            # and a dropped copy while the backfill copy arrived correctly.
+            #
+            # Correcting only the topic is worse, not better: nothing marks the buffered row
+            # sent (`mark_sent` is called by the backfill loop alone, `main.py:357`), so a
+            # correct live publish would deliver every reading TWICE.
+            #
+            # Making it real needs three things together — the org in the topic, an
+            # ack-guaranteed send (`send_and_wait`, since `send()` only awaits batching), and
+            # marking the row sent so backfill skips it. That is a change to the delivery
+            # semantics of the core data path and belongs to whoever owns that decision, not
+            # to a defect fix. Until then this stays off, which is exactly what has shipped
+            # all along.
+            #
+            # `_forward_to_kafka` is kept, and correct, so the work above is a wiring change
+            # rather than a rewrite.
+            if IMMEDIATE_FORWARD_ENABLED and self.kafka_producer:
                 try:
                     await self._forward_to_kafka(enriched_message)
                     metrics.record_kafka_success()
