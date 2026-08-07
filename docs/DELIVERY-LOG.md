@@ -5408,3 +5408,56 @@ else's suite is mid-flight. Verified by planting a labelled exited container and
   staging cluster running single-replica is *noticed* — also needs a cluster.
 
 **Suite:** backend 3593 → 3600 · frontend 833 · e2e 84 collected · edge agent 289.
+
+## FS-285 — the reports that failed to send, and nowhere to find out
+
+Wave I measured. **FS-366 and FS-367 are closed** — the phantom `ModelDeployment` interface and
+its three fields are gone, and `StrategicEngine` renders `—` rather than a false `0` for
+decision history, deriving availability from the payload so it populates itself the day a route
+starts sending `status`. **FS-368** closed with FS-487. The rest — FS-241/243/244/245 (⚠
+htreinen's RAG lane), FS-247/249/250 (ERP transformers) — are multi-day feature builds in other
+lanes, and left there.
+
+**FS-285 was the one in mine, and it was real.** `GET /api/v1/exports/deliveries` has returned
+a `status` and an `error` per scheduled send for some time. **Zero frontend files called it.**
+
+So a user schedules a report to be emailed, the send fails, `ExportDeliveryJob.status` becomes
+`'failed'` with the reason sitting in `error` — and there is no surface anywhere in the product
+that would show them either one. What they experience is a report that did not arrive, and
+nothing to ask.
+
+`/admin/export-deliveries` is the smallest honest surface for it. Failures are counted at the
+top and sorted to the front, because a page showing fifty successful sends with one failure
+below the fold is the same silence in a longer form. The server's own error text reaches the
+screen unedited — an SMTP rejection and an expired credential need different people, and
+"delivery failed" throws away the only actionable thing on the page.
+
+### Three things it did NOT do, each for a reason
+
+**No mock branch.** Every other client forks on `USE_MOCK`, and a fixture here would be
+actively misleading: the demo would show a tidy list of successful deliveries, which is the
+single most reassuring lie this endpoint could tell. In mock mode the request fails and the
+page says the history is unavailable — which is true.
+
+**snake_case types.** `/api/v1/exports` is not in the transform registry, so the wire sends
+`schedule_id`, `scheduled_for`, `completed_at`. My first draft declared them camelCase, which
+would have been exactly the defect this codebase has spent the session sweeping for — a type
+asserting fields the server never sends, with TypeScript vouching for them.
+
+**The seam was left alone.** Registering the prefix would fix the casing and change it for
+`ExportButton`'s job polling too, which works today. Changing a shared seam to suit one new
+caller is a poor trade.
+
+### Both route guards fired on the new page, immediately
+
+`everyRouteIsSwept` demanded the route join the e2e sweep and `everyRoutedPageHasATest`
+demanded a test file — within seconds of the route being added, before either was written.
+That is the guards doing precisely the job they were built for, on their author.
+
+And a third caught something subtler. `everyMockedClientHasARealModeTest` flagged the new
+client as needing a real-mode test — because its docstring **mentions** `USE_MOCK` while
+explaining why it has none. The guard was matching raw text. **A detector that reads
+documentation as code will eventually report the file that documents the very thing it looks
+for.** It strips comments now, with both directions asserted.
+
+**Suite:** frontend 833 → 843 · e2e 84 → 86 collected · backend 3600 · edge agent 289.

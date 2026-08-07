@@ -31,10 +31,23 @@ const API_DIR = resolve(__dirname, '..', 'api')
  *  so there is no real branch to exercise. */
 const NOT_A_CLIENT = new Set(['mockMode.ts', 'mockApi.ts'])
 
+/** Comments stripped before the search.
+ *
+ *  The first version matched the raw text, so a client that merely MENTIONED `USE_MOCK` in
+ *  prose was demanded to have a real-mode test. `exportDeliveries.ts` was the first —
+ *  its docstring explains why it has no mock branch, and saying so was enough to be
+ *  reported as having one. A detector that reads documentation as code will eventually
+ *  report the file that documents the very thing it is looking for. */
+const COMMENT = /\/\*[\s\S]*?\*\/|(?<![:'"`])\/\/[^\n]*/g
+
+export function hasMockFork(source: string): boolean {
+  return source.replace(COMMENT, ' ').includes('USE_MOCK')
+}
+
 function clientsWithMockForks(): string[] {
   return readdirSync(API_DIR)
     .filter((f) => f.endsWith('.ts') && !f.includes('.test.') && !NOT_A_CLIENT.has(f))
-    .filter((f) => readFileSync(join(API_DIR, f), 'utf8').includes('USE_MOCK'))
+    .filter((f) => hasMockFork(readFileSync(join(API_DIR, f), 'utf8')))
 }
 
 const FORKED = clientsWithMockForks()
@@ -46,6 +59,17 @@ describe('the sweep is not vacuous', () => {
   it('finds a plausible number of forked clients', () => {
     // A broken read returns nothing, and nothing has no uncovered members.
     expect(FORKED.length).toBeGreaterThan(10)
+  })
+
+  it('ignores a client that only mentions USE_MOCK in a comment', () => {
+    // The false positive that produced this check. A file explaining why it has NO mock
+    // branch must not be counted as having one.
+    expect(hasMockFork('// this client has no USE_MOCK fork\nexport const x = 1')).toBe(false)
+    expect(hasMockFork('/** no USE_MOCK here */\nexport const x = 1')).toBe(false)
+  })
+
+  it('still sees a real fork', () => {
+    expect(hasMockFork('if (USE_MOCK) { return fixture }')).toBe(true)
   })
 
   it('recognises a client it knows has a real-mode test', () => {

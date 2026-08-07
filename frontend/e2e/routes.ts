@@ -21,5 +21,5 @@ export const ROUTES = [
   '/predictive/rul', '/predictive/historian', '/fleet', '/fleet/organization',
   '/logistics/yard', '/logistics/transportation', '/erp', '/compliance', '/nlp', '/intake',
   '/admin/users', '/admin/collectors', '/admin/health', '/admin/settings',
-  '/admin/notifications', '/admin/errors', '/admin/fleet',
+  '/admin/notifications', '/admin/errors', '/admin/fleet', '/admin/export-deliveries',
 ]

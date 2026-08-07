@@ -52,6 +52,12 @@ const ErrorTriageDetail = named(() => import('./pages/admin'), 'ErrorTriageDetai
 // FS-132: notifications center (subscriptions + delivery log), kept lazy.
 const Notifications = named(() => import('./pages/admin'), 'Notifications')
 
+// FS-285. `GET /exports/deliveries` returns a status and an error per scheduled send, and
+// no page called it — a report that failed to go out was invisible to the person waiting
+// for it. Through the same barrel as the other admin pages, which is the import shape
+// `everyRoutedPageHasATest.test.ts` has to follow to see it at all.
+const ExportDeliveries = named(() => import('./pages/admin'), 'ExportDeliveries')
+
 const Users = named(() => import('./pages/admin'), 'Users')
 const Collectors = named(() => import('./pages/admin'), 'Collectors')
 const SystemHealth = named(() => import('./pages/admin'), 'SystemHealth')
@@ -153,6 +159,7 @@ const App: FC = () => {
                   <Route path="/admin/health" element={<SystemHealth />} />
                   <Route path="/admin/settings" element={<Settings />} />
                   <Route path="/admin/notifications" element={<Notifications />} />
+                  <Route path="/admin/export-deliveries" element={<ExportDeliveries />} />
                   <Route path="/admin/errors" element={<ErrorTriage />} />
                   <Route path="/admin/errors/:fingerprint" element={<ErrorTriageDetail />} />
                   <Route path="/admin/fleet" element={<Fleet />} />
