@@ -9,7 +9,13 @@ backup nobody restores is not a backup.
 
 Round-trips the exact commands the CronJob and the runbook use — `pg_dump -Fc`
 then `pg_restore` — against a migrations-built schema, and asserts the restored
-database matches the source.
+database matches the source in rows, schema version, and **tenant isolation**.
+
+That last one is FS-522, and it is the assertion the other three cannot make. A
+restore that brings back every row and drops every RLS policy satisfies all of
+them, and hands the business a database serving one tenant's rows to another —
+during an incident, when nobody is looking at authorization. The restore
+succeeds; the security property does not.
 
 pg_dump/pg_restore run INSIDE the container via docker exec, not on the host:
 the host client is frequently older than the server (pg_dump refuses to dump a
@@ -107,6 +113,56 @@ def test_dump_restores_into_an_empty_database(pg_container):
     )
     assert restored_version == source_version, (
         f"schema version drift: source={source_version} restored={restored_version}"
+    )
+
+    # 5. Tenant isolation must survive the restore (FS-522).
+    #
+    #    Everything above compares DATA. A restore that brings back every row and drops
+    #    every policy passes all four checks — and hands the business a database where one
+    #    tenant reads another's rows, during an incident, at the moment nobody is looking
+    #    at authorization. **The restore succeeds and the security property does not.**
+    #
+    #    It is not a hypothetical property of pg_dump. The CronJob dumps with `--no-acl`,
+    #    which drops GRANT/REVOKE; policies are separate objects and DO survive, but that
+    #    is a fact about the current flags, not a guarantee. Adding `--section=data`,
+    #    restoring into a database whose roles do not exist, or a migration writing a
+    #    policy that names a role the restore target lacks would each break it silently,
+    #    because the restore is deliberately tolerant of partial failure two steps above.
+    #
+    #    Measured before it was asserted: 66 policies, 65 tables with row security and 65
+    #    with FORCE, identical on both sides. FORCE is counted separately on purpose — it
+    #    is what stops the owning role from bypassing the policies, and losing only that
+    #    would leave `pg_policies` looking untouched.
+    isolation = {
+        "policies": "SELECT count(*) FROM pg_policies",
+        "tables with row security": (
+            "SELECT count(*) FROM pg_class WHERE relrowsecurity"
+        ),
+        "tables with FORCE row security": (
+            "SELECT count(*) FROM pg_class WHERE relforcerowsecurity"
+        ),
+    }
+    lost = []
+    for label, sql in isolation.items():
+        source = _psql_scalar(container, "omniusgrid_test", sql)
+        restored = _psql_scalar(container, RESTORE_DB, sql)
+        if source != restored:
+            lost.append(f"{label}: source={source} restored={restored}")
+
+    # Vacuity: a schema with no policies would satisfy the comparison above trivially,
+    # and this codebase's tenant isolation is entirely row-level.
+    assert int(_psql_scalar(container, "omniusgrid_test", isolation["policies"])) > 0, (
+        "the source database has no RLS policies at all, so the isolation comparison "
+        "below proves nothing. Either the migrations no longer create them — which is a "
+        "far larger problem than this drill — or the probe is broken."
+    )
+    assert not lost, (
+        "tenant isolation did not survive the restore:\n  "
+        + "\n  ".join(lost)
+        + "\n\nEvery row came back and the policies that keep one tenant out of "
+        "another's data did not. A recovery like this reads as a success — the row "
+        "counts match, the schema version matches, the application starts — and the "
+        "restored database serves every organization's rows to every user."
     )
 
     _exec(container, "dropdb", "-U", "omniusgrid", "--if-exists", RESTORE_DB)

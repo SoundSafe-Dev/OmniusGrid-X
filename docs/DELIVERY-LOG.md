@@ -6300,3 +6300,40 @@ the DR runbooks described restoring from a repository nothing wrote to.
 
 Mutation-verified both ways: removing the runbook's qualifier fails it, and removing the
 single-pod StatefulSet (simulating the cutover) fails it in the opposite direction.
+
+---
+
+## FS-522 — the drill restored every row and could not tell whether isolation came back
+
+The plan listed this as "the drill needs to run against a real dump". It already does:
+`test_backup_restore_drill.py` starts a real Postgres via testcontainers, runs the CronJob's
+exact `pg_dump -Fc --no-owner --no-acl` inside the container, restores into a fresh database,
+and compares row counts and the schema version. That premise was met.
+
+**What it could not see is whether tenant isolation survived.** Every check it made compares
+DATA. A restore that brings back every row and drops every RLS policy passes all four — and
+hands the business a database where one organization reads another's rows, during an incident,
+at the moment nobody is looking at authorization. The restore succeeds and the security
+property does not.
+
+This is not hypothetical for this schema. Tenant isolation here is *entirely* row-level: 66
+policies across 65 tables, all of them `FORCE ROW LEVEL SECURITY` since FS-307. The CronJob
+dumps with `--no-acl`, which drops GRANT/REVOKE; policies are separate objects and do survive,
+but that is a fact about the current flags rather than a guarantee. Adding `--section=data`,
+restoring into a database whose roles do not exist, or a migration writing a policy naming a
+role the target lacks would each break it silently — and the restore step is deliberately
+tolerant of partial failure two steps earlier, so nothing would raise.
+
+Measured before asserting: **66 policies, 65 tables with row security, 65 with FORCE, identical
+on both sides.** The restore is sound. `FORCE` is counted separately on purpose — it is what
+stops the owning role from bypassing the policies, and losing only that would leave
+`pg_policies` looking untouched while the isolation was gone.
+
+Vacuity is checked: a schema with no policies satisfies the comparison trivially, so the drill
+asserts the source has some before comparing.
+
+Mutation-verified by dropping every policy from the restored database after the restore: rows
+and schema version still match, and the drill fails with `policies: source=66 restored=0`.
+
+**Wave L closes here.** FS-509, 510, 511, 512, 513, 514, 516, 517, 518, 519, 520, 521 and 522
+are done; FS-515 needed no change and the reason is recorded above.
