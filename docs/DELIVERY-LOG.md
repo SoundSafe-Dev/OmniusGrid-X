@@ -5604,3 +5604,38 @@ FS-307 left the still-open list. The two-way guard added in FS-491 caught the di
 moment the register moved first — which is what it is for.
 
 **Suite:** edge agent 289 → 297 · backend 3603 · frontend 843 · e2e 119.
+
+## FS-501, FS-502 — two defects in twenty lines, neither of which reports anything
+
+Both in the collector supervision loop, and both invisible from outside the process: it keeps
+running, the collector list still looks populated, and the only symptoms are CPU and a
+supervisor that quietly stopped existing.
+
+**FS-502 — the supervision tasks were dropped.** `start_all` built them into a local that went
+out of scope on the next statement, never awaited and with no strong reference. asyncio holds
+only a weak reference to a running task, so the loop was free to collect one mid-flight, and an
+exception inside a collected task surfaces nowhere. `all_collectors_started` was logged before
+any collector had started.
+
+They are held on the instance now and cancelled in `stop_all` — because `self._running = False`
+is checked at the top of the loop, which a supervisor sitting in `await collector.start()`
+never reaches. Signalling is not stopping.
+
+**FS-501 — a clean return spun the loop.** Restarts were counted and delayed only in the
+`except` branch, so a `start()` that **returns** rather than raises incremented nothing and
+slept for nothing: a tight loop for the life of the process, with no counter moving and nothing
+in the log. A collector exiting normally when its connection closes is the ordinary case.
+
+### The test I got wrong first, and what fixed it
+
+My first assertion waited for the loop to exhaust `max_restarts` — which is now *correct*
+behaviour and takes about fifty seconds (10 restarts × a 5 s delay), so it timed out against a
+working fix. What actually separates the defect from the fix is **the rate**: a supervisor that
+sleeps starts a handful of times in a short window; one that hot-spins starts thousands. The
+test now runs the supervisor for 0.3 s and asserts the count is small.
+
+The mutation proof is unusually direct. Reverting both fixes does not produce a failing
+assertion — it produces a **hung test run**, because the loop spins hard enough to starve
+everything around it. That is the defect, demonstrated.
+
+**Suite:** edge agent 297 → 300.

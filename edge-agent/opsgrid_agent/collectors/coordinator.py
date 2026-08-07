@@ -105,6 +105,9 @@ class UnifiedCollectorCoordinator:
         # Status tracking
         self._running = False
         self._health_check_task: Optional[asyncio.Task] = None
+        #: The per-collector supervision tasks (FS-502). Held so they are not garbage
+        #: collected mid-flight and so `stop_all` can cancel them.
+        self._collector_tasks: List[asyncio.Task] = []
         #: True while the immediate Kafka forward is failing (FS-496). Used only to decide
         #: LOG LEVEL: the first failure since the last success is a warning, the rest are
         #: debug. Without this, either a broken path stays silent (what FS-495 did for its
@@ -148,17 +151,27 @@ class UnifiedCollectorCoordinator:
             async with semaphore:
                 await self._start_collector(config)
         
-        # Create tasks for all collectors
-        tasks = [
+        # RETAINED, NOT DROPPED (FS-502). This built the list into a local that went out of
+        # scope on the next line — never awaited, and with no strong reference, so the event
+        # loop was free to garbage-collect a supervision task mid-flight and the exception
+        # from a collector that failed to start had nowhere to surface. `all_collectors_started`
+        # was then logged before any collector had started.
+        #
+        # These are long-lived supervisors, so they are NOT awaited here — `start_all` must
+        # return. They are held on the instance and cancelled in `stop_all`.
+        self._collector_tasks = [
             asyncio.create_task(start_with_limit(config))
             for config in self.configs.values()
             if config.enabled
         ]
-        
+
         # Start health monitoring
         self._health_check_task = asyncio.create_task(self._health_monitor())
         
-        logger.info("all_collectors_started")
+        logger.info(
+            "collector_supervisors_started",
+            count=len(self._collector_tasks),
+        )
     
     async def _start_collector(self, config: CollectorConfig):
         """Start a single collector instance"""
@@ -207,6 +220,19 @@ class UnifiedCollectorCoordinator:
         while self._running and restart_count < max_restarts:
             try:
                 await collector.start()
+                # A CLEAN RETURN IS STILL A RESTART (FS-501). Only the `except` branch
+                # counted and slept, so a `start()` that RETURNS rather than raises spun this
+                # loop as fast as the scheduler allowed, for the life of the process — no
+                # counter moving, no delay, nothing in the log. A collector that exits
+                # normally on a closed connection is the ordinary case, not an exotic one.
+                restart_count += 1
+                logger.warning(
+                    "collector_returned",
+                    asset_id=asset_id,
+                    restart_count=restart_count,
+                    note="start() returned without raising; treating as a restart",
+                )
+                await asyncio.sleep(5)
             except Exception as e:
                 restart_count += 1
                 logger.error(
@@ -430,6 +456,14 @@ class UnifiedCollectorCoordinator:
         # Cancel health monitor
         if self._health_check_task:
             self._health_check_task.cancel()
+
+        # And the supervisors (FS-502). `self._running = False` above lets each loop exit at
+        # its next iteration, but a supervisor sitting in `await collector.start()` does not
+        # reach that check — so without this, `stop_all` returns while supervisors are still
+        # awaiting sockets the stop below is about to close.
+        for task in getattr(self, "_collector_tasks", []):
+            task.cancel()
+        self._collector_tasks = []
         
         # Stop all collectors
         stop_tasks = []
