@@ -412,7 +412,12 @@ services:
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
-      - '--alertmanager.url=http://alertmanager:9093'
+      # FS-516. `--alertmanager.url` was REMOVED in Prometheus 2.0. An unknown flag is
+      # fatal at startup, so the compose Prometheus exited immediately — which means
+      # nobody running the stack locally has ever had metrics, alerts or the SLO rules,
+      # and the four gates that assert those rules are well-formed were checking a file
+      # no running Prometheus had ever loaded. It was also redundant:
+      # infra/prometheus/prometheus.yml:8-12 configures the alertmanager the current way.
     networks:
       - omniusgrid-network
 
@@ -566,6 +571,17 @@ services:
       AGENT_ID: simulator-001
       BUFFER_RETENTION_HOURS: 24
       METRICS_PORT: 9108
+      # FS-518. Without COLLECTORS the agent logs `no_collectors_configured` and produces
+      # no telemetry at all — so the service named "simulator" simulated nothing, and the
+      # scrape job pointed at it (FS-517) reported an agent with no readings as healthy.
+      #
+      # `simulate` is the explicit source both synthetic-capable collectors understand, so
+      # this stays honest under EDGE_REQUIRE_EXPLICIT_SOURCES (FS-508): the values are
+      # stamped synthetic on the way out rather than passing as hardware.
+      COLLECTORS: >-
+        [{"asset_id": "sim-press-001", "collector_type": "audio", "enabled": true,
+          "config": {"source": "simulate", "asset_id": "sim-press-001",
+                     "sample_rate": 16000, "frame_seconds": 1.0, "poll_interval": 10}}]
     ports:
       - "9108:9108"   # Prometheus /metrics
     volumes:

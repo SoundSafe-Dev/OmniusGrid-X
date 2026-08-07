@@ -8,7 +8,19 @@ metadata:
     app.kubernetes.io/component: worker
     app.kubernetes.io/part-of: omniusgrid
 spec:
-  replicas: 1
+  # FS-512. Was `replicas: 1` — the live telemetry path running as a single pod, so a
+  # node drain, an image pull failure or an OOM stopped ingestion outright.
+  #
+  # It also disagreed with the autoscaler that owns this workload:
+  # `autoscaling/scaledobjects.yaml:29` sets `minReplicaCount: 2` with the reason "never
+  # scale to zero (cold start would drop the live stream behind), keep a warm floor". So
+  # the declared floor was 2 and the deployed floor was 1, and between `kubectl apply`
+  # and KEDA's first 15s poll the telemetry path ran at one replica on every deploy.
+  # Where KEDA is not installed — which CI explicitly tolerates, gating the autoscaling
+  # stack on the CRD existing — it stayed at 1 permanently.
+  #
+  # KEDA owns the count once it is running; this is the value before it does.
+  replicas: 2
   selector:
     matchLabels:
       app.kubernetes.io/name: ingestion-worker

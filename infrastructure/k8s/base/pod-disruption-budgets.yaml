@@ -40,3 +40,24 @@ spec:
   selector:
     matchLabels:
       app.kubernetes.io/name: redpanda
+---
+# FS-512. The ingestion worker is the live telemetry path and KEDA holds it at a floor of
+# 2 (`autoscaling/scaledobjects.yaml:29`), so by this file's own rule — "only multi-replica
+# workloads get a PDB" — it should always have had one. It did not, because the rule was
+# applied against the Deployment's `replicas` field and the floor that actually governs it
+# lives in a different stack, deployed by a different job. Nothing read both.
+#
+# The other single-replica workloads remain deliberately excluded per the header above:
+# export-worker and compliance-reports-worker have `minReplicaCount: 0` and scale to zero,
+# where a PDB protects nothing; timescaledb, redis, seaweedfs, jaeger and otel-collector
+# are true singletons whose availability needs replication, not a disruption budget.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: ingestion-worker-pdb
+spec:
+  # One pod at a time keeps the telemetry stream consuming through a rolling node drain.
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ingestion-worker

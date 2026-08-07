@@ -574,6 +574,16 @@ jobs:
               echo "::endgroup::"
             done
           done
+      - name: Workloads run at or above their autoscaler's declared floor
+        run: |
+          pip install pyyaml
+          # The ingestion worker — the live telemetry path — declared `replicas: 1` while
+          # the autoscaler that owns it declared `minReplicaCount: 2`, with the reason
+          # written out beside it. Two artefacts, two different stacks, two different deploy
+          # jobs, and nothing read both: the workload ran below its own stated floor until
+          # KEDA's first poll, and permanently wherever the KEDA CRDs are absent — which the
+          # deploy job explicitly tolerates.
+          ./tests/k8s/check_replica_floors.py
       - name: Manifests land in their declared namespace and name a real target
         run: |
           pip install pyyaml

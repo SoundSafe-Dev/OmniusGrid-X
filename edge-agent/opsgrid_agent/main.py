@@ -592,12 +592,20 @@ class EdgeAgent:
             logger.warning("agent_state_persist_failed", error=str(e), path=self.state_path)
 
         # Prometheus /metrics + /healthz. Default-on (METRICS_ENABLED=false to
-        # disable); METRICS_PORT overrides the default 9100. The metrics_server
-        # module serves the same registry as opsgrid_agent.metrics plus /healthz.
+        # disable); METRICS_PORT overrides the default. The metrics_server module
+        # serves the same registry as opsgrid_agent.metrics plus /healthz.
+        #
+        # FS-519. The default was 9100 and matched NOTHING: the StatefulSet declares
+        # containerPort 9108, the compose simulator publishes 9108, and both scrape
+        # jobs target 9108. So any deployment that did not set METRICS_PORT explicitly
+        # listened on a port nothing scraped — the agent looked healthy, exported a full
+        # registry, and every edge alert stayed silent because no series existed. 9100 is
+        # also the node_exporter port, so on a host running one the agent would have been
+        # scraped as the node exporter or failed to bind.
         if os.getenv('METRICS_ENABLED', 'true').lower() != 'false':
             from opsgrid_agent.metrics_server import start_metrics_server
             start_metrics_server(
-                int(os.getenv('METRICS_PORT', '9100')),
+                int(os.getenv('METRICS_PORT', '9108')),
                 health_provider=self._health_snapshot,
             )
 

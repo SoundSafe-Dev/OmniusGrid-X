@@ -6085,3 +6085,93 @@ namespace list, and pointing CI back at a raw stack path each fail it with the s
 
 **Gate:** 66 namespaced objects, 6 scale targets, 4 scrape jobs. All existing k8s gates still
 pass (108 probes, 4 targets, placeholder-secret and backend-security checks).
+
+---
+
+## FS-516 / FS-517 / FS-518 / FS-519 — the local stack could not start, and would have lied if it had
+
+Four defects in the compose observability stack. Each is invisible to the validator that owns
+its artefact, and the gap is between them rather than in any one of them.
+
+### FS-516 — Prometheus exited on startup
+
+`docker-compose.yml:415` passed `--alertmanager.url=http://alertmanager:9093`. That flag was
+**removed in Prometheus 2.0**, and an unknown flag is fatal. So the container exited
+immediately on every `docker compose up`.
+
+Nobody running the stack locally has ever had metrics, alerts or SLO rules. Four CI gates
+assert those rule files are well-formed — `promtool check rules`, `promtool check config`,
+the rule unit tests, the kubeconform pass — and **not one of them had ever been loaded by a
+running Prometheus.** The flag was redundant besides: `prometheus.yml:8-12` configures the
+alertmanager the current way, which is why removing it loses nothing. A test asserts the
+alerting block is still there, because a fix that made the container start while dropping
+alert routing would pass the first check and be worse than the bug.
+
+### FS-517 — one container, two jobs, every series doubled
+
+`prometheus.yml` defined `edge-agent` → `edge-agent:9108` and `opsgrid-edge-agent` →
+`edge-agent-sim:9108`. `edge-agent` is a **network alias** for `edge-agent-sim`
+(`docker-compose.yml:579-581`), so both scraped the same container.
+
+The plan recorded this as "two jobs, both permanently DOWN". It is worse than that. **No alert
+rule or dashboard panel filters by `job`**, so with the simulator profile on, every series
+existed twice under two job labels: `sum(edge_agent_up)` on the fleet dashboard counted each
+agent twice, and `EdgeAgentBufferHigh` would have fired two identical alerts per agent. The
+fleet size was wrong in the direction that looks like growth.
+
+### FS-518 — the simulator simulated nothing
+
+`edge-agent-sim` set neither `COLLECTORS` nor `COLLECTORS_FILE`, so the agent logged
+`no_collectors_configured` and produced no telemetry — while the scrape job pointed at it
+reported it up and healthy. It now runs one `audio` collector with `source: "simulate"`, which
+is explicit and therefore still honest under `EDGE_REQUIRE_EXPLICIT_SOURCES` (FS-508): the
+readings are stamped synthetic rather than passing as hardware.
+
+### FS-519 — the metrics port matched nothing
+
+`main.py:600` defaulted `METRICS_PORT` to **9100**. The StatefulSet declares containerPort
+9108, the compose service publishes 9108, and every scrape target is 9108. Any deployment that
+did not set it explicitly served a full registry on a port nothing scraped — the agent looks
+healthy, exports everything, and every edge alert stays silent for the honest reason that no
+series exists. 9100 is also the node_exporter port, so on a host running one the agent would
+be scraped *as* the node exporter or fail to bind.
+
+`backend/tests/test_the_local_stack_can_actually_start.py` holds all four: no removed
+Prometheus flag, the alertmanager still configured, every scrape target naming a real compose
+service **or alias**, no two jobs on one container after alias resolution, the simulator
+configuring a collector with an explicit source, and the agent's default port matching both
+the scrape targets and the StatefulSet. Mutation-verified on FS-516, FS-517 and FS-519.
+
+---
+
+## FS-512 — a workload running below the floor its own autoscaler declares
+
+The plan recorded this as "ten single-replica workloads with no PDB". Measuring it made the
+finding smaller and sharper, and the plan's framing wrong.
+
+`base/pod-disruption-budgets.yaml` already argues the general case correctly in its header:
+only multi-replica workloads get a PDB, because `minAvailable: 1` on a single-replica workload
+gives no protection and `maxUnavailable: 0` makes `kubectl drain` hang forever. Eight of the
+ten are correctly excluded — `export-worker` and `compliance-reports-worker` have
+`minReplicaCount: 0` and scale to zero, and timescaledb, redis, seaweedfs, jaeger and
+otel-collector are true singletons whose availability needs replication, not a budget.
+
+**One is a real defect, and it is the telemetry path.** `ingestion-worker` was `replicas: 1`
+while the autoscaler that owns it declares `minReplicaCount: 2`, with the reason written out
+beside it: *"Real-time telemetry: never scale to zero (cold start would drop the live stream
+behind), keep a warm floor."* So the declared floor was 2 and the deployed floor was 1. On
+every apply, ingestion ran as a single pod until KEDA's next 15-second poll — and where KEDA is
+not installed, which the deploy job explicitly tolerates by gating on the CRD, it stayed at one
+permanently.
+
+It had no PDB either, and by that file's own rule it qualified. **The rule had been applied
+against the Deployment's `replicas` field, and the floor that governs this workload lives in a
+different stack, deployed by a different job.** Rule 122 again, in the manifests.
+
+`tests/k8s/check_replica_floors.py` pairs them: any ScaledObject with a floor of 2 or more must
+name a workload deployed at or above that floor and covered by a PDB. It deliberately does not
+demand a PDB anywhere else — the existing exclusions are right and are left alone.
+
+Mutation-verified both ways: reverting `replicas` and mistyping the PDB **selector** each fail
+it with the specific reason. Renaming the PDB object does not, correctly — coverage is the
+selector, not the name.
