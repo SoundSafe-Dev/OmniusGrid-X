@@ -40,9 +40,22 @@ class BackfillContractTest(unittest.TestCase):
 
         sent = run(scenario())
         self.assertEqual(len(sent), 1)
-        # _forward_to_kafka serializes the whole message to bytes.
-        _topic, raw, _key = sent[0]
-        value = json.loads(raw)
+        # THE VALUE IS A DICT, NOT BYTES (FS-495). This read `json.loads(raw)` with the
+        # comment "_forward_to_kafka serializes the whole message to bytes" — which was true
+        # of the code and was the defect: the producer is configured with its own
+        # `value_serializer`, so pre-encoding here meant aiokafka ran `json.dumps(bytes)` and
+        # raised on every message. The coordinator now hands over the object and lets the
+        # producer serialise, as every other caller of that producer already did.
+        #
+        # This assertion's INTENT — packml_state reaches the top level of the live payload —
+        # was always right, and it survives unchanged. Only the unwrapping moved.
+        _topic, value, _key = sent[0]
+        self.assertIsInstance(
+            value,
+            dict,
+            "the live forward handed the producer pre-encoded bytes again; its "
+            "value_serializer cannot accept those (FS-495)",
+        )
         self.assertEqual(value["packml_state"], "Execute")
         self.assertTrue(INGESTION_REQUIRED_KEYS <= set(value))
 

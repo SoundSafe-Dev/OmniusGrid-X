@@ -105,6 +105,11 @@ class UnifiedCollectorCoordinator:
         # Status tracking
         self._running = False
         self._health_check_task: Optional[asyncio.Task] = None
+        #: True while the immediate Kafka forward is failing (FS-496). Used only to decide
+        #: LOG LEVEL: the first failure since the last success is a warning, the rest are
+        #: debug. Without this, either a broken path stays silent (what FS-495 did for its
+        #: whole life) or an offline broker writes one warning per message.
+        self._forward_failing = False
     
     def register_collector(self, config: CollectorConfig):
         """Register a collector configuration"""
@@ -299,14 +304,36 @@ class UnifiedCollectorCoordinator:
                 try:
                     await self._forward_to_kafka(enriched_message)
                     metrics.record_kafka_success()
+                    if self._forward_failing:
+                        self._forward_failing = False
+                        logger.info("immediate_forward_recovered", asset_id=asset_id)
                 except Exception as e:
                     metrics.record_kafka_error()
-                    # Already in buffer, will retry later
-                    logger.debug(
-                        "immediate_forward_failed",
-                        asset_id=asset_id,
-                        error=str(e)
-                    )
+                    # WARNING, NOT DEBUG (FS-496). The message is already buffered and the
+                    # backfill path will deliver it, so this is not data loss — which is
+                    # why it was written at `debug`. But that reasoning holds for ONE
+                    # failure, not for a path that fails every time: FS-495 was a 100%
+                    # failure rate that produced no visible signal for as long as it
+                    # existed, because the only two witnesses were a debug line and a
+                    # counter nobody alerts on.
+                    #
+                    # The first failure since the last success is logged at warning; the
+                    # rest stay at debug so a genuinely offline broker does not flood the
+                    # log with one line per message.
+                    if not self._forward_failing:
+                        self._forward_failing = True
+                        logger.warning(
+                            "immediate_forward_failed",
+                            asset_id=asset_id,
+                            error=str(e),
+                            note="message is buffered; delivery falls back to backfill",
+                        )
+                    else:
+                        logger.debug(
+                            "immediate_forward_still_failing",
+                            asset_id=asset_id,
+                            error=str(e),
+                        )
             
             logger.debug(
                 "collector_message_received",
@@ -326,15 +353,29 @@ class UnifiedCollectorCoordinator:
             )
     
     async def _forward_to_kafka(self, message: Dict):
-        """Forward message to Kafka"""
+        """Forward a message to Kafka.
+
+        THE PRODUCER SERIALISES, NOT THIS (FS-495). `main.py:259` builds the producer with
+        `value_serializer=lambda v: json.dumps(v).encode('utf-8')` and hands that same
+        object here (`main.py:270`). This method used to `json.dumps(...).encode()` first
+        and pass the bytes as the value, so aiokafka then ran `json.dumps(b'{...}')` —
+        **TypeError: Object of type bytes is not JSON serializable, on every message**,
+        since the day it was written.
+
+        It cost delivery latency rather than data: the message is buffered before this is
+        attempted and the backfill path serialises correctly, so everything arrived by the
+        slow route. But the immediate path never once worked, and the failure went to
+        `logger.debug` (see the caller, fixed in FS-496).
+
+        No test could see it because the producer double in
+        `tests/test_edge_agent_integration.py:47-55` stores `value` verbatim and applies no
+        serializer — a fake that is wrong at exactly the seam that is broken.
+        `tests/test_live_forward_survives_the_serializer.py` models the real contract.
+        """
         asset_id = message.get('asset_id', 'unknown')
         topic = f"telemetry.{asset_id}"
-        
-        # Serialize
-        payload = json.dumps(message).encode('utf-8')
-        
-        # Send
-        await self.kafka_producer.send(topic, payload)
+
+        await self.kafka_producer.send(topic, message)
     
     async def _health_monitor(self):
         """Monitor health of all collectors"""

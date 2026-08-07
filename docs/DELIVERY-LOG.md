@@ -5522,3 +5522,85 @@ controls, or a selector change turns thirty-three green ticks into thirty-three 
 
 **Suite:** e2e 86 → 119 collected, **119 passing against a live backend** · frontend 843 ·
 backend 3603 · edge agent 289.
+
+## FS-494 … FS-498 — two defects the edge agent's 289 tests could not see
+
+The new plan's first wave. Both of the severe items were verified by hand before a line was
+changed, and both had been broken since the day they were written.
+
+### FS-495 — the live forward has never worked
+
+`main.py:259` configures the Kafka producer with
+`value_serializer=lambda v: json.dumps(v).encode('utf-8')` and hands that same object to the
+coordinator (`:270`). The coordinator pre-encoded and passed the bytes as the value
+(`coordinator.py:334-337`), so aiokafka ran `json.dumps(b'{...}')` — **`TypeError: Object of
+type bytes is not JSON serializable`, on every single message.**
+
+Reproduced in three lines before touching anything, then asserted by a test that fails against
+the old code.
+
+**It cost latency, not data.** The message is buffered before the forward is attempted and the
+backfill path serialises correctly (`main.py:314`), so everything arrived by the slow road.
+But the fast road never once carried anything.
+
+**Why 289 tests missed it.** `tests/test_edge_agent_integration.py:47-55` defines a
+`FakeProducer` whose `send()` appends `value` to a list — it applies no serializer, so it
+accepts bytes happily. `test_coordinator_roundtrip.py:95` passes `kafka_producer=None` and
+skips the path. The double was wrong at exactly the seam that was broken.
+
+One existing test had to change: `test_backfill_contract.py:26` did `json.loads(raw)` with the
+comment *"_forward_to_kafka serializes the whole message to bytes"* — a test written around
+the defect. Its **intent** (packml_state reaches the top level) was always right and survives
+unchanged; only the unwrapping moved, and it now asserts the value is a dict.
+
+### FS-496 — a 100% failure rate logged at `debug`
+
+The catch at `coordinator.py:302-309` logged `immediate_forward_failed` at **debug** and
+incremented a counter. That reasoning holds for *one* failure — the data is buffered, it will
+retry — and it is why nobody looked. It does not hold for a path that fails every time.
+
+The first failure since the last success is now a `warning`; the rest stay at debug so an
+offline broker does not write one line per message. Recovery logs once at `info`.
+
+### FS-497 — every heartbeat has reported five zeros
+
+`heartbeat.py:48-52` reads `buffer_pending`, `dead_lettered`, `dropped`, `active_collectors`,
+`total_collectors`. `_health_snapshot()` returned `collectors_total`, `collectors_active` and
+**no buffer keys at all**. Every read has a `, 0` default, so every field defaulted, every time.
+
+This one reaches production monitoring: `backend/app/services/edge_fleet.py:69` sets the
+`edge_agent_buffer_pending` gauge from that field, and `alerts.yml:241` alerts above 5000. **A
+fleet backing up on disk looked idle.**
+
+`tests/test_heartbeat.py:9-16` supplies its own `health()` dict with the correct names. It is a
+good test of the reporter and can say nothing about the producer, because the two were never
+connected in a test — both halves individually right, disagreeing about the contract between
+them. The new test builds a real agent, takes its real snapshot, and runs it through the real
+reporter, with no hand-written dict anywhere.
+
+Both spellings are emitted, because `/healthz` consumers may read the old ones and fixing one
+silent break by introducing another is not a fix. The buffer numbers come from a cache that
+`_stats_reporter` already computed every five minutes and previously only logged —
+`_health_snapshot` is deliberately sync (it serves the HTTP health server from another thread)
+and the buffer's `get_stats()` is async.
+
+### FS-498 — the alert that parsed and could not fire
+
+`promtool check rules` validates an expression's syntax and says nothing about whether it can
+ever cross its threshold, so `EdgeAgentBufferHigh` was syntactically perfect for exactly as
+long as it was useless. Five promtool test files existed — errors, subsystems, platform,
+workers, security — and none covered edge.
+
+`tests/edge_alerts_test.yml` drives the gauge past the threshold and asserts the alert fires,
+plus three cases that must stay quiet: below threshold, **exactly at it** (`> 5000` must not
+fire on 5000), and a blip that drains inside the `for: 10m` window. Run through the
+`prom/prometheus` image rather than installing anything, and mutation-verified by raising the
+threshold to 500000. Now wired into the `prometheus-rules` job.
+
+### FS-494 — the register, made to agree
+
+Seven closures from the previous session went into `DELIVERED` and the verification table, and
+FS-307 left the still-open list. The two-way guard added in FS-491 caught the disagreement the
+moment the register moved first — which is what it is for.
+
+**Suite:** edge agent 289 → 297 · backend 3603 · frontend 843 · e2e 119.

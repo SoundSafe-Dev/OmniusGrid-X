@@ -56,6 +56,15 @@ DELIVERED: dict[str, str | None] = {
     "FS-349": None,      # model_version says "none (no correlation model loaded)"
     "FS-351": None,      # critical correlations reach the notification service
     "FS-352": None,      # the placeholder restart endpoint was removed, not stubbed
+    # Closed 2026-08-06, after the wave-F sweep. Each carries a guard; where the guard does
+    # not cite the item number it is pinned in _GUARDED_WITHOUT_CITATION below.
+    "FS-285": None,      # /admin/export-deliveries surfaces a failed scheduled send
+    "FS-307": None,      # the contract gate runs as NOSUPERUSER NOBYPASSRLS
+    "FS-371": None,      # make reap-test-containers
+    "FS-373": None,      # the CI/real load-test threshold split is pinned both ways
+    "FS-489": None,      # every e2e file is collected or excused with a reason
+    "FS-490": None,      # credential-gated suites are registered and name their variable
+    "FS-492": None,      # the controls sweep reads the shared route list
 }
 
 #: FS-355 is recorded as delivered on the strength of a decision written in a test

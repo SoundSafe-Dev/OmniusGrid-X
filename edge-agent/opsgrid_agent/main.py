@@ -80,6 +80,11 @@ class EdgeAgent:
             restart_callback=self._restart_runtime_after_update,
             bundle_validator=self._validate_config_bundle,
         )
+        #: Buffer counters the heartbeat reports (FS-497), refreshed by `_stats_reporter`.
+        #: Cached rather than queried because `_health_snapshot` is sync — it also serves the
+        #: HTTP health server from another thread — while the buffer's `get_stats` is async.
+        #: Zeros until the first stats pass, which is honest: nothing has been measured yet.
+        self._buffer_snapshot: Dict[str, Any] = {}
         self._running = False
         self._tasks: List[asyncio.Task] = []
         self.config_hash = compute_config_hash(self.config.get('collectors', []))
@@ -440,6 +445,14 @@ class EdgeAgent:
                 )
                 # Converged: also publish integration's agent-level gauges.
                 status = self.coordinator.get_status()
+                # Cached for `_health_snapshot`, which is sync and cannot await the buffer
+                # (FS-497). Refreshed on this loop's cadence, which is also the cadence the
+                # buffer-depth alert reasons about.
+                self._buffer_snapshot = {
+                    "pending": stats.get('total_messages', 0),
+                    "dead_lettered": stats.get('dead_lettered', 0),
+                    "dropped": stats.get('dropped', 0),
+                }
                 metrics.refresh_buffer_stats(stats['total_messages'])
                 metrics.refresh_collector_stats(
                     status['active_collectors'],
@@ -525,11 +538,31 @@ class EdgeAgent:
             status = self.coordinator.get_status()
         except Exception:  # pragma: no cover - defensive
             status = {}
+        # THE KEY NAMES ARE THE HEARTBEAT'S (FS-497). This returned `collectors_total` and
+        # `collectors_active` and no buffer keys at all, while `heartbeat.build_payload`
+        # reads `active_collectors`, `total_collectors`, `buffer_pending`, `dead_lettered`
+        # and `dropped` (`heartbeat.py:48-52`). Every field defaulted, so **every heartbeat
+        # this agent has ever sent reported five zeros** — and the backend feeds
+        # `edge_agent_buffer_pending` from one of them (`app/services/edge_fleet.py:69`),
+        # so `EdgeAgentBufferHigh` (`infra/prometheus/alerts.yml:241`) could never fire.
+        #
+        # Both spellings are emitted. `/healthz` consumers may read the old ones, and a
+        # rename is not worth a second silent break to fix the first.
+        #
+        # The buffer numbers come from a cache, not a query: this method is sync and
+        # thread-safe on purpose (it serves the HTTP health server), and the buffer's
+        # `get_stats()` is async. `_stats_reporter` already computes them every five
+        # minutes and previously only logged them.
         return {
             "status": "ok" if self._running else "stopping",
             "running": self._running,
             "collectors_total": status.get("total_collectors", 0),
             "collectors_active": status.get("active_collectors", 0),
+            "total_collectors": status.get("total_collectors", 0),
+            "active_collectors": status.get("active_collectors", 0),
+            "buffer_pending": self._buffer_snapshot.get("pending", 0),
+            "dead_lettered": self._buffer_snapshot.get("dead_lettered", 0),
+            "dropped": self._buffer_snapshot.get("dropped", 0),
         }
 
     async def start(self):

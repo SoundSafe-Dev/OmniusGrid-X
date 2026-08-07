@@ -26,7 +26,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The eighty-eight numbered classes
+## The ninety numbered classes
 
 **The count is the numbering, and it was already stale before this line was corrected.**
 This heading read "forty-seven" while the document's own highest class was 60 — the summary
@@ -2735,6 +2735,18 @@ one of its findings. The habit that catches it:
      `controls-do-not-break` kept a private array of 8 routes while the shared list held 33,
      and `everyRouteIsSwept` — the guard for exactly this — was comparing against the other
      one. A private copy is not a shortcut; it is an exemption nobody granted.
+
+120. **A fake is a claim about the real thing, and only the real thing can refute it.**
+     A double at a boundary encodes a belief about the contract there; if the belief is wrong
+     the test agrees with the caller and the defect survives every run. `FakeProducer` applied
+     no serializer and `test_heartbeat` supplied its own key names — two defects, invisible
+     for one reason. Make the double do the thing the real collaborator does that could fail.
+
+121. **"It parses" is not "it works", for anything declarative.**
+     Alert rules, manifests and schemas each have a validator that checks form and far fewer
+     tests that check effect. `EdgeAgentBufferHigh` passed `promtool check rules` for as long
+     as it could never fire. Ask what would have to happen for the declaration to *do*
+     something, then assert that.
 
 ---
 
@@ -7081,3 +7093,77 @@ Two copies of "the things we check" drift, and the drift is invisible from eithe
 list that grew looks complete, and the list that did not looks deliberate. When a guard exists
 to keep a list honest, every consumer of that list has to read the same one — a private copy
 is not a shortcut, it is an exemption nobody granted.
+
+## Class 89 — a double that is wrong at exactly the seam that is broken (FS-495, FS-497)
+
+Two defects, one shape, both in the edge agent, both invisible for the same reason. The agent
+has a 289-test suite and neither was caught, because in both cases the test substituted
+something at the join where the disagreement lived.
+
+**The live forward has never worked.** `main.py:259` builds the Kafka producer with
+`value_serializer=lambda v: json.dumps(v).encode('utf-8')` and hands it to the coordinator
+(`:270`). The coordinator pre-encoded and passed the bytes as the value
+(`coordinator.py:334-337`), so aiokafka ran `json.dumps(b'{...}')` — **TypeError on every
+message, since the day it was written.**
+
+The double: `tests/test_edge_agent_integration.py:47-55` defines a `FakeProducer` whose
+`send()` appends `value` to a list. It applies no serializer, so it accepts bytes happily.
+`test_coordinator_roundtrip.py:95` passes `kafka_producer=None` and skips the path entirely.
+
+It cost latency, not data — the message is buffered before the forward is attempted and the
+backfill path serialises correctly, so everything arrived by the slow road. But the fast road
+never once carried anything, and the only witnesses were a `logger.debug` line and a counter
+nobody alerts on. **A path that fails 100% of the time and a path that fails occasionally were
+logged identically**, which is what FS-496 corrects: the first failure since the last success
+is a warning, the rest stay at debug so an offline broker does not flood the log.
+
+**The heartbeat has always reported five zeros.** `heartbeat.py:48-52` reads `buffer_pending`,
+`dead_lettered`, `dropped`, `active_collectors`, `total_collectors`. `_health_snapshot()`
+returned `collectors_total`, `collectors_active` and no buffer keys. Every read has a `, 0`
+default, so every field defaulted, every time.
+
+The double: `tests/test_heartbeat.py:9-16` supplies its own `health()` dict with the *correct*
+names. It is a good test of the reporter and can say nothing about the producer, because the
+two were never connected in a test. **Both halves were individually right and disagreed about
+the contract between them.**
+
+That one reaches production monitoring: `backend/app/services/edge_fleet.py:69` sets
+`edge_agent_buffer_pending` from that field and `alerts.yml:241` alerts on it above 5000. A
+fleet backing up on disk looked idle.
+
+### The rule the two share
+
+A fake is a claim about the real thing. `FakeProducer` claimed "a producer accepts whatever
+you give it"; the real one applies a serializer. The heartbeat test claimed "the health
+snapshot has these keys"; the real one has different ones. In both cases the test passed
+because the substitute agreed with the caller — which is the one party whose agreement proves
+nothing.
+
+## Class 90 — an alert that parses, and cannot fire (FS-498)
+
+`promtool check rules` validates an expression's syntax. It says nothing about whether the
+series exists, or whether it can ever cross the threshold. So `EdgeAgentBufferHigh` was
+syntactically perfect for exactly as long as it was useless.
+
+The gap is not the rule, it is the missing half of the test suite: five promtool test files
+existed, covering errors, subsystems, platform, workers and security — and none covered edge.
+`tests/edge_alerts_test.yml` now drives the gauge past the threshold and asserts the alert
+appears, plus the three cases that must stay quiet: below threshold, exactly at it (`> 5000`
+must not fire on 5000), and a blip that drains inside the `for: 10m` window.
+
+Mutation-verified by raising the threshold to 500000 — the firing case then reports the alert
+it expected and got `[]`.
+
+## Rule 120 — a fake is a claim about the real thing, and only the real thing can refute it
+
+When a double stands in at a boundary, it encodes somebody's belief about the contract there.
+If that belief is wrong the test agrees with the caller and the defect survives every run. Make
+the double do the one thing the real collaborator does that could fail — apply the serializer,
+return the real key names — or the test is asserting the caller against itself.
+
+## Rule 121 — "it parses" is not "it works", for anything declarative
+
+Alert rules, manifests, schemas and config files all have a validator that checks form and a
+much smaller number of tests that check effect. A rule that cannot fire, a manifest that
+cannot apply, a schema no payload satisfies — each passes its linter. Ask what would have to
+happen for the declaration to *do* something, then assert that.

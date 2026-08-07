@@ -476,7 +476,8 @@ jobs:
             tests/subsystems_alerts_test.yml \
             tests/platform_alerts_test.yml \
             tests/worker_alerts_test.yml \
-            tests/security_alerts_test.yml
+            tests/security_alerts_test.yml \
+            tests/edge_alerts_test.yml
 
   # --- k8s manifest validation (blocking) ----------------------------------
   k8s-manifests:

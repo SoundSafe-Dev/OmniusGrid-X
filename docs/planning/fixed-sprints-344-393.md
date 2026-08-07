@@ -53,6 +53,13 @@ Every FS-344…393 item was checked against the code it cites. Eight no longer r
 | FS-349 | `model_version` ships as `"gemma-4-placeholder"` | `NO_MODEL_VERSION = "none (no correlation model loaded)"` — states the only true thing available before load |
 | FS-351 | critical-risk correlations are logged, never dispatched | they reach the notification service; `test_correlation_alerts_are_dispatched.py` covers the tenant, the severity mapping, and a failed delivery |
 | FS-352 | `POST /admin/collectors/{id}/restart` is a bare return with a 2026-01-15 timestamp | removed rather than stubbed — a 501 is a 5xx and would have made contract conformance worse than the placeholder |
+| FS-307 | the contract gate runs as superuser, so it cannot see a tenant-isolation failure | it connects as `omniusgrid_contract` (`NOSUPERUSER NOBYPASSRLS`, non-owning); demonstrated on a throwaway database — superuser sees both tenants' rows under FORCE RLS, the restricted role sees one |
+| FS-285 | export delivery failure surfacing | `/admin/export-deliveries` lists every attempt, counts failures first, and carries the server's own error text |
+| FS-371 | nothing reaps testcontainers | `make reap-test-containers`, matched on the testcontainers label and filtered to exited so it is safe mid-suite |
+| FS-373 | the load test blocks on error rate but not p95 | the latency SLO is asserted on the real-infrastructure profile and kept OUT of CI deliberately; both arms are pinned |
+| FS-489 | — | every `e2e/*.ts` is collected by Playwright or excused with its reason |
+| FS-490 | ERP suites skip without credentials and nothing counts them | a register: a credential-gated suite must be listed, and the variable that enables it must appear in its own skip reason |
+| FS-492 | — | the controls sweep reads the shared route list instead of a private copy of 8 |
 
 **Wave F is closed in full.** It was the highest-severity block in this plan — figures a machine
 generated, presented to an operator as measurements — and all ten items now have a guard. Two
@@ -91,8 +98,7 @@ authenticated `/ws` stream) is untouched, and that is a feature rather than a bu
 
 ### What is still open, verified 2026-08-06
 
-`FS-307` (the contract gate still runs as superuser, so it cannot see a tenant-isolation
-failure and its results must not be read as statements about isolation) · `FS-369`…`FS-376`
+`FS-369`…`FS-376`
 (the production-readiness wave: PITR, HA/autoscaling wiring, the advisory `pre-commit` job,
 the missing latency SLO gate, hand-provisioned secrets, the README/manifest contradiction) ·
 Wave I's product-capability items.
