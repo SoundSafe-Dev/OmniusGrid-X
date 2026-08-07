@@ -26,7 +26,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The eighty-seven numbered classes
+## The eighty-eight numbered classes
 
 **The count is the numbering, and it was already stale before this line was corrected.**
 This heading read "forty-seven" while the document's own highest class was 60 — the summary
@@ -2729,6 +2729,12 @@ one of its findings. The habit that catches it:
      apply and its number could not have moved if every policy had been dropped. A gate that
      cannot fail in a dimension is not weak, it is mute — and its green gets spent on a claim
      it never made.
+
+119. **A subject list belongs in one place, and the guard must read that place.**
+     Two copies of "the things we check" drift, and the drift is invisible from either side.
+     `controls-do-not-break` kept a private array of 8 routes while the shared list held 33,
+     and `everyRouteIsSwept` — the guard for exactly this — was comparing against the other
+     one. A private copy is not a shortcut; it is an exemption nobody granted.
 
 ---
 
@@ -7030,3 +7036,48 @@ Point at the property a gate is cited for and ask what would have to break for i
 If the answer is "nothing in that dimension" — a superuser bypassing RLS, a mock standing in
 for the boundary, an assertion that holds for both branches — the gate is not weak, it is
 *mute*, and its green is being spent on a claim it never made.
+
+## Class 88 — a private copy of the list the guard checks (FS-492)
+
+`controls-do-not-break.spec.ts` exists because `dispatchShipment` returned 422 on every call
+since the day it was written, and **no test could see it because no test clicked anything**.
+Its own docstring says so.
+
+It swept **8 of 33 routes**, from a private array with an honest comment attached: *"the routes
+with the most interactive surface, not all 32 — this costs a click each."* That was a
+reasonable cost decision when it was made, and it silently became a coverage claim. The
+twenty-five routes it skipped were every admin page, every engine, all three analytics pages,
+OEE, shop-floor, intake and NLP — three quarters of the product still in exactly the position
+the file was written to fix.
+
+**And it could not drift into view.** `everyRouteIsSwept.test.ts` compares `App.tsx` against
+`e2e/routes.ts`; a private copy inside a spec is invisible to the guard that exists to catch
+this. The list was moved to `routes.ts` in FS-489 for an unrelated reason — Playwright forbids
+spec-to-spec imports — and this file was not looking at it.
+
+Adding a route to the shared list therefore extended two sweeps and not the third, which is
+the quiet version of the same failure: the guard was right, the coverage was wrong, and
+nothing connected them.
+
+### The cost that hid the coverage, and what removing it cost instead
+
+Pointing it at all 33 routes made it time out — first at the original 240s, then at 396s after
+the budget was made per-route. It ran **6.6 minutes** and still failed. Raising the constant
+again would have bought an eleven-minute serial job whose failure is one red line naming a
+list.
+
+The loop became one test per route, and `test.describe.configure({ mode: 'parallel' })` — the
+half that pays for the split, since tests in one file run serially by default. **2.4 minutes
+for 33 routes, against 6.6 for 8.** Four times the coverage in a third of the time, and a
+failure now names its route in the test title rather than inside an accumulated array.
+
+The per-route split loses one thing worth keeping: each route passes trivially if it finds no
+buttons, so a separate test asserts the sweep still clicks more than fifteen controls. Without
+it a selector change turns thirty-three green ticks into thirty-three no-ops.
+
+## Rule 119 — a subject list belongs in one place, and the guard must read that place
+
+Two copies of "the things we check" drift, and the drift is invisible from either side: the
+list that grew looks complete, and the list that did not looks deliberate. When a guard exists
+to keep a list honest, every consumer of that list has to read the same one — a private copy
+is not a shortcut, it is an exemption nobody granted.

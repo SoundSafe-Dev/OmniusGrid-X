@@ -5461,3 +5461,64 @@ documentation as code will eventually report the file that documents the very th
 for.** It strips comments now, with both directions asserted.
 
 **Suite:** frontend 833 → 843 · e2e 84 → 86 collected · backend 3600 · edge agent 289.
+
+## FS-492 — running the 47 tests that had never run here
+
+47 of the 86 e2e tests are gated on `E2E_LIVE_BACKEND=1`, and locally they had only ever
+skipped. They are the authenticated suites — the writes-actually-persist journey, the
+data-reaches-the-screen sweep over every route, the controls sweep — written specifically to
+catch the "renders but is wrong" class this session has been closing, and nothing here had
+ever executed one.
+
+### Standing it up found two environment facts worth writing down
+
+**`localhost:5432` is not the compose database on this machine.** A native postgres owns
+`127.0.0.1:5432` and `[::1]:5432`, and colima's container forward binds `*:5432` — so the
+native server wins every host connection. `DATABASE_URL=...@localhost:5432` reaches a
+postgres with no `omniusgrid` role and no timescaledb, which presents as *"role does not
+exist"* while `docker exec` into the container works perfectly. That is a footgun for anybody
+following the README on a colima machine.
+
+The run used its own `timescale/timescaledb:latest-pg15` on **55432** rather than either
+existing server — the dev database is never a safe target here, because the suite writes and
+deletes at every endpoint.
+
+### The result
+
+**119 passed, 0 failed, and zero 5xx across 1,494 requests.** The 46 previously-unrun
+authenticated tests pass against a live backend, which is the first real verification that the
+work shipped this session holds outside jsdom.
+
+### What it exposed: FS-492
+
+`controls-do-not-break.spec.ts` swept **8 of 33 routes** from a private array. Its comment was
+honest — *"the routes with the most interactive surface, not all 32 — this costs a click
+each"* — and it had quietly become a coverage claim. The twenty-five it skipped were every
+admin page, every engine, all three analytics pages, OEE, shop-floor, intake and NLP.
+
+The file exists because `dispatchShipment` returned 422 on every call since it was written and
+no test could see it because **no test clicked anything**. Three quarters of the product was
+still in that position.
+
+It could not drift into view either: `everyRouteIsSwept.test.ts` compares `App.tsx` against
+`e2e/routes.ts`, so a private copy inside a spec is invisible to the guard built to catch
+exactly this. Adding a route extended two sweeps and not the third.
+
+### The cost that hid the coverage
+
+Pointing it at all 33 routes timed out — at the original 240s, then at 396s after I made the
+budget per-route, running 6.6 minutes and still failing. Raising the constant again buys an
+eleven-minute serial job whose failure is one red line naming a list.
+
+So the loop became one test per route, plus
+`test.describe.configure({ mode: 'parallel' })` — the half that pays for the split, since
+tests in one file run serially by default. **2.4 minutes for 33 routes against 6.6 for 8**:
+four times the coverage in a third of the time, and a failure names its route in the test
+title instead of inside an accumulated array.
+
+All 33 pass. The per-route split would lose its vacuity check — each route passes trivially
+with no buttons — so a separate test asserts the sweep still clicks more than fifteen
+controls, or a selector change turns thirty-three green ticks into thirty-three no-ops.
+
+**Suite:** e2e 86 → 119 collected, **119 passing against a live backend** · frontend 843 ·
+backend 3603 · edge agent 289.
