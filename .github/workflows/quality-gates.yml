@@ -574,6 +574,14 @@ jobs:
               echo "::endgroup::"
             done
           done
+      - name: The canonical README names every buildable tree
+        run: |
+          # overlays/dr has existed since FS-230, is built by five gates, and appeared
+          # nowhere in the README that opens by calling the tree canonical. A directory CI
+          # builds and the canonical document omits is worse than an undocumented one — the
+          # document is complete on its face, so the first omission removes the weight from
+          # all of it. The gap opened by ADDITION, which review does not catch reliably.
+          ./tests/k8s/check_the_readme_describes_the_tree.py
       - name: Every consumed Secret has somewhere it can come from
         run: |
           pip install pyyaml

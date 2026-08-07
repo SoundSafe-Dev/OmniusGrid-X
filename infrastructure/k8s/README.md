@@ -1,17 +1,45 @@
 # Kubernetes deployment (canonical stack)
 
-This kustomize tree (`base/` + `overlays/{staging,production}`) is the
-**canonical** Kubernetes deployment for OmniusGrid. The old hand-rolled
-manifests that lived in `infra/k8s/` (Patroni-based TimescaleDB, pgBackRest
+This kustomize tree is the **canonical** Kubernetes deployment for OmniusGrid. Every
+directory below has a `kustomization.yaml` and is built by CI:
+
+| tree | what it is | applied by |
+|---|---|---|
+| `base/` | every workload, unprefixed, in `omniusgrid` | nothing directly — overlays reference it |
+| `overlays/staging`, `overlays/production` | the app, image-pinned, `namePrefix`ed | the deploy jobs in `ci-cd.yml` |
+| `overlays/dr` | the disaster-recovery site (FS-230) | **the runbook, not CI** — a DR site is cold, and continuously applying to it would defeat the point. Five gates build and validate it. |
+| `monitoring/`, `autoscaling/`, `database-ha/` | the three operator stacks, deployed on their own lifecycle | nothing directly — see `platform/` |
+| `platform/staging/monitoring`, `platform/staging/autoscaling`, `platform/staging/database-ha` | the three stacks with staging's namespace and scale targets (FS-509, FS-510) | the "Deploy platform stacks" step in the staging job |
+| `platform/production/monitoring`, `platform/production/autoscaling`, `platform/production/database-ha` | the same, for production | the "Deploy platform stacks" step in the production job |
+| `secrets/external-secrets`, `secrets/sealed-secrets` | two provisioning paths, one of which the operator picks | **the operator, per environment** — both need a real vault or a cluster keypair, so CI cannot apply either. `tests/k8s/check_every_secret_has_a_source.py` asserts every consumed Secret has a source in both. |
+| `legacy-patroni/` | archived; in no kustomization and applied nowhere | nothing. Kept for reference only. |
+
+`overlays/dr` was missing from this list for as long as it has existed, while the paragraph
+above called the tree canonical and named `base/` and two overlays. A directory five CI gates
+build, absent from the document that claims to describe all of them, is how an operator learns
+the tree is not to be trusted. `tests/k8s/check_the_readme_describes_the_tree.py` now fails on
+a buildable directory this table does not name.
+
+The old hand-rolled manifests that lived in `infra/k8s/` (Patroni-based TimescaleDB, pgBackRest
 CronJob) are archived under `legacy-patroni/` for reference; they are not
 applied by CI and drift from the base names.
 
 > **Database HA.** `base/` runs a **single** TimescaleDB pod — a node/disk loss
 > is a full outage. `database-ha/` is the enterprise replacement: a 3-instance
 > CloudNativePG cluster with automatic failover, synchronous replication (RPO≈0),
-> continuous WAL archiving to S3 for PITR, and a PgBouncer pooler. It supersedes
-> the archived `legacy-patroni/`. It is opt-in (needs the CloudNativePG operator
-> and a TimescaleDB-enabled image) — see [`database-ha/README.md`](database-ha/README.md).
+> continuous WAL archiving to S3 (point-in-time recovery — **not available on the
+> deployed stack; see below**), and a PgBouncer pooler. It supersedes the archived
+> `legacy-patroni/`. It is opt-in (needs the CloudNativePG operator and a
+> TimescaleDB-enabled image) — see [`database-ha/README.md`](database-ha/README.md).
+>
+> **The cutover has not happened.** `base/` still ships the single-pod StatefulSet, and
+> the deploy job applies `database-ha/` only where the CloudNativePG CRDs are already
+> installed. So the PITR in the sentence above is a property of a stack nobody is running:
+> what protects the deployed database is the nightly logical `pg_dump`, RPO up to 24 hours.
+> `backend/tests/test_the_recovery_promise_matches_the_deployment.py` holds this paragraph
+> and the runbooks to that, in both directions — the qualifier must go the day the cutover
+> lands, because an under-promising runbook sends an operator to the slower recovery during
+> an incident.
 
 > **Backups.** Because `legacy-patroni/` is never applied, the pgBackRest
 > CronJob living there meant staging and production had **no backups at all**,

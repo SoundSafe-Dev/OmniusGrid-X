@@ -6232,3 +6232,71 @@ as it stands. A DR site is cold; continuously applying to it from CI would defea
 Five gates already build and validate it, and the runbook is what applies it. There is no
 defect there — the plan's framing was wrong, and the honest close is to say so rather than
 manufacture a deploy job for it.
+
+---
+
+## FS-520 — the canonical document that omitted a tree five gates build
+
+`infrastructure/k8s/README.md` opens by calling the tree **canonical** and then named `base/`
+and two overlays. `overlays/dr` has existed since FS-230, is built and validated by five CI
+gates, and appeared nowhere in it.
+
+A directory CI builds and the canonical document omits is worse than an undocumented one,
+because the document is complete on its face. An operator reads it, concludes the tree is
+`base/` plus two overlays, and either misses the DR site or — having found it another way —
+stops trusting anything else the file says. **Documentation is load-bearing only while it is
+exhaustive; the first omission takes the weight off all of it.**
+
+The README now carries a table of all thirteen buildable trees with what applies each, and
+`tests/k8s/check_the_readme_describes_the_tree.py` fails on any that is missing.
+
+**It caught its own author immediately.** The first version of that table wrote
+`platform/{staging,production}/{monitoring,autoscaling,database-ha}` — readable to a person,
+and five of the six paths absent from the file as far as any reader searching for one is
+concerned. An inventory earns its keep by being literal. The gap opened by **addition**, which
+is the point: nobody edits a README two levels up when they add a directory, and this same
+commit would have added five unnamed trees by exactly the route that lost `overlays/dr`.
+
+---
+
+## FS-513 — the reported defect was not there, and the real one was next to it
+
+FS-513 was filed as "PITR still does not exist, while root `README.md:405-406` presents it as
+live". The first half is true. **The second is not** — those lines are a branch-comparison
+table mapping one repository path to another and claim nothing about capability.
+
+Every recovery document is already explicit: the runbook's RPO line reads "Up to 24 h (no
+point-in-time recovery)", it labels the pgBackRest instructions in the DR runbooks "not yet
+operational", and its PITR section is titled "Restoring PITR (**not yet done**)". There was
+nothing dishonest to correct, and the capability itself needs a database cutover that cannot be
+done from here.
+
+**One document was overstating, and it was not the one named.**
+`infrastructure/k8s/README.md` described `database-ha/` as providing "continuous WAL archiving
+to S3 for PITR" and noted two lines later that the stack is opt-in — but not on the sentence
+making the promise. An operator scanning for "PITR" reads the promise and not the caveat. The
+caveat now sits in the sentence, with what is actually protecting the deployed database.
+
+### The detector was wrong first, and instructively
+
+Its first version asked for a database image shipping the `pgbackrest` binary. That is the
+requirement for the **archived** `legacy-patroni` path, and it is not how CloudNativePG does
+PITR at all — CNPG uses barman-cloud, built into the operator's image, driven by
+`backup.barmanObjectStore`. So the check demanded evidence the working path would never
+produce, and would have reported "no PITR" for the rest of the repository's life, **including
+after somebody built it**.
+
+The question that decides it is which database is running, not which binaries exist somewhere
+in the tree: `base/` still ships the single-pod TimescaleDB StatefulSet, so the cutover has not
+happened and the deployed database has no WAL archive.
+
+`backend/tests/test_the_recovery_promise_matches_the_deployment.py` holds the promise to the
+deployment **in both directions**. The qualifier must stay while the cutover has not happened,
+and must go the day it does — an under-promising runbook sends an operator to the slower
+recovery during an incident, which is the same kind of wrong pointing the other way. That
+matters here because this shape has already cost once: `legacy-patroni/` held the pgBackRest
+CronJob, was in no kustomization, and staging and production had **no backups at all** while
+the DR runbooks described restoring from a repository nothing wrote to.
+
+Mutation-verified both ways: removing the runbook's qualifier fails it, and removing the
+single-pod StatefulSet (simulating the cutover) fails it in the opposite direction.
