@@ -666,6 +666,27 @@ groups:
       # processed nor preserved and its offset advances regardless. This is telemetry
       # leaving the system: the device has been told the data was received, its buffer
       # has dropped it, and nothing in the cloud holds it.
+      # A side effect on the ingest path is failing and being swallowed (FS-537).
+      #
+      # Swallowing is correct: ingestion must not stop because a WebSocket publish failed
+      # or an OEE counter could not be updated. What was missing is that nothing counted
+      # them, so a rule failing on every message wrote one log line per message and
+      # aggregated nowhere.
+      #
+      # `alarm_rule_evaluation` is the label that matters most. Its failure means
+      # server-side alarm rules are not firing — telemetry still flows, dashboards still
+      # update, and the alerting is off, which is a condition an operator otherwise
+      # discovers by noticing an alarm that never arrived.
+      - alert: IngestionSideEffectFailing
+        expr: increase(opsgrid_ingestion_side_effect_failed_total[15m]) > 0
+        for: 5m
+        labels:
+          severity: high
+          team: platform
+        annotations:
+          summary: "Ingest side effect {{ $labels.side_effect }} is failing"
+          description: "{{ $value }} failures of {{ $labels.side_effect }} in the last 15m. Telemetry is still being stored — this path is deliberately non-fatal — but the side effect is not happening. If this is alarm_rule_evaluation, server-side alarm rules are NOT firing."
+
       - alert: IngestionDataLost
         expr: increase(opsgrid_ingestion_dead_letter_failed_total[15m]) > 0
         for: 0m

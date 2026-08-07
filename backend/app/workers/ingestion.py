@@ -19,6 +19,7 @@ from app.core.config import settings
 from app.workers.health_server import (
     INGESTION_DEAD_LETTERED,
     INGESTION_DEAD_LETTER_FAILED,
+    INGESTION_SIDE_EFFECT_FAILED,
     start_health_server,
 )
 from app.core.datetime_utils import aware_utc
@@ -346,6 +347,7 @@ class IngestionWorker:
         except Exception as e:
             # Don't fail ingestion if WebSocket fails
             logger.warning("websocket_publish_failed", error=str(e), asset_id=asset_id)
+            INGESTION_SIDE_EFFECT_FAILED.labels(side_effect="websocket_telemetry_publish").inc()
         
         # Update OEE part counters
         try:
@@ -356,6 +358,7 @@ class IngestionWorker:
             )
         except Exception as e:
             logger.warning("oee_telemetry_tracking_failed", error=str(e), asset_id=asset_id)
+            INGESTION_SIDE_EFFECT_FAILED.labels(side_effect="oee_telemetry_tracking").inc()
 
     async def _process_agent_heartbeat(self, session: AsyncSession, data: Dict):
         """Update asset fleet-version fields from an edge-agent heartbeat."""
@@ -478,6 +481,9 @@ class IngestionWorker:
                 asset_id=str(asset_uuid),
                 error=str(exc),
             )
+            INGESTION_SIDE_EFFECT_FAILED.labels(
+                side_effect="alarm_rule_evaluation"
+            ).inc()
 
     async def _process_state(self, session: AsyncSession, asset_id: str, data: Dict, organization_id: str):
         """Process PackML state transitions"""
@@ -559,6 +565,7 @@ class IngestionWorker:
             )
         except Exception as e:
             logger.warning("websocket_state_publish_failed", error=str(e), asset_id=asset_id)
+            INGESTION_SIDE_EFFECT_FAILED.labels(side_effect="websocket_state_publish").inc()
         
         # Update OEE tracking
         try:
@@ -571,6 +578,7 @@ class IngestionWorker:
             )
         except Exception as e:
             logger.warning("oee_state_tracking_failed", error=str(e), asset_id=asset_id)
+            INGESTION_SIDE_EFFECT_FAILED.labels(side_effect="oee_state_tracking").inc()
     
     async def _process_alarm(self, session: AsyncSession, asset_id: str, data: Dict, organization_id: str):
         """Process alarm events"""
@@ -611,6 +619,9 @@ class IngestionWorker:
             )
         except Exception as e:
             logger.warning("websocket_alarm_publish_failed", error=str(e), asset_id=asset_id)
+            INGESTION_SIDE_EFFECT_FAILED.labels(
+                side_effect="websocket_alarm_publish"
+            ).inc()
     
     def _infer_unit(self, metric_name: str) -> Optional[str]:
         """Infer unit from metric name"""

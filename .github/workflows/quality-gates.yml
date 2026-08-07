@@ -471,13 +471,24 @@ jobs:
       - name: Run alert unit tests
         working-directory: ./infra/prometheus
         run: |
-          promtool test rules \
-            tests/error_alerts_test.yml \
-            tests/subsystems_alerts_test.yml \
-            tests/platform_alerts_test.yml \
-            tests/worker_alerts_test.yml \
-            tests/security_alerts_test.yml \
-            tests/edge_alerts_test.yml
+          set -euo pipefail
+          # GLOBBED, not listed (FS-537). This was six filenames written out, so a new
+          # unit-test file was run only if whoever added it also remembered to edit this
+          # workflow — and an alert test that does not run is indistinguishable from one
+          # that passes. The same shape as `everyE2eFileIsCollectedOrExcused` (FS-489),
+          # where 47 e2e tests had never executed because the collector's pattern did not
+          # match their filenames.
+          shopt -s nullglob
+          files=(tests/*_test.yml)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No alert unit tests found under infra/prometheus/tests/ — either they" >&2
+            echo "were deleted or this glob stopped matching. Failing rather than" >&2
+            echo "reporting success over an empty set." >&2
+            exit 1
+          fi
+          echo "Running ${#files[@]} alert unit-test files:"
+          printf '  %s\n' "${files[@]}"
+          promtool test rules "${files[@]}"
 
   # --- k8s manifest validation (blocking) ----------------------------------
   k8s-manifests:

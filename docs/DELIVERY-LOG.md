@@ -6618,3 +6618,62 @@ Mutation-verified: dropping the persisted basis, and restoring the placeholder c
 fail with the specific reason.
 
 **Suite:** backend 3688 → 3699.
+
+---
+
+## FS-537 — six swallowed failures on the ingest path, none of them counted
+
+`ingestion.py` catches and continues around two WebSocket publishes, two OEE updates, an alarm
+publish, and **alarm rule evaluation**. Swallowing is right: telemetry that reached the database
+is what matters, and the alternative is a poison message halting the pipeline for everything
+behind it.
+
+**What was missing is that nothing counted them.** A rule that raises on every message wrote
+one `alarm_rule_evaluation_failed` line per message and aggregated nowhere. "Server-side alarm
+rules have stopped firing" was therefore a condition the platform could not report: telemetry
+keeps flowing, dashboards keep updating, and the alerting is silently off until an operator
+notices an alarm that never arrived.
+
+This is the third time the same argument has been made here, which is why the deliverable is a
+guard rather than six edits. `INGESTION_DEAD_LETTERED` (FS-464) exists because "recoverable is
+not the same as noticed". FS-496 raised the edge agent's swallowed Kafka failure out of `debug`
+after it had failed 100% of the time invisibly. FS-504 counted a buffer prune that dropped 500
+rows silently. **The platform was monitoring the edge's silent failures and not its own,
+twice.**
+
+### The guard found the sixth
+
+The plan listed five. `test_every_swallowed_side_effect_is_counted.py` walks every broad
+`except` in the file that does not re-raise, and immediately flagged a sixth:
+`_process_alarm`'s WebSocket publish. Its failure means an alarm was written to the database
+and never reached the live feed — the alarm exists, the page does not update, and nothing says
+why. Found after the survey that produced the list had finished, which is the whole argument
+for the guard.
+
+It also flagged the top-level consumer handler, correctly by its own rule and wrongly in fact:
+that one calls `_dead_letter`, which increments two counters that both have alert rules. The
+detector cannot see an increment inside a helper. Exempted **by log event name** with the
+reason recorded, rather than by widening the body match — a body-shaped exemption would also
+silently excuse any future handler that happened to call something.
+
+### A counter nothing alerts on is a metric, not a signal
+
+`IngestionSideEffectFailing` reads the counter with a 5-minute `for` window, and
+`infra/prometheus/tests/ingestion_side_effects_test.yml` proves it can fire from a series
+shaped as the worker emits it — plus two must-stay-quiet cases: a counter that never moves, and
+a single blip that stops inside the window. `promtool check rules` proves an expression parses,
+never that a series exists to make it true, which is exactly how `EdgeAgentBufferHigh` was
+syntactically perfect and useless (rule 121).
+
+### And the alert tests were a hardcoded list
+
+The `prometheus-rules` job named six test files explicitly, so a new one ran only if whoever
+added it also remembered to edit the workflow — **and an alert test that does not run is
+indistinguishable from one that passes.** Same shape as FS-489, where 47 e2e tests had never
+executed because the collector's pattern did not match their filenames. It is now a glob that
+fails loudly on an empty match rather than reporting success over nothing.
+
+Mutation-verified: removing the alarm-rule counter fails three assertions.
+
+**Suite:** backend 3699 → 3711 · 49 alert rules linted, 7 unit-test files passing · README
+floor raised 3,200 → 3,700 (its own staleness ratchet fired at a 613-test gap).

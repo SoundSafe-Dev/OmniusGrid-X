@@ -79,6 +79,48 @@ INGESTION_DEAD_LETTER_FAILED = Counter(
     ["source_topic"],
 )
 
+#: Side effects on the hot ingest path that failed and were swallowed (FS-537).
+#:
+#: FIVE OF THEM, AND SWALLOWING IS RIGHT. Ingestion must not stop because a WebSocket
+#: publish failed or an OEE counter could not be updated — telemetry that reached the
+#: database is the thing that matters, and the alternative is a poison message halting the
+#: pipeline. What was missing is that **nothing counted them.**
+#:
+#: One of the five is `alarm_rule_evaluation` (`ingestion.py:475`). A rule that raises on
+#: every message writes one `alarm_rule_evaluation_failed` line per message and nothing
+#: aggregates it, so "server-side alarm rules stopped firing" is a condition the platform
+#: cannot report and an operator discovers by noticing an alarm that never arrived. The
+#: telemetry keeps flowing, the dashboards keep updating, and the alerting is off.
+#:
+#: This is the same argument as `INGESTION_DEAD_LETTERED` above — recoverable is not the
+#: same as noticed — and the same as FS-496 and FS-504 on the edge agent, where a 100%
+#: failing path produced a debug line and a counter was the whole fix. The platform was
+#: monitoring the edge's silent failures and not its own, twice.
+#:
+#: Labelled by SIDE EFFECT, which is a fixed set of five, never by error text.
+INGESTION_SIDE_EFFECT_FAILED = Counter(
+    "opsgrid_ingestion_side_effect_failed_total",
+    "Non-fatal side effects on the ingest path that raised and were swallowed",
+    ["side_effect"],
+)
+
+#: The five, named. A sixth swallow added without a name here counts under nothing, so the
+#: guard asserts this set against the handlers in `ingestion.py`.
+INGESTION_SIDE_EFFECTS = (
+    "websocket_telemetry_publish",
+    "oee_telemetry_tracking",
+    "alarm_rule_evaluation",
+    "websocket_state_publish",
+    "oee_state_tracking",
+    # THE SIXTH, found by the guard and not by the survey that preceded it. The plan
+    # counted five swallows on the ingest path; `_process_alarm`'s WebSocket publish is a
+    # seventh handler in the file and the sixth of this class. Its failure means an alarm
+    # was written to the database and never reached the live feed — so the alarm exists,
+    # the page does not update, and nothing says why.
+    "websocket_alarm_publish",
+)
+
+
 _started = False
 
 
