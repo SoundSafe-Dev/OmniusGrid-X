@@ -104,7 +104,19 @@ export interface AssetCreate {
   vendor?: string;
   model?: string;
   serialNumber?: string;
-  organizationId?: string;
+  // `organizationId` was declared here and the axios transform seam
+  // (`registerTransform('/api/v1/assets')`) turned it into `organization_id` on the wire —
+  // which `POST /assets/` REQUIRED. So creating an asset from the UI meant supplying your
+  // own tenant, the client-supplied-organisation shape `app/core/tenant.py` exists to
+  // forbid, and omitting it was a 422 (FS-523).
+  //
+  // The server derives the organisation from the JWT and the field is gone from the
+  // request schema, so sending one now does nothing at all. Removed for exactly the reason
+  // written below about `metadata`: a write type that names a field the endpoint cannot
+  // apply — or must not trust — is a promise the API does not keep.
+  //
+  // `Asset` (the RESPONSE type) keeps its `organizationId`. The server sends it; reading
+  // it was never the problem.
   workcellId?: string;
   connectionConfig?: Record<string, any>;
   // `metadata` was declared here and `POST /assets/` does not accept it, so it was

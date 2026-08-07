@@ -42,7 +42,15 @@ class AssetBase(BaseModel):
 
 
 class AssetCreate(AssetBase):
-    organization_id: UUID
+    # FS-523, and these two were found by the GUARD rather than by the sweep that
+    # preceded it — the first pass keyed on the handler's own parameter being named
+    # `organization_id`, and these derive the tenant under a different parameter name.
+    # A detector narrower than the class it checks for is the recurring failure in this
+    # repository; the guard reads the imported model and the handler's dependency, so it
+    # does not care what anything is called.
+    #
+    # As with the other twelve: required on the schema, never read by the handler, so a
+    # caller who omits it got a 422. `POST /assets` is the core create path of the product.
     # Required: migration 013 made assets.workcell_id NOT NULL. Optional here
     # meant POST /assets without a workcell 500'd (NotNullViolation) instead of
     # returning a clean 422. (FS-90 write-path alignment.)
@@ -229,7 +237,16 @@ class YardTrailerBase(BaseModel):
 
 
 class YardTrailerCreate(YardTrailerBase):
-    organization_id: UUID
+    # FS-523. `organization_id` was declared here and REQUIRED, while the handler
+    # derives the tenant from the token and never reads the body's value — its own
+    # comment says "FROM THE TOKEN, NEVER THE REQUEST". So the schema forced every
+    # caller to send a value the server discards, and a caller who omitted it got a
+    # 422. The frontend types carry no organization_id, so it omitted it: all twelve
+    # of these create endpoints answered 422 to the only client that calls them.
+    #
+    # Removed rather than made Optional. A field a caller can set that changes nothing
+    # is its own small lie, and pydantic ignores extra keys by default, so a client
+    # still sending one is unaffected.
     carrier_id: Optional[UUID] = None
     driver_id: Optional[UUID] = None
     shipment_id: Optional[UUID] = None
@@ -271,7 +288,16 @@ class DockDoorBase(BaseModel):
 
 
 class DockDoorCreate(DockDoorBase):
-    organization_id: UUID
+    # FS-523, and these two were found by the GUARD rather than by the sweep that
+    # preceded it — the first pass keyed on the handler's own parameter being named
+    # `organization_id`, and these derive the tenant under a different parameter name.
+    # A detector narrower than the class it checks for is the recurring failure in this
+    # repository; the guard reads the imported model and the handler's dependency, so it
+    # does not care what anything is called.
+    #
+    # As with the other twelve: required on the schema, never read by the handler, so a
+    # caller who omits it got a 422. `POST /assets` is the core create path of the product.
+    pass
 
 
 class DockDoorUpdate(BaseModel):
@@ -324,7 +350,16 @@ class YardMoveBase(BaseModel):
 
 
 class YardMoveCreate(YardMoveBase):
-    organization_id: UUID
+    # FS-523. `organization_id` was declared here and REQUIRED, while the handler
+    # derives the tenant from the token and never reads the body's value — its own
+    # comment says "FROM THE TOKEN, NEVER THE REQUEST". So the schema forced every
+    # caller to send a value the server discards, and a caller who omitted it got a
+    # 422. The frontend types carry no organization_id, so it omitted it: all twelve
+    # of these create endpoints answered 422 to the only client that calls them.
+    #
+    # Removed rather than made Optional. A field a caller can set that changes nothing
+    # is its own small lie, and pydantic ignores extra keys by default, so a client
+    # still sending one is unaffected.
     trailer_id: UUID
     jockey_driver_id: Optional[UUID] = None
 
@@ -363,7 +398,16 @@ class DriverWaitTimeBase(BaseModel):
 
 
 class DriverWaitTimeCreate(DriverWaitTimeBase):
-    organization_id: UUID
+    # FS-523. `organization_id` was declared here and REQUIRED, while the handler
+    # derives the tenant from the token and never reads the body's value — its own
+    # comment says "FROM THE TOKEN, NEVER THE REQUEST". So the schema forced every
+    # caller to send a value the server discards, and a caller who omitted it got a
+    # 422. The frontend types carry no organization_id, so it omitted it: all twelve
+    # of these create endpoints answered 422 to the only client that calls them.
+    #
+    # Removed rather than made Optional. A field a caller can set that changes nothing
+    # is its own small lie, and pydantic ignores extra keys by default, so a client
+    # still sending one is unaffected.
     driver_id: UUID
     trailer_id: Optional[UUID] = None
 
@@ -409,7 +453,16 @@ class YardCheckPointBase(BaseModel):
 
 
 class YardCheckPointCreate(YardCheckPointBase):
-    organization_id: UUID
+    # FS-523. `organization_id` was declared here and REQUIRED, while the handler
+    # derives the tenant from the token and never reads the body's value — its own
+    # comment says "FROM THE TOKEN, NEVER THE REQUEST". So the schema forced every
+    # caller to send a value the server discards, and a caller who omitted it got a
+    # 422. The frontend types carry no organization_id, so it omitted it: all twelve
+    # of these create endpoints answered 422 to the only client that calls them.
+    #
+    # Removed rather than made Optional. A field a caller can set that changes nothing
+    # is its own small lie, and pydantic ignores extra keys by default, so a client
+    # still sending one is unaffected.
     trailer_id: UUID
 
 
@@ -446,7 +499,17 @@ class CarrierBase(BaseModel):
 
 
 class CarrierCreate(CarrierBase):
-    organization_id: UUID
+    # FS-523. `organization_id` was declared here and REQUIRED, while the handler
+    # derives the tenant from the token and never reads the body's value — its own
+    # comment says "FROM THE TOKEN, NEVER THE REQUEST". So the schema forced every
+    # caller to send a value the server discards, and a caller who omitted it got a
+    # 422. The frontend types carry no organization_id, so it omitted it: all twelve
+    # of these create endpoints answered 422 to the only client that calls them.
+    #
+    # Removed rather than made Optional. A field a caller can set that changes nothing
+    # is its own small lie, and pydantic ignores extra keys by default, so a client
+    # still sending one is unaffected.
+    pass
 
 
 class CarrierUpdate(BaseModel):
@@ -507,7 +570,16 @@ class DriverBase(BaseModel):
 
 
 class DriverCreate(DriverBase):
-    organization_id: UUID
+    # FS-523. `organization_id` was declared here and REQUIRED, while the handler
+    # derives the tenant from the token and never reads the body's value — its own
+    # comment says "FROM THE TOKEN, NEVER THE REQUEST". So the schema forced every
+    # caller to send a value the server discards, and a caller who omitted it got a
+    # 422. The frontend types carry no organization_id, so it omitted it: all twelve
+    # of these create endpoints answered 422 to the only client that calls them.
+    #
+    # Removed rather than made Optional. A field a caller can set that changes nothing
+    # is its own small lie, and pydantic ignores extra keys by default, so a client
+    # still sending one is unaffected.
     carrier_id: Optional[UUID] = None
 
 
@@ -560,7 +632,16 @@ class ShipmentBase(BaseModel):
 
 
 class ShipmentCreate(ShipmentBase):
-    organization_id: UUID
+    # FS-523. `organization_id` was declared here and REQUIRED, while the handler
+    # derives the tenant from the token and never reads the body's value — its own
+    # comment says "FROM THE TOKEN, NEVER THE REQUEST". So the schema forced every
+    # caller to send a value the server discards, and a caller who omitted it got a
+    # 422. The frontend types carry no organization_id, so it omitted it: all twelve
+    # of these create endpoints answered 422 to the only client that calls them.
+    #
+    # Removed rather than made Optional. A field a caller can set that changes nothing
+    # is its own small lie, and pydantic ignores extra keys by default, so a client
+    # still sending one is unaffected.
     carrier_id: Optional[UUID] = None
     driver_id: Optional[UUID] = None
     trailer_id: Optional[UUID] = None
@@ -610,7 +691,17 @@ class RouteBase(BaseModel):
 
 
 class RouteCreate(RouteBase):
-    organization_id: UUID
+    # FS-523. `organization_id` was declared here and REQUIRED, while the handler
+    # derives the tenant from the token and never reads the body's value — its own
+    # comment says "FROM THE TOKEN, NEVER THE REQUEST". So the schema forced every
+    # caller to send a value the server discards, and a caller who omitted it got a
+    # 422. The frontend types carry no organization_id, so it omitted it: all twelve
+    # of these create endpoints answered 422 to the only client that calls them.
+    #
+    # Removed rather than made Optional. A field a caller can set that changes nothing
+    # is its own small lie, and pydantic ignores extra keys by default, so a client
+    # still sending one is unaffected.
+    pass
 
 
 class RouteUpdate(BaseModel):
@@ -648,7 +739,16 @@ class LoadPlanBase(BaseModel):
 
 
 class LoadPlanCreate(LoadPlanBase):
-    organization_id: UUID
+    # FS-523. `organization_id` was declared here and REQUIRED, while the handler
+    # derives the tenant from the token and never reads the body's value — its own
+    # comment says "FROM THE TOKEN, NEVER THE REQUEST". So the schema forced every
+    # caller to send a value the server discards, and a caller who omitted it got a
+    # 422. The frontend types carry no organization_id, so it omitted it: all twelve
+    # of these create endpoints answered 422 to the only client that calls them.
+    #
+    # Removed rather than made Optional. A field a caller can set that changes nothing
+    # is its own small lie, and pydantic ignores extra keys by default, so a client
+    # still sending one is unaffected.
     shipment_id: UUID
     trailer_id: Optional[UUID] = None
     planned_by: Optional[UUID] = None
@@ -688,7 +788,16 @@ class FreightChargeBase(BaseModel):
 
 
 class FreightChargeCreate(FreightChargeBase):
-    organization_id: UUID
+    # FS-523. `organization_id` was declared here and REQUIRED, while the handler
+    # derives the tenant from the token and never reads the body's value — its own
+    # comment says "FROM THE TOKEN, NEVER THE REQUEST". So the schema forced every
+    # caller to send a value the server discards, and a caller who omitted it got a
+    # 422. The frontend types carry no organization_id, so it omitted it: all twelve
+    # of these create endpoints answered 422 to the only client that calls them.
+    #
+    # Removed rather than made Optional. A field a caller can set that changes nothing
+    # is its own small lie, and pydantic ignores extra keys by default, so a client
+    # still sending one is unaffected.
     shipment_id: UUID
     carrier_id: Optional[UUID] = None
     approved_by: Optional[UUID] = None
@@ -726,7 +835,16 @@ class DockAppointmentBase(BaseModel):
 
 
 class DockAppointmentCreate(DockAppointmentBase):
-    organization_id: UUID
+    # FS-523. `organization_id` was declared here and REQUIRED, while the handler
+    # derives the tenant from the token and never reads the body's value — its own
+    # comment says "FROM THE TOKEN, NEVER THE REQUEST". So the schema forced every
+    # caller to send a value the server discards, and a caller who omitted it got a
+    # 422. The frontend types carry no organization_id, so it omitted it: all twelve
+    # of these create endpoints answered 422 to the only client that calls them.
+    #
+    # Removed rather than made Optional. A field a caller can set that changes nothing
+    # is its own small lie, and pydantic ignores extra keys by default, so a client
+    # still sending one is unaffected.
     dock_door_id: UUID
     trailer_id: Optional[UUID] = None
     shipment_id: Optional[UUID] = None
@@ -828,11 +946,34 @@ class LoadQualityLogBase(BaseModel):
 
 
 class LoadQualityLogCreate(LoadQualityLogBase):
-    organization_id: UUID
+    # FS-523. `organization_id` was declared here and REQUIRED, while the handler
+    # derives the tenant from the token and never reads the body's value — its own
+    # comment says "FROM THE TOKEN, NEVER THE REQUEST". So the schema forced every
+    # caller to send a value the server discards, and a caller who omitted it got a
+    # 422. The frontend types carry no organization_id, so it omitted it: all twelve
+    # of these create endpoints answered 422 to the only client that calls them.
+    #
+    # Removed rather than made Optional. A field a caller can set that changes nothing
+    # is its own small lie, and pydantic ignores extra keys by default, so a client
+    # still sending one is unaffected.
     shipment_id: Optional[UUID] = None
     trailer_id: Optional[UUID] = None
-    asset_id: Optional[UUID] = None
+    # REQUIRED, because the column is (FS-523). `load_quality_logs.asset_id` is
+    # `nullable=False` with no default; declaring it Optional here meant a caller who
+    # omitted it reached the INSERT and got a NotNullViolationError — a **500** they
+    # cannot act on, where the honest answer is a 422 naming the field.
+    #
+    # This was masked. Before the spurious `organization_id` above was removed, an
+    # incomplete body failed validation on that first, so the endpoint answered 422 for
+    # the wrong reason and the real missing field was never reached. Removing a field
+    # that should not have been required revealed one that should have been.
+    asset_id: UUID
     operation_id: Optional[UUID] = None
+    # Same column shape, and NOT required: the service computes it
+    # (`logistics_correlation_engine.py:509`, from `_analyze_root_cause`) and never reads
+    # a caller's value, so requiring it would ask for something the server overwrites.
+    # It is the second NOT NULL column on this table, and `_analyze_root_cause` defaults
+    # it to `asset_id` — which is why fixing only the field above is enough.
     root_cause_asset: Optional[UUID] = None
     root_cause_operation: Optional[UUID] = None
 

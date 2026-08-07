@@ -6337,3 +6337,96 @@ and schema version still match, and the drill fails with `policies: source=66 re
 
 **Wave L closes here.** FS-509, 510, 511, 512, 513, 514, 516, 517, 518, 519, 520, 521 and 522
 are done; FS-515 needed no change and the reason is recorded above.
+
+---
+
+## FS-523 — fourteen create endpoints answered 422 to the only client that calls them
+
+The plan filed this as "Yard's seven untested POSTs — all state-mutating, only 'does not 500'
+coverage". Writing the tests found the coverage gap *and* something larger underneath it.
+
+### The write-side twin of FS-99
+
+Fourteen create endpoints declared a **required** `organization_id` on their request body,
+while the handler derived the tenant from the token and never read the body's value. The
+handlers say so themselves, in a comment repeated verbatim at each site:
+
+> FROM THE TOKEN, NEVER THE REQUEST — `data.organization_id` is client-supplied, so a caller
+> could file the row under any organisation they named.
+
+Correct. And the schema next door forced every caller to send that exact client-supplied value
+anyway, with no default — so **omitting it is a 422**. The frontend's types carry no
+`organization_id`, so it omitted it:
+
+```
+POST /transportation/{carriers,drivers,shipments,routes,load-plans,freight-charges}
+POST /yard/{trailers/checkin,dock/doors,dock/appointments,moves,driver-wait-times,checkpoints}
+POST /logistics-correlation/load-quality
+POST /assets
+```
+
+A shipment you cannot create, a carrier you cannot add, a trailer you cannot check in, an asset
+you cannot register. FS-99 found the same defect on four yard **GETs** — a required
+`organization_id` query parameter no frontend call sent — and fixed them one router at a time.
+The read side got a guard. The write side did not, and the same shape was sitting in fourteen
+places.
+
+`test_no_handler_takes_its_tenant_from_the_body.py` passes on every one of them, correctly:
+none of these handlers *reads* the tenant from the body. Nothing asked whether the schema still
+**demanded** it. Two artefacts, each right about itself.
+
+The field is removed rather than made optional. A field a caller can set that changes nothing
+invites somebody to set it and believe it did something; pydantic ignores extra keys, so a
+client still sending one is unaffected. One handler comment had already recorded the decision
+to defer this — *"Making it optional there is a separate change with its own readers to
+check"* — and those readers are now checked.
+
+### The guard found two the sweep did not
+
+`AssetCreate` and `DockDoorCreate` were missed by the first pass, which keyed on the handler's
+own parameter being named `organization_id`; those two derive the tenant under a different
+name. The guard reads the **imported model** and the handler's dependency, so it does not care
+what anything is called. A detector one degree narrower than its class would have shipped with
+`POST /assets` — the core create path of the product — still answering 422.
+
+### Removing a spurious required field revealed a real one
+
+With `organization_id` gone from `LoadQualityLogCreate`, `POST /logistics/load-quality` began
+returning **500** on an incomplete body: `load_quality_logs.asset_id` is `nullable=False` with
+no default and the schema declared it `Optional`, so the request reached the INSERT and raised
+`NotNullViolationError`.
+
+It had always been broken. The spurious field was failing validation *first*, so the endpoint
+answered 422 for the wrong reason and the genuinely missing field was never reached. Sweeping
+the class found **nine** Create-schema fields that are optional over a NOT NULL column with no
+default, across six schemas — most supplied by their handler, this one not.
+
+`asset_id` is now required, so the caller gets a 422 naming the field instead of a 500 they
+cannot act on. `root_cause_asset` — the second NOT NULL column on the same table — stays
+optional deliberately: the service computes it and overwrites any caller value.
+
+### And the frontend was sending a tenant
+
+`AssetCreate` in `frontend/src/types/asset.ts` declared `organizationId`, which the axios
+transform seam turned into `organization_id` on the wire. So creating an asset from the UI
+meant supplying your own tenant. Removed, for the reason already written three lines below it
+about `metadata` (FS-423): a write type that names a field the endpoint cannot apply — or must
+not trust — is a promise the API does not keep. The **response** type keeps its
+`organizationId`; the server sends it, and reading it was never the problem.
+
+### The seven yard writes, which is where this started
+
+`route_walk.py` drives every route for 5xx, so none was unexecuted; all seven were unasserted.
+"Returns 200" is a weak claim for a state transition — `POST /trailers/{id}/checkout` answers
+a hand-built `{"message": "Trailer checked out successfully"}`, past tense, built before
+anything is verified, and FS-352 removed an endpoint whose whole body was a sentence like that
+and no action.
+
+Eleven tests: each transition is asserted against the database (checkout stamps a departure,
+assigning a door takes it out of `available`, starting an appointment moves it off
+`scheduled`, a move relocates the trailer, completing one stamps a duration, a wait time
+persists with the rate the charge is computed from) and four assert a second tenant cannot
+drive any of it — the service takes each id straight into `WHERE id = :id` with no
+organization filter, so RLS is the only thing in the way.
+
+**Suite:** backend 3626 → 3668 · frontend 843 · `tsc` clean.
