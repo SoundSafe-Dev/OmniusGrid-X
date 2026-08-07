@@ -725,10 +725,19 @@ async def _vacuum_telemetry() -> None:
 # anywhere restarted anything.
 #
 # WHY REMOVED RATHER THAN IMPLEMENTED. A restart would have to reach the device, and the
-# edge agent registers exactly two command handlers: `agent_update` and `model_update`
-# (`edge-agent/opsgrid_agent/ota/{executor,model_executor}.py`). Submitting a
-# `restart_collector` command would queue something nothing consumes — the same lie moved
-# one layer down, and harder to see. Adding the handler is Hridyansh's lane.
+# edge agent registers exactly one command handler: `agent_update`, bound by
+# `OTAUpdateExecutor.register` (`edge-agent/opsgrid_agent/ota/executor.py:68`), which
+# `main.py:68,209` constructs and registers. Submitting a `restart_collector` command would
+# queue something nothing consumes — the same lie moved one layer down, and harder to see.
+# Adding the handler is Hridyansh's lane.
+#
+# CORRECTED 2026-08-07 (FS-505). This note previously said "exactly two … `agent_update` and
+# `model_update`". `ModelUpdateExecutor.register` does bind `model_update`
+# (`ota/model_executor.py:68-70`), but nothing ever constructs that class, so `register()` is
+# never called and the agent answers `unknown_action` — which also means every model rollout
+# `rollout_orchestrator.py:297` dispatches fails against working hardware. The decision above
+# was right; the premise under it was half true. `tests/test_dispatched_commands_have_a_handler.py`
+# now pairs the two sides so neither the claim nor the gap can drift again.
 #
 # WHY REMOVED RATHER THAN 501. A 501 is a 5xx, and the contract gate counts any 5xx as a
 # ServerError, so an honest "not implemented" would have made conformance worse than the

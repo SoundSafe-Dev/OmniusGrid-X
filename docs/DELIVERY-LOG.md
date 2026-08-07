@@ -5840,3 +5840,169 @@ Mutation-verified: removing `metrics.record_dropped` fails both the structural g
 behavioural test.
 
 **Suite:** edge agent 305 → 307.
+
+---
+
+## FS-505 — the cloud dispatches a command the fleet answers `unknown_action`
+
+`rollout_orchestrator.py:297` picks the action by artifact type:
+
+```python
+action_id = "model_update" if release.artifact_type == "model" else "agent_update"
+```
+
+The agent registers **one** handler. `OTAUpdateExecutor.register` binds `agent_update`, and
+`main.py:68,209` constructs and registers it. `ModelUpdateExecutor.register` binds
+`model_update` — and nothing anywhere constructs that class, so `register()` never runs.
+`commands/consumer.py:149-155` answers `{"error": "unknown_action"}`.
+
+So every model rollout the cloud dispatches fails, and it fails as a **device** failure: the
+rollout records the target as unable to take the update, against hardware that is working
+perfectly.
+
+### A comment asserted it worked
+
+`api/health.py:728` justified removing the collector-restart endpoint with
+
+> the edge agent registers exactly two command handlers: `agent_update` and `model_update`
+
+The decision was right and the premise was half true, which is the kind that survives review.
+Corrected in place, with what is actually registered and how to see it.
+
+### Neither side could see the pair
+
+The backend knows what it dispatches; the agent knows what it registers; nothing read both.
+That is the same shape as FS-485 (truncation signals) and FS-486 (the ERP connector list) —
+two lists that must agree with no single place that compares them.
+
+`backend/tests/test_dispatched_commands_have_a_handler.py` walks the orchestrator for the
+action ids it can assign, walks the agent for the handlers registered by classes **`main.py`
+actually constructs**, and requires the sets to agree. Starting the walk from `main.py` is the
+whole trick: reading `register_handler` calls package-wide would have counted the handler on
+the class nobody builds, which is the defect.
+
+`model_update` is carried as an exemption naming the owner and what closes it, and two further
+tests assert the exemption is still both dispatched and unhandled — a stale entry is how an
+allowlist stops describing the code and starts excusing it, which FS-504 had just cost.
+
+**Not fixed here:** wiring `ModelUpdateExecutor` is three lines in the OTA lane, and it has no
+tests at all (FS-507). Switching an untested 220-line handler into the live command path is a
+separate act from noticing it is missing.
+
+### The reader was wrong first
+
+A regex over the assignment returned `{model_update, agent_update, model}` — `"model"` is the
+*artifact type* the ternary tests against, not an action it sends. The reader now walks the
+AST and descends into `body`/`orelse` but never into `test`. The difference is between reading
+what the code sends and reading what it asks about, and the regex version would have reported
+a phantom unhandled action forever.
+
+Mutation-verified: removing the exemption fails three independent assertions.
+
+**Suite:** backend 3606 → 3612.
+
+---
+
+## FS-506 — 460 lines of edge agent nothing imports, three of them fully tested
+
+The backend has had an unreachable-module inventory since its 7,726-line measurement. The
+agent never did, and its version has a twist that makes it *harder* to see: **three of the four
+orphans have passing tests.**
+
+| module | lines | tests | what is actually missing |
+|---|---|---|---|
+| `compression.py` | 43 | `test_dataplane_robustness` | **the receiver.** It frames output as `codec_marker + body` and nothing in `backend/app` decodes it — enabling it would make every uplink unreadable rather than smaller. Half a protocol, and the shipped half is the wrong one. |
+| `aggregation.py` | 83 | `test_dataplane_robustness` | an opt-in config key and a flush loop. The key would be the fifth cross-cutting one and must join `CROSS_CUTTING_KEYS` in the same change, or a strict collector dies on it (FS-500). |
+| `config_reload.py` | 114 | a dedicated file | **a trigger.** `main.py` installs no signal handler and the command consumer registers no `reload_config` action, so there is no path by which a reload could be asked for. |
+| `ota/model_executor.py` | 220 | none | the wiring FS-505 documents. The only one here that is actively dispatched to. |
+
+Coverage reports three of these green, the suite counts them, and a reader browsing the tree
+finds a documented feature with passing tests. **A test is evidence the code is correct, never
+evidence that anything calls it** — FS-490's class ("counted what does not run") arriving at a
+different layer.
+
+`edge-agent/tests/test_no_new_unreachable_modules.py` requires each entry to say what is
+specifically missing, asserts every listed module is *still* unreachable, and fails on a fifth.
+
+### The detector flagged the program itself
+
+The first run reported `main.py` — true, and useless: it is the entrypoint (`pyproject.toml:21`,
+`Dockerfile:49`). An inventory that flags the program nobody reads twice. Entrypoints are
+excluded by name, and the exclusion is asserted against the packaging metadata so it cannot
+become a hiding place.
+
+Mutation-verified: a new orphan module fails the sweep by name.
+
+---
+
+## FS-507 — the live HTTP collector had no test, and every failure path is swallowed
+
+`http_rest` is one of seventeen types in `SUPPORTED_COLLECTORS` — a collector an operator can
+name in a config file and point at a device today. Before this, **zero tests named it**, and it
+was the only registered type in that position.
+
+That matters more than it sounds, because every failure path in it is swallowed. `_collect`
+catches `httpx.HTTPError` and then bare `Exception` and returns; `_poll_loop` wraps the same
+call in a second handler. The collector cannot crash, cannot restart, and cannot tell the
+coordinator anything is wrong — **a poll that raises on every cycle looks exactly like a poll
+that works.** Supervision (FS-501) never sees it, the heartbeat (FS-497) never counts it, and
+the asset goes quiet. That is the FS-495 shape, and the only thing standing between this
+collector and that outcome was that nobody had run it.
+
+Ten tests drive the real object with a stubbed transport: a reading is emitted at all, the
+payload survives normalisation, a nested object is flattened rather than dropped, a list
+response uses its first object, the request goes where it was configured, a connection error
+does not end the poll loop, a 200 carrying non-JSON does not propagate, and `stop()` closes the
+client and cancels the task.
+
+**The collector is correct.** No defect was found — the gap was purely the absence of any
+assertion. Mutation-verified: removing the `emit` call fails five of the ten.
+
+---
+
+## FS-508 — the production posture was documented in a comment and configured nowhere
+
+The agent reads four switches that each choose between a permissive and a safe behaviour:
+
+| switch | default | what the default costs |
+|---|---|---|
+| `EDGE_REQUIRE_EXPLICIT_SOURCES` | `false` | an audio/video collector with no `source` **synthesizes** its readings instead of refusing to start |
+| `EDGE_REQUIRE_TLS` | `false` | a failure to build the mTLS context degrades the uplink to plaintext instead of aborting |
+| `KAFKA_SECURITY_PROTOCOL` | `PLAINTEXT` | no client certificate on the telemetry uplink |
+| `ENROLLMENT_CA_FINGERPRINT` | unset | the CA bundle returned by the enrollment call is trusted unpinned — and that response is the trust root for the whole fleet |
+
+**All four were set in exactly one place in the repository: a commented-out block in
+`deploy/install.sh:35-38` headed "Production posture".** The shipped StatefulSet set none of
+them, and `grep -rln edge-agent overlays/` is empty — no overlay patches the edge agent, so the
+base manifest is what production runs verbatim.
+
+Meanwhile the production overlay sets `MTLS_ENABLED=true` for the backend. One side of the
+connection is configured to require mTLS and the other is configured for plaintext, in the same
+tree, and nothing compared them. **A commented line documents an intention; it configures
+nothing.**
+
+`EDGE_REQUIRE_EXPLICIT_SOURCES=true` is now set in the manifest. It cannot break a running
+fleet: it rejects only a config that omits `source` on a synthetic-capable collector, which is
+a config that was already lying about what it measured.
+
+The two TLS switches are **not** flipped. Fail-closed TLS aborts startup on an agent that has
+not enrolled — `main.py:608-611` records that ordering hazard — so turning them on before mTLS
+enrollment is proven end-to-end would brick the fleet on the deploy that enabled it. They are
+recorded as deferred with what closes them (Wave L, a cluster) rather than guessed at.
+
+`edge-agent/tests/test_the_shipped_deployment_sets_its_posture.py` requires every switch to be
+either set in the manifest or listed with a reason and a closing condition, asserts a deferred
+switch that got set is removed from the list, and asserts the agent still reads each one — a
+guard whose subjects the code stopped reading protects nothing while looking diligent, which
+FS-484, FS-492 and FS-504 each cost once.
+
+### The reader has to tell code from comments
+
+The variable this item is about was findable by grep in `install.sh` — as a comment. The guard
+parses the manifest as YAML and has a test proving it does not count the commented-out
+`COLLECTORS_FILE` block, because a detector that cannot tell the difference would have passed
+on the broken tree.
+
+Mutation-verified: reverting the manifest line fails two assertions.
+
+**Suite:** edge agent 307 → 344.

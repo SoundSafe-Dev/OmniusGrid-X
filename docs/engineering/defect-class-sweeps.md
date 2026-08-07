@@ -7167,3 +7167,50 @@ Alert rules, manifests, schemas and config files all have a validator that check
 much smaller number of tests that check effect. A rule that cannot fire, a manifest that
 cannot apply, a schema no payload satisfies — each passes its linter. Ask what would have to
 happen for the declaration to *do* something, then assert that.
+
+## Rule 122 — when two components must agree, something has to read both
+
+The backend knows which command action ids it dispatches. The agent knows which handlers it
+registers. Both are correct about themselves, and for as long as nothing compared them the
+cloud sent `model_update` to a fleet that answered `unknown_action` (FS-505). Same shape as the
+truncation signals (FS-485) and the ERP connector list (FS-486): the defect is not in either
+list, it is in the absence of a third thing that reads both.
+
+The guard belongs wherever it can see both sides, which is often neither component's own test
+directory. When one side is out of your lane, the pairing test is still yours to write — it
+changes no behaviour and makes the gap impossible to keep missing.
+
+## Rule 123 — a test proves the code is correct, never that anything calls it
+
+Three edge-agent modules had passing tests, green coverage, and no production caller (FS-506).
+Nothing in the ordinary signals distinguishes that from a working feature: the suite counts it,
+the coverage report shows it, and a reader browsing the tree finds documentation and
+assertions. This is FS-490's class — counting what does not run — one layer up from skipped
+tests.
+
+Whenever a sweep asks "is this tested?", ask the second question: **is it reached?** They are
+independent, and the combination that hides longest is *tested and unreachable*.
+
+## Rule 124 — a commented line documents an intention; it configures nothing
+
+Four edge-agent safety switches — TLS required, Kafka SSL, explicit sources, CA pinning — were
+"set" in exactly one place: a commented block headed "Production posture" (FS-508). They grep
+as present. Every shipped deployment ran the permissive default, while the production overlay
+set `MTLS_ENABLED=true` on the other side of the same connection.
+
+Two consequences for detectors. First, parse the artefact — YAML as YAML, not as text — or the
+sweep passes on the broken tree for the same reason the reviewer did. Second, treat *unset* as
+a value the manifest chose: a switch that is neither set nor explicitly deferred with a reason
+is a default nobody picked, and only a default somebody picked is safe to ship.
+
+## Rule 125 — an unreachable path in a fully-swallowing component fails invisibly forever
+
+The HTTP collector catches `httpx.HTTPError`, then bare `Exception`, and its poll loop wraps
+the same call in a second handler (FS-507). It cannot crash, cannot restart, and cannot tell
+supervision anything is wrong — so a poll that raises every cycle is indistinguishable from one
+that works, and the asset just goes quiet.
+
+Swallowing is often right at a poll boundary. What makes it dangerous is swallowing *plus* no
+assertion that the happy path produces anything. The pairing to look for is a component with
+broad handlers and zero behavioural tests: neither alone is alarming, and together they mean
+nothing has ever confirmed the component does its job.

@@ -86,6 +86,24 @@ spec:
               value: "24"
             - name: METRICS_PORT
               value: "9108"
+            # FS-508. Without this, an audio or video collector configured with no
+            # `source` key SYNTHESIZES its readings — a demo tone, a generated frame —
+            # and emits them through the same pipeline as hardware. The values are
+            # stamped as synthetic downstream, but nothing refuses to start, so an
+            # operator who mistyped a key gets a working-looking asset reporting
+            # numbers no microphone ever heard.
+            #
+            # `collectors/base.py:44-50` has always had the guard; it was gated on this
+            # variable, which was set in exactly one place in the repo — a COMMENTED
+            # line in `deploy/install.sh:37` under the heading "Production posture".
+            # So the safe posture was documented and shipped nowhere, and every
+            # deployment ran the permissive default.
+            #
+            # Setting it here cannot break a running fleet: it rejects only a config
+            # that omits `source` on a synthetic-capable collector, which is a config
+            # that was already lying about what it measured.
+            - name: EDGE_REQUIRE_EXPLICIT_SOURCES
+              value: "true"
             # Mount a collector config and point COLLECTORS_FILE at it, or set
             # COLLECTORS to a JSON array via a ConfigMap.
             # - name: COLLECTORS_FILE
