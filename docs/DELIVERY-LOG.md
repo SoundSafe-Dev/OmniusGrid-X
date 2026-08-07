@@ -6554,3 +6554,67 @@ Mutation-verified three ways: restoring the hardcoded seatbelt count, the zero i
 the literal fuel-price default each fail with the specific reason.
 
 **Suite:** backend 3677 → 3688 · frontend 843 · `tsc` clean.
+
+---
+
+## FS-534 — two scores that were computed partially and presented as if completely
+
+The sibling of FS-533, one layer in. Those were constants presented as measurements; these are
+real computations missing a term they were designed with, and saying nothing about it.
+
+### The root-cause correlation score
+
+`_analyze_root_cause` seeds `correlation_score` at `0.5` — `# Default moderate correlation` —
+raises it `0.15` per critical alarm during the operation and `0.1` for a prior similar defect.
+Its own design names a telemetry-anomaly term that is not computed:
+`# (simplified - would do actual anomaly detection)`.
+
+The sharper problem is that **0.5 means two opposite things**. With no asset supplied the
+function returns 0.5 having queried nothing at all; after examining an operation and finding no
+alarms it also returns 0.5. "We looked and found nothing" and "we never looked" were the same
+number, and `# Default moderate correlation` is how the second one read.
+
+This is persisted onto `load_quality_logs.manufacturing_correlation_score` and served from
+there — it becomes the figure a quality engineer reads months later when deciding whether a
+shipping defect came from the line. FS-349 named this exact failure (a report carrying a
+`model_version` for a model never loaded) and the fix was to say so in the payload.
+
+**The basis has to outlive the transaction, and my first version did not.** It returned `basis`
+from `_analyze_root_cause` and the caller passed only the number to the row constructor, so the
+qualification existed for the length of one function call while the bare 0.5 was still what got
+stored. The comment I had written claimed it "travels with the score" — it did not. It now goes
+into `meta_data`, the existing home for per-row provenance on that table, and a test asserts
+the persistence rather than the return value.
+
+### The shipping-readiness score
+
+`_score_asset_for_shipment` reads PackML state, estimates operation completion and counts
+recent quality issues — all real queries. Then:
+
+```python
+# Check asset OEE (would need actual OEE calculation)
+# For now, use placeholder
+```
+
+and **nothing happens.** There is no placeholder. The comment describes a stand-in that does
+not exist, which is worse than either doing the work or leaving it out, because a reader takes
+it for a known approximation.
+
+`factors` is the function's own explanation of its score, returned to the caller and rendered
+to a user. It listed every term that *was* applied and stayed silent about the one that was
+not, so a score built from three of four inputs read as complete. The omission is now stated
+there — through the mechanism already present, rather than a second one beside it — plus a
+machine-readable `terms_omitted`.
+
+### The guard could not find its own subject
+
+The first version looked the methods up on the engine instance and raised `AttributeError`:
+`_analyze_root_cause` lives on `LoadQualityCorrelator`, which the engine composes, and the
+readiness method is called `_score_asset_for_shipment`. It now searches every class in the
+module by name and fails loudly if a subject disappears — a guard that cannot find what it
+checks reports nothing, which is the failure mode this file exists to prevent one level up.
+
+Mutation-verified: dropping the persisted basis, and restoring the placeholder comment, each
+fail with the specific reason.
+
+**Suite:** backend 3688 → 3699.

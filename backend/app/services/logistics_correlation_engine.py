@@ -509,7 +509,24 @@ class LoadQualityCorrelator:
                 root_cause_asset=root_cause_analysis.get('root_cause_asset'),
                 root_cause_operation=root_cause_analysis.get('root_cause_operation'),
                 manufacturing_correlation_score=root_cause_analysis.get('correlation_score'),
-                carrier_liable=carrier_liable
+                carrier_liable=carrier_liable,
+                # THE SCORE IS PERSISTED, SO ITS BASIS HAS TO BE (FS-534).
+                #
+                # `_analyze_root_cause` returns `basis` and `anomaly_detection_applied`
+                # alongside the number, and this constructor originally took only the
+                # number — so the qualification existed for the length of one function call
+                # and the bare 0.5 was what a quality engineer read months later. A basis
+                # that does not outlive the transaction qualifies nothing.
+                #
+                # `meta_data` rather than a new column: it is the existing home for
+                # per-row provenance on this table and needs no migration to start being
+                # honest.
+                meta_data={
+                    'correlation_basis': root_cause_analysis.get('basis'),
+                    'anomaly_detection_applied': root_cause_analysis.get(
+                        'anomaly_detection_applied', False
+                    ),
+                },
             )
             session.add(log)
             await session.commit()
@@ -531,11 +548,37 @@ class LoadQualityCorrelator:
         operation_id: Optional[UUID],
         defect_type: str
     ) -> Dict[str, Any]:
-        """Analyze root cause correlation"""
+        """Root-cause correlation from alarm evidence, saying so (FS-534).
+
+        WHAT THIS SCORE IS. `correlation_score` is persisted onto
+        `load_quality_logs.manufacturing_correlation_score` and served from there, so it is
+        not a transient — it becomes the number a quality engineer reads when deciding
+        whether a shipping defect came from the line.
+
+        WHAT IT WAS. `0.5  # Default moderate correlation`, raised by `0.15` per critical
+        alarm during the operation and `0.1` if a similar defect had been logged before.
+        The source says `# Count telemetry anomalies / # (simplified - would do actual
+        anomaly detection)` — so the anomaly term named in the design is not computed, and
+        with no asset supplied the function returns 0.5 having queried **nothing at all**.
+
+        A defect logged with no asset therefore came back as "moderate correlation" — an
+        invented confidence about a link nothing had looked for. That is the failure this
+        repository named in FS-349, where a report carried a `model_version` for a model
+        that was never loaded; the fix there was to say so in the payload, and it is the fix
+        here.
+
+        `basis` now travels with the score. `no_evidence_examined` is the honest answer for
+        the case that used to read as moderate.
+        """
         result = {
             'root_cause_asset': asset_id,
             'root_cause_operation': operation_id,
-            'correlation_score': 0.5  # Default moderate correlation
+            # Was `0.5  # Default moderate correlation`. It is not moderate correlation; it
+            # is the value before anything has been examined, and only the `basis` below
+            # distinguishes the two.
+            'correlation_score': 0.5,
+            'basis': 'no_evidence_examined',
+            'anomaly_detection_applied': False,
         }
         
         if not asset_id:
@@ -571,6 +614,11 @@ class LoadQualityCorrelator:
                 # Increase correlation score if alarms occurred
                 if critical_alarms > 0:
                     result['correlation_score'] = min(0.95, 0.5 + (critical_alarms * 0.15))
+                    result['basis'] = 'critical_alarms_during_operation'
+                else:
+                    # Examined and found nothing, which is a different statement from
+                    # never having looked — and produces the same 0.5 either way.
+                    result['basis'] = 'no_critical_alarms_during_operation' 
                 
                 # Check for similar defects from this asset/operation combo
                 similar_result = await session.execute(
@@ -586,6 +634,7 @@ class LoadQualityCorrelator:
                 
                 if similar_count > 0:
                     result['correlation_score'] = min(0.95, result['correlation_score'] + 0.1)
+                    result['basis'] = f"{result['basis']}+prior_similar_defects"
         
         return result
     
@@ -1040,13 +1089,25 @@ class LogisticsCorrelationEngine:
             score -= recent_issues * 5
             factors.append(f"{recent_issues} quality issues recently")
         
-        # Check asset OEE (would need actual OEE calculation)
-        # For now, use placeholder
-        
+        # THE OEE TERM IS NOT INCLUDED, and now the response says so (FS-534).
+        #
+        # This read `# Check asset OEE (would need actual OEE calculation) / # For now, use
+        # placeholder` — and then did nothing. There was no placeholder. The comment
+        # described a stand-in that did not exist, which is worse than either doing the work
+        # or leaving it out, because a reader takes it for a known approximation.
+        #
+        # `factors` is this function's own explanation of its score and is returned to the
+        # caller. It listed every term that WAS applied and stayed silent about the one that
+        # was not, so a score built from three of four inputs read as a complete assessment.
+        # Stating the omission uses the mechanism already here rather than inventing a
+        # second one.
+        factors.append("OEE not included — asset OEE is not part of this score")
+
         return {
             'score': max(0, min(100, score)),
             'estimated_ready_time': estimated_ready.isoformat(),
-            'factors': factors
+            'factors': factors,
+            'terms_omitted': ['asset_oee'],
         }
 
 
