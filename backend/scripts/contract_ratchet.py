@@ -85,7 +85,31 @@ from pathlib import Path
 #: previous raise recorded, for the same reason.
 #:
 #: Raise it when a fix clears the noise, as this one did. Never lower it.
-BASELINE_PASSING = 360
+#: RE-BASELINED 2026-08-06 AFTER FS-307, with both configurations measured on the same
+#: database, same seed, back to back:
+#:
+#:     as the owning SUPERUSER (the old gate)   397 / 470
+#:     as omniusgrid_contract (NOSUPERUSER)     392 / 470
+#:
+#: The gate had been running as a superuser, which bypasses FORCE ROW LEVEL SECURITY, so
+#: every previous number was measured with tenant isolation switched off. The cost of turning
+#: it on is **five operations**, and `ServerError` rises 17 -> 23.
+#:
+#: The six that fail only under the restricted role are the point of the exercise — they were
+#: passing because RLS was off:
+#:     GET  /api/v1/audit/logs                                  (fixed, FS-503)
+#:     GET  /api/v1/audit/verify                                (fixed, FS-503)
+#:     GET  /api/v1/model-monitoring/{data-,}drift/history/{id}
+#:     GET  /api/v1/model-monitoring/performance/history/{id}
+#:     POST /api/v1/compliance/reports/schedules
+#:
+#: 380, not 392. This is ONE run at the new configuration, and the spread recorded above is
+#: up to 9 operations with no code change; a floor set at the measurement would fail on
+#: variance. 380 leaves 12 of headroom and still catches a regression of 13 — where the old
+#: 360 would have sat through a loss of 32.
+#:
+#: Raise it when a fix clears the noise. Never lower it.
+BASELINE_PASSING = 380
 
 #: Total operations the schema documents, checked so a collapse in collection cannot
 #: pass the ratchet by making "passing" small and "total" equally small.

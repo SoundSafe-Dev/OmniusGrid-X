@@ -18,6 +18,25 @@ from app.middleware.rbac import require_admin
 
 from pydantic import BaseModel  # noqa: E402
 
+def _ip_str(value) -> str | None:
+    """The stored address as a string, or None (FS-503).
+
+    `AuditLog.ip_address` is `String(45).with_variant(INET, "postgresql")`
+    (`app/db/models.py:1569`), so on Postgres the column is INET and the driver hands back an
+    `ipaddress.IPv4Address`/`IPv6Address`. The response models here declare `Optional[str]`,
+    and pydantic will not coerce an address object into a `str` field — it raises, and
+    FastAPI turns that into a 500. Every row carrying an IP broke the page it appeared on.
+
+    Converting at the boundary rather than widening the declared type, because the API's
+    contract really is a string: `str(IPv4Address("127.0.0.1")) == "127.0.0.1"`, which is
+    what every client already expects to receive.
+
+    On SQLite the variant is VARCHAR and the value is already a string, so this is a no-op
+    there — which is exactly why no non-realdb test could see the defect.
+    """
+    return None if value is None else str(value)
+
+
 router = APIRouter()
 
 
@@ -147,7 +166,7 @@ async def list_audit_logs(
                 "resource_type": log.resource_type,
                 "resource_id": log.resource_id,
                 "details": log.details,
-                "ip_address": log.ip_address,
+                "ip_address": _ip_str(log.ip_address),
                 "user_agent": log.user_agent,
                 "hash_chain": log.hash_chain,
             }
@@ -187,7 +206,7 @@ async def get_audit_log(
         "resource_type": log.resource_type,
         "resource_id": log.resource_id,
         "details": log.details,
-        "ip_address": log.ip_address,
+        "ip_address": _ip_str(log.ip_address),
         "user_agent": log.user_agent,
         "hash_chain": log.hash_chain,
         "created_at": log.created_at.isoformat() if log.created_at else None
@@ -230,7 +249,7 @@ async def verify_hash_chain(
             "resource_type": log.resource_type,
             "resource_id": log.resource_id,
             "details": log.details,
-            "ip_address": log.ip_address,
+            "ip_address": _ip_str(log.ip_address),
             "user_agent": log.user_agent,
         }
         

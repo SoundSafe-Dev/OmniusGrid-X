@@ -5639,3 +5639,71 @@ assertion — it produces a **hung test run**, because the loop spins hard enoug
 everything around it. That is the defect, demonstrated.
 
 **Suite:** edge agent 297 → 300.
+
+## FS-493, FS-503 — the gate started working, and immediately found a 500
+
+FS-307 moved the contract gate off the postgres superuser. The plan's first item was to
+re-measure, because every previous conformance number had been taken with `FORCE ROW LEVEL
+SECURITY` bypassed. Both configurations were run on the same database, back to back:
+
+| | conforming | `ServerError` |
+|---|---:|---:|
+| as the owning **superuser** (the old gate) | **397 / 470** | 17 |
+| as `omniusgrid_contract` (`NOSUPERUSER NOBYPASSRLS`) | **392 / 470** | 23 |
+
+**Turning tenant isolation on costs five operations.** I had flagged that the ratchet might
+fail on the first run; it does not — 392 is comfortably above the old floor of 360. The
+prediction was wrong in the harmless direction, and worth saying so plainly.
+
+The new floor is **380**, not 392. This is one run at the new configuration and the file
+records a spread of up to nine operations with no code change, so a floor set at the
+measurement would fail on variance. 380 leaves 12 of headroom and catches a regression of 13,
+where 360 would have sat through a loss of 32.
+
+### The six the gate could not previously see
+
+Six operations fail **only** under the restricted role — they were passing because RLS was
+switched off. Two are the audit trail; three are model-monitoring history; one is compliance
+report scheduling. And the first one turned out not to be an RLS problem at all.
+
+### FS-503 — `GET /audit/logs` 500s on any row that has an IP address
+
+`AuditLog.ip_address` is `String(45).with_variant(INET, "postgresql")`, so on Postgres the
+column is `INET` and the driver returns an `ipaddress.IPv4Address`. The response model declares
+`Optional[str]`. Pydantic will not coerce an address object into a `str` field, so serialising
+raises — twenty-five validation errors on a hundred-row page — and FastAPI returns **500**.
+
+Every row with an IP breaks the page it lands on. This is the endpoint an auditor opens.
+
+**Why nothing caught it**, and both reasons are ordinary:
+
+* the tenant-scoping fixtures insert audit rows with **no `ip_address`**, so the column is
+  NULL and `Optional[str]` accepts None happily;
+* SQLite has no `inet` type, so the variant falls back to `VARCHAR(45)` and the driver returns
+  a plain string — nothing outside `realdb` can see this at all.
+
+And it surfaced only under the restricted role because **RLS changed which rows came back**.
+As a superuser the page happened to contain rows without an address. That is Rule 117 again —
+*the defect is a property of the schema and the failure is a property of the data* — one week
+after the rule was written, in a field whose own column comment records a previous incident:
+inserts bound VARCHAR against the INET column and `audit_trail` swallowed the failure, so "the
+audit trail has been silently empty on real deployments while every write appeared to succeed".
+
+Fixed by converting at the boundary in all three read sites rather than widening the declared
+type, because the API's contract really is a string.
+
+### Two detector corrections, both mine, both caught by reading the hits
+
+Scanning for the general class — *a field declared `str` over a column that is not one* — my
+first pass reported **28 offenders**. All 28 were false: I tested `str in get_args(annotation)`,
+and `Dict[str, Any]` has `str` among its arguments. Comparing the field's **outermost** type
+instead gives **zero**.
+
+Which raised the real question: why does the FS-303 pairing not catch `ip_address` either? Because
+`AuditLogEntry` is declared inline in `app/api/audit.py`, and that guard reads
+`app/models/schemas.py` only. Measured: **313 pydantic models are declared inline across 54 api
+modules, against 123 in `schemas.py`** — the pairing sees 28% of them. That is the FS-492 shape
+again, a guard whose subject list is quieter than the code, and it is recorded here rather than
+half-built.
+
+**Suite:** backend 3603 → 3606 · contract floor 360 → 380.
