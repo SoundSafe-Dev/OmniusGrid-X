@@ -103,10 +103,24 @@ class SecurityEventItem(BaseModel):
 class DriverSafetyItem(BaseModel):
     """`_driver_safety_out`, shared by the fleet list and the per-driver route.
 
-    `idleTimeHours` and `seatbeltViolations` are hardcoded 0 and `trend` is
-    hardcoded "stable" — declared because the handler does return them, not
-    because anything measures them. See #44: a figure nothing computes should not
-    be mistaken for one that is measured.
+    THREE OF THESE WERE CONSTANTS AND ONE WAS A LIE (FS-533). The previous docstring
+    recorded the first part honestly — `idleTimeHours` and `seatbeltViolations` were
+    hardcoded `0` and `trend` was hardcoded `"stable"` — and left it there, which is how a
+    documented placeholder becomes a permanent one.
+
+    `seatbeltViolations: 0` is not a neutral placeholder on a driver safety report. It is a
+    claim that no driver in the fleet has ever been recorded unbelted, on the same screen as
+    a score that determines who gets coached. It is now **counted from the same
+    `geotab_exceptions` rows the other three come from**, which is where it always was.
+
+    `period: "30d"` was the lie. `_exceptions` applied no time filter at all, so every count
+    on this response was lifetime-to-date while the payload said thirty days. A driver's
+    score got worse forever and never recovered, because nothing ever aged out. The query is
+    now windowed, which makes the existing label true and makes `trend` computable.
+
+    `idleTimeHours` stays **None**. Idle time is a duration and `geotab_exceptions` records
+    events, with no duration column — there is nothing in this schema to compute it from.
+    Optional and null is the honest shape; a zero is a measurement.
     """
 
     driverId: str
@@ -115,10 +129,13 @@ class DriverSafetyItem(BaseModel):
     harshBrakingEvents: int
     harshAccelerationEvents: int
     speedingEvents: int
-    idleTimeHours: int
+    #: None — no duration data exists for this. See the class docstring.
+    idleTimeHours: Optional[int] = None
     seatbeltViolations: int
     period: str
-    trend: str
+    #: "improving" | "worsening" | "stable", from this window against the one before it.
+    #: None when the previous window has nothing to compare against.
+    trend: Optional[str] = None
 
 
 class GeoPosition(BaseModel):
@@ -227,8 +244,22 @@ async def _device_ids_for(db, org_id, identifier: str) -> list[str]:
     return sorted({r for r in rows if r} | {identifier})
 
 
-async def _exceptions(db, org_id, device_id=None, device_ids=None):
+#: The window the driver-safety response has always claimed (`period: "30d"`) and never
+#: applied. Named rather than inlined so the label and the filter come from one place —
+#: they disagreed for as long as both existed.
+SAFETY_WINDOW_DAYS = 30
+
+
+async def _exceptions(db, org_id, device_id=None, device_ids=None, since=None):
+    """Exceptions for this org, optionally windowed.
+
+    `since` is opt-in and defaults to None so the callers that want every exception —
+    the security feed, the vehicle DTC join — are unchanged. Only the safety scores
+    pass it, because only they claim a period.
+    """
     stmt = select(GeoTabException).where(GeoTabException.organization_id == org_id)
+    if since is not None:
+        stmt = stmt.where(GeoTabException.timestamp >= since)
     # `device_ids` is the resolved set from `_device_ids_for` — the vehicle's devices plus
     # the caller's own identifier. Filtered in SQL so a per-vehicle read never loads the org.
     if device_ids is not None:
@@ -460,27 +491,72 @@ async def vehicle_security(vehicle_id: str, org_id: UUID = Depends(get_tenant_or
 
 # --------------------------------------------------------------- driver safety
 
+#: Exception types that count as a seatbelt violation. GeoTab spells this differently
+#: across firmware versions, and `geotab_exceptions.exception_type` is a free-form string —
+#: so a set, not an equality. Missing a spelling under-counts a safety figure, which is the
+#: direction that looks like good news.
+SEATBELT_EXCEPTION_TYPES = frozenset({"seatbelt", "seat_belt", "seatbelt_violation"})
+
+
+def _counts_by_driver(exceptions) -> dict:
+    by_driver: dict = defaultdict(lambda: defaultdict(int))
+    for e in exceptions:
+        if e.driver_id:
+            by_driver[str(e.driver_id)][e.exception_type] += 1
+    return by_driver
+
+
 @router.get("/safety/drivers", response_model=List[DriverSafetyItem])
 async def driver_safety(org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
     drivers = (await db.execute(select(Driver).where(Driver.organization_id == org_id))).scalars().all()
-    excs = await _exceptions(db, org_id)
-    by_type = defaultdict(lambda: defaultdict(int))
-    for e in excs:
-        if e.driver_id:
-            by_type[str(e.driver_id)][e.exception_type] += 1
-    return [_driver_safety_out(d, by_type[str(d.id)]) for d in drivers]
+    now = datetime.now(timezone.utc)
+    window_start = now - timedelta(days=SAFETY_WINDOW_DAYS)
+    previous_start = window_start - timedelta(days=SAFETY_WINDOW_DAYS)
+
+    current = _counts_by_driver(await _exceptions(db, org_id, since=window_start))
+    # The window before this one, for `trend`. Fetched whole and split rather than issued
+    # per driver — `test_fleet_health_filters_in_sql.py` asserts these reads do not loop.
+    earlier = _counts_by_driver(
+        [
+            e for e in await _exceptions(db, org_id, since=previous_start)
+            if e.timestamp is not None and e.timestamp < window_start
+        ]
+    )
+    return [
+        _driver_safety_out(d, current[str(d.id)], earlier[str(d.id)]) for d in drivers
+    ]
 
 
-def _driver_safety_out(d: Driver, counts: dict) -> dict:
+def _safety_score(counts: dict) -> int:
+    harsh = counts.get("harsh_braking", 0) + counts.get("harsh_acceleration", 0)
+    return max(0, 100 - harsh * 5 - counts.get("speeding", 0) * 8)
+
+
+def _driver_safety_out(d: Driver, counts: dict, previous: dict | None = None) -> dict:
     harsh_b = counts.get("harsh_braking", 0)
     harsh_a = counts.get("harsh_acceleration", 0)
     speeding = counts.get("speeding", 0)
-    score = max(0, 100 - (harsh_b + harsh_a) * 5 - speeding * 8)
+    seatbelt = sum(counts.get(t, 0) for t in SEATBELT_EXCEPTION_TYPES)
+    score = _safety_score(counts)
+
+    # `trend` compares this window's score with the one before it. None when the previous
+    # window is empty: with nothing to compare against, "stable" is a claim rather than an
+    # observation — which is what it was for every driver, always.
+    trend = None
+    if previous:
+        before = _safety_score(previous)
+        trend = "improving" if score > before else "worsening" if score < before else "stable"
+
     return {
         "driverId": str(d.id), "driverName": f"{d.first_name} {d.last_name}".strip(),
         "overallScore": score, "harshBrakingEvents": harsh_b,
         "harshAccelerationEvents": harsh_a, "speedingEvents": speeding,
-        "idleTimeHours": 0, "seatbeltViolations": 0, "period": "30d", "trend": "stable",
+        # None, not 0. `geotab_exceptions` records events and has no duration column, so
+        # there is nothing here to compute idle HOURS from. A zero would be a measurement.
+        "idleTimeHours": None,
+        "seatbeltViolations": seatbelt,
+        "period": f"{SAFETY_WINDOW_DAYS}d",
+        "trend": trend,
     }
 
 
@@ -501,12 +577,21 @@ async def one_driver_safety(driver_id: str, org_id: UUID = Depends(get_tenant_or
     d = (await db.execute(select(Driver).where(Driver.id == driver_id, Driver.organization_id == org_id))).scalar_one_or_none()
     if d is None:
         raise HTTPException(status_code=404, detail="driver not found")
-    excs = await _exceptions(db, org_id)
-    counts = defaultdict(int)
-    for e in excs:
-        if str(e.driver_id) == driver_id:
-            counts[e.exception_type] += 1
-    return _driver_safety_out(d, counts)
+    # Windowed and split exactly as the list route is (FS-533). These two handlers share
+    # `_driver_safety_out`, so a period applied in one and not the other would have the
+    # same driver scoring differently on the list and on their own page — the shape FS-492
+    # named, where one caller reads a private copy of what another computes.
+    now = datetime.now(timezone.utc)
+    window_start = now - timedelta(days=SAFETY_WINDOW_DAYS)
+    previous_start = window_start - timedelta(days=SAFETY_WINDOW_DAYS)
+
+    counts: dict = defaultdict(int)
+    previous: dict = defaultdict(int)
+    for e in await _exceptions(db, org_id, since=previous_start):
+        if str(e.driver_id) != driver_id or e.timestamp is None:
+            continue
+        (counts if e.timestamp >= window_start else previous)[e.exception_type] += 1
+    return _driver_safety_out(d, counts, previous)
 
 
 # ------------------------------------------------------------- live tracking

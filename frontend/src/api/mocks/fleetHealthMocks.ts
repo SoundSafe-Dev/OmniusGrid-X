@@ -242,7 +242,7 @@ export const mockDriverSafetyMetrics: DriverSafetyMetrics[] = [
     speedingEvents: 0,
     idleTimeHours: 12.5,
     seatbeltViolations: 0,
-    period: 'last_30_days',
+    period: '30d',
     trend: 'improving',
   },
   {
@@ -254,8 +254,8 @@ export const mockDriverSafetyMetrics: DriverSafetyMetrics[] = [
     speedingEvents: 3,
     idleTimeHours: 24.2,
     seatbeltViolations: 1,
-    period: 'last_30_days',
-    trend: 'declining',
+    period: '30d',
+    trend: 'worsening',
   },
   {
     driverId: 'driver-3',
@@ -266,7 +266,7 @@ export const mockDriverSafetyMetrics: DriverSafetyMetrics[] = [
     speedingEvents: 1,
     idleTimeHours: 18.3,
     seatbeltViolations: 0,
-    period: 'last_30_days',
+    period: '30d',
     trend: 'stable',
   },
   {
@@ -278,7 +278,7 @@ export const mockDriverSafetyMetrics: DriverSafetyMetrics[] = [
     speedingEvents: 2,
     idleTimeHours: 15.7,
     seatbeltViolations: 0,
-    period: 'last_30_days',
+    period: '30d',
     trend: 'stable',
   },
   {
@@ -290,7 +290,7 @@ export const mockDriverSafetyMetrics: DriverSafetyMetrics[] = [
     speedingEvents: 0,
     idleTimeHours: 8.9,
     seatbeltViolations: 0,
-    period: 'last_30_days',
+    period: '30d',
     trend: 'improving',
   },
   {
@@ -302,8 +302,8 @@ export const mockDriverSafetyMetrics: DriverSafetyMetrics[] = [
     speedingEvents: 8,
     idleTimeHours: 32.4,
     seatbeltViolations: 2,
-    period: 'last_30_days',
-    trend: 'declining',
+    period: '30d',
+    trend: 'worsening',
   },
 ];
 

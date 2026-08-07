@@ -315,19 +315,42 @@ class LinehaulCharge(BaseModel):
     amount: float
 
 
+class FuelSurchargeAssumptions(BaseModel):
+    """What the surcharge amount rests on (FS-533).
+
+    The previous docstring on `FuelSurchargeCharge` said: "the honest fix is to label a
+    fallback surcharge as one." This is that label, and it is a declared part of the
+    response rather than a note in the source — a consumer reading `amount` can see, in
+    the same payload, whether it came from a contract or from a configured average.
+    """
+
+    basis: str
+    base_fuel_price_usd_per_gallon: float
+    current_fuel_price_usd_per_gallon: float
+    average_mpg: float
+    rate_per_mile: float
+    note: str
+
+
 class FuelSurchargeCharge(BaseModel):
-    """NOT ALWAYS A MEASUREMENT. Without a contract fuel-surcharge table the engine falls
-    back to hardcoded prices — `base_fuel_price=2.50`, `current_fuel_price=3.50` — and
-    those two defaults are what `amount` is derived from. They are declared here because
-    they are sent, and a consumer that wants to know whether the figure is real can
-    compare them to the defaults. Recorded in the burn-down doc; the honest fix is to
-    label a fallback surcharge as one."""
+    """NOT A MEASUREMENT unless `assumptions.basis` says so.
+
+    Without a contract fuel-surcharge table the engine derives `amount` from configured
+    fleet assumptions — the current fuel price and MPG that `optimize_route` uses, plus a
+    base price the surcharge is measured above. Those were three hardcoded default
+    arguments that no caller ever supplied, numerically identical to the settings and
+    disconnected from them (FS-533).
+
+    `assumptions` now travels with the figure and names its `basis`, so "billed against our
+    contract" and "estimated from a fleet average" are distinguishable by a consumer rather
+    than only by reading the service."""
 
     charge_type: str
     rate_basis: str
     distance_miles: Optional[float] = None
     base_fuel_price: Optional[float] = None
     current_fuel_price: Optional[float] = None
+    assumptions: Optional[FuelSurchargeAssumptions] = None
     amount: float
 
 

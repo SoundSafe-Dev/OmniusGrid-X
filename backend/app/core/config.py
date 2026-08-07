@@ -347,6 +347,19 @@ class Settings(BaseSettings):
     FUEL_PRICE_USD_PER_GALLON: float = 3.50
     TOLL_COST_USD_PER_MILE: float = 0.05
 
+    # The baseline a fuel surcharge is measured ABOVE — the price already covered by the
+    # linehaul rate, so the surcharge bills only the difference (FS-533).
+    #
+    # This is the one number the fuel-surcharge calculation needed that the settings above
+    # did not already provide. The other two it uses — the current price and the fleet MPG —
+    # were HARDCODED in `calculate_fuel_surcharge` as `3.50` and `6.0`: numerically identical
+    # to FUEL_PRICE_USD_PER_GALLON and FLEET_AVERAGE_MPG, and completely disconnected from
+    # them. An operator who set their own fuel price moved the route estimate and left every
+    # freight charge on the old figure, with nothing to indicate the two disagreed. A private
+    # copy of a shared value is rule 55, and the copies here were already identical, which is
+    # the state in which divergence is least likely to be noticed.
+    FUEL_SURCHARGE_BASE_PRICE_USD_PER_GALLON: float = 2.50
+
     # Require edge requests to carry a proof-of-possession signature
     # (X-Agent-Timestamp/X-Agent-Signature) in addition to the CA-verified
     # certificate header. The cert is public material — without the signature a

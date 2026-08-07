@@ -212,32 +212,87 @@ class FreightBillingEngine:
     async def calculate_fuel_surcharge(
         self,
         distance_miles: float,
-        base_fuel_price: float = 2.50,
-        current_fuel_price: float = 3.50,
-        mpg: float = 6.0,
+        base_fuel_price: Optional[float] = None,
+        current_fuel_price: Optional[float] = None,
+        mpg: Optional[float] = None,
         contract_rates: Optional[Dict] = None
     ) -> Dict[str, Any]:
-        """Calculate fuel surcharge"""
-        if contract_rates and 'fuel_surcharge_table' in contract_rates:
-            # Use contract-specific fuel surcharge table
-            fsc_table = contract_rates['fuel_surcharge_table']
-            # Implementation would look up based on current fuel price
-            rate_per_mile = fsc_table.get('default', 0.45)
+        """Fuel surcharge from configured fleet assumptions, or a contract table (FS-533).
+
+        THIS IS A MONEY FIGURE AND IT WAS NOT MEASURED. The three inputs were hardcoded
+        default arguments — `2.50`, `3.50`, `6.0` — and the only caller
+        (`calculate_shipment_costs`) passes none of them, so every fuel surcharge the product
+        has ever produced came from a dollar-a-gallon differential written in this signature.
+        The response then echoed `base_fuel_price` and `current_fuel_price` back beside the
+        amount, where they read as the prices a real calculation had looked up.
+        `FuelSurchargeCharge`'s own docstring recorded this and said the honest fix was to
+        label a fallback surcharge as one. This is that.
+
+        WORSE THAN A STALE CONSTANT: A DUPLICATE ONE. `optimize_route` in this same class
+        already reads `settings.FUEL_PRICE_USD_PER_GALLON` and `settings.FLEET_AVERAGE_MPG`,
+        whose values are **3.50 and 6.0** — numerically identical to the literals here and
+        entirely disconnected from them. An operator setting their own fuel price moved the
+        route estimate and left every freight charge behind, with nothing indicating the two
+        disagreed. Identical copies are the state in which divergence is least likely to be
+        noticed (rule 55).
+
+        THE ARITHMETIC WAS DECORATIVE. `rate_per_mile` was
+        `(fuel_diff * (distance / mpg)) / distance` — distance cancels exactly, so the rate
+        is always `fuel_diff / mpg` and the whole surcharge is `distance * fuel_diff / mpg`.
+        Written to look like a per-mile calculation over the trip. Left algebraically
+        equivalent and stated plainly, because the shape mattered more than the value: it is
+        what made the figure read as derived from the shipment.
+        """
+        base_fuel_price = (
+            settings.FUEL_SURCHARGE_BASE_PRICE_USD_PER_GALLON
+            if base_fuel_price is None else base_fuel_price
+        )
+        current_fuel_price = (
+            settings.FUEL_PRICE_USD_PER_GALLON
+            if current_fuel_price is None else current_fuel_price
+        )
+        mpg = settings.FLEET_AVERAGE_MPG if mpg is None else mpg
+
+        table = (contract_rates or {}).get('fuel_surcharge_table')
+        if table:
+            # A CONTRACT TABLE IS NOT YET READ BY PRICE. The intended behaviour is to index
+            # the table by the current fuel price; what happens is a single `default` entry.
+            # Unchanged here — implementing a price-indexed lookup is a billing decision, not
+            # a defect fix — but `basis` below now says so, rather than the caller inferring
+            # from the presence of a table that their contract rate was applied.
+            rate_per_mile = table.get('default', 0.45)
+            basis = 'contract_table_default_entry'
         else:
-            # Standard calculation
-            fuel_diff = max(0, current_fuel_price - base_fuel_price)
-            gallons_needed = distance_miles / mpg
-            rate_per_mile = (fuel_diff * gallons_needed) / distance_miles if distance_miles > 0 else 0
-        
+            fuel_diff = max(0.0, current_fuel_price - base_fuel_price)
+            rate_per_mile = (fuel_diff / mpg) if mpg > 0 else 0.0
+            basis = 'configured_fleet_assumptions'
+
         amount = distance_miles * rate_per_mile
-        
+
         return {
             'charge_type': 'fuel_surcharge',
             'rate_basis': 'per_mile',
             'distance_miles': distance_miles,
             'base_fuel_price': base_fuel_price,
             'current_fuel_price': current_fuel_price,
-            'amount': round(amount, 2)
+            'amount': round(amount, 2),
+            # What the amount rests on, in the shape `optimize_route` established (FS-348).
+            # Returned rather than logged, so a caller that stores the charge can store what
+            # produced it.
+            'assumptions': {
+                'basis': basis,
+                'base_fuel_price_usd_per_gallon': base_fuel_price,
+                'current_fuel_price_usd_per_gallon': current_fuel_price,
+                'average_mpg': mpg,
+                'rate_per_mile': round(rate_per_mile, 4),
+                'note': (
+                    "Fuel prices are configured fleet assumptions, not a live fuel index. "
+                    "This is an estimate, not a carrier quote."
+                    if basis == 'configured_fleet_assumptions' else
+                    "Taken from the contract table's `default` entry. The table is not yet "
+                    "indexed by current fuel price, so a price-banded rate is not applied."
+                ),
+            },
         }
     
     async def create_freight_charge(

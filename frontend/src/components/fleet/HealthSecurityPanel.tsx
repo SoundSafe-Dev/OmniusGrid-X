@@ -330,11 +330,16 @@ export const HealthSecurityPanel: FC = () => {
                 <div key={driver.driverId} className="p-3 border-b border-opsgrid-border flex items-center justify-between">
                   <div>
                     <p className="font-medium text-sm">{driver.driverName}</p>
+                    {/* `'declining'` was tested for here and the backend has only ever
+                        sent improving/worsening/stable, so the red styling could not
+                        apply (FS-533). It also could not have mattered: `trend` was
+                        hardcoded `'stable'` server-side for every driver. Two reasons the
+                        branch was dead, which is why neither surfaced. */}
                     <p className={`text-xs ${
                       driver.trend === 'improving' ? 'text-green-500' :
-                      driver.trend === 'declining' ? 'text-red-500' : 'text-gray-500'
+                      driver.trend === 'worsening' ? 'text-red-500' : 'text-gray-500'
                     }`}>
-                      {driver.trend}
+                      {driver.trend ?? 'No prior period'}
                     </p>
                   </div>
                   <div className={`text-lg font-bold ${

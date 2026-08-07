@@ -6471,3 +6471,86 @@ because the distinction is the point — a required field over a NOT NULL column
 only an *optional* one over a NOT NULL column is the 500.
 
 **Suite:** backend 3668 → 3677.
+
+---
+
+## FS-533 — constants presented as measurements, on two screens where the number decides something
+
+Wave F closed "generated figures presented as measurements" for the GeoTab surface: `random.*`
+behind a gate, stamped. This is the quieter half of the same class — **deterministic constants
+written inline in a response builder**. A random number at least moves. A hardcoded one reads
+as a measurement that happens to be steady, which is why it survives longer.
+
+### Driver safety: three constants and a period that was not applied
+
+`_driver_safety_out` returned `idleTimeHours: 0`, `seatbeltViolations: 0` and `trend: "stable"`
+for every driver in every organisation. The response model's own docstring recorded exactly
+that and left it, which is how a documented placeholder becomes a permanent one.
+
+**`seatbeltViolations: 0` is not neutral on a driver safety report.** It is a claim that no
+driver has ever been recorded unbelted, on the same screen as a score that decides who gets
+coached — and it was countable from the same `geotab_exceptions` rows as the other three the
+whole time. It is now counted, across every spelling GeoTab uses for it: `exception_type` is a
+free-form string, and missing a spelling under-counts a safety figure, which is the direction
+that looks like good news.
+
+**`period: "30d"` was the outright lie.** `_exceptions` applied no time filter, so every count
+was lifetime-to-date under a label saying thirty days. A driver's score got worse permanently
+and could never recover, because nothing aged out. The query is windowed now, which makes the
+label true and makes `trend` a real comparison — this window's score against the one before
+it, and **null** when there is no previous window, because with nothing to compare "stable" is
+a claim rather than an observation.
+
+**`idleTimeHours` is null, not zero.** Idle time is a duration; `geotab_exceptions` records
+events and has no duration column. There is nothing in this schema to compute it from, and a
+zero is a measurement.
+
+### And a frontend branch that could never fire
+
+`HealthSecurityPanel.tsx:335` tested `driver.trend === 'declining'` for its red styling. The
+backend's vocabulary is improving/worsening/stable — **`'declining'` has never been sent**. Two
+independent reasons the branch was dead, which is why neither surfaced: the value was hardcoded
+`'stable'` anyway.
+
+The mock fixtures supplied `'declining'`, so the branch rendered correctly in every mock-mode
+test and never once against a real backend. **A fake that shares the caller's mistake cannot
+refute it** (rule 120). The mock's `period: 'last_30_days'` disagreed with the server's `"30d"`
+for the same reason and is aligned too.
+
+### Fuel surcharge: a money figure from three default arguments
+
+`calculate_fuel_surcharge` took `base_fuel_price=2.50, current_fuel_price=3.50, mpg=6.0` as
+defaults, and its only caller passes none of them. **Every freight charge this product has
+produced came from a dollar-a-gallon differential written in a function signature** — and the
+response echoed those two prices back beside the amount, where they read as prices something
+had looked up. `FuelSurchargeCharge`'s docstring had already recorded this and said the honest
+fix was to label a fallback surcharge as one.
+
+Worse than stale — **duplicated**. `optimize_route`, in the same class, already reads
+`settings.FUEL_PRICE_USD_PER_GALLON` (3.50) and `settings.FLEET_AVERAGE_MPG` (6.0): the same
+numbers, entirely disconnected. An operator setting their own fuel price moved the route
+estimate and left every freight charge behind, with nothing indicating the two disagreed.
+Identical copies are the state in which divergence is least likely to be noticed.
+
+And the arithmetic was decorative: `rate_per_mile = (fuel_diff * (distance / mpg)) / distance`
+cancels exactly, so the rate was always `fuel_diff / mpg` and the surcharge was
+`distance * fuel_diff / mpg`. Written to look like a per-mile calculation over the trip. Left
+algebraically equivalent and stated plainly — **the amount does not change**, which is asserted,
+because a silent repricing would be a far larger act than the one intended.
+
+All three inputs now come from settings, and an `assumptions` block travels with the figure in
+the shape FS-348 established, naming its `basis`: `configured_fleet_assumptions` or
+`contract_table_default_entry`. The contract branch takes `table['default']` and does not index
+by price — its own comment says "Implementation would look up based on current fuel price" —
+so a caller with a contract can now tell that their banded rate was not applied.
+
+### The tests passed alone and failed in company
+
+The first version drove the coroutine with `asyncio.get_event_loop().run_until_complete`, which
+works in isolation and breaks inside the suite where pytest-asyncio owns the loop. A test that
+passes alone and fails in company is testing the harness. Rewritten as async.
+
+Mutation-verified three ways: restoring the hardcoded seatbelt count, the zero idle time, and
+the literal fuel-price default each fail with the specific reason.
+
+**Suite:** backend 3677 → 3688 · frontend 843 · `tsc` clean.

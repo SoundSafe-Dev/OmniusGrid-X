@@ -738,10 +738,20 @@ export interface DriverSafetyMetrics {
   harshBrakingEvents: number;
   harshAccelerationEvents: number;
   speedingEvents: number;
-  idleTimeHours: number;
+  /** NULL — nothing measures this (FS-533). `geotab_exceptions` records events with no
+   *  duration column, so the backend has nothing to compute idle HOURS from and sends
+   *  `null` rather than a zero that would read as a measurement. */
+  idleTimeHours: number | null;
   seatbeltViolations: number;
   period: string;
-  trend: 'improving' | 'stable' | 'declining';
+  /** `'declining'` WAS NEVER SENT (FS-533). The backend's vocabulary is
+   *  improving/worsening/stable — `HealthSecurityPanel` tested for `'declining'` and so
+   *  the red styling for a worsening driver could never apply, in either direction: the
+   *  value was hardcoded `'stable'` for every driver anyway. Two independent reasons the
+   *  branch was dead, which is why neither was noticed. Same class as FS-435.
+   *
+   *  `null` when there is no previous window to compare against. */
+  trend: 'improving' | 'stable' | 'worsening' | null;
 }
 
 // Maintenance Types
