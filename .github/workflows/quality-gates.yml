@@ -574,6 +574,16 @@ jobs:
               echo "::endgroup::"
             done
           done
+      - name: Every consumed Secret has somewhere it can come from
+        run: |
+          pip install pyyaml
+          # Both provisioning paths are deliberately applied by nobody — each needs a real
+          # vault or a cluster keypair per environment. That makes the risk a different one:
+          # if the manifests omit a secret the workloads consume, the operator provisions
+          # everything documented, every step reports success, and the deploy still dies on
+          # CreateContainerConfigError for a secret nobody listed. Six were in that state.
+          # Checks BOTH documented paths, because an operator picks one.
+          ./tests/k8s/check_every_secret_has_a_source.py
       - name: Workloads run at or above their autoscaler's declared floor
         run: |
           pip install pyyaml

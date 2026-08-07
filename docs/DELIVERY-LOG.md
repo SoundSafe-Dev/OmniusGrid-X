@@ -6175,3 +6175,60 @@ demand a PDB anywhere else — the existing exclusions are right and are left al
 Mutation-verified both ways: reverting `replicas` and mistyping the PDB **selector** each fail
 it with the specific reason. Renaming the PDB object does not, correctly — coverage is the
 selector, not the name.
+
+---
+
+## FS-514 — six secrets the workloads consume and nothing provisions
+
+`infrastructure/k8s/secrets/` holds two complete provisioning paths — an External Secrets
+Operator manifest and a Sealed Secrets sealing script — and neither is referenced by any
+kustomization or workflow. The plan recorded that as the defect. **It is not.** Both need a
+real vault or a cluster keypair per environment, so CI cannot apply them; the overlays say so,
+and `strip_placeholder_secrets.py` states the intended failure mode — a pod that never got its
+secret dies with `CreateContainerConfigError`, loudly, rather than running on a placeholder.
+
+Which makes the actual risk a different one, and worse. **If the provisioning manifests omit a
+secret the workloads consume, the operator provisions everything the documentation asks for,
+every step reports success, and the deploy still dies.** The failure is loud; the cause is
+invisible, because the consuming half and the provisioning half live in different trees and
+nothing compared them.
+
+Pairing them found six:
+
+| secret | keys | state |
+|---|---|---|
+| `app-secrets` | `edge-bootstrap-token`, `erp-encryption-key`, `geotab-webhook-secret` | **no path at all** |
+| `smtp-credentials` | whole secret | **no path at all** |
+| `grafana-admin` | `admin-password` | **no path at all** |
+| `backend-tls` | whole secret | cert-manager |
+| `ca-certificate` | whole secret | cert-manager |
+| `redpanda-broker-tls` | whole secret | cert-manager |
+
+The three TLS secrets are issued in-cluster by cert-manager rather than copied from a vault, so
+they have a source — it is simply not this one. They are recorded as such, because "no
+ExternalSecret" reading as "no source" is a wrong reason in an allowlist, and FS-504 had just
+cost a buffer counter to exactly that.
+
+The other three are real, and are **closed rather than recorded**: each now has an
+ExternalSecret, an entry in `secrets.env.example`, and a `seal` call in `seal.sh`. They are not
+minor — `edge-bootstrap-token` is what a device presents to enroll, so without it no agent can
+join the fleet; `erp-encryption-key` decrypts every stored vendor credential; and every other
+monitoring credential already had an ExternalSecret while `grafana-admin` did not, so the
+monitoring stack was one secret short of starting even where the documented provisioning had
+been done in full.
+
+`tests/k8s/check_every_secret_has_a_source.py` reads `env`, `envFrom` **and volumes** — a
+secret mounted as a file is just as fatal when absent as one read into an environment variable,
+and only the env form is obvious — and holds **both** documented paths to the same rule, since
+an operator picks one and a secret covered by only the other leaves them with precisely this
+gap. `NO_SOURCE_YET` is empty and the tests assert any future entry is still both consumed and
+unprovisioned, so it cannot go stale.
+
+Mutation-verified on each path independently: removing a `seal` call and renaming an
+ExternalSecret target each fail it with the specific reason.
+
+**Not fixed here:** FS-515 (`overlays/dr` validated by CI and applied by nothing) is *correct*
+as it stands. A DR site is cold; continuously applying to it from CI would defeat the point.
+Five gates already build and validate it, and the runbook is what applies it. There is no
+defect there — the plan's framing was wrong, and the honest close is to say so rather than
+manufacture a deploy job for it.
