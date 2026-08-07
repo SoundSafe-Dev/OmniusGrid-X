@@ -5707,3 +5707,52 @@ again, a guard whose subject list is quieter than the code, and it is recorded h
 half-built.
 
 **Suite:** backend 3603 → 3606 · contract floor 360 → 380.
+
+## FS-500 — a `quality:` block that killed the collector it configured
+
+`_start_collector` splatted the whole config block into the constructor:
+
+```python
+collector = collector_class(**config.config, on_message_callback=...)
+```
+
+Four keys in that dict are not the collector's business. They live there because that is where
+an operator naturally writes them, and they are read from there by other parts of the agent —
+`quality` by the coordinator, `packml` by `collectors/adapter.py:55`, `alerts` and `oee` by
+`main.py:506,512`.
+
+**Four of the seventeen registered collector types take no `**kwargs`**: mqtt, modbus, opcua,
+orca_file. Measured, not assumed — the survey said five and named two files that map to adapter
+types. For those four, writing any of those blocks raised
+`TypeError: unexpected keyword argument`, which `_start_collector`'s own handler caught and
+logged as `collector_start_failed`. **The collector never ran.**
+
+The symptom is one log line at startup naming a config key the operator had every reason to
+think was supported, then silence from that asset forever. And it depended on the device: the
+adapter-wrapped collectors take the raw dict and were fine, so the same config file works for a
+BACnet asset and kills an MQTT one.
+
+Nothing caught it because the failure is in a handover. The quality pipeline has tests, the
+collectors have tests, and no test starts a collector with a `quality:` block — one component
+reading a key out of a dict another component is about to reject.
+
+The stripped set is asserted against the four the agent actually reads, so a fifth
+cross-cutting key added without registering it fails here rather than silently killing a
+collector.
+
+### Two test corrections, both mine
+
+**A missing-argument failure masquerading as the defect.** My first fixture passed only the
+cross-cutting blocks, so `modbus` failed on its own required `connection_type` — a different
+defect, and asserting on it would have made the test dishonest. Each strict collector now gets
+its minimum config, so the assertion isolates the thing under test.
+
+**A test that passed alone and failed in the suite.** The "own keys still reach it" case built
+a real `MQTTCollector` — and `test_edge_agent_integration.py:31-34` installs a fake
+`opsgrid_agent.collectors.mqtt` into `sys.modules`, so by the time it ran the registered class
+was somebody else's double. Caught because the full suite disagreed with the single-file run;
+a green single-file run would have shipped a test that asserts nothing about mqtt. It registers
+its own stub now — a test of what the coordinator *passes along* should not depend on which
+collector implementation happens to be loaded.
+
+**Suite:** edge agent 300 → 304.

@@ -39,6 +39,15 @@ from ..quality import QualityAction, QualityConfig, QualityPipeline
 logger = structlog.get_logger()
 
 
+#: Config keys consumed by the agent rather than by a collector's constructor (FS-500).
+#:
+#: They live inside each collector's `config` block because that is where an operator
+#: naturally writes them, and they are read from there by the coordinator, the adapter and
+#: `main`. Splatting them into the constructor is what broke the four collectors that take
+#: no `**kwargs`.
+CROSS_CUTTING_KEYS = frozenset({"quality", "packml", "alerts", "oee"})
+
+
 @dataclass
 class CollectorConfig:
     """Configuration for a single collector instance"""
@@ -185,9 +194,27 @@ class UnifiedCollectorCoordinator:
                 )
                 return
             
-            # Create collector instance
+            # CROSS-CUTTING KEYS ARE STRIPPED FIRST (FS-500).
+            #
+            # `config.config` is splatted into the constructor, and four of its keys are not
+            # the collector's business at all — they are read by other parts of the agent
+            # out of the same dict:
+            #
+            #     quality  -> this class, `_quality` (line ~123)
+            #     packml   -> `collectors/adapter.py:55`
+            #     alerts   -> `main.py:506`
+            #     oee      -> `main.py:512`
+            #
+            # Four of the seventeen registered collector types take no `**kwargs` — mqtt,
+            # modbus, opcua and orca_file — so for those, a `quality:` or `alerts:` block
+            # raised `TypeError: unexpected keyword argument`, which the handler below
+            # catches and logs as `collector_start_failed`. **The collector then never ran**,
+            # and the only symptom was one log line at startup describing a config key the
+            # operator had every reason to think was supported. The adapter-wrapped
+            # collectors were unaffected because they take the raw dict, which is why this
+            # depended on which device you were talking to.
             collector = collector_class(
-                **config.config,
+                **{k: v for k, v in (config.config or {}).items() if k not in CROSS_CUTTING_KEYS},
                 on_message_callback=self._on_collector_message
             )
             
