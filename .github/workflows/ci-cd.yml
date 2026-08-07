@@ -402,14 +402,14 @@ jobs:
 
           echo "::group::monitoring (no operator required)"
           kustomize build --load-restrictor LoadRestrictionsNone \
-            infrastructure/k8s/monitoring \
-            | python3 tests/k8s/strip_placeholder_secrets.py | kubectl apply -n omniusgrid-staging -f -
+            infrastructure/k8s/platform/staging/monitoring \
+            | python3 tests/k8s/strip_placeholder_secrets.py | kubectl apply -f -
           echo "::endgroup::"
 
           if kubectl get crd scaledobjects.keda.sh >/dev/null 2>&1; then
             echo "::group::autoscaling (KEDA present)"
             kustomize build --load-restrictor LoadRestrictionsNone \
-              infrastructure/k8s/autoscaling | kubectl apply -n omniusgrid-staging -f -
+              infrastructure/k8s/platform/staging/autoscaling | kubectl apply -f -
             echo "::endgroup::"
           else
             echo "SKIP autoscaling: KEDA CRDs not installed in this cluster."
@@ -419,8 +419,8 @@ jobs:
           if kubectl get crd clusters.postgresql.cnpg.io >/dev/null 2>&1; then
             echo "::group::database-ha (CloudNativePG present)"
             kustomize build --load-restrictor LoadRestrictionsNone \
-              infrastructure/k8s/database-ha \
-              | python3 tests/k8s/strip_placeholder_secrets.py | kubectl apply -n omniusgrid-staging -f -
+              infrastructure/k8s/platform/staging/database-ha \
+              | python3 tests/k8s/strip_placeholder_secrets.py | kubectl apply -f -
             echo "::endgroup::"
           else
             echo "SKIP database-ha: CloudNativePG CRDs not installed in this cluster."
@@ -509,14 +509,14 @@ jobs:
 
           echo "::group::monitoring (no operator required)"
           kustomize build --load-restrictor LoadRestrictionsNone \
-            infrastructure/k8s/monitoring \
-            | python3 tests/k8s/strip_placeholder_secrets.py | kubectl apply -n omniusgrid -f -
+            infrastructure/k8s/platform/production/monitoring \
+            | python3 tests/k8s/strip_placeholder_secrets.py | kubectl apply -f -
           echo "::endgroup::"
 
           if kubectl get crd scaledobjects.keda.sh >/dev/null 2>&1; then
             echo "::group::autoscaling (KEDA present)"
             kustomize build --load-restrictor LoadRestrictionsNone \
-              infrastructure/k8s/autoscaling | kubectl apply -n omniusgrid -f -
+              infrastructure/k8s/platform/production/autoscaling | kubectl apply -f -
             echo "::endgroup::"
           else
             echo "SKIP autoscaling: KEDA CRDs not installed in this cluster."
@@ -526,8 +526,8 @@ jobs:
           if kubectl get crd clusters.postgresql.cnpg.io >/dev/null 2>&1; then
             echo "::group::database-ha (CloudNativePG present)"
             kustomize build --load-restrictor LoadRestrictionsNone \
-              infrastructure/k8s/database-ha \
-              | python3 tests/k8s/strip_placeholder_secrets.py | kubectl apply -n omniusgrid -f -
+              infrastructure/k8s/platform/production/database-ha \
+              | python3 tests/k8s/strip_placeholder_secrets.py | kubectl apply -f -
             echo "::endgroup::"
           else
             echo "SKIP database-ha: CloudNativePG CRDs not installed in this cluster."

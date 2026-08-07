@@ -1,0 +1,62 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Staging KEDA autoscaling (FS-509 + FS-510).
+#
+# TWO defects, and the second one applies to production as well.
+#
+# FS-509 — the namespace. As with monitoring/: `autoscaling/` hardcodes
+# `namespace: omniusgrid` and the staging job applied it with
+# `-n omniusgrid-staging`, which kubectl rejects outright.
+#
+# FS-510 — the scale target names a workload that exists in NEITHER environment.
+# `scaledobjects.yaml` targets `ingestion-worker`, `export-worker` and
+# `compliance-reports-worker`. The overlays that deploy those workers apply
+# `namePrefix: staging-` / `prod-`, so the Deployments are really called
+# `staging-ingestion-worker` and `prod-ingestion-worker`. `autoscaling/` has no
+# namePrefix and is applied outside the overlay, so its ScaledObjects reference
+# names nothing answers to.
+#
+# KEDA does not fail loudly on this. The ScaledObject is created, reports a
+# `ScaledObjectCheckFailed` condition, and scales nothing — so the three Redpanda
+# consumer workers KEDA exists to scale sat at their static replica count under
+# any lag. `ingestion-worker` is `replicas: 1` (FS-512), and that is the
+# telemetry path.
+#
+# WHY A PATCH AND NOT `namePrefix`. namePrefix rewrites an object's own name and
+# any reference kustomize knows how to follow. `ScaledObject` is a custom
+# resource and kustomize has no nameReference rule for
+# `spec.scaleTargetRef.name`, so a namePrefix here would rename the ScaledObjects
+# themselves and leave the broken references untouched — the same bug with
+# tidier names.
+
+resources:
+  - ../../../autoscaling
+
+namespace: omniusgrid-staging
+
+patches:
+- target:
+    group: keda.sh
+    kind: ScaledObject
+    name: ingestion-worker
+  patch: |-
+    - op: replace
+      path: /spec/scaleTargetRef/name
+      value: staging-ingestion-worker
+- target:
+    group: keda.sh
+    kind: ScaledObject
+    name: export-worker
+  patch: |-
+    - op: replace
+      path: /spec/scaleTargetRef/name
+      value: staging-export-worker
+- target:
+    group: keda.sh
+    kind: ScaledObject
+    name: compliance-reports-worker
+  patch: |-
+    - op: replace
+      path: /spec/scaleTargetRef/name
+      value: staging-compliance-reports-worker

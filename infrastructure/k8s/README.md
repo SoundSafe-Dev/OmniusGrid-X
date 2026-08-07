@@ -29,9 +29,22 @@ applied by CI and drift from the base names.
 > from `infra/prometheus/*.yml` (one source of truth shared with docker-compose):
 >
 > ```bash
+> # Apply through the per-environment overlay, NOT the raw stack (FS-509):
 > kustomize build --load-restrictor LoadRestrictionsNone \
->   infrastructure/k8s/monitoring | kubectl apply -f -
+>   infrastructure/k8s/platform/production/monitoring | kubectl apply -f -
 > ```
+>
+> **Why the overlay.** `monitoring/`, `autoscaling/` and `database-ha/` each
+> hardcode `namespace: omniusgrid`, and the staging deploy piped them into
+> `kubectl apply -n omniusgrid-staging`. kubectl refuses an object whose embedded
+> namespace disagrees with `-n` — and `-n` cannot override one, it can only supply
+> one that is absent — so under `set -euo pipefail` the staging deploy failed at
+> that line and staging never had any of the three applied. `platform/<env>/<stack>`
+> declares the namespace per environment; `tests/k8s/check_namespaces_and_targets.py`
+> holds every rendered object to it, checks that each KEDA `scaleTargetRef` names a
+> workload the matching app overlay really deploys (they did not — the overlays add
+> a `namePrefix` the autoscaling stack does not), and checks the deploy job still
+> routes through the overlays.
 >
 > Prometheus discovers targets via the Kubernetes API (backend `/metrics`,
 > Redpanda, kube-state-metrics, plus any pod annotated `prometheus.io/scrape`),

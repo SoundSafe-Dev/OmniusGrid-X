@@ -6006,3 +6006,82 @@ on the broken tree.
 Mutation-verified: reverting the manifest line fails two assertions.
 
 **Suite:** edge agent 307 → 344.
+
+---
+
+## FS-509 / FS-510 / FS-511 / FS-521 — three stacks nobody compared to where they were sent
+
+`monitoring/`, `autoscaling/` and `database-ha/` are deployed outside the app overlay: they
+carry operator CRs and a cross-tree rule reference, so they cannot join the image-pinned
+overlay build. Being outside it, nothing ever compared them to the environment they were
+applied into. Three defects followed, and the CI gate that validated all three could not see
+any of them.
+
+### FS-509 — the staging deploy has been failing at that line
+
+All three hardcode `namespace: omniusgrid`. The staging job piped the rendered output into
+`kubectl apply -n omniusgrid-staging`, and kubectl refuses an object whose embedded namespace
+disagrees with `-n`:
+
+```
+error: the namespace from the provided object "omniusgrid" does not match
+the namespace "omniusgrid-staging"
+```
+
+The step runs under `set -euo pipefail`. **Staging has therefore never had monitoring,
+autoscaling or the HA database applied** — the alert rules FS-498 and FS-583 are about have
+never been loaded there.
+
+Production was unaffected because its namespace happened to match. That is exactly why this
+survived: the broken path had no working twin to be compared with.
+
+`-n` cannot override an embedded namespace — it can only supply one that is absent — so the
+fix is a per-environment overlay that declares it. Those live in `platform/<env>/<stack>` and
+not `<stack>/overlays/<env>`, because kustomize refuses an overlay nested inside its own base
+("cycle detected: candidate root contains visited root").
+
+### FS-510 — KEDA has been scaling nothing, in *both* environments
+
+`scaledobjects.yaml` targets `ingestion-worker`, `export-worker` and
+`compliance-reports-worker`. The overlays that deploy those workers apply
+`namePrefix: staging-` / `prod-`, so the Deployments are really `staging-ingestion-worker` and
+`prod-ingestion-worker`. `autoscaling/` is applied outside the overlay and has no prefix.
+
+KEDA does not fail loudly on this. It creates the ScaledObject, reports
+`ScaledObjectCheckFailed`, and scales nothing — so the three Redpanda consumer workers sat at
+a static replica count under any lag. `ingestion-worker` is `replicas: 1`, and that is the
+telemetry path.
+
+A `namePrefix` in the new overlay would have been the wrong fix: kustomize has no
+nameReference rule for a custom resource's `spec.scaleTargetRef.name`, so it would rename the
+ScaledObjects and leave the broken references untouched — the same bug with tidier names. Each
+reference is patched explicitly.
+
+### FS-511 — Prometheus discovering nothing, healthily
+
+Four scrape jobs pinned `namespaces: ['omniusgrid']`. In staging, every one of them found zero
+targets while Prometheus itself came up healthy with all rules loaded. **That is the failure
+that looks most like success.** Both namespaces are now listed: Kubernetes SD does not error
+on a namespace that is absent, it simply yields no targets, so one config is correct in either
+cluster — and one config cannot drift from its copy.
+
+### FS-521 — the lint, which is the actual deliverable
+
+`tests/k8s/check_namespaces_and_targets.py` renders every platform stack per environment and
+asserts three things `kubeconform` cannot: every namespaced object carries its declared
+namespace, every `scaleTargetRef` names a workload the matching app overlay really deploys, and
+every pinned scrape job discovers both environments. A namespace disagreeing with `-n` is
+schema-valid YAML; a `scaleTargetRef` naming an absent Deployment is a string.
+
+It also reads the **deploy job**, and fails if any stack is still applied by its raw path.
+Fixing the manifests without fixing the workflow would have left the mismatch precisely where
+it was — and that is the half a manifest lint would ordinarily never look at.
+
+Vacuity is checked explicitly: all three checks pass trivially over an empty set, and each
+reads from a build that can silently render nothing.
+
+Mutation-verified three ways — reverting the scale-target prefix, narrowing the Prometheus
+namespace list, and pointing CI back at a raw stack path each fail it with the specific reason.
+
+**Gate:** 66 namespaced objects, 6 scale targets, 4 scrape jobs. All existing k8s gates still
+pass (108 probes, 4 targets, placeholder-secret and backend-security checks).

@@ -1,0 +1,32 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Production monitoring stack (FS-509).
+#
+# WHAT WAS BROKEN. `monitoring/` hardcodes `namespace: omniusgrid` in its own
+# kustomization and in every manifest under it, and the STAGING deploy job piped
+# the rendered output into `kubectl apply -n omniusgrid-staging`. kubectl refuses
+# an object whose embedded namespace differs from `-n`:
+#
+#   error: the namespace from the provided object "omniusgrid" does not match
+#   the namespace "omniusgrid-staging"
+#
+# The step runs under `set -euo pipefail`, so the staging deploy failed at that
+# line — staging has never had monitoring applied, and the alert rules FS-498 and
+# FS-583 are about have never been loaded there. Production was unaffected
+# because its namespace happened to match, which is exactly why this survived:
+# the broken path was the one nobody could compare to the working one.
+#
+# WHY AN OVERLAY RATHER THAN FIXING THE `-n` FLAG. `-n` cannot override an
+# embedded namespace; it can only supply one that is absent. Declaring it here
+# rewrites every object, including references `-n` never touches (RoleBinding
+# subjects, NetworkPolicy peers).
+#
+# WHY THIS LIVES OUTSIDE `monitoring/`. kustomize refuses an overlay nested
+# inside its own base — "cycle detected: candidate root contains visited root".
+# Hence `platform/<env>/<stack>` rather than `<stack>/overlays/<env>`.
+
+resources:
+  - ../../../monitoring
+
+namespace: omniusgrid

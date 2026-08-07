@@ -41,7 +41,19 @@ scrape_configs:
     kubernetes_sd_configs:
       - role: endpoints
         namespaces:
-          names: ['omniusgrid']
+          # FS-511. This was ['omniusgrid'] alone, so in staging — where the
+          # namespace is omniusgrid-staging — every one of these four jobs
+          # discovered nothing. Prometheus came up healthy with zero targets,
+          # which is the failure that looks most like success: the UI is
+          # green, the alert rules are loaded, and nothing can ever fire.
+          #
+          # Listing both is deliberate rather than templated. Kubernetes SD
+          # does not error on a namespace that is absent, it simply yields no
+          # targets — so one config is correct in both clusters. A per-env
+          # ConfigMap would mean two copies of this file, and the drift
+          # between them is a worse failure than a listed namespace that a
+          # given cluster happens not to have.
+          names: ['omniusgrid', 'omniusgrid-staging']
     relabel_configs:
       - source_labels: [__meta_kubernetes_service_label_app_kubernetes_io_name]
         action: keep
@@ -60,7 +72,19 @@ scrape_configs:
     kubernetes_sd_configs:
       - role: pod
         namespaces:
-          names: ['omniusgrid']
+          # FS-511. This was ['omniusgrid'] alone, so in staging — where the
+          # namespace is omniusgrid-staging — every one of these four jobs
+          # discovered nothing. Prometheus came up healthy with zero targets,
+          # which is the failure that looks most like success: the UI is
+          # green, the alert rules are loaded, and nothing can ever fire.
+          #
+          # Listing both is deliberate rather than templated. Kubernetes SD
+          # does not error on a namespace that is absent, it simply yields no
+          # targets — so one config is correct in both clusters. A per-env
+          # ConfigMap would mean two copies of this file, and the drift
+          # between them is a worse failure than a listed namespace that a
+          # given cluster happens not to have.
+          names: ['omniusgrid', 'omniusgrid-staging']
     relabel_configs:
       - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
         action: keep
@@ -78,7 +102,19 @@ scrape_configs:
     kubernetes_sd_configs:
       - role: pod
         namespaces:
-          names: ['omniusgrid']
+          # FS-511. This was ['omniusgrid'] alone, so in staging — where the
+          # namespace is omniusgrid-staging — every one of these four jobs
+          # discovered nothing. Prometheus came up healthy with zero targets,
+          # which is the failure that looks most like success: the UI is
+          # green, the alert rules are loaded, and nothing can ever fire.
+          #
+          # Listing both is deliberate rather than templated. Kubernetes SD
+          # does not error on a namespace that is absent, it simply yields no
+          # targets — so one config is correct in both clusters. A per-env
+          # ConfigMap would mean two copies of this file, and the drift
+          # between them is a worse failure than a listed namespace that a
+          # given cluster happens not to have.
+          names: ['omniusgrid', 'omniusgrid-staging']
     relabel_configs:
       - source_labels: [__meta_kubernetes_pod_label_cnpg_io_cluster]
         action: keep
@@ -102,7 +138,19 @@ scrape_configs:
     kubernetes_sd_configs:
       - role: pod
         namespaces:
-          names: ['omniusgrid']
+          # FS-511. This was ['omniusgrid'] alone, so in staging — where the
+          # namespace is omniusgrid-staging — every one of these four jobs
+          # discovered nothing. Prometheus came up healthy with zero targets,
+          # which is the failure that looks most like success: the UI is
+          # green, the alert rules are loaded, and nothing can ever fire.
+          #
+          # Listing both is deliberate rather than templated. Kubernetes SD
+          # does not error on a namespace that is absent, it simply yields no
+          # targets — so one config is correct in both clusters. A per-env
+          # ConfigMap would mean two copies of this file, and the drift
+          # between them is a worse failure than a listed namespace that a
+          # given cluster happens not to have.
+          names: ['omniusgrid', 'omniusgrid-staging']
     relabel_configs:
       - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
         action: keep

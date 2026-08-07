@@ -556,15 +556,35 @@ jobs:
         # These reference operator CRDs (Prometheus rules from outside the tree,
         # CloudNativePG Cluster/Pooler, KEDA ScaledObject) — build with the None
         # load-restrictor and let kubeconform skip the CRD schemas it can't know.
+        #
+        # Built per ENVIRONMENT (FS-509). The raw stack was validated here and applied
+        # somewhere else: all three hardcode `namespace: omniusgrid` and the staging deploy
+        # piped them into `kubectl apply -n omniusgrid-staging`, which kubectl rejects. This
+        # step passed on manifests that could never apply, because it never looked at where
+        # they were being sent.
         run: |
           set -euo pipefail
-          for t in monitoring database-ha autoscaling; do
-            echo "::group::$t"
-            kustomize build --load-restrictor LoadRestrictionsNone "infrastructure/k8s/$t" \
-              | kubeconform -summary -ignore-missing-schemas \
-                  -kubernetes-version 1.29.0
-            echo "::endgroup::"
+          for env in staging production; do
+            for t in monitoring database-ha autoscaling; do
+              echo "::group::$env/$t"
+              kustomize build --load-restrictor LoadRestrictionsNone \
+                "infrastructure/k8s/platform/$env/$t" \
+                | kubeconform -summary -ignore-missing-schemas \
+                    -kubernetes-version 1.29.0
+              echo "::endgroup::"
+            done
           done
+      - name: Manifests land in their declared namespace and name a real target
+        run: |
+          pip install pyyaml
+          # kubeconform cannot see either of these: a namespace disagreeing with the `-n`
+          # flag is schema-valid, and a scaleTargetRef naming a Deployment that does not
+          # exist is just a string. Both fail at apply time or silently at run time —
+          # staging never had monitoring applied at all, and KEDA scaled nothing in EITHER
+          # environment because the app overlays add a namePrefix the autoscaling stack
+          # does not. Also asserts the deploy job still routes through the overlays, since
+          # fixing the manifests alone would leave the mismatch exactly where it was.
+          ./tests/k8s/check_namespaces_and_targets.py
 
   # --- k8s live smoke test on kind (blocking) ------------------------------
   k8s-smoke:

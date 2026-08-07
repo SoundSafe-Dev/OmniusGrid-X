@@ -2748,6 +2748,29 @@ one of its findings. The habit that catches it:
      as it could never fire. Ask what would have to happen for the declaration to *do*
      something, then assert that.
 
+122. **When two components must agree, something has to read both.**
+     The backend knew which command ids it dispatched, the agent knew which it registered,
+     both were right about themselves, and the fleet answered `unknown_action` to every model
+     rollout. The defect is in the absence of a third thing that reads both — and that guard
+     is still yours to write when one side is out of your lane.
+
+123. **A test proves the code is correct, never that anything calls it.**
+     Three edge-agent modules had passing tests, green coverage and no production caller.
+     Nothing in the ordinary signals separates that from a working feature. Whenever a sweep
+     asks "is this tested?", ask the second question: **is it reached?**
+
+124. **A commented line documents an intention; it configures nothing.**
+     Four edge-agent safety switches were "set" in a commented block headed "Production
+     posture". They grep as present, and every deployment ran the permissive default. Parse
+     the artefact rather than the text, and treat *unset* as a value: only a default somebody
+     chose is safe to ship.
+
+125. **An unreachable path in a fully-swallowing component fails invisibly forever.**
+     The HTTP collector catches twice over, so it cannot crash, restart or report — a poll
+     that raises every cycle is indistinguishable from one that works. Broad handlers plus
+     zero behavioural tests is the pairing to look for: neither alone is alarming, and
+     together they mean nothing has ever confirmed the component does its job.
+
 ---
 
 ## Open observations, not yet tickets
