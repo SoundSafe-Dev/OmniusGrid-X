@@ -61,10 +61,12 @@ MAX_UNSIGNALLED = 0
 
 #: Files another dev owns. Counted, because the number is about the API's surface rather
 #: than about who fixes it — but named so a failure says whose lane it is in.
-OTHER_LANES = {
-    "analysis_sessions", "nlp_correlation", "kanban", "telemetry",
-    "auth", "engines", "model_monitoring", "logistics_correlation",
-}
+#:
+#: SHARED (FS-590). This was a private copy of eight routers and
+#: `test_generated_input_cannot_five_hundred` kept its own list of the same eight plus
+#: `rag` — already diverged, silently, with neither file able to see it. Lane ownership is
+#: one fact about the team.
+from tests._lane_failures import LANE_ROUTERS as OTHER_LANES
 
 #: How an endpoint declares it was capped. `mark_truncated` (app/core/pagination.py) sets
 #: `X-Result-Truncated` from a `limit + 1` probe.

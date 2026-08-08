@@ -43,15 +43,31 @@ from app.services.cloud_gateway import cloud_gateway
 from app.services.mlops_pipeline import mlops_pipeline
 from app.services.strategic_engine import strategic_engine
 from app.services.tactical_engine import tactical_engine
+from tests.test_service_lifecycle_is_declared import EXPECTED_DORMANT
 
 MAIN = pathlib.Path(__file__).resolve().parents[1] / "app" / "main.py"
 
-ENGINES = {
+#: The four, keyed by the SHARED dormant declaration (FS-590).
+#:
+#: THIS FILE KEPT A PRIVATE COPY, AND IT WAS MINE, WRITTEN HOURS EARLIER.
+#: `test_service_lifecycle_is_declared.py` already recorded exactly which background
+#: services are dormant and why — with better reasons than a bare list, including the one
+#: that matters most: `cloud_gateway` holds a 10,000-entry in-memory queue drained only by
+#: the `_flush_loop` that `start()` launches, so starting any producer without it means
+#: events accumulate and are silently dropped.
+#:
+#: Two lists of the same fact is FS-492's shape, and the carry-across sweep that found it
+#: was looking for exactly this — in other people's guards. It found mine first.
+#:
+#: Reading `EXPECTED_DORMANT` means the day one of these is started, BOTH guards fail
+#: together and the reasoning lives in one place.
+_INSTANCES = {
     "tactical_engine": tactical_engine,
     "mlops_pipeline": mlops_pipeline,
     "strategic_engine": strategic_engine,
     "cloud_gateway": cloud_gateway,
 }
+ENGINES = {name: _INSTANCES[name] for name in EXPECTED_DORMANT if name in _INSTANCES}
 
 
 def _started_in_main() -> set[str]:
@@ -69,6 +85,27 @@ def _started_in_main() -> set[str]:
 
 
 class TestThePremiseIsStillTrue:
+    def test_the_derived_set_did_not_shrink(self):
+        """DERIVING A LIST TRADES ONE FAILURE FOR ANOTHER, and this is the second one.
+
+        Sharing `EXPECTED_DORMANT` removed the divergence two private copies had already
+        accumulated (FS-590). It also means this file's population is now controlled by
+        another file — and when a mutation test removed `cloud_gateway` from that
+        declaration, every assertion here still passed. **The suite went from 16 tests to
+        14 and reported success**: the sweep had silently stopped checking the one engine
+        whose dormancy actually costs something, because it holds a 10,000-entry queue that
+        only its own `_flush_loop` drains.
+
+        A count is the cheapest thing that notices. Sharing a list is right; sharing it
+        without asserting what you got is how a guard narrows to nothing one entry at a
+        time.
+        """
+        assert set(ENGINES) == set(_INSTANCES), (
+            f"this file checks {sorted(ENGINES)} and expects {sorted(_INSTANCES)}. An "
+            f"engine dropped out of EXPECTED_DORMANT, so it is no longer checked here — "
+            f"either it was started (update both) or the declaration lost an entry."
+        )
+
     def test_main_starts_something(self):
         """If this read empty the whole file would pass by asserting that engines nobody
         starts report they are not started — true and useless."""

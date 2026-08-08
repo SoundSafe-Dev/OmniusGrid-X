@@ -98,3 +98,30 @@ GET_FAILURES: dict[str, LaneFailure] = {}
 #: Write endpoints permitted to 5xx. Keyed by (method, path) — the write walk records why
 #: the method is part of the key, and it is not optional.
 WRITE_FAILURES: dict[tuple[str, str], LaneFailure] = {}
+
+
+#: Routers another dev owns (FS-590).
+#:
+#: TWO GUARDS KEPT PRIVATE COPIES AND THEY HAD ALREADY DIVERGED.
+#: `test_capped_lists_cannot_grow.OTHER_LANES` listed eight routers;
+#: `test_generated_input_cannot_five_hundred._OTHER_LANES` listed the same eight plus
+#: `rag`. So one sweep exempted the RAG router and the other did not, and neither file
+#: could see the disagreement — which is FS-492's shape exactly, arriving in the guards
+#: themselves rather than in the code they check.
+#:
+#: The divergence was benign here (a subset, not a contradiction), and that is the point:
+#: it had already happened, silently, and the next edit to either list would have widened
+#: it. Lane ownership is one fact about the team, not two facts about two test files.
+#:
+#: `rag` is included — it is htreinen's, like the others.
+LANE_ROUTERS = frozenset({
+    "analysis_sessions",
+    "auth",
+    "engines",
+    "kanban",
+    "logistics_correlation",
+    "model_monitoring",
+    "nlp_correlation",
+    "rag",
+    "telemetry",
+})

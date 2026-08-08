@@ -7624,3 +7624,68 @@ the negative: **no regression below the floor**, under conditions worse than CI'
 The tool behaved correctly throughout, including on the run before this one — a truncated
 report was rejected with *"collected 1 operations, expected about 452 … a collapse in
 collection would look like a pass"*, which is the vacuity check earning its place.
+
+---
+
+# Wave Q — the standing defect hunt
+
+Eight carry-across items: take a class already closed once, ask which other component has the
+same shape, sweep, guard, mutation-verify. **Three of the eight found nothing, and that is
+recorded, because "proven clean" and "never checked" look identical afterwards.**
+
+## FS-590 — no two guards keep the same list, and the first duplicate was mine
+
+FS-492 found a sweep reading a private copy of the shared route list. Carried across to **the
+guards themselves**: 86 module-level string collections live in `tests/`, and any two
+describing the same fact will drift, because nothing compares them.
+
+**`ENGINES` vs `EXPECTED_DORMANT`.** `test_service_lifecycle_is_declared.py` already declared
+exactly which background services are dormant, with better reasons than a bare list — including
+the one that matters: `cloud_gateway` holds a 10,000-entry in-memory queue drained only by the
+`_flush_loop` its own `start()` launches, so starting any producer without it means events
+accumulate and are silently dropped. **I wrote the duplicate hours before this sweep found it**,
+in the FS-530 guard. It derives from the shared declaration now.
+
+**`OTHER_LANES` vs `_OTHER_LANES`.** Two sweeps' idea of which routers belong to another dev —
+and **they had already diverged**: one exempted `rag` and the other did not, silently, with
+neither file able to see it. Benign as a subset, and the next edit to either would have widened
+it. Lane ownership is one fact about the team, so it moved to `_lane_failures.LANE_ROUTERS`.
+
+**Two media-type guards keep different lists of response classes** and each is missing entries
+the other has — `DYNAMIC` has `RedirectResponse`, `_EMITTERS` has `PlainTextResponse`,
+`HTMLResponse` and two helpers. `PlainTextResponse` sets its own content type and is absent from
+the first, which looks like a gap rather than a distinction. **Recorded, not merged**: both
+belong to a sweep I have not read in full, and merging two lists on a resemblance is how a guard
+quietly widens or narrows.
+
+**`PUBLIC_PROBES` ⊂ `PUBLIC_REQUIRED_EXACT`** — compared and left alone. Different questions
+("must not disclose" vs "must be reachable unauthenticated"), and the subset relation is
+coherent rather than accidental.
+
+### Deriving a list trades one failure for another
+
+Sharing removed the divergence and handed the source control of the consumer's population. When
+a mutation test dropped `cloud_gateway` from `EXPECTED_DORMANT`, the engine-status suite went
+from 16 tests to 14 **and reported success** — it had silently stopped checking the one engine
+whose dormancy actually costs something.
+
+A count is the cheapest thing that notices. Sharing a list is right; sharing it without
+asserting what you got back is how a guard narrows to nothing one entry at a time.
+
+The detector needed one correction of its own: two `Path` constants pointing at the same
+workflow file share three "members" (`.github`, `workflows`, `quality-gates.yml`). Two guards
+reading the same file is correct, and reporting it is the kind of noise that stops a sweep being
+read — `Path` expressions are excluded.
+
+## FS-589, FS-592 — swept, nothing found, recorded
+
+**Hardcoded constants presented as measurements**, carried from FS-533 across all of `app/`.
+Forty numeric literal defaults exist; narrowing to the actual shape — *a default no caller ever
+overrides, whose value becomes a figure a user reads* — leaves **seven**, and every one is an
+internal threshold or cap (a dedup TTL, a PSI threshold, a calculation interval, a field cap).
+None is the fuel-surcharge shape where the default IS the answer on screen.
+
+**Counted what does not run**, carried from FS-490 to the frontend test suite: **zero** `.skip`,
+`.todo`, `xit` or `xdescribe` across 110 test files.
+
+**Suite:** backend 3881 → 3897.

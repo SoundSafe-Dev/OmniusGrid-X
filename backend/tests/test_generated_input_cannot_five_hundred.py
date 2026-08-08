@@ -43,8 +43,10 @@ _OFFSET_NAMES = {"skip", "offset"}
 
 #: Files another dev owns; their parameters are theirs to bound.
 #: `telemetry.py` carries the one remaining unbounded `skip` and is Harsh's.
-_OTHER_LANES = {"telemetry", "kanban", "auth", "analysis_sessions", "nlp_correlation",
-                "model_monitoring", "logistics_correlation", "engines", "rag"}
+#:
+#: SHARED (FS-590). See `_lane_failures.LANE_ROUTERS` — this list and the one in
+#: `test_capped_lists_cannot_grow` had already drifted apart by one entry.
+from tests._lane_failures import LANE_ROUTERS as _OTHER_LANES
 
 
 def _upper_bound(field_info):
