@@ -7059,3 +7059,44 @@ The self-check for that was then wrong too: it asserted the stripped source cont
 property now — that this file contributes no entries to its own sweep.
 
 **Frontend:** 847 → 851 tests.
+
+---
+
+## FS-550 / FS-552 — an unlabelled combobox, app-wide, reported at 100% coverage
+
+`ui/Select.tsx` rendered a `<label>` with no `htmlFor` and a `<select>` with no `id`. **A
+screen reader announced "combo box" and nothing else** — on every filter and every form built
+from the shared primitive. Its error text had no `role="alert"`, no `aria-describedby` and no
+`aria-invalid`, so a validation failure was perceivable only to someone looking at the colour.
+
+`Input.tsx`, one file away, does all of this correctly with `useId()` and has since task 6.
+**That is what makes this a defect rather than an omission**: the pattern was established,
+applied to one primitive, and not carried across. `Select` now mirrors it exactly.
+
+### It was reported at 100% of lines the whole time
+
+The barrel imports it, so the module body executes and every line counts as covered. Nothing
+ever *rendered* it. `a11y.test.tsx` covered `Button` and `Input` and stopped there.
+
+That is the same distinction FS-529 drew between a definition being tested and being reached,
+arriving at the coverage report: **a file can be fully "covered" and never exercised.** It is
+also why FS-541's widened include does not by itself help here — the number was already 100%
+and already wrong.
+
+The axe baseline now covers six primitives (`Button`, `Input`, `Select`, `Table`, `Modal`,
+`Badge`) with two `Select`-specific assertions: that the label is queryable — which is what
+throws without `htmlFor`/`id` — and that the error carries `role="alert"` and the control
+`aria-invalid`, because that is the difference between an error being *visible* and being
+*perceivable*.
+
+Mutation-verified both ways: removing `htmlFor` fails two tests, removing `role="alert"` fails
+one.
+
+### `tsc` caught the Table test using another component's API
+
+The first version rendered `<Table columns={...} data={...} />`. This `Table` is compound —
+`Table.Head`, `Table.Row`, `Table.Cell`. In a JavaScript test that would have rendered an
+**empty table** and asserted it had no accessibility violations, which is true and worthless.
+The type checker refused it.
+
+**Frontend:** 851 → 856 tests · `tsc` clean.
