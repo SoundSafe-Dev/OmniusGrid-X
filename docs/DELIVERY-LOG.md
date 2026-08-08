@@ -7589,3 +7589,38 @@ on either entry would have deleted live, routed code.
   decision; what was fixed is that their status routes no longer report construction defaults
   as measurements.
 * **Wave Q** (FS-585…592) — the standing carry-across hunt, not begun.
+
+---
+
+## FS-573 — the contract gate was run, and the number is not usable
+
+Run locally against an isolated TimescaleDB after this tranche's changes:
+
+```
+contract conformance: 387/471 operations (ratchet: 380)
+84 failed, 387 passed in 34:12
+```
+
+**The gate passes.** Nothing in this tranche dropped conformance below the committed floor,
+including the fourteen create endpoints FS-523 made callable for the first time — which is the
+question worth asking, because an endpoint that used to answer 422 on a missing required field
+now reaches its handler, where generated input can find a 500.
+
+**The number itself is not a conformance measurement, and the ratchet was not raised.**
+`contract_ratchet.py` printed *"Raise BASELINE_PASSING to 387 to lock the gain in"*, and doing
+that would have been wrong twice over:
+
+* This run had **no Redpanda**. CI supplies one (`REDPANDA_URL: 127.0.0.1:39092`); locally the
+  app spent the run retrying a broker that was not there — 352 `KafkaConnectionError` lines,
+  individual requests taking up to **73 seconds**, and **47 of the 84 failures are read
+  timeouts** rather than contract violations. A timeout is a fact about my laptop.
+* 387 is **below the 392** measured earlier in this session under the restricted role. Raising
+  a floor to a number lower than one already observed is not locking in a gain; it is lowering
+  the bar while the tool's message makes it read as the opposite.
+
+So the floor stays at 380 and FS-573's burn-down stays open. What this run does establish is
+the negative: **no regression below the floor**, under conditions worse than CI's.
+
+The tool behaved correctly throughout, including on the run before this one — a truncated
+report was rejected with *"collected 1 operations, expected about 452 … a collapse in
+collection would look like a pass"*, which is the vacuity check earning its place.
