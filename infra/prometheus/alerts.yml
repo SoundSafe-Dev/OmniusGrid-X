@@ -688,6 +688,26 @@ groups:
       #
       # Critical rather than high: an audit gap is a compliance finding, it cannot be
       # reconstructed after the fact, and every minute it continues is unrecoverable.
+      # Telemetry the edge agent permanently discarded (FS-591).
+      #
+      # DISTINCT FROM EdgeAgentBufferHigh, which watches data WAITING to send. This watches
+      # data that no longer exists: the store-and-forward buffer sheds its oldest rows on a
+      # full disk, those readings are gone from the device, and they never reached the
+      # cloud. FS-504 made the agent count them; nothing consumed the count.
+      #
+      # `increase` over an hour rather than a threshold on the gauge, because the value is
+      # cumulative — a fleet that dropped rows last month should not page forever, and a
+      # fleet dropping them now should page whatever the historical total.
+      - alert: EdgeAgentDroppingTelemetry
+        expr: increase(edge_agent_dropped[1h]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Agent {{ $labels.agent_id }} is discarding telemetry"
+          description: "{{ $value }} readings were permanently discarded by {{ $labels.agent_id }} in the last hour. Unlike buffer_pending (waiting) and dead_lettered (replayable), this data no longer exists anywhere. The buffer sheds its oldest rows when the disk is full — check disk space and uplink health on the device."
+
       - alert: AuditWriteFailing
         expr: increase(opsgrid_audit_write_failed_total[10m]) > 0
         for: 0m

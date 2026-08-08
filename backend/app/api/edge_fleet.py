@@ -52,6 +52,16 @@ class AgentStatusOut(BaseModel):
     last_seen: Optional[str]
     buffer_pending: int
     dead_lettered: int
+    #: FS-591. Declared last, and it was missing entirely. The agent counts discarded
+    #: telemetry, sends it every heartbeat, `HeartbeatPayload` accepts it and the handler
+    #: writes it to `edge_agent_status.dropped` — and this model omitted it, so FastAPI
+    #: deleted it on the way out and no fleet view has ever shown how much data an agent
+    #: has lost.
+    #:
+    #: `buffer_pending` is waiting to send and `dead_lettered` is replayable. **This one is
+    #: gone.** It was the only unrecoverable figure of the three and the only one with no
+    #: response field, no gauge and no alert.
+    dropped: int = 0
     active_collectors: int
     total_collectors: int
     cert_expires_in_seconds: Optional[int]
@@ -142,6 +152,7 @@ def _to_out(row: EdgeAgentStatus, now: datetime) -> AgentStatusOut:
         last_seen=row.last_seen.isoformat() if row.last_seen else None,
         buffer_pending=row.buffer_pending or 0,
         dead_lettered=row.dead_lettered or 0,
+        dropped=row.dropped or 0,
         active_collectors=row.active_collectors or 0,
         total_collectors=row.total_collectors or 0,
         cert_expires_in_seconds=row.cert_expires_in_seconds,

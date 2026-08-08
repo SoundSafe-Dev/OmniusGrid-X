@@ -7689,3 +7689,52 @@ None is the fuel-surcharge shape where the default IS the answer on screen.
 `.todo`, `xit` or `xdescribe` across 110 test files.
 
 **Suite:** backend 3881 → 3897.
+
+---
+
+## FS-585 / FS-591 — the one counter that measures permanent loss reached nobody
+
+Carried from FS-485 ("a signal the server sends and nothing consumes") to the **edge→backend
+heartbeat** — the one wire in this product where a field crosses a network, a schema, an ORM and
+a response model. Four boundaries, each of which fails silently.
+
+**It found `dropped`.** The agent counts telemetry its store-and-forward buffer discarded;
+FS-504 built that counter, because up to 500 undelivered readings vanished per disk-full event
+with nothing recording it. The count is sent in every heartbeat, accepted by `HeartbeatPayload`,
+and written to `edge_agent_status.dropped`.
+
+Then it stops. `AgentStatusOut` omitted it, `update_fleet_metrics` set no gauge, and no alert
+named it. FastAPI **deletes** an undeclared response field rather than erroring, so the number
+travelled the entire wire, landed in a column, and reached nobody.
+
+### The instrumentation was inversely proportional to the severity
+
+| figure | what it means | gauge | alert |
+|---|---|---|---|
+| `buffer_pending` | waiting to send — **recoverable** | ✅ | ✅ `EdgeAgentBufferHigh` |
+| `dead_lettered` | preserved for replay — **recoverable** | ✅ | — |
+| `dropped` | **gone from the device, never arrived** | ❌ | ❌ |
+
+Both recoverable figures were instrumented. The permanent one had no gauge, no alert, and no
+field in the response. All three now exist, and `EdgeAgentDroppingTelemetry` is `critical`
+reading an **`increase` over an hour** rather than a threshold on the cumulative total — an
+agent that dropped 4,000 readings during an outage last quarter is not an incident today, and
+an alert that always fires is muted within a day. The promtool test drives the firing case and
+both quiet ones.
+
+### And a second finding, recorded rather than resolved
+
+`agent_version` **is** served — by a different route, from a different column.
+`GET /fleet/agents/versions` builds its distribution from `Asset.agent_version`, written by the
+**Kafka** heartbeat path (`workers/ingestion.py:415`); the **HTTP** heartbeat writes
+`EdgeAgentStatus.agent_version`. Two writers, two tables, one fact — so an agent reporting over
+one path and not the other shows a different version depending on which screen you open.
+
+Not resolved here: reconciling them means deciding which table owns the fleet's version, which
+is the OTA lane's call. Recorded so the next person to touch either writer sees the other.
+Rule 122, again.
+
+Mutation-verified at all three boundaries independently — removing the accept field, the
+response field, and the gauge each fail with the specific reason.
+
+**Suite:** backend 3897 → 3910 · 51 alert rules.

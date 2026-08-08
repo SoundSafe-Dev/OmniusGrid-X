@@ -82,3 +82,50 @@ tests:
       - eval_time: 11m
         alertname: EdgeAgentBufferHigh
         exp_alerts: []
+
+  # ---------------------------------------------------------------------------
+  # EdgeAgentDroppingTelemetry (FS-591). Data that NO LONGER EXISTS — distinct from
+  # EdgeAgentBufferHigh, which watches data waiting to send.
+  #
+  # The counter is cumulative, so the rule uses `increase` over an hour: a fleet that
+  # dropped rows last month must not page forever, and a fleet dropping them now must page
+  # whatever its historical total. Both directions are asserted below.
+  # ---------------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'edge_agent_dropped{agent_id="edge-agent-0"}'
+        values: '0+5x70'          # +5 discarded every minute
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: EdgeAgentDroppingTelemetry
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              team: platform
+              agent_id: edge-agent-0
+            exp_annotations:
+              summary: "Agent edge-agent-0 is discarding telemetry"
+              description: "150 readings were permanently discarded by edge-agent-0 in the last hour. Unlike buffer_pending (waiting) and dead_lettered (replayable), this data no longer exists anywhere. The buffer sheds its oldest rows when the disk is full — check disk space and uplink health on the device."
+
+  # MUST STAY QUIET: a historical total that is not growing. The case a threshold on the
+  # raw gauge gets wrong — an agent that dropped 4,000 readings during an outage last
+  # quarter is not an incident today, and an alert that pages about it forever is muted
+  # within a day, which is the same as not having one.
+  - interval: 1m
+    input_series:
+      - series: 'edge_agent_dropped{agent_id="edge-agent-1"}'
+        values: '4000x70'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: EdgeAgentDroppingTelemetry
+        exp_alerts: []
+
+  # MUST STAY QUIET: a healthy agent that has never dropped anything.
+  - interval: 1m
+    input_series:
+      - series: 'edge_agent_dropped{agent_id="edge-agent-2"}'
+        values: '0x70'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: EdgeAgentDroppingTelemetry
+        exp_alerts: []

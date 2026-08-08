@@ -51,6 +51,23 @@ edge_agent_dead_lettered = Gauge(
     "Dead-lettered message count reported by the agent",
     ["agent_id"],
 )
+#: Telemetry the agent DISCARDED — the only one of the three buffer figures that is
+#: unrecoverable, and the only one that had no gauge (FS-591).
+#:
+#: `buffer_pending` is data waiting to send. `dead_lettered` is data preserved for replay.
+#: **`dropped` is data that no longer exists anywhere**: the store-and-forward buffer sheds
+#: its oldest rows on a full disk (FS-504 made it count them) and those readings are gone
+#: from the edge and never reached the cloud.
+#:
+#: It was counted by the agent, sent in every heartbeat, accepted by `HeartbeatPayload`, and
+#: written to `edge_agent_status.dropped` — then omitted from `AgentStatusOut`, given no
+#: gauge here, and no alert. The one number measuring permanent loss travelled the entire
+#: wire and reached nobody, while the two recoverable ones were both instrumented.
+edge_agent_dropped = Gauge(
+    "edge_agent_dropped",
+    "Telemetry permanently discarded by the agent's buffer (unrecoverable)",
+    ["agent_id"],
+)
 edge_agent_active_collectors = Gauge(
     "edge_agent_active_collectors",
     "Active collector count reported by the agent",
@@ -68,6 +85,7 @@ def update_fleet_metrics(agent_id: str, health: Dict[str, Any], live: str) -> No
     edge_agent_up.labels(agent_id=agent_id).set(1 if live == "online" else 0)
     edge_agent_buffer_pending.labels(agent_id=agent_id).set(health.get("buffer_pending", 0) or 0)
     edge_agent_dead_lettered.labels(agent_id=agent_id).set(health.get("dead_lettered", 0) or 0)
+    edge_agent_dropped.labels(agent_id=agent_id).set(health.get("dropped", 0) or 0)
     edge_agent_active_collectors.labels(agent_id=agent_id).set(health.get("active_collectors", 0) or 0)
     cert = health.get("cert_expires_in_seconds")
     if cert is not None:
