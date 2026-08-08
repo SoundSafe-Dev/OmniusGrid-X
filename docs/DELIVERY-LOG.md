@@ -7506,3 +7506,86 @@ not obvious until it passes when it should fail.
 Mutation-verified: a new unused export fails by name.
 
 **Frontend:** 871 → 876 tests · `tsc` clean.
+
+---
+
+# FS-493 … FS-575 — what this tranche found, in one place
+
+Eighty-three items across five waves. The summary is not a list of fixes; it is the set of
+**shapes** that turned up more than once, because those are what the next person will hit.
+
+## Six things were broken in production and produced no signal
+
+| | |
+|---|---|
+| Every model rollout the cloud dispatched | the agent registers `agent_update` only and answered `unknown_action`, so the rollout recorded a **device** failure against working hardware (FS-505) |
+| Staging never had monitoring, autoscaling or the HA database applied | all three hardcode `namespace: omniusgrid` and the job piped them into `-n omniusgrid-staging`, which kubectl refuses, under `set -euo pipefail` (FS-509) |
+| KEDA scaled nothing, in **both** environments | the ScaledObjects target `ingestion-worker` and the overlays deploy `prod-ingestion-worker` (FS-510) |
+| The compose Prometheus exited on startup | `--alertmanager.url` was removed in Prometheus 2.0, so nobody running the stack locally has ever had metrics — while four CI gates asserted the rule files were well-formed (FS-516) |
+| Fourteen create endpoints answered **422** to the frontend | including `POST /assets`; their schema required an `organization_id` the handler discards, and the frontend sends none (FS-523) |
+| Five ERP vendors synced, stored rows, and analysed nothing | `route_for()` returned `None`, so each reported `skipped: unrouted` behind a successful integration (FS-557…561) |
+
+## The recurring shapes
+
+**A number that was never computed.** `seatbeltViolations: 0` on a driver safety report is a
+claim that no driver has ever been recorded unbelted — countable from the same rows all along.
+Every freight charge came from a fuel differential written in a function signature. `period:
+"30d"` on a query with no time filter, so a driver's score got worse permanently and could
+never recover. And `0.5` meaning both "examined and found nothing" and "never looked", persisted
+to the row a quality engineer reads months later.
+
+**Swallowing was right; silence was the defect.** Three times — a buffer prune dropping 500
+undelivered readings, alarm rule evaluation failing so the alerting was off while telemetry
+flowed, and the audit trail *silently empty on real deployments while every write appeared to
+succeed*. In each the `except` should stay and the counter should have existed.
+
+**Two artefacts, each correct about itself.** The backend knew which commands it dispatched and
+the agent knew which it registered. The consuming half knew which secrets it needed and the
+provisioning half knew which it created. The label knew its text and the input knew its id.
+Nothing read both.
+
+**A guard whose subject list was narrower than the code.** `overlays/dr` absent from a
+"canonical" README that five gates build. Six alert-test files listed by hand in CI. Nine of ten
+component directories outside the coverage measurement. Each artefact was correct when written
+and wrong the moment the tree grew.
+
+## What the detectors cost, and it was mostly mine
+
+Eleven detectors in this tranche were wrong before the code was. The pattern is stable enough
+to state as a rule: **a sweep that flags most of a tree is a broken detector, not a discovery.**
+
+| sweep | first reported | why |
+|---|---|---|
+| orphaned definitions | 1,111 of 1,936 (57%) | subtracted a use per `def`; a definition emits no `Name` node |
+| unnamed buttons | 75 of 97 | regex could not see text nested inside a child element |
+| unassociated labels | 55 of 60 | knew `htmlFor` and not the three other valid forms |
+| ERP status vocabulary | — | five spellings, two of them not status fields at all |
+
+The one that matters most went the **other** way. Recursing the JSX tree with `forEachChild`
+descends into a child's *attributes*, so `<LogOut size={16} />` read as renderable content and
+**both sidebar logout buttons dropped out of the unnamed list** — the control that ends a user's
+session. An over-reporting sweep is noisy and gets fixed; an under-reporting one passes.
+
+**Three guards satisfied themselves**, in three languages, in one day: the `vi.mock` sweep
+matched the dead mocks quoted in its own docstring, the doc-citation guard flagged the paragraph
+confessing a bad citation, and the dead-hook inventory counted its own list as usage. A guard
+that scans the tree it lives in must exclude itself, and none was obvious until it passed when
+it should have failed.
+
+And a **false entry in a curated list** is worse than a false alarm, because it reads as
+verified: two modules sat in the unreachable inventory described as dead, with reasons somebody
+had written after checking. Both are loaded by `importlib` from a dotted string. A reader acting
+on either entry would have deleted live, routed code.
+
+## What is deliberately not done
+
+* **FS-573** — 92 contract non-conformers. An L-sized burn-down needing the live gate to iterate
+  against; the floor is unchanged and holding.
+* **FS-563…566** — RAG streaming, async ingestion, document metadata, answer feedback. Another
+  lane, untouched.
+* **FS-562** — the backend reports `routed: false` with a reason per entity; surfacing that
+  third state on the correlations view is a frontend data-flow change.
+* **FS-530** — the four engines are still not started. Whether they should run is a product
+  decision; what was fixed is that their status routes no longer report construction defaults
+  as measurements.
+* **Wave Q** (FS-585…592) — the standing carry-across hunt, not begun.
