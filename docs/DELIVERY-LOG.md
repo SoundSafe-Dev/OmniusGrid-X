@@ -6904,3 +6904,54 @@ One assertion in the first draft was `... or True`. Removed — a vacuous assert
 about things that only look like they are checking something is worse than none.
 
 **Suite:** backend 3787 → 3803 · frontend 843 · `tsc` clean.
+
+---
+
+## FS-532 — the GeoTab gate had two structural guards and nothing that ran it
+
+`geotab_service` invents telematics at ~35 `random.*` sites, including `hos_violation`
+exception types and hours-of-service figures — **DOT-regulated findings**. Two defences
+existed and both are structural: FS-267's guard pairs gating against stamping across the
+module, and the production settings validator refuses the flag. **Neither runs the code.**
+
+That matters because the gate is spelled two different ways. Four functions call
+`_require_simulated()`; `get_device_location` inlines `if not settings.GEOTAB_SIMULATED`,
+because it *prefers* real data and only invents a position when no trip endpoint or exception
+fix exists. A structural check has to know both spellings — and a third, added by someone who
+did not read the first two, is invisible to it while the fabricated data flows.
+
+**My own detector proved the point before this file existed.** Sweeping for functions calling
+`random.` without calling `_require_simulated` flagged `get_device_location` as an ungated
+fabricator. It is not; it gates correctly, by a different name. A structural sweep is one
+rename from a false positive and one new spelling from a false negative.
+
+### The mutation test caught this file being vacuous
+
+Deleting `get_device_location`'s inline gate left every assertion passing. With simulation off
+the mock registry is skipped, so `known_ids` is empty and the method raises "Device not
+found" — **a refusal, from a branch that has nothing to do with the gate**. The test asserted
+"it refuses" and got that from somewhere else, which is precisely the failure mode its own
+comment warns about two lines above.
+
+The discriminating case needed a device that IS known and has no fix: a trip row with neither
+`start_location` nor `end_location`. That puts the device into `known_ids` and leaves
+`location` as None — the only path that reaches the gate. With it, "No known location";
+without it, coordinates drawn from a bounding box and returned as a fix. On a map those are
+indistinguishable.
+
+The fixture was then wrong in its own right: `get_device_location` issues two queries, and
+answering both with the trip made the second read `exc.location` off a `GeoTabTrip` and raise
+`AttributeError` — a failure in the fixture that read as a failure in the gate. It is
+order-aware now.
+
+Mutation-verified three ways, each on a different defence: removing the HOS gate (fabricated
+DOT data escaping), removing the inline location gate, and dropping the provenance stamp from
+`get_exceptions`.
+
+The refusal assertion deliberately does not pin an exception type — `_require_simulated` raises
+`SimulatedDataDisabled` and the location path raises `ValueError` — but it does exclude
+`TypeError` and `AttributeError`, because a test that passes because it called the method
+wrongly proves nothing about the gate. The first version of the call table used an invented
+device id and did exactly that.
+
+**Suite:** backend 3803 → 3816.
