@@ -1,7 +1,9 @@
 """API routes for AI Engine management"""
 
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
+
+from app.core.pagination import mark_engine_stopped
 from pydantic import BaseModel
 from datetime import datetime, timezone
 from uuid import UUID
@@ -55,16 +57,54 @@ class StrategicRecommendationResponse(BaseModel):
 
 
 class ModelStatusResponse(BaseModel):
+    #: FS-530. `running` is false in every deployment: `mlops_pipeline.start()` is called
+    #: from nowhere, so the poll loop that would populate `cached_models` and advance
+    #: `current_model` has never run. Declared first because it is what the three fields
+    #: below MEAN — without it they are construction-time defaults reported as state.
+    running: bool = False
+    note: Optional[str] = None
     current_model: str
     cached_models: List[str]
     poll_interval_seconds: int
 
 
 # Tactical Engine Routes (Local Inference)
+#: Four engines expose a status route and NONE of them is started (FS-530).
+#:
+#: `main.py` starts eight background services — oee_calculator, command_executor, the two
+#: schedulers, rollout_orchestrator, posting_drain, report_scheduler, error_tracker — and
+#: `tactical_engine`, `mlops_pipeline`, `strategic_engine` and `cloud_gateway` are not among
+#: them. Each defines `start()`, each spawns its loops there, and nothing calls it.
+#: `tactical_engine.py:442-446` records its own unreachability in a docstring.
+#:
+#: So every figure these routes report is the value the object was CONSTRUCTED with:
+#: `model_loaded: false` because nothing loaded a model, `cached_models: []` because the
+#: poll loop never ran, `connected: false` because the connection manager never started.
+#: Each reads as an observation about the world and is a fact about an object nobody
+#: switched on.
+#:
+#: THIS DOES NOT START THEM. Whether these engines should run — and what happens to the
+#: telemetry path when they do — is a product decision in the correlation-AI lane, not a
+#: defect fix. What is a defect is a status endpoint that cannot distinguish "not running"
+#: from "running and idle", which is FS-349's shape exactly: a report carrying a
+#: `model_version` for a model that was never loaded.
+def _engine_running_note(running: bool, engine: str) -> Optional[str]:
+    """The one sentence that separates an idle engine from an absent one."""
+    if running:
+        return None
+    return (
+        f"The {engine} background loop is NOT running: its start() is not called at "
+        f"startup. The figures below are construction-time defaults, not measurements."
+    )
+
+
 @router.get("/tactical/status")
 async def get_tactical_status():
     """Get status of local tactical inference engine"""
+    running = getattr(tactical_engine, "_running", False)
     return {
+        "running": running,
+        "note": _engine_running_note(running, "tactical inference"),
         "model_loaded": tactical_engine.model is not None,
         "model_version": tactical_engine.model_version,
         "max_latency_target_ms": tactical_engine._max_latency_ms,
@@ -102,8 +142,24 @@ async def run_tactical_inference(asset_id: str, feature_vector: dict):
 
 # Strategic Engine Routes (Cloud Recommendations)
 @router.get("/strategic/recommendations", response_model=List[StrategicRecommendationResponse])
-async def get_strategic_recommendations(min_priority: Optional[int] = None):
-    """Get pending recommendations from cloud strategic engine"""
+async def get_strategic_recommendations(
+    response: Response, min_priority: Optional[int] = None
+):
+    """Pending recommendations, and whether the listener that fills them is running.
+
+    AN EMPTY LIST HERE MEANS TWO THINGS (FS-530). Either the strategic listener ran and had
+    nothing to recommend, or `strategic_engine.start()` was never called — which is the
+    case in every deployment, because `main.py` does not call it. The body cannot tell
+    them apart and the page renders "No recommendations" for both, which is the failure
+    that renders as emptiness (FS-487).
+
+    Signalled by HEADER rather than by changing the array into an envelope, for the reason
+    `mark_truncated` gives: clients already consume the bare list, and reshaping it would
+    break every caller to fix something they could then no longer see.
+    """
+    mark_engine_stopped(
+        response, "strategic", getattr(strategic_engine, "_running", False)
+    )
     recs = strategic_engine.get_pending_recommendations(min_priority)
     
     return [
@@ -151,7 +207,10 @@ async def reject_recommendation(rec_id: str, operator_id: str, reason: str):
 async def get_mlops_status():
     """Get MLOps pipeline status"""
     status = mlops_pipeline.get_status()
+    running = getattr(mlops_pipeline, "_running", False)
     return {
+        'running': running,
+        'note': _engine_running_note(running, "MLOps polling"),
         'current_model': status['current_model'],
         'cached_models': status['cached_models'],
         'poll_interval_seconds': status['poll_interval_seconds'],

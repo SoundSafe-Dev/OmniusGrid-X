@@ -6845,3 +6845,62 @@ is a second thing to keep true, which is the shape FS-492 named.
 Mutation-verified: one new uncounted `except Exception: pass` fails at 202.
 
 **Suite:** backend 3778 → 3787.
+
+---
+
+## FS-530 — four engines expose a status route and none of them is started
+
+`main.py` starts eight background services. `tactical_engine`, `mlops_pipeline`,
+`strategic_engine` and `cloud_gateway` are not among them. Each defines `start()`, each spawns
+its loops there, and **nothing calls it**. `tactical_engine.py:442-446` records its own
+unreachability in a docstring, so this has been known for some time.
+
+Every figure those routes report is therefore the value the object was **constructed** with:
+
+| route | reports | means |
+|---|---|---|
+| `/engines/tactical/status` | `model_loaded: false` | nothing loaded a model |
+| `/engines/mlops/status` | `cached_models: []` | the poll loop never ran |
+| `/engines/cloud/status` | `connected: false` | the connection manager never started |
+| `/engines/strategic/recommendations` | `[]` | the listener never ran |
+
+Each reads as an observation about the world and is a fact about an object nobody switched on.
+**`connected: false` on a cloud gateway reads as "the cloud is unreachable"** — a different and
+far more alarming statement than "we never tried". `cached_models: []` reads as "no models have
+been published". An operator cannot act on the difference, because the payload does not carry
+it.
+
+### This deliberately does not start them
+
+Whether these engines should run — and what happens to the telemetry path when they do — is a
+product decision in the correlation-AI lane, not a defect fix. What *is* a defect is a status
+endpoint that cannot distinguish **not running** from **running and idle**. That is FS-349's
+shape exactly, where a report carried a `model_version` for a model that was never loaded, and
+the fix there was to say so in the payload.
+
+Each status route now carries `running` and a one-sentence note. `cloud_gateway` had no
+`_running` flag at all — three siblings had one and it did not, so `get_stats()` had no way to
+answer the question — and now does.
+
+**Both directions are asserted.** A permanent "not running" banner on an engine that has since
+been started is the same defect pointing the other way, and the one that would survive longest:
+nobody investigates a warning that has always been there. A test fails the day any of these
+four appears in `main.py`'s start list, so the note comes out with the same change that starts
+the loop.
+
+### The list route is signalled by header
+
+`/strategic/recommendations` returns a bare array, and an empty one means both "ran, found
+nothing" and "never started" — the failure that renders as emptiness (FS-487). The page renders
+"No recommendations" either way.
+
+`X-Engine-Not-Running` follows `X-Result-Truncated`'s reasoning verbatim: clients already
+consume the bare list, and reshaping it into an envelope would break every caller in order to
+fix something they could then no longer see. A test asserts the body is still a list
+comprehension — **parsed, not grepped**, because `return [` matches a docstring as readily as
+a return, and the docstrings in this file are long enough that it would.
+
+One assertion in the first draft was `... or True`. Removed — a vacuous assertion in a file
+about things that only look like they are checking something is worse than none.
+
+**Suite:** backend 3787 → 3803 · frontend 843 · `tsc` clean.

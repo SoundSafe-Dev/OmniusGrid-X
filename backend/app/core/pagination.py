@@ -105,3 +105,22 @@ def mark_truncated(response: Response, rows: Sequence[T], limit: int) -> List[T]
     response.headers["X-Result-Limit"] = str(limit)
     response.headers["X-Result-Truncated"] = "true" if truncated else "false"
     return list(rows[:limit])
+
+
+#: Response header naming a background loop that is not running (FS-530).
+#:
+#: A list endpoint served from an engine's in-memory state returns `[]` for two entirely
+#: different reasons: the engine ran and found nothing, or the engine was never started. The
+#: body cannot tell them apart, and the frontend renders "No recommendations" for both —
+#: which is the "failure that renders as emptiness" class FS-487 exists to prevent.
+#:
+#: A HEADER for the same reason `X-Result-Truncated` is one: the body is a bare array that
+#: clients already consume, and changing its shape would break every caller in order to fix
+#: something they could then no longer see.
+ENGINE_NOT_RUNNING_HEADER = "X-Engine-Not-Running"
+
+
+def mark_engine_stopped(response: Response, engine: str, running: bool) -> None:
+    """Set `X-Engine-Not-Running: <engine>` when the loop behind this data is not up."""
+    if not running:
+        response.headers[ENGINE_NOT_RUNNING_HEADER] = engine
