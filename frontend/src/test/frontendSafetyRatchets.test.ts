@@ -34,8 +34,8 @@
  *
  * ## Status-colour maps — 12 files, only down
  *
- * Twelve files map a status to a colour. `utils/statusColors.ts` has a contrast test
- * protecting its values; eleven copies do not, and `pages/Alarms.tsx` reproduces
+ * Twelve files map a status to a colour. `STATUS_COLORS` in `utils/constants.ts` has a
+ * contrast test protecting its values; eleven copies do not, and `pages/Alarms.tsx` reproduces
  * `STATUS_COLORS` verbatim including the exact strings that test exists to protect. A private
  * copy of a shared list is FS-492's shape — and here the copy is of the one thing that has a
  * guard, so the guard covers a twelfth of what it appears to.
@@ -159,7 +159,8 @@ describe('frontend safety surfaces only shrink', () => {
     expect(
       [...colourMapFiles].sort(),
       `${colourMapFiles.size} files map a status to a colour, up from ` +
-        `${MAX_COLOUR_MAP_FILES}. utils/statusColors.ts has a contrast test protecting its ` +
+        `${MAX_COLOUR_MAP_FILES}. STATUS_COLORS in utils/constants.ts has a contrast test ` +
+        `protecting its ` +
         `values and the copies do not — pages/Alarms.tsx reproduces STATUS_COLORS verbatim, ` +
         `including the exact strings that test exists to protect. Import the shared map.`,
     ).toHaveLength(MAX_COLOUR_MAP_FILES)

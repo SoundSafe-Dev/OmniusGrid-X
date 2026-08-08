@@ -6994,8 +6994,8 @@ config's include and exclude lists. After the components fix it flagged `utils`,
 `i18n` and `i18n/locales`.
 
 **`utils/` was the real one.** It holds `formatters.ts` — which wraps every date and number
-conversion in a try/catch — and `statusColors.ts`, whose contrast values have a test written
-specifically to protect them. **Both had tests and neither counted toward the number.**
+conversion in a try/catch — and `constants.ts`'s `STATUS_COLORS`, whose contrast values have
+a test (`utils/statusColors.test.ts`) written specifically to protect them. **Both had tests and neither counted toward the number.**
 `types/` and `i18n/locales/` are now excluded with reasons: type declarations have no runtime
 behaviour, so including them adds a denominator with no possible numerator, and translation
 catalogues are data on the same argument as `mockApi.ts`.
@@ -7275,11 +7275,20 @@ That one is **paired with a floor**, for the reason FS-539 gives: a cap on the b
 alone is satisfied by deleting a call site, and only moving both together means a conversion
 was migrated rather than removed.
 
-Twelve files map a status to a colour. `utils/statusColors.ts` has a contrast test protecting
-its values and the eleven copies do not — `pages/Alarms.tsx` reproduces `STATUS_COLORS`
-verbatim, **including the exact strings that test exists to protect**. FS-492's shape, where
-the copy is of the one thing that has a guard, so the guard covers a twelfth of what it
-appears to.
+Twelve files map a status to a colour. `STATUS_COLORS` in **`utils/constants.ts`** has a
+contrast test (`utils/statusColors.test.ts`) protecting its values, and the eleven copies do
+not — `pages/Alarms.tsx` reproduces the map verbatim, **including the exact strings that test
+exists to protect**. FS-492's shape, where the copy is of the one thing that has a guard, so
+the guard covers a twelfth of what it appears to.
+
+*(This paragraph first cited a statusColors module under utils/, which does not exist — the
+test is named for the concept and the map lives in `utils/constants.ts`.
+`test_documented_files_exist` caught it on the next full run: the guard doing its job on the
+person adding guards.*
+
+*It then caught this very sentence, because a confession that names the missing path in
+backticks is indistinguishable from a citation of it — rule 37 once more, in a document rather
+than a detector. The path is written in plain prose here so the guard reads it as English.)*
 
 The non-null count is parsed rather than grepped: `!` appears in `!foo`, `!==`, and inside
 every string in the tree, and only the AST distinguishes the assertion from the operator.
@@ -7287,3 +7296,59 @@ every string in the tree, and only the AST distinguishes the assertion from the 
 Mutation-verified: one added `x.a!.toLocaleUpperCase()` trips two ratchets at once.
 
 **Frontend:** 865 → 871 tests · `tsc` clean.
+
+---
+
+## FS-557 — NetSuite syncs completed, stored rows, and analysed nothing
+
+NetSuite has a working connector, it stores raw records, and
+`erp_sync_correlation.route_for("netsuite", …)` returned `None` for every entity. So every sync
+completed, wrote its rows, and reported `skipped: unrouted` — **a successful integration with
+an empty correlation list, and nothing anywhere saying the vendor was never analysed.**
+
+### Why not reuse SAP's transformer, demonstrated rather than asserted
+
+The route registry states the rule in its own header: *"Reusing another vendor's transformer
+would yield empty normalized records and a confident report of zero anomalies."*
+
+A test now proves it. `transform_invoice` reads `InvoiceId` and `DueDate`; SuiteTalk sends
+`tranId` and `dueDate`. Running SAP's transformer over a NetSuite payload produces
+`invoice_number: None, due_date: None, total_amount: None` — and an analyzer reading a record
+of nulls **finds nothing wrong with it**. The failure is a clean bill of health, not an error,
+which is why it would have survived.
+
+### Two SuiteTalk shapes that decide whether this works at all
+
+* **Reference objects.** `status`, `entity` and `currency` arrive as
+  `{"id": "3", "refName": "Open"}`, not strings. A dict is truthy and never equal to a status
+  string, so the overdue check would take the wrong branch for every invoice.
+* **String amounts.** `"4820.50" > average * 5` is a `TypeError` in Python 3, raised inside a
+  background sync where it is swallowed and the vendor silently stops producing correlations.
+
+### The status vocabulary is the one that would have been a confident wrong answer
+
+`analyze_invoice_anomalies` tests `status != "paid"`. NetSuite never says "paid" — it says
+**"Paid In Full"**. Without the mapping, *every settled invoice reports as overdue*: FS-435's
+shape exactly, two vocabularies with no translation, and the output is wrong rather than
+broken. Mutation-verified — removing the mapping fails seven tests, including the one asserting
+a paid invoice is *not* flagged.
+
+Inventory uses `quantityAvailable` (on-hand minus committed) against `reorderPoint`. Reading
+`quantityOnHand` instead reports a real shortfall as healthy — the direction that looks like
+good news — so the field choice is asserted with a payload where the two disagree (80 on hand,
+12 available, reorder at 50), not merely commented.
+
+### The half-finished registration failed closed, by design
+
+The four routes were registered before the `PATTERN_CLASSES` entry, and `route_for` still
+returned `None` — because it refuses a vendor with routes and no pattern class, exactly as its
+docstring promises: *"a registry entry without a matching PATTERN_CLASSES entry resolves to
+None rather than failing later inside a background sync."* A half-done edit produced no
+correlations instead of an AttributeError in a swallowed task.
+
+The existing registry guard then demanded a sample record for each new transformer and failed
+until it got one. The samples are SuiteTalk-shaped — reference objects and string amounts —
+because a sample of plain scalars would exercise neither of the two conversions the transformer
+exists to perform.
+
+**Suite:** backend 3816 → 3836 · frontend 871.

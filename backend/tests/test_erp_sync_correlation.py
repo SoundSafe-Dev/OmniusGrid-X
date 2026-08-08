@@ -422,6 +422,31 @@ class TestEveryRegisteredTransformerActuallyRuns:
         "transform_shipment": {"ShipmentNumber": "SH-1"},
         "transform_dynamics_invoice": {"invoicenumber": "INV-9", "_customerid_value": "acct-1"},
         "transform_dynamics_product": {"productid": "p-1", "productnumber": "SKU-1"},
+        # NetSuite (FS-557). SuiteTalk-shaped: `status`, `entity` and `currency` are
+        # REFERENCE OBJECTS, not strings, and amounts are strings. Both are the shapes the
+        # transformer exists to flatten, so a sample using plain scalars would exercise
+        # neither and this guard would pass over a transformer that cannot read the real
+        # API — which is precisely what it is here to prevent.
+        "transform_netsuite_invoice": {
+            "tranId": "INV-1",
+            "dueDate": "2026-01-15",
+            "total": "100.00",
+            "status": {"refName": "Open"},
+            "entity": {"refName": "Acme"},
+        },
+        "transform_netsuite_sales_order": {
+            "tranId": "SO-1",
+            "tranDate": "2026-01-02",
+            "total": "250.00",
+            "orderStatus": {"refName": "Pending Fulfillment"},
+            "entity": {"refName": "Acme"},
+        },
+        "transform_netsuite_inventory": {
+            "itemId": "SKU-1",
+            "quantityAvailable": "12",
+            "reorderPoint": "50",
+            "location": {"refName": "Plant A"},
+        },
     }
 
     def test_each_one_returns_a_record_without_raising(self):

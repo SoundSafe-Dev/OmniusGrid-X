@@ -47,6 +47,21 @@ PATTERN_CLASSES: Dict[str, Tuple[str, str]] = {
         "app.services.erp_connectors.dynamics_correlation_patterns",
         "DynamicsCorrelationPatterns",
     ),
+    # FS-557. NetSuite had a working connector storing raw records and no route, so every
+    # sync reported `skipped: unrouted` — a successful integration with an empty
+    # correlation list and nothing saying the vendor was not analysed.
+    #
+    # THIS ENTRY WENT IN SECOND, AND THE GAP BETWEEN WAS INSTRUCTIVE. The four routes
+    # below were registered first and `route_for("netsuite", "invoice")` still returned
+    # None — because `route_for` refuses a vendor with no PATTERN_CLASSES entry, exactly
+    # as its docstring promises: "a registry entry without a matching PATTERN_CLASSES
+    # entry resolves to None rather than failing later inside a background sync." A
+    # half-finished registration failed closed instead of calling a nonexistent class in
+    # a swallowed background task.
+    "netsuite": (
+        "app.services.erp_connectors.netsuite_correlation_patterns",
+        "NetSuiteCorrelationPatterns",
+    ),
 }
 
 #: (erp_type, normalized entity type) -> (transformer method, analyzer method).
@@ -96,6 +111,33 @@ CORRELATION_ROUTES: Dict[Tuple[str, str], Tuple[str, str]] = {
     ("dynamics", "products"): (
         "transform_dynamics_product",
         "analyze_product_inventory_correlation",
+    ),
+    # --- NetSuite (FS-557) --------------------------------------------------------
+    # Each pair verified field-by-field, as the header above requires:
+    # `transform_netsuite_invoice` emits invoice_number / due_date / status /
+    # supplier_id / total_amount, and `analyze_invoice_anomalies` reads those five and
+    # nothing else. NetSuite's own field names are read (`tranId`, `dueDate`,
+    # `quantityAvailable`), because the SAP transformer applied to a SuiteTalk payload
+    # emits a record of Nones and a confident report of zero anomalies.
+    #
+    # Two entity spellings for inventory: SuiteTalk's record type is `inventoryItem` and
+    # the sync also normalises to `inventory`. Both routed rather than assumed, for the
+    # same reason `a_purchaseorder` sits beside `purchaseorder` above.
+    ("netsuite", "invoice"): (
+        "transform_netsuite_invoice",
+        "analyze_invoice_anomalies",
+    ),
+    ("netsuite", "salesorder"): (
+        "transform_netsuite_sales_order",
+        "analyze_sales_order_correlation",
+    ),
+    ("netsuite", "inventoryitem"): (
+        "transform_netsuite_inventory",
+        "analyze_inventory_shortfall",
+    ),
+    ("netsuite", "inventory"): (
+        "transform_netsuite_inventory",
+        "analyze_inventory_shortfall",
     ),
 }
 

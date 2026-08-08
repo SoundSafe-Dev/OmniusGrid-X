@@ -351,6 +351,138 @@ class ERPDataTransformer:
         
         return normalized_items
     
+    # ================================================================================
+    # NetSuite (FS-557)
+    # ================================================================================
+    #
+    # NetSuite has a working connector, stores raw records, and `route_for()` returned
+    # None — so every NetSuite sync completed, wrote its rows, and reported
+    # `skipped: unrouted` with no correlation ever produced. The customer sees a
+    # successful integration and an empty analysis.
+    #
+    # THESE READ NETSUITE'S OWN FIELD NAMES, which is the entire point. The route
+    # registry's header states the rule: "Reusing another vendor's transformer would
+    # yield empty normalized records and a confident report of zero anomalies." SAP's
+    # `transform_invoice` looks for `InvoiceId`/`DueDate`; SuiteTalk sends `tranId` and
+    # `dueDate`, so the SAP transformer applied to a NetSuite payload emits a record of
+    # Nones and the analyzer finds nothing wrong with it — the worst possible outcome,
+    # because it is indistinguishable from clean data.
+    #
+    # Field names are SuiteTalk REST record fields. Two shapes need care and both are
+    # handled below:
+    #
+    #   * `status` and `entity` arrive as OBJECTS (`{"id": "...", "refName": "Open"}`),
+    #     not strings. Reading them directly yields a dict where the analyzer expects a
+    #     scalar, and a dict is truthy — so an overdue check comparing it to "paid" is
+    #     always unequal and every invoice reads as unpaid.
+    #   * amounts arrive as STRINGS ("1234.56"), which is why `_parse_currency` is used
+    #     rather than a bare float().
+
+    @staticmethod
+    def _netsuite_ref(value: Any) -> Optional[str]:
+        """A SuiteTalk reference field, reduced to the scalar an analyzer can compare.
+
+        NetSuite sends `{"id": "12", "refName": "Open"}` for status, customer, currency
+        and location. `refName` is the human value; `id` is the internal key. Prefers
+        `refName`, falls back to `id`, and passes a plain string through unchanged so a
+        flattened payload still works.
+        """
+        if value is None:
+            return None
+        if isinstance(value, dict):
+            reference = value.get("refName") or value.get("id")
+            return str(reference) if reference is not None else None
+        return str(value)
+
+    def transform_netsuite_invoice(self, netsuite_invoice: Dict[str, Any]) -> Dict[str, Any]:
+        """NetSuite invoice -> the five fields `analyze_invoice_anomalies` reads.
+
+        Emits `invoice_number`, `due_date`, `status`, `supplier_id` and `total_amount`
+        under exactly those names, because that analyzer reads those five and nothing
+        else. Verified field-by-field, as the route registry requires.
+        """
+        return {
+            "entity_type": "Invoice",
+            # `tranId` is the document number a user recognises; `id` is internal.
+            "invoice_number": netsuite_invoice.get("tranId") or netsuite_invoice.get("id"),
+            "invoice_date": self._parse_date(netsuite_invoice.get("tranDate")),
+            "due_date": self._parse_date(netsuite_invoice.get("dueDate")),
+            # On an invoice `entity` is the CUSTOMER being billed. It occupies the
+            # `supplier_id` slot because that is what the shared analyzer calls its
+            # counterparty field; renaming the analyzer's contract per vendor is how
+            # two vendors stop being comparable.
+            "supplier_id": self._netsuite_ref(netsuite_invoice.get("entity")),
+            "supplier_name": self._netsuite_ref(netsuite_invoice.get("entity")),
+            "total_amount": self._parse_currency(netsuite_invoice.get("total")),
+            "currency": self._netsuite_ref(netsuite_invoice.get("currency")),
+            "status": self._map_netsuite_status(
+                self._netsuite_ref(netsuite_invoice.get("status"))
+            ),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "source_system": "NetSuite",
+        }
+
+    def transform_netsuite_sales_order(self, netsuite_order: Dict[str, Any]) -> Dict[str, Any]:
+        """NetSuite salesOrder -> the normalized order shape."""
+        return {
+            "entity_type": "SalesOrder",
+            "order_number": netsuite_order.get("tranId") or netsuite_order.get("id"),
+            "order_date": self._parse_date(netsuite_order.get("tranDate")),
+            "delivery_date": self._parse_date(
+                netsuite_order.get("shipDate") or netsuite_order.get("dueDate")
+            ),
+            "customer_id": self._netsuite_ref(netsuite_order.get("entity")),
+            "total_amount": self._parse_currency(netsuite_order.get("total")),
+            "currency": self._netsuite_ref(netsuite_order.get("currency")),
+            "status": self._map_netsuite_status(
+                self._netsuite_ref(
+                    netsuite_order.get("orderStatus") or netsuite_order.get("status")
+                )
+            ),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "source_system": "NetSuite",
+        }
+
+    def transform_netsuite_inventory(self, netsuite_item: Dict[str, Any]) -> Dict[str, Any]:
+        """NetSuite inventoryItem -> the normalized inventory shape."""
+        return {
+            "entity_type": "Inventory",
+            "material_id": netsuite_item.get("itemId") or netsuite_item.get("id"),
+            "material_name": netsuite_item.get("displayName") or netsuite_item.get("itemId"),
+            "plant": self._netsuite_ref(netsuite_item.get("location")),
+            # `quantityAvailable` is on-hand minus committed, which is what a shortage
+            # check needs. `quantityOnHand` overstates availability against open orders.
+            "quantity": self._parse_currency(netsuite_item.get("quantityAvailable")),
+            "quantity_on_hand": self._parse_currency(netsuite_item.get("quantityOnHand")),
+            "reorder_point": self._parse_currency(netsuite_item.get("reorderPoint")),
+            "unit": self._netsuite_ref(netsuite_item.get("unitsType")),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "source_system": "NetSuite",
+        }
+
+    @staticmethod
+    def _map_netsuite_status(status: Optional[str]) -> Optional[str]:
+        """NetSuite status text -> the vocabulary the shared analyzers compare against.
+
+        `analyze_invoice_anomalies` tests `status != "paid"`. NetSuite says "Paid In
+        Full", "Open", "Pending Approval" — none of which equals "paid", so without this
+        mapping **every paid invoice would be reported as overdue**. That is FS-435's
+        shape: two vocabularies, no translation, and the failure is a confident wrong
+        answer rather than an error.
+        """
+        if not status:
+            return None
+        normalized = status.strip().lower()
+        if "paid" in normalized:
+            return "paid"
+        if "open" in normalized or "pending" in normalized:
+            return "open"
+        if "cancel" in normalized or "void" in normalized:
+            return "cancelled"
+        if "closed" in normalized or "fulfilled" in normalized or "billed" in normalized:
+            return "closed"
+        return normalized
+
     def _parse_date(self, date_value: Any) -> Optional[str]:
         """
         Parse date value from SAP format.
