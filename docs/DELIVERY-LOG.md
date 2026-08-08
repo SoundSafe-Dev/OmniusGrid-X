@@ -7142,3 +7142,43 @@ Mutation-verified both assertions: stripping one logout label, and restoring the
 button.
 
 **Frontend:** 856 → 860 tests · `tsc` clean.
+
+---
+
+## FS-548 / FS-582 — "0 Vehicles" is the same lie as "No vehicles", and the sweep could not see it
+
+`GeoTabIntegration` caught both of its fetch failures into `console.error` and nothing else.
+A failed vehicle load left the array empty and the header rendered **"0 Vehicles"** beside an
+empty map. A dispatcher reads that as the fleet not reporting — a claim about the world, from
+a failure of the request.
+
+**`failureIsNotEmptiness` is structurally blind to it.** Six broadenings had made that sweep
+progressively better at finding empty *text*, and a number is not a phrase: a component can
+say exactly the same thing in digits and never enter the population. A count reads as *more*
+authoritative than a sentence, because a figure looks computed.
+
+The component now has real loading and error states, and the count only renders when the
+request succeeded. Geofences deliberately do not set the error — a geofence failure leaves the
+map usable, and `loadError` is reserved for "the vehicle list did not arrive".
+
+### The seventh pattern, and the seventh false positive
+
+`RENDERED_COUNT` matches a count with a **noun beside it**, in JSX text. `{items.length}`
+alone is usually a key or an index; `{items.length} Vehicles` is a statement to a user. Two
+sites match across the tree — the right order of magnitude for a pattern meant to catch a
+claim rather than an expression.
+
+It flagged `CorrelationAIPane` on its first run, correctly by its own rule and wrongly in
+fact: that badge sits inside `{currentSession && …}`, so a failed load leaves the object null
+and nothing renders. **A count read off an object is guarded by that object existing** — a
+guard shape none of the six previous patterns needed to know, because a literal phrase has no
+receiver. The check requires the *same* receiver: `{foo && …{bar.count}…}` is not a guard for
+`bar`, and accepting any nearby `&&` would excuse most of the tree.
+
+That is the seventh false positive this file has recorded, and the first belonging to a
+pattern that is not about phrases. Its history is now a chain of seven broadenings and seven
+corrections, each written down where the next person will hit it.
+
+Mutation-verified: reverting the badge to a bare count fails the sweep by name.
+
+**Frontend:** 860 tests · `tsc` clean.

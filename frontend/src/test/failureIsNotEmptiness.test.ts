@@ -175,9 +175,33 @@ const CHAIN_WINDOW = 2500
  */
 const EMPTY_PHRASE =
   String.raw`(?:No [A-Za-z][^<>{"']{2,120}|[A-Za-z][^<>{"']{0,30}(?:not found|nothing to [a-z]+|no results|is empty|none yet)[^<>{"']{0,20})`
+/**
+ * A SEVENTH BROADENING: A COUNT IS AN EMPTY STATE (FS-548 / FS-582).
+ *
+ * `GeoTabIntegration` rendered `<Badge>{vehicles.length} Vehicles</Badge>`. Both of its
+ * fetches caught failure into `console.error` and nothing else, so a failed load left the
+ * array empty and the header said **"0 Vehicles"**.
+ *
+ * That is the same lie as "No vehicles found" and reads as MORE authoritative, because a
+ * figure looks computed. A dispatcher sees an empty map and a zero and concludes the fleet
+ * is not reporting — a claim about the world, from a failure of the request.
+ *
+ * And every pattern above is structurally blind to it. There is no sentence to match: a
+ * number is not a phrase. Six broadenings had made this sweep progressively better at
+ * finding empty *text* while a component could say the same thing in digits and never enter
+ * the population.
+ *
+ * DELIBERATELY NARROW — a count with a NOUN beside it, in JSX text. `{items.length}` on its
+ * own is usually a key, a style calculation or an index; `{items.length} Vehicles` is a
+ * statement to a user. Two sites match across the tree, which is the right order of
+ * magnitude for a pattern meant to catch a claim rather than an expression.
+ */
+const RENDERED_COUNT = String.raw`\{[A-Za-z_$][\w$.]*(?:\.length|[Cc]ount)\}\s*[A-Za-z][^<>{]{0,28}`
+
 const EMPTY_STATE = [
   new RegExp(String.raw`>\s*(${EMPTY_PHRASE})\s*<`, 'g'),
   new RegExp(String.raw`["'](${EMPTY_PHRASE})["']`, 'g'),
+  new RegExp(String.raw`>\s*(${RENDERED_COUNT})<`, 'g'),
 ]
 
 function sourceFiles(dir: string): string[] {
@@ -275,6 +299,26 @@ export function fallsThroughToEmptiness(raw: string, _file = ''): string[] {
       if (phrase in NOT_A_QUERY_EMPTY_STATE) continue
       const before = source.slice(0, match.index!)
       if (EARLY_RETURN.test(before) || THREE_STATE_CHAIN.test(before)) continue
+      // A COUNT READ OFF AN OBJECT IS GUARDED BY THAT OBJECT EXISTING.
+      //
+      // `CorrelationAIPane` renders `{currentSession && <Badge>{currentSession
+      // .data_sources_count} sources</Badge>}`. If the session failed to load it is null
+      // and the badge does not render at all — there is no zero to misread. The count
+      // pattern flagged it on its first run, correctly by its own rule and wrongly in
+      // fact, which is the seventh false positive this file has recorded and the first
+      // belonging to a pattern that is not about phrases.
+      //
+      // Deliberately requires the SAME receiver: `{foo && …{bar.count}…}` is not a guard
+      // for `bar`, and accepting any nearby `&&` would excuse most of the tree.
+      const receiver = /\{([A-Za-z_$][\w$]*)[.?]/.exec(phrase)?.[1]
+      if (
+        receiver &&
+        new RegExp(String.raw`\{\s*${receiver}\s*&&`).test(
+          before.slice(Math.max(0, before.length - CHAIN_WINDOW)),
+        )
+      ) {
+        continue
+      }
       const chain = before.slice(Math.max(0, before.length - CHAIN_WINDOW))
       const chainStart = before.length - chain.length
       const guarded = [...chain.matchAll(new RegExp(ERROR_BRANCH.source, 'g'))].some((e) =>
