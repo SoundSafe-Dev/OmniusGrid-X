@@ -6677,3 +6677,57 @@ Mutation-verified: removing the alarm-rule counter fails three assertions.
 
 **Suite:** backend 3699 → 3711 · 49 alert rules linted, 7 unit-test files passing · README
 floor raised 3,200 → 3,700 (its own staleness ratchet fired at a 613-test gap).
+
+---
+
+## FS-529 — 53 functions inside live modules that nothing calls
+
+`test_no_new_unreachable_modules.py` tracks whole **modules** nothing imports. It cannot see an
+orphan inside a file that is imported and used on every request — and that is the more dangerous
+shape, because the module around it is alive, tested and reviewed, so the dead function inherits
+all of that credibility.
+
+### The two that are not merely unused
+
+**`core/security.py` holds a second, unreachable WebSocket authenticator.**
+`get_current_user_ws` has no callers. The live one is `api/auth.py:resolve_websocket_user`,
+whose own comment reads *"Same checks as core.security.get_current_user_ws"* — **it cites the
+dead one as its reference**, and they are not the same: the live one also handles the dev-token
+path. A parallel implementation of *authentication* is rule 55 in the worst possible place. The
+next person who reuses the helper sitting in `core/security` gets subtly different auth from
+the rest of the product. `verify_token` and `api_keys.verify_api_key` are the same surface.
+
+**`llm_client.stream_generate` and `strategic_engine.get_recommendation_history` are finished
+capability with no route in front of them** — not dead code, unwired features, and the reason
+two screens render an em dash. Both are already planned (FS-563, FS-567); the inventory
+independently found them from the other direction.
+
+### The detector was wrong first, by a factor of twenty
+
+Its first run reported **1,111 of 1,936 functions — 57% of the codebase.** The bug was a
+decrement: it subtracted one use per `def`, on the theory that a definition is not a use. A
+definition emits no `Name` node for its own name, so nothing needed subtracting, and every
+method called exactly once netted to zero.
+
+A sweep that flags most of a codebase is one nobody reads twice — the module-level guard's
+header records being wrong the same way, by a factor of three. It would also have buried the
+two auth duplicates in a thousand lines of noise, which is the concrete cost.
+
+Two further filters take it from 484 to 53, both real rather than convenient: decorated
+functions are excluded (a route handler, a pydantic validator and a pytest fixture are all
+invoked by name-free machinery — counting them flags every endpoint in the product), and
+definitions inside already-unreachable modules are excluded, because the module guard counts
+them once and double-listing would make this file look like it had found twice as much.
+
+**And I double-listed anyway.** Three `oracle_correlation_patterns.py` entries went into the
+inventory for a file the module guard already carries, so `_orphans()` excluded them and the
+entries described nothing. The staleness test caught it on the first run — which is what that
+test is for, one level up from the docstring warning I had just written and ignored.
+
+A calibration test now asserts the detector never flags more than a tenth of the codebase, so
+the 57% version cannot come back looking diligent.
+
+Mutation-verified: a new function in a live module fails by name. The scan is cached, so 56
+parametrized cases run in 1.8s rather than 60.
+
+**Suite:** backend 3711 → 3768.
