@@ -55,9 +55,25 @@ vi.mock('../components/kanban/KanbanBoard', () => ({
 }))
 vi.mock('../components/kanban/TaskDetailModal', () => ({ TaskDetailModal: () => null }))
 vi.mock('../components/kanban/CreateTaskModal', () => ({ CreateTaskModal: () => null }))
-vi.mock('../components/kanban/KanbanMetrics', () => ({ KanbanMetrics: () => null }))
 vi.mock('../components/kanban/KanbanFilters', () => ({ KanbanFilters: () => null }))
-vi.mock('../components/ExportButton', () => ({ ExportButton: () => null }))
+/* TWO MOCKS HERE POINTED AT NOTHING (FS-544).
+ *
+ *   vi.mock('../components/kanban/KanbanMetrics', ...)   the file is KanbanMetricsBar.tsx
+ *   vi.mock('../components/ExportButton', ...)           it lives in components/common
+ *
+ * Vitest does not warn about a factory registered for a module nobody imports, so both were
+ * inert and both real components rendered — in a test whose stated purpose is to isolate the
+ * page from them. The suite passed either way, which is why it survived: a mock that does
+ * nothing and a mock that works look identical from the outside.
+ *
+ * DELETED RATHER THAN CORRECTED. The page test passes with the real `KanbanMetricsBar` and
+ * the real `ExportButton` mounted — it has been passing that way all along — so stubbing
+ * them now would remove coverage this file already has in order to honour an intention that
+ * was never enforced. The four mocks above are kept because each stands in for something
+ * this test genuinely is not about: a drag implementation, and three modals.
+ *
+ * `mockPathsResolve.test.ts` now fails on a vi.mock path that resolves to no file.
+ */
 
 const { default: KanbanPage } = await import('./Kanban')
 const { TooltipProvider } = await import('../components/ui')

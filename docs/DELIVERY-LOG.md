@@ -7015,3 +7015,47 @@ was agreeing with itself. Only `src/`-rooted globs count as directory scopes now
 corrected version immediately found the four above.
 
 **Frontend:** 843 → 847 tests · `tsc` clean · coverage gate passing at the new floor.
+
+---
+
+## FS-544 / FS-581 — two mocks that pointed at nothing, out of 136
+
+`Kanban.test.tsx` carried two `vi.mock` calls naming modules that do not exist:
+
+```
+vi.mock('../components/kanban/KanbanMetrics', ...)   the file is KanbanMetricsBar.tsx
+vi.mock('../components/ExportButton', ...)           it lives in components/common
+```
+
+**Vitest does not warn about a factory registered for a module nobody imports.** Both were
+inert, both real components mounted, and the test whose stated purpose is to isolate the page
+from them was doing no such thing. The suite passed either way — which is exactly why it
+survived. *A mock that does nothing and a mock that works look identical from the outside.*
+
+A dead mock is worse than no mock: a test with none is honest about what it renders, while a
+test with a dead one states an isolation it does not have — so a failure originating in
+`KanbanMetricsBar` surfaces as a Kanban *page* failure, and whoever debugs it reads the mock
+list and rules that component out.
+
+**Deleted rather than corrected.** The page test has been passing with both real components
+mounted all along, so stubbing them now would remove coverage this file already has in order
+to honour an intention that was never enforced. The four remaining mocks stand in for things
+the test genuinely is not about — a drag implementation and three modals.
+
+`mockPathsResolve.test.ts` sweeps all 136 `vi.mock` calls and fails on any whose path resolves
+to no file. It skips bare specifiers, because `vi.mock('axios')` is npm's problem.
+
+### The guard reported itself, twice over
+
+Its header quotes both dead mocks verbatim, so the first version matched them inside its own
+docstring and named itself as the offender. **Rule 37 in its purest form** — a text search
+finds the comment describing a defect as readily as the defect — and the third guard today to
+hit it. It strips comments now, as `everyMockedClientHasARealModeTest.test.ts` already did for
+the identical reason.
+
+The self-check for that was then wrong too: it asserted the stripped source contains no
+`KanbanMetrics` anywhere, which fails, because the renamed-module test uses those names as
+**data**. Forbidding a string is not the same as forbidding a match; it asserts the precise
+property now — that this file contributes no entries to its own sweep.
+
+**Frontend:** 847 → 851 tests.
