@@ -306,7 +306,18 @@ export const GeofencingPanel: FC<GeofencingPanelProps> = ({ onAlert }) => {
               <p className="text-sm text-gray-600 mb-2">{selectedZone.description}</p>
               <div className="text-xs space-y-1">
                 <p>Type: {selectedZone.type}</p>
-                <p>Radius: {(selectedZone.radius! / 1000).toFixed(1)} km</p>
+                {/* NOT `radius!` (FS-556). This file's own header records that
+                    `zone.center!.latitude` threw on the first centerless zone and, with only
+                    the app-root ErrorBoundary, BLANKED THE ENTIRE APP. `radius` is optional
+                    for exactly the same reason — a polygon zone has neither — and
+                    `(undefined / 1000).toFixed(1)` is the same TypeError twenty lines below
+                    the comment describing it.
+
+                    A polygon zone has no radius to show, so the row is omitted rather than
+                    rendered as NaN. */}
+                {selectedZone.radius != null && (
+                  <p>Radius: {(selectedZone.radius / 1000).toFixed(1)} km</p>
+                )}
                 <p>Alert on Entry: {selectedZone.alertRules.onEntry ? 'Yes' : 'No'}</p>
                 <p>Alert on Exit: {selectedZone.alertRules.onExit ? 'Yes' : 'No'}</p>
               </div>

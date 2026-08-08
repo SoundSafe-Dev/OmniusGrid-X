@@ -7234,3 +7234,56 @@ forgotten.
 Mutation-verified: removing one `htmlFor` fails by file and line.
 
 **Frontend:** 860 → 865 tests · `tsc` clean.
+
+---
+
+## FS-554 / FS-555 / FS-556 — three frontend surfaces that may only shrink
+
+Each is a population where most instances are fine, a few are defects, and telling them apart
+needs judgement a sweep cannot supply. A file demanding thirty fixes gets argued with and
+ignored; a number that can only move one way costs nothing and makes the next addition a
+decision.
+
+### The one real defect, and it is the sharpest kind
+
+The plan listed "twelve non-null assertions on nullable network fields". Measuring found all
+but one are guarded by a preceding `.filter()` or ternary — TypeScript simply cannot narrow
+across a callback boundary. **The framing was wrong and the residue was one.**
+
+That one is `GeofencingPanel`'s `(selectedZone.radius! / 1000).toFixed(1)`. The same file's
+header records that `zone.center!.latitude` threw on the first centerless zone and, with only
+the app-root ErrorBoundary, **blanked the entire app**. `radius` is optional for exactly the
+same reason — a polygon zone has neither — so this is the identical crash on the sibling
+field, twenty lines below the comment describing it. A polygon zone has no radius to show, so
+the row is omitted rather than rendered as NaN.
+
+### The ratchets
+
+```
+MAX_NON_NULL_ASSERTIONS   30    only DOWN
+MAX_INLINE_TO_LOCALE      93    only DOWN
+MIN_FORMATTER_CALLS       65    only UP
+MAX_COLOUR_MAP_FILES      12    only DOWN
+```
+
+`utils/formatters.ts` wraps every date and number conversion in a try/catch returning
+`'Invalid date'`. Ninety-three call sites bypass it, so `new Date(null).toLocaleString()`
+renders the literal string **"Invalid Date"** to a user, and a malformed ERP timestamp becomes
+a cell of nonsense rather than a handled absence.
+
+That one is **paired with a floor**, for the reason FS-539 gives: a cap on the bad number
+alone is satisfied by deleting a call site, and only moving both together means a conversion
+was migrated rather than removed.
+
+Twelve files map a status to a colour. `utils/statusColors.ts` has a contrast test protecting
+its values and the eleven copies do not — `pages/Alarms.tsx` reproduces `STATUS_COLORS`
+verbatim, **including the exact strings that test exists to protect**. FS-492's shape, where
+the copy is of the one thing that has a guard, so the guard covers a twelfth of what it
+appears to.
+
+The non-null count is parsed rather than grepped: `!` appears in `!foo`, `!==`, and inside
+every string in the tree, and only the AST distinguishes the assertion from the operator.
+
+Mutation-verified: one added `x.a!.toLocaleUpperCase()` trips two ratchets at once.
+
+**Frontend:** 865 → 871 tests · `tsc` clean.
