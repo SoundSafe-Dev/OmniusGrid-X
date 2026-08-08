@@ -27,12 +27,28 @@ export default defineConfig({
       // never fall no matter how much untested code was added.
       //
       // The scope below is the code a regression would actually be felt in.
+      // WIDENED 2026-08-08 (FS-541) from `src/components/ui/**` to all of
+      // `src/components/**`. The narrow form left NINE of the ten component
+      // directories outside the measurement — assets, charts, commands, common,
+      // fleet, kanban, layout, nlp and yard, **10,566 lines** — so the four
+      // percentages below described a subset chosen years ago and the ratchet could
+      // not fall no matter how much untested component code was added.
+      //
+      // That is the same failure the comment above this block describes for an even
+      // narrower include, fixed once at a different depth and left half-done: the
+      // scope was widened to five paths and one of them was itself a leaf.
       include: [
         'src/api/**',
         'src/stores/**',
         'src/hooks/**',
-        'src/components/ui/**',
+        'src/components/**',
         'src/pages/**',
+        // FS-541, found by the guard after the components fix. `utils/` holds
+        // `formatters.ts` — which wraps every date/number conversion in a try/catch — and
+        // `statusColors.ts`, whose contrast values have a test protecting them. Both had
+        // tests and neither counted toward the number. `i18n/` is the runtime setup.
+        'src/utils/**',
+        'src/i18n/*.{ts,tsx}',
       ],
       exclude: [
         '**/*.test.{ts,tsx}',
@@ -42,6 +58,17 @@ export default defineConfig({
         // inflate the number with data that has no behaviour to test.
         'src/api/mockApi.ts',
         'src/api/generated/**',
+        // macOS writes these inside source directories and the coverage provider tries
+        // to parse them, printing three RollupError stack traces on every run. Harmless
+        // — they are gitignored and excluded automatically — but a gate whose output is
+        // full of red stack traces is a gate people stop reading.
+        '**/.DS_Store',
+        // Type declarations have no runtime behaviour to cover; including them adds a
+        // denominator with no possible numerator and drags every percentage down for a
+        // reason unrelated to testing.
+        'src/types/**',
+        // Translation catalogues are data, on the same argument as `mockApi.ts` above.
+        'src/i18n/locales/**',
       ],
       // RAISED 2026-07-31 (FS-260). Set from the MEASURED value, with ~1 point of
       // margin, so this is a ratchet rather than an aspiration: it cannot be met by
@@ -62,11 +89,29 @@ export default defineConfig({
       //
       // Raise these as coverage improves. Do NOT lower them to make a build pass:
       // the point is that dropping below today's level is a regression.
+      // RAISED 2026-08-08 (FS-541/542), and the include widened in the same commit so
+      // the number moves for a stated reason rather than appearing to improve.
+      //
+      //   before, ui/ only        50.96 / 55.57 / 45.25 / 52.61   thresholds 38/41/34/39
+      //   after, all components   45.60 / 46.30 / 41.39 / 47.02   thresholds 44/45/40/46
+      //
+      // (utils/ and i18n/ joined in the same commit — the guard found them after the
+      // components fix, and utils/ holds two modules that HAD tests which did not count.)
+      //
+      // The measured figure FELL by widening — 10,566 lines of previously invisible
+      // component code came into scope — and the threshold still rises by six points,
+      // because the old one trailed even the narrow measurement by 13. A ratchet that
+      // sits 13 points below reality would sit through coverage falling by a quarter.
+      //
+      // ~1 point of margin, as FS-260 set: enough that a single refactor does not fail
+      // the build, not enough to absorb a real regression.
+      //
+      // Raise these as coverage improves. Do NOT lower them to make a build pass.
       thresholds: {
-        statements: 38,
-        branches: 41,
-        functions: 34,
-        lines: 39,
+        statements: 44,
+        branches: 45,
+        functions: 40,
+        lines: 46,
       },
     },
   },

@@ -6955,3 +6955,63 @@ wrongly proves nothing about the gate. The first version of the call table used 
 device id and did exactly that.
 
 **Suite:** backend 3803 → 3816.
+
+---
+
+## FS-541 / FS-542 — the coverage ratchet could not see nine of ten component directories
+
+`vitest.config.ts` included `src/components/ui/**` — **one** of the ten directories under
+`src/components/`. The other nine (assets, charts, commands, common, fleet, kanban, layout,
+nlp, yard) were **10,566 lines outside the measurement**, so the four percentages described a
+subset chosen once and never revisited, and the thresholds could not fall no matter how much
+untested component code arrived.
+
+The config's own comment describes exactly this failure for an even narrower include it had
+already fixed: *"it measured the code we happened to have tested, so it could never fall no
+matter how much untested code was added."* **The class was fixed at one depth and left open at
+the next** — the scope was widened to five paths and one of those five was itself a leaf.
+
+### Widening lowers the number and the threshold still rises
+
+```
+before, ui/ only        50.96 / 55.57 / 45.25 / 52.61    thresholds 38 / 41 / 34 / 39
+after,  everything      45.60 / 46.30 / 41.39 / 47.02    thresholds 44 / 45 / 40 / 46
+```
+
+The measured figure **fell** by five points, because previously invisible code came into
+scope — and the threshold still rises by six, because the old one trailed even the narrow
+measurement by 13. A ratchet sitting 13 points below reality would have sat through coverage
+falling by a quarter. Both changes are in one commit so the number moves for a stated reason
+rather than appearing to improve.
+
+Verified to bite: raising `statements` to 47 fails the run with
+`Coverage for statements (45.6%) does not meet global threshold (47%)`.
+
+### The guard found four more, including one that mattered
+
+`coverageSeesEverySourceDirectory.test.ts` pairs every directory under `src/` against the
+config's include and exclude lists. After the components fix it flagged `utils`, `types`,
+`i18n` and `i18n/locales`.
+
+**`utils/` was the real one.** It holds `formatters.ts` — which wraps every date and number
+conversion in a try/catch — and `statusColors.ts`, whose contrast values have a test written
+specifically to protect them. **Both had tests and neither counted toward the number.**
+`types/` and `i18n/locales/` are now excluded with reasons: type declarations have no runtime
+behaviour, so including them adds a denominator with no possible numerator, and translation
+catalogues are data on the same argument as `mockApi.ts`.
+
+### The guard was wrong twice, and the mutation test found the worse one
+
+First it parsed the **wrong `include:`** — the config declares one for which files are *test*
+files and one for which files are *measured*, and taking the first match asserted against the
+test-file pattern. It now slices from `coverage: {`, and a companion assertion fails if the
+test-file glob is ever what gets read.
+
+Then, more seriously: narrowing the include back to `src/components/ui/**` failed only the
+*specific* assertion and not the general one. `covers()` stripped `**` from anywhere, so the
+exclude entry `'**/*.test.{ts,tsx}'` — a **file** pattern, not a directory scope — collapsed
+to an empty prefix and marked every directory as deliberately excluded. The whole-tree check
+was agreeing with itself. Only `src/`-rooted globs count as directory scopes now, and the
+corrected version immediately found the four above.
+
+**Frontend:** 843 → 847 tests · `tsc` clean · coverage gate passing at the new floor.
