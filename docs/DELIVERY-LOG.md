@@ -7792,3 +7792,46 @@ which is why this class only appears in hand-rolled effects, and why the sweep l
 Mutation-verified: restoring the original two lines fails all three assertions at once.
 
 **Frontend:** 876 → 881 tests · `tsc` clean.
+
+---
+
+## FS-587 — swept, nothing found, recorded
+
+"A failure that renders as a fact", carried across to the five remaining fleet panels after
+`GeoTabIntegration` turned out to have neither a loading nor an error state (FS-548).
+
+**All five handle failure correctly.** `PerformancePanel` and `FleetTrackerMap` use the
+three-state ternary (`isLoading ? … : error ? … : …`); `MaintenancePanel` and
+`HealthSecurityPanel` return early on `if (error)`; `GeofencingPanel` branches inline. None has
+a console-only catch.
+
+The first pass of this check grepped for `{error ? …}` and reported four of five as unguarded —
+**the third time today a grep proved narrower than the idioms in use**, and the reason
+`failureIsNotEmptiness` knows five forms of failure branch rather than one. Its verdict on all
+five is clean, and it is the detector that has been corrected seven times.
+
+`GeoTabIntegration` was the outlier, not the pattern. Recorded because *proven clean* and
+*never checked* look identical afterwards.
+
+---
+
+# Wave Q complete — FS-585 … FS-592
+
+Eight carry-across items. **Four found a defect, four found nothing**, and the four negatives
+are written down because the alternative is somebody doing the same work again in three months.
+
+| | found |
+|---|---|
+| **FS-585 / FS-591** | `dropped` — the only unrecoverable buffer figure, and the only one with no response field, no gauge and no alert. The instrumentation was inversely proportional to the severity |
+| **FS-586** | `PlatformDataSourcePicker` rendering an empty `<select>` and an enabled button after a failed request, so the first failure is discovered through a second one |
+| **FS-588** | one shipment's costs shown under another's name — no clear, no catch, no cancellation |
+| **FS-590** | three pairs of guards keeping the same list, one already diverged; **the first duplicate was mine, written hours earlier** |
+| FS-587 | nothing — all five fleet panels already branch on failure |
+| FS-589 | nothing of the FS-533 shape — seven numeric defaults survive the narrowing and all are internal thresholds |
+| FS-592 | nothing — zero skipped tests across 111 frontend files |
+| *(FS-585 folded into FS-591)* | one wire, one finding |
+
+**The method's own result.** Carry-across produced four findings from eight attempts — and two
+of the four were in code written **that same day**, by me: the duplicated engine list, and the
+`dropped` counter I had built without checking whether anything consumed it. Asking "where else
+does this shape live" is worth doing immediately after closing a class, not only months later.
