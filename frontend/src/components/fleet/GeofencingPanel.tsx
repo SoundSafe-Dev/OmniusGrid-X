@@ -505,31 +505,35 @@ const ZoneFormModal: FC<{
           </button>
         </div>
         <div>
-          <label className="block text-sm text-gray-600 mb-1">Name</label>
+          <label htmlFor="geofencingpanel-name" className="block text-sm text-gray-600 mb-1">Name</label>
           <input
+              id="geofencingpanel-name"
             className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
             value={name} onChange={(e) => setName(e.target.value)} placeholder="Downtown Depot"
           />
         </div>
         <div>
-          <label className="block text-sm text-gray-600 mb-1">Description</label>
+          <label htmlFor="geofencingpanel-description" className="block text-sm text-gray-600 mb-1">Description</label>
           <input
+              id="geofencingpanel-description"
             className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
             value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional details"
           />
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="block text-sm text-gray-600 mb-1">Latitude</label>
+            <label htmlFor="geofencingpanel-latitude" className="block text-sm text-gray-600 mb-1">Latitude</label>
             <input
+              id="geofencingpanel-latitude"
               type="number"
               className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
               value={latitude} onChange={(e) => setLatitude(e.target.value)} placeholder="39.8283"
             />
           </div>
           <div>
-            <label className="block text-sm text-gray-600 mb-1">Longitude</label>
+            <label htmlFor="geofencingpanel-longitude" className="block text-sm text-gray-600 mb-1">Longitude</label>
             <input
+              id="geofencingpanel-longitude"
               type="number"
               className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
               value={longitude} onChange={(e) => setLongitude(e.target.value)} placeholder="-98.5795"
@@ -538,16 +542,18 @@ const ZoneFormModal: FC<{
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="block text-sm text-gray-600 mb-1">Radius (km)</label>
+            <label htmlFor="geofencingpanel-radius-km" className="block text-sm text-gray-600 mb-1">Radius (km)</label>
             <input
+              id="geofencingpanel-radius-km"
               type="number"
               className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
               value={radiusKm} onChange={(e) => setRadiusKm(e.target.value)} placeholder="5"
             />
           </div>
           <div>
-            <label className="block text-sm text-gray-600 mb-1">Color</label>
+            <label htmlFor="geofencingpanel-color" className="block text-sm text-gray-600 mb-1">Color</label>
             <select
+              id="geofencingpanel-color"
               className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
               value={color} onChange={(e) => setColor(e.target.value as GeofenceZoneExtended['color'])}
             >

@@ -62,10 +62,11 @@ export const KanbanFilters: React.FC<KanbanFiltersProps> = ({
       <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-3">
         {/* View Type */}
         <div>
-          <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+          <label htmlFor="kanbanfilters-view" className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
             View
           </label>
           <select
+              id="kanbanfilters-view"
             value={filters.view_type}
             onChange={(e) => onFiltersChange({ view_type: e.target.value as any })}
             className="w-full text-sm border border-gray-300 dark:border-gray-600 rounded-md px-2 py-1.5 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
@@ -80,10 +81,11 @@ export const KanbanFilters: React.FC<KanbanFiltersProps> = ({
 
         {/* Task Type */}
         <div>
-          <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+          <label htmlFor="kanbanfilters-task-type" className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
             Task Type
           </label>
           <select
+              id="kanbanfilters-task-type"
             value={filters.task_type || ''}
             onChange={(e) => onFiltersChange({ task_type: e.target.value || undefined })}
             className="w-full text-sm border border-gray-300 dark:border-gray-600 rounded-md px-2 py-1.5 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
@@ -103,10 +105,11 @@ export const KanbanFilters: React.FC<KanbanFiltersProps> = ({
 
         {/* Priority */}
         <div>
-          <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+          <label htmlFor="kanbanfilters-priority" className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
             Priority
           </label>
           <select
+              id="kanbanfilters-priority"
             value={filters.priority || ''}
             onChange={(e) => onFiltersChange({ priority: e.target.value || undefined })}
             className="w-full text-sm border border-gray-300 dark:border-gray-600 rounded-md px-2 py-1.5 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
@@ -122,10 +125,11 @@ export const KanbanFilters: React.FC<KanbanFiltersProps> = ({
 
         {/* Status */}
         <div>
-          <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+          <label htmlFor="kanbanfilters-status" className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
             Status
           </label>
           <select
+              id="kanbanfilters-status"
             value={filters.status || ''}
             onChange={(e) => onFiltersChange({ status: e.target.value || undefined })}
             className="w-full text-sm border border-gray-300 dark:border-gray-600 rounded-md px-2 py-1.5 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
@@ -141,10 +145,11 @@ export const KanbanFilters: React.FC<KanbanFiltersProps> = ({
 
         {/* Date Range */}
         <div>
-          <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+          <label htmlFor="kanbanfilters-from-date" className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
             From Date
           </label>
           <input
+              id="kanbanfilters-from-date"
             type="date"
             value={filters.date_from || ''}
             onChange={(e) => onFiltersChange({ date_from: e.target.value || undefined })}
@@ -153,10 +158,11 @@ export const KanbanFilters: React.FC<KanbanFiltersProps> = ({
         </div>
 
         <div>
-          <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+          <label htmlFor="kanbanfilters-to-date" className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
             To Date
           </label>
           <input
+              id="kanbanfilters-to-date"
             type="date"
             value={filters.date_to || ''}
             onChange={(e) => onFiltersChange({ date_to: e.target.value || undefined })}

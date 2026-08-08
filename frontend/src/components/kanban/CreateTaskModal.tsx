@@ -81,10 +81,11 @@ export const CreateTaskModal: React.FC<CreateTaskModalProps> = ({
         <form onSubmit={handleSubmit} className="p-4 space-y-4">
           {/* Title */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            <label htmlFor="createtaskmodal-title" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
               Title *
             </label>
             <input
+              id="createtaskmodal-title"
               type="text"
               value={formData.title}
               onChange={(e) => setFormData({ ...formData, title: e.target.value })}
@@ -96,10 +97,11 @@ export const CreateTaskModal: React.FC<CreateTaskModalProps> = ({
 
           {/* Description */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            <label htmlFor="createtaskmodal-description" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
               Description
             </label>
             <textarea
+              id="createtaskmodal-description"
               value={formData.description}
               onChange={(e) => setFormData({ ...formData, description: e.target.value })}
               rows={3}
@@ -111,10 +113,11 @@ export const CreateTaskModal: React.FC<CreateTaskModalProps> = ({
           {/* Task Type & Priority */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              <label htmlFor="createtaskmodal-task-type" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                 Task Type
               </label>
               <select
+              id="createtaskmodal-task-type"
                 value={formData.task_type}
                 onChange={(e) => setFormData({ ...formData, task_type: e.target.value as any })}
                 className="w-full border border-gray-300 dark:border-gray-600 rounded-md px-3 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
@@ -132,10 +135,11 @@ export const CreateTaskModal: React.FC<CreateTaskModalProps> = ({
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              <label htmlFor="createtaskmodal-priority" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                 Priority
               </label>
               <select
+              id="createtaskmodal-priority"
                 value={formData.priority}
                 onChange={(e) => setFormData({ ...formData, priority: e.target.value as any })}
                 className="w-full border border-gray-300 dark:border-gray-600 rounded-md px-3 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
@@ -152,10 +156,11 @@ export const CreateTaskModal: React.FC<CreateTaskModalProps> = ({
           {/* Due Date & Duration */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              <label htmlFor="createtaskmodal-due-date" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                 Due Date
               </label>
               <input
+              id="createtaskmodal-due-date"
                 type="datetime-local"
                 value={formData.due_date || ''}
                 onChange={(e) => setFormData({ ...formData, due_date: e.target.value })}
@@ -164,10 +169,11 @@ export const CreateTaskModal: React.FC<CreateTaskModalProps> = ({
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              <label htmlFor="createtaskmodal-estimated-duration-minutes" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                 Estimated Duration (minutes)
               </label>
               <input
+              id="createtaskmodal-estimated-duration-minutes"
                 type="number"
                 value={formData.estimated_effort_minutes || ''}
                 onChange={(e) => setFormData({ ...formData, estimated_effort_minutes: parseInt(e.target.value) || undefined })}
@@ -179,10 +185,11 @@ export const CreateTaskModal: React.FC<CreateTaskModalProps> = ({
 
           {/* Tags */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            <label htmlFor="createtaskmodal-tags-comma-separated" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
               Tags (comma-separated)
             </label>
             <input
+              id="createtaskmodal-tags-comma-separated"
               type="text"
               value={formData.tags?.join(', ') || ''}
               onChange={(e) => setFormData({ ...formData, tags: e.target.value.split(',').map(t => t.trim()).filter(Boolean) })}

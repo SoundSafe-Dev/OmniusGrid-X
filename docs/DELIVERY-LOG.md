@@ -7182,3 +7182,55 @@ corrections, each written down where the next person will hit it.
 Mutation-verified: reverting the badge to a bare count fails the sweep by name.
 
 **Frontend:** 860 tests · `tsc` clean.
+
+---
+
+## FS-553 — forty-five labels that were captions, not labels
+
+A `<label>` with no `htmlFor`, sitting beside its input rather than wrapping it, is a caption.
+A screen reader announces the control as "edit text" with no name, clicking the text does not
+focus the field, and the form is usable only by a sighted mouse user. `GeofencingPanel` had
+eight, `CreateTaskModal` seven, `KanbanFilters` six.
+
+Same defect as FS-550, one layer out: there the shared primitive was unlabelled; here it is the
+pages that hand-roll their own form markup instead of using it.
+
+34 were wired mechanically by an AST codemod — the shape is uniform, a `<label>` followed by a
+sibling control inside a `<div>`, and 34 hand edits across ten files is how a typo gets in.
+
+### Four forms count as association, and the detector knew one
+
+| form | sites |
+|---|---|
+| `htmlFor` pointing at the control's `id` | 5 |
+| the label **wrapping** its control — implicit, valid | 10 |
+| the control being a self-labelling component (`ui/Input` takes a `label` prop) | 11 |
+| the label wrapping **`{children}`** — a generic `Field` wrapper | 1 |
+
+The first measurement said **"55 of 60 unassociated"**, knowing only the first form. Ten of
+those wrap their control and are correct. That is the fourth detector this week to over-report
+by not knowing a second idiom — and 92% of a tree is a number large enough to be dismissed
+rather than acted on.
+
+The fourth form was found by the guard on its first run: `ShopFloor` defines
+`<label><span>{label}</span>{children}</label>` and passes each input in. At the call site the
+label really does wrap its control; a static walk sees an expression and cannot know what it
+will hold. The check is narrow on purpose — only the literal identifier `children`, or it
+would excuse every label containing interpolated text.
+
+### The codemod's first run generated colliding ids
+
+It slugged the label text alone: `id="title"`, `id="description"`. Those collide the moment two
+forms are mounted together, and **a duplicate id does not error** — the label silently points
+at the first match in the document, so the association reads as fixed and is not. Every
+generated id now carries its component's name, and a test asserts no literal id appears in two
+files.
+
+Eleven remain, listed with what each needs: a `ui/Input` sibling wants the `label` prop rather
+than an adjacent `<label>`, and three controls are nested inside a wrapper div. A finite set
+rather than a silent tail, with a staleness test so it cannot become a place findings go to be
+forgotten.
+
+Mutation-verified: removing one `htmlFor` fails by file and line.
+
+**Frontend:** 860 → 865 tests · `tsc` clean.

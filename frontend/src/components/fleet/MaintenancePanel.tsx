@@ -503,15 +503,17 @@ const CreateScheduleModal: FC<{ onClose: () => void; onCreated: () => void }> = 
           <button onClick={onClose} aria-label="Close" className="text-gray-400 hover:text-gray-600">✕</button>
         </div>
         <div>
-          <label className="block text-sm text-gray-600 mb-1">Vehicle Number</label>
+          <label htmlFor="maintenancepanel-vehicle-number" className="block text-sm text-gray-600 mb-1">Vehicle Number</label>
           <input
+              id="maintenancepanel-vehicle-number"
             className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
             value={vehicleNumber} onChange={(e) => setVehicleNumber(e.target.value)} placeholder="TRK-104"
           />
         </div>
         <div>
-          <label className="block text-sm text-gray-600 mb-1">Service Type</label>
+          <label htmlFor="maintenancepanel-service-type" className="block text-sm text-gray-600 mb-1">Service Type</label>
           <select
+              id="maintenancepanel-service-type"
             className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
             value={serviceType} onChange={(e) => setServiceType(e.target.value as MaintenanceSchedule['serviceType'])}
           >
@@ -525,24 +527,27 @@ const CreateScheduleModal: FC<{ onClose: () => void; onCreated: () => void }> = 
           </select>
         </div>
         <div>
-          <label className="block text-sm text-gray-600 mb-1">Description</label>
+          <label htmlFor="maintenancepanel-description" className="block text-sm text-gray-600 mb-1">Description</label>
           <input
+              id="maintenancepanel-description"
             className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
             value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional details"
           />
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="block text-sm text-gray-600 mb-1">Scheduled Date</label>
+            <label htmlFor="maintenancepanel-scheduled-date" className="block text-sm text-gray-600 mb-1">Scheduled Date</label>
             <input
+              id="maintenancepanel-scheduled-date"
               type="date"
               className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
               value={scheduledDate} onChange={(e) => setScheduledDate(e.target.value)}
             />
           </div>
           <div>
-            <label className="block text-sm text-gray-600 mb-1">Priority</label>
+            <label htmlFor="maintenancepanel-priority" className="block text-sm text-gray-600 mb-1">Priority</label>
             <select
+              id="maintenancepanel-priority"
               className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
               value={priority} onChange={(e) => setPriority(e.target.value as MaintenanceSchedule['priority'])}
             >

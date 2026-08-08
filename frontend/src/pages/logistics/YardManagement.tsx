@@ -753,22 +753,25 @@ const CheckInModal: FC<{ onClose: () => void; onCheckedIn: () => void }> = ({ on
           <button onClick={onClose} aria-label="Close" className="text-opsgrid-text-secondary hover:text-opsgrid-text">✕</button>
         </div>
         <div>
-          <label className="block text-sm text-opsgrid-text-secondary mb-1">Trailer ID</label>
+          <label htmlFor="yardmanagement-trailer-id" className="block text-sm text-opsgrid-text-secondary mb-1">Trailer ID</label>
           <input
+              id="yardmanagement-trailer-id"
             className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
             value={trailerId} onChange={(e) => setTrailerId(e.target.value)} placeholder="TRL-1042"
           />
         </div>
         <div>
-          <label className="block text-sm text-opsgrid-text-secondary mb-1">Carrier</label>
+          <label htmlFor="yardmanagement-carrier" className="block text-sm text-opsgrid-text-secondary mb-1">Carrier</label>
           <input
+              id="yardmanagement-carrier"
             className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
             value={carrierName} onChange={(e) => setCarrierName(e.target.value)} placeholder="Carrier name"
           />
         </div>
         <div>
-          <label className="block text-sm text-opsgrid-text-secondary mb-1">Type</label>
+          <label htmlFor="yardmanagement-type" className="block text-sm text-opsgrid-text-secondary mb-1">Type</label>
           <select
+              id="yardmanagement-type"
             className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
             value={trailerType} onChange={(e) => setTrailerType(e.target.value as YardTrailer['trailerType'])}
           >

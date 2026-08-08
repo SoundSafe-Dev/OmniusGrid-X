@@ -253,8 +253,9 @@ export const ContextManagementModal: React.FC<ContextManagementModalProps> = ({
                   </div>
                   <div className="flex gap-3 items-center">
                     <div className="flex-1">
-                      <label className="block text-xs text-gray-600 dark:text-gray-400 mb-1">Progress: {goal.progress}%</label>
+                      <label htmlFor="contextmanagementmodal-progress" className="block text-xs text-gray-600 dark:text-gray-400 mb-1">Progress: {goal.progress}%</label>
                       <input
+              id="contextmanagementmodal-progress"
                         type="range"
                         min="0"
                         max="100"

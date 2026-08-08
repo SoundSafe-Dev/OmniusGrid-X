@@ -166,8 +166,9 @@ export const IntakeInbox: React.FC = () => {
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-opsgrid-text mb-1">Data Type</label>
+              <label htmlFor="intakeinbox-data-type" className="block text-sm font-medium text-opsgrid-text mb-1">Data Type</label>
               <select
+              id="intakeinbox-data-type"
                 value={dataType}
                 onChange={(e) => setDataType(e.target.value as any)}
                 className="w-full px-3 py-2 border border-opsgrid-border rounded-md bg-opsgrid-bg text-opsgrid-text"

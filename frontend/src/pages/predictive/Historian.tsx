@@ -142,8 +142,9 @@ export const Historian: FC = () => {
       <Card title="Historian Query" subtitle="Query the tenant time-series historian">
         <div className="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
           <div className="md:col-span-1">
-            <label className="block text-xs text-opsgrid-text-secondary mb-1">Asset</label>
+            <label htmlFor="historian-asset" className="block text-xs text-opsgrid-text-secondary mb-1">Asset</label>
             <select
+              id="historian-asset"
               value={effectiveAssetId}
               onChange={(e) => setAssetId(e.target.value)}
               className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-opsgrid-text-primary"
@@ -168,8 +169,9 @@ export const Historian: FC = () => {
             </select>
           </div>
           <div>
-            <label className="block text-xs text-opsgrid-text-secondary mb-1">Metric</label>
+            <label htmlFor="historian-metric" className="block text-xs text-opsgrid-text-secondary mb-1">Metric</label>
             <input
+              id="historian-metric"
               value={metric}
               onChange={(e) => setMetric(e.target.value)}
               placeholder="e.g. temperature"
@@ -177,8 +179,9 @@ export const Historian: FC = () => {
             />
           </div>
           <div>
-            <label className="block text-xs text-opsgrid-text-secondary mb-1">Granularity</label>
+            <label htmlFor="historian-granularity" className="block text-xs text-opsgrid-text-secondary mb-1">Granularity</label>
             <select
+              id="historian-granularity"
               value={granularity}
               onChange={(e) => setGranularity(e.target.value as HistorianGranularity)}
               className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-opsgrid-text-primary"
@@ -191,8 +194,9 @@ export const Historian: FC = () => {
             </select>
           </div>
           <div>
-            <label className="block text-xs text-opsgrid-text-secondary mb-1">Range</label>
+            <label htmlFor="historian-range" className="block text-xs text-opsgrid-text-secondary mb-1">Range</label>
             <select
+              id="historian-range"
               value={range}
               onChange={(e) => setRange(e.target.value)}
               className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-opsgrid-text-primary"

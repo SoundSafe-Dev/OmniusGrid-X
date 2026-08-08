@@ -229,8 +229,9 @@ export const ERPIntegrationsPage: FC = () => {
             <Input label="Base URL" value={form.base_url}
               onChange={(e) => setForm({ ...form, base_url: e.target.value })} />
             <div>
-              <label className="block text-sm font-medium text-opsgrid-text mb-1">Auth config (JSON)</label>
-              <textarea className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-opsgrid-text font-mono text-xs"
+              <label htmlFor="erpintegrations-auth-config-json" className="block text-sm font-medium text-opsgrid-text mb-1">Auth config (JSON)</label>
+              <textarea
+              id="erpintegrations-auth-config-json" className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-opsgrid-text font-mono text-xs"
                 rows={4} value={authConfigText} onChange={(e) => setAuthConfigText(e.target.value)} />
             </div>
             {testResult.__form && (
