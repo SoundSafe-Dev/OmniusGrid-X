@@ -7419,3 +7419,57 @@ double-listed, which was correct at the time and stopped being correct when the 
 files exist to prevent.**
 
 **Suite:** backend 3836 → 3873.
+
+---
+
+## FS-567 / FS-568 — a rejected recommendation vanished
+
+`reject_recommendation` removed the recommendation from `pending_recommendations` and appended
+it nowhere. The only record was a `queue_discrete_event` to `cloud_gateway` — **which is never
+started** (FS-530) — so in practice the operator's decision was discarded the moment it was
+made.
+
+That is worse than losing an approval. An approval is visible in its effects; **a rejection is
+a decision not to act, and the only evidence it happened is the record of it.** Without one the
+same recommendation returns on the next cycle and the operator rejects it again, with nothing
+to say they already did.
+
+`get_recommendation_history` existed with no route in front of it — which is why
+`StrategicEngine.tsx` renders an em dash for decision history, and why the method was in the
+definition-level dead-code inventory (FS-529), found independently from the other direction.
+It also read `implemented_recommendations`, which holds approvals only, so a history of
+decisions omitted every decision not to act.
+
+### The plan's premise was wrong, and the truth was worse
+
+FS-568 said the response model omits `status`, `approved_at` and `rejected_at`, *"which the
+engine does set"*. **The engine did not.** Those keys went into a cloud-event payload bound for
+a gateway that never starts, and never onto the recommendation itself.
+
+Both halves were missing — so declaring the fields on the response model alone, as the item
+described, would have shipped a permanent `"pending"` for every recommendation ever decided.
+The recommendation now carries `status`, `decided_at`, `decided_by` and `decision_note`;
+`status` defaults to `"pending"` so a consumer never has to distinguish *not decided* from
+*field absent*; and the response model declares all four, because FastAPI **omits** an
+undeclared field rather than erroring.
+
+### Three guards caught the change, each correctly
+
+* `test_no_new_orphaned_definitions` named `get_recommendation_history` as a **stale**
+  inventory entry the moment it got a route. An inventory reporting wired code as dead is what
+  makes the whole list untrustworthy, so it is caught rather than curated.
+* `test_readme_test_count_is_not_stale` noticed the API grew to 471 operations while the README
+  said 470 — a figure quoted to describe how much of the API the contract gate covers.
+* `test_capped_lists_cannot_grow` failed because the new route takes a `limit` and returned a
+  bare array. `MAX_UNSIGNALLED` is zero and this was the first thing to break it. **On a
+  decision log a full page reads as "these are all the calls anyone made"**, so it selects one
+  extra row and sets `X-Result-Truncated` from evidence rather than from `len(rows) == limit`,
+  which cannot tell a full page from a final one.
+
+A test also asserts `/history` is declared before the `{rec_id}` routes: FastAPI resolves in
+declaration order, and a parameterised route declared first would swallow the literal segment
+while the endpoint still appeared registered.
+
+Mutation-verified: making a rejection append nowhere again fails three tests.
+
+**Suite:** backend 3873 → 3881.

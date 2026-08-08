@@ -3,7 +3,7 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
-from app.core.pagination import mark_engine_stopped
+from app.core.pagination import mark_engine_stopped, mark_truncated
 from pydantic import BaseModel
 from datetime import datetime, timezone
 from uuid import UUID
@@ -54,6 +54,21 @@ class StrategicRecommendationResponse(BaseModel):
     #: never happened.
     simulated: bool = False
     simulation_basis: str = ""
+
+    #: THE OPERATOR'S DECISION (FS-568). Undeclared until now, so FastAPI deleted it on the
+    #: way out even once the engine recorded it — a response model omits, it does not error,
+    #: which is why a field can be set on the server and absent from the payload with
+    #: nothing anywhere reporting a problem.
+    #:
+    #: The plan filed this as "the engine DOES set status/approved_at/rejected_at and the
+    #: model omits them". Measuring found the opposite: the engine set them in a cloud-event
+    #: payload bound for a gateway that never starts, and never on the recommendation. Both
+    #: halves were missing, and declaring the field without recording it would have shipped
+    #: a permanent `"pending"`.
+    status: str = "pending"
+    decided_at: Optional[str] = None
+    decided_by: Optional[str] = None
+    decision_note: Optional[str] = None
 
 
 class ModelStatusResponse(BaseModel):
@@ -175,8 +190,62 @@ async def get_strategic_recommendations(
             'requires_approval': r.requires_approval,
             'simulated': getattr(r, 'simulated', False),
             'simulation_basis': r.simulation_basis,
+            'status': r.status,
+            'decided_at': r.decided_at.isoformat() if r.decided_at else None,
+            'decided_by': r.decided_by,
+            'decision_note': r.decision_note,
         }
         for r in recs
+    ]
+
+
+@router.get(
+    "/strategic/recommendations/history",
+    response_model=List[StrategicRecommendationResponse],
+)
+async def get_recommendation_history(
+    response: Response,
+    asset_id: Optional[str] = None,
+    limit: int = Query(50, ge=1, le=500),
+):
+    """Decisions an operator has already made — approvals AND rejections (FS-567).
+
+    `strategic_engine.get_recommendation_history` has existed with no route in front of
+    it, which is why `StrategicEngine.tsx` renders an em dash for decision history. The
+    method was in the definition-level dead-code inventory (FS-529) for the same reason.
+
+    Both outcomes are served. Approvals are visible in their effects; a rejection is a
+    decision NOT to act, and until FS-567 it was discarded entirely — so this route is the
+    only place one can ever be seen.
+    """
+    mark_engine_stopped(
+        response, "strategic", getattr(strategic_engine, "_running", False)
+    )
+    # SIGNALLED, because it is capped. `MAX_UNSIGNALLED` is zero and this route was the
+    # first thing to break it — a bare array of exactly `limit` rows is indistinguishable
+    # from the complete history, and on a DECISION log that reads as "these are all the
+    # calls anyone made". Selects one extra row so the header is set from evidence rather
+    # than from `len(rows) == limit`, which cannot tell a full page from a final one.
+    rows = strategic_engine.get_recommendation_history(asset_id=asset_id, limit=limit + 1)
+    return [
+        {
+            'recommendation_id': r.recommendation_id,
+            'asset_id': r.asset_id,
+            'type': r.recommendation_type,
+            'priority': r.priority,
+            'description': r.description,
+            'expected_impact': r.expected_impact,
+            'confidence': r.confidence,
+            'valid_until': r.valid_until.isoformat(),
+            'requires_approval': r.requires_approval,
+            'simulated': getattr(r, 'simulated', False),
+            'simulation_basis': r.simulation_basis,
+            'status': r.status,
+            'decided_at': r.decided_at.isoformat() if r.decided_at else None,
+            'decided_by': r.decided_by,
+            'decision_note': r.decision_note,
+        }
+        for r in mark_truncated(response, rows, limit)
     ]
 
 

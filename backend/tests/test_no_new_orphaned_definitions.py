@@ -76,9 +76,10 @@ ORPHANS: dict[str, str] = {
     "app/services/llm_client.py::stream_generate":
         "Streaming answer generation, complete and unexposed. FS-563 is the route. Not dead "
         "code — an unwired feature.",
-    "app/services/strategic_engine.py::get_recommendation_history":
-        "FS-567. The engine method exists and nothing serves it, which is why StrategicEngine "
-        "renders an em dash for decision history.",
+    # get_recommendation_history CAME OFF THIS LIST when FS-567 gave it a route
+    # (GET /engines/strategic/recommendations/history). The staleness test named it on the
+    # next full run — the inventory reporting a wired method as dead is the failure that
+    # makes the whole list untrustworthy, so it is caught rather than curated.
     "app/services/tactical_engine.py::queue_inference":
         "Belongs to the tactical loop that main.py never starts (FS-530). Reachable the day "
         "that decision is made; meaningless before it.",
