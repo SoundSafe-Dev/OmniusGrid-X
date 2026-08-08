@@ -41,7 +41,18 @@ COLLECTORS = Path(__file__).resolve().parent.parent / "opsgrid_agent" / "collect
 _NO_CONNECTION = {
     "__init__.py",
     "base.py",
-    "coordinator.py",      # routes messages between collectors; owns no socket
+    # Owns no socket — but it DOES have a retry loop, and the reason needed updating
+    # (FS-580). `_run_collector` supervises each collector with a FIXED 5-second delay,
+    # bounded at 10 restarts, and FS-501 made a clean return count as a restart.
+    #
+    # Exempt deliberately, not by oversight. The invariant here is about not hammering a
+    # remote endpoint that is down; this loop restarts a LOCAL object, and its cap is what
+    # bounds the cost rather than a growing delay. What the cap also does is give up
+    # permanently after ~50 seconds — the collector is then dead for the life of the
+    # process, which is a supervision-policy question for the edge lane rather than a
+    # backoff one, and is recorded here because the previous reason ("owns no socket")
+    # stopped describing the file the moment it gained a retry loop.
+    "coordinator.py",
     "adapter.py",          # wraps another collector
     "file_watcher.py",     # a directory is either there or it is not
     "screen_scraper.py",   # reads a local framebuffer

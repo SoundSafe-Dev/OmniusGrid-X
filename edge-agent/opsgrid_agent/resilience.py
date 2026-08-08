@@ -48,6 +48,7 @@ a self-contained behavioural demo of both primitives.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import time
 from enum import Enum
 from typing import Callable, Optional
@@ -327,6 +328,7 @@ class CircuitBreaker:
 # --------------------------------------------------------------------------- #
 
 
+@dataclass
 class ReconnectPolicy:
     """How hard a collector retries a device it cannot reach (FS-473).
 
@@ -367,24 +369,23 @@ class ReconnectPolicy:
     cooldown_cap: float = 300.0
     cooldown_multiplier: float = 2.0
 
-    def __init__(
-        self,
-        initial_delay: float = 1.0,
-        max_delay: float = 60.0,
-        multiplier: float = 2.0,
-        failure_threshold: int = 5,
-        initial_cooldown: float = 30.0,
-        cooldown_cap: float = 300.0,
-        cooldown_multiplier: float = 2.0,
-    ) -> None:
-        self.initial_delay = initial_delay
-        self.max_delay = max_delay
-        self.multiplier = multiplier
-        self.failure_threshold = failure_threshold
-        self.initial_cooldown = initial_cooldown
-        self.cooldown_cap = cooldown_cap
-        self.cooldown_multiplier = cooldown_multiplier
+    # A DATACLASS, so the seven values above are the ONLY place they are written (FS-579).
+    #
+    # This had a hand-written `__init__` repeating all seven as parameter defaults. The class
+    # attributes were therefore shadowed on every instance and decided nothing — they existed
+    # to be READ, while the `__init__` copy is what every collector actually got.
+    #
+    # That is the same defect this class was created to fix, one level up. FS-473 consolidated
+    # sixteen copies of `cap=60.0` and `failure_threshold=5` out of eight collector modules
+    # and into this file, on the reasoning that "a guess in eight places is a guess nobody can
+    # revise". The consolidation then wrote the guess twice in the file that consolidated it,
+    # and the copy a reader's eye lands on first — the annotated declaration with the
+    # explanatory comments — was the dead one.
+    #
+    # `@dataclass` generates the `__init__` from the attributes, so editing a number edits the
+    # value collectors receive. The validation moves to `__post_init__` unchanged.
 
+    def __post_init__(self) -> None:
         # The pair has to make sense together. A backoff that climbs past the breaker's
         # cooldown cap means the breaker opens and the loop was already waiting longer than
         # the cooldown, so opening changes nothing — the instrument is present and inert,

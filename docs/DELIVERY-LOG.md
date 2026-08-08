@@ -7875,3 +7875,58 @@ first draft also invented plausible annotation text, which is the kind of error 
 correct right up until it runs.
 
 **Suite:** backend 3910 → 3935 · 9 promtool files over 51 rules.
+
+---
+
+## FS-576 / FS-577 / FS-579 / FS-580 — the Wave P residue, and two premises that did not hold
+
+### FS-579 — a value written twice, and the dead copy was the documented one
+
+`ReconnectPolicy` declared seven tuning numbers as annotated class attributes, each with a
+comment explaining it, and then repeated all seven as `__init__` parameter defaults. **The
+class attributes were shadowed on every instance and decided nothing.**
+
+This is the same defect the class was created to fix, one level up. FS-473 consolidated sixteen
+copies of `cap=60.0` and `failure_threshold=5` out of eight collector modules into this file,
+on the reasoning that *"a guess in eight places is a guess nobody can revise: the person with
+the telemetry has to find all eight, and the ones they miss are the ones that keep the old
+behaviour."* The consolidation then wrote the guess **twice in the file that consolidated it** —
+and the copy a reader's eye lands on first was the dead one.
+
+It survives review because both copies agree when written. The divergence arrives later as a
+single edit, and there is no moment where the mistake is visible: the first reader sees two
+consistent lists, the second sees a number that does not take effect and no reason why.
+
+`@dataclass` makes the attributes the only place. `__post_init__` keeps the pairing check, and
+a test asserts it still fires — a dataclass silently discards an `__init__` body that was not
+moved, so the validation could have vanished with nothing failing.
+
+The guard generalises it: a class-attribute default shadowed by a literal `__init__` default.
+It deliberately does not flag a dataclass (that is the fix) or a `None` sentinel falling back to
+the attribute (that is single-source).
+
+### FS-580 — the exemption was right and its reason had expired
+
+`coordinator.py` is exempt from the backoff invariant as *"routes messages between collectors;
+owns no socket"*. Still true — and FS-501 gave it a supervision loop with a **fixed 5-second
+delay bounded at 10 restarts**, so the file gained a retry loop its reason did not describe.
+
+The exemption stays: the invariant is about not hammering a remote endpoint, and this restarts
+a local object with a cap that bounds the cost. The reason now says so, and records what the
+cap also does — **give up permanently after roughly fifty seconds**, leaving that collector
+dead for the life of the process. That is a supervision-policy question for the edge lane, not
+a backoff one, and it is written down rather than implied.
+
+### FS-576 and FS-577 — measured, premises wrong
+
+**FS-576** said `Spatial3DChart` is 127 unmounted lines "carrying a plotly dependency". The
+lines are real; the dependency is not. `AnnotatedChart` and `FacilityHeatmap` are mounted in
+`AnalyticsPages` and both import plotly, so deleting the third changes no dependency. What is
+left is 127 lines the barrel comment already admits are unmounted.
+
+**FS-577** said five backend scripts are unreferenced. **All seven candidates are referenced** —
+`gen_030/032/033` by the migrations they generated (which name their generator, which is the
+provenance of a generated file), `generate_openapi` by `generate_sdk.sh`, and the rest by the
+README and the deployment docs. Nothing to remove.
+
+**Suite:** backend 3935 · edge agent 344 → 351 · frontend 881.
