@@ -79,3 +79,27 @@ def record_websocket_event(event: str, delta: int = 0) -> None:
     WEBSOCKET_EVENTS.labels(event=event).inc()
     if delta:
         WEBSOCKET_CONNECTIONS.inc(delta)
+
+
+#: Audit rows the middleware could not write (FS-536).
+#:
+#: THIS HAS ALREADY HAPPENED, AND THE COMMENT RECORDING IT IS IN THE SCHEMA.
+#: `db/models.py:1561-1567`: migrations create `audit_logs.ip_address` as INET, the model
+#: declared VARCHAR, every insert bound `$n::VARCHAR`, Postgres rejected it — "and
+#: audit_trail swallows the failure as `audit_log_failed`, so **the audit trail has been
+#: silently empty on real deployments while every write appeared to succeed**."
+#:
+#: The type mismatch was fixed. The condition that made it invisible was not: the handler
+#: still logs and continues, and nothing counts. So the next thing that breaks an audit
+#: write — a constraint, a migration, a full disk, an RLS policy — reproduces the same
+#: outcome, and an auditor discovers it by finding a period with no rows.
+#:
+#: Continuing IS right. An audit write must not fail a user's request. But "do not fail the
+#: request" and "do not tell anyone" are separate decisions, and only the first was made.
+#:
+#: Labelled by ACTION, which is a bounded vocabulary, never by error text.
+AUDIT_WRITE_FAILURES = Counter(
+    "opsgrid_audit_write_failed_total",
+    "Audit rows the middleware could not persist",
+    ["action"],
+)

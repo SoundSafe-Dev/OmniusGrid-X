@@ -677,6 +677,27 @@ groups:
       # server-side alarm rules are not firing — telemetry still flows, dashboards still
       # update, and the alerting is off, which is a condition an operator otherwise
       # discovers by noticing an alarm that never arrived.
+      # CRITICAL: an audit row could not be written (FS-536).
+      #
+      # The middleware continues, correctly — an audit write must not fail a user's
+      # request. But this repository has already shipped a period where EVERY audit
+      # insert failed on an INET/VARCHAR mismatch and the handler swallowed it, so "the
+      # audit trail has been silently empty on real deployments while every write appeared
+      # to succeed" (`db/models.py:1561-1567`). The mismatch was fixed; the invisibility
+      # was not, until this counter and this rule.
+      #
+      # Critical rather than high: an audit gap is a compliance finding, it cannot be
+      # reconstructed after the fact, and every minute it continues is unrecoverable.
+      - alert: AuditWriteFailing
+        expr: increase(opsgrid_audit_write_failed_total[10m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Audit rows are not being written ({{ $labels.action }})"
+          description: "{{ $value }} audit writes for action {{ $labels.action }} failed in the last 10m. Requests are still succeeding — this is deliberate — so the only symptom is a gap in the audit trail, which cannot be reconstructed later. Check the audit_logs schema and the middleware log for audit_log_failed."
+
       - alert: IngestionSideEffectFailing
         expr: increase(opsgrid_ingestion_side_effect_failed_total[15m]) > 0
         for: 5m

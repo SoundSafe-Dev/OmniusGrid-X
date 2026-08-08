@@ -1,0 +1,64 @@
+# promtool unit tests for AuditWriteFailing (FS-536). Run from infra/prometheus/:
+#   promtool test rules tests/audit_alerts_test.yml
+#
+# WHY THIS RULE NEEDS A UNIT TEST MORE THAN MOST. The condition it watches has already
+# occurred in production and produced no signal at all: `db/models.py:1561-1567` records an
+# INET/VARCHAR mismatch that failed every audit insert while the middleware swallowed it, so
+# "the audit trail has been silently empty on real deployments while every write appeared to
+# succeed". A rule guarding that must be provably firable, not merely well-formed — which is
+# the distinction `promtool check rules` cannot make (rule 121, FS-498).
+#
+# `for: 0m` is deliberate and asserted below: unlike the ingest side effects, there is no
+# acceptable transient here. One lost audit row is a permanent gap in a compliance record.
+
+rule_files:
+  - ../alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ---------------------------------------------------------------------------
+  # A single failed audit write fires immediately. No `for` window to wait out.
+  # ---------------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'opsgrid_audit_write_failed_total{action="user.delete"}'
+        values: '0 1 1 1 1 1 1 1 1 1'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: AuditWriteFailing
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              team: platform
+              action: user.delete
+            exp_annotations:
+              summary: "Audit rows are not being written (user.delete)"
+              description: "1 audit writes for action user.delete failed in the last 10m. Requests are still succeeding — this is deliberate — so the only symptom is a gap in the audit trail, which cannot be reconstructed later. Check the audit_logs schema and the middleware log for audit_log_failed."
+
+  # ---------------------------------------------------------------------------
+  # MUST STAY QUIET: a counter that has never moved. The steady state of a healthy
+  # system, and the case a `> 0` on the raw counter rather than an `increase()` breaks.
+  # ---------------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'opsgrid_audit_write_failed_total{action="asset.update"}'
+        values: '0x15'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: AuditWriteFailing
+        exp_alerts: []
+
+  # ---------------------------------------------------------------------------
+  # MUST STAY QUIET: a historical failure that has aged out of the 10m range. The rule
+  # reports a CURRENT gap; a permanently latched alert from one old failure would be
+  # ignored within a day, which is the same as not having it.
+  # ---------------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'opsgrid_audit_write_failed_total{action="org.create"}'
+        values: '3x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: AuditWriteFailing
+        exp_alerts: []

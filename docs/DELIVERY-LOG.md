@@ -6731,3 +6731,63 @@ Mutation-verified: a new function in a live module fails by name. The scan is ca
 parametrized cases run in 1.8s rather than 60.
 
 **Suite:** backend 3711 → 3768.
+
+---
+
+## FS-536 — the audit trail has been silently empty here before, and nothing had changed about why
+
+`db/models.py:1561-1567` carries the post-mortem, above `audit_logs.ip_address`:
+
+> Migrations 001/009 create this as INET. Declared as VARCHAR here, every insert bound
+> `$n::VARCHAR` and Postgres rejected it … and audit_trail swallows the failure as
+> `audit_log_failed`, so **the audit trail has been silently empty on real deployments while
+> every write appeared to succeed.**
+
+The type mismatch was fixed. **The condition that made it invisible was not.** The handler
+still logged and continued, and nothing counted — so the next thing to break an audit write, a
+constraint or a migration or a full disk or an RLS policy, reproduces the identical outcome,
+and an auditor discovers it by finding a period with no rows.
+
+Continuing is right: an audit write must not fail a user's request, and a test asserts the
+handler still does not re-raise, because a fix that took the platform down on a schema change
+would be a far larger fault than the one being repaired. But *"do not fail the request"* and
+*"do not tell anyone"* are separate decisions, and only the first had been made. Same argument
+as FS-537 on the ingest path and FS-504 on the edge buffer — three places where the swallow was
+correct and the silence was not.
+
+`AuditWriteFailing` is **critical with `for: 0m`**, and both are asserted. An audit gap is a
+compliance finding, it cannot be reconstructed after the fact, and unlike a dropped WebSocket
+frame there is no acceptable transient. `infra/prometheus/tests/audit_alerts_test.yml` proves
+it fires on a single failure, and stays quiet for a counter that never moves and for a
+historical failure that has aged out — a permanently latched alert from one old failure is
+muted within a day, which is the same as not having one.
+
+### Two functions that appeared to try and fail
+
+`_get_request_body` and `_get_response_body` each returned `None` inside a
+`try`/`except Exception`. A `return None` cannot raise, so the handler could never fire — the
+try/except was theatre implying an attempt that was not being made, and a reader looking for
+why audit rows carry no payload found a function that looked like it was trying. They now say
+plainly that bodies are not captured, and why (reading the body consumes the stream before the
+route handler sees it).
+
+**And the guard for that was wrong first, in the way this repository has a rule about.** It
+searched the source text for `"except Exception"` and failed against the fix — because the
+docstring explaining the removal contains that phrase. Rule 37: a substring search matches the
+comment describing a defect as readily as the defect. It parses the AST now.
+
+## FS-540 — measured, and the premise was wrong
+
+Filed as "`api/health.py:596` returns 200 with nulls on any failure — indistinguishable from a
+working probe with no data". It is not: `available: False` distinguishes them, the response
+model documents why the three figures are nullable rather than zeroed, and
+`AdminPages.tsx:535` renders "Host metrics unavailable" off that flag. The design is honest end
+to end.
+
+One real gap, narrower than filed: the `try` covered only `import psutil`, and the three calls
+after it were unguarded. psutil raises under a restrictive seccomp profile or with `/proc`
+unmounted — both ordinary in a hardened container — and the result was a **500 on an admin
+page whose entire design is to say "unavailable" gracefully**. The answer already existed; the
+fix is to reach it.
+
+**Suite:** backend 3768 → 3778 · 50 alert rules, 8 promtool unit-test files.

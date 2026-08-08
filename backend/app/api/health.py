@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 from uuid import UUID
 
+import structlog
 from aiokafka import AIOKafkaConsumer
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, ConfigDict
@@ -25,6 +26,8 @@ from app.db.database import engine, get_db
 from app.middleware.tenant_isolation import get_tenant_db
 from app.db.models import Alarm, Asset, User
 from app.middleware.rbac import require_admin
+
+logger = structlog.get_logger()
 
 router = APIRouter()
 
@@ -591,17 +594,34 @@ async def system_metrics(current_user=Depends(get_current_active_user)):
     previous call, which suits the page's 15s polling; interval>0 would sleep
     ON the event loop.
     """
+    unavailable = {"available": False, "cpu_percent": None, "memory_percent": None,
+                   "disk_percent": None}
     try:
         import psutil
     except Exception:
-        return {"available": False, "cpu_percent": None, "memory_percent": None,
-                "disk_percent": None}
-    return {
-        "available": True,
-        "cpu_percent": psutil.cpu_percent(interval=None),
-        "memory_percent": psutil.virtual_memory().percent,
-        "disk_percent": psutil.disk_usage("/").percent,
-    }
+        return unavailable
+
+    # FS-540 hardening. The `try` covered only the IMPORT; the three calls below were
+    # unguarded. psutil raises under a restrictive seccomp profile or when /proc is not
+    # mounted — both ordinary in a hardened container — and the result was a 500 on an
+    # admin page whose whole design is to say "unavailable" gracefully. `available: False`
+    # already exists for exactly this answer, so the fix is to reach it.
+    #
+    # The plan filed this endpoint as "returns 200 with nulls on any failure —
+    # indistinguishable from a working probe with no data". That premise is wrong: the
+    # `available` flag distinguishes them, the response model documents why the three are
+    # nullable, and `AdminPages.tsx:535` renders "Host metrics unavailable" off it. The
+    # unguarded calls were the only real gap.
+    try:
+        return {
+            "available": True,
+            "cpu_percent": psutil.cpu_percent(interval=None),
+            "memory_percent": psutil.virtual_memory().percent,
+            "disk_percent": psutil.disk_usage("/").percent,
+        }
+    except Exception as exc:  # noqa: BLE001 — see above
+        logger.warning("system_metrics_unavailable", error=str(exc))
+        return unavailable
 
 
 @router.get("/health/db", operation_id="health_health_database_unversioned", response_model=DatabaseHealthOut)
