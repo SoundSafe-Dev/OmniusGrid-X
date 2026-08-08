@@ -180,6 +180,7 @@ export const ContextManagementModal: React.FC<ContextManagementModalProps> = ({
                   <Badge key={priority} variant="info" className="flex items-center gap-1">
                     {priority}
                     <button
+                      aria-label={`Remove priority ${priority}`}
                       onClick={() => handleRemovePriority(priority)}
                       className="ml-1 hover:text-red-500"
                     >

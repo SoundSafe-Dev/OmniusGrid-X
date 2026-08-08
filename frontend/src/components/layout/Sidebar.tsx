@@ -323,6 +323,7 @@ export const Sidebar: FC<SidebarProps> = ({ mobile = false, onClose }) => {
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
+                    aria-label="Log out"
                     onClick={handleLogout}
                     className="flex items-center justify-center p-2 rounded-lg text-opsgrid-text-secondary hover:bg-opsgrid-hover hover:text-opsgrid-text transition-colors"
                   >
@@ -349,6 +350,7 @@ export const Sidebar: FC<SidebarProps> = ({ mobile = false, onClose }) => {
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
+                  aria-label="Log out"
                   onClick={handleLogout}
                   className="flex items-center justify-center w-full p-2 rounded-lg text-opsgrid-text-secondary hover:bg-opsgrid-hover hover:text-opsgrid-text transition-colors"
                 >

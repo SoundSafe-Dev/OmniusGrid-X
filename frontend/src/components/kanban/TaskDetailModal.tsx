@@ -232,6 +232,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
             </span>
           </div>
           <button
+            aria-label="Close task details"
             onClick={onClose}
             className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
           >

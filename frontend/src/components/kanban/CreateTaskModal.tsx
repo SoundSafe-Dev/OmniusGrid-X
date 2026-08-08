@@ -69,6 +69,7 @@ export const CreateTaskModal: React.FC<CreateTaskModalProps> = ({
             Create New Task
           </h2>
           <button
+            aria-label="Close create task dialog"
             onClick={onClose}
             className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
           >

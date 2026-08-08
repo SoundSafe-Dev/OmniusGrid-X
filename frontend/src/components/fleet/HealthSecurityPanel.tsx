@@ -302,7 +302,8 @@ export const HealthSecurityPanel: FC = () => {
                       <p className="text-xs text-gray-600">{event.description}</p>
                       <p className="text-xs text-gray-500 mt-1">{event.vehicleNumber} • {new Date(event.timestamp).toLocaleString()}</p>
                     </div>
-                    <button 
+                    <button
+                      aria-label={`Acknowledge security event ${event.eventType ?? ''}`}
                       onClick={() => handleAcknowledgeSecurity(event.id)}
                       className="p-1 text-green-600 hover:bg-green-50 rounded"
                     >

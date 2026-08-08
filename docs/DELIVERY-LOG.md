@@ -7100,3 +7100,45 @@ The first version rendered `<Table columns={...} data={...} />`. This `Table` is
 The type checker refused it.
 
 **Frontend:** 851 → 856 tests · `tsc` clean.
+
+---
+
+## FS-551 — thirteen buttons with no accessible name, and one that did nothing
+
+Thirteen of 96 `<button>` elements had no `aria-label`, no `title` and no text. A screen reader
+announces those as "button" and nothing else. The list included **both sidebar logout
+buttons** — so a screen-reader user could reach the control that ends their session and not be
+told what it was — plus two modal closes, two alarm-acknowledge controls, and the Kanban
+board/list toggle.
+
+One had no handler at all. `KanbanColumn`'s chevron was a `<button>` with no `onClick`:
+focusable, announced as a button, silent when pressed. **That is worse than no affordance** —
+it invites the action and then fails without saying so. It is presentational now, because
+giving it behaviour is a feature decision and removing a false affordance is not.
+
+### The detector was wrong three times, in both directions
+
+| version | flagged | why |
+|---|---|---|
+| regex over lines | **75 of 97** | any button whose text sat inside a child element |
+| JSX parsed, one level | 18 | text nested deeper than one child was missed |
+| recursed with `forEachChild` | 11 | **descends into a child's attributes** — `<LogOut size={16} />` reads as content because of `{16}` |
+| recursed over `children` only | **13** | correct |
+
+75 of 97 is most of the codebase, which is the signature of a broken detector rather than a
+broken product — the same failure FS-529's first run made at 57%. There is now a calibration
+assertion capping it at a tenth, so that version cannot come back looking diligent.
+
+**The third correction is the instructive one.** It made the sweep *under*-report, and the two
+buttons it hid were the most consequential in the set. A false negative in an accessibility
+sweep is invisible by construction: nothing fails, and the control stays unnamed. Every other
+detector error today was a false positive, which announces itself.
+
+`tsc` then caught two of my labels reading `alert.geofence_name` and `event.event_type` where
+the types are camelCase — the template would have rendered `undefined` into the accessible
+name, which is a label that is present and useless.
+
+Mutation-verified both assertions: stripping one logout label, and restoring the handler-less
+button.
+
+**Frontend:** 856 → 860 tests · `tsc` clean.

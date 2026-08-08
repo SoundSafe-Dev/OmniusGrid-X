@@ -286,7 +286,7 @@ export const UsersPage: FC = () => {
           <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg max-w-md w-full">
             <div className="p-6 border-b border-opsgrid-border flex items-center justify-between">
               <h3 className="text-xl font-semibold">Add New User</h3>
-              <button onClick={() => setShowAddModal(false)} className="text-opsgrid-text-secondary hover:text-opsgrid-text">
+              <button aria-label="Close add dialog" onClick={() => setShowAddModal(false)} className="text-opsgrid-text-secondary hover:text-opsgrid-text">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -353,7 +353,7 @@ export const UsersPage: FC = () => {
           <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg max-w-md w-full">
             <div className="p-6 border-b border-opsgrid-border flex items-center justify-between">
               <h3 className="text-xl font-semibold">Edit User</h3>
-              <button onClick={() => setShowEditModal(false)} className="text-opsgrid-text-secondary hover:text-opsgrid-text">
+              <button aria-label="Close edit dialog" onClick={() => setShowEditModal(false)} className="text-opsgrid-text-secondary hover:text-opsgrid-text">
                 <X className="w-5 h-5" />
               </button>
             </div>

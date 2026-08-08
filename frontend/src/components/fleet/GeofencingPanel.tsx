@@ -406,7 +406,8 @@ export const GeofencingPanel: FC<GeofencingPanelProps> = ({ onAlert }) => {
                   </p>
                 </div>
                 {!alert.acknowledged ? (
-                  <button 
+                  <button
+                    aria-label={`Acknowledge geofence alert for ${alert.geofenceName ?? 'zone'}`}
                     onClick={() => handleAcknowledge(alert.id)}
                     className="p-1 text-green-600 hover:bg-green-50 rounded"
                   >

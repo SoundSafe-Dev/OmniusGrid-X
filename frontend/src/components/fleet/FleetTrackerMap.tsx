@@ -392,7 +392,8 @@ export const FleetTrackerMap: FC<FleetTrackerMapProps> = ({
           <div className="lg:w-[200px] bg-opsgrid-panel border-t lg:border-t-0 lg:border-l border-opsgrid-border p-3 relative z-10">
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs font-semibold">Legend</span>
-              <button 
+              <button
+                aria-label="Hide map legend"
                 onClick={() => setShowLegend(false)}
                 className="text-gray-400 hover:text-gray-600"
               >

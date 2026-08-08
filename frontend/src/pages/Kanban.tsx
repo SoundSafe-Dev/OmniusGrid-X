@@ -104,6 +104,8 @@ const KanbanContent: React.FC = () => {
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
+                    aria-label="Board view"
+                    aria-pressed={viewMode === 'board'}
                     onClick={() => setViewMode('board')}
                     className={`p-2 rounded-md transition-colors ${
                       viewMode === 'board'
@@ -119,6 +121,8 @@ const KanbanContent: React.FC = () => {
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
+                    aria-label="List view"
+                    aria-pressed={viewMode === 'list'}
                     onClick={() => setViewMode('list')}
                     className={`p-2 rounded-md transition-colors ${
                       viewMode === 'list'
