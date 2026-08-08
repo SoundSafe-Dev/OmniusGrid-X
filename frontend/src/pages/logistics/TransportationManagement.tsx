@@ -1074,8 +1074,40 @@ const ShipmentDetailModal: FC<{
     }
   };
 
+  // FS-588. THREE DEFECTS IN TWO LINES, and all three show one shipment's MONEY under
+  // another shipment's name.
+  //
+  //   `getShipmentCosts(shipment.id).then(setCosts)` with `[shipment.id]`
+  //
+  //   1. NO CLEAR. Switching from shipment A to B leaves A's linehaul, fuel surcharge and
+  //      total on screen, under B's heading, until B's request returns.
+  //   2. NO CATCH. If B's request FAILS, A's figures stay there permanently — the panel
+  //      never stops attributing them to B, and an unhandled rejection is the only trace.
+  //   3. NO CANCELLATION. If A's request is slow and B's is fast, A's response lands
+  //      second and overwrites B's. Both requests succeeded; the screen is still wrong,
+  //      and it stays wrong until something else re-renders.
+  //
+  // A stale list is a visible annoyance. A stale COST is a number a dispatcher reads and
+  // acts on, and nothing about it looks stale.
+  const [costsError, setCostsError] = useState(false);
+
   useEffect(() => {
-    transportationApi.getShipmentCosts(shipment.id).then(setCosts);
+    let cancelled = false;
+    // Cleared FIRST, so the gap between shipments renders as absent rather than as the
+    // previous shipment's figures.
+    setCosts(null);
+    setCostsError(false);
+    transportationApi
+      .getShipmentCosts(shipment.id)
+      .then((loaded) => {
+        if (!cancelled) setCosts(loaded);
+      })
+      .catch(() => {
+        if (!cancelled) setCostsError(true);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [shipment.id]);
 
   return (
@@ -1171,6 +1203,11 @@ const ShipmentDetailModal: FC<{
             </div>
           )}
 
+          {costsError && (
+            <p role="alert" className="text-sm text-status-alarm">
+              Could not load costs for this shipment.
+            </p>
+          )}
           {costs && (
             <div className="bg-opsgrid-bg rounded-lg p-4">
               <h4 className="font-medium mb-3">Cost Breakdown</h4>

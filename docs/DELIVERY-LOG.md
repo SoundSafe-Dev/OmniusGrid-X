@@ -7738,3 +7738,57 @@ Mutation-verified at all three boundaries independently — removing the accept 
 response field, and the gauge each fail with the specific reason.
 
 **Suite:** backend 3897 → 3910 · 51 alert rules.
+
+---
+
+## FS-586 / FS-588 — a stale cost is a number a dispatcher acts on
+
+Two carry-across sweeps, and the second found money attributed to the wrong shipment.
+
+### FS-586 — the three-state chain, applied to hand-rolled fetches
+
+`failureIsNotEmptiness` was broadened six times and reaches components that fetch by hand.
+This asks the narrower question: does such a component have a **loading** and an **error**
+state at all? Two matched, and one was a false positive — `App.tsx` builds routes with
+`lazy(() => loader().then(…))`, which is code-splitting, not data.
+
+The real one is `PlatformDataSourcePicker`, and it is FS-549's subject found independently:
+
+```ts
+platformCorrelationApi.listSourceTypes().then(setTypes).catch(() => setTypes([]))
+```
+
+A failed request left the list empty and the component rendered an empty `<select>` beside an
+**enabled Add button** — which reads as "this platform has no data sources to offer" rather
+than "we could not ask". The user then picks nothing, presses Add, and gets a *second* failure
+from the attach call. **The first failure is discovered through the second, one interaction
+later, with nothing connecting them.** It now says which happened, and the button is disabled
+while it is true.
+
+### FS-588 — three defects in two lines, all of them money
+
+```ts
+useEffect(() => {
+  transportationApi.getShipmentCosts(shipment.id).then(setCosts)
+}, [shipment.id])
+```
+
+1. **No clear.** Switching from shipment A to B leaves A's linehaul, fuel surcharge and total
+   on screen, under B's heading, until B's request returns.
+2. **No catch.** If B's request fails, A's figures stay there **permanently** — the panel never
+   stops attributing them to B, and an unhandled rejection is the only trace.
+3. **No cancellation.** If A's request is slow and B's is fast, A's response lands second and
+   overwrites B's. Both requests succeeded and the screen is still wrong.
+
+A stale list is a visible annoyance. **A stale cost is a number a dispatcher reads and acts on,
+and nothing about it looks stale.**
+
+`idKeyedFetchesDoNotGoStale.test.ts` asserts all three separately, so a partial fix fails on
+the part that is missing. React Query does all three for you — a query keyed on the id returns
+`undefined` while fetching, exposes `isError`, and discards a response for a superseded key —
+which is why this class only appears in hand-rolled effects, and why the sweep looks only at
+`useEffect`.
+
+Mutation-verified: restoring the original two lines fails all three assertions at once.
+
+**Frontend:** 876 → 881 tests · `tsc` clean.
