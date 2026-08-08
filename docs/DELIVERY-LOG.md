@@ -6791,3 +6791,57 @@ page whose entire design is to say "unavailable" gracefully**. The answer alread
 fix is to reach it.
 
 **Suite:** backend 3768 → 3778 · 50 alert rules, 8 promtool unit-test files.
+
+---
+
+## FS-539 — 201 handlers swallow a failure and 11 count it; both numbers now ratchet
+
+283 handlers in `app/` catch `Exception`, `BaseException` or bare. **201 never re-raise**, and
+in 190 of those nothing increments a counter — the only record is a log line that aggregates
+nowhere.
+
+**A sweep would have been the wrong deliverable.** Most of these are correct: a background task
+that must not die, a best-effort cache warm, a notification that is nice to have. A file
+demanding 201 fixes gets argued with and then ignored. What is not correct is that the number
+can grow unnoticed, and that a swallow on a path that matters looks exactly like one on a path
+that does not.
+
+So two numbers moving one way each:
+
+```
+MAX_SWALLOWING   201  only DOWN — a new uncounted swallow fails the build
+MIN_COUNTED       11  only UP   — hardening a handler is recorded, not lost
+```
+
+**The pair matters more than either alone.** A count cap by itself is satisfied by deleting a
+handler; a counted floor by itself is satisfied by adding handlers that count. Together the
+only way to move both correctly is to make an existing failure visible.
+
+This has already cost three times, and each was found by accident rather than by a gate:
+FS-504 (a buffer prune dropped 500 undelivered readings and counted none), FS-537 (alarm rule
+evaluation failing silently, so the alerting was off while telemetry flowed), and FS-536 (**the
+audit trail silently empty on real deployments while every write appeared to succeed** — the
+schema still carries that post-mortem). In all three the swallow was right and the silence was
+the defect.
+
+### The totals are too coarse on their own
+
+Swapping a counted handler in `ingestion.py` for an uncounted one somewhere quiet leaves both
+numbers intact. So `ingestion.py` and `audit.py` — hardened by FS-537 and FS-536 — are named
+individually and must stay fully counted, with a companion test asserting each still *has*
+swallows to check, so a moved file cannot satisfy the rule by emptying it.
+
+Three further properties are asserted rather than assumed: the detector must not count a
+handler that re-raises (translating an error properly is the fix, not the defect), the
+allowance must sit within ten of the real figure (a ratchet set well above it allows growth
+while reading as a constraint — the failure `contract_ratchet.py` names in its own header),
+and the walk must find a plausible number in both directions.
+
+`MIN_COUNTED` is **11, not the 10 a body-only scan reports**: `ingestion.py`'s top-level
+handler counts through `_dead_letter`. That exemption is imported from the FS-537 guard rather
+than restated — the two files share one detector limitation, and a second copy of the reason
+is a second thing to keep true, which is the shape FS-492 named.
+
+Mutation-verified: one new uncounted `except Exception: pass` fails at 202.
+
+**Suite:** backend 3778 → 3787.
