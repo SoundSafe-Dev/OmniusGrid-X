@@ -447,6 +447,59 @@ class TestEveryRegisteredTransformerActuallyRuns:
             "reorderPoint": "50",
             "location": {"refName": "Plant A"},
         },
+        # Odoo (FS-558). `partner_id` is a MANY2ONE — `[id, name]` — and an unset field
+        # comes back as `false`, not null. A sample with plain scalars would exercise
+        # neither, and both are what the transformer exists to flatten.
+        "transform_odoo_invoice": {
+            "name": "INV/2026/0001",
+            "invoice_date_due": "2026-01-15",
+            "amount_total": 900.0,
+            "partner_id": [7, "Acme Co"],
+            "payment_state": "not_paid",
+            "state": "posted",
+        },
+        "transform_odoo_sales_order": {
+            "name": "SO0001",
+            "date_order": "2026-01-02",
+            "amount_total": 250.0,
+            "partner_id": [7, "Acme Co"],
+            "state": "sale",
+        },
+        # Infor (FS-559). PascalCase and flat.
+        "transform_infor_invoice": {
+            "InvoiceNumber": "I-1",
+            "DueDate": "2026-01-15",
+            "TotalAmount": "100.00",
+            "Status": "Open",
+        },
+        "transform_infor_inventory": {
+            "ItemID": "SKU-1",
+            "QuantityOnHand": "12",
+            "ReorderLevel": "50",
+        },
+        # Epicor (FS-560). `InvoiceNum`, NOT Infor's `InvoiceNumber` — one careless copy
+        # apart, and the wrong one yields None rather than an error. `OpenInvoice` is a
+        # BOOLEAN, which is why the sample carries it as one.
+        "transform_epicor_invoice": {
+            "InvoiceNum": "E-1",
+            "DueDate": "2026-01-15",
+            "InvoiceAmt": "100.00",
+            "OpenInvoice": True,
+        },
+        "transform_epicor_part": {
+            "PartNum": "P-1",
+            "OnHandQty": "12",
+            "MinimumQty": "50",
+        },
+        # Intuit (FS-561). No status field at all — settlement is `Balance`, and
+        # `CustomerRef` is `{"value": …, "name": …}`.
+        "transform_intuit_invoice": {
+            "DocNumber": "1001",
+            "DueDate": "2026-01-15",
+            "TotalAmt": 300.0,
+            "Balance": 300.0,
+            "CustomerRef": {"value": "42", "name": "Acme Co"},
+        },
     }
 
     def test_each_one_returns_a_record_without_raising(self):

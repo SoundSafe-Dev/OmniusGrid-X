@@ -7352,3 +7352,70 @@ because a sample of plain scalars would exercise neither of the two conversions 
 exists to perform.
 
 **Suite:** backend 3816 → 3836 · frontend 871.
+
+---
+
+## FS-558 / FS-559 / FS-560 / FS-561 — the remaining four vendors, and the five spellings of "paid"
+
+Odoo, Infor, Epicor and Intuit were each in NetSuite's state: a working connector, stored
+records, and `route_for()` returning `None`. Every sync completed and reported
+`skipped: unrouted`.
+
+Each now has a transformer reading **its own** field names, a pattern class, registered
+routes, and a test driving a real vendor payload to an anomaly. All eight vendors route.
+
+### The five spellings of "this invoice is settled"
+
+| vendor | field | settled looks like |
+|---|---|---|
+| NetSuite | `status` | the string `"Paid In Full"` |
+| Odoo | `payment_state` | `"paid"` — and `state: "posted"` is **not** it |
+| Infor | `Status` | `"Paid"` |
+| Epicor | `OpenInvoice` | the **boolean** `False` |
+| Intuit | `Balance` | the **number** `0` — there is no status field at all |
+
+**Two of the five carry settlement in a field that is not a status, and one of those is a
+boolean whose false value means paid.** A transformer looking for a status string finds
+nothing on either, leaves it `None`, and `None != "paid"` — so *every Epicor and every
+QuickBooks invoice would be reported overdue the moment its due date passed*. Not an error: a
+confident wrong answer, on a finance screen, for two entire vendors.
+
+Odoo's is subtler. `state: "posted"` means the document is finalised, not that money arrived;
+reading it instead of `payment_state` marks every posted invoice paid and **suppresses every
+overdue finding**. The two mistakes fail in opposite directions and neither raises.
+
+A single test asserts all five normalise to the same token, because five per-vendor tests can
+each pass while the vendors disagree — and then a cross-vendor view compares incomparable
+values and nothing fails. Mutation-verified on all three unusual fields.
+
+### The module guard called four live modules dead — and had two wrong already
+
+The four new pattern classes are loaded by `importlib` from a dotted string in
+`PATTERN_CLASSES`, so no `ast.Import` node exists and the guard reported them unreachable. The
+fix a reader would reach for is to delete them.
+
+Widening the walk to count a dotted `app.*` string in production code then exposed something
+worse: **`oracle_correlation_patterns` and `infor_connector` were already in that baseline,
+described as dead, with reasons somebody had written after checking.** Oracle has been routed
+since it was wired; Infor's connector is loaded by the factory. A reader acting on either
+entry would have deleted a live module.
+
+That is the cost of a detector that knows one idiom — not a false alarm, which announces
+itself, but **a false entry in a curated list, which reads as verified.**
+
+Two smaller corrections on the way: the exclusion for test files used `is not` against
+`ROOT / "tests"`, which builds a new `Path` each time, so the identity comparison was always
+true and the vacuity probe kept counting itself.
+
+### The two dead-code guards handed a finding to each other
+
+Removing `oracle_correlation_patterns` from the module baseline moved it out of that guard's
+population and into the definition-level one — where its three genuinely orphaned analyzers
+belong. Nobody wrote them back: `test_no_new_orphaned_definitions` failed on the next full run
+and named all three. They had been in that inventory earlier and were removed as
+double-listed, which was correct at the time and stopped being correct when the facts changed.
+
+**A finding that fell between two guards would have been invisible in exactly the way both
+files exist to prevent.**
+
+**Suite:** backend 3836 → 3873.

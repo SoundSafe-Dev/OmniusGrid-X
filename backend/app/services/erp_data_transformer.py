@@ -483,6 +483,231 @@ class ERPDataTransformer:
             return "closed"
         return normalized
 
+    # ================================================================================
+    # Odoo (FS-558)
+    # ================================================================================
+    #
+    # Odoo's JSON-RPC returns MANY2ONE fields as a two-element list — `[42, "Acme Co"]`,
+    # the id and its display name. Reading one directly puts a list where the analyzer
+    # expects a scalar, and a non-empty list is truthy: every comparison against a status
+    # string silently takes the wrong branch, exactly as NetSuite's reference objects do.
+    #
+    # Models are `account.move` (invoices AND bills, distinguished by `move_type`),
+    # `sale.order` and `product.product`.
+
+    @staticmethod
+    def _odoo_scalar(value: Any) -> Optional[str]:
+        """An Odoo many2one `[id, name]` pair, reduced to its display name."""
+        if value is None or value is False:
+            # Odoo sends `false`, not null, for an unset field — and `False` is not None,
+            # so a plain `or` chain downstream would treat it as a present value.
+            return None
+        if isinstance(value, (list, tuple)):
+            return str(value[1]) if len(value) > 1 else str(value[0])
+        return str(value)
+
+    def transform_odoo_invoice(self, odoo_move: Dict[str, Any]) -> Dict[str, Any]:
+        """Odoo `account.move` -> the five fields `analyze_invoice_anomalies` reads."""
+        return {
+            "entity_type": "Invoice",
+            "invoice_number": odoo_move.get("name") or odoo_move.get("id"),
+            "invoice_date": self._parse_date(odoo_move.get("invoice_date")),
+            "due_date": self._parse_date(odoo_move.get("invoice_date_due")),
+            "supplier_id": self._odoo_scalar(odoo_move.get("partner_id")),
+            "supplier_name": self._odoo_scalar(odoo_move.get("partner_id")),
+            "total_amount": self._parse_currency(odoo_move.get("amount_total")),
+            "currency": self._odoo_scalar(odoo_move.get("currency_id")),
+            "status": self._map_odoo_payment_state(
+                odoo_move.get("payment_state"), odoo_move.get("state")
+            ),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "source_system": "Odoo",
+        }
+
+    def transform_odoo_sales_order(self, odoo_order: Dict[str, Any]) -> Dict[str, Any]:
+        """Odoo `sale.order` -> the normalized order shape."""
+        return {
+            "entity_type": "SalesOrder",
+            "order_number": odoo_order.get("name") or odoo_order.get("id"),
+            "order_date": self._parse_date(odoo_order.get("date_order")),
+            "delivery_date": self._parse_date(odoo_order.get("commitment_date")),
+            "customer_id": self._odoo_scalar(odoo_order.get("partner_id")),
+            "total_amount": self._parse_currency(odoo_order.get("amount_total")),
+            "currency": self._odoo_scalar(odoo_order.get("currency_id")),
+            "status": self._map_odoo_order_state(odoo_order.get("state")),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "source_system": "Odoo",
+        }
+
+    @staticmethod
+    def _map_odoo_payment_state(payment_state: Any, state: Any) -> Optional[str]:
+        """Odoo's `payment_state` -> the analyzer's vocabulary.
+
+        `payment_state` is the field that says whether money arrived: `not_paid`,
+        `in_payment`, `paid`, `partial`, `reversed`. `state` is the DOCUMENT state
+        (`draft`/`posted`/`cancel`) and a posted invoice is not a paid one — reading it
+        instead would mark every posted invoice paid and suppress every overdue finding.
+        """
+        payment = str(payment_state).strip().lower() if payment_state else ""
+        if payment == "paid":
+            return "paid"
+        if payment in {"partial", "in_payment"}:
+            return "open"
+        document = str(state).strip().lower() if state else ""
+        if document == "cancel":
+            return "cancelled"
+        if document == "draft":
+            return "draft"
+        return "open"
+
+    @staticmethod
+    def _map_odoo_order_state(state: Any) -> Optional[str]:
+        mapping = {
+            "draft": "draft",
+            "sent": "open",
+            "sale": "open",
+            "done": "closed",
+            "cancel": "cancelled",
+        }
+        return mapping.get(str(state).strip().lower() if state else "", None)
+
+    # ================================================================================
+    # Infor (FS-559) and Epicor (FS-560)
+    # ================================================================================
+    #
+    # Both are ION/OData-style REST services returning flat records with PascalCase
+    # field names, so neither needs a reference-object unwrapper. What they DO need is
+    # their own field names: Infor sends `InvoiceNumber`/`DueDate`, Epicor sends
+    # `InvoiceNum`/`DueDate`/`InvoiceAmt`. Neither matches SAP's `InvoiceId`, and the
+    # near-miss between them is the point — `InvoiceNumber` and `InvoiceNum` are one
+    # careless copy apart, and a wrong one produces a null rather than an error.
+
+    def transform_infor_invoice(self, infor_invoice: Dict[str, Any]) -> Dict[str, Any]:
+        """Infor ION invoice -> the normalized invoice shape."""
+        return {
+            "entity_type": "Invoice",
+            "invoice_number": infor_invoice.get("InvoiceNumber") or infor_invoice.get("ID"),
+            "invoice_date": self._parse_date(infor_invoice.get("InvoiceDate")),
+            "due_date": self._parse_date(infor_invoice.get("DueDate")),
+            "supplier_id": infor_invoice.get("SupplierID") or infor_invoice.get("VendorID"),
+            "supplier_name": infor_invoice.get("SupplierName"),
+            "total_amount": self._parse_currency(infor_invoice.get("TotalAmount")),
+            "currency": infor_invoice.get("CurrencyCode"),
+            "status": self._map_generic_invoice_status(infor_invoice.get("Status")),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "source_system": "Infor",
+        }
+
+    def transform_infor_inventory(self, infor_item: Dict[str, Any]) -> Dict[str, Any]:
+        """Infor inventory -> the normalized inventory shape."""
+        return {
+            "entity_type": "Inventory",
+            "material_id": infor_item.get("ItemID") or infor_item.get("ID"),
+            "material_name": infor_item.get("ItemDescription"),
+            "plant": infor_item.get("WarehouseID") or infor_item.get("Location"),
+            "quantity": self._parse_currency(infor_item.get("QuantityOnHand")),
+            "reorder_point": self._parse_currency(infor_item.get("ReorderLevel")),
+            "unit": infor_item.get("UnitOfMeasure"),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "source_system": "Infor",
+        }
+
+    def transform_epicor_invoice(self, epicor_invoice: Dict[str, Any]) -> Dict[str, Any]:
+        """Epicor `Erp.BO.InvoiceSvc` -> the normalized invoice shape.
+
+        `InvoiceNum` is Epicor's abbreviation and it is NOT Infor's `InvoiceNumber`.
+        Reading the wrong one yields None and an analyzer that reports nothing wrong.
+        """
+        return {
+            "entity_type": "Invoice",
+            "invoice_number": epicor_invoice.get("InvoiceNum"),
+            "invoice_date": self._parse_date(epicor_invoice.get("InvoiceDate")),
+            "due_date": self._parse_date(epicor_invoice.get("DueDate")),
+            "supplier_id": epicor_invoice.get("CustNum") or epicor_invoice.get("VendorNum"),
+            "supplier_name": epicor_invoice.get("CustomerName"),
+            "total_amount": self._parse_currency(epicor_invoice.get("InvoiceAmt")),
+            "currency": epicor_invoice.get("CurrencyCode"),
+            # Epicor carries payment state as a BOOLEAN, not a status string. `OpenInvoice`
+            # false means settled — so a status-string comparison finds nothing to compare
+            # and every invoice stays "open", which is the overdue check firing on all of
+            # them.
+            "status": "open" if epicor_invoice.get("OpenInvoice") else "paid",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "source_system": "Epicor",
+        }
+
+    def transform_epicor_part(self, epicor_part: Dict[str, Any]) -> Dict[str, Any]:
+        """Epicor `Erp.BO.PartSvc` -> the normalized inventory shape."""
+        return {
+            "entity_type": "Inventory",
+            "material_id": epicor_part.get("PartNum"),
+            "material_name": epicor_part.get("PartDescription"),
+            "plant": epicor_part.get("Plant"),
+            "quantity": self._parse_currency(epicor_part.get("OnHandQty")),
+            "reorder_point": self._parse_currency(epicor_part.get("MinimumQty")),
+            "unit": epicor_part.get("IUM"),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "source_system": "Epicor",
+        }
+
+    # ================================================================================
+    # Intuit QuickBooks (FS-561)
+    # ================================================================================
+    #
+    # QBO nests money and references: `TotalAmt` is a bare number but `CustomerRef` is
+    # `{"value": "42", "name": "Acme"}`, and `Balance` — not a status field — is what says
+    # whether an invoice is settled. There is no `status` on a QBO Invoice at all, so a
+    # transformer that looks for one leaves it None and the overdue check treats every
+    # invoice as unpaid.
+
+    @staticmethod
+    def _qbo_ref(value: Any) -> Optional[str]:
+        """A QBO `{"value": ..., "name": ...}` reference, reduced to a scalar."""
+        if value is None:
+            return None
+        if isinstance(value, dict):
+            reference = value.get("name") or value.get("value")
+            return str(reference) if reference is not None else None
+        return str(value)
+
+    def transform_intuit_invoice(self, qbo_invoice: Dict[str, Any]) -> Dict[str, Any]:
+        """QuickBooks Online Invoice -> the normalized invoice shape.
+
+        STATUS IS DERIVED FROM `Balance`, because QBO has no status field on an invoice.
+        A zero balance means settled. Looking for `Status` — as every other vendor here
+        has — returns None, and `None != "paid"` is true, so every invoice ever synced
+        would be reported overdue the moment its due date passed.
+        """
+        balance = self._parse_currency(qbo_invoice.get("Balance"))
+        return {
+            "entity_type": "Invoice",
+            "invoice_number": qbo_invoice.get("DocNumber") or qbo_invoice.get("Id"),
+            "invoice_date": self._parse_date(qbo_invoice.get("TxnDate")),
+            "due_date": self._parse_date(qbo_invoice.get("DueDate")),
+            "supplier_id": self._qbo_ref(qbo_invoice.get("CustomerRef")),
+            "supplier_name": self._qbo_ref(qbo_invoice.get("CustomerRef")),
+            "total_amount": self._parse_currency(qbo_invoice.get("TotalAmt")),
+            "currency": self._qbo_ref(qbo_invoice.get("CurrencyRef")),
+            "status": "paid" if balance is not None and balance <= 0 else "open",
+            "balance": balance,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "source_system": "Intuit",
+        }
+
+    @staticmethod
+    def _map_generic_invoice_status(status: Any) -> Optional[str]:
+        """Shared status normalisation for the PascalCase REST vendors."""
+        if not status:
+            return None
+        normalized = str(status).strip().lower()
+        if "paid" in normalized or normalized == "closed":
+            return "paid"
+        if "cancel" in normalized or "void" in normalized:
+            return "cancelled"
+        if "draft" in normalized:
+            return "draft"
+        return "open"
+
     def _parse_date(self, date_value: Any) -> Optional[str]:
         """
         Parse date value from SAP format.

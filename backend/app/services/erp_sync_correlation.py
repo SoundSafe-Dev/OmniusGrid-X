@@ -62,6 +62,30 @@ PATTERN_CLASSES: Dict[str, Tuple[str, str]] = {
         "app.services.erp_connectors.netsuite_correlation_patterns",
         "NetSuiteCorrelationPatterns",
     ),
+    # FS-558..561. The remaining four vendors, each in the same state NetSuite was:
+    # a working connector, stored records, and no route — so every sync reported
+    # `skipped: unrouted` and produced nothing.
+    #
+    # The ANALYZERS are the same across these five, because they read one normalized
+    # shape. The TRANSFORMERS are not and cannot be — that is the registry's rule, and
+    # the near-miss between Infor's `InvoiceNumber` and Epicor's `InvoiceNum` is why:
+    # one careless copy apart, and the wrong one yields None rather than an error.
+    "odoo": (
+        "app.services.erp_connectors.odoo_correlation_patterns",
+        "OdooCorrelationPatterns",
+    ),
+    "infor": (
+        "app.services.erp_connectors.infor_correlation_patterns",
+        "InforCorrelationPatterns",
+    ),
+    "epicor": (
+        "app.services.erp_connectors.epicor_correlation_patterns",
+        "EpicorCorrelationPatterns",
+    ),
+    "intuit": (
+        "app.services.erp_connectors.intuit_correlation_patterns",
+        "IntuitCorrelationPatterns",
+    ),
 }
 
 #: (erp_type, normalized entity type) -> (transformer method, analyzer method).
@@ -139,6 +163,43 @@ CORRELATION_ROUTES: Dict[Tuple[str, str], Tuple[str, str]] = {
         "transform_netsuite_inventory",
         "analyze_inventory_shortfall",
     ),
+    # --- Odoo (FS-558) ------------------------------------------------------------
+    # `account.move` covers invoices and bills; `sale.order` is the order model.
+    ("odoo", "account.move"): ("transform_odoo_invoice", "analyze_invoice_anomalies"),
+    ("odoo", "invoice"): ("transform_odoo_invoice", "analyze_invoice_anomalies"),
+    ("odoo", "sale.order"): (
+        "transform_odoo_sales_order",
+        "analyze_sales_order_correlation",
+    ),
+    ("odoo", "salesorder"): (
+        "transform_odoo_sales_order",
+        "analyze_sales_order_correlation",
+    ),
+
+    # --- Infor (FS-559) -----------------------------------------------------------
+    ("infor", "invoice"): ("transform_infor_invoice", "analyze_invoice_anomalies"),
+    ("infor", "inventory"): (
+        "transform_infor_inventory",
+        "analyze_inventory_shortfall",
+    ),
+
+    # --- Epicor (FS-560) ----------------------------------------------------------
+    # Entity names are Epicor service names (`Erp.BO.InvoiceSvc`); `_normalize` strips
+    # separators, so the keys are written as the sync will see them after normalising.
+    ("epicor", "erp.bo.invoicesvc"): (
+        "transform_epicor_invoice",
+        "analyze_invoice_anomalies",
+    ),
+    ("epicor", "invoice"): ("transform_epicor_invoice", "analyze_invoice_anomalies"),
+    ("epicor", "erp.bo.partsvc"): (
+        "transform_epicor_part",
+        "analyze_inventory_shortfall",
+    ),
+    ("epicor", "part"): ("transform_epicor_part", "analyze_inventory_shortfall"),
+
+    # --- Intuit QuickBooks (FS-561) -----------------------------------------------
+    ("intuit", "invoice"): ("transform_intuit_invoice", "analyze_invoice_anomalies"),
+
 }
 
 #: NOT registered, and why — so nobody re-derives it.

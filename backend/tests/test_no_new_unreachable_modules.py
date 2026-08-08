@@ -17,6 +17,17 @@ it reads as a feature to anybody browsing the tree, and it is the first thing so
 were found this way: 2,508 lines writing to `erp_sync_status` with a session they take as a
 parameter, from callers that do not exist.
 
+TWO BASELINE ENTRIES WERE ALREADY WRONG, and widening the walk is what showed it.
+`oracle_correlation_patterns` is loaded by `erp_sync_correlation.PATTERN_CLASSES` and has been
+routed since Oracle was wired; `infor_connector` is loaded by `erp_connector_factory`. Both are
+imported **by string**, through `importlib`, so no `ast.Import` node exists anywhere and both
+sat in this baseline described as dead — with a reason, written by somebody who checked. A
+reader acting on either entry would have deleted a live, routed module.
+
+That is the cost of a detector that knows one idiom: not a false alarm, which announces itself,
+but a **false entry in a curated list**, which reads as verified. Removed, and the walk now
+counts a dotted `app.*` string in production code as the import it is.
+
 THE DETECTOR WAS WRONG FIRST, and by a lot. Counting `ast.ImportFrom(module=...)` alone reported
 **57** modules, because `main.py` mounts routers with `from app.api import alarms, alarm_rules,
 …` — which records `app.api`, not `app.api.alarms`. Every router in the tree looked dead. The
@@ -63,11 +74,6 @@ UNREACHABLE: dict[str, str] = {
     "app/services/erp_connectors/sap_data_extraction.py":
         "Same shape as dynamics_data_extraction, and the most misleading of the three because "
         "SAP is the one vendor whose sync IS wired — through run_erp_sync, not this file.",
-    "app/services/erp_connectors/oracle_correlation_patterns.py":
-        "Vendor correlation patterns for Oracle. POOL #33 is writing the Dataverse/Odoo "
-        "transformer; whether Oracle joins that set is the same decision.",
-    "app/services/erp_connectors/infor_connector.py":
-        "A sixth vendor connector, not in the factory's route table. Same decision as #33.",
     "app/services/erp_connectors/sap_webhook_integration.py":
         "Superseded by `app/api/erp_webhooks.py` + `erp_webhook_receiver`, which is what the "
         "signed-webhook path actually uses. Delete candidate — but confirm no vendor-specific "
@@ -120,6 +126,33 @@ def _referenced() -> set[str]:
                 elif isinstance(node, ast.Import):
                     for alias in node.names:
                         seen.add(alias.name)
+                # A DOTTED MODULE PATH IN A STRING IS AN IMPORT (FS-558..561).
+                #
+                # `erp_sync_correlation.PATTERN_CLASSES` maps a vendor to
+                # `("app.services.erp_connectors.odoo_correlation_patterns", "Odoo…")` and
+                # loads it with `importlib.import_module`. There is no `ast.Import` node
+                # anywhere, so four live, routed, tested modules read as unreachable — and
+                # the fix a reader would reach for is to DELETE them.
+                #
+                # This is the third form of the same lesson in this file's history: the
+                # walk knew `ImportFrom(module=)`, learned `module.alias`, and did not know
+                # that a registry-driven codebase imports by string. Any dynamically loaded
+                # module was invisible to it.
+                elif (
+                    # PRODUCTION ONLY. A dotted string in a TEST is not a production
+                    # reference, and the vacuity probe below names a fictional module in
+                    # exactly this form — counting it made the probe reference itself and
+                    # the scan report it as reachable.
+                    # `!=`, NOT `is not`. `ROOT / "tests"` builds a NEW Path each time,
+                    # so an identity comparison is always true and the exclusion never
+                    # applied — the probe below kept counting itself.
+                    root != ROOT / "tests"
+                    and isinstance(node, ast.Constant)
+                    and isinstance(node.value, str)
+                    and node.value.startswith("app.")
+                    and "." in node.value[4:]
+                ):
+                    seen.add(node.value)
     return seen
 
 

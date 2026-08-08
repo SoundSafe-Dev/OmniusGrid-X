@@ -120,10 +120,32 @@ ORPHANS: dict[str, str] = {
     "app/services/erp_connectors/sap_connector.py::batch_fetch": "As above.",
     "app/services/erp_connectors/dynamics_correlation_patterns.py::analyze_project_resource_correlation":
         "A pattern the dynamics route does not select.",
-    # `oracle_correlation_patterns.py` used to have three entries here and does not now:
-    # the module-level guard already carries the whole file, so `_orphans()` excludes it and
-    # the entries described nothing. My own docstring warns against exactly this
-    # double-listing and I did it anyway — which is what the staleness test below is for.
+    # `oracle_correlation_patterns.py` — THE ENTRIES CAME BACK, and the round trip is the
+    # point.
+    #
+    # They were here, then removed as double-listed: the module-level guard carried the whole
+    # file, so `_orphans()` excluded it and the entries described nothing. That was correct
+    # when written.
+    #
+    # It stopped being correct when FS-558..561 taught the module guard that a dotted string
+    # in `PATTERN_CLASSES` is an import. Oracle has been routed all along; the module was
+    # never dead, its baseline entry was wrong, and removing that entry moved the file OUT of
+    # the module guard's population and INTO this one — where its three genuinely orphaned
+    # analyzers belong. Nobody wrote them back; this guard failed on the next full run and
+    # named all three.
+    #
+    # Two guards handing a finding to each other as the facts change is the behaviour worth
+    # having. A finding that fell between them would have been invisible in exactly the way
+    # both files exist to prevent.
+    "app/services/erp_connectors/oracle_correlation_patterns.py::analyze_employee_correlation":
+        "An Oracle HR pattern the route table does not select. Oracle IS routed — for "
+        "invoices and shipments — so this is an unselected analyzer in a live module, not "
+        "dead code in a dead one.",
+    "app/services/erp_connectors/oracle_correlation_patterns.py::analyze_project_correlation":
+        "As above: a project-correlation analyzer with no entity routed to it.",
+    "app/services/erp_connectors/oracle_correlation_patterns.py::analyze_cash_flow_correlation":
+        "As above, and per the route table's own note it takes a PERIOD rather than a "
+        "record, so the router could not call it even if an entity were routed.",
     "app/services/erp_correlation_patterns.py::analyze_supply_chain_risk":
         "Three vertical-specific pattern analysers with no selector reaching them.",
     "app/services/erp_correlation_patterns.py::analyze_defense_manufacturing_correlation": "As above.",
