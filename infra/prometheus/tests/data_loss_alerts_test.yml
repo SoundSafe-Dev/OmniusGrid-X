@@ -1,0 +1,225 @@
+# promtool unit tests for the eight alerts guarding DATA LOSS and TOTAL OUTAGE (FS-583).
+#
+# WHY THESE EIGHT FIRST. 30 of 51 rules had no unit test, and a rule with none is only known
+# to PARSE. `promtool check rules` cannot tell a rule that fires from one that never can —
+# `EdgeAgentBufferHigh` was syntactically perfect and unfirable for the whole time it existed
+# (FS-498), and `EdgeAgentDroppingTelemetry` had no rule at all until FS-591.
+#
+# These are the ones where "cannot fire" is worst: telemetry leaving the system, a backup that
+# stopped running, and the two processes whose absence means the product is down. An alert
+# that cannot fire is indistinguishable from a healthy system, and these are exactly the
+# conditions nobody watches a dashboard for.
+#
+# ANNOTATIONS ARE ASSERTED IN FULL, and not by choice: promtool compares them whether or not
+# you supply them, so omitting the block asserts they are EMPTY. That makes every one of these
+# a transcription of the rule's own prose — including `runbook_url` — which is why the
+# expectations below are generated from `alerts.yml` rather than typed. Where a `{{ $value }}`
+# appears, the number is the one the series actually produces, and getting it wrong is how the
+# first draft of this file failed.
+#
+# EVERY CASE HAS A QUIET TWIN. An alert that fires on a healthy system gets muted within a day,
+# which is the same as not having one — so each counter is also driven flat, and each
+# cumulative one is driven with a large historical total that is not growing.
+
+rule_files:
+  - ../alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  # TOTAL LOSS: neither processed nor preserved, and the offset advances regardless.
+  - interval: 1m
+    input_series:
+      - series: 'opsgrid_ingestion_dead_letter_failed_total{source_topic="telemetry.org.press-1"}'
+        values: '0+1x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: IngestionDataLost
+        exp_alerts:
+          -
+            exp_labels:
+              severity: critical
+              source_topic: telemetry.org.press-1
+              team: platform
+            exp_annotations:
+              summary: "Ingestion worker LOST telemetry — the dead-letter publish also failed"
+              description: "10 messages from telemetry.org.press-1 were dropped entirely: unprocessable, and the DLQ publish failed too. The sending device has already been acknowledged and has discarded its copy. Check broker reachability and the DLQ topic's existence."
+
+  # MUST STAY QUIET: IngestionDataLost on a healthy series.
+  - interval: 1m
+    input_series:
+      - series: 'opsgrid_ingestion_dead_letter_failed_total{source_topic="telemetry.org.press-1"}'
+        values: '9x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: IngestionDataLost
+        exp_alerts: []
+
+  # RECOVERABLE but unnoticed: published to the DLQ, absent from the database.
+  - interval: 1m
+    input_series:
+      - series: 'opsgrid_ingestion_dead_lettered_total{source_topic="telemetry.org.press-1"}'
+        values: '0+2x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: IngestionDeadLettering
+        exp_alerts:
+          -
+            exp_labels:
+              severity: high
+              source_topic: telemetry.org.press-1
+              team: platform
+            exp_annotations:
+              summary: "Ingestion worker is dead-lettering telemetry"
+              description: "20 messages from telemetry.org.press-1 could not be processed in the last 15m and were published to the DLQ. The data is replayable but is not in the database. Check the DLQ topic for the failure reason."
+
+  # MUST STAY QUIET: IngestionDeadLettering on a healthy series.
+  - interval: 1m
+    input_series:
+      - series: 'opsgrid_ingestion_dead_lettered_total{source_topic="telemetry.org.press-1"}'
+        values: '400x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: IngestionDeadLettering
+        exp_alerts: []
+
+  # The EDGE side: rows the store-and-forward buffer shed (FS-504 built this counter).
+  - interval: 1m
+    input_series:
+      - series: 'edge_buffer_dropped_total'
+        values: '0+3x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: EdgeBufferDropping
+        exp_alerts:
+          -
+            exp_labels:
+              severity: medium
+              team: edge
+            exp_annotations:
+              summary: "Edge buffer dropping messages (size cap)"
+              description: "30 oldest edge messages pruned to stay under the buffer size cap"
+
+  # MUST STAY QUIET: EdgeBufferDropping on a healthy series.
+  - interval: 1m
+    input_series:
+      - series: 'edge_buffer_dropped_total'
+        values: '77x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: EdgeBufferDropping
+        exp_alerts: []
+
+  # The EDGE side of dead-lettering.
+  - interval: 1m
+    input_series:
+      - series: 'edge_buffer_dead_lettered_total'
+        values: '0+1x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: EdgeDeadLettering
+        exp_alerts:
+          -
+            exp_labels:
+              severity: high
+              team: edge
+            exp_annotations:
+              summary: "Edge messages dead-lettered"
+              description: "10 edge messages exhausted retries and were dead-lettered in the last 15m"
+
+  # MUST STAY QUIET: EdgeDeadLettering on a healthy series.
+  - interval: 1m
+    input_series:
+      - series: 'edge_buffer_dead_lettered_total'
+        values: '55x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: EdgeDeadLettering
+        exp_alerts: []
+
+  # AVAILABILITY. `up == 0` is the easiest expression to break with a job-label typo, and a rule watching a job nothing scrapes is permanently silent.
+  - interval: 1m
+    input_series:
+      - series: 'up{job="timescaledb"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: TimescaleDBDown
+        exp_alerts:
+          -
+            exp_labels:
+              job: timescaledb
+              severity: critical
+              team: infrastructure
+            exp_annotations:
+              summary: "TimescaleDB is down"
+              description: "TimescaleDB has been down for more than 1 minute. All data ingestion is halted."
+              runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/deployment/dr-timescaledb-failure.md"
+
+  # MUST STAY QUIET: TimescaleDBDown on a healthy series.
+  - interval: 1m
+    input_series:
+      - series: 'up{job="timescaledb"}'
+        values: '1x10'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: TimescaleDBDown
+        exp_alerts: []
+
+  # The API process.
+  - interval: 1m
+    input_series:
+      - series: 'up{job="opsgrid-backend"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: BackendAPIDown
+        exp_alerts:
+          -
+            exp_labels:
+              job: opsgrid-backend
+              severity: high
+              team: backend
+            exp_annotations:
+              summary: "OpsGrid Backend API is down"
+              description: "Backend API has been down for more than 2 minutes. Dashboard inaccessible."
+              runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/deployment/dr-backend-crash.md"
+
+  # MUST STAY QUIET: BackendAPIDown on a healthy series.
+  - interval: 1m
+    input_series:
+      - series: 'up{job="opsgrid-backend"}'
+        values: '1x10'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: BackendAPIDown
+        exp_alerts: []
+
+  # BACKUPS: invisible by construction. A backup that stops running produces no error, and the first sign is a restore with nothing to restore from — which this repository has already lived through.
+  - interval: 1m
+    input_series:
+      - series: 'kube_job_status_failed{job_name="prod-db-backup-29001"}'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: DatabaseBackupJobFailed
+        exp_alerts:
+          -
+            exp_labels:
+              severity: high
+              team: platform
+            exp_annotations:
+              summary: "Database backup Job failed"
+              description: "A db-backup Job reported a failed pod. The nightly logical backup did not complete; check the Job logs and DatabaseBackupStale."
+              runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/database-backup-restore.md"
+
+  # MUST STAY QUIET: DatabaseBackupJobFailed on a healthy series.
+  - interval: 1m
+    input_series:
+      - series: 'kube_job_status_failed{job_name="prod-db-backup-29001"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: DatabaseBackupJobFailed
+        exp_alerts: []
+

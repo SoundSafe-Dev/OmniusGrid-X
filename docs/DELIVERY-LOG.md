@@ -7835,3 +7835,43 @@ are written down because the alternative is somebody doing the same work again i
 of the four were in code written **that same day**, by me: the duplicated engine list, and the
 `dropped` counter I had built without checking whether anything consumed it. Asking "where else
 does this shape live" is worth doing immediately after closing a class, not only months later.
+
+---
+
+## FS-583 — 30 of 51 alert rules could not be shown to fire
+
+`promtool check rules` validates syntax and says **nothing** about whether a series exists that
+would make an expression true. This repository has paid for that twice: `EdgeAgentBufferHigh`
+was syntactically perfect and **unfirable for its entire existence** — the heartbeat sent
+`collectors_total` and the rule read `total_collectors` (FS-497/498) — and `edge_agent_dropped`
+had no rule at all, so the only counter measuring permanently lost telemetry reached nobody
+(FS-591).
+
+**An alert that cannot fire is indistinguishable from a healthy system.**
+
+Eight new tests cover the rules where that costs most: telemetry leaving the system
+(`IngestionDataLost`, `IngestionDeadLettering`, `EdgeBufferDropping`, `EdgeDeadLettering`), a
+backup that stopped running (`DatabaseBackupJobFailed`), and the two processes whose absence
+means the product is down (`TimescaleDBDown`, `BackendAPIDown`). Coverage 21 → 28 of 51.
+
+### The untested set is named, not counted
+
+A number alone can be improved by **deleting a rule** — better ratchet, fewer alerts, which is
+the exact trade the gate exists to prevent. The remaining 23 are listed by name, and three
+assertions hold the list honest: nothing new joins it, an entry that gains a test must leave
+it, and an entry whose rule was deleted fails rather than quietly improving the figure.
+
+Nine rules are **absolutely** required to have a test, outside the ratchet: the seven above
+plus `EdgeAgentDroppingTelemetry` and `AuditWriteFailing`. The slow tail a ratchet tolerates is
+not acceptable for a rule whose silence means data is gone.
+
+### promtool compares annotations whether or not you supply them
+
+Omitting `exp_annotations` asserts they are **empty**, so every expectation is a
+byte-for-byte transcription of the rule's own prose — including `runbook_url`, and including
+`{{ $value }}` and `{{ $labels.* }}` rendered to what the series actually produces. Three
+drafts failed on that before the file was generated from `alerts.yml` rather than typed. The
+first draft also invented plausible annotation text, which is the kind of error that reads as
+correct right up until it runs.
+
+**Suite:** backend 3910 → 3935 · 9 promtool files over 51 rules.
