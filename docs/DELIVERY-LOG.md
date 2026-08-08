@@ -7473,3 +7473,36 @@ while the endpoint still appeared registered.
 Mutation-verified: making a rejection append nowhere again fails three tests.
 
 **Suite:** backend 3873 → 3881.
+
+---
+
+## FS-575 — eight exported hooks nothing imports, and one of them is a whole subsystem
+
+The frontend twin of the backend's unreachable-module inventory. An exported hook with no
+consumer reads as available capability: typed, compiling, in autocomplete — so the next person
+who needs that data writes a second one rather than finding this.
+
+**All six `useFeatureFlags` exports are unused, and the backend serves the API.**
+`app/api/feature_flags.py` mounts full CRUD and `featureFlagsApi` wraps it. So the feature-flag
+system exists end to end and **nothing in the product consults a flag** — a different and more
+interesting fact than "dead code". Deleting the hooks would leave a backend serving an API with
+no client at all; wiring them is a decision about whether this codebase gates behaviour on
+flags. Recorded, not resolved.
+
+`useWorkcells` and `useOrganizations` are duplication rather than absence — both wrap endpoints
+already read through direct api calls, which is rule 55's shape, so the entry says which is
+which for whoever adds the third.
+
+**The guard satisfied itself on its first run.** It lists all eight names in `DEAD_EXPORTS` and
+in its own prose, and it lives under `src/` — so the consumer scan counted its own inventory as
+usage and reported every recorded entry as wired. An inventory that satisfies itself is the
+emptiest possible guard.
+
+That is the same shape as the `vi.mock` sweep reading its own docstring (FS-544) and the
+doc-citation guard flagging its own confession (FS-557). **Three times today, in three
+different languages** — a guard that scans the tree it lives in must exclude itself, and it is
+not obvious until it passes when it should fail.
+
+Mutation-verified: a new unused export fails by name.
+
+**Frontend:** 871 → 876 tests · `tsc` clean.
