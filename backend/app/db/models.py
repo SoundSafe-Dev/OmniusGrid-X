@@ -2041,7 +2041,11 @@ class AuditLog(Base):
     organization = relationship("Organization", foreign_keys="AuditLog.organization_id", lazy="raise")
     action = Column(String(100), nullable=False)
     resource_type = Column(String(50), nullable=True)
-    resource_id = Column(UUID(as_uuid=True), nullable=True)  # Polymorphic UUID resource
+    #: VARCHAR, not UUID, and migration 009 says why in its own comment: "polymorphic:
+    #: route names/config keys, not always a UUID". The merge brought a UUID column
+    #: here, which binds fine until the first audit row whose resource is a route name.
+    #: `test_schema_parity` caught it as uuid-vs-text drift against the migrated schema.
+    resource_id = Column(String(36), nullable=True)  # Polymorphic - can reference any table
     details = Column(JSON, default={}, nullable=False)
     # Migrations 001/009 create this as INET. Declared as VARCHAR here, every
     # insert bound $n::VARCHAR and Postgres rejected it with
