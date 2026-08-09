@@ -62,6 +62,12 @@ DOCS = [
     # failed. Read the parts through the shared reader rather than naming them, so the next
     # part is covered on the day it is written.
     *_sweeps_document.parts(),
+    # ADDED WHILE FIXING A STALE CLAIM IN IT (FS-573). This document is 554 lines of
+    # citations — scripts, workflows, test modules, migration files — and it was never in
+    # this list, so none of them were checked. It is also the document a reader consults
+    # before touching the contract gate, which makes a path that no longer resolves more
+    # expensive here than in most places.
+    ROOT / "docs" / "engineering" / "api-contract-gate.md",
 ]
 
 #: `` `something.py` `` — a backticked filename with a source extension.

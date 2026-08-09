@@ -108,6 +108,34 @@ from pathlib import Path
 #: variance. 380 leaves 12 of headroom and still catches a regression of 13 — where the old
 #: 360 would have sat through a loss of 32.
 #:
+#: MEASURED AGAIN 2026-08-08, and the floor STAYS AT 380 for a reason worth writing down.
+#:
+#:     with Postgres + Redis + a reachable broker    402 / 471
+#:     with Postgres + Redis, broker absent          387 / 471   (2026-08-07)
+#:
+#: 402 is the highest this gate has ever scored, and it is the first run where all three
+#: dependencies were actually present — the broker step (FS-259b) is `continue-on-error` and
+#: REMOVES ITS OWN CONTAINER if the advertised address does not verify, because a half-working
+#: broker hangs the app and collects 1 operation instead of 452. That fail-safe is right, and
+#: it is also why this number cannot become the floor.
+#:
+#: THE FLOOR MUST SURVIVE THE WORST LEGITIMATE CONFIGURATION, and the worst legitimate
+#: configuration is a degraded broker step: 387, minus the measured spread of 9, is 378. The
+#: floor is already 380. **Raising it to anything near 402 would fail every build in which the
+#: broker did not come up** — which is precisely how this job's predecessor became advisory
+#: and got killed at six hours.
+#:
+#: So the next raise is gated on a CI change, not on a code fix: make the broker required, or
+#: measure what the job scores without one and set the floor from that. Until then a healthy
+#: run carries 22 of headroom, which is slack this gate cannot spend.
+#:
+#: What the 402 run found, which is the point of running it: `ServerError` is down to 14, and
+#: not one of the 14 is a defect in this lane. Six are the pg_stat_statements limitation
+#: recorded below, four are RAG (vector store unreachable in this harness), two are CORRECT
+#: 503s charged to the API because schemathesis counts any 5xx, one is an unhandled
+#: PermissionError on a missing OTA artifact directory, and **one is a response model that has
+#: never been able to serialise its own handler's output** — see FS-608.
+#:
 #: Raise it when a fix clears the noise. Never lower it.
 BASELINE_PASSING = 380
 

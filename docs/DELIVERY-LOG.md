@@ -8041,3 +8041,124 @@ formatter is a different number presented as the same one — worse than a dated
 would add a whole-tree format run to every test session in order to be wrong.
 
 **Suite:** backend 3,947 · edge agent 351 · frontend 881 · `tsc` clean.
+
+---
+
+## FS-562 — the answer existed and died at the end of the request
+
+`correlate_synced_records` has distinguished *"analysed, nothing anomalous"* from *"no analyzer
+is registered for this vendor's field names"* since FS-557. Its log line spells out the stakes:
+reusing another vendor's transformer would produce "empty normalized records and a confident
+report of zero anomalies."
+
+**And the answer reached the client only in the `POST /sync` response**, which is read once and
+gone — while the page an operator watches polls `GET /sync-status`, built from a table with
+nowhere to put it. So the correlations tab rendered an empty list for both cases, under a sync
+row reporting **success**.
+
+This is `failureIsNotEmptiness` one layer further back. Not a failed read shown as "no
+results" — an analysis that never ran, shown as an analysis that found nothing, with a green
+badge beside it.
+
+**Three states, and the third is why the column is nullable.** Migration 063 adds
+`correlation_routed BOOLEAN` and `correlation_reason TEXT`, both nullable on purpose: a row
+written before the column existed recorded no correlation attempt either way, and stamping
+`false` on it would invent a skip that may never have happened. The UI reads null as "not
+recorded" and renders nothing.
+
+The mutation that mattered was not deleting the warning — it was changing
+`s.correlation_routed === false` to `!s.correlation_routed`. That one line would put a gap
+warning on the entire sync history of every integration, which is the same mistake in the
+opposite direction: a finding invented out of an absence of data. One test failed, and it is
+the null case.
+
+The warning is per **entity type**, not per integration, because one vendor can have an
+analyzer for `Invoice` and none for `Shipment` — which is also why it lives on the status rows
+rather than as a banner over the correlations list.
+
+Four boundaries, each of which drops a field silently, and the guard pins all four: the
+service returns it, the route persists it, `SyncStatusResponse` declares it (FastAPI **omits**
+an undeclared field rather than erroring — the shape that hid the edge agent's `dropped`
+counter), and the column exists to hold it. The mock now carries an unrouted row too: a mock
+that only has the happy path is a mock that agrees with the bug.
+
+## FS-573, first pass — the gate's own document had closed a limitation and not said so
+
+`api-contract-gate.md` carried a section headed *"Known limitation: this gate runs with RLS
+inert"*, ending **"This gate does not do the same yet."** FS-307 had already fixed it — the job
+provisions `omniusgrid_contract` and connects as it, and the ratchet records the five-operation
+cost. The prose describing the problem outlived all three edits that solved it.
+
+**A closed limitation that still reads as open is worse than an unrecorded one.** Somebody
+planning work either re-does the fix or discounts the gate's results on a caveat that no longer
+applies — and this document exists to be read before touching a blocking gate.
+
+Guarded by `test_the_contract_gate_doc_matches_the_gate.py`, which pairs the doc against the
+workflow in **both** directions: the doc must not describe a gate that is gone, and the gate
+must still provision the role the doc now says it does. Without the second half, deleting the
+role from the workflow would leave the first assertion passing while the document became wrong
+again. The doc was also never in `test_documented_files_exist.py`'s scope, so 554 lines of
+path citations were unchecked; it is now.
+
+---
+
+## FS-573 — the gate's best-ever score, and why the floor did not move
+
+**402 of 471**, measured 2026-08-08. The highest this gate has recorded, and the first run with
+all three dependencies genuinely present: the restricted `omniusgrid_contract` role (FS-307),
+Redis, and a broker advertising an address the client could reach. Every previous local
+measurement was missing at least one of those — the 387 from the day before had 352
+`KafkaConnectionError`s in it.
+
+**The floor stays at 380.**
+
+    Postgres + Redis + a reachable broker    402 / 471
+    Postgres + Redis, broker absent          387 / 471
+
+The broker step is `continue-on-error` and **removes its own container** when the advertised
+address does not verify, because a half-working broker hangs the app and the run collects 1
+operation instead of 452. That fail-safe is right. It also fixes the ceiling on the floor: the
+worst *legitimate* configuration scores 387, and 387 minus the measured spread of 9 is 378 —
+below the floor already in force. Raising toward 402 would fail every build where the broker
+did not come up, which is exactly how this job's predecessor became advisory and was killed at
+six hours.
+
+So the next raise is gated on a **CI change, not a code fix**: make the broker required, or
+measure the no-broker score deliberately and set the floor from that. Recorded in the ratchet's
+own comments, where the next person to look at 22 points of headroom will find it.
+
+### `ServerError` is 14, and twelve of them are not tickets
+
+The only bucket that is entirely defects, down from 23 at the FS-307 re-baseline. Each one was
+reproduced against a live app using schemathesis' own curl reproduction rather than inferred
+from the report:
+
+* **6** — `/admin/query-performance/*`. `pg_stat_statements` needs `shared_preload_libraries`
+  and Postgres is a service container, which takes no command. Documented, environmental.
+* **4** — `/rag/*`, vector store unreachable in this harness.
+* **2** — `/edge/enroll` and `/sso/login/callback` return a **correct 503**. Schemathesis counts
+  any 5xx, so a properly-reported missing dependency is charged to the API.
+* **2** — real, and both in other lanes.
+
+### The one that justified the run: an endpoint that has never returned successfully
+
+`POST /api/v1/engines/correlation/integration/analyze` has a single return path and it cannot
+be serialised:
+
+    1 validation error for CorrelationAnalysisResponse
+    integration_result.message
+      Input should be a valid list [input_value='Integration processing in background']
+
+`integration_result` is declared `Dict[str, List[str]]`; the handler passes
+`{"message": "Integration processing in background"}`. Pydantic rejects it **while building the
+response**, so the analysis runs, the background task is queued, and the caller gets a 500.
+There is no input that makes this endpoint succeed and there never has been — the same class as
+FS-486, a capability that ships and cannot be reached.
+
+Left for the correlation-AI lane as FS-608, because which side is wrong is a shape decision:
+either the annotation should be `Dict[str, str]`, or the message branch should be a list and the
+field is meant to carry category → created-ids. The background task suggests the second.
+
+The other real one, FS-609, is `POST /fleet/releases` letting a `PermissionError` escape when
+the OTA artifact directory is missing — where the two correct 503s beside it show the shape it
+should have.

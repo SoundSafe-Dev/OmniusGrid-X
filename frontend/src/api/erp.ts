@@ -48,6 +48,19 @@ export interface SyncStatus {
   records_failed?: number | null
   sync_duration_seconds?: number | null
   next_sync_at?: string | null
+  /**
+   * Whether correlation had a route for this vendor and entity on the last sync (FS-562).
+   *
+   * THREE STATES, and the third is the point. `true` means the records were analysed;
+   * `false` means no analyzer is registered for this vendor's field names, so nothing was
+   * looked at; `null`/absent means the sync recorded no correlation attempt — every row
+   * written before the column existed. Without this the correlations tab renders an empty
+   * list for the first two alike, which is the same defect as a failed read showing as "no
+   * results", one layer further back.
+   */
+  correlation_routed?: boolean | null
+  /** Why correlation produced nothing, when it produced nothing. */
+  correlation_reason?: string | null
 }
 
 export interface FieldMapping {
@@ -152,7 +165,12 @@ const mockIntegrations: ERPIntegration[] = [
 const mockSyncStatus: Record<string, SyncStatus[]> = {
   'erp-sap-1': [
     { entity_type: 'PurchaseOrder', last_sync_at: new Date(Date.now() - 3600_000).toISOString(), last_sync_status: 'success', records_synced: 128, records_failed: 0, sync_duration_seconds: 12 },
-    { entity_type: 'Invoice', last_sync_at: new Date(Date.now() - 3600_000).toISOString(), last_sync_status: 'success', records_synced: 74, records_failed: 2, sync_duration_seconds: 8 },
+    { entity_type: 'Invoice', last_sync_at: new Date(Date.now() - 3600_000).toISOString(), last_sync_status: 'success', records_synced: 74, records_failed: 2, sync_duration_seconds: 8, correlation_routed: true },
+    // A SUCCESSFUL SYNC THAT WAS NEVER ANALYSED. In the mock deliberately, because this is
+    // the state the UI got wrong: 41 records in, no correlations out, and nothing on the
+    // screen distinguishing that from "we looked and found nothing". A mock that only
+    // carries the happy path is a mock that agrees with the bug (rule 28).
+    { entity_type: 'Shipment', last_sync_at: new Date(Date.now() - 3600_000).toISOString(), last_sync_status: 'success', records_synced: 41, records_failed: 0, sync_duration_seconds: 5, correlation_routed: false, correlation_reason: 'no correlation route for this erp_type/entity_type' },
   ],
 }
 const mockMappings: Record<string, FieldMapping[]> = {

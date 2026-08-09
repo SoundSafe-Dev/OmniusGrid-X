@@ -161,6 +161,17 @@ class SyncStatusResponse(BaseModel):
     next_sync_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
+    #: FS-562. Whether a correlation route existed for this vendor/entity on the last
+    #: sync, and why not when there was none. The server has always known this — it was
+    #: returned by the sync POST and then discarded, while the page an operator watches
+    #: polls THIS endpoint. Without it, an empty correlations list means either "analysed,
+    #: nothing found" or "never analysed", and those are opposite answers.
+    #:
+    #: Three states, not two: `None` is a sync that recorded no correlation attempt, which
+    #: is every row written before the column existed.
+    correlation_routed: Optional[bool] = None
+    correlation_reason: Optional[str] = None
+
 
 class MessageResponse(BaseModel):
     """The two deletes. Both answer with a sentence and nothing else."""
@@ -850,6 +861,12 @@ async def run_erp_sync(integration_id: str, organization_id: str, entity_types: 
             sync_row.records_synced = synced
             sync_row.records_failed = failed
             sync_row.sync_duration_seconds = int(duration)
+            # FS-562. The outcome reached the POST response and stopped there, while the
+            # UI polls sync-status. Persisted so a reload does not turn "no analyzer for
+            # this vendor" back into "no anomalies found".
+            if etype in correlation_summary:
+                sync_row.correlation_routed = correlation_summary[etype].get("routed")
+                sync_row.correlation_reason = correlation_summary[etype].get("reason")
             entry = {"status": status, "records_synced": synced, "records_failed": failed}
             # Surface the correlation outcome rather than leaving it in the logs.
             # An operator looking at a sync that produced no correlations needs to

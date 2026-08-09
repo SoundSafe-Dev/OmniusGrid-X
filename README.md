@@ -545,9 +545,13 @@ verifier failed. On a UTC developer machine none of it is visible.
 > path, a line number, or a measurement taken on the day.
 
 > 📋 **Next week's work is pooled in
-> [`docs/planning/next-week-task-pool.md`](docs/planning/next-week-task-pool.md)** — 56
-> independently-assignable tickets with sizes and acceptance criteria, for **Harsh (Product
-> Manager)** to redistribute. Four of them are *decisions* that block engineering work.
+> [`docs/planning/next-week-task-pool.md`](docs/planning/next-week-task-pool.md)** (week of
+> 2026-08-10) — **20 independently-assignable tickets and 5 decisions**, with sizes and
+> acceptance criteria, for **Harsh (Product Manager)** to redistribute. Every figure in it was
+> re-derived from the tree on the day it was written, and one item is a *recorded negative* —
+> an entry measured while writing and found not to reproduce. The previous pool is archived at
+> [`task-pool-2026-07-26.md`](docs/planning/task-pool-2026-07-26.md); nothing was carried
+> forward on its say-so.
 
 > ⚠️ The pre-convergence feature branches are all merged into
 > `hamad/converged-pre-main` and now into **`main`**. **Start new work from

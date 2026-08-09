@@ -188,9 +188,25 @@ an environment where Qdrant resolves, the request would execute the delete path 
 for deleting vectors with no organisation filter. Left for that item's owner (`rag.py` is
 another dev's lane); recorded here so the category label does not invite dismissing it.
 
-### Known limitation: this gate runs with RLS inert
+### CLOSED 2026-08-06 (FS-307): this gate used to run with RLS inert
 
-The contract job connects as the database superuser, and **a superuser bypasses row-level
+**Everything in this section describes the state before FS-307, and it is kept because the
+re-baseline it forced is only legible beside it.** The job now provisions
+`omniusgrid_contract` with `provision_app_role.py` — the same script `conftest.py` uses — and
+connects as that role. The script asserts `NOSUPERUSER NOBYPASSRLS` after the DDL rather than
+trusting it, because a silent bypass would make every number downstream a fiction.
+
+The cost was **five operations**, measured on one database, one seed, back to back: 397 as the
+owning superuser, 392 as the restricted role. Six operations fail only under the restricted
+role, and those six are the point of the exercise — they were passing because RLS was off.
+The floor was re-baselined to 380 deliberately, which is a different act from lowering a floor
+to make a build pass, and `contract_ratchet.py` records both numbers.
+
+**Point 2 below is still open**, and it is the one this repository cannot answer.
+
+---
+
+The contract job connected as the database superuser, and **a superuser bypasses row-level
 security even where `FORCE ROW LEVEL SECURITY` is set**. So every tenant-isolation policy
 in the schema is switched off for the duration of this suite.
 
@@ -201,16 +217,15 @@ create with someone else's `organization_id` in the body returned **200 and wrot
 row**, which looks like a cross-tenant write and is not one. The policy was present,
 forced, and correct; the connection was simply exempt.
 
-`tests/conftest.py:139` gets this right for the real-DB suite — it creates a
+`tests/conftest.py:139` got this right for the real-DB suite — it creates a
 `NOSUPERUSER NOBYPASSRLS` role explicitly because "superusers bypass RLS even with
-FORCE", so the isolation tests are sound. **This gate does not do the same yet.**
+FORCE", so the isolation tests were sound. **This gate now does the same.**
 
 Two things follow, and the second is not answerable from this repository:
 
-1. Give the contract job a restricted role, the way `conftest` does. Expect conformance
-   to *drop* when it lands — endpoints that currently sail through will start meeting the
-   policies — so it needs a deliberate re-baseline, which is a different act from
-   lowering the floor to make a build pass and must be recorded as such.
+1. ~~Give the contract job a restricted role, the way `conftest` does.~~ **Done, FS-307.**
+   Conformance dropped by five, exactly as predicted, and the re-baseline is recorded in
+   `contract_ratchet.py` with both measurements.
 2. **Check which role production connects as.** `DATABASE_URL` comes from the
    `database-credentials` secret, which is not in the repo, so the answer is
    operational. If that role is the cluster owner or otherwise carries `BYPASSRLS`, then

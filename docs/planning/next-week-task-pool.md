@@ -1,808 +1,464 @@
 # Next week — task pool
 
-Written 2026-07-26 for **Harsh as Product Manager**. Grouped by lane so it can be handed
-out as-is; every task is independently assignable, so reassign freely.
+**Week of Monday 2026-08-10.** Written 2026-08-08 for **Harsh as Product Manager**, grouped by
+lane so it can be handed out as-is. Every item is independently assignable; reassign freely.
 
-Numbers are stable references — a task keeps its number if it moves lane.
-**Every figure below was verified against the repository on 2026-07-26.** Tasks marked
-*verify first* may already be fixed; the shape of the work depends on what is actually true.
+The previous pool (2026-07-26) is archived at
+[`task-pool-2026-07-26.md`](task-pool-2026-07-26.md). **Nothing has been carried forward on its
+say-so.** Every figure below was re-derived from the repository on 2026-08-08, and several
+entries that pool listed as open have since closed — they are not repeated here.
 
-> ### ⚠️ Verify before you start — the pool drifts faster than it is read
+> ### ⚠️ Verify before you start
 >
-> **Re-audited 2026-07-30.** Of the four items picked up since this was written, **three had
-> already been partly or wholly done**:
+> The last pool was re-audited four days after it was written, and **three of the four items
+> picked up had already been partly or wholly done**. That is not a criticism of the pool; it
+> is what a written snapshot does while sixty commits a day land against it.
 >
-> * **#31** — the seeder DID set a webhook secret; it was a shared literal, which was a
->   different and worse defect than the one recorded. Now done.
-> * **#40** — the `ws://` socket helper had already been deleted and the scheme already derived
->   from the page protocol. The only missing half was a test. Now done.
-> * **#55** — `overlays/dr` exists, builds, and is linted by two CI jobs. Entry corrected.
-> * **#43** — the ratio had moved the wrong way (191/417 → 195/458) because new routes landed
->   undeclared. Baseline corrected.
->
-> This is not a criticism of the pool; it is what a written snapshot does while sixty-odd
-> commits a day land against it. **Spend the first ten minutes of any item reproducing the
-> claim.** If it does not reproduce, correct the entry in place with the date and what you
-> found — that is worth more than the task was.
+> **Spend the first ten minutes of any item reproducing its claim.** If it does not reproduce,
+> correct the entry in place with the date and what you found — that is worth more than the
+> task was. Three plans in a row rotted by listing more work than existed, every time because
+> the next plan was written from the previous pool instead of from the tree.
 
 Sizes: **S** under half a day · **M** 1–2 days · **L** 3+ days.
 
-*A print-ready PDF (one lane per page) is not committed — it would go stale beside this
-file. Regenerate:*
+*Regenerate the print-ready PDF (not committed — it would go stale beside this file):*
 `python3 tools/docs/md2pdf.py docs/planning/next-week-task-pool.md docs/planning/next-week-task-pool.pdf`
 
 ---
 
 ## Verified state, so nobody re-derives it
 
+Measured 2026-08-08 on `hamad/converged-pre-main` at `e0c0815f`.
+
 | Fact | Value |
 |---|---|
-| `response_model` coverage | **191 / 417 routes (45%)** |
-| API files still using `get_db` | **24** |
-| `kanban.py` | 10 `get_db` + 14 `get_tenant_db` — mixed |
-| Frontend `USE_MOCK` forks in `src/api/` | **190** |
-| `useTranslation` call sites | **0** (i18n scaffolded, unused) |
-| `api-contract` CI gate | `continue-on-error: true` — advisory |
-| Tests quarantined in `ci-cd.yml` | 3 files ignored, 2 tests deselected |
-| `correlation_ai_engine.py` | 3,627 LOC, zero tests reach it |
-| `CorrelationAIPane.tsx` | 843 LOC, no test |
-| `geotab_service.py` | 16 `random.uniform` call sites |
-| ERP tests | 488 with live vendors, 399 hermetic |
+| Backend suite | **3,956 passing**, 102 skipped |
+| Edge-agent suite | **351 passing**, 1 skipped |
+| Frontend suite | **886 passing** across 112 files; `tsc` clean |
+| Frontend coverage | 45.51 / 46.24 / 41.28 / **46.94** against thresholds 44 / 45 / 40 / **46** |
+| `response_model` coverage | **419 / 472 routes**; 53 undeclared, ratchet ceiling 53 |
+| Contract gate | **402 of 471** measured 2026-08-08 with all three dependencies; floor stays **380** — see FS-593 |
+| Alert rules | 51 total, **23 with no promtool test** |
+| Migrations | 66; **4 cannot be re-run**, permanently — see FS-578 |
+| Swallow surface | `MAX_SWALLOWING` 201 · `MIN_COUNTED` 11 |
+| Ratchets at zero | 4 — unset adapter fields, unsignalled caps, phantom fields, unfed types |
+| `main` vs this branch | **432 ahead, 7 behind** |
+| Lane-failure register | empty |
 
-**Checked and found DONE — deliberately absent from this pool**, because the previous plan
-still listed both: Redis is deployed (`base/redis-statefulset.yaml`), and server-side alarm
-rules exist (`AlarmRule` model + `AlarmRules.tsx` with a test).
+**Four ratchets are at zero.** Worth saying out loud, because a register that reaches zero and
+stays on the page becomes a monument rather than an instrument — see D4.
+
+`docs/engineering/open-decisions.md` has **one** entry, added 2026-08-08: the `pre-commit`
+question below. It had been empty since 2026-08-05, and an empty decision register is a claim
+that nothing is blocked on intent, which is a strong claim to leave unexamined.
 
 ---
 
 # Decisions — Harsh, as PM
 
-These cost a conversation, not a sprint, and each blocks real work.
+Each blocks or shapes engineering work below.
 
-1. **Correlation-AI honesty — what does the product claim?** · *blocks #13, #14; shapes #15*
-   `CORRELATION_MODEL_ENABLED` is `False` by default and the engine falls back to a
-   heuristic, so **every deployment today shows heuristics styled as AI output**. The engine
-   now labels its own output `simulated: true`, but nothing carries or displays that. Three
-   defensible answers: label it in the UI, hide the AI tab when the model is off, or ship
-   the adapter enabled.
+### D1. Promote `main`  ·  *blocks nothing formally, distorts everything*
 
-   Done when: the answer is written down, and #13/#14 are either scheduled or closed as
-   won't-do.
+`hamad/converged-pre-main` is **432 commits ahead of `main` and 7 behind**, and the 7 are
+content-identical to the fork point — `git diff <merge-base> main` is empty, so nothing has to
+come back. Meanwhile every developer is told to branch from `main`, which means branching from
+a tree that predates the entire convergence.
 
-2. **Quarantined tests — MOSTLY ANSWERED 2026-07-30. One left, and it is the real one.**
-   Four of the five were fixed: the three scenario-builder files were rewritten against the
-   API their modules actually export (8 + 6 + 7 tests) and
-   `test_image_domain_mapper.py::test_map_image_domains` was repaired. All four `--ignore`
-   /`--deselect` flags are out of `ci-cd.yml` and both registers are updated. **No production
-   code changed** — every one was a test left asserting the API that merge `42ed66d8`
-   replaced.
+This has been true and un-actioned across two pools. It is not an engineering task; it is a
+window somebody has to pick.
 
-   The register had reasoned these were "written against an API that never shipped" and left
-   them for the owning lane. Half right, and the wrong half mattered: the API they wanted
-   never shipped, but the builders they cover are **live on the intake path** —
-   `nlp_correlation.py:1594/1655/1794` and `analysis_sessions.py:972` call them on every
-   intake — so CI was skipping coverage of shipped code, not of an unbuilt feature. Worth
-   remembering the next time a quarantine entry says "not mine to touch": check whether the
-   thing under test is running in production before deciding it is someone else's problem.
+**Done when:** the promotion has run, or a date is written down.
 
-   **Still open, and it needs HARSH specifically:**
-   `test_document_domain_mapper.py::test_map_section_to_domain_table_content`.
-   `map_section_to_domain` returns `None` for a table whose header row is
-   `["asset_id", "status"]` with a `"failed"` cell, where the test expects `MNT`. That is a
-   disagreement about what the mapper *should* do — either table-content mapping has a gap or
-   the expectation was never right — and it is the only one of the five that needs a decision
-   about the intended taxonomy rather than a rewrite. It stays quarantined, expiring
-   2026-09-23.
+### D2. The contract gate's ceiling is a policy question  ·  *shapes FS-593*
 
-   Done when: HARSH decides which of the mapper and the test is wrong, and #12 is scheduled.
+**45 of the 471 operations cannot pass without a deliberate behaviour change** — 31 + 14,
+measured 2026-08-08. Two shapes, both documented in `docs/engineering/api-contract-gate.md`:
 
-2b. **The quarantine is tracked in two files that duplicate the same list.** S
-   `tests/test_quarantine.py` and `tests/test_ci_quarantine_expires.py` both hold a register
-   of what CI excludes, both check it against `ci-cd.yml`, and both had to be edited by hand
-   for the change above. Two sources of truth for "what is CI skipping" is the exact drift
-   these registers exist to prevent — they just cannot catch it in each other. Collapse to
-   one, with the other importing it.
+* **31 `AcceptedNegativeData`** — Pydantic's lax mode coerces `{"is_enabled": 0}` to `False`
+  and returns 201. Strict mode would satisfy the check and **break every client sending
+  `1`/`"true"`**.
+* **14 `UnsupportedMethodResponse`** — `GET /alarms/acknowledge-all` returns 422 rather than
+  405 because the literal path is shadowed by `/alarms/{alarm_id}`. A 405 needs typed path
+  converters across many routes.
 
-   Done when: one register is the source of truth and removing an entry means editing one
-   file.
+Neither is a defect. Adopting either is a compatibility decision with a real cost.
 
-3. **`main` promotion window** · *pairs with #39*
-   `hamad/converged-pre-main` is well ahead of `main`, and every dev is told to branch from
-   `main`. The longer the gap, the more divergent everyone's starting point.
+**Done when:** the answer is written into the gate document, so the next person to raise the
+ratchet knows whether the target is **~424** (leave both policies alone: 471 − 45 − the two
+genuine defects) or **469**. Without it, somebody reads the 69-operation gap as 69 tickets and
+spends a week on non-bugs. It is two — see FS-593b.
 
-   Done when: a date is agreed and announced to the four active branches.
+### D3. 1,777 lines of service code that production does not import  ·  *blocks FS-598*
 
-4. **The `super_admin` role** · *blocks #23, and `data_retention.py`*
-   Two features need a role that spans tenants, which is a deliberate hole in the RLS model.
-   `app/core/roles.py:48` documents the need; nothing implements it. It has a real blast
-   radius, which is why neither feature shipped.
+Four modules, imported by **zero** application code:
 
-   Done when: scope is decided — which routes, which audit trail, who can grant it — and
-   written into `roles.py` as the spec #23 builds against.
+| Module | Lines | What it is |
+|---|---|---|
+| `erp_error_handler.py` | 533 | the entire ERP dead-letter surface |
+| `erp_security.py` | 483 | credential handling for connectors |
+| `device_provisioning.py` | 465 | edge enrolment |
+| `schema_registry.py` | 296 | telemetry schema validation |
 
----
+Each has *tests* naming it, which is how it survived a dead-code sweep — a module with tests
+and no callers reads as live to any importer-based check. They are inventoried in
+`test_no_new_unreachable_modules.py`.
 
-# Alex — intake & spreadsheet parsing
-*Under Harsh. Sequenced: #5 and #6 finish work he already started.*
+The decision is per module and it is **wire or delete**, not "leave for later": the DLQ surface
+in particular is 533 lines that an operator would reasonably assume is running.
 
-His onboarding landed here — he fixed `normalize_key`, added `normalize_column_header`,
-added a messy real-world CSV fixture, and wrote `docs/DATA_FLOW_OVERVIEW.md`.
-**Two of those three code additions are not connected to anything**, which is the natural
-next step and teaches the lesson this codebase keeps relearning.
+**Done when:** each of the four has an owner and a verdict recorded in the inventory.
 
-5. **Wire `normalize_column_header` into its callers** · S
-   He added it with three passing tests and **no production caller** — `grep` finds it only
-   in its own test file, so it currently normalises nothing. Eight modules consume
-   `shared_key_detector`; the spreadsheet path (`multi_spreadsheet_correlator`) is the one
-   that ingests headers.
+### D4. Four ratchets are at zero — retire them or keep them  ·  S
 
-   Do: route header ingestion through the helper, then assert a realistic header row
-   normalises end to end rather than unit-testing the helper again.
+`MAX_UNSET_FIELDS`, `MAX_UNSIGNALLED`, `MAX_UNREAD_PHANTOM_FIELDS` and `MAX_UNFED_FIELDS` are
+all zero, and `docs/engineering/open-decisions.md` had no entries for three days before FS-574
+added one.
 
-   Done when: removing the call makes a test fail. A helper with a test and no caller does
-   nothing.
+A ratchet at zero should become a plain assertion (`assert not offenders`) and lose its
+allowance, or it keeps inviting somebody to nudge it up. **Done when:** each is converted or
+deliberately kept, with the reason.
 
-6. **Make the messy fixture assert something** · S
-   `tests/load/fixtures/messy_factory_upload.csv` is referenced by **no test**. He built it
-   to represent real-world mess, and right now it is a file that proves nothing.
+### D5. `pre-commit` is advisory, and compliance is one 972-file commit  ·  *registered*
 
-   Do: point a parser test at it and assert the keys and headers that come out.
+The only entry in `docs/engineering/open-decisions.md`, pinned by
+`backend/tests/test_the_precommit_decision_is_still_open.py`. Repeated here because a decision
+in a register nobody opens is a decision nobody makes.
 
-   Done when: corrupting a column in the fixture fails the test.
+CI runs the formatting hooks with `continue-on-error: true`, above a comment reading *"Advisory
+while the existing tree is brought into compliance."* The tree has not been brought into
+compliance, and that sentence now describes a choice rather than a transition. Measured
+2026-08-08 on a clean tree: **972 files, +55,068 / −40,118**.
 
-7. **Decide and test header-collision behaviour** · S
-   `Serial #` and `Serial No.` may both normalise to `serial_number`. Today's behaviour is
-   **unknown** — one column may be silently overwriting another, which is data loss that
-   looks like success.
+Both answers are defensible. Making it blocking means one announced tree-wide reformat landed
+when no branch is open — a 972-file diff conflicts with every branch that exists, and
+`git blame` on all 972 then points at that commit instead of at whoever wrote the line. Keeping
+it advisory means the comment stops claiming a transition, and the hooks keep the value that
+needs no tree-wide change: merge conflicts and secrets.
 
-   Do: find out what happens now, choose the behaviour (last-wins, first-wins, or raise),
-   and implement it deliberately.
+**It lands in four lanes at once, which is why it is Harsh's call and not a developer's.**
 
-   Done when: the chosen behaviour is asserted by a test, with the reasoning in the
-   docstring so nobody re-litigates it.
-
-8. **Extend the messy-header corpus** · M
-   The fixture covers one shape of mess. Real customer spreadsheets bring merged cells, a
-   title row above the header, trailing total rows, unit suffixes (`Temp (°C)`), duplicate
-   names, non-ASCII, and Excel coercing values to dates.
-
-   Done when: each case has a named test saying what real situation it represents, and the
-   parser either handles it or fails loudly rather than silently mis-parsing.
-
-9. **Fold `docs/DATA_FLOW_OVERVIEW.md` into the architecture docs** · M · *stretch*
-   He wrote 114 lines living outside `docs/architecture/`, alongside an existing
-   `DATA_FLOW.md`. Two descriptions of one flow will disagree, and nobody will know which
-   is current.
-
-   Done when: one document describes the flow and the other is gone, not left as a stale
-   copy.
+**Done when:** either the reformat is scheduled with a date, or the workflow comment says the
+job is advisory by choice and why.
 
 ---
 
-# Harsh — correlation AI, NLP, kanban, MLOps
-*His own lane until he reassigns it. #10 is the one only he has the context for.*
+# Hamad — platform, contract gate, frontend primitives
 
-10. **Unquarantine the three scenario builders** · M · *needs #2*
-    `test_document_scenario_builder.py`, `test_image_scenario_builder.py` and
-    `test_cross_file_scenario_builder.py` fail at collection with
-    `ImportError: cannot import name 'build_document_scenarios'`. The test and the module
-    disagree about the API; only he knows which side is right.
+### FS-593. The contract floor cannot rise until the broker is guaranteed · M · *not the burn-down it looks like*
 
-    Done when: the three files are passing and un-ignored in `ci-cd.yml`, or deleted with a
-    one-line note saying why.
+**Measured 2026-08-08, the first run with all three dependencies present: 402 of 471, against
+a floor of 380.** That is the highest this gate has ever scored, and the floor is staying at
+380 — which is the finding, not a failure of nerve.
 
-11. **Re-enable the two deselected tests** · S · *needs #2*
-    `test_document_domain_mapper.py::test_map_section_to_domain_table_content` and
-    `test_image_domain_mapper.py::test_map_image_domains` are `--deselect`ed.
+    Postgres + Redis + a reachable broker    402 / 471
+    Postgres + Redis, broker absent          387 / 471   (2026-08-07)
 
-    Done when: both run in CI, or are deleted.
+The broker step is `continue-on-error` and **removes its own container** if the advertised
+address does not verify, because a half-working broker hangs the app and collects 1 operation
+instead of the whole set. That fail-safe is correct. It also means the worst *legitimate* configuration
+scores 387, and 387 minus the measured spread of 9 is 378 — below the floor already in force.
+**Raising the floor toward 402 would fail every build in which the broker did not come up**,
+which is exactly how this job's predecessor became advisory and got killed at six hours.
 
-12. **Make the quarantine expire** · S
-    Nothing stops an exclusion becoming permanent — a `--ignore` is invisible in a green
-    build, which is how these five survived.
+So the next raise is gated on a CI change, not a code fix.
 
-    Do: add a named marker plus a test that fails once an expiry date passes.
+**Done when:** either the broker is a required step whose failure fails the job — in which
+case the floor moves to roughly 390 — or the job's score without a broker is measured
+deliberately and the floor is set from *that*. Write down which, in the ratchet's own comments.
 
-    Done when: adding a new exclusion without an expiry date fails CI.
+### FS-593b. The fixable bucket is 14, and none of it is in this lane · S · *reclassification*
 
-13. **Plumb the `simulated` flag through the API** · S · *needs #1; blocks #14*
-    **The honesty fix currently stops at the service layer.** Verified: no file in
-    `app/api/` reads the key. `nlp_correlation.py:1152-1155` cherry-picks exactly four
-    values out of the analysis, and `/query` returns `response_model=NLPQueryResponse`,
-    which declares no `simulated` field and would strip it even if the handler copied it. So
-    the engine labels its output and nothing downstream can see the label.
+`ServerError` is the only bucket that is entirely defects, and it is down to **14** from 23 at
+the FS-307 re-baseline. Classified by reproducing each one against a live app:
 
-    Done when: a test asserts the flag survives the HTTP boundary with
-    `CORRELATION_MODEL_ENABLED=False`.
+| Count | What it actually is |
+|---|---|
+| 6 | `/admin/query-performance/*` — `pg_stat_statements` needs `shared_preload_libraries`, and Postgres is a service container that takes no command. Documented, environmental. |
+| 4 | `/rag/*` — vector store unreachable in this harness; htreinen's lane either way |
+| 2 | `/edge/enroll` and `/sso/login/callback` return a **correct 503**. Schemathesis counts any 5xx, so a properly-reported missing dependency is charged to the API. |
+| 1 | `POST /fleet/releases` — see FS-609 |
+| 1 | `POST /engines/correlation/integration/analyze` — see FS-608 |
 
-14. **Show the user when an analysis is simulated** · S · *needs #13*
-    Once the flag reaches the client, `CorrelationAIPane.tsx` has to render it — a badge, a
-    banner, whatever #1 decided.
+**Done when:** nothing. This entry exists so the next person does not read "14 server errors" as
+fourteen tickets. It is two.
 
-    Done when: with the model disabled the UI visibly distinguishes a heuristic from an
-    inference, and a test covers it.
+### FS-594. `components/common/` — 346 lines, 5 components, zero test files · M
 
-15. **Make the Gemma adapter loadable in a dev environment** · M
-    `CORRELATION_ADAPTER_PATH` defaults to `./checkpoints/best_lora_v2`, which no
-    documentation explains how to obtain. The load failure is caught per request and
-    swallowed into the fallback, so a misconfigured path looks like a working system.
+Every one is stubbed out of the page tests that mount it (`vi.mock('../components/common', () => ({ ExportButton: () => null }))` in
+`pages/OEE.test.tsx:39` and `pages/AssetDetail.test.tsx:35`), so not one is ever rendered by anything. They
+report as covered because nothing distinguishes "stubbed" from "exercised".
 
-    Do: document how a dev gets the adapter, and make a failed load loud at startup rather
-    than silent on every request.
+**Done when:** each renders in at least one test that asserts behaviour, and the page tests
+that stub them either stop stubbing or say why in the mock.
 
-    Done when: a dev can follow written steps to a real inference, and a bad
-    `CORRELATION_ADAPTER_PATH` fails visibly instead of silently degrading.
+### FS-595. `components/ui/` — 12 components, 2 test files · M
 
-16. **Kanban RLS-write-on-read** · M · *verify first*
-    `kanban.py` mixes 10 `get_db` and 14 `get_tenant_db`. One root cause was reported to
-    500 `/kanban/board`, `/metrics` and `/workload` — the same class as the ERP sync that
-    wrote nothing on a non-owner role.
+`a11y.test.tsx` covers `Button` and `Input`. `Select` was an unlabelled combobox app-wide until
+FS-550 and reported **100% line coverage** throughout, because the a11y suite never rendered
+it. `Table`, `Modal`, `Badge` and `Tooltip` are in the same position now.
 
-    Do: reproduce on real Postgres as a non-owner role first, since it may already be fixed.
-    Then convert the handlers that touch RLS-protected tables.
+**Done when:** the axe assertion covers every primitive in the directory, driven off a
+directory listing rather than a hand-kept list — so a new primitive is covered on the day it
+lands.
 
-    Done when: those three endpoints return data on real Postgres as a non-owner role, with
-    a test that fails if a handler regresses to `get_db`.
+### FS-596. 23 of 51 alert rules cannot be shown to fire · M
 
-17. **`/nlp/correlation/intake/{id}` 500** · S · *reported; verify*
-    Reported as a 500. Unverified.
+`promtool check rules` proves an expression **parses** and says nothing about whether a series
+exists that would make it true. `EdgeAgentBufferHigh` was syntactically perfect and unfirable
+for its entire existence. The 23 are **named, not counted**, in
+`test_every_alert_rule_is_provably_firable.py`, so the ratchet cannot be satisfied by deleting
+a rule.
 
-    Done when: either a fix with a regression test, or a note that it no longer reproduces.
+**Done when:** a batch has promtool tests that drive each expression true **and** a
+must-stay-quiet case, and the named set shrinks by that batch.
 
-18. **First tests for `correlation_ai_engine.py`** · L
-    3,627 lines, and `pytest -k correlation` deselects 1,245 tests and runs **none** against
-    it. Every change to it is currently unverifiable.
+### FS-597. The coverage thresholds have under one point of headroom · S · *decide, then act*
 
-    Do: start with the pure scoring helpers that need no model — `_calculate_risk_score`,
-    `_simulate_root_cause`, `_generate_kanban_tasks`.
+Measured 46.94 lines against a threshold of **46**. That is 0.94 points, and an unrelated
+refactor that adds an untested file fails the build. The opposite problem to FS-542, which
+found 12 points of slack.
 
-    Done when: the scoring helpers have known-input/known-output tests, so a change to risk
-    scoring cannot land silently.
+Two defensible answers: add tests until there is room (FS-594/595 do this), or accept that the
+threshold now tracks reality closely and treat a failure as a signal rather than noise. **Done
+when:** one is chosen and written into `vitest.config.ts` beside the numbers.
 
-19. **Split `CorrelationAIPane.tsx`** · L
-    843 lines with no test. Data-fetching and layout are entangled, so neither can be
-    tested without the other.
+### FS-598. Four live services with production callers and zero tests · M · *distinct from D3*
 
-    Done when: data-fetching is extracted from presentation, and at least the fetching layer
-    has tests.
+These **are** imported — which is what separates them from D3:
+
+| Module | Lines | Production importers |
+|---|---|---|
+| `shop_floor_fanout.py` | 326 | **4** |
+| `agent_release_storage.py` | 103 | **4** |
+| `insight_activation.py` | 517 | 1 (a mounted router) |
+| `inference_client.py` | 137 | 2 |
+
+`insight_activation` is the one to start with: 517 lines behind a mounted router, so it is
+reachable over HTTP today.
+
+**Done when:** each has a test that exercises its main path, and the two with four importers
+have one asserting behaviour at a caller.
+
+### ~~FS-599. Six e2e skips nobody counts~~ — **measured while writing this, premise wrong** · S
+
+Recorded rather than deleted, because *proven clean* and *never checked* look identical
+afterwards, and because the mistake is instructive.
+
+A grep for `test.skip` in `frontend/e2e` returns 6 hits. **Four are
+`test.skip(!LIVE, 'needs a live backend; set E2E_LIVE_BACKEND=1')`** — a conditional guard with
+a stated reason, which is exactly what this item would have asked for. **The other two are
+comments**, describing the FS-386 defect where `test.skip(count === 0)` turned an empty page
+into a silent pass. Rule 37 caught me again: prose about a defect gathers around the defect, so
+a text search matches the description as readily as the thing.
+
+There are **zero unconditional skips** in the e2e suite, and zero `@pytest.mark.skip` in the
+backend. What *is* real: the live-backend suite runs 119 tests in CI and roughly 39 on a laptop
+without a backend, and nothing counts the difference at the point of use.
+
+**Left as:** no work. If somebody wants the residual, it is a one-line reporter that prints how
+many specs the `!LIVE` guard skipped — worth an hour, not a ticket.
 
 ---
 
-# Hridyansh — tenant isolation, RBAC, OTA, edge
+# HARSH — MLOps, correlation-AI
 
-20. **`get_db` on RLS-protected tables — 24 API files** · L · ⭐ *highest-value task here*
-    The class of bug that made the ERP background sync write nothing on a non-owner role and
-    hid the dashboard's data behind zeroes. A handler using `get_db` never sets
-    `app.current_org_id`, so an RLS predicate evaluates NULL and rows silently vanish —
-    reads return empty, writes are rejected. Invisible in dev, because the dev connection
-    owns the tables and owners bypass RLS.
+### FS-600. The response-model burn-down is now entirely in other lanes · M
 
-    Do: **write the guard test first** — one that fails when a handler depending on `get_db`
-    queries an RLS-protected model. Then work the 24 files against the RLS tables in
-    migrations `011`/`033`.
+**419 of 472 routes declare a `response_model`; 53 do not, and not one of the 53 is in Hamad's
+lane.** An undeclared route is a route the contract gate cannot check, so this is also the
+cheapest way to move FS-593.
 
-    Done when: the guard exists and passes, and every handler touching an RLS-protected
-    table uses `get_tenant_db`. The guard matters more than the sweep; without it the next
-    one ships too.
+| Router | Undeclared |
+|---|---|
+| `engines` | 11 |
+| `model_monitoring` | 9 |
+| `logistics_correlation` | 8 |
+| `analysis_sessions` | 7 |
+| `nlp_correlation` | 6 |
+| `auth` | 4 |
+| `correlation_integration` | 3 |
+| `telemetry` | 3 |
+| `kanban` | 2 |
 
-21. **`ORGANIZATION_ID` is hardcoded in the edge StatefulSet** · S
-    `base/edge-agent-statefulset.yaml:62,64` sets `"dev-org"`, so **every edge agent in
-    every environment reports into the same fake organisation** — production included.
+History and method are in [`hamad-response-model-burndown.md`](hamad-response-model-burndown.md).
+The ratchet ceiling is 53, so **any new undeclared route now fails the build** — this is
+burn-down, not containment.
 
-    Done when: the value comes from per-environment configuration, and no overlay ships
-    `dev-org`.
+**Done when:** a router reaches zero and `MAX_UNDECLARED` drops by that many.
 
-22. **Edge backoff jitter** · S
-    Without jitter, a fleet that loses the backend reconnects in lockstep and stampedes it
-    the moment it returns, turning a brief outage into a longer one.
+### FS-608. `POST /engines/correlation/integration/analyze` has never returned successfully · S · **do this first**
 
-    Done when: reconnect delay is randomised, and a test shows N agents do not retry in the
-    same instant.
+Found by the contract gate on 2026-08-08 and reproduced against a live app. The handler has
+**one** return path, and it cannot be serialised:
 
-23. **Organisation management CRUD** · M · *needs #4*
-    `AdminPages.tsx` sets `USER_MGMT_ENABLED = false`, so the UI exists and is switched off.
-    Only `GET /users` is implemented.
+```
+1 validation error for CorrelationAnalysisResponse
+integration_result.message
+  Input should be a valid list [type=list_type,
+                                input_value='Integration processing in background']
+```
 
-    Do: add create/update/deactivate/role-change with `require_admin` and tenant scoping,
-    then turn the flag on.
+`CorrelationAnalysisResponse.integration_result` is declared `Dict[str, List[str]]`
+(`correlation_integration.py:52`). The handler returns
+`integration_result={"message": "Integration processing in background"}` — a `Dict[str, str]` —
+at `correlation_integration.py:150`. Pydantic rejects it while *building the response*, so the
+analysis runs, the background task is queued, and the caller gets a **500 every time**.
 
-    Done when: an admin can manage users in their own org through the UI, an operator
-    cannot, and a cross-tenant attempt is refused by a test.
+This is not a generated-input problem. There is no input that makes this endpoint succeed, and
+there never has been. Same class as FS-486: a capability that ships and cannot be reached.
 
-24. **Collector tests** · M
-    The collector has no tests, so its parsing and batching behaviour is unverified.
+**It needs a decision, which is why it is here and not fixed.** Either the annotation is wrong
+(the message branch is a plain string) or the message branch is wrong (it should be
+`{"message": ["Integration processing in background"]}`, and the field is meant to carry
+category → created-ids). The background task suggests the second, but that is a call for
+whoever owns the shape.
 
-    Done when: the happy path and at least malformed-input handling are covered.
+**Done when:** the endpoint returns 200 for a valid request, and a test asserts it — the gate
+will confirm it independently on the next run.
+
+### FS-609. `POST /fleet/releases` raises `PermissionError` instead of reporting unavailable · S · *OTA*
+
+Also from the 2026-08-08 run. The OTA artifact directory defaults to
+`/var/lib/omniusgrid/ota`, which does not exist and is not writable outside a container, and
+the handler lets the `PermissionError` escape:
+
+```
+[Errno 13] Permission denied: '/private/var/lib/omniusgrid'
+[Errno  2] No such file or directory: '/private/var/lib/omniusgrid/ota'
+```
+
+In a real deployment the path exists, so this is *mostly* environmental — but an endpoint whose
+storage is unavailable should answer 503 with a reason, the way `/edge/enroll` and
+`/sso/login/callback` already do. Those two also appear in the gate's 5xx list and are
+**correct**; this one is an unhandled exception wearing the same clothes.
+
+**Done when:** a missing or unwritable artifact directory produces a 503 naming the path, and
+the gate's server-error list drops by one.
+
+### FS-601. `components/kanban/` — 1,811 lines, 7 components, zero test files · L
+
+`KanbanColumn` (252) and `KanbanCard` (239) have no test; `TaskDetailModal` (604),
+`KanbanBoard`, `CreateTaskModal` and `KanbanFilters` exist in the page test only as
+`() => null` stubs. `stores/kanbanStore.tsx` (367 lines, board loading and every task mutation)
+is mocked wholesale at `pages/Kanban.test.tsx`.
+
+**Done when:** the store has direct tests and the two leaf components render in one.
+
+### FS-602. `components/nlp/` — 3,735 lines, 10 components, 2 test files · L
+
+The largest untested component directory in the repository, and it is the intake surface.
+
+**Done when:** the four largest components have a test that asserts behaviour rather than
+mounting.
+
+### FS-603. The correlation-AI honesty question is still open · S · *carried from the last pool*
+
+`CORRELATION_MODEL_ENABLED` is `False` by default and the engine falls back to a heuristic, so
+every deployment shows heuristics styled as AI output. The engine now labels its own output
+`simulated: true` and the transcript endpoints carry it (FS-479), but the **AI tab does not
+display it**.
+
+**Done when:** the answer is written down — label it, hide the tab when the model is off, or
+ship the adapter enabled.
 
 ---
 
 # htreinen — RAG
 
-25. **`/rag/documents` leaks a raw SeaweedFS error** · S
-    An infrastructure connection error is surfaced verbatim to the client instead of a 503 —
-    unreadable for the caller, and an information leak about internal topology.
+Four items, unchanged and unstarted. Each was measured on 2026-08-06 and none has moved.
 
-    Done when: the endpoint returns 503 with a generic message, the detail is logged
-    server-side, and a test covers the storage-unavailable path.
+* **FS-563. Streaming answers** · M — `stream_generate()` exists and no route exposes it.
+* **FS-564. Async ingestion (202 + status)** · L — a large upload blocks the request today.
+* **FS-565. The document metadata record** · L — **unblocks four other items**; do this first.
+* **FS-566. Answer feedback loop** · M.
 
-26. **`rag_eval` is excluded from the default test run** · S
-    So it has zero coverage in CI, and the suite that validates retrieval quality never runs
-    on a PR.
+One more, found by the contract gate and left for this lane deliberately:
 
-    Done when: it runs in CI, or the exclusion carries a written reason and an expiry
-    (see #12).
+### FS-604. `DELETE /api/v1/rag/documents/{doc_id}` reaches its handler with a literal path · S
 
-27. **The five open items in `docs/rag_ingestion_followups.md`** · M
-    Carried from the ingestion work and not yet scheduled.
+Thirteen of the fourteen `UnsupportedMethodResponse` operations return 422 because their path
+parameter is typed, so the request never reaches the handler. This one takes `doc_id: str`,
+accepts the literal `"link"` as a perfectly good id, and **runs the deletion path**. It deletes
+nothing today, but it is the same handler FS-266 flags for deleting vectors with no
+organisation filter.
 
-    Done when: each is done or removed from the list with a reason — the list should not
-    outlive its usefulness.
-
-28. **RAG containerisation seam** · M
-    `docs/RAG_CONTAINERIZATION.md` describes a seam that is not yet realised, so the RAG
-    backend cannot be deployed the way the document says.
-
-    Done when: the documented topology is what actually runs, or the document is corrected
-    to match reality.
+**Done when:** the id is typed, or the handler scopes its delete by organisation. Preferably
+both.
 
 ---
 
-# Hamad — ERP connectors
+# Hridyansh — OTA, edge agent
 
-29. **Intuit tier 4** · S
-    Everything is built — connector, 87 hermetic tests, 16 live-ready tests,
-    `scripts/intuit_authorize.py`, a CI job. It needs the one-time human consent, because
-    QuickBooks offers no client-credentials grant.
+### FS-605. `http_rest.py` is a registered collector type with zero tests · M
 
-    Do: register `http://localhost:8399/callback` on the app, run the authorize script,
-    store the refresh token and realm id as CI secrets.
+186 lines, registered at `coordinator.py`, and it catches `httpx.HTTPError` then bare
+`Exception` while its poll loop wraps the same call in a second handler. It **cannot crash,
+cannot restart, and cannot tell supervision anything is wrong** — a poll that raises every
+cycle is indistinguishable from one that works, and the asset just goes quiet. Rule 125.
 
-    Done when: `test_erp_intuit_sandbox.py` runs green against a real sandbox company. Note
-    the refresh token **rotates**, so two people using the same company will fight over it.
+**Done when:** a test drives one successful poll and one failing poll, and the failing one is
+visible to something.
 
-30. **Rotate the three development credentials** · S
-    The SAP key, Intuit client secret and Dataverse client secret were all shared in
-    conversation during development. None is in the repository, but all three should be
-    treated as compromised.
+### FS-606. The coordinator's supervision gives up after ~50 seconds · S · *decision*
 
-    Done when: all three are rotated and stored as repository secrets, and the
-    `erp-sap-sandbox`, `erp-intuit-sandbox` and `erp-dynamics-sandbox` jobs stop skipping.
+`_run_collector` retries with a fixed 5-second delay, capped at 10 restarts, then stops
+permanently — leaving that collector dead for the life of the process. This is recorded as the
+reason for its backoff exemption (FS-580) rather than as a defect, because whether a supervisor
+should give up is a policy question for this lane.
 
-31. **Give seeded ERP integrations a `webhook_secret`** · S · ✅ DONE
-    *Partly stale when picked up: the seeder DID set one, but as the literal `"demo-secret"` —
-    which is two problems in one string. Migration 049's unique index means a second seeded
-    integration (or a second demo organisation) is rejected by a constraint rather than
-    anything readable; and a signing key committed to the repository would let anyone who has
-    cloned this forge a webhook against a demo deployment. Now derived per integration id:
-    distinct between integrations, stable across re-seeds, since the seeder deletes and
-    reinserts on every run and an operator wiring up a real sender needs the value to survive
-    that. `test_demo_can_receive_a_signed_webhook_realdb.py` proves a webhook signed with the
-    seeded secret is ACCEPTED end to end, with a wrong-signature control — the seeder writing a
-    well-formed secret proves nothing if the receiver would reject it.*
-    Migration 049 enforces uniqueness and the demo seeder sets no secret — so the demo
-    cannot exercise the webhook path at all, and two seeded integrations would collide if it
-    did.
+**Done when:** the cap is deliberate and documented, or replaced with backoff that does not
+terminate.
 
-    Done when: `seed_demo_data.py` generates a distinct secret per integration, and the demo
-    can receive a signed webhook.
+### FS-607. Synthetic sources are opt-out, not opt-in · S
 
-32. **Verify a real vendor webhook end to end** · M
-    The raw-body HMAC scheme is proven against our own sender only. Intuit is the one vendor
-    whose scheme is verified against vendor documentation, and its sandbox sends genuine
-    webhooks.
+`collectors/base.py` refuses a synthetic default only when `EDGE_REQUIRE_EXPLICIT_SOURCES=true`,
+which is set nowhere except a **commented-out line** in `deploy/install.sh`. Stamped, so not
+dishonest — but on by default in every shipped deployment. Rule 124: a commented line documents
+an intention and configures nothing.
 
-    Done when: a real Intuit webhook is accepted, stored as an `ERPIntegrationEvent`, and a
-    replay of it is deduplicated.
-
-33. **Correlation transformers for a second vendor** · M
-    `erp_sync_correlation.CORRELATION_ROUTES` routes only SAP, because
-    `transform_purchase_order` reads SAP field names. Dataverse and Odoo purchase orders are
-    reported as `skipped: unrouted` — honest, but no correlations are produced for either.
-
-    Do: write a transformer that reads that vendor's field names and register the route. Do
-    **not** reuse the SAP transformer; it would produce empty records and a confident report
-    of zero anomalies.
-
-    Done when: a synced Dataverse or Odoo purchase order produces a correlation, and the
-    routing test covers the new pair.
-
-34. **ERP export definition** · M
-    `EXPORT_DEFINITIONS` has `telemetry`, `kanban_tasks` and `registries`. ERP entities are
-    exactly what an operator wants for reconciliation, and there is no way to get them out.
-
-    Done when: ERP entities are exportable and tenant-scoped, with a test proving a second
-    tenant's rows are absent from the file.
-
-35. **ERP events over WebSocket** · M
-    No ERP event reaches `websocket_manager`, so the ERP hub never updates live — a synced
-    or webhook-delivered change needs a manual refresh.
-
-    Done when: an inbound webhook results in a WebSocket message to that tenant only.
-
-36. **`erp_database_replication.py`** · M · *verify*
-    491 lines, reported as entirely no-op. If true, it is 491 lines that look like a feature
-    and are not.
-
-    Done when: either it does something, with a test proving it, or it is deleted.
-
-37. **ERP → Kafka** · L
-    No ERP producer exists. Whether ERP data belongs on the bus alongside telemetry is an
-    architectural question, not only an implementation one.
-
-    Done when: a decision is recorded, and if yes, ERP events are produced and consumed with
-    the same idempotency guarantees as telemetry.
+**Done when:** the default is inverted, or the deployment sets it.
 
 ---
 
-# Hamad — platform, frontend, CI
+# Infrastructure — unowned, needs a cluster or a decision
 
-38. **Flip `api-contract` to blocking** · ~~S~~ **M** · ⚠️ *three premises tested 2026-07-30, all false*
-    The job says it is "ready to flip pending one green CI run". It is not, and it could not
-    have been. I ran it.
+### FS-514. Nothing applies either secret-provisioning path · L
 
-    **(a) "schemathesis can't be run locally" — false.** It is pinned in
-    `requirements-dev.txt` and installs and runs fine. That sentence is the stated reason the
-    job stayed advisory, and it had stopped being true.
+`secrets/external-secrets/` and `secrets/sealed-secrets/` are referenced by **no kustomization
+and no workflow** — confirmed again 2026-08-08. Meanwhile `strip_placeholder_secrets.py` states
+the intended failure mode is a `CreateContainerConfigError` if the real secret was never
+provisioned. So the intended failure is the *only* thing that happens.
 
-    **(b) The job cannot finish.** Measured: **~2.5 minutes per operation** (21 health
-    operations, 4 verdicts in 10 minutes) × **451 operations ≈ 19 hours**. Nothing caps it —
-    there is no `max_examples`, no registered hypothesis profile anywhere in the repo, and no
-    `timeout-minutes` on the job, so it runs into GitHub's 6-hour limit and gets killed. With
-    `continue-on-error: true` that kill is invisible. **This job has never passed and cannot,
-    so "observed green in CI" was never reachable.**
+**Done when:** one path is wired into an overlay and the CI manifest job builds it.
 
-    **(c) It also genuinely failed.** ✅ **FIXED** — the first real defect it found is now
-    closed: the problem+json envelope discarded `exc.headers`, so **every 405 the API has ever
-    returned lacked `Allow` (RFC 9110 §15.5.6) and every 401 lacked `WWW-Authenticate`
-    (§11.6.1)** — both mandatory, both needed by a client to act on the response. One defect,
-    but it failed on all 451 operations, because schemathesis probes each with an undeclared
-    method. Fixed in `app/core/errors.py` and mutation-verified by
-    `tests/test_error_envelope_keeps_required_headers.py`.
+### FS-513. PITR does not exist · L
 
-    **And note what a green run would prove.** Only **195/457 routes (43%) declare a
-    `response_model`** (#43), and schemathesis can only check what is declared — so this gate
-    validates well under half the API even when it works. #43 is a prerequisite for this gate
-    meaning what its name implies, not a separate nice-to-have.
+`legacy-patroni/` holds the pgBackRest CronJob, is in no kustomization, and is applied nowhere,
+while the root README presents it as live. What runs is a logical `pg_dump -Fc` with an RPO of
+up to 24 hours. `test_the_recovery_promise_matches_the_deployment.py` pins the gap so the
+README cannot quietly re-inflate the claim.
 
-    ✅ **DONE 2026-07-30 (477b6854). The job finishes in ~8 minutes and BLOCKS.** It was not
-    slow, it was broken in four independent ways, each of which alone would have stopped it:
-    ASGI in-process execution gave every generated example a new event loop while the app's
-    singletons stayed bound to the first; the websocket queue processor's error path had no
-    backoff, so it span at full CPU on the resulting failures; the job never ran migrations,
-    so every DB-backed operation 500'd against an empty database; and it used
-    `POSTGRES_USER=test` while the migration chain GRANTs to the `omniusgrid` role by name.
-    The suite now serves the app under uvicorn on a real port — one long-lived loop, like
-    production.
+**Done when:** either an image shipping `pgbackrest` plus an `archive_command` is deployed, or
+the README states the real RPO.
 
-    It blocks as a **ratchet** (`scripts/contract_ratchet.py`), not pass/fail: 299 of 451
-    operations conform, and the floor is 290 with a measured margin — four consecutive runs
-    scored 294/296/297/300 with no code change, so a floor at the best score would fail half
-    of all builds and a gate that cries wolf gets switched off.
+### FS-522. The restore drill has never been run against a real dump · L
 
-    **What is left is #43's problem, and it is now enumerated.** The 152 non-conforming
-    operations are mostly ONE behaviour: generated input reaching Postgres unvalidated and
-    surfacing as a 500 where the contract promises a 4xx — **64 `DataError` + 32
-    `IntegrityError`**. That is per-endpoint validation work spread across every lane, and it
-    is exactly what a contract gate is for. Each fix raises the ratchet.
+`test_backup_restore_drill.py` exists. A backup nobody has restored is a backup nobody has.
 
-    Done when: the remaining 152 are burned down and the floor is raised toward 451.
-
-39. **Promote `main`** · S · *needs #3*
-    The mechanical half of #3. Every dev is told to branch from `main`, which is well behind
-    the converged branch — so each new branch starts from a stale base and inherits bugs
-    already fixed.
-
-    Done when: `main` matches the converged branch, CI is green on it, and every dev has been
-    told to rebase.
-
-40. **Frontend WebSocket defaults to `ws://`** · S · ✅ DONE
-    *Was already half-fixed when picked up: `fleetHealth.ts`'s socket helper had been removed
-    (it opened `/ws/fleet-health`, a route the backend does not serve, and defaulted to
-    `ws://`), and `websocket.ts` already derived the scheme from `window.location.protocol`.
-    The unfinished half was the test — the derivation was correct and NOTHING asserted it, so a
-    regression would have been silent until an operator on HTTPS noticed the fleet had stopped
-    updating, which reads as a quiet fleet rather than a broken socket. `getWsUrl` and
-    `getApiUrl` are exported and covered by `src/api/urlDerivation.test.ts`; reverting the
-    scheme turns three of its nine red. The localhost audit found two fallbacks, both
-    dev-gated and both correct.*
-    `api/fleetHealth.ts:156` defaults to the insecure scheme, so **fleet-health sockets
-    break on any HTTPS deployment** — production included.
-
-    Do: derive the scheme from the page protocol, and audit the other hardcoded `localhost`
-    fallbacks while there.
-
-    Done when: an HTTPS deployment gets `wss://` with no configuration, and a test covers
-    the derivation.
-
-41. **Coverage thresholds** · S
-    None exist, and `vitest.config.ts` narrows coverage `include` to three paths — so the
-    reported number is decorative and cannot regress.
-
-    Done when: both suites have a threshold set at today's real number, so coverage can only
-    go up.
-
-42. **Adopt the generated SDK** · S
-    It is generated, committed, and has **zero importers** — so it is neither used nor
-    verified, and will drift from the API silently.
-
-    Done when: at least one real caller uses it, or it is deleted.
-
-43. **`response_model` coverage: 195/458 (42%)** · M · ⚠️ *baseline was stale*
-    **Re-measured 2026-07-30.** The entry said 191/417 (45%). The route count has grown since
-    it was written, so the ratio has gone DOWN while the absolute number went up — new routes
-    are landing without a declared response. Measure before claiming progress against this one.
-
-    Undeclared responses make the OpenAPI schema fiction for more than half the API, which also
-    weakens #38 — schemathesis can only check what is declared.
-
-    Done when: coverage is meaningfully above 42%, prioritising the routes the frontend
-    actually calls, AND new routes cannot land undeclared (otherwise the ratio drifts back).
-
-44. **GeoTab is 100% synthetic** · M
-    16 `random.uniform` sites in `geotab_service.py`, including **DOT-regulated
-    hours-of-service numbers**. Being a stub is defensible; presenting fabricated compliance
-    figures as real is not.
-
-    Do: label the data as simulated at the API and in the UI, or gate the surface behind a
-    flag that is off by default.
-
-    Done when: nobody can mistake a generated HOS figure for a measured one.
-
-45. **Migration chain hygiene** · M
-    Test fixtures (005/006/008/009) sit in the production chain, prefixes are duplicated at
-    004/005/007/009, 019 is missing, and not every migration is idempotent.
-
-    Done when: the chain applies cleanly twice in a row on an empty database, and
-    `check_migrations.py` passes (see #48).
-
-46. **190 `USE_MOCK` forks, and every test runs in mock mode** · L
-    `frontend/src/test/setup.ts` stubs `VITE_USE_MOCK=true`, so **no test ever exercises the
-    real client path** — the branch that runs in production is the branch nothing covers,
-    and it can drift from the API undetected.
-
-    Do: add real-mode tests (MSW against the OpenAPI schema), starting with pages that have
-    real backends.
-
-    Done when: the real path has coverage for at least the dashboard and ERP pages, and new
-    API clients are expected to have it.
-
-47. **i18n: 0 `useTranslation` call sites** · L
-    A full i18n scaffold with locale files, and roughly 560 hardcoded strings. The scaffold
-    implies a capability the product does not have.
-
-    Do: decide scope first — which languages, which surfaces, whether this is wanted at all
-    — then extract.
-
-    Done when: either a first surface is genuinely translated end to end, or the scaffold is
-    removed so it stops implying support.
-
----
-
-# Hamad — deploy & infrastructure
-
-60. **`backup/alex` exists on NO origin remote** · S · ✅ DONE 2026-07-30
-    89 commits of Alex's work lived on the mirror only; `origin` had no `alex` branch at all.
-    Pushed to `origin/alex` at `d5286f1c` — additive, creating a new ref, nothing rewritten and
-    nothing on the mirror touched.
-
-    Still worth Alex knowing: the two remotes drifted because pushes went to one of them. The
-    branch is safe now, but keeping it that way means pushing both.
-
-61. **Four branches carry `node_modules` in git** · M · *re-measured 2026-07-30*
-    `backup/alex` (19,048), `origin/alex` (19,048), `origin/HARSH-CONTRIBUTION` (19,056) and
-    `origin/htreinen` (19,048). Converged tracks zero.
-
-    **`origin/alex` is on this list because of #60, deliberately.** Pushing Alex's 89
-    single-homed commits to `origin` mirrored the branch as it stood, `node_modules` and all.
-    Stripping them would have rewritten his history without asking him, which is a worse thing
-    to do to someone's only remaining copy than carrying the files for a few more days. The
-    ordering matters if this comes up again: *preserve first, clean second, and let the owner
-    do the cleaning.*
-
-    Two consequences, and the second is the expensive one: any merge from them tries to bring
-    2.3 M lines with it, and their real diffs are unreadable — `git diff` against converged
-    reports 20,000 changed files, so nobody can see what the branch actually contains. That is
-    a review nobody will do.
-
-    Do: the branch owners strip `node_modules` (it is already in `.gitignore` on converged) and
-    force-push, or the branches are re-cut from converged with only the real changes cherry-picked.
-
-    Done when: `git ls-tree -r <branch> | grep -c node_modules/` is 0 on all three.
-
-62. **Eight branches have not moved since 17 July** · S · *measured 2026-07-30*
-    `HARSH-CONTRIBUTION`, `htreinen`, `feature/gemma-correlation-ai` and five `hridyansh/*`
-    branches, each 28–112 commits ahead of converged, all last committed 2026-07-17 — while
-    converged has taken 70+ commits since. The `origin` and `backup` copies have also drifted
-    apart from each other (`backup/hridyansh/integration` is 38 commits ahead of `origin`'s;
-    `backup/feature/RAG-Compliance-Doc-Pipeline` is 282 ahead).
-
-    Every day this holds, the eventual merge gets harder and the chance the work is re-done by
-    someone else goes up — which is the concrete form of "devs working uselessly".
-
-    Do: for each, decide merge / re-cut / delete. A branch nobody will merge should be deleted,
-    not left as a decision somebody has to keep re-making.
-
-    Done when: each of the eight has a recorded decision.
-
-57. **`pre-commit` cannot be made blocking by flipping the flag** · M · *measured 2026-07-30*
-    The job is `continue-on-error: true` under a comment reading *"Advisory while the existing
-    tree is brought into compliance."* The tree is **not** in compliance, and the gap is much
-    larger than that comment implies.
-
-    `pre-commit run --all-files` rewrites **781 files — 45,405 insertions, 33,106 deletions**:
-    ruff (262 errors, 260 auto-fixed, 2 remaining), ruff-format, prettier, trailing-whitespace
-    and end-of-file-fixer, across `backend/tests` (191), `backend/app` (131), `frontend/src`
-    (~90), `edge-agent` (40) and `database/migrations` (14).
-
-    **Do not just flip the flag.** The compliance commit touches every lane's files at once, so
-    it will conflict with all eleven outstanding branches — the eight that have not moved since
-    17 July would each need a manual rebase through a whole-tree reformat.
-
-    Do: agree a freeze window, land the reformat as ONE commit that changes nothing else, have
-    every open branch rebase, and only then flip the flag. The 2 unfixable ruff errors need
-    reading first — they are the only part that is not mechanical.
-
-    Done when: the job is blocking and green, and `git log` shows the reformat as a single
-    isolated commit.
-
-    *(Verified by running it. The working tree was reverted; nothing was reformatted.)*
-
-58. **Two CI jobs are advisory and one is deliberately so** · S · *measured 2026-07-30*
-    Beyond #38's `api-contract`:
-
-    * `pre-commit` — see #57, and it is the substantial one.
-    * `load-test` — ✅ **FIXED 2026-07-31. It now has a target and BLOCKS.** It was broken
-      twice over, and the second one is the part that would have survived the obvious fix:
-      besides having no app to talk to, the script hit `/api/v1/telemetry` and
-      `/api/v1/dashboard`, **neither of which is a route** (every telemetry endpoint is
-      scoped to an asset; `dashboard` is a router prefix), while `/api/v1/assets` and
-      `/api/v1/alarms` only 307-redirected. Four of eight endpoints were wrong, so standing
-      the app up alone would still have produced ~50% errors.
-
-      The job now migrates a schema, starts the app under uvicorn, waits for readiness
-      rather than sleeping a guess, and runs k6 against it. Verified with a real k6 binary
-      in **both** directions — app up: exit 0, 100/100 checks; app down: exit 99 — because
-      "it passes" was never the property in doubt.
-
-      One trap worth recording: k6 derives its exit code from **thresholds only** — a failed
-      `check()` does not fail the run. Reaching for `--no-thresholds` to drop the latency
-      SLOs would have made the job incapable of failing again. The script now selects a
-      CI profile internally (`CI_SMOKE=true`) that keeps the error-rate thresholds and drops
-      only the latency ones, which on a shared runner measure the runner's neighbours.
-    * SBOM generation (`ci-cd.yml`) — **deliberate and correctly reasoned**, under a comment
-      saying *"generation failure must not block a deploy."* Leave it. Recorded here so the
-      next audit does not re-flag it.
-
-    Done when: `load-test` either runs against a real target or is gone.
-
-59. **`backend/dataset`: 1.5 GB on disk, 41 MB packed** · S · ✅ MOSTLY DONE · ⚠️ *my own figure was wrong*
-    **Corrected and largely fixed 2026-07-30.** The original entry said "1.57 GB of the 1.59 GB
-    repository — 99% of every clone". That measured the WORKING TREE. Git stores the corpus
-    compressed and deduplicated: the whole repository packs to **96 MB**, of which the dataset
-    is **41 MB**. The clone was never the problem — the checkout is.
-
-    **Do not delete it.** `generate_dataset_enhanced.py` sets no random seed and can call an LLM,
-    so the corpus is *generated* but **not reproducible**: deleting it loses ~500,000 scenarios
-    that cannot be regenerated identically, and the fine-tuning results stop being explicable.
-
-    Done: all 28 `actions/checkout` steps now sparse-checkout without it (no job read it, so
-    every CI run was writing 1.5 GB for nothing); `make lean` / `make unlean` do the same for a
-    developer's working tree, measured at 1.6 GB → 104 MB; `.gitignore` now stops the NEXT
-    corpus landing in git.
-
-    Left open, and small: getting 41 MB out of history needs a rewrite, which breaks every
-    outstanding branch — same coordinated window as #49, not a separate one. See
-    `docs/engineering/large-assets.md`.
-
-48. **Wire `check_migrations.py` into CI** · S · ✅ **ALREADY DONE** · ⚠️ *entry was stale, verified 2026-07-30*
-    This was closed by FS-203 and the entry was never updated. `quality-gates.yml:147-169`
-    runs it as the `migration-hygiene` job — blocking (no `continue-on-error`), on every push
-    to the branch namespaces that exist and on every PR to `main`.
-
-    Checked because a stale "do this" is more expensive than a stale "done": it costs
-    somebody the whole investigation before they find the work already exists. Both stale
-    entries found this way so far (#55, #48) were stale in that direction.
-
-49. **Rotate `HAMAD_IDE.pem`** · S · *needs coordination*
-    The key was untracked in FS-01 but **remains in git history on both remotes**.
-    Untracking does not revoke a key.
-
-    Do: rotate the key first. Decide separately whether to purge the history, since a
-    rewrite invalidates everyone's clones and needs a scheduled window.
-
-    Done when: the old key is revoked, and the history decision is recorded either way.
-
-50. **`monitoring/`, `autoscaling/` and `database-ha/` are referenced by no overlay** · M
-    `overlays/production/kustomization.yaml` builds `../../base` plus `hpa.yaml` and nothing
-    else. The in-cluster Prometheus/Grafana, the KEDA scalers and the CloudNativePG HA stack
-    are reviewed YAML that **has run nowhere but a kind cluster**.
-
-    Done when: `kustomize build overlays/production` contains them, or `ci-cd.yml` applies
-    the operator-dependent stacks in a documented step — and the four blocking k8s gates
-    stay green.
-
-51. **RTO/RPO checklist is still a template** · M
-    `docs/runbooks/rto-rpo-checklist.md` has `[DURATION]` where the measured RTO and RPO
-    belong. **Measured numbers or it is not a DR plan** — an untested recovery procedure is
-    a guess.
-
-    Do: run a restore drill and time it. This needs a drill, not a doc edit.
-
-    Done when: both figures are real measurements, with the date they were taken.
-
-52. **KEDA scale drill** · M
-    The autoscalers have never been observed scaling on real load, so the thresholds are
-    theoretical.
-
-    Do: run `tests/load/ingestion_load.py` against staging and watch the HPA.
-
-    Done when: `kubectl get hpa` shows an observed scale-up under load and scale-down after,
-    recorded alongside #51.
-
-53. **Placeholder secrets can reach production** · M
-    `base/object-store.yaml`, `monitoring/grafana.yaml` and `monitoring/alertmanager.yaml`
-    ship DEV/CI-ONLY credentials — including a placeholder Grafana admin password with
-    anonymous Viewer enabled. They are honestly labelled in comments; **nothing enforces
-    that production overrides them.**
-
-    Done when: a production build containing a known placeholder fails a CI gate. A comment
-    is not a control.
-
-54. **Probes, resource limits and `securityContext` for the four workers, otel and jaeger** · M
-    Without probes a wedged worker is never restarted; without limits one can starve the
-    node; without `securityContext` they run more privileged than they need.
-
-    Done when: all seven workloads have liveness/readiness probes, requests and limits, and
-    a non-root `securityContext`.
-
-55. **`overlays/dr` — the overlay EXISTS; what is left is verifying it** · M · ⚠️ *entry was stale*
-    **Corrected 2026-07-30.** The overlay was written (FS-230): distinct namespace, DR
-    hostnames, cold-site replica counts. It builds, and `quality-gates.yml` already lints it
-    alongside base/staging/production in two separate jobs. Do not write it again.
-
-    Its own header states the part that IS still open, and states it accurately: *"UNVERIFIED
-    AGAINST A REAL CLUSTER. There is no second cluster to try it on."* It also does not create
-    cross-region replication — that is pgBackRest's job and it is what actually determines the
-    RPO, so applying this overlay to an empty cluster gives you running pods with no data.
-
-    Done when: the runbook's steps have been executed against a second cluster, including the
-    restore step — which is the one that matters and which the overlay does not replace.
-
-56. **CNPG cutover — what makes PITR real** · L
-    `docs/runbooks/database-backup-restore.md` still says *"Restoring PITR (not yet done)"*
-    and marks itself not operational. Point-in-time recovery is a plan, not a capability.
-
-    Do: build the TimescaleDB-enabled CNPG image, install the operator, run the documented
-    cutover, repoint `DATABASE_URL` at the pooler.
-
-    Done when: `kubectl cnpg status` shows three healthy instances, a PITR restore has been
-    performed, and that runbook section is deleted because it is finally false.
+**Done when:** one drill has run end-to-end and its output is recorded with a date.
 
 ---
 
 ## Notes for redistribution
 
-**Lane totals:** decisions 4 · Alex 5 · Harsh 10 · Hridyansh 5 · htreinen 4 ·
-Hamad ERP 9 · Hamad platform 10 · Hamad infra 9. **56 total.**
-
-Hamad's three sections hold 28 of 56, because the ownership table currently gives him
-backend platform, frontend, deploy/CI, schema, observability and docs. **That is the most
-obvious thing to rebalance** — #40, #41, #42, #43 and #48 are self-contained and need no
-ERP or deploy context.
-
-**Sequencing that actually matters:**
-
-- #2 before #10/#11/#12 — no point fixing tests that may be deleted.
-- #1 → #13 → #14, in that order. The flag is not in the API response yet, so building the
-  UI first would have nothing to read.
-- #4 before #23.
-- #5/#6 before #8 — finish the wiring before widening the corpus.
-- #20's guard test before its 24-file sweep.
-- #48 before #45 — get the check running, then fix what it finds.
-- #51 and #52 are one drill, scheduled together.
-
-**Verify before scheduling:** #16, #17, #36. Some may already be fixed.
-
-**The single highest-value task is #20.** It is the root cause behind at least three
-separate user-visible bugs found so far, and its guard test matters more than the sweep —
-without it the next one ships too.
+* **Lane discipline holds.** `auth.py`, `kanban.py`, `telemetry.py`, `analysis_sessions.py`,
+  `nlp_correlation.py`, `model_monitoring.py`, `logistics_correlation.py`, `engines.py` and
+  `rag_*.py` belong to the owners above. Mechanical fixes (a `response_model`, a type on a path
+  parameter) are fine from any lane; product and design decisions are not.
+* **Every item names its evidence.** If a claim does not reproduce, the entry is wrong — say so
+  in it, with the date. That is the single habit that stops the next pool inheriting this one's
+  mistakes.
+* **Nothing here is a guess about severity.** Sizes are effort. Where an item is dangerous
+  rather than merely undone, the entry says why in its own words — FS-598's mounted router,
+  D3's dead-letter surface, FS-604's unscoped delete.

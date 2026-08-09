@@ -2396,6 +2396,15 @@ class ERPSyncStatus(Base):
     sync_duration_seconds = Column(Numeric, nullable=True)
     next_sync_at = Column(DateTime(timezone=True), nullable=True)
     delta_token = Column(Text, nullable=True)
+
+    #: Whether correlation had a route for this vendor/entity on the last sync (FS-562).
+    #: NULL is a real third state: a row written before this column existed recorded no
+    #: attempt either way, and defaulting it to False would invent a skip that may never
+    #: have happened. The UI reads null as "not recorded".
+    correlation_routed = Column(Boolean, nullable=True)
+    #: Why correlation produced nothing, when it produced nothing.
+    correlation_reason = Column(Text, nullable=True)
+
     created_at = Column(DateTime(timezone=True), default=utcnow)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 

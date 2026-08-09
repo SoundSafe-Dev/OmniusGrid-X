@@ -402,12 +402,25 @@ const StatusTab: FC<{ id: string }> = ({ id }) => {
           <p className="text-xs text-opsgrid-text-secondary">No syncs recorded yet.</p>
         ) : (
           (statuses ?? []).map((s) => (
-            <div key={s.entity_type} className="text-xs flex justify-between py-1">
-              <span className="text-opsgrid-text">{s.entity_type}</span>
-              <span className="text-opsgrid-text-secondary">
-                <Badge variant={s.last_sync_status === 'success' ? 'success' : 'error'}>{s.last_sync_status}</Badge>
-                {' '}{s.records_synced ?? 0}✓ {s.records_failed ?? 0}✗
-              </span>
+            <div key={s.entity_type} className="text-xs py-1">
+              <div className="flex justify-between">
+                <span className="text-opsgrid-text">{s.entity_type}</span>
+                <span className="text-opsgrid-text-secondary">
+                  <Badge variant={s.last_sync_status === 'success' ? 'success' : 'error'}>{s.last_sync_status}</Badge>
+                  {' '}{s.records_synced ?? 0}✓ {s.records_failed ?? 0}✗
+                </span>
+              </div>
+              {/* FS-562. A sync that succeeded and was never analysed looks exactly like one
+                  that was analysed and found nothing — the correlations tab shows an empty
+                  list either way. The server has always known which it was; it just had
+                  nowhere to say so. Rendered here rather than on the correlations tab
+                  because the answer is per entity type, and that list is not. */}
+              {s.correlation_routed === false && (
+                <p className="text-opsgrid-text-secondary italic mt-0.5">
+                  Not analysed — no correlation rules for this vendor's {s.entity_type}.
+                  An empty correlations list here is a gap, not a clean result.
+                </p>
+              )}
             </div>
           ))
         )}
