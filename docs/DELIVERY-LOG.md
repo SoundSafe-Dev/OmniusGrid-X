@@ -8249,3 +8249,65 @@ availability it does not have is the same fiction as one that lists work that do
 
 **The check is now cheap and permanent:** before any future pool, ask where each contributor's
 last commit lives, not just what it says.
+
+---
+
+## Landing two developers' stranded work, and completing it to the gates
+
+Both integrations are on `hamad/converged-pre-main`. What made it expensive is worth writing
+down: **twenty-one thousand lines that had never been through this branch's gates.**
+
+### The two single lines that cost 719 and 29 tests
+
+`Asset.workcell` became ambiguous because his composite `fk_assets_workcell_org` — which also
+pins `organization_id`, so an asset cannot reference another tenant's workcell — sits alongside
+the single-column FK converged already had. Both are wanted. SQLAlchemy refuses to guess, and
+**every fixture that touches an Asset builds that mapper**, so one unresolved relationship took
+719 tests with it.
+
+Then a test that builds SQLite from six named tables stopped being closed under its own foreign
+keys when Workcell gained one to `sites`. SQLite reports that as `no such table: main.sites` at
+INSERT time, thirteen tests deep, nowhere near the list that is actually wrong.
+
+### The gates were the point, and one of them caught me
+
+Twenty-seven routes arrived with no `response_model`. Raising `MAX_UNDECLARED` would have been
+one line; instead the router's own `_*_response` builders were read and declared. I checked
+those five field-for-field, reported "no field is dropped" — and
+`test_response_models_match_their_returns` then failed on **ten routes I had not checked**,
+because deactivate, assign, bulk and inventory return different shapes:
+
+* `deactivate_*` return the **full resource**, not an `{id, is_active}` acknowledgement. My
+  model would have deleted five to six fields from each.
+* assign/remove return `created`/`removed` — whether the call **changed** anything. I declared
+  `assigned`, the state after the call, which is a different question.
+
+**My confidence about the five is exactly what stopped me looking at the other ten.** Declaring
+a response model makes FastAPI delete undeclared keys, so a documentation change silently
+narrows a wire — the client sees 200 and a missing field.
+
+### Four of six "unguarded mutations" were the detector
+
+`FleetTargeting` deactivates four resources through a hoisted `options` object rather than
+repeating the handler. Reading only the call site made all four a finding while the failure was
+handled the whole time — and a non-greedy `{…}?` stopped at the inner `setFeedback({ … })`, one
+line above the `onError` it was looking for. Rule 27: brace-matching, not a window.
+
+The other two were real. A resume that failed left the rollout paused with the button reporting
+nothing; a disable that failed left a maintenance window enforcing while the operator believed
+it was off.
+
+### A filename that was doing the work of a test
+
+Deleting the emptied `AdminPages.test.tsx` — after its UsersPage describes moved to
+`Users.test.tsx` — made `everyRoutedPageHasATest` report Collectors, SystemHealth and Settings
+as untested. **They always were.** The file's name satisfied the walk while every describe
+inside it was about a different page.
+
+### What was preserved, and why that came first
+
+`rag-rewrite` existed on **no remote at all** — three commits, 35 files, +4,433 lines, one disk
+failure from gone. Hridyansh's tip was on the `backup` mirror only, and `origin` already had an
+older, diverged `hridyansh/integration`, so the newer tip went in under its own name rather
+than force-overwriting anything. Preservation before integration, because a merge is not a
+backup and a resolution that goes wrong is only recoverable if the input still exists.
