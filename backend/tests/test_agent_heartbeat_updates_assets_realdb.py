@@ -72,6 +72,14 @@ async def _heartbeat(tenant_async_url, org_id, asset_ids, version="1.2.3"):
             await worker._process_agent_heartbeat(session, {
                 "message_type": "agent_heartbeat",
                 "organization_id": str(org_id),
+                # `agent_id` ADDED 2026-08-09, and its absence was a defect in this fixture
+                # rather than in the handler. The agent has always sent it —
+                # `build_heartbeat_payload` puts it in every beat — and the merge made the
+                # handler require it, because the stale-agent reconciliation keys on it and
+                # a beat that names no agent cannot be attributed. A hand-written payload
+                # in a shape the real producer never emits tests the payload (rule 50); this
+                # one silently stopped exercising the write it exists to prove.
+                "agent_id": "agent-under-test",
                 "asset_ids": [str(a) for a in asset_ids],
                 "agent_version": version,
             })

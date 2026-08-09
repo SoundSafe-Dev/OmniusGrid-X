@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_password_hash
 from app.core.config import settings
+from app.core.pagination import MAX_OFFSET
 from app.core.session import SessionManager
 from app.core.tenant import get_tenant_db, get_tenant_org_id
 from app.db.models import Organization, User, UserInvitation
@@ -118,7 +119,13 @@ class UserResponse(BaseModel):
     id: UUID
     email: str
     name: str
-    full_name: str
+    #: OPTIONAL, because `users.full_name` is nullable with no server default. A required
+    #: field over a nullable column means a perfectly valid row cannot be serialised —
+    #: pydantic raises inside the handler and FastAPI answers 500, naming a validation error
+    #: in our own schema rather than anything about the data. A Python-side ORM default does
+    #: not save it: that fires only for rows written through SQLAlchemy, and a migration
+    #: backfill or a raw INSERT writes NULL straight past it.
+    full_name: str | None = None
     role: UserRole
     organization_id: UUID = Field(alias="organizationId")
     is_active: bool = Field(alias="isActive")
@@ -445,7 +452,7 @@ async def list_users(
     # DECLARED, not just validated. The handler already refused skip<0 / limit>500 with a
     # 422 — correct behaviour that OpenAPI could not see, so the contract gate could not
     # check it and the generated SDK would not carry it. `Query` does both.
-    skip: int = Query(0, ge=0, description="Rows to skip."),
+    skip: int = Query(0, ge=0, le=MAX_OFFSET, description="Rows to skip."),
     limit: int = Query(100, ge=1, le=500, description="Maximum rows to return."),
     organization_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),
@@ -482,7 +489,7 @@ async def list_invitations(
     # DECLARED, not just validated. The handler already refused skip<0 / limit>500 with a
     # 422 — correct behaviour that OpenAPI could not see, so the contract gate could not
     # check it and the generated SDK would not carry it. `Query` does both.
-    skip: int = Query(0, ge=0, description="Rows to skip."),
+    skip: int = Query(0, ge=0, le=MAX_OFFSET, description="Rows to skip."),
     limit: int = Query(100, ge=1, le=500, description="Maximum rows to return."),
     invitation_status: InvitationStatus | None = None,
     current_user: User = Depends(require_admin),

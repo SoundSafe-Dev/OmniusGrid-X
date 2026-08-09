@@ -63,11 +63,17 @@ FRAMEWORK_PROTOCOL_NAMES = {
 #: "Unused" is the observation, not the reason.
 ORPHANS: dict[str, str] = {
     # --- superseded parallel implementations, the dangerous ones --------------------------
-    "app/core/security.py::get_current_user_ws":
-        "A SECOND WebSocket authenticator. The live one is api/auth.py:resolve_websocket_user, "
-        "whose comment cites THIS function as its reference — and differs from it (the live "
-        "one also handles the dev-token path). A parallel auth implementation is rule 55 in "
-        "the worst place: reusing this one gets subtly different authentication.",
+    # ARRIVED WITH THE 2026-08-08 MERGE. Both are helpers for a path that was not finished,
+    # in modules that ARE live — so they inherit the module's credibility while running
+    # never, which is exactly the shape this file exists to name.
+    "app/services/fleet_targeting.py::_membership_exists":
+        "A bulk membership pre-check. The bulk-assignment route validates per row instead, "
+        "so this never runs — and wiring it would replace four round trips with one, which "
+        "is the reason to decide rather than delete.",
+    "app/services/maintenance_windows.py::local_date_for_weekday":
+        "Resolves a weekday to a local date inside a window's own timezone. The scheduler "
+        "works in fixed UTC offsets today, which is what makes a DST boundary interesting; "
+        "this helper is the half of that fix that landed.",
     "app/core/security.py::verify_token":
         "A thin wrapper over decode_local_token with no callers. Harmless in itself and part "
         "of the same duplicate-auth surface as get_current_user_ws — decide both together.",
@@ -296,14 +302,20 @@ class TestNothingNewIsOrphaned:
 
 
 class TestTheDuplicateAuthSurfaceIsNamed:
-    """Called out separately from the inventory because it is the one entry where "unused" is
-    not the risk. Two unreachable authenticators sit beside the live one, and the live one's
-    own comment points at the dead one as its model."""
+    """Called out separately from the inventory because it is the one place where "unused" is
+    not the risk. Unreachable authenticators sat beside the live one, and the live one's own
+    comment pointed at a dead one as its model.
+
+    ONE OF THE THREE IS GONE, and gone the right way (2026-08-09). The merge made
+    `api/auth.py:resolve_websocket_user` **delegate to** `core.security.get_current_user_ws`
+    instead of reimplementing it — so there is now one WebSocket authenticator rather than
+    two that differ, and the entry it held is deleted rather than reworded. That is what
+    closing one of these looks like: the duplicate stops existing, not the record of it.
+    """
 
     @pytest.mark.parametrize(
         "entry",
         [
-            "app/core/security.py::get_current_user_ws",
             "app/core/security.py::verify_token",
             "app/api/api_keys.py::verify_api_key",
         ],

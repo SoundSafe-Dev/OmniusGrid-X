@@ -76,6 +76,26 @@ def _values_of(node: ast.expr) -> set[str]:
         return _values_of(node.body) | _values_of(node.orelse)
     if isinstance(node, ast.BoolOp):
         return set().union(*(_values_of(v) for v in node.values))
+    # A DICT LOOKUP WITH A DEFAULT, which is what the ternary became on 2026-08-08:
+    #
+    #     action_id = {"model": "model_update",
+    #                  "agent": "agent_self_update"}.get(release.artifact_type, "agent_update")
+    #
+    # The reachable actions are the dict's VALUES plus the default — never its keys, which
+    # are artifact types and exactly the confusion the ternary version already had to avoid.
+    # Reading only `Constant` and `IfExp` made this return nothing, and a reader that finds
+    # nothing reports every action handled: the guard would have gone quiet on the same day
+    # the code grew a third action.
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "get":
+        values: set[str] = set()
+        if isinstance(node.func.value, ast.Dict):
+            for v in node.func.value.values:
+                values |= _values_of(v)
+        for arg in node.args[1:]:
+            values |= _values_of(arg)
+        return values
+    if isinstance(node, ast.Dict):
+        return set().union(*(_values_of(v) for v in node.values)) if node.values else set()
     return set()
 
 

@@ -60,7 +60,6 @@ def build_heartbeat_payload(
     manifest: dict[str, Any],
     config_hash: str,
     collector_status: dict[str, Any],
-    buffer_depth: int,
     update_status: dict[str, Any] | None = None,
     timestamp: str | None = None,
 ) -> dict[str, Any]:
@@ -80,12 +79,17 @@ def build_heartbeat_payload(
     `_process_agent_heartbeat` DOES consume `collector_status` — so that field now has a
     reader and the FS-466 argument no longer applies to it.
 
-    `git_sha`, `buffer_depth` and `agent_update` still have **no consumer** in the merged
-    tree. They are kept rather than dropped, because dropping another lane's field during a
-    merge is how work disappears — and they are recorded in
-    `test_heartbeat_contract_is_fully_read.py::DELIBERATELY_UNREAD` with an owner, so the
-    gap is visible instead of silent. `agent_update` is the one that matters: a self-update
-    that reports its outcome to nobody cannot be rolled back on evidence.
+    `git_sha` and `buffer_depth` are GONE AGAIN, and the guard is why. Recording them as
+    deliberately-unread was the first attempt; `test_heartbeat_contract_is_fully_read`
+    rejects that outright — *"the last three exemptions here were closed by DELETING the
+    fields, because the agent was computing them on every beat for nobody. Prefer that to
+    writing a reason."* These are two of that three. Buffer depth already travels the HTTP
+    heartbeat as `buffer_pending`, where it is persisted and gauged and alerted on; build
+    identity already travels here as `build_id`, which the cloud does write.
+
+    THIS IS NOT HIS WORK BEING DROPPED. `collector_status` stays, because he added a reader
+    for it — that is the entire difference between the three fields FS-466 removed. The
+    feature is kept; the two fields nobody consumes are not.
     """
     payload = {
         "message_type": "agent_heartbeat",
@@ -95,9 +99,7 @@ def build_heartbeat_payload(
         "agent_version": manifest["agent_version"],
         "config_hash": config_hash,
         "build_id": manifest.get("build_id"),
-        "git_sha": manifest.get("git_sha"),
         "collector_status": collector_status,
-        "buffer_depth": buffer_depth,
         "timestamp": timestamp or _utc_now(),
     }
     if update_status:

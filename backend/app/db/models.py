@@ -497,6 +497,15 @@ class Site(Base):
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
+
+    #: ORDERING ONLY (FS-417). SQLAlchemy builds insert ordering from relationships, not
+    #: from ForeignKey columns — so without these the unit of work can flush this row
+    #: before the parent it references. Postgres refuses it; SQLite accepts it silently,
+    #: which is why ten models arrived this way unnoticed. `lazy="raise"` because nothing
+    #: should traverse them: an accidental lazy load in async code is a MissingGreenlet.
+    organization = relationship("Organization", foreign_keys="Site.organization_id", lazy="raise")
+    creator = relationship("User", foreign_keys="Site.created_by", lazy="raise")
+
     created_at = Column(DateTime(timezone=True), default=utcnow, server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True),
@@ -570,6 +579,16 @@ class MaintenanceWindow(Base):
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
+
+    #: ORDERING ONLY (FS-417). SQLAlchemy builds insert ordering from relationships, not
+    #: from ForeignKey columns — so without these the unit of work can flush this row
+    #: before the parent it references. Postgres refuses it; SQLite accepts it silently,
+    #: which is why ten models arrived this way unnoticed. `lazy="raise"` because nothing
+    #: should traverse them: an accidental lazy load in async code is a MissingGreenlet.
+    organization = relationship("Organization", foreign_keys="MaintenanceWindow.organization_id", lazy="raise")
+    site = relationship("Site", foreign_keys="MaintenanceWindow.site_id", lazy="raise")
+    creator = relationship("User", foreign_keys="MaintenanceWindow.created_by", lazy="raise")
+
     created_at = Column(DateTime(timezone=True), default=utcnow, server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True),
@@ -607,6 +626,15 @@ class AssetAgentCollector(Base):
     running = Column(Boolean, nullable=False, default=False, server_default=text("false"))
     heartbeat_at = Column(DateTime(timezone=True), nullable=False)
 
+    #: ORDERING ONLY (FS-417). SQLAlchemy builds insert ordering from relationships, not
+    #: from ForeignKey columns — so without these the unit of work can flush this row
+    #: before the parent it references. Postgres refuses it; SQLite accepts it silently,
+    #: which is why ten models arrived this way unnoticed. `lazy="raise"` because nothing
+    #: should traverse them: an accidental lazy load in async code is a MissingGreenlet.
+    organization = relationship("Organization", foreign_keys="AssetAgentCollector.organization_id", lazy="raise")
+    asset = relationship("Asset", foreign_keys="AssetAgentCollector.asset_id", lazy="raise")
+
+
 
 class FleetTag(Base):
     """Tenant-owned reusable asset label."""
@@ -636,6 +664,15 @@ class FleetTag(Base):
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
+
+    #: ORDERING ONLY (FS-417). SQLAlchemy builds insert ordering from relationships, not
+    #: from ForeignKey columns — so without these the unit of work can flush this row
+    #: before the parent it references. Postgres refuses it; SQLite accepts it silently,
+    #: which is why ten models arrived this way unnoticed. `lazy="raise"` because nothing
+    #: should traverse them: an accidental lazy load in async code is a MissingGreenlet.
+    organization = relationship("Organization", foreign_keys="FleetTag.organization_id", lazy="raise")
+    creator = relationship("User", foreign_keys="FleetTag.created_by", lazy="raise")
+
     created_at = Column(DateTime(timezone=True), default=utcnow, server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True),
@@ -678,6 +715,17 @@ class AssetFleetTag(Base):
     )
     assigned_at = Column(DateTime(timezone=True), default=utcnow, server_default=func.now())
 
+    #: ORDERING ONLY (FS-417). SQLAlchemy builds insert ordering from relationships, not
+    #: from ForeignKey columns — so without these the unit of work can flush this row
+    #: before the parent it references. Postgres refuses it; SQLite accepts it silently,
+    #: which is why ten models arrived this way unnoticed. `lazy="raise"` because nothing
+    #: should traverse them: an accidental lazy load in async code is a MissingGreenlet.
+    organization = relationship("Organization", foreign_keys="AssetFleetTag.organization_id", lazy="raise")
+    asset = relationship("Asset", foreign_keys="AssetFleetTag.asset_id", lazy="raise")
+    tag = relationship("FleetTag", foreign_keys="AssetFleetTag.tag_id", lazy="raise")
+    assigner = relationship("User", foreign_keys="AssetFleetTag.assigned_by", lazy="raise")
+
+
 
 class FleetGroup(Base):
     """Tenant-owned explicit fleet group."""
@@ -706,6 +754,15 @@ class FleetGroup(Base):
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
+
+    #: ORDERING ONLY (FS-417). SQLAlchemy builds insert ordering from relationships, not
+    #: from ForeignKey columns — so without these the unit of work can flush this row
+    #: before the parent it references. Postgres refuses it; SQLite accepts it silently,
+    #: which is why ten models arrived this way unnoticed. `lazy="raise"` because nothing
+    #: should traverse them: an accidental lazy load in async code is a MissingGreenlet.
+    organization = relationship("Organization", foreign_keys="FleetGroup.organization_id", lazy="raise")
+    creator = relationship("User", foreign_keys="FleetGroup.created_by", lazy="raise")
+
     created_at = Column(DateTime(timezone=True), default=utcnow, server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True),
@@ -748,6 +805,17 @@ class AssetFleetGroup(Base):
     )
     assigned_at = Column(DateTime(timezone=True), default=utcnow, server_default=func.now())
 
+    #: ORDERING ONLY (FS-417). SQLAlchemy builds insert ordering from relationships, not
+    #: from ForeignKey columns — so without these the unit of work can flush this row
+    #: before the parent it references. Postgres refuses it; SQLite accepts it silently,
+    #: which is why ten models arrived this way unnoticed. `lazy="raise"` because nothing
+    #: should traverse them: an accidental lazy load in async code is a MissingGreenlet.
+    organization = relationship("Organization", foreign_keys="AssetFleetGroup.organization_id", lazy="raise")
+    asset = relationship("Asset", foreign_keys="AssetFleetGroup.asset_id", lazy="raise")
+    group = relationship("FleetGroup", foreign_keys="AssetFleetGroup.group_id", lazy="raise")
+    assigner = relationship("User", foreign_keys="AssetFleetGroup.assigned_by", lazy="raise")
+
+
 
 class FleetCohort(Base):
     """Saved validated dynamic targeting query."""
@@ -780,6 +848,15 @@ class FleetCohort(Base):
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
+
+    #: ORDERING ONLY (FS-417). SQLAlchemy builds insert ordering from relationships, not
+    #: from ForeignKey columns — so without these the unit of work can flush this row
+    #: before the parent it references. Postgres refuses it; SQLite accepts it silently,
+    #: which is why ten models arrived this way unnoticed. `lazy="raise"` because nothing
+    #: should traverse them: an accidental lazy load in async code is a MissingGreenlet.
+    organization = relationship("Organization", foreign_keys="FleetCohort.organization_id", lazy="raise")
+    creator = relationship("User", foreign_keys="FleetCohort.created_by", lazy="raise")
+
     created_at = Column(DateTime(timezone=True), default=utcnow, server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True),
@@ -1391,6 +1468,16 @@ class UserInvitation(Base):
     )
     accepted_at = Column(DateTime(timezone=True))
     revoked_at = Column(DateTime(timezone=True))
+
+    #: ORDERING ONLY (FS-417). SQLAlchemy builds insert ordering from relationships, not
+    #: from ForeignKey columns — so without these the unit of work can flush this row
+    #: before the parent it references. Postgres refuses it; SQLite accepts it silently,
+    #: which is why ten models arrived this way unnoticed. `lazy="raise"` because nothing
+    #: should traverse them: an accidental lazy load in async code is a MissingGreenlet.
+    organization = relationship("Organization", foreign_keys="UserInvitation.organization_id", lazy="raise")
+    creator = relationship("User", foreign_keys="UserInvitation.created_by", lazy="raise")
+    accepted_user = relationship("User", foreign_keys="UserInvitation.accepted_user_id", lazy="raise")
+
     created_at = Column(
         DateTime(timezone=True),
         default=utcnow,
@@ -2702,6 +2789,16 @@ class FleetTargetPreview(Base):
         nullable=False,
     )
     expires_at = Column(DateTime(timezone=True), nullable=False)
+
+    #: ORDERING ONLY (FS-417). SQLAlchemy builds insert ordering from relationships, not
+    #: from ForeignKey columns — so without these the unit of work can flush this row
+    #: before the parent it references. Postgres refuses it; SQLite accepts it silently,
+    #: which is why ten models arrived this way unnoticed. `lazy="raise"` because nothing
+    #: should traverse them: an accidental lazy load in async code is a MissingGreenlet.
+    organization = relationship("Organization", foreign_keys="FleetTargetPreview.organization_id", lazy="raise")
+    release = relationship("AgentRelease", foreign_keys="FleetTargetPreview.release_id", lazy="raise")
+    creator = relationship("User", foreign_keys="FleetTargetPreview.created_by", lazy="raise")
+
     created_at = Column(DateTime(timezone=True), default=utcnow, server_default=func.now())
 
 

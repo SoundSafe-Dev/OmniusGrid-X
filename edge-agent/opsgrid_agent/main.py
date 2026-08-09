@@ -494,7 +494,6 @@ class EdgeAgent:
                 await asyncio.sleep(3600)
 
     async def _heartbeat_payload(self) -> Dict[str, Any]:
-        stats = await self.buffer.get_stats()
         status = self.coordinator.get_status()
         update_status = self._safe_update_status()
         return build_heartbeat_payload(
@@ -504,7 +503,6 @@ class EdgeAgent:
             manifest=self.manifest,
             config_hash=self.config_hash,
             collector_status=status,
-            buffer_depth=stats['total_messages'],
             update_status=update_status,
         )
 

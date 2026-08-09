@@ -66,10 +66,9 @@ def test_heartbeat_payload_shape():
         agent_id="agent-1",
         organization_id="org-1",
         asset_ids=["asset-1", "asset-2"],
-        manifest={"agent_version": "1.2.3", "build_id": "build-7", "git_sha": "deadbee"},
+        manifest={"agent_version": "1.2.3", "build_id": "build-7"},
         config_hash="abc123",
         collector_status={"collectors": {}},
-        buffer_depth=0,
         timestamp="2030-01-01T00:00:00Z",
     )
 
@@ -81,9 +80,7 @@ def test_heartbeat_payload_shape():
         "agent_version": "1.2.3",
         "config_hash": "abc123",
         "build_id": "build-7",
-        "git_sha": "deadbee",
         "collector_status": {"collectors": {}},
-        "buffer_depth": 0,
         "timestamp": "2030-01-01T00:00:00Z",
     }
 
@@ -95,7 +92,7 @@ def test_agent_update_is_only_sent_when_there_is_one():
     base = dict(
         agent_id="a", organization_id="o", asset_ids=[],
         manifest={"agent_version": "1", "build_id": "b"},
-        config_hash="c", collector_status={}, buffer_depth=0,
+        config_hash="c", collector_status={},
         timestamp="2030-01-01T00:00:00Z",
     )
     assert "agent_update" not in build_heartbeat_payload(**base)
@@ -112,7 +109,6 @@ def test_heartbeat_reports_restart_spanning_update_state():
         manifest={"agent_version": "1.0.0"},
         config_hash="abc123",
         collector_status={"active_collectors": 1, "total_collectors": 1},
-        buffer_depth=0,
         update_status={
             "status": "rolled_back",
             "attempted_version": "2.0.0",
