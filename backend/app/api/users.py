@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import Query, APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
@@ -442,8 +442,11 @@ async def _public_invitation(
 
 @router.get("", response_model=UserListResponse)
 async def list_users(
-    skip: int = 0,
-    limit: int = 100,
+    # DECLARED, not just validated. The handler already refused skip<0 / limit>500 with a
+    # 422 — correct behaviour that OpenAPI could not see, so the contract gate could not
+    # check it and the generated SDK would not carry it. `Query` does both.
+    skip: int = Query(0, ge=0, description="Rows to skip."),
+    limit: int = Query(100, ge=1, le=500, description="Maximum rows to return."),
     organization_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),
 ) -> UserListResponse:
@@ -476,8 +479,11 @@ async def list_users(
 @router.get("/invitations", response_model=InvitationListResponse)
 async def list_invitations(
     request: Request,
-    skip: int = 0,
-    limit: int = 100,
+    # DECLARED, not just validated. The handler already refused skip<0 / limit>500 with a
+    # 422 — correct behaviour that OpenAPI could not see, so the contract gate could not
+    # check it and the generated SDK would not carry it. `Query` does both.
+    skip: int = Query(0, ge=0, description="Rows to skip."),
+    limit: int = Query(100, ge=1, le=500, description="Maximum rows to return."),
     invitation_status: InvitationStatus | None = None,
     current_user: User = Depends(require_admin),
     organization_id: UUID = Depends(get_tenant_org_id),

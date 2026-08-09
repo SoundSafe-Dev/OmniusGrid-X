@@ -83,8 +83,9 @@ const Modal: FC<ModalProps> = ({ title, children, onClose, footer }) => (
   </div>
 );
 
-//: The server's own ceiling on `GET /auth/users` (`le=200`). Asking for more is a 422, not
-//: a bigger page — see the note at the query below.
+//: This page's ceiling, which is BELOW the server's. `GET /auth/users` is served by
+//: `api/users.py` and declares `le=500`; 200 is the largest page worth rendering at once,
+//: and the footer says so when it is reached rather than ending the list quietly.
 const USER_PAGE_CAP = 200;
 
 //: One page, and the step "Show more" takes. The server declares `le=200`, so the cap

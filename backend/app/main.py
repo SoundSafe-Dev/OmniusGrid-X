@@ -342,7 +342,11 @@ app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"], 
 app.include_router(
     users.router,
     prefix="/api/v1/auth/users",
-    tags=["User Management"],
+    # A DISTINCT TAG, because operationIds are derived from it and both routers export
+    # list_users / get_user / update_user / deactivate_user. Mounting both produced four
+    # duplicate operationIds, which the generated SDK cannot represent — the concrete cost
+    # of keeping two user-administration surfaces, and a reason to resolve that decision.
+    tags=["Tenant Users & Invitations"],
     responses=common_responses,
 )
 app.include_router(

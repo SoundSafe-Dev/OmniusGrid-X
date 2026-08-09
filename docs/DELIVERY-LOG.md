@@ -8311,3 +8311,27 @@ failure from gone. Hridyansh's tip was on the `backup` mirror only, and `origin`
 older, diverged `hridyansh/integration`, so the newer tip went in under its own name rather
 than force-overwriting anything. Preservation before integration, because a merge is not a
 backup and a resolution that goes wrong is only recoverable if the input still exists.
+
+### Two findings that only appeared once both integrations were combined
+
+Each integration was green on its own branch. Landing them together produced fifteen failures,
+and neither cause was visible in either half alone.
+
+**Four unbounded pagination parameters.** His `list_users` and `list_invitations` declare
+`skip: int = 0, limit: int = 100` and then validate by hand — `if skip < 0 or limit < 1 or
+limit > 500: raise 422`. The *behaviour* is correct. It is also **invisible to OpenAPI**, so the
+contract gate cannot check it and the generated SDK will not carry it, and
+`test_pagination_params_are_bounded` reports it as unbounded because from the schema's point of
+view it is. Declared with `Query(0, ge=0)` / `Query(100, ge=1, le=500)`, which documents and
+enforces the same rule his handler already applied.
+
+**Four duplicate operationIds.** Both user-administration routers export `list_users`,
+`get_user`, `update_user` and `deactivate_user`, and both were mounted under the tag
+`User Management` — from which operationIds are derived. The generated SDK cannot represent a
+duplicate. Fixed by tagging his `Tenant Users & Invitations`, which is also **the concrete cost
+of keeping two user surfaces**: the decision to keep both was recorded as an open question, and
+this is the first bill it has produced.
+
+The general shape is worth keeping: **two changes that each pass alone can fail together**, and
+the failure is in neither one's diff. Only the combined branch shows it, which is an argument
+for integrating early rather than accumulating.
