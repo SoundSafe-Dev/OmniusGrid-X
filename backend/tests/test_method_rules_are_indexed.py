@@ -15,6 +15,13 @@ suite — `test_documented_endpoints_exist.py` checks every endpoint the README 
 `test_documented_files_exist.py` checks every filename three docs cite. A rules index is the
 same kind of claim.
 
+SPLIT ACROSS SIX FILES SINCE FS-584, and the split is exactly the kind of change that
+quietly disables a guard like this one. The index kept the cited path; the sections moved into
+`sweeps/part-*.md`. A guard that went on reading only the index would have found zero `## Rule
+N` sections and passed every assertion below — reporting a perfectly consistent document while
+checking nothing. `_text()` therefore reads the index AND every part, and
+`test_it_reads_every_part_and_not_just_the_index` is what stops that failure mode returning.
+
 SCOPED TO THE RULES SECTION, deliberately. Several prose sections in the same file enumerate
 with the identical `1. **…**` formatting — the five maintenance-mode defects, the four things
 the CI-quarantine guard asserts — so a file-wide regex reports duplicate rules 1–5 and is
@@ -25,6 +32,8 @@ from __future__ import annotations
 
 import pathlib
 import re
+
+from tests import _sweeps_document
 
 DOC = (
     pathlib.Path(__file__).resolve().parents[2]
@@ -45,7 +54,9 @@ FIRST_RULE_WITH_A_SECTION = 22
 
 
 def _text() -> str:
-    return DOC.read_text()
+    """The index and every part — see `_sweeps_document`, which both readers of this
+    document share so that neither keeps a private idea of where it lives."""
+    return _sweeps_document.text()
 
 
 def _list_numbers() -> list[int]:
@@ -71,6 +82,19 @@ class TestTheCheckIsNotVacuous:
 
     def test_it_finds_the_rule_sections(self):
         assert len(_section_numbers()) > 15
+
+    def test_it_reads_every_part_and_not_just_the_index(self):
+        """FS-584 moved every `## Rule N` section out of the cited file and into
+        `sweeps/part-*.md`. A guard still reading only the index would find nothing and pass
+        — the most comfortable failure there is, because a document that has stopped being
+        checked and one that is perfectly consistent produce the same green tick."""
+        found = _sweeps_document.parts()
+        assert len(found) >= 5, f"only {len(found)} parts under {_sweeps_document.PARTS_DIR}"
+        assert not list(SECTION.finditer(DOC.read_text())), (
+            "a `## Rule N` section is back in the index file. Harmless in itself — but the "
+            "index is the one file this guard read before the split, so a section here is "
+            "the one place a drifted rule would still be found by accident."
+        )
 
     def test_it_is_scoped_to_the_list(self):
         """A file-wide regex reports duplicate rules 1–5, because prose sections elsewhere
@@ -143,7 +167,7 @@ class TestTheReadmeAgreesOnTheCount:
         """
         import re
 
-        doc = DOC.read_text()
+        doc = _text()
         numbers = {int(m) for m in re.findall(r"^## (\d+)\.", doc, re.M)}
         numbers |= {int(m) for m in re.findall(r"^## Class (\d+)", doc, re.M)}
         assert numbers, "no class sections found; the heading patterns have drifted"
@@ -151,7 +175,7 @@ class TestTheReadmeAgreesOnTheCount:
 
         readme = (DOC.parents[2] / "README.md").read_text()
         phrase = f"{_spell(highest)} numbered classes"
-        for name, text in (("the sweeps document", doc), ("the README", readme)):
+        for name, text in (("the sweeps index", DOC.read_text()), ("the README", readme)):
             assert phrase in text, (
                 f"{name} does not say '{phrase}'. The highest class number is {highest}, and "
                 f"a count stated in prose beside a document that contradicts it is worse "

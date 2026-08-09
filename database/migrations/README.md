@@ -69,8 +69,39 @@ coherently and is idempotent.
 ## Conventions
 
 - Pick the next free prefix; `check_migrations.py` enforces uniqueness.
-- Make statements idempotent (`IF NOT EXISTS`, guarded `DO $$` blocks) so a
-  partially-applied migration can be re-run.
+- **Make statements idempotent** (`IF NOT EXISTS`, guarded `DO $$` blocks) so a
+  partially-applied migration can be re-run. This is not a style preference: `migrate.py`
+  runs in autocommit and executes one statement at a time, because continuous aggregates and
+  `add_retention_policy` refuse a transaction block. A file that fails at statement 7 has
+  **committed statements 1–6 and recorded no version**, so running it again is the only
+  recovery there is. Wrapping the file in `BEGIN;`/`COMMIT;` is the other valid answer —
+  seventeen migrations take it — but not for a file that creates a continuous aggregate.
+  Enforced by `test_every_migration_can_be_rerun_realdb.py`, which applies the chain from
+  empty and re-runs each file at its own point in it.
+- Postgres has no `IF NOT EXISTS` for a **policy, trigger or constraint**. The idiom here is
+  `DROP POLICY IF EXISTS x ON t;` before the `CREATE`, or `ADD CONSTRAINT` inside a guarded
+  `DO $$ … IF NOT EXISTS … $$` block. Twenty-two files look non-idempotent to a text search
+  for this reason; four actually are.
+
+## The four migrations that cannot be re-run
+
+Measured 2026-08-08 against `timescaledb:latest-pg15`:
+
+| File | Statement that fails the retry |
+|------|-------------------------------|
+| `001_init.sql` | `CREATE TABLE organizations` — no `IF NOT EXISTS` |
+| `002_continuous_aggregates.sql` | `CREATE MATERIALIZED VIEW … WITH (timescaledb.continuous)` |
+| `004_query_optimization.sql` | two bare `CREATE INDEX` |
+| `010_api_keys.sql` | `INSERT INTO permissions … VALUES` with no `ON CONFLICT` |
+
+**Do not fix them.** Every existing database has applied all four, and editing an applied
+migration is checksum drift — the runner then refuses to migrate at all until somebody runs
+`--rebaseline-drifted`. A repair here takes deployed databases out of service and improves
+nothing, because they will never be run again on a database that already has them. The list
+is closed; the guard exists to keep a *new* migration off it.
+
+If one of these does fail halfway on a fresh bringup, the recovery is to drop the database and
+start again, not to re-run the file.
 - Schema and data belong in separate files; a data-only migration fails
   `test_migration_chain_hygiene.py`.
 - `created_at` / `updated_at` need a **server** default

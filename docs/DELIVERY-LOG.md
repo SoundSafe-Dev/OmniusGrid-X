@@ -7930,3 +7930,114 @@ provenance of a generated file), `generate_openapi` by `generate_sdk.sh`, and th
 README and the deployment docs. Nothing to remove.
 
 **Suite:** backend 3935 · edge agent 344 → 351 · frontend 881.
+
+---
+
+## FS-578 / FS-584 — the retry nobody could take, and a split that turned off three guards
+
+### FS-578 — idempotency is not a style preference here, it is the only recovery
+
+`migrate.py` connects with `autocommit = True` and executes one statement at a time. That is
+correct and it is documented — TimescaleDB continuous aggregates, `add_retention_policy` and
+`CREATE INDEX CONCURRENTLY` all refuse a transaction block. **The consequence was written
+nowhere:** a migration that fails at statement 7 of 12 has already committed statements 1
+through 6, and its version row is never written. There is no rollback. The only recovery an
+operator has at 3am is to run the file again.
+
+The README has said "make statements idempotent" since FS-56, and nothing enforced it. The
+honest reason nothing did is that **the static check over-reports five to one.** Postgres
+offers no `IF NOT EXISTS` for a policy, a trigger or a constraint, so the idiom in this tree
+is `DROP POLICY IF EXISTS` before the `CREATE`, or `ADD CONSTRAINT` inside a guarded `DO $$`
+block. A text sweep sees the bare `CREATE` and reports a defect: **22 files look wrong,
+4 are.** The difference is only visible by running them.
+
+So the guard runs them. It builds a scratch database on the session container, applies the
+chain from empty, and after each migration succeeds it re-runs that migration inside a
+transaction it discards. Three details decide whether the number means anything:
+
+* **Re-run at the file's own point in the chain, not at the end.** Re-running everything after
+  the whole chain reports `010_api_keys.sql` failing on `relation "permissions" does not
+  exist` — because `037_remove_unused_permission_rbac.sql` legitimately dropped that table
+  twenty-seven migrations later. Neither that nor `009`'s renamed column is an idempotency
+  defect, and a guard reporting them teaches people to ignore it.
+* **"Cannot be tried" is detected from Postgres' error, not from a pattern list.** A list of
+  statement shapes is a second place to keep one fact and it was wrong in both directions: it
+  missed `CREATE MATERIALIZED VIEW … WITH (timescaledb.continuous)`, and marking that shape
+  hostile wholesale would have *hidden* `002`, which fails the retry for an unrelated reason.
+* **Skipped is not passed.** Two statements cannot be retried, and the guard says so rather
+  than counting the files clean.
+
+**None of the four can be fixed, and that is the load-bearing part.** Every existing database
+has applied all four, and editing an applied migration is checksum drift — the runner then
+refuses to migrate at all until somebody runs `--rebaseline-drifted`. A repair takes deployed
+databases out of service and improves nothing. The README now names the four and says not to
+touch them; the guard is forward-only.
+
+The other half of the item's premise was wrong. *"37 of 65 migrations contain no
+DROP/rollback"* measures the wrong thing — most migrations should not contain a `DROP`. Four
+contain an irreversible statement, and those are the ones worth naming.
+
+### FS-584 — splitting the document turned off three checks, and all three went on passing
+
+7,239 lines, 229 sections, split into an index at the cited path and five parts under
+`docs/engineering/sweeps/`. Verified byte-for-byte: index plus parts reproduce the original.
+
+Then the full suite failed, and the reason is the finding.
+
+* `test_method_rules_are_indexed.py` reads `## Rule N` sections. They all moved. It found
+  **zero**, and every assertion it makes passed over an empty set.
+* `test_the_session_arc_is_a_real_range.py` looks for the FS-range claim, which is in part 5.
+  It had a vacuity check and failed honestly — the only one of the three that did.
+* `test_documented_files_exist.py` names the document in a list of prose-heavy files whose
+  source citations must resolve. Its entry still resolved, so **7,100 lines of citations left
+  the check with nothing failing and the file count going up.**
+
+The comment predicting exactly this was already in the third file, written when the delivery
+log moved out of the README: *"Moving prose out of a checked document moves it out of the
+check unless the scope moves with it."* It was right, and it did not stop me.
+
+Both readers now share `backend/tests/_sweeps_document.py` rather than each keeping a private idea of
+where the document lives — two guards with private copies of one fact is the defect FS-590
+closed a week ago, and the split would have re-introduced it.
+
+**And one citation had already rotted.** `fixed-sprints-344-393.md` cited
+a citation reading *defect-class-sweeps.md, lines 777–786* for an argument about why a route prefix should not be edited;
+those lines now hold an unrelated paragraph about a provenance flag. Nothing could have caught
+it — the file exists, the lines exist, and only a reader who knows what they expected to find
+can tell. Both line citations into that document are now section citations, no new ones are
+allowed into it, and the rest are checked for being in range, which is the most a static check
+can establish and is explicitly not a check that they point at the right paragraph.
+
+---
+
+## FS-574 — recorded as a decision, because it is one
+
+`pre-commit` runs in CI with `continue-on-error: true`, above a comment reading *"Advisory
+while the existing tree is brought into compliance."* The tree has not been brought into
+compliance, and the comment has been true long enough that it now describes **a decision
+rather than a transition**.
+
+Measured on a clean tree with `pre-commit run --all-files`: **972 files changed, 55,068
+insertions, 40,118 deletions.** The plan's figure was 924 and +53,752/−39,025 — three weeks of
+new code older. `ruff format` alone accounts for 570 Python files against 125 already clean.
+
+Both answers are defensible and they are not reversible against each other. Making it blocking
+means one announced tree-wide reformat landed when no branch is open, because a 972-file diff
+conflicts with every branch that exists — and `git blame` on 972 files then points at that
+commit instead of at whoever wrote the line. Keeping it advisory means the comment stops
+claiming a transition that is not happening, and the hooks keep the value that needs no
+tree-wide change: merge conflicts and secrets.
+
+**Not mine to make.** The reformat lands in four other people's lanes. It is now an entry in
+`docs/engineering/open-decisions.md` — the register's first since it emptied on 2026-08-05 —
+pinned by `backend/tests/test_the_precommit_decision_is_still_open.py`, which asserts the job
+is still advisory and the four formatting hooks are still declared. Both are one-line edits
+somebody could make for good local reasons, and neither would fail anything otherwise.
+
+**The diff figures are dated, not continuously checked, and the entry says so.** Reproducing
+them needs the hook versions pinned in `.pre-commit-config.yaml`; the `ruff` on this machine
+reports 570 files and the pinned v0.6.9 may not agree. A live figure computed with the wrong
+formatter is a different number presented as the same one — worse than a dated one, and it
+would add a whole-tree format run to every test session in order to be wrong.
+
+**Suite:** backend 3,947 · edge agent 351 · frontend 881 · `tsc` clean.

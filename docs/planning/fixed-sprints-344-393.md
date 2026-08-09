@@ -428,7 +428,7 @@ for placeholder secrets.
   deep (`VIEWER/OPERATOR/ADMIN`), pinned by a CHECK constraint in migration 048.
 
 - **FS-356 · Eleven capped lists still cannot say they were capped** · M
-  `defect-class-sweeps.md:1435`. Twelve bare-array endpoints truncate with no signal; only
+  `defect-class-sweeps.md` § *22. A capped list that cannot say it was capped* (now `sweeps/part-1-the-first-twenty-nine-classes.md`). Twelve bare-array endpoints truncate with no signal; only
   `/api/v1/rul` was fixed.
   ✅ **DONE 2026-08-01 — as a ratchet, and the item's own framing was wrong.**
 
@@ -458,7 +458,7 @@ for placeholder secrets.
   `/api/v1/logistics`. Confirmed live: 12 paths carry the doubled segment, and one of them
   (`truck-asset-readiness`) is among the contract gate's 500s.
 
-  **Why it is not a routing edit**, per `defect-class-sweeps.md:777-786` — and that analysis
+  **Why it is not a routing edit**, per `defect-class-sweeps.md` § *10. An org-scoped table with neither a filter nor RLS* (now `sweeps/part-1-the-first-twenty-nine-classes.md`) — and that analysis
   is correct, checked 2026-08-01. *Removing* the inner prefix would land
   `logistics_correlation`'s `/delivery-efficiency` and `/compliance/summary` on the paths
   `fleet_logistics` already serves, and since `logistics_correlation` registers first it would

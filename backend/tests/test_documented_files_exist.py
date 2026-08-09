@@ -37,6 +37,8 @@ from typing import Dict, List, Set
 
 import pytest
 
+from tests import _sweeps_document
+
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 DOCS = [
     ROOT / "README.md",
@@ -54,6 +56,12 @@ DOCS = [
     # make. The note above this list applies to new documents as much as moved ones: prose
     # full of paths is unchecked unless the scope includes it.
     ROOT / "docs" / "engineering" / "open-decisions.md",
+    # THE NOTE ABOVE CAME TRUE (FS-584). The sweeps document was split into six files; the
+    # index kept the cited path and stayed in this list, and **7,100 lines of citations left
+    # the check without the count changing** — the entry above still resolved, so nothing
+    # failed. Read the parts through the shared reader rather than naming them, so the next
+    # part is covered on the day it is written.
+    *_sweeps_document.parts(),
 ]
 
 #: `` `something.py` `` — a backticked filename with a source extension.
@@ -198,3 +206,73 @@ class TestTheExemptionsStayHonest:
         outlives whatever it was protecting."""
         orphaned = [n for n in DELIBERATELY_ABSENT if n not in CITATIONS]
         assert not orphaned, f"exempted but no longer cited anywhere: {orphaned}"
+
+
+#: `` `foo.md:120` `` / `` `foo.md:777-786` `` — a citation into a markdown file by line.
+MARKDOWN_LINE_CITATION = re.compile(r"`([A-Za-z0-9_][A-Za-z0-9_./-]*\.md):(\d+)(?:-(\d+))?`")
+
+#: The line citations that exist, and what each is pointing at. Named so a NEW one is
+#: visible: this is the shape that expires without saying so.
+KNOWN_LINE_CITATIONS = {
+    "README.md:405-406": "the two pgBackRest rows in the superseded-paths table (FS-513)",
+    "README.md:16-25": "the badge block at the top of the README",
+    "database-backup-restore.md:11": "the RPO sentence the recovery guard checks",
+}
+
+
+class TestNobodyCitesALivingDocumentByLineNumber:
+    """A LINE NUMBER IS A CLAIM THAT EXPIRES IN SILENCE.
+
+    `fixed-sprints-344-393.md` cited `defect-class-sweeps.md:777-786` for an argument about
+    why a route prefix should not be edited. By the time anyone followed it, those lines held
+    an unrelated paragraph about a provenance flag — the document had grown underneath the
+    citation. Nothing failed, and nothing could: the file exists, the lines exist, and only a
+    reader who knows what they expected to find can tell that they are the wrong ones.
+
+    Both of that document's line citations are now section citations, which move with the
+    text. This keeps new ones out of the file that moves most.
+    """
+
+    def test_the_pattern_matches_a_citation(self):
+        """Vacuity: a regex that matched nothing would pass both assertions below over an
+        empty set, which is how three guards in this suite have already failed."""
+        assert MARKDOWN_LINE_CITATION.search("see `foo.md:12-14` for the rest")
+        assert not MARKDOWN_LINE_CITATION.search("see `foo.md` for the rest")
+
+    def test_no_line_citation_into_the_sweeps_document(self):
+        """Scoped to the document that changes daily rather than banned everywhere. A line
+        citation into a finished document is merely brittle; into this one it is wrong within
+        the week, and it was."""
+        offenders = []
+        for path in ROOT.joinpath("docs").rglob("*.md"):
+            for match in MARKDOWN_LINE_CITATION.finditer(path.read_text()):
+                if "defect-class-sweeps" in match.group(1) or match.group(1).startswith("part-"):
+                    offenders.append(f"{path.relative_to(ROOT)} -> {match.group(0)}")
+        assert not offenders, (
+            "these cite the sweeps document by line number, and it gains a few hundred lines "
+            "a week:\n  " + "\n  ".join(offenders) + "\n\nCite the section heading instead "
+            "— it moves with the text, and a reader can find it after the next split."
+        )
+
+    def test_every_other_line_citation_is_at_least_in_range(self):
+        """The weaker check the rest get, and it is worth saying what it does NOT prove: a
+        citation can point inside the file and at the wrong paragraph, which is exactly what
+        happened above. In range is the most a static check can establish."""
+        for path in list(ROOT.joinpath("docs").rglob("*.md")) + [ROOT / "README.md"]:
+            for match in MARKDOWN_LINE_CITATION.finditer(path.read_text()):
+                # Resolve beside the citing document, then at the repo root. NOT by rglob:
+                # `README.md` matches a dozen files in this tree and the first one wins, so
+                # an out-of-range citation was checked against whichever README the walk
+                # happened to reach — the guard passed on a deliberately broken input while
+                # this was being verified.
+                name = match.group(1)
+                candidates = [path.parent / name, ROOT / name]
+                target = next((c for c in candidates if c.is_file()), None)
+                if target is None:
+                    continue  # the missing-file check above owns that failure
+                last = int(match.group(3) or match.group(2))
+                length = len(target.read_text().splitlines())
+                assert last <= length, (
+                    f"{path.relative_to(ROOT)} cites {match.group(0)} and that file has only "
+                    f"{length} lines"
+                )

@@ -20,8 +20,14 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from tests import _sweeps_document
+
 ROOT = Path(__file__).resolve().parent.parent.parent
-SWEEPS = ROOT / "docs" / "engineering" / "defect-class-sweeps.md"
+
+#: The claim lives in the last PART of the sweeps document, not in the index. Read through
+#: the shared reader: FS-584 split the file and this guard went on opening the index alone,
+#: which is how it started reporting on a sentence it could no longer see.
+SWEEPS = _sweeps_document.INDEX
 
 #: Where an FS reference can legitimately live: source comments, guard docstrings, and the
 #: engineering documents. Deliberately not the delivery log alone — an item recorded only
@@ -69,7 +75,7 @@ def _referenced() -> set[int]:
 
 
 def test_the_claim_is_present_and_parseable():
-    match = CLAIM.search(SWEEPS.read_text())
+    match = CLAIM.search(_sweeps_document.text())
     assert match, (
         "the sweeps document no longer states its FS range in the expected form, so the "
         "assertions below would check nothing"
@@ -77,7 +83,7 @@ def test_the_claim_is_present_and_parseable():
 
 
 def test_the_range_has_no_gaps():
-    match = CLAIM.search(SWEEPS.read_text())
+    match = CLAIM.search(_sweeps_document.text())
     low, high = int(match.group(1)), int(match.group(2))
     referenced = _referenced()
     missing = [n for n in range(low, high + 1) if n not in referenced]
@@ -90,7 +96,7 @@ def test_the_range_has_no_gaps():
 
 
 def test_the_count_matches_the_range():
-    match = CLAIM.search(SWEEPS.read_text())
+    match = CLAIM.search(_sweeps_document.text())
     low, high, word = int(match.group(1)), int(match.group(2)), match.group(3)
     assert word in _WORDS, (
         f"the count is written as {word!r}, which this test cannot check. Spell it as a "

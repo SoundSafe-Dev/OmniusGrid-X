@@ -63,7 +63,16 @@ def _registry_counts() -> tuple[int, int]:
 TEXT = REGISTER.read_text()
 
 #: Section titles that are not open decisions.
-_NOT_ENTRIES = ("Not on this page", "Closed, and what closing one cost", "None open")
+#: Headings that are the page's furniture rather than an open decision. "None open" stays
+#: after the register gained an entry again (FS-574): the phrase is what an emptied register
+#: says about itself, and deleting it here would make the day it empties again a test
+#: failure rather than good news.
+_NOT_ENTRIES = (
+    "Not on this page",
+    "Closed, and what closing one cost",
+    "None open",
+    "Everything else here was closed",
+)
 
 
 def _open_entries(text: str | None = None) -> list[str]:

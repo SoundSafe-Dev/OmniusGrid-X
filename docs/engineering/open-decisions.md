@@ -34,9 +34,47 @@ that were right.**
 
 ---
 
-## None open
+## 1. `pre-commit` is advisory, and bringing the tree into compliance is one 972-file commit
 
-**Every entry on this page has been closed** (FS-466 … FS-470, 2026-08-05). What each one
+**The state.** `.pre-commit-config.yaml` declares four formatting hooks — `trailing-whitespace`,
+`end-of-file-fixer`, `ruff-format` and `prettier` — and `quality-gates.yml` runs them with
+`continue-on-error: true`, above a comment reading *"Advisory while the existing tree is
+brought into compliance."* The tree has not been brought into compliance, and the comment has
+been true for long enough that it now describes a decision rather than a transition.
+
+**What making it blocking costs.** Measured 2026-08-08 by running `pre-commit run --all-files`
+on a clean tree: **972 files changed, 55,068 insertions, 40,118 deletions.** Of the Python
+half, `ruff format` alone would rewrite 570 files and leave 125 as they are. It touches every
+lane in this repository at once — OTA, MLOps, correlation-AI and RAG included.
+
+**Why it is a decision and not a task.** Both answers are defensible and they are not
+reversible against each other:
+
+* *Make it blocking.* One announced tree-wide reformat, landed when no branch is open,
+  because a 972-file diff conflicts with every branch that exists. Every future diff is then
+  clean, and `git blame` on 972 files points at that commit instead of at the person who wrote
+  the line.
+* *Keep it advisory and say so.* The comment stops claiming a transition that is not
+  happening. New code stays unformatted at the same rate it does today, and the hooks catch
+  the two things that do not need a tree-wide change — merge conflicts and secrets — which is
+  most of their value.
+
+Nobody outside the lanes can make this call: the reformat lands in four other people's files.
+
+**Pinned by** `backend/tests/test_the_precommit_decision_is_still_open.py`, which asserts the
+CI job is still advisory and the four formatting hooks are still declared — so the entry
+cannot go stale by somebody quietly making it blocking, or by the hooks being removed.
+
+**The diff figures above are dated, not continuously checked, and that is deliberate.**
+Reproducing them requires the hook versions pinned in `.pre-commit-config.yaml`; a count
+computed with a locally-installed formatter would be a different number presented as the same
+one. Re-measure with the command above, in a clean tree, before deciding on it.
+
+---
+
+## Everything else here was closed on 2026-08-05
+
+**Every entry that was on this page then has been closed** (FS-466 … FS-470, 2026-08-05). What each one
 needed turned out to be a decision rather than an investigation, which is what this page was
 for — and in three of the five, making the decision took less time than the entry had spent
 being re-read.
