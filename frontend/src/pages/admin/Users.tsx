@@ -22,6 +22,7 @@ import {
   Table,
 } from '../../components';
 import { useDialog } from '../../components/ui';
+import { formatDateTime } from '../../utils/formatters';
 import { useAuthStore } from '../../stores';
 import { User, UserInvitation, UserRole } from '../../types';
 
@@ -32,11 +33,11 @@ const ROLE_OPTIONS = [
   { value: 'viewer', label: 'Viewer' },
 ];
 
-const formatDate = (value?: string | null) => {
-  if (!value) return '—';
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? '—' : parsed.toLocaleString();
-};
+// Through the shared helper, not a bare toLocaleString. This local version already
+// guarded the two cases it thought of; `utils/formatters` guards the ones it did not, and
+// a second implementation of "render a timestamp" is how the two drift. Ninety-four inline
+// calls is the population the ratchet exists to shrink — this one does not join it.
+const formatDate = (value?: string | null) => (value ? formatDateTime(value) : '—');
 
 const invitationStatusVariant = (
   invitation: UserInvitation

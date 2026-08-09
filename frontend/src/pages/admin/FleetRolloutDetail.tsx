@@ -73,6 +73,10 @@ export const FleetRolloutDetail: FC = () => {
   const pauseRollout = usePauseAgentRollout();
   const resumeRollout = useResumeAgentRollout();
   const cancelRollout = useCancelAgentRollout();
+  // Narrowed once, here. `rollout.data!` appeared three times below because TypeScript
+  // re-widens a property access inside a closure — a local binding it can narrow says
+  // the same thing without telling the compiler to stop checking.
+  const rolloutRow = rollout.data;
 
   const waveGroups = useMemo(
     () => groupByWave(rollout.data?.targets ?? []),
@@ -98,13 +102,13 @@ export const FleetRolloutDetail: FC = () => {
             <RefreshCw size={16} className="mr-2" />
             Refresh
           </Button>
-          {rollout.data &&
+          {rolloutRow &&
             (['pending', 'running'].includes(rollout.data.status) ||
               (rollout.data.status === 'paused' &&
                 rollout.data.pause_reason === 'maintenance_window')) && (
             <Button
               variant="secondary"
-              onClick={() => pauseRollout.mutate(rollout.data!.id)}
+              onClick={() => pauseRollout.mutate(rolloutRow.id)}
               loading={pauseRollout.isPending}
             >
               {rollout.data.pause_reason === 'maintenance_window'
@@ -112,19 +116,19 @@ export const FleetRolloutDetail: FC = () => {
                 : 'Pause'}
             </Button>
           )}
-          {rollout.data?.status === 'paused' && (
+          {rolloutRow?.status === 'paused' && (
             <Button
               variant="secondary"
-              onClick={() => resumeRollout.mutate(rollout.data!.id)}
+              onClick={() => resumeRollout.mutate(rolloutRow.id)}
               loading={resumeRollout.isPending}
             >
               Resume
             </Button>
           )}
-          {rollout.data && ['pending', 'running', 'paused'].includes(rollout.data.status) && (
+          {rolloutRow && ['pending', 'running', 'paused'].includes(rolloutRow.status) && (
             <Button
               variant="danger"
-              onClick={() => cancelRollout.mutate(rollout.data!.id)}
+              onClick={() => cancelRollout.mutate(rolloutRow.id)}
               loading={cancelRollout.isPending}
             >
               Cancel
