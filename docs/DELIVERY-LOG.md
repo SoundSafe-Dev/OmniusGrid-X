@@ -8204,3 +8204,48 @@ was a filename; here it was a person.
 carried, and two are on their third consecutive pool (`main` promotion, correlation-AI honesty).
 A repeat with no age on it reads as new work and hides how long it has been sitting, which is
 how a decision nobody makes stays invisible while looking like a fresh ticket every fortnight.
+
+---
+
+## Assigning from the branch's status found two weeks of two people's work off the branch
+
+The task was to allocate the pool. Measuring `hamad/converged-pre-main` first — before deciding
+who does what — turned up something that makes most of the pool premature.
+
+**Where each developer's most recent commit actually lives**, which took one command and had
+never been asked:
+
+* **Hridyansh** — nine commits dated 23–27 July on `backup/hridyansh/integration`, on **no
+  `origin` branch and not on converged**. Signed agent self-update with rollback, fleet
+  targeting and rollout cohorts, maintenance windows, audited remote operations, tenant user
+  administration. **Two of the nine are titled "onto converged main"** — he was trying to land
+  this and it reached the backup mirror and stopped.
+* **htreinen** — three commits, 20–23 July, on a local branch that exists on **no remote**.
+  Structure-aware chunking, ingestion guardrails, an eval suite. One disk failure from gone, and
+  it has **no merge base** with converged, so it is a cherry-pick rather than a merge.
+* **Alex** — merged. His work is on the branch.
+
+Converged has zero files matching `rollout cohort`, `self-update`, `invitation` or
+`maintenance_windows`, so Hridyansh's is unabsorbed work rather than work the convergence
+superseded. How much is genuinely new needs triage with him; the diff figure alone includes
+pre-convergence lineage and would overstate it.
+
+**The cause is `main`.** It is 434 commits and 126,472 insertions behind this branch, and every
+developer is told to branch from it. Anyone who follows the instruction starts from a tree that
+predates the product — so two of them sensibly kept their old branches instead, and that is
+exactly what is now stranded. The promotion has been an open decision for three consecutive
+pools; this is the bill for that.
+
+**It also invalidates part of the pool.** htreinen was assigned FS-563–566, and "structure-aware
+chunking, ingestion guardrails, eval suite" plausibly overlaps them. Assigning work somebody may
+already have done is the same waste as the pool being too short, arrived at from the other
+direction.
+
+So the assignment leads with three integration items ahead of every ticket, and records what it
+assumes: that the other four are working this week at all. Commits in the last 21 days are
+Hamad 541, Hridyansh 9, htreinen 9, Alex 6, Harsh 0. If that ratio holds, the integration is
+mine alone and the per-person lists slip — worth writing down, because a plan that assumes
+availability it does not have is the same fiction as one that lists work that does not exist.
+
+**The check is now cheap and permanent:** before any future pool, ask where each contributor's
+last commit lives, not just what it says.

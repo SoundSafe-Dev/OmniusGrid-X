@@ -51,6 +51,14 @@ the repository on 2026-08-08.
 > task was. Three plans in a row rotted by listing more work than existed, every time because
 > the next plan was written from the previous pool instead of from the tree.
 
+> ### Who does what
+>
+> This file is the **inventory**. [`assignments-2026-08-10.md`](assignments-2026-08-10.md) says
+> who does what and in what order, derived from the branch's status rather than this file's
+> ordering — and it opens with three items that come **before** any ticket here, because
+> measuring the branch found nine of Hridyansh's commits on the backup remote only and three of
+> htreinen's on an unpushed local branch.
+
 Sizes: **S** under half a day · **M** 1–2 days · **L** 3+ days.
 
 *Regenerate the print-ready PDF (not committed — it would go stale beside this file):*

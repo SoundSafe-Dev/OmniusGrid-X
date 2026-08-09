@@ -544,14 +544,20 @@ verifier failed. On a UTC developer machine none of it is visible.
 > investigates a backlog that looks too long. Every entry in the new tranche carries a file
 > path, a line number, or a measurement taken on the day.
 
-> 📋 **Next week's work is pooled in
-> [`docs/planning/next-week-task-pool.md`](docs/planning/next-week-task-pool.md)** (week of
-> 2026-08-10) — **31 independently-assignable tickets and 5 decisions**, seventeen of them carried from the previous pool and marked with their age, with sizes and
-> acceptance criteria, for **Harsh (Product Manager)** to redistribute. Every figure in it was
-> re-derived from the tree on the day it was written, and one item is a *recorded negative* —
-> an entry measured while writing and found not to reproduce. The previous pool is archived at
-> [`task-pool-2026-07-26.md`](docs/planning/task-pool-2026-07-26.md); nothing was carried
-> forward on its say-so.
+> 📋 **Next week's work.** The inventory is
+> [`docs/planning/next-week-task-pool.md`](docs/planning/next-week-task-pool.md) (week of
+> 2026-08-10) — **31 tickets and 5 decisions**, seventeen carried from the previous pool and
+> marked with their age, with sizes and acceptance criteria. Every figure was re-derived from
+> the tree on the day it was written, and one entry is a *recorded negative*: measured while
+> writing and found not to reproduce. The previous pool is archived at
+> [`task-pool-2026-07-26.md`](docs/planning/task-pool-2026-07-26.md).
+>
+> **Who does what is
+> [`docs/planning/assignments-2026-08-10.md`](docs/planning/assignments-2026-08-10.md)**,
+> derived from this branch's status rather than the pool's ordering. It opens with three
+> integration items that precede every ticket — measuring the branch found **nine of
+> Hridyansh's commits on the backup remote only, and three of htreinen's on a local branch that
+> exists on no remote at all**.
 
 > ⚠️ The pre-convergence feature branches are all merged into
 > `hamad/converged-pre-main` and now into **`main`**. **Start new work from
