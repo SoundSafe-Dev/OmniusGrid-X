@@ -35,6 +35,16 @@ vi.mock('../../api', () => ({
     createUser: (d: unknown) => createUser(d),
     updateUser: (id: string, d: unknown) => updateUser(id, d),
     deleteUser: (id: string) => deleteUser(id),
+    // ADDED 2026-08-08 by the Hridyansh merge. His Users page also reaches for the
+    // invitation surface, and a partial vi.mock throws on any export it omits — the same
+    // cause as the Fleet mocks. Stubbed neutrally: these describes are about the user
+    // table's affordances, not about invitations.
+    getInvitations: vi.fn().mockResolvedValue({ items: [], total: 0, skip: 0, limit: 200, hasMore: false }),
+    inviteUser: vi.fn(),
+    resendInvitation: vi.fn(),
+    revokeInvitation: vi.fn(),
+    deactivateUser: (id: string) => deleteUser(id),
+    reactivateUser: vi.fn(),
   },
   api: { get: vi.fn(), post: vi.fn(), patch: vi.fn(), delete: vi.fn() },
 }))

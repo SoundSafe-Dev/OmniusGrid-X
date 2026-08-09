@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.config import settings
 from app.db.models import (
+    Site,
     AgentRelease,
     AgentRollout,
     AgentRolloutTarget,
@@ -35,6 +36,11 @@ async def command_db(tmp_path: Path):
     tables = [
         Organization.__table__,
         AssetType.__table__,
+        # `sites` joined the list on 2026-08-08: Hridyansh's fleet-targeting work gave
+        # Workcell a composite FK to it, and a hand-picked table subset silently stops
+        # being closed under its own foreign keys the moment somebody adds one. SQLite
+        # reports it as `no such table: main.sites` at INSERT time, thirteen tests deep.
+        Site.__table__,
         Workcell.__table__,
         Asset.__table__,
         User.__table__,
